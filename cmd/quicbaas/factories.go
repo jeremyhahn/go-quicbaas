@@ -70,12 +70,6 @@ type KMSClientFactory func() (KMSClient, error)
 // kmsClientFactory creates KMS clients.
 var kmsClientFactory KMSClientFactory = createKMSClient
 
-// SealClientFactory is a function type for creating seal clients.
-type SealClientFactory func() (SealClient, error)
-
-// sealClientFactory creates seal clients.
-var sealClientFactory SealClientFactory = createSealClient
-
 // SecretsClientFactory is a function type for creating secrets clients.
 type SecretsClientFactory func() (SecretsClient, error)
 
@@ -178,16 +172,6 @@ type KMSClient interface {
 	KMSUnwrapKey(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error)
 	KMSSetKeySafety(ctx context.Context, req *service.SetKeySafetyRequest) (*service.SetKeySafetyResponse, error)
 	KMSClearKeySafety(ctx context.Context, req *service.ClearKeySafetyRequest) (*service.ClearKeySafetyResponse, error)
-	Close() error
-}
-
-// SealClient defines the interface for seal operations.
-type SealClient interface {
-	SealStatus(ctx context.Context) (*service.SealStatusResponse, error)
-	SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error)
-	Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error)
-	Seal(ctx context.Context) error
-	Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error)
 	Close() error
 }
 
@@ -425,18 +409,6 @@ func createKMSClient() (KMSClient, error) {
 	}
 }
 
-// createSealClient creates a client for seal operations based on transport.
-func createSealClient() (SealClient, error) {
-	switch transport {
-	case "grpc", "":
-		return createGRPCClient()
-	case "mcp":
-		return createMCPSealClient()
-	default:
-		return createSDKSealClient()
-	}
-}
-
 // createGRPCSecretsClient creates a gRPC client for secrets operations.
 func createGRPCSecretsClient() (SecretsClient, error) {
 	return createGRPCClient()
@@ -602,7 +574,6 @@ func resetFactories() {
 	sdkClientFactory = createSDKClient
 	cryptoClientFactory = createCryptoClient
 	kmsClientFactory = createKMSClient
-	sealClientFactory = createSealClient
 	secretsClientFactory = createGRPCSecretsClient
 	timeSeriesClientFactory = createTimeSeriesClient
 	authClientFactory = createSDKAuthClient

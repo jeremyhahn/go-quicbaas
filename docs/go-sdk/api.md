@@ -71,7 +71,6 @@ type Client interface {
 
     // Security operations
     Auth() AuthClient
-    Seal() SealClient
     KMS() KMSClient
     Secrets() SecretsClient
     Crypto() CryptoClient
@@ -993,91 +992,11 @@ func GetOpenIDConfiguration(ctx context.Context) (*OpenIDConfiguration, error)
 
 ---
 
-## SealClient
+## Seal and unseal
 
-Provides seal/unseal operations for encryption key management.
-
-### Status
-
-Returns the current seal status.
-
-```go
-func Status(ctx context.Context) (*SealStatus, error)
-```
-
-**SealStatus:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Sealed | bool | Whether the database is sealed |
-| Initialized | bool | Whether initialization has occurred |
-| Progress | int | Number of unseal keys provided |
-| Required | int | Number of keys required to unseal |
-| ClusterName | string | Cluster name |
-| ClusterVersion | string | Cluster version |
-
-### Init
-
-Initializes the seal with Shamir secret sharing.
-
-```go
-func Init(ctx context.Context, req *InitRequest) (*InitResponse, error)
-```
-
-**InitRequest:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| SecretShares | int | Total number of key shares to generate |
-| SecretThreshold | int | Number of shares required to unseal |
-
-**InitResponse:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Keys | []string | Generated unseal keys (store securely) |
-| RootToken | string | Initial root token |
-
-**Example:**
-
-```go
-resp, err := client.Seal().Init(ctx, &quicbaas.InitRequest{
-    SecretShares:    5,
-    SecretThreshold: 3,
-})
-// Store keys securely - they cannot be retrieved again
-```
-
-### Unseal
-
-Provides an unseal key to progress toward unsealing.
-
-```go
-func Unseal(ctx context.Context, req *UnsealRequest) (*UnsealResponse, error)
-```
-
-**UnsealRequest:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Key | string | One unseal key |
-| Reset | bool | Reset unseal progress |
-
-**UnsealResponse:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Sealed | bool | Whether still sealed |
-| Progress | int | Current unseal progress |
-| Required | int | Keys required to unseal |
-
-### Seal
-
-Seals the database, requiring unseal keys to access data.
-
-```go
-func Seal(ctx context.Context) error
-```
+There is no `SealClient` (#1559). Seal, unseal, init, rekey and status go
+through `Security().Barrier()`, which returns `QRDBBarrierClient`, the
+re-export of go-qrdb's `BarrierClient`.
 
 ---
 

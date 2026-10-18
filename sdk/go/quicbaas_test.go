@@ -374,20 +374,6 @@ func TestClient_Auth(t *testing.T) {
 	}
 }
 
-func TestClient_Seal(t *testing.T) {
-	mockT := &mockTransport{}
-	c := &client{
-		transport: mockT,
-		opts:      defaultOptions(),
-	}
-
-	seal := c.seal()
-	seal2 := c.seal()
-	if seal != seal2 {
-		t.Error("expected same Seal client instance")
-	}
-}
-
 func TestClient_KMS(t *testing.T) {
 	mockT := &mockTransport{}
 	c := &client{
@@ -624,19 +610,6 @@ func (m *mockAuthClientForCoverage) GetJWKS(ctx context.Context) (*service.JWKS,
 func (m *mockAuthClientForCoverage) GetOpenIDConfiguration(ctx context.Context) (*service.OpenIDConfiguration, error) {
 	return nil, nil
 }
-
-type mockSealClientForCoverage struct{}
-
-func (m *mockSealClientForCoverage) Status(ctx context.Context) (*SealStatus, error) {
-	return nil, nil
-}
-func (m *mockSealClientForCoverage) Init(ctx context.Context, req *InitRequest) (*InitResponse, error) {
-	return nil, nil
-}
-func (m *mockSealClientForCoverage) Unseal(ctx context.Context, req *UnsealRequest) (*UnsealResponse, error) {
-	return nil, nil
-}
-func (m *mockSealClientForCoverage) Seal(ctx context.Context) error { return nil }
 
 type mockKMSClientForCoverage struct{}
 
@@ -999,15 +972,6 @@ func TestClient_Accessors_RLockPath(t *testing.T) {
 		result := c.auth()
 		if result != AuthClient(mock) {
 			t.Error("expected pre-populated Auth client to be returned via RLock path")
-		}
-	})
-
-	t.Run("Seal_RLockPath", func(t *testing.T) {
-		mock := &mockSealClientForCoverage{}
-		c := &client{transport: mockT, opts: defaultOptions(), sealClient: mock}
-		result := c.seal()
-		if result != SealClient(mock) {
-			t.Error("expected pre-populated Seal client to be returned via RLock path")
 		}
 	})
 

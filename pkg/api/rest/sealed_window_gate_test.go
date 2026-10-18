@@ -81,7 +81,6 @@ func TestRESTSealedWindowGate_SealedAdmitDenyTable(t *testing.T) {
 		{"credentials wire (deliberate exclusion)", http.MethodGet, "/v1/credentials/", true},
 		{"barrier seal (deliberate exclusion)", http.MethodPost, "/v1/barrier/seal", true},
 		{"barrier enable-encryption (deliberate exclusion)", http.MethodPost, "/api/v1/barrier/enable-encryption", true},
-		{"legacy seal surface", http.MethodGet, "/api/v1/seal/status", true},
 		{"iam users", http.MethodGet, "/api/v1/iam/users", true},
 		{"user factors wire", http.MethodGet, "/v1/users/factors/list", true},
 

@@ -68,44 +68,7 @@ func TestCreateCryptoClient_DefaultTransport(t *testing.T) {
 	assert.NotNil(t, client)
 }
 
-// TestCreateSealClient_MCPTransport tests MCP branch of createSealClient.
-func TestCreateSealClient_MCPTransport(t *testing.T) {
-	origTransport := transport
-	origFactory := sdkClientFactory
-	defer func() {
-		transport = origTransport
-		sdkClientFactory = origFactory
-	}()
-
-	transport = "mcp"
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return newTestSDKClient(nil, nil), nil
-	}
-
-	client, err := createSealClient()
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-}
-
 // TestCreateSealClient_DefaultTransport tests default (SDK) branch.
-func TestCreateSealClient_DefaultTransport(t *testing.T) {
-	origTransport := transport
-	origFactory := sdkClientFactory
-	defer func() {
-		transport = origTransport
-		sdkClientFactory = origFactory
-	}()
-
-	transport = "rest"
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return newTestSDKClient(nil, nil), nil
-	}
-
-	client, err := createSealClient()
-	require.NoError(t, err)
-	assert.NotNil(t, client)
-}
-
 // TestCreateBackupClient_MCPTransport tests MCP branch of createBackupClient.
 func TestCreateBackupClient_MCPTransport(t *testing.T) {
 	origTransport := transport
@@ -248,24 +211,6 @@ func TestCreateCryptoClient_MCPFactoryError(t *testing.T) {
 }
 
 // TestCreateSealClient_MCPFactoryError tests MCP factory error for seal.
-func TestCreateSealClient_MCPFactoryError(t *testing.T) {
-	origTransport := transport
-	origFactory := sdkClientFactory
-	defer func() {
-		transport = origTransport
-		sdkClientFactory = origFactory
-	}()
-
-	transport = "mcp"
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, fmt.Errorf("factory error")
-	}
-
-	client, err := createSealClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-}
-
 // TestCreateBackupClient_MCPFactoryError tests MCP factory error for backup.
 func TestCreateBackupClient_MCPFactoryError(t *testing.T) {
 	origTransport := transport

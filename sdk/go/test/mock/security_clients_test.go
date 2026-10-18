@@ -20,298 +20,10 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/crypto"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/seal"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/service"
 )
-
-// =============================================================================
-// Seal Client Tests
-// =============================================================================
-
-func TestSealClient_Status_Unsealed(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transport.SetResponse("quicbaas.Seal", "Status", &seal.SealStatus{
-		Sealed:         false,
-		Initialized:    true,
-		Progress:       0,
-		Required:       3,
-		ClusterName:    "test-cluster",
-		ClusterVersion: "1.0.0",
-	}, nil)
-
-	ctx := context.Background()
-	status, err := client.Status(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if status.Sealed {
-		t.Error("expected unsealed status")
-	}
-	if !status.Initialized {
-		t.Error("expected initialized status")
-	}
-	if status.Required != 3 {
-		t.Errorf("expected required=3, got %d", status.Required)
-	}
-	if status.ClusterName != "test-cluster" {
-		t.Errorf("expected cluster name 'test-cluster', got '%s'", status.ClusterName)
-	}
-
-	// Verify the request was captured
-	requests := transport.Requests()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 request, got %d", len(requests))
-	}
-	if requests[0].Service != "quicbaas.Seal" || requests[0].Method != "Status" {
-		t.Errorf("unexpected request: %s/%s", requests[0].Service, requests[0].Method)
-	}
-}
-
-func TestSealClient_Status_Sealed(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transport.SetResponse("quicbaas.Seal", "Status", &seal.SealStatus{
-		Sealed:      true,
-		Initialized: true,
-		Progress:    1,
-		Required:    3,
-	}, nil)
-
-	ctx := context.Background()
-	status, err := client.Status(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !status.Sealed {
-		t.Error("expected sealed status")
-	}
-	if status.Progress != 1 {
-		t.Errorf("expected progress=1, got %d", status.Progress)
-	}
-}
-
-func TestSealClient_Init_Success(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	expectedKeys := []string{"key1", "key2", "key3", "key4", "key5"}
-	transport.SetResponse("quicbaas.Seal", "Init", &seal.InitResponse{
-		Keys:      expectedKeys,
-		RootToken: "root-token-12345",
-	}, nil)
-
-	ctx := context.Background()
-	resp, err := client.Init(ctx, &seal.InitRequest{
-		SecretShares:    5,
-		SecretThreshold: 3,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(resp.Keys) != 5 {
-		t.Errorf("expected 5 keys, got %d", len(resp.Keys))
-	}
-	if resp.RootToken != "root-token-12345" {
-		t.Errorf("expected root token 'root-token-12345', got '%s'", resp.RootToken)
-	}
-
-	// Verify request payload
-	req := transport.LastRequest()
-	if req == nil {
-		t.Fatal("expected a captured request")
-	}
-	initReq, ok := req.Payload.(*seal.InitRequest)
-	if !ok {
-		t.Fatal("expected InitRequest payload")
-	}
-	if initReq.SecretShares != 5 || initReq.SecretThreshold != 3 {
-		t.Errorf("unexpected init params: shares=%d, threshold=%d", initReq.SecretShares, initReq.SecretThreshold)
-	}
-}
-
-func TestSealClient_Init_InvalidThreshold(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	ctx := context.Background()
-	_, err := client.Init(ctx, &seal.InitRequest{
-		SecretShares:    3,
-		SecretThreshold: 5, // threshold > shares
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid threshold")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestSealClient_Init_ZeroShares(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	ctx := context.Background()
-	_, err := client.Init(ctx, &seal.InitRequest{
-		SecretShares:    0,
-		SecretThreshold: 0,
-	})
-	if err == nil {
-		t.Fatal("expected error for zero shares")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestSealClient_Unseal_ProgressiveUnlock(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	ctx := context.Background()
-
-	// First key - still sealed
-	transport.SetResponse("quicbaas.Seal", "Unseal", &seal.UnsealResponse{
-		Sealed:   true,
-		Progress: 1,
-		Required: 3,
-	}, nil)
-
-	resp, err := client.Unseal(ctx, &seal.UnsealRequest{Key: "key1"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !resp.Sealed {
-		t.Error("expected still sealed after first key")
-	}
-	if resp.Progress != 1 {
-		t.Errorf("expected progress=1, got %d", resp.Progress)
-	}
-
-	// Second key - still sealed
-	transport.SetResponse("quicbaas.Seal", "Unseal", &seal.UnsealResponse{
-		Sealed:   true,
-		Progress: 2,
-		Required: 3,
-	}, nil)
-
-	resp, err = client.Unseal(ctx, &seal.UnsealRequest{Key: "key2"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Progress != 2 {
-		t.Errorf("expected progress=2, got %d", resp.Progress)
-	}
-
-	// Third key - now unsealed
-	transport.SetResponse("quicbaas.Seal", "Unseal", &seal.UnsealResponse{
-		Sealed:   false,
-		Progress: 3,
-		Required: 3,
-	}, nil)
-
-	resp, err = client.Unseal(ctx, &seal.UnsealRequest{Key: "key3"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Sealed {
-		t.Error("expected unsealed after third key")
-	}
-}
-
-func TestSealClient_Unseal_Reset(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transport.SetResponse("quicbaas.Seal", "Unseal", &seal.UnsealResponse{
-		Sealed:   true,
-		Progress: 0,
-		Required: 3,
-	}, nil)
-
-	ctx := context.Background()
-	resp, err := client.Unseal(ctx, &seal.UnsealRequest{Reset: true})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.Progress != 0 {
-		t.Errorf("expected progress=0 after reset, got %d", resp.Progress)
-	}
-}
-
-func TestSealClient_Unseal_EmptyKeyNoReset(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	ctx := context.Background()
-	_, err := client.Unseal(ctx, &seal.UnsealRequest{Key: "", Reset: false})
-	if err == nil {
-		t.Fatal("expected error for empty key without reset")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
-
-func TestSealClient_Seal_Success(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transport.SetResponse("quicbaas.Seal", "Seal", nil, nil)
-
-	ctx := context.Background()
-	err := client.Seal(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify request was sent
-	requests := transport.Requests()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 request, got %d", len(requests))
-	}
-	if requests[0].Method != "Seal" {
-		t.Errorf("expected Seal method, got %s", requests[0].Method)
-	}
-}
-
-func TestSealClient_TransportError(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transportErr := errors.NewConnection("test", "connection refused")
-	transport.SetResponse("quicbaas.Seal", "Status", nil, transportErr)
-
-	ctx := context.Background()
-	_, err := client.Status(ctx)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected connection error, got: %v", err)
-	}
-}
-
-func TestSealClient_NilContext(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	var nilCtx context.Context
-	_, err := client.Status(nilCtx)
-	if err == nil {
-		t.Fatal("expected error for nil context")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected invalid input error, got: %v", err)
-	}
-}
 
 // =============================================================================
 // KMS Client Tests
@@ -1372,9 +1084,6 @@ func TestCryptoClient_NilContext(t *testing.T) {
 // =============================================================================
 
 func TestAllClients_NilTransport(t *testing.T) {
-	if seal.NewClient(nil) != nil {
-		t.Error("seal.NewClient should return nil for nil transport")
-	}
 	if kms.NewClient(nil) != nil {
 		t.Error("kms.NewClient should return nil for nil transport")
 	}
@@ -1391,16 +1100,6 @@ func TestAllClients_ClosedTransport(t *testing.T) {
 		name string
 		test func(t *testing.T, transport *Transport)
 	}{
-		{
-			name: "seal_status",
-			test: func(t *testing.T, transport *Transport) {
-				client := seal.NewClient(transport)
-				_, err := client.Status(context.Background())
-				if err == nil {
-					t.Error("expected error for closed transport")
-				}
-			},
-		},
 		{
 			name: "kms_list",
 			test: func(t *testing.T, transport *Transport) {
@@ -1452,16 +1151,6 @@ func TestAllClients_CanceledContext(t *testing.T) {
 		name string
 		test func(t *testing.T, ctx context.Context, transport *Transport)
 	}{
-		{
-			name: "seal_status",
-			test: func(t *testing.T, ctx context.Context, transport *Transport) {
-				client := seal.NewClient(transport)
-				_, err := client.Status(ctx)
-				if err == nil {
-					t.Error("expected error for canceled context")
-				}
-			},
-		},
 		{
 			name: "kms_generate",
 			test: func(t *testing.T, ctx context.Context, transport *Transport) {
@@ -1517,38 +1206,6 @@ func TestAllClients_CanceledContext(t *testing.T) {
 // =============================================================================
 // Request Verification Tests
 // =============================================================================
-
-func TestSealClient_RequestCapture(t *testing.T) {
-	transport := NewTransport()
-	client := seal.NewClient(transport)
-
-	transport.SetResponse("quicbaas.Seal", "Init", &seal.InitResponse{
-		Keys:      []string{"k1", "k2", "k3"},
-		RootToken: "token",
-	}, nil)
-
-	ctx := context.Background()
-	_, err := client.Init(ctx, &seal.InitRequest{
-		SecretShares:    3,
-		SecretThreshold: 2,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify request was captured correctly
-	if transport.RequestCount() != 1 {
-		t.Errorf("expected 1 request, got %d", transport.RequestCount())
-	}
-
-	req := transport.LastRequest()
-	if req.Service != "quicbaas.Seal" {
-		t.Errorf("expected service 'quicbaas.Seal', got '%s'", req.Service)
-	}
-	if req.Method != "Init" {
-		t.Errorf("expected method 'Init', got '%s'", req.Method)
-	}
-}
 
 func TestKMSClient_RequestCapture(t *testing.T) {
 	transport := NewTransport()
@@ -1699,22 +1356,15 @@ func TestSecurityClients_TransportReset(t *testing.T) {
 
 func TestSecurityClients_MultipleRequests(t *testing.T) {
 	transport := NewTransport()
-	sealClient := seal.NewClient(transport)
 	kmsClient := kms.NewClient(transport)
 	secretsClient := secrets.NewClient(transport)
 
-	transport.SetResponse("quicbaas.Seal", "Status", &seal.SealStatus{Sealed: false}, nil)
 	transport.SetResponse("quicbaas.KMS", "ListKeys", &kms.ListKeysResponse{Keys: []kms.KeyInfo{}}, nil)
 	transport.SetResponse("quicbaas.Secrets", "List", &secrets.ListSecretsResponse{Paths: []string{}}, nil)
 
 	ctx := context.Background()
 
-	_, err := sealClient.Status(ctx)
-	if err != nil {
-		t.Fatalf("seal status error: %v", err)
-	}
-
-	_, err = kmsClient.ListKeys(ctx)
+	_, err := kmsClient.ListKeys(ctx)
 	if err != nil {
 		t.Fatalf("kms list error: %v", err)
 	}
@@ -1726,12 +1376,12 @@ func TestSecurityClients_MultipleRequests(t *testing.T) {
 
 	// Verify all requests were captured
 	requests := transport.Requests()
-	if len(requests) != 3 {
-		t.Errorf("expected 3 requests, got %d", len(requests))
+	if len(requests) != 2 {
+		t.Errorf("expected 2 requests, got %d", len(requests))
 	}
 
 	// Verify request order
-	expectedServices := []string{"quicbaas.Seal", "quicbaas.KMS", "quicbaas.Secrets"}
+	expectedServices := []string{"quicbaas.KMS", "quicbaas.Secrets"}
 	for i, req := range requests {
 		if req.Service != expectedServices[i] {
 			t.Errorf("request %d: expected service '%s', got '%s'", i, expectedServices[i], req.Service)

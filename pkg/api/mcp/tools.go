@@ -178,7 +178,6 @@ func NewToolRegistry(svc service.QuicBaaS, log *logger.Logger) *ToolRegistry {
 // registerTools registers all available QuicBaaS operations as MCP tools.
 func (r *ToolRegistry) registerTools() {
 	// Register security service tools
-	r.registerSealTools()
 	r.registerKMSTools()
 	r.registerKMSOpTools()
 	r.registerKMSExportTools()
@@ -919,24 +918,6 @@ func (r *ToolRegistry) ExecuteTool(ctx context.Context, name string, args map[st
 
 	// Route to appropriate handler
 	switch name {
-	// Seal Operations
-	case "quicbaas_seal_status":
-		return r.executeSealStatus(ctx, args)
-	case "quicbaas_seal_init":
-		return r.executeSealInit(ctx, args)
-	case "quicbaas_unseal":
-		return r.executeUnseal(ctx, args)
-	case "quicbaas_seal":
-		return r.executeSeal(ctx, args)
-	case "quicbaas_seal_rekey":
-		return r.executeSealRekey(ctx, args)
-	case "quicbaas_seal_generate_recovery_key":
-		return r.executeSealGenerateRecoveryKey(ctx, args)
-	case "quicbaas_seal_delete_recovery_key":
-		return r.executeSealDeleteRecoveryKey(ctx, args)
-	case "quicbaas_seal_generate_root_token":
-		return r.executeSealGenerateRootToken(ctx, args)
-
 	// KMS Operations
 	case "quicbaas_kms_generate_key":
 		return r.executeKMSGenerateKey(ctx, args)

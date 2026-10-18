@@ -479,10 +479,10 @@ This page is the operator-facing migration table.
 | `quicbaas seal unseal --share <S>` | `quicbaas barrier unseal-shares --share <S>` | removed |
 | `quicbaas seal seal` | `quicbaas barrier seal` | removed |
 | `quicbaas seal init-shamir --threshold N --total M` | `quicbaas barrier init-shamir --threshold N --total M` | removed |
-| `POST /api/v1/seal/status` | `GET /api/v1/barrier/status` | legacy retained, returns `Deprecation:` and `Sunset:` headers |
-| `POST /api/v1/seal/unseal` | `POST /api/v1/barrier/unseal` | legacy retained |
-| `POST /api/v1/seal/init` | `POST /api/v1/barrier/initialize` | legacy retained |
-| `POST /api/v1/seal/rekey` | `POST /api/v1/barrier/rekey` | legacy retained |
+| `POST /api/v1/seal/status` | `GET /api/v1/barrier/status` | removed (#1559) |
+| `POST /api/v1/seal/unseal` | `POST /api/v1/barrier/unseal` | removed (#1559) |
+| `POST /api/v1/seal/init` | `POST /api/v1/barrier/initialize` | removed (#1559) |
+| `POST /api/v1/seal/rekey` | `POST /api/v1/barrier/rekey` | removed (#1559) |
 
 The alias surface is exhaustively listed in
 `scripts/verifynaming`. Any new code path that introduces a
@@ -498,13 +498,13 @@ must appear in no tracked file — see
 Go SDK:
 
 ```go
-// Old
+// Old (removed, #1559)
 sealClient := sdk.Seal()
 status, _ := sealClient.Status(ctx)
 
-// New
-barrierClient := sdk.Barrier()
-status, _ := barrierClient.Status(ctx)
+// New: the go-qrdb BarrierClient re-export
+barrierClient, err := sdk.Security().Barrier()
+status, err := barrierClient.Status(ctx)
 ```
 
 TypeScript SDK:
@@ -571,8 +571,7 @@ plaintext data dir would silently mask a corrupt-data scenario.
 
 ### Sunset timeline
 
-The deprecation alias surface (legacy `/api/v1/seal/*` paths,
-`SealClient` interfaces, `quicbaas seal …` CLI verbs, `seal:` YAML key)
-is retained for one release. The current target sunset date is on the
-`Sunset:` response header of the deprecated REST paths
-(`Sunset: Wed, 01 Jul 2026 00:00:00 GMT`).
+The legacy `/api/v1/seal/*` paths, the `SealClient` interfaces and the
+`quicbaas seal …` CLI verbs are removed (#1559); `Security().Barrier()` and
+the `quicbaas barrier` group are the only seal and barrier paths. The
+`seal:` YAML key is covered under Daemon configuration above.

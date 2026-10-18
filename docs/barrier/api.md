@@ -31,18 +31,12 @@ Every row below is derived from source, not from prose. The columns mean:
 - **Permission** — `resource:action` from
   `pkg/api/rest/routes_permissions_generated.go`.
 
-### `quicbaas.Seal` — SDK package `sdk/go/client/seal`
+### No `quicbaas.Seal` service
 
-Dedicated transport handlers: rest=no, grpc=no, mcp=no; embedded routes registered: 0; MCP tools registered server-side: 8.
-
-MCP tools: `quicbaas_seal`, `quicbaas_seal_delete_recovery_key`, `quicbaas_seal_generate_recovery_key`, `quicbaas_seal_generate_root_token`, `quicbaas_seal_init`, `quicbaas_seal_rekey`, `quicbaas_seal_status`, `quicbaas_unseal`
-
-| SDK method | REST route (transport) | Served? | gRPC | MCP | Embedded | Permission |
-|---|---|---|---|---|---|---|
-| `Init` | `POST /api/v1/seal/init` | yes | MISSING | MISSING | MISSING | `tenant_barrier:init` |
-| `Seal` | `POST /api/v1/seal/seal` | yes | MISSING | MISSING | MISSING | `tenant_barrier:seal` |
-| `Status` | `GET /api/v1/seal/status` | yes | MISSING | MISSING | MISSING | `tenant_barrier:status` |
-| `Unseal` | `POST /api/v1/seal/unseal` | yes | MISSING | MISSING | MISSING | `tenant_barrier:unseal` |
+The former `quicbaas.Seal` SDK service, its `quicbaas_seal*` MCP tools and its
+`/api/v1/seal/*` routes were a parallel copy of the barrier and are removed
+(#1559). Every seal and barrier verb goes through `Security().Barrier()`, the
+re-export of go-qrdb's `BarrierClient`.
 
 
 
@@ -279,33 +273,11 @@ precondition rather than an error, which is the worse failure mode
 `BarrierHasRecoveryKeysResponse` mirrors the REST body and carries `has_keys`
 for the same reason.
 
-### `/api/v1/seal` — the older seal surface, still mounted
+### `/api/v1/seal` — removed
 
-| Route | Handler |
-|---|---|
-| `GET /api/v1/seal/status` | `HandleSealStatus` |
-| `POST /api/v1/seal/init` | `HandleSealInit` |
-| `POST /api/v1/seal/unseal` | `HandleUnseal` |
-| `POST /api/v1/seal/seal` | `HandleSeal` |
-| `POST /api/v1/seal/rekey` | `HandleRekey` |
-| `POST /api/v1/seal/rotate-root` | `HandleRotateRootKey` |
-| `POST /api/v1/seal/root/generate` | `HandleGenerateRootToken` |
-| `POST /api/v1/seal/recovery/generate` | `HandleGenerateRecoveryKey` |
-| `DELETE /api/v1/seal/recovery` | `HandleDeleteRecoveryKey` |
-
-The SDK's `quicbaas.Seal` service (`sdk/go/client/seal`) targets the `/seal`
-family, which is why the generated matrix above shows those paths rather than
-the `/barrier` ones. The **CLI's `barrier` group is the canonical surface**
-(`cmd/quicbaas/main.go:196-198` calls `configureCanonicalSurface` for exactly
-this reason), and it targets `/barrier`.
-
-Both are live **on the server**, even though the CLI's `seal` alias tree was
-removed: `cmd/quicbaas/canonical.go:39-45` records that `barrier` is now the
-single canonical entry point and "the former `seal` alias tree has been
-removed". The removal was on the client. A deployment restricting access to one
-route family and not the other has restricted nothing. That is stated here because it is not visible from either
-family on its own, and it is a real access-control consideration rather than a
-documentation nicety.
+The older `/api/v1/seal/*` route family is no longer mounted (#1559). The
+`/api/v1/barrier/*` family above is the only REST path to the barrier
+lifecycle, and the CLI's `barrier` group and `Security().Barrier()` target it.
 
 ### `/api/v1/init` — the ceremony surface
 

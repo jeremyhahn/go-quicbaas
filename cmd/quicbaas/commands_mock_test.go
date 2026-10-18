@@ -83,42 +83,6 @@ func TestMockKMSClientInterfaceCompliance(t *testing.T) {
 	})
 }
 
-func TestMockSealClientInterfaceCompliance(t *testing.T) {
-	t.Run("implements_all_methods", func(t *testing.T) {
-		var client SealClient = &MockSealClient{}
-		assert.NotNil(t, client)
-
-		ctx := context.Background()
-
-		_, _ = client.SealInit(ctx, &service.SealInitRequest{})
-		_, _ = client.Unseal(ctx, &service.UnsealRequest{})
-		_ = client.Seal(ctx)
-		_, _ = client.SealStatus(ctx)
-		_, _ = client.Rekey(ctx, &service.RekeyRequest{})
-		_ = client.Close()
-	})
-
-	t.Run("custom_func_implementations", func(t *testing.T) {
-		statusCalled := false
-
-		client := &MockSealClient{
-			SealStatusFunc: func(ctx context.Context) (*service.SealStatusResponse, error) {
-				statusCalled = true
-				return &service.SealStatusResponse{
-					Sealed:      false,
-					Initialized: true,
-				}, nil
-			},
-		}
-
-		resp, err := client.SealStatus(context.Background())
-		require.NoError(t, err)
-		assert.True(t, statusCalled)
-		assert.False(t, resp.Sealed)
-		assert.True(t, resp.Initialized)
-	})
-}
-
 func TestMockSecretsClientInterfaceCompliance(t *testing.T) {
 	t.Run("implements_all_methods", func(t *testing.T) {
 		var client SecretsClient = &MockSecretsClient{}
@@ -343,18 +307,6 @@ func TestMockClientErrorHandling(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid key name")
 	})
 
-	t.Run("seal_client_error", func(t *testing.T) {
-		client := &MockSealClient{
-			SealInitFunc: func(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-				return nil, errors.New(errors.ErrAlreadyExists, "test", "already initialized")
-			},
-		}
-
-		_, err := client.SealInit(context.Background(), &service.SealInitRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "already initialized")
-	})
-
 	t.Run("secrets_client_error", func(t *testing.T) {
 		client := &MockSecretsClient{
 			GetSecretFunc: func(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
@@ -460,21 +412,6 @@ func TestMockClientDefaultBehavior(t *testing.T) {
 		assert.True(t, verifyResp.Valid)
 	})
 
-	t.Run("seal_client_defaults_unimplemented", func(t *testing.T) {
-		client := &MockSealClient{}
-
-		// Seal methods return unimplemented by default
-		_, err := client.SealStatus(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-
-		_, err = client.SealInit(context.Background(), &service.SealInitRequest{})
-		require.Error(t, err)
-
-		err = client.Seal(context.Background())
-		require.Error(t, err)
-	})
-
 	t.Run("secrets_client_defaults_unimplemented", func(t *testing.T) {
 		client := &MockSecretsClient{}
 
@@ -531,34 +468,6 @@ func TestFactoryFunctionReplacements(t *testing.T) {
 		resp, err := client.KMSGenerateKey(context.Background(), &service.GenerateKeyRequest{})
 		require.NoError(t, err)
 		assert.Equal(t, "factory-test-key", resp.Key.KeyID)
-	})
-
-	t.Run("replace_seal_factory", func(t *testing.T) {
-		origFactory := sealClientFactory
-		defer func() { sealClientFactory = origFactory }()
-
-		customClient := &MockSealClient{
-			SealStatusFunc: func(ctx context.Context) (*service.SealStatusResponse, error) {
-				return &service.SealStatusResponse{
-					Sealed:      true,
-					Initialized: true,
-					Threshold:   3,
-					TotalShares: 5,
-				}, nil
-			},
-		}
-
-		sealClientFactory = func() (SealClient, error) {
-			return customClient, nil
-		}
-
-		client, err := sealClientFactory()
-		require.NoError(t, err)
-
-		resp, err := client.SealStatus(context.Background())
-		require.NoError(t, err)
-		assert.True(t, resp.Sealed)
-		assert.Equal(t, 3, resp.Threshold)
 	})
 
 	t.Run("factory_returns_error", func(t *testing.T) {

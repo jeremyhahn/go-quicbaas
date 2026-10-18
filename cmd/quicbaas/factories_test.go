@@ -34,7 +34,6 @@ func TestResetFactories(t *testing.T) {
 	origSDKFactory := sdkClientFactory
 	origCryptoFactory := cryptoClientFactory
 	origKMSFactory := kmsClientFactory
-	origSealFactory := sealClientFactory
 	origSecretsFactory := secretsClientFactory
 	origTimeSeriesFactory := timeSeriesClientFactory
 	origAuthFactory := authClientFactory
@@ -47,9 +46,6 @@ func TestResetFactories(t *testing.T) {
 		return nil, errors.Newf(errors.ErrInternal, "test", "mock error")
 	}
 	kmsClientFactory = func() (KMSClient, error) {
-		return nil, errors.Newf(errors.ErrInternal, "test", "mock error")
-	}
-	sealClientFactory = func() (SealClient, error) {
 		return nil, errors.Newf(errors.ErrInternal, "test", "mock error")
 	}
 	secretsClientFactory = func() (SecretsClient, error) {
@@ -69,7 +65,6 @@ func TestResetFactories(t *testing.T) {
 	assert.NotNil(t, sdkClientFactory)
 	assert.NotNil(t, cryptoClientFactory)
 	assert.NotNil(t, kmsClientFactory)
-	assert.NotNil(t, sealClientFactory)
 	assert.NotNil(t, secretsClientFactory)
 	assert.NotNil(t, timeSeriesClientFactory)
 	assert.NotNil(t, authClientFactory)
@@ -78,7 +73,6 @@ func TestResetFactories(t *testing.T) {
 	sdkClientFactory = origSDKFactory
 	cryptoClientFactory = origCryptoFactory
 	kmsClientFactory = origKMSFactory
-	sealClientFactory = origSealFactory
 	secretsClientFactory = origSecretsFactory
 	timeSeriesClientFactory = origTimeSeriesFactory
 	authClientFactory = origAuthFactory
@@ -801,45 +795,6 @@ func TestMockSecretsClient_DefaultMethods(t *testing.T) {
 		ch, err := client.WatchSecretsByPrefix(ctx, &service.WatchSecretsRequest{Prefix: "test/"})
 		assert.Error(t, err)
 		assert.Nil(t, ch)
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
-
-func TestMockSealClient_DefaultMethods(t *testing.T) {
-	client := &MockSealClient{}
-	ctx := context.Background()
-
-	t.Run("SealInit", func(t *testing.T) {
-		resp, err := client.SealInit(ctx, &service.SealInitRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Unseal", func(t *testing.T) {
-		resp, err := client.Unseal(ctx, &service.UnsealRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Seal", func(t *testing.T) {
-		err := client.Seal(ctx)
-		assert.Error(t, err)
-	})
-
-	t.Run("SealStatus", func(t *testing.T) {
-		resp, err := client.SealStatus(ctx)
-		assert.Error(t, err)
-		assert.Nil(t, resp)
-	})
-
-	t.Run("Rekey", func(t *testing.T) {
-		resp, err := client.Rekey(ctx, &service.RekeyRequest{})
-		assert.Error(t, err)
-		assert.Nil(t, resp)
 	})
 
 	t.Run("Close", func(t *testing.T) {

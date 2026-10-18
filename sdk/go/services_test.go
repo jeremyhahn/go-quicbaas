@@ -157,12 +157,6 @@ func TestSecurityService_DelegatesToClient(t *testing.T) {
 		}
 	})
 
-	t.Run("Seal", func(t *testing.T) {
-		if svc.Seal() != c.seal() {
-			t.Error("Security().Seal() should delegate to client.Seal()")
-		}
-	})
-
 	t.Run("KMS", func(t *testing.T) {
 		if svc.KMS() != c.kms() {
 			t.Error("Security().KMS() should delegate to client.KMS()")
@@ -359,9 +353,6 @@ func TestBackwardCompatibility_DirectAccessors(t *testing.T) {
 	}
 	if c.auth() == nil {
 		t.Error("Auth() should return non-nil client")
-	}
-	if c.seal() == nil {
-		t.Error("Seal() should return non-nil client")
 	}
 	if c.kms() == nil {
 		t.Error("KMS() should return non-nil client")

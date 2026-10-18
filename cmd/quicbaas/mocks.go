@@ -294,65 +294,6 @@ func (m *MockKMSClient) Close() error {
 	return nil
 }
 
-// MockSealClient is a mock implementation of SealClient for testing.
-type MockSealClient struct {
-	SealStatusFunc func(ctx context.Context) (*service.SealStatusResponse, error)
-	SealInitFunc   func(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error)
-	UnsealFunc     func(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error)
-	SealFunc       func(ctx context.Context) error
-	RekeyFunc      func(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error)
-	CloseFunc      func() error
-}
-
-// SealStatus mocks the SealStatus method.
-func (m *MockSealClient) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
-	if m.SealStatusFunc != nil {
-		return m.SealStatusFunc(ctx)
-	}
-	// Return unimplemented error by default since seal service is not yet implemented
-	return nil, errors.Newf(errors.ErrUnimplemented, "seal.status", "Seal service not yet implemented")
-}
-
-// SealInit mocks the SealInit method.
-func (m *MockSealClient) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	if m.SealInitFunc != nil {
-		return m.SealInitFunc(ctx, req)
-	}
-	return nil, errors.Newf(errors.ErrUnimplemented, "seal.init", "Seal service not yet implemented")
-}
-
-// Unseal mocks the Unseal method.
-func (m *MockSealClient) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	if m.UnsealFunc != nil {
-		return m.UnsealFunc(ctx, req)
-	}
-	return nil, errors.Newf(errors.ErrUnimplemented, "seal.unseal", "Seal service not yet implemented")
-}
-
-// Seal mocks the Seal method.
-func (m *MockSealClient) Seal(ctx context.Context) error {
-	if m.SealFunc != nil {
-		return m.SealFunc(ctx)
-	}
-	return errors.Newf(errors.ErrUnimplemented, "seal.seal", "Seal service not yet implemented")
-}
-
-// Rekey mocks the Rekey method.
-func (m *MockSealClient) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	if m.RekeyFunc != nil {
-		return m.RekeyFunc(ctx, req)
-	}
-	return nil, errors.Newf(errors.ErrUnimplemented, "seal.rekey", "Seal service not yet implemented")
-}
-
-// Close mocks the Close method.
-func (m *MockSealClient) Close() error {
-	if m.CloseFunc != nil {
-		return m.CloseFunc()
-	}
-	return nil
-}
-
 // MockSecretsClient is a mock implementation of SecretsClient for testing.
 type MockSecretsClient struct {
 	StoreSecretFunc          func(ctx context.Context, req *service.StoreSecretRequest) (*service.StoreSecretResponse, error)
@@ -536,7 +477,6 @@ func (m *MockTimeSeriesClient) Close() error {
 var (
 	_ CryptoClient     = (*MockCryptoClient)(nil)
 	_ KMSClient        = (*MockKMSClient)(nil)
-	_ SealClient       = (*MockSealClient)(nil)
 	_ SecretsClient    = (*MockSecretsClient)(nil)
 	_ TimeSeriesClient = (*MockTimeSeriesClient)(nil)
 )

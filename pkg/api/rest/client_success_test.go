@@ -501,54 +501,6 @@ func TestKMSGenerateDataKeyWithKEKSuccess(t *testing.T) {
 	assert.NotNil(t, resp.CiphertextBlob)
 }
 
-// TestSealInitSuccess tests SealInit success path.
-func TestSealInitSuccess(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/seal/init", r.URL.Path)
-		json.NewEncoder(w).Encode(service.SealInitResponse{
-			RootToken: "root-token-123",
-			Version:   1,
-			Timestamp: time.Now(),
-		})
-	}))
-	defer server.Close()
-
-	client, _ := NewRESTClient(server.URL, log)
-	resp, err := client.SealInit(ctx, &service.SealInitRequest{
-		Threshold:   2,
-		TotalShares: 3,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "root-token-123", resp.RootToken)
-	assert.Equal(t, uint64(1), resp.Version)
-}
-
-// TestRekeySuccess tests Rekey success path.
-func TestRekeySuccess(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/seal/rekey", r.URL.Path)
-		json.NewEncoder(w).Encode(service.RekeyResponse{
-			Version:   2,
-			Timestamp: time.Now(),
-		})
-	}))
-	defer server.Close()
-
-	client, _ := NewRESTClient(server.URL, log)
-	resp, err := client.Rekey(ctx, &service.RekeyRequest{
-		NewThreshold:   2,
-		NewTotalShares: 5,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(2), resp.Version)
-}
-
 // TestKMSListKeysSuccess tests KMSListKeys success path.
 func TestKMSListKeysSuccess(t *testing.T) {
 	log := testLogger(t)
@@ -633,41 +585,4 @@ func TestRotateSecretSuccess(t *testing.T) {
 	resp, err := client.RotateSecret(ctx, &service.RotateSecretRequest{SecretID: "app/db/password", NewData: []byte("new-password")})
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-// TestSealStatusSuccess tests SealStatus success path.
-func TestSealStatusSuccess(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/seal/status", r.URL.Path)
-		json.NewEncoder(w).Encode(service.SealStatusResponse{
-			Sealed:    false,
-			Threshold: 2,
-		})
-	}))
-	defer server.Close()
-
-	client, _ := NewRESTClient(server.URL, log)
-	resp, err := client.SealStatus(ctx)
-	require.NoError(t, err)
-	assert.False(t, resp.Sealed)
-	assert.Equal(t, 2, resp.Threshold)
-}
-
-// TestSealSuccess tests Seal success path.
-func TestSealSuccess(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/seal/seal", r.URL.Path)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client, _ := NewRESTClient(server.URL, log)
-	err := client.Seal(ctx)
-	require.NoError(t, err)
 }

@@ -86,29 +86,23 @@ var sealScanPruned = map[string]bool{
 // aliasFiles are the files ALLOWED to mention Seal* — the documented alias
 // surface.
 var aliasFiles = map[string]bool{
-	"pkg/seal/types.go":                               true, // SealMode legacy enum
-	"pkg/seal/barrier_seal_manager.go":                true, // legacy adapter (test-only at runtime)
-	"pkg/seal/barrier_seal_manager_test.go":           true,
-	"pkg/api/grpc/client_seal.go":                     true, // deprecated thin wrappers
-	"pkg/api/grpc/seal_manager_compat.go":             true, // noop SealManager shim
-	"pkg/api/rest/handlers_seal.go":                   true, // legacy /v1/seal/* paths
-	"pkg/api/rest/handlers_seal_test.go":              true,
-	"cmd/quicbaas/seal.go":                            true, // deprecation alias forwarder
-	"cmd/quicbaas/seal_test.go":                       true,
-	"cmd/quicbaas/seal_alias_test.go":                 true,
-	"cmd/quicbaas/seal_recovery_keys_test.go":         true,
-	"cmd/quicbaas/factories_mcp_seal.go":              true,
-	"cmd/quicbaas/factories_mcp_seal_test.go":         true,
-	"cmd/quicbaas/factories_mcp_seal_methods_test.go": true,
-	"cmd/quicbaas/quic_kms_client.go":                 true, // contains QUICSealClient (legacy adapter)
-	"sdk/typescript/src/rest.ts":                      true, // contains RestSealClient deprecation alias
-	"sdk/typescript/src/interfaces.ts":                true, // contains SealClient interface alias
-	"sdk/typescript/src/index.ts":                     true, // re-exports the alias
-	"sdk/typescript/svelte-security/src/types.ts":     true, // comment references SealClient legacy adapter
-	"pkg/service/seal_service.go":                     true, // legacy seal service kept for one release
-	"pkg/service/seal_service_test.go":                true,
-	"pkg/service/service.go":                          true, // interface aggregator references SealService alias
-	"pkg/testutil/mocks.go":                           true, // MockSealClient kept for legacy tests
+	"pkg/seal/types.go":                           true, // SealMode legacy enum
+	"pkg/seal/barrier_seal_manager.go":            true, // legacy adapter (test-only at runtime)
+	"pkg/seal/barrier_seal_manager_test.go":       true,
+	"pkg/api/grpc/client_seal.go":                 true, // deprecated thin wrappers
+	"pkg/api/grpc/seal_manager_compat.go":         true, // noop SealManager shim
+	"cmd/quicbaas/seal.go":                        true, // deprecation alias forwarder
+	"cmd/quicbaas/seal_test.go":                   true,
+	"cmd/quicbaas/seal_alias_test.go":             true,
+	"cmd/quicbaas/seal_recovery_keys_test.go":     true,
+	"cmd/quicbaas/factories_mcp_seal_test.go":     true,
+	"cmd/quicbaas/quic_kms_client.go":             true, // contains QUICSealClient (legacy adapter)
+	"sdk/typescript/src/rest.ts":                  true, // contains RestSealClient deprecation alias
+	"sdk/typescript/src/interfaces.ts":            true, // contains SealClient interface alias
+	"sdk/typescript/src/index.ts":                 true, // re-exports the alias
+	"sdk/typescript/svelte-security/src/types.ts": true, // comment references SealClient legacy adapter
+	"pkg/service/service.go":                      true, // interface aggregator references SealService alias
+	"pkg/testutil/mocks.go":                       true, // MockSealClient kept for legacy tests
 }
 
 // aliasDirs are trees whose files remain on the alias path. All other test files
@@ -118,7 +112,6 @@ var aliasDirs = []string{
 	"cmd/quicbaas",        // CLI tests still reference SealClient/MockSealClient via aliases
 	"sdk/typescript/test", // TS tests cover the deprecation aliases
 	"sdk/go",              // Go SDK retains Seal*/SealClient aliases for one release
-	"sdk/go/client/seal",  // subpackage with the seal.Client interface
 	"pkg/seal",            // legacy seal package retained as compat layer
 	"pkg/service",         // legacy seal_service.go and SealService aliases on the interface aggregator
 	"pkg/testutil",        // MockSealClient kept for legacy tests

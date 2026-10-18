@@ -53,7 +53,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/registry"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/sdlc"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/seal"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/transaction"
@@ -407,24 +406,6 @@ type HealthClient = health.Client
 
 // HealthResponse is an alias for health.HealthResponse.
 type HealthResponse = health.HealthResponse
-
-// SealClient is an alias for the seal.Client interface.
-type SealClient = seal.Client
-
-// SealStatus is an alias for seal.SealStatus.
-type SealStatus = seal.SealStatus
-
-// InitRequest is an alias for seal.InitRequest.
-type InitRequest = seal.InitRequest
-
-// InitResponse is an alias for seal.InitResponse.
-type InitResponse = seal.InitResponse
-
-// UnsealRequest is an alias for seal.UnsealRequest.
-type UnsealRequest = seal.UnsealRequest
-
-// UnsealResponse is an alias for seal.UnsealResponse.
-type UnsealResponse = seal.UnsealResponse
 
 // KMSClient is an alias for the kms.Client interface.
 type KMSClient = kms.Client
@@ -1724,7 +1705,6 @@ type client struct {
 	clusterClient            ClusterClient
 	healthClient             HealthClient
 	authClient               AuthClient
-	sealClient               SealClient
 	kmsClient                KMSClient
 	secretsClient            SecretsClient
 	cryptoClient             CryptoClient
@@ -2183,24 +2163,6 @@ func (c *client) auth() AuthClient {
 		c.authClient = newAuthClient(c.transport)
 	}
 	return c.authClient
-}
-
-// seal returns the Seal client. Reachable via Security().Seal().
-func (c *client) seal() SealClient {
-	c.mu.RLock()
-	if c.sealClient != nil {
-		c.mu.RUnlock()
-		return c.sealClient
-	}
-	c.mu.RUnlock()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.sealClient == nil {
-		c.sealClient = newSealClient(c.transport)
-	}
-	return c.sealClient
 }
 
 // kms returns the KMS client. Reachable via Security().KMS().
@@ -2735,7 +2697,6 @@ func newQueryClient(t Transport) QueryClient                   { return query.Ne
 func newClusterClient(t Transport) ClusterClient               { return cluster.NewClient(t) }
 func newHealthClient(t Transport) HealthClient                 { return health.NewClient(t) }
 func newAuthClient(t Transport) AuthClient                     { return auth.NewClient(t) }
-func newSealClient(t Transport) SealClient                     { return seal.NewClient(t) }
 func newKMSClient(t Transport) KMSClient                       { return kms.NewClient(t) }
 func newSecretsClient(t Transport) SecretsClient               { return secrets.NewClient(t) }
 func newCryptoClient(t Transport) CryptoClient                 { return crypto.NewClient(t) }

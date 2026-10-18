@@ -15,7 +15,6 @@ import BatchClient from './clients/batch.js';
 import TransactionClient, { CompareTarget, CompareResult, TxnOpType } from './clients/transaction.js';
 import QueryClient, { Operator } from './clients/query.js';
 import AuthClient from './clients/auth.js';
-import SealClient from './clients/seal.js';
 import ClusterClient, { NodeState, RebalanceStrategy, RebalanceStatus } from './clients/cluster.js';
 import HealthClient, { HealthStatus } from './clients/health.js';
 import OperationsClient, { MigrationStatus, UpgradeStatus, ReplaceNodeStatus } from './clients/operations.js';
@@ -80,7 +79,6 @@ export class QuicBaaS {
   #transactionClient = null;
   #queryClient = null;
   #authClient = null;
-  #sealClient = null;
   #clusterClient = null;
   #healthClient = null;
   #operationsClient = null;
@@ -257,18 +255,6 @@ export class QuicBaaS {
       this.#authClient = new AuthClient(this.#transport);
     }
     return this.#authClient;
-  }
-
-  /**
-   * Get the Seal client for seal/unseal operations.
-   *
-   * @returns {SealClient}
-   */
-  seal() {
-    if (!this.#sealClient) {
-      this.#sealClient = new SealClient(this.#transport);
-    }
-    return this.#sealClient;
   }
 
   // ============================================================================

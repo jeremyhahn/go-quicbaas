@@ -986,14 +986,6 @@ func TestEndpointMapping(t *testing.T) {
 		{"Secrets", "Rotate", "/api/v1/secrets/{path}/rotate", http.MethodPost},
 		{"Secrets", "CustomSecrets", "/api/v1/secrets/customsecrets", http.MethodPost},
 
-		// Seal methods
-		{"Seal", "Status", "/api/v1/seal/status", http.MethodGet},
-		{"Seal", "Init", "/api/v1/seal/init", http.MethodPost},
-		{"Seal", "Unseal", "/api/v1/seal/unseal", http.MethodPost},
-		{"Seal", "Seal", "/api/v1/seal/seal", http.MethodPost},
-		{"Seal", "Rekey", "/api/v1/seal/rekey", http.MethodPost},
-		{"Seal", "CustomSeal", "/api/v1/seal/customseal", http.MethodPost},
-
 		// Crypto methods
 		{"Crypto", "Encrypt", "/api/v1/crypto/encrypt/{name}", http.MethodPost},
 		{"Crypto", "Decrypt", "/api/v1/crypto/decrypt/{name}", http.MethodPost},

@@ -229,30 +229,6 @@ func TestClusterStatus_Fields(t *testing.T) {
 	}
 }
 
-func TestSealStatus_Fields(t *testing.T) {
-	status := &SealStatus{
-		Sealed:         true,
-		Initialized:    true,
-		Progress:       2,
-		Required:       3,
-		ClusterName:    "test-cluster",
-		ClusterVersion: "1.0.0",
-	}
-
-	if !status.Sealed {
-		t.Error("Sealed not set correctly")
-	}
-	if !status.Initialized {
-		t.Error("Initialized not set correctly")
-	}
-	if status.Progress != 2 {
-		t.Error("Progress not set correctly")
-	}
-	if status.Required != 3 {
-		t.Error("Required not set correctly")
-	}
-}
-
 func TestKeyInfo_Fields(t *testing.T) {
 	now := time.Now()
 	info := &KeyInfo{

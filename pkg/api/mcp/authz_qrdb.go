@@ -885,10 +885,6 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
 	"quicbaas_trust_publish_dane":           {"certs", "generate"},
 
-	// Seal
-	"quicbaas_seal":   {"seal", "seal"},
-	"quicbaas_unseal": {"seal", "unseal"},
-
 	// Timeseries
 	"quicbaas_timeseries_query":  {"timeseries", "query"},
 	"quicbaas_timeseries_write":  {"timeseries", "write"},

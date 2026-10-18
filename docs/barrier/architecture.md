@@ -14,10 +14,10 @@ This page documents only the QuicBaaS-specific deltas.
 
 | Concern | Where it lives | Notes |
 |---------|----------------|-------|
-| REST routes | `pkg/api/rest/handlers_{barrier,ceremony,bootstrap}.go` | Mirrors go-qrdb's path layout under `/api/v1/{barrier,init,bootstrap}/*`. The legacy `/api/v1/seal/*` paths are kept for one release with `Deprecation:` and `Sunset:` response headers. |
+| REST routes | `pkg/api/rest/handlers_{barrier,ceremony,bootstrap}.go` | Mirrors go-qrdb's path layout under `/api/v1/{barrier,init,bootstrap}/*`. The legacy `/api/v1/seal/*` paths are removed (#1559). |
 | Service facade | `pkg/service/{barrier,ceremony}_service.go` | Thin wrappers that delegate to go-qrdb's `BarrierClient` / `CeremonyClient`. Enable-encryption is embedded-node-driven: the service layer dispatches to `s.qrdbNode` (wired as an `EncryptionMigrator`), NOT the qrdb `BarrierClient` transport. |
 | Strategy adapter | `pkg/barrier/manager.go` | The canonical SDK adapter. Constructed by `pkg/server/lifecycle.go:initBarrier` from the YAML `barrier.*` configuration. Replaces the deleted `defaultSealManager`. |
-| CLI verbs | `cmd/quicbaas/{barrier,init,bootstrap}.go` | Mirror `xkmsctl` verb-for-verb. `quicbaas seal …` is retained for one release as a deprecation alias that warns to stderr and forwards to the new path. |
+| CLI verbs | `cmd/quicbaas/{barrier,init,bootstrap}.go` | Mirror `xkmsctl` verb-for-verb. The `quicbaas seal …` alias is removed (#1559). |
 | Daemon CLI | `cmd/quicbaasd/init.go` | Mirrors `xkmsd init` — the `--barrier-strategy`, `--shares`, `--threshold`, `--so name:KIND:path`, `--trusted-ca` flag set is identical. |
 | Frontend | `cmd/quicbaas/frontend/src/views/security/{Barrier,Ceremony,Bootstrap}View.svelte` | Strategy-aware UX (disabled / software / shamir / tpm2 / pkcs11 / *kms / auto). Replaces `SealView.svelte`. |
 | TS SDK | `sdk/typescript/src/{types,interfaces,rest,factory}.ts` | `Barrier*` / `Ceremony*` / `Bootstrap*` types and interfaces. `Seal*` types remain as deprecation aliases that `console.warn` on first use. |
@@ -135,8 +135,7 @@ Transport gates:
   `/api/v1/barrier` and `/v1/barrier` mounts and is shared by the
   validator PEP and the default-deny scope gate
   (`authz_default_deny.go`). The legacy `/api/v1/seal/*` routes are
-  granular in the default-deny gate only and remain unmapped (denied)
-  under the validator posture.
+  removed (#1559).
 
 Guard tests enforce bidirectional set equality between each transport's
 barrier dispatch surface and its permission table

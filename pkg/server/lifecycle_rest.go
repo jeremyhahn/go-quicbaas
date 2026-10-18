@@ -25,7 +25,6 @@ import (
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -323,18 +322,6 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// needs no CA handle, so it is always wired.
 	restServer.SetBootstrapService(service.NewBootstrapService(nil))
 	s.logger.Info("Bootstrap service wired into REST server")
-
-	// Wire the seal service into the QuicBaaS facade so that REST
-	// handlers can reach it via the service.SealService type assertion.
-	// This must run after initBarrier (called earlier in Start) has
-	// populated s.barrierManager; when seal is disabled, barrierManager is
-	// nil and we leave the facade's sealService as nil, which causes
-	// handlers to respond with ErrUnavailable rather than panic.
-	if s.barrierManager != nil {
-		sealSvc := service.NewSealService(s.barrierManager, logger.NewAdapter(s.logger))
-		s.quicBaaSService.SetSealService(sealSvc)
-		s.logger.Info("Seal service wired into service facade")
-	}
 
 	// Keep the module's qrdb ModuleAuthFallback seam wired for compatibility
 	// with qrdb's module extension contract. The node-level authenticator is the

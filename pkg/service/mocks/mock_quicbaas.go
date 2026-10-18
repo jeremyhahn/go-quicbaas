@@ -884,52 +884,6 @@ func (m *MockQuicBaaS) WatchManager() *watch.Manager {
 
 // Status returns a default sealed=false response.
 // Tests that need specific behavior should set StatusFunc.
-func (m *MockQuicBaaS) Status(ctx context.Context) (*service.SealStatusResponse, error) {
-	return &service.SealStatusResponse{Sealed: false, Initialized: true, Mode: "manual"}, nil
-}
-
-// Initialize returns a default SealInitResponse.
-func (m *MockQuicBaaS) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return &service.SealInitResponse{}, nil
-}
-
-// Unseal returns a default UnsealResponse.
-func (m *MockQuicBaaS) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return &service.UnsealResponse{Sealed: false}, nil
-}
-
-// Seal returns nil (success).
-func (m *MockQuicBaaS) Seal(ctx context.Context) error {
-	return nil
-}
-
-// Rekey returns a default RekeyResponse.
-func (m *MockQuicBaaS) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return &service.RekeyResponse{}, nil
-}
-
-// GenerateRecoveryKey returns a default GenerateRecoveryKeyResponse.
-func (m *MockQuicBaaS) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	return &service.GenerateRecoveryKeyResponse{}, nil
-}
-
-// DeleteRecoveryKey returns a default DeleteRecoveryKeyResponse.
-func (m *MockQuicBaaS) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	return &service.DeleteRecoveryKeyResponse{Deleted: true}, nil
-}
-
-// RotateRootKey returns a default RotateRootKeyResponse.
-func (m *MockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	return &service.RotateRootKeyResponse{Success: true}, nil
-}
-
-// GenerateRootToken returns a default GenerateRootTokenResponse.
-func (m *MockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	return &service.GenerateRootTokenResponse{}, nil
-}
-
-// SetSealService is a no-op for the mock.
-func (m *MockQuicBaaS) SetSealService(_ service.SealService) {}
 
 // =============================================================================
 // Lifecycle Methods

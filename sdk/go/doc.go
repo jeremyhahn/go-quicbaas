@@ -130,7 +130,6 @@
 //   - Query: Secondary index queries
 //   - Cluster: Cluster status and management
 //   - Health: Health checks and probes
-//   - Seal: Seal/unseal operations
 //   - KMS: Key management service
 //   - Secrets: Secret storage with versioning
 //   - Crypto: Encryption/decryption as a service

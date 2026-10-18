@@ -39,7 +39,6 @@ DELETE /api/v1/registry/leases/{lease_id}
 DELETE /api/v1/scheduler/jobs/{id}
 DELETE /api/v1/sdlc/projects/{projectID}/binding
 DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer
-DELETE /api/v1/seal/recovery
 DELETE /api/v1/secrets/*
 DELETE /api/v1/secrets/dynamic/leases/{id}
 DELETE /api/v1/secrets/dynamic/roles/{name}
@@ -218,7 +217,6 @@ GET /api/v1/sdlc/projects/{projectID}/open-work
 GET /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer
 GET /api/v1/sdlc/tasks/{taskID}/delivery
 GET /api/v1/sdlc/worker-image
-GET /api/v1/seal/status
 GET /api/v1/secrets-prefix/*
 GET /api/v1/secrets-versions/*
 GET /api/v1/secrets-watch/*
@@ -500,13 +498,6 @@ POST /api/v1/sdlc/projects/{projectID}/onboarding
 POST /api/v1/sdlc/repos/{repo}/onboarding
 POST /api/v1/sdlc/webhook/{projectID}
 POST /api/v1/sdlc/worker-image/refresh
-POST /api/v1/seal/init
-POST /api/v1/seal/recovery/generate
-POST /api/v1/seal/rekey
-POST /api/v1/seal/root/generate
-POST /api/v1/seal/rotate-root
-POST /api/v1/seal/seal
-POST /api/v1/seal/unseal
 POST /api/v1/secrets/*
 POST /api/v1/secrets/dynamic/credentials/{role}
 POST /api/v1/secrets/dynamic/leases/{id}/renew

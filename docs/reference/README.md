@@ -37,9 +37,9 @@ Each copy is the published text as fetched, with one exception: line 757 of `mqt
 
 | File | Standard | Revision | Implementing package |
 |---|---|---|---|
-| [rfc9745.txt](rfc9745.txt) | The Deprecation HTTP Response Header Field | RFC 9745, March 2025 | `pkg/api/rest` (`handlers_seal.go`) |
-| [rfc8594.txt](rfc8594.txt) | The Sunset HTTP Header Field | RFC 8594, May 2019 | `pkg/api/rest` (`handlers_seal.go`) |
-| [rfc8288.txt](rfc8288.txt) | Web Linking | RFC 8288, October 2017 | `pkg/sdlc` (`forge_http.go`, `rel="next"` parsing), `pkg/api/rest` (`handlers_seal.go`) |
+| [rfc9745.txt](rfc9745.txt) | The Deprecation HTTP Response Header Field | RFC 9745, March 2025 | none: the only implementer, `pkg/api/rest/handlers_seal.go`, was removed (#1559) |
+| [rfc8594.txt](rfc8594.txt) | The Sunset HTTP Header Field | RFC 8594, May 2019 | none: the only implementer, `pkg/api/rest/handlers_seal.go`, was removed (#1559) |
+| [rfc8288.txt](rfc8288.txt) | Web Linking | RFC 8288, October 2017 | `pkg/sdlc` (`forge_http.go`, `rel="next"` parsing) |
 | [rfc6797.txt](rfc6797.txt) | HTTP Strict Transport Security (HSTS) | RFC 6797, November 2012 | `pkg/api/rest` (`middleware.go`) |
 | [rfc7617.txt](rfc7617.txt) | The 'Basic' HTTP Authentication Scheme | RFC 7617, September 2015 | `pkg/signalbridge` (`http_transport.go`) |
 | [rfc3986.txt](rfc3986.txt) | Uniform Resource Identifier (URI): Generic Syntax | RFC 3986, January 2005 | `pkg/api/rest` (`iam_dynamic_registration.go`, scheme syntax) |

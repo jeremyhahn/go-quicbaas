@@ -30,7 +30,6 @@ graph TD
     SecuritySvc --> Ceremony[Ceremony: QRDBCeremonyClient]
     SecuritySvc --> Credentials[Credentials: QRDBCredentialClient]
     SecuritySvc --> SealStore[SealStore: QRDBSealStoreClient]
-    SecuritySvc --> Seal[Seal: SealClient]
     SecuritySvc --> KMS[KMS: KMSClient]
     SecuritySvc --> Secrets[Secrets: SecretsClient]
     SecuritySvc --> Crypto[Crypto: CryptoClient]
@@ -73,7 +72,6 @@ graph TD
 // sdk/go/services.go:56
 type SecurityService interface {
     Auth() AuthService
-    Seal() SealClient
     KMS() KMSClient
     Secrets() SecretsClient
     Crypto() CryptoClient
@@ -577,11 +575,11 @@ Migrating to it is a cross-surface change that must move the REST PEP
 (`pkg/api/rest/authz_pep_mapping.go`), the gRPC map, the QUIC sub-op map, and
 the MCP map together — not one of them.
 
-## Seal — SealClient (legacy)
+## Seal — removed
 
-`Security().Seal()` is the legacy seal client preserved for backward
-compatibility with deployments still using the pre-barrier API
-surface. New work should use `Security().Barrier()` instead.
+There is no `Security().Seal()` client (#1559). Seal, unseal, init and
+rekey go through `Security().Barrier()`, the re-export of go-qrdb's
+`BarrierClient`.
 
 ## KMS — KMSClient
 

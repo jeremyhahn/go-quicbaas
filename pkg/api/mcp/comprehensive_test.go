@@ -601,46 +601,6 @@ func (m *mockService) WatchManager() *watch.Manager {
 	return nil
 }
 
-// SetSealService is a no-op for the mock.
-func (m *mockService) SetSealService(_ service.SealService) {}
-
-// SealService default stubs to satisfy the QuicBaaS interface.
-// Tests that exercise seal behavior compose mockServiceWithSeal or supply
-// a dedicated SealService implementation.
-func (m *mockService) Status(_ context.Context) (*service.SealStatusResponse, error) {
-	return &service.SealStatusResponse{}, nil
-}
-
-func (m *mockService) Initialize(_ context.Context, _ *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return &service.SealInitResponse{}, nil
-}
-
-func (m *mockService) Unseal(_ context.Context, _ *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return &service.UnsealResponse{}, nil
-}
-
-func (m *mockService) Seal(_ context.Context) error { return nil }
-
-func (m *mockService) Rekey(_ context.Context, _ *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return &service.RekeyResponse{}, nil
-}
-
-func (m *mockService) GenerateRecoveryKey(_ context.Context, _ *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	return &service.GenerateRecoveryKeyResponse{}, nil
-}
-
-func (m *mockService) DeleteRecoveryKey(_ context.Context, _ *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	return &service.DeleteRecoveryKeyResponse{Deleted: true}, nil
-}
-
-func (m *mockService) GenerateRootToken(_ context.Context, _ *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	return &service.GenerateRootTokenResponse{}, nil
-}
-
-func (m *mockService) RotateRootKey(_ context.Context, _ *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	return &service.RotateRootKeyResponse{Success: true}, nil
-}
-
 func (m *mockService) FleetAdmin() service.FleetAdminService { return nil }
 
 func TestComprehensive_ToolRegistry(t *testing.T) {

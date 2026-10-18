@@ -2313,45 +2313,6 @@ func TestRemaining91_ParseCryptoGenerateRandomResponse_ValidInput(t *testing.T) 
 
 // factories_mcp_seal.go coverage
 
-func TestRemaining91_ParseUnsealResponse_InvalidInput(t *testing.T) {
-	_, err := parseUnsealResponse(99)
-	assert.Error(t, err)
-}
-
-func TestRemaining91_ParseUnsealResponse_ValidInput(t *testing.T) {
-	data := map[string]interface{}{"sealed": false, "progress": float64(3), "total": float64(5)}
-	resp, err := parseUnsealResponse(data)
-	require.NoError(t, err)
-	assert.False(t, resp.Sealed)
-}
-
-func TestRemaining91_ParseSealStatusResponse_InvalidInput(t *testing.T) {
-	_, err := parseSealStatusResponse(99)
-	assert.Error(t, err)
-}
-
-func TestRemaining91_ParseSealStatusResponse_ValidInput(t *testing.T) {
-	data := map[string]interface{}{"sealed": true, "progress": float64(0), "total": float64(5)}
-	resp, err := parseSealStatusResponse(data)
-	require.NoError(t, err)
-	assert.True(t, resp.Sealed)
-}
-
-func TestRemaining91_ParseRekeyResponse_InvalidInput(t *testing.T) {
-	_, err := parseRekeyResponse(99)
-	assert.Error(t, err)
-}
-
-func TestRemaining91_ParseRekeyResponse_ValidInput(t *testing.T) {
-	data := map[string]interface{}{
-		"version": float64(3),
-		"shares":  []interface{}{base64.StdEncoding.EncodeToString([]byte("share1")), base64.StdEncoding.EncodeToString([]byte("share2"))},
-	}
-	resp, err := parseRekeyResponse(data)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(3), resp.Version)
-}
-
 // factories_mcp_backup.go coverage
 
 func TestRemaining91_ParseBackupDeleteResponse_InvalidInput(t *testing.T) {

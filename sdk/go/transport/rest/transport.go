@@ -643,8 +643,6 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapKMSMethod(method)
 	case "Secrets":
 		return t.mapSecretsMethod(method)
-	case "Seal":
-		return t.mapSealMethod(method)
 	case "Crypto":
 		return t.mapCryptoMethod(method)
 	case "Vector":
@@ -897,24 +895,6 @@ func (t *Transport) mapSecretsMethod(method string) (string, string) {
 		return "/api/v1/secrets/{path}/rotate", http.MethodPost
 	default:
 		return "/api/v1/secrets/" + strings.ToLower(method), http.MethodPost
-	}
-}
-
-// mapSealMethod maps Seal service methods to REST endpoints.
-func (t *Transport) mapSealMethod(method string) (string, string) {
-	switch method {
-	case "Status":
-		return "/api/v1/seal/status", http.MethodGet
-	case "Init":
-		return "/api/v1/seal/init", http.MethodPost
-	case "Unseal":
-		return "/api/v1/seal/unseal", http.MethodPost
-	case "Seal":
-		return "/api/v1/seal/seal", http.MethodPost
-	case "Rekey":
-		return "/api/v1/seal/rekey", http.MethodPost
-	default:
-		return "/api/v1/seal/" + strings.ToLower(method), http.MethodPost
 	}
 }
 

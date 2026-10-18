@@ -173,7 +173,7 @@ client, _ := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
 | `Cluster()` | Cluster status and management |
 | `Registry()` | Service registry client (Register/Renew/Deregister/Resolve/Watch), served on every transport — see [docs/service-registry](../service-registry/user.md) |
 | `Health()` | Health checks and probes |
-| `Seal()` | Seal/unseal operations |
+| `Security().Barrier()` | Seal/unseal operations (go-qrdb `BarrierClient` re-export) |
 | `KMS()` | Key management service |
 | `Secrets()` | Secret storage with versioning |
 | `Crypto()` | Encryption/decryption as a service |

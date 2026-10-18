@@ -108,38 +108,6 @@ func TestClient_KMSDeleteDEK_ServerError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestClient_SealStatus_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer ts.Close()
-
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	client, err := NewRESTClient(ts.URL, log)
-	require.NoError(t, err)
-	defer client.Close()
-
-	_, err = client.SealStatus(context.Background())
-	assert.Error(t, err)
-}
-
-func TestClient_Seal_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer ts.Close()
-
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	client, err := NewRESTClient(ts.URL, log)
-	require.NoError(t, err)
-	defer client.Close()
-
-	err = client.Seal(context.Background())
-	assert.Error(t, err)
-}
-
 func TestClient_ListSecrets_ServerError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -648,62 +616,6 @@ func TestClient_KMSClearDEKSafety_ServerError(t *testing.T) {
 
 	_, err = client.KMSClearDEKSafety(context.Background(), &service.ClearDEKSafetyRequest{
 		Path: "dek/path1",
-	})
-	assert.Error(t, err)
-}
-
-func TestClient_SealInit_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer ts.Close()
-
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	client, err := NewRESTClient(ts.URL, log)
-	require.NoError(t, err)
-	defer client.Close()
-
-	_, err = client.SealInit(context.Background(), &service.SealInitRequest{
-		TotalShares: 5,
-		Threshold:   3,
-	})
-	assert.Error(t, err)
-}
-
-func TestClient_Unseal_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer ts.Close()
-
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	client, err := NewRESTClient(ts.URL, log)
-	require.NoError(t, err)
-	defer client.Close()
-
-	_, err = client.Unseal(context.Background(), &service.UnsealRequest{
-		Share: []byte("key-share-1"),
-	})
-	assert.Error(t, err)
-}
-
-func TestClient_Rekey_ServerError(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer ts.Close()
-
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	client, err := NewRESTClient(ts.URL, log)
-	require.NoError(t, err)
-	defer client.Close()
-
-	_, err = client.Rekey(context.Background(), &service.RekeyRequest{
-		NewTotalShares: 5,
-		NewThreshold:   3,
 	})
 	assert.Error(t, err)
 }

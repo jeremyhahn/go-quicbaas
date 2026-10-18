@@ -277,45 +277,6 @@ func (m *mockQuicBaaS) VerifyBackup(ctx context.Context, req *service.VerifyBack
 	return &service.VerifyBackupResponse{Valid: true}, nil
 }
 
-// SealService — full surface
-func (m *mockQuicBaaS) Status(ctx context.Context) (*service.SealStatusResponse, error) {
-	return &service.SealStatusResponse{}, nil
-}
-
-func (m *mockQuicBaaS) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	return &service.SealInitResponse{}, nil
-}
-
-func (m *mockQuicBaaS) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	return &service.UnsealResponse{}, nil
-}
-
-func (m *mockQuicBaaS) Seal(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockQuicBaaS) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	return &service.RekeyResponse{}, nil
-}
-
-func (m *mockQuicBaaS) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	return &service.GenerateRecoveryKeyResponse{}, nil
-}
-
-func (m *mockQuicBaaS) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	return &service.DeleteRecoveryKeyResponse{}, nil
-}
-
-func (m *mockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	return &service.GenerateRootTokenResponse{}, nil
-}
-
-func (m *mockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	return &service.RotateRootKeyResponse{}, nil
-}
-
-func (m *mockQuicBaaS) SetSealService(svc service.SealService) {}
-
 // Auth operations
 func (m *mockQuicBaaS) Login(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
 	return &service.LoginResponse{AccessToken: "token"}, nil

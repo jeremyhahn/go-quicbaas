@@ -154,7 +154,7 @@ the authentication context into key attributes for both paths.
 | Trust bootstrap | Yes — `Security().Trust().Bootstrap()` (single canonical lib in xkms/pkg/trust/bootstrap) | n/a |
 | Key management (Generate / Get / Delete / List / Rotate) | Yes — `Security().KMS()` | Wire-compatible legacy REST + MCP tools |
 | Cryptographic (Sign / Verify / Encrypt / Decrypt) | Yes — `Security().KMS()` + `Security().Crypto()` | Wire-compatible legacy REST + MCP tools |
-| Seal / Unseal (xkms legacy, not the barrier) | Yes — `Security().Seal()` | Wire-compatible legacy REST + MCP + gRPC |
+| Seal / Unseal (xkms legacy, not the barrier) | No SDK accessor; the SDK seal client is removed (#1559), use `Security().Barrier()` | Wire-compatible legacy REST + MCP + gRPC |
 | Certificate store (Save/Get/Delete/List/Exists/Chain) | Yes — `Security().Certificate()` + `Security().CertificateExt()` | Legacy `/api/v1/xkms/certs/*` |
 | PIN admin (SO/User set/change/verify/lockout) | Yes — qrdb `PINBackend` composed at startup; exposed by qrdb handlers (gRPC/QUIC/MCP) | Legacy `/api/v1/xkms/pin/*` retained |
 
@@ -191,7 +191,7 @@ instead of the caller computing one.
 | **Key Versions** | ListVersions, Enable, Disable, EnableAll, DisableAll | `GET /keys/{id}/versions`, `POST .../enable`, `POST .../disable`, `POST .../enable-all`, `POST .../disable-all` | -- | -- | `Security().KMS()` |
 | **Cryptographic** | Sign, Verify, Encrypt, Decrypt | `POST /keys/{id}/sign`, `POST /keys/{id}/verify`, `POST /keys/{id}/encrypt`, `POST /keys/{id}/decrypt` | `xkms.sign`, `xkms.verify`, `xkms.encrypt`, `xkms.decrypt` | `Sign`, `Verify`, `Encrypt`, `Decrypt` | `Security().KMS()` |
 | **Certificate Store** | SaveCert, GetCert, DeleteCert, ListCerts, CertExists, SaveCertChain, GetCertChain | `POST /certs`, `GET /certs/{id}`, `DELETE /certs/{id}`, `GET /certs`, `HEAD /certs/{id}` | `xkms.saveCert`, `xkms.getCert`, `xkms.deleteCert`, `xkms.listCerts`, `xkms.certExists`, `xkms.saveCertChain`, `xkms.getCertChain` | `SaveCert`, `GetCert`, `DeleteCert`, `ListCerts` | `Security().Certificate()` |
-| **Seal (xkms legacy)** | Seal, Unseal, CanSeal | `POST /seal`, `POST /unseal`, `GET /seal/capability` | `xkms.seal`, `xkms.unseal`, `xkms.canSeal` | `Seal`, `Unseal`, `CanSeal` | `Security().Seal()` |
+| **Seal (xkms legacy)** | Seal, Unseal, CanSeal | `POST /seal`, `POST /unseal`, `GET /seal/capability` | `xkms.seal`, `xkms.unseal`, `xkms.canSeal` | `Seal`, `Unseal`, `CanSeal` | none (#1559); use `Security().Barrier()` |
 | **Barrier (canonical)** | Status, Initialize, InitializeShamir, Unseal, UnsealWithShare, UnsealWithShares, Seal, Rekey | `POST /api/v1/barrier/*` | `quicbaas.barrier.*` | `quicbaas.v1.BarrierService` | `Security().Barrier()` |
 | **Ceremony (canonical)** | Status, ClaimCert, BeginClaimShare/CompleteClaimShare, SignCSR, EnrollExternalOfficer, Initialize | `POST /api/v1/ceremony/*` | `quicbaas.ceremony.*` | `quicbaas.v1.CeremonyService` | `Security().Ceremony()` |
 | **Credentials (canonical)** | Submit, List, Rotate, RetrieveVersion, ListVersions, Delete, GCExpired | `POST /api/v1/credentials/*` | `quicbaas.credentials.*` | `quicbaas.v1.CredentialService` | `Security().Credentials()` |

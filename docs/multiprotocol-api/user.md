@@ -200,7 +200,7 @@ Authentication and session management.
 
 Server seal/unseal operations with Shamir secret sharing.
 
-**Source:** `sdk/go/client/seal/client.go`
+**Source:** `Security().Barrier()`, the go-qrdb `BarrierClient` re-export; the SDK seal client was removed (#1559)
 
 | Operation | Description |
 |-----------|-------------|
@@ -918,7 +918,6 @@ QuicBaaS also supports the Model Context Protocol (MCP) for AI/LLM integration. 
 | Service Types | `sdk/go/service/types.go` |
 | QUIC Protocol | `sdk/go/transport/quic/protocol.go` |
 | REST Transport | `sdk/go/transport/rest/transport.go` |
-| Seal Client | `sdk/go/client/seal/client.go` |
 | IAM Client | `sdk/go/client/iam/client.go` |
 | KMS Service | `pkg/service/kms_service.go` |
 | Crypto Service | `pkg/service/crypto_service.go` |

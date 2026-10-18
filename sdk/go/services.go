@@ -60,7 +60,6 @@ type ClusterManagementService interface {
 // directly.
 type SecurityService interface {
 	Auth() AuthService
-	Seal() SealClient
 	KMS() KMSClient
 	Secrets() SecretsClient
 	Crypto() CryptoClient
@@ -240,7 +239,6 @@ func (s *securityService) Auth() AuthService {
 	return s.authSvc
 }
 
-func (s *securityService) Seal() SealClient                     { return s.c.seal() }
 func (s *securityService) KMS() KMSClient                       { return s.c.kms() }
 func (s *securityService) Secrets() SecretsClient               { return s.c.secrets() }
 func (s *securityService) Crypto() CryptoClient                 { return s.c.crypto() }
@@ -426,7 +424,7 @@ func (c *client) ClusterMgmt() ClusterManagementService {
 }
 
 // Security returns the SecurityService sub-interface providing organized
-// access to Auth, Seal, KMS, Secrets, Crypto, Certificate,
+// access to Auth, KMS, Secrets, Crypto, Certificate,
 // DynamicSecrets, RBAC, SealStore, ACME, Trust, and CertificateExt operations.
 func (c *client) Security() SecurityService {
 	return c.securitySvc()

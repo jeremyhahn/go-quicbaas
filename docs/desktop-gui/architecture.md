@@ -156,8 +156,8 @@ The seal/barrier system is the foundation - nothing else works without it. We im
 - `pkg/service/seal_service.go` - service layer with request/response types
 - `pkg/api/rest/handlers_seal.go` - REST handlers
 - `pkg/api/grpc/server_seal_methods.go` - gRPC handlers
-- `sdk/go/client/seal/client.go` - basic SDK seal client (needs recovery/root-token)
-- `cmd/quicbaas/seal.go` - CLI commands (needs recovery/root-token)
+- `Security().Barrier()` - the go-qrdb `BarrierClient` re-export; the SDK seal client was removed (#1559)
+- `cmd/quicbaas/barrier.go` - barrier CLI commands; the CLI seal command was removed (#1559)
 - `pkg/config/config.go` - SealConfig struct
 - `pkg/server/lifecycle.go` - initBarrier() server integration
 

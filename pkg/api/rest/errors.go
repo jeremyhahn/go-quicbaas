@@ -49,9 +49,6 @@ var (
 	// ErrSchedulerServiceUnavailable indicates the scheduler service is not available.
 	ErrSchedulerServiceUnavailable = errors.New("scheduler service not available")
 
-	// ErrSealServiceUnavailable indicates the seal service is not available.
-	ErrSealServiceUnavailable = errors.New("seal service not available")
-
 	// ErrBarrierServiceUnavailable indicates the barrier facade is not yet
 	// wired (e.g. before lifecycle setup completes). The handlers return
 	// 503 Service Unavailable so callers can retry once the barrier is up.

@@ -3106,84 +3106,6 @@ func TestMockSecretsClientExtended(t *testing.T) {
 	})
 }
 
-func TestMockSealClientExtended(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-
-	t.Run("custom_implementations", func(t *testing.T) {
-		t.Parallel()
-
-		client := &MockSealClient{
-			SealStatusFunc: func(ctx context.Context) (*service.SealStatusResponse, error) {
-				return &service.SealStatusResponse{
-					Sealed:         false,
-					Initialized:    true,
-					Threshold:      3,
-					TotalShares:    5,
-					SharesProvided: 3,
-				}, nil
-			},
-			SealInitFunc: func(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-				// Share material is never returned (qrdb share-free
-				// contract): officers claim shares out-of-band.
-				return &service.SealInitResponse{
-					RootToken: "root-token",
-					Version:   1,
-				}, nil
-			},
-			UnsealFunc: func(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-				return &service.UnsealResponse{
-					Sealed:         false,
-					SharesProvided: 3,
-				}, nil
-			},
-			SealFunc: func(ctx context.Context) error {
-				return nil
-			},
-			RekeyFunc: func(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-				return &service.RekeyResponse{
-					Version:   2,
-					Timestamp: time.Now(),
-				}, nil
-			},
-			CloseFunc: func() error {
-				return nil
-			},
-		}
-
-		// Test status
-		statusResp, err := client.SealStatus(ctx)
-		require.NoError(t, err)
-		assert.False(t, statusResp.Sealed)
-		assert.True(t, statusResp.Initialized)
-
-		// Test init (share-free: response carries no share material)
-		initResp, err := client.SealInit(ctx, &service.SealInitRequest{TotalShares: 5, Threshold: 3})
-		require.NoError(t, err)
-		assert.Equal(t, "root-token", initResp.RootToken)
-		assert.Equal(t, uint64(1), initResp.Version)
-
-		// Test unseal
-		unsealResp, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("share")})
-		require.NoError(t, err)
-		assert.False(t, unsealResp.Sealed)
-
-		// Test seal
-		err = client.Seal(ctx)
-		assert.NoError(t, err)
-
-		// Test rekey (share-free: response carries no share material)
-		rekeyResp, err := client.Rekey(ctx, &service.RekeyRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, uint64(2), rekeyResp.Version)
-
-		// Test close
-		err = client.Close()
-		assert.NoError(t, err)
-	})
-}
-
 func TestMockCryptoClientExtended(t *testing.T) {
 	t.Parallel()
 
@@ -3574,11 +3496,6 @@ func TestInterfaceComplianceExtended(t *testing.T) {
 	t.Run("SecretsClient", func(t *testing.T) {
 		t.Parallel()
 		var _ SecretsClient = (*MockSecretsClient)(nil)
-	})
-
-	t.Run("SealClient", func(t *testing.T) {
-		t.Parallel()
-		var _ SealClient = (*MockSealClient)(nil)
 	})
 
 	t.Run("CryptoClient", func(t *testing.T) {

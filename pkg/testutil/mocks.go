@@ -802,86 +802,6 @@ func (m *MockQuicBaaS) Close() error {
 	return nil
 }
 
-// =============================================================================
-// Seal Service Methods (for type-assertion based handler access)
-// =============================================================================
-
-// SealStatus delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
-	args := m.Called(ctx)
-	resp, _ := args.Get(0).(*service.SealStatusResponse)
-	return resp, args.Error(1)
-}
-
-// Status delegates to testify mock infrastructure (alias for SealStatus).
-func (m *MockQuicBaaS) Status(ctx context.Context) (*service.SealStatusResponse, error) {
-	args := m.Called(ctx)
-	resp, _ := args.Get(0).(*service.SealStatusResponse)
-	return resp, args.Error(1)
-}
-
-// SealInitialize delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) SealInitialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.SealInitResponse)
-	return resp, args.Error(1)
-}
-
-// Initialize delegates to testify mock infrastructure (alias for SealInitialize).
-func (m *MockQuicBaaS) Initialize(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.SealInitResponse)
-	return resp, args.Error(1)
-}
-
-// Unseal delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.UnsealResponse)
-	return resp, args.Error(1)
-}
-
-// Seal delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) Seal(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
-// Rekey delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.RekeyResponse)
-	return resp, args.Error(1)
-}
-
-// GenerateRecoveryKey delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) GenerateRecoveryKey(ctx context.Context, req *service.GenerateRecoveryKeyRequest) (*service.GenerateRecoveryKeyResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.GenerateRecoveryKeyResponse)
-	return resp, args.Error(1)
-}
-
-// DeleteRecoveryKey delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) DeleteRecoveryKey(ctx context.Context, req *service.DeleteRecoveryKeyRequest) (*service.DeleteRecoveryKeyResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.DeleteRecoveryKeyResponse)
-	return resp, args.Error(1)
-}
-
-// GenerateRootToken delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) GenerateRootToken(ctx context.Context, req *service.GenerateRootTokenRequest) (*service.GenerateRootTokenResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.GenerateRootTokenResponse)
-	return resp, args.Error(1)
-}
-
-// RotateRootKey delegates to testify mock infrastructure.
-func (m *MockQuicBaaS) RotateRootKey(ctx context.Context, req *service.RotateRootKeyRequest) (*service.RotateRootKeyResponse, error) {
-	args := m.Called(ctx, req)
-	resp, _ := args.Get(0).(*service.RotateRootKeyResponse)
-	return resp, args.Error(1)
-}
-
 // SetKeyRotationPolicy delegates to testify mock infrastructure.
 func (m *MockQuicBaaS) SetKeyRotationPolicy(ctx context.Context, req *service.SetKeyRotationPolicyRequest) (*service.SetKeyRotationPolicyResponse, error) {
 	args := m.Called(ctx, req)
@@ -901,10 +821,4 @@ func (m *MockQuicBaaS) DeleteKeyRotationPolicy(ctx context.Context, req *service
 	args := m.Called(ctx, req)
 	resp, _ := args.Get(0).(*service.DeleteKeyRotationPolicyResponse)
 	return resp, args.Error(1)
-}
-
-// SetSealService is a no-op for the mock. The mock implements the SealService
-// methods directly so no inner service needs to be injected.
-func (m *MockQuicBaaS) SetSealService(_ service.SealService) {
-	// No-op for mock — seal methods are implemented directly on MockQuicBaaS.
 }

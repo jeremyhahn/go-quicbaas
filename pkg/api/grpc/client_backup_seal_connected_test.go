@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/jeremyhahn/go-quicbaas/api/proto"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
@@ -152,58 +151,6 @@ func setupConnectedBackupSealClient(t *testing.T, fail bool) *Client {
 		server.Stop()
 	})
 	return client
-}
-
-// =============================================================================
-// Seal client RPCs — happy path
-// =============================================================================
-
-func TestSealClient_Connected_HappyPaths(t *testing.T) {
-	client := setupConnectedBackupSealClient(t, false)
-	ctx := context.Background()
-
-	status, err := client.SealStatus(ctx)
-	require.NoError(t, err)
-	assert.True(t, status.Initialized)
-	assert.Equal(t, 2, status.Threshold)
-
-	initResp, err := client.SealInit(ctx, &service.SealInitRequest{Threshold: 2, TotalShares: 3})
-	require.NoError(t, err)
-	assert.Equal(t, "root", initResp.RootToken)
-	assert.Equal(t, uint64(1), initResp.Version)
-
-	unsealResp, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("s1")})
-	require.NoError(t, err)
-	assert.False(t, unsealResp.Sealed)
-
-	require.NoError(t, client.Seal(ctx))
-
-	rekeyResp, err := client.Rekey(ctx, &service.RekeyRequest{NewThreshold: 2, NewTotalShares: 2})
-	require.NoError(t, err)
-	assert.Equal(t, uint64(2), rekeyResp.Version)
-}
-
-// =============================================================================
-// Seal client RPCs — server error path
-// =============================================================================
-
-func TestSealClient_Connected_ServerErrors(t *testing.T) {
-	client := setupConnectedBackupSealClient(t, true)
-	ctx := context.Background()
-
-	_, err := client.SealStatus(ctx)
-	require.Error(t, err)
-
-	_, err = client.SealInit(ctx, &service.SealInitRequest{})
-	require.Error(t, err)
-
-	_, err = client.Unseal(ctx, &service.UnsealRequest{})
-	require.Error(t, err)
-
-	require.Error(t, client.Seal(ctx))
-
-	_, err = client.Rekey(ctx, &service.RekeyRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================

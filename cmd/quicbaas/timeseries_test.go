@@ -1985,19 +1985,6 @@ func TestMockKMSClient_FuncFieldPaths(t *testing.T) {
 	})
 }
 
-func TestMockSealClient_Close_WithFunc(t *testing.T) {
-	closed := false
-	client := &MockSealClient{
-		CloseFunc: func() error {
-			closed = true
-			return nil
-		},
-	}
-	err := client.Close()
-	assert.NoError(t, err)
-	assert.True(t, closed)
-}
-
 func TestMockSecretsClient_FuncFieldPaths(t *testing.T) {
 	ctx := context.Background()
 

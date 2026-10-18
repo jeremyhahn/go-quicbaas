@@ -36,7 +36,6 @@ DELETE /api/v1/registry/leases/{lease_id} permission service_registry:register
 DELETE /api/v1/scheduler/jobs/{id} permission scheduler:delete
 DELETE /api/v1/sdlc/projects/{projectID}/binding permission sdlc:unbind
 DELETE /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc:bind
-DELETE /api/v1/seal/recovery permission seal:generate_recovery
 DELETE /api/v1/secrets/* permission secrets:delete
 DELETE /api/v1/secrets/dynamic/leases/{id} permission dynamic_secrets:lease_revoke
 DELETE /api/v1/secrets/dynamic/roles/{name} permission dynamic_secrets:role_delete
@@ -215,7 +214,6 @@ GET /api/v1/sdlc/projects/{projectID}/open-work permission sdlc:read
 GET /api/v1/sdlc/projects/{projectID}/pulls/{number}/reviewer permission sdlc:read
 GET /api/v1/sdlc/tasks/{taskID}/delivery permission sdlc:read
 GET /api/v1/sdlc/worker-image permission worker_images:read
-GET /api/v1/seal/status permission tenant_barrier:status
 GET /api/v1/secrets-prefix/* permission secrets:read
 GET /api/v1/secrets-versions/* permission secrets:read
 GET /api/v1/secrets-watch/* permission secrets:read
@@ -492,13 +490,6 @@ POST /api/v1/sdlc/projects/{projectID}/onboarding permission sdlc:bind
 POST /api/v1/sdlc/repos/{repo}/onboarding permission sdlc:bind
 POST /api/v1/sdlc/webhook/{projectID} public -:-
 POST /api/v1/sdlc/worker-image/refresh permission worker_images:refresh
-POST /api/v1/seal/init permission tenant_barrier:init
-POST /api/v1/seal/recovery/generate permission seal:generate_recovery
-POST /api/v1/seal/rekey permission seal:rekey
-POST /api/v1/seal/root/generate permission seal:bootstrap
-POST /api/v1/seal/rotate-root permission seal:rekey
-POST /api/v1/seal/seal permission tenant_barrier:seal
-POST /api/v1/seal/unseal permission tenant_barrier:unseal
 POST /api/v1/secrets/* permission secrets:write
 POST /api/v1/secrets/dynamic/credentials/{role} permission dynamic_secrets:generate
 POST /api/v1/secrets/dynamic/leases/{id}/renew permission dynamic_secrets:lease_renew

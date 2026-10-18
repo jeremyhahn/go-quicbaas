@@ -182,10 +182,6 @@ func TestTransport_MapToToolName(t *testing.T) {
 		{"quicbaas.Cluster", "Status", "quicbaas_cluster_status"},
 		{"quicbaas.Cluster", "AddNode", "quicbaas_cluster_add_node"},
 
-		// Seal operations
-		{"quicbaas.Seal", "Unseal", "quicbaas_unseal"},
-		{"quicbaas.Seal", "Seal", "quicbaas_seal"},
-
 		// KMS operations
 		{"quicbaas.KMS", "GenerateKey", "quicbaas_kms_generate_key"},
 		{"quicbaas.KMS", "Encrypt", "quicbaas_kms_encrypt"},

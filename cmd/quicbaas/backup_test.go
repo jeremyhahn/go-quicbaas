@@ -2514,15 +2514,6 @@ func TestCreateGRPCCryptoClient(t *testing.T) {
 	})
 }
 
-func TestCreateGRPCSealClient(t *testing.T) {
-	t.Run("createSealClient with grpc transport", func(t *testing.T) {
-		// This will fail due to no server, but tests the code path
-		transport = "grpc"
-		_, _ = createSealClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-}
-
 func TestCreateGRPCSecretsClient(t *testing.T) {
 	t.Run("createGRPCSecretsClient returns client", func(t *testing.T) {
 		// This will fail due to no server, but tests the code path

@@ -130,7 +130,6 @@ quicbaas barrier enable-encryption
 | Unseal with the right passphrase fails | The strategy is Shamir, not passphrase. Check `status` and collect a quorum. |
 | Shares submitted, still sealed | The threshold is not met. `status` reports how many of how many. |
 | `barrier init` says already initialised | It is. Initialisation is once per barrier; you want `unseal`. |
-| Restricting `/api/v1/barrier` did not lock the surface down | `/api/v1/seal` is a second mounted family reaching the same lifecycle. See [api.md](api.md). |
 | `quicbaas barrier` rejects a tenant argument | Wrong group. A tenant's barrier is `quicbaas iam tenant barrier`. |
 
 ## What this feature does not do

@@ -173,12 +173,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.Operations", "UpgradeNode"}:          gapNameDrift + "quicbaas_upgrade_node",
 	{"quicbaas.Operations", "GetUpgradeStatus"}:     gapNoTool,
 
-	// --- Seal --------------------------------------------------------------
-	// The Seal case derives quicbaas_<lowercase method>, which is right for
-	// Seal/Unseal and wrong for everything else.
-	{"quicbaas.Seal", "Init"}:   gapNameDrift + "quicbaas_seal_init",
-	{"quicbaas.Seal", "Status"}: gapNameDrift + "quicbaas_seal_status",
-
 	// --- Secrets -----------------------------------------------------------
 	{"quicbaas.Secrets", "ListVersions"}: gapNameDrift + "quicbaas_secrets_versions",
 	{"quicbaas.Secrets", "GetVersion"}:   gapNoTool,

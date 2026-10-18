@@ -469,28 +469,18 @@ consistent with every other quicbaas verb.
 
 ---
 
-## quicbaas seal (deprecated)
+## quicbaas seal (removed)
 
-> **Status:** Deprecated alias. New work should use
-> `quicbaas barrier`. Every `seal` verb prints a
-> deprecation warning to stderr and forwards to the equivalent
-> `barrier` verb.
+> **Status:** Removed (#1559). Use `quicbaas barrier`, which calls
+> `Security().Barrier()`, the re-export of go-qrdb's `BarrierClient`.
 
-The legacy `seal` tree is retained for operator-runbook compatibility
-through at least the next major release. The verb and flag surface
-matches the original; behaviour matches the canonical `barrier`
-surface bit-for-bit because both share the same SDK
-`Security().Barrier()` backend.
-
-Source:
-`cmd/quicbaas/seal.go` (the forwarding
-shim) and
-[`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go) (the
-canonical implementation).
+The `seal` tree and its client plumbing no longer exist. The table below
+maps each former `seal` verb to its `barrier` verb in
+[`cmd/quicbaas/barrier.go`](../../cmd/quicbaas/barrier.go).
 
 ### Migration table
 
-| Deprecated `seal` verb | Canonical `barrier` verb |
+| Removed `seal` verb | Canonical `barrier` verb |
 |------------------------|--------------------------|
 | `quicbaas seal status` | `quicbaas barrier status` |
 | `quicbaas seal init --shares N --threshold M` | `quicbaas barrier init` (single passphrase) or `quicbaas barrier init-shamir --secret <s> --total N --threshold M` |

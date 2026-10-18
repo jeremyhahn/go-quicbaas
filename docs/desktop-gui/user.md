@@ -3040,7 +3040,7 @@ This operation takes 1-5 minutes depending on data size.
 
 ### See also
 
-- [CLI: quicbaas seal](../barrier/cli.md) — seal operations via CLI
+- [CLI: quicbaas barrier](../barrier/cli.md) — seal operations via CLI
 - [handlers_seal.go](../../pkg/api/rest/handlers_seal.go) — seal implementation
 - [security/seal.md](../barrier/engineering.md) — seal architecture and best practices
 - Security → KMS — key management service

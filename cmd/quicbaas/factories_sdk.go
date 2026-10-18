@@ -386,87 +386,6 @@ func (c *sdkKMSClient) Close() error {
 }
 
 // =============================================================================
-// SDK Seal Client
-// =============================================================================
-
-// sdkSealClient implements the SealClient interface using SDK transport.
-type sdkSealClient struct {
-	sdk quicbaas.Client
-}
-
-// createSDKSealClient creates an SDK client for seal operations.
-func createSDKSealClient() (SealClient, error) {
-	sdk, err := sdkClientFactory()
-	if err != nil {
-		return nil, err
-	}
-	return &sdkSealClient{sdk: sdk}, nil
-}
-
-// SealInit initializes the seal and generates key shares.
-func (c *sdkSealClient) SealInit(ctx context.Context, req *service.SealInitRequest) (*service.SealInitResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.Seal", "Init", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.SealInitResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkSealClient.SealInit", "unexpected response type")
-	}
-	return result, nil
-}
-
-// Unseal provides a key share to unseal the database.
-func (c *sdkSealClient) Unseal(ctx context.Context, req *service.UnsealRequest) (*service.UnsealResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.Seal", "Unseal", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.UnsealResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkSealClient.Unseal", "unexpected response type")
-	}
-	return result, nil
-}
-
-// Seal re-seals the database.
-func (c *sdkSealClient) Seal(ctx context.Context) error {
-	_, err := c.sdk.Transport().Request(ctx, "quicbaas.Seal", "Seal", nil)
-	return err
-}
-
-// SealStatus returns the current seal status.
-func (c *sdkSealClient) SealStatus(ctx context.Context) (*service.SealStatusResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.Seal", "Status", nil)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.SealStatusResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkSealClient.SealStatus", "unexpected response type")
-	}
-	return result, nil
-}
-
-// Rekey generates new key shares with a new threshold configuration.
-func (c *sdkSealClient) Rekey(ctx context.Context, req *service.RekeyRequest) (*service.RekeyResponse, error) {
-	resp, err := c.sdk.Transport().Request(ctx, "quicbaas.Seal", "Rekey", req)
-	if err != nil {
-		return nil, err
-	}
-	result, ok := resp.(*service.RekeyResponse)
-	if !ok {
-		return nil, sdkerrors.NewInternal("sdkSealClient.Rekey", "unexpected response type")
-	}
-	return result, nil
-}
-
-// Close closes the underlying SDK client.
-func (c *sdkSealClient) Close() error {
-	return c.sdk.Close()
-}
-
-// =============================================================================
 // SDK Backend Client
 // =============================================================================
 
@@ -988,7 +907,6 @@ func (c *sdkOperationsClient) GetUpgradeStatus(ctx context.Context, req *operati
 
 var _ CryptoClient = (*sdkCryptoClient)(nil)
 var _ KMSClient = (*sdkKMSClient)(nil)
-var _ SealClient = (*sdkSealClient)(nil)
 var _ BackendClient = (*sdkBackendClient)(nil)
 var _ SafetyClient = (*sdkSafetyClient)(nil)
 var _ BackupClient = (*sdkBackupClient)(nil)

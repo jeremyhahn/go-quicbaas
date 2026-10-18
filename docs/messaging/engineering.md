@@ -122,7 +122,7 @@ The unified client provides access to all QuicBaaS services:
 | Query | `client.Query()` | Secondary index queries |
 | Cluster | `client.Cluster()` | Cluster status and management |
 | Health | `client.Health()` | Health checks and probes |
-| Seal | `client.Seal()` | Seal/unseal operations |
+| Barrier | `client.Security().Barrier()` | Seal/unseal operations (go-qrdb `BarrierClient` re-export) |
 | KMS | `client.KMS()` | Key management service |
 | Secrets | `client.Secrets()` | Secret storage with versioning |
 | Crypto | `client.Crypto()` | Encryption/decryption as a service |

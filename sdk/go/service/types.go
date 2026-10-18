@@ -856,13 +856,6 @@ type (
 // =============================================================================
 
 type (
-	SealStatusResponse          = pkgservice.SealStatusResponse
-	SealInitRequest             = pkgservice.SealInitRequest
-	SealInitResponse            = pkgservice.SealInitResponse
-	UnsealRequest               = pkgservice.UnsealRequest
-	UnsealResponse              = pkgservice.UnsealResponse
-	RekeyRequest                = pkgservice.RekeyRequest
-	RekeyResponse               = pkgservice.RekeyResponse
 	GenerateRecoveryKeyRequest  = pkgservice.GenerateRecoveryKeyRequest
 	GenerateRecoveryKeyResponse = pkgservice.GenerateRecoveryKeyResponse
 	DeleteRecoveryKeyRequest    = pkgservice.DeleteRecoveryKeyRequest
@@ -1714,14 +1707,6 @@ type (
 	AuthRevokeRoleRequest  = pkgservice.AuthRevokeRoleRequest
 	AuthRevokeRoleResponse = pkgservice.AuthRevokeRoleResponse
 	RoleInfo               = pkgservice.RoleInfo
-)
-
-// =============================================================================
-// Seal Service
-// =============================================================================
-
-type (
-	SealService = pkgservice.SealService
 )
 
 // =============================================================================

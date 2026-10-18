@@ -263,22 +263,12 @@ type QuicBaaS interface {
 	// SetDynamicSecretsService wires the Dynamic Secrets service into the
 	// facade at runtime.
 	//
-	// It is a setter rather than a builder option for the same reason
-	// SetSealService is: the service is composed during server bring-up, over
+	// It is a setter rather than a builder option because the service is composed during server bring-up, over
 	// the durable qrdb-backed KV and the credential generator registry, which
 	// is strictly later than the service container that owns the facade.
 	// Until it is called, Security().DynamicSecrets() reports the capability
 	// as unconfigured rather than panicking.
 	SetDynamicSecretsService(svc DynamicSecretsService)
-
-	// SetSealService wires the SealService into the facade at runtime.
-	// This is called by the server after the seal manager has been initialized
-	// so that the REST/gRPC handlers can reach the seal subsystem.
-	SetSealService(svc SealService)
-
-	// SealService operations promoted directly onto the facade so that REST
-	// handlers can reach them via a single type assertion on s.service.
-	SealService
 
 	// LoginCeremony returns the unified login-ceremony facade
 	// (BeginLogin / FinishLogin). It forwards to the composed go-qrdb node's

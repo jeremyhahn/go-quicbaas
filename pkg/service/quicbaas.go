@@ -200,10 +200,6 @@ type quicBaaS struct {
 	sshClient                 xkmsssh.Client
 	iamService                *iamServiceProvider
 
-	// sealService handles database seal/unseal operations.
-	// Nil when seal is disabled.
-	sealService SealService
-
 	// loginService is the unified login-ceremony facade
 	// (BeginLogin / FinishLogin). Nil until SetLoginService wires it.
 	loginService LoginServicer
@@ -5008,113 +5004,6 @@ func (s *quicBaaS) SetDynamicSecretsService(svc DynamicSecretsService) {
 	s.mu.Lock()
 	s.dynamicSecretsService = svc
 	s.mu.Unlock()
-}
-
-// SetSealService wires the SealService into the facade at runtime.
-// Called by the server after the seal manager has been initialized.
-func (s *quicBaaS) SetSealService(svc SealService) {
-	s.mu.Lock()
-	s.sealService = svc
-	s.mu.Unlock()
-}
-
-// Status returns the current seal status. Implements SealService for the facade.
-func (s *quicBaaS) Status(ctx context.Context) (*SealStatusResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Status", "seal service not initialized")
-	}
-	return svc.Status(ctx)
-}
-
-// Initialize performs first-time initialization of the database seal. Implements SealService for the facade.
-func (s *quicBaaS) Initialize(ctx context.Context, req *SealInitRequest) (*SealInitResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Initialize", "seal service not initialized")
-	}
-	return svc.Initialize(ctx, req)
-}
-
-// Unseal provides one key share to unseal the database. Implements SealService for the facade.
-func (s *quicBaaS) Unseal(ctx context.Context, req *UnsealRequest) (*UnsealResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Unseal", "seal service not initialized")
-	}
-	return svc.Unseal(ctx, req)
-}
-
-// Seal immediately seals the database. Implements SealService for the facade.
-func (s *quicBaaS) Seal(ctx context.Context) error {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return errors.New(errors.ErrUnavailable, "quicBaaS.Seal", "seal service not initialized")
-	}
-	return svc.Seal(ctx)
-}
-
-// Rekey rotates the master key. Implements SealService for the facade.
-func (s *quicBaaS) Rekey(ctx context.Context, req *RekeyRequest) (*RekeyResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.Rekey", "seal service not initialized")
-	}
-	return svc.Rekey(ctx, req)
-}
-
-// GenerateRecoveryKey creates new recovery keys. Implements SealService for the facade.
-func (s *quicBaaS) GenerateRecoveryKey(ctx context.Context, req *GenerateRecoveryKeyRequest) (*GenerateRecoveryKeyResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GenerateRecoveryKey", "seal service not initialized")
-	}
-	return svc.GenerateRecoveryKey(ctx, req)
-}
-
-// DeleteRecoveryKey removes all recovery keys. Implements SealService for the facade.
-func (s *quicBaaS) DeleteRecoveryKey(ctx context.Context, req *DeleteRecoveryKeyRequest) (*DeleteRecoveryKeyResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.DeleteRecoveryKey", "seal service not initialized")
-	}
-	return svc.DeleteRecoveryKey(ctx, req)
-}
-
-// RotateRootKey rotates the root encryption key. Implements SealService for the facade.
-func (s *quicBaaS) RotateRootKey(ctx context.Context, req *RotateRootKeyRequest) (*RotateRootKeyResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.RotateRootKey", "seal service not initialized")
-	}
-	return svc.RotateRootKey(ctx, req)
-}
-
-// GenerateRootToken creates a new root token for admin access. Implements SealService for the facade.
-func (s *quicBaaS) GenerateRootToken(ctx context.Context, req *GenerateRootTokenRequest) (*GenerateRootTokenResponse, error) {
-	s.mu.RLock()
-	svc := s.sealService
-	s.mu.RUnlock()
-	if svc == nil {
-		return nil, errors.New(errors.ErrUnavailable, "quicBaaS.GenerateRootToken", "seal service not initialized")
-	}
-	return svc.GenerateRootToken(ctx, req)
 }
 
 // Database returns the Database service (returns nil if not configured).

@@ -538,62 +538,6 @@ func TestRESTClient_Secrets(t *testing.T) {
 	})
 }
 
-// TestRESTClient_Seal tests seal operations.
-func TestRESTClient_Seal(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	// Test SealStatus
-	t.Run("SealStatus", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodGet, r.Method)
-			assert.Equal(t, "/api/v1/seal/status", r.URL.Path)
-
-			resp := service.SealStatusResponse{
-				Sealed:      false,
-				Threshold:   3,
-				TotalShares: 5,
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		client, err := NewRESTClient(server.URL, log)
-		require.NoError(t, err)
-
-		resp, err := client.SealStatus(ctx)
-
-		require.NoError(t, err)
-		assert.False(t, resp.Sealed)
-		assert.Equal(t, 3, resp.Threshold)
-	})
-
-	// Test Unseal
-	t.Run("Unseal", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "/api/v1/seal/unseal", r.URL.Path)
-
-			resp := service.UnsealResponse{
-				Sealed:         false,
-				SharesProvided: 3,
-			}
-			json.NewEncoder(w).Encode(resp)
-		}))
-		defer server.Close()
-
-		client, err := NewRESTClient(server.URL, log)
-		require.NoError(t, err)
-
-		resp, err := client.Unseal(ctx, &service.UnsealRequest{
-			Share: []byte("unseal-key-1"),
-		})
-
-		require.NoError(t, err)
-		assert.False(t, resp.Sealed)
-	})
-}
-
 // TestRESTClient_TimeSeries tests time series operations.
 func TestRESTClient_TimeSeries(t *testing.T) {
 	log := testLogger(t)
@@ -1686,43 +1630,4 @@ func TestKMSListKeysNegativeLimit(t *testing.T) {
 	resp, err := client.KMSListKeys(ctx, -1, "")
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-}
-
-// TestSealStatusServerError tests SealStatus error handling.
-func TestSealStatusServerError(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "internal error"})
-	}))
-	defer server.Close()
-
-	client, err := NewRESTClient(server.URL, log)
-	require.NoError(t, err)
-
-	resp, err := client.SealStatus(ctx)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-// TestSealServerError tests Seal error handling.
-func TestSealServerError(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "forbidden"})
-	}))
-	defer server.Close()
-
-	client, err := NewRESTClient(server.URL, log)
-	require.NoError(t, err)
-
-	err = client.Seal(ctx)
-	require.Error(t, err)
 }

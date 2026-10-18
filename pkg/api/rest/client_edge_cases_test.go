@@ -185,46 +185,6 @@ func TestSchedulerJobConversions(t *testing.T) {
 	})
 }
 
-// TestSealClientMethods tests the Seal client methods.
-func TestSealClientMethods(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	t.Run("SealStatus success", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "/api/v1/seal/status", r.URL.Path)
-			json.NewEncoder(w).Encode(service.SealStatusResponse{
-				Sealed:      false,
-				Initialized: true,
-				Mode:        "auto",
-				Threshold:   3,
-			})
-		}))
-		defer server.Close()
-
-		client, err := NewRESTClient(server.URL, log)
-		require.NoError(t, err)
-
-		resp, err := client.SealStatus(ctx)
-		require.NoError(t, err)
-		assert.False(t, resp.Sealed)
-	})
-
-	t.Run("Seal success", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "/api/v1/seal/seal", r.URL.Path)
-			w.WriteHeader(http.StatusOK)
-		}))
-		defer server.Close()
-
-		client, err := NewRESTClient(server.URL, log)
-		require.NoError(t, err)
-
-		err = client.Seal(ctx)
-		require.NoError(t, err)
-	})
-}
-
 // TestKMSDeleteDEKClient tests KMSDeleteDEK client method.
 func TestKMSDeleteDEKClient(t *testing.T) {
 	log := testLogger(t)
@@ -515,38 +475,6 @@ func TestSecretClientMethods(t *testing.T) {
 	})
 }
 
-// TestUnsealClientMethods tests the Unseal client methods.
-func TestUnsealClientMethods(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	t.Run("Unseal nil request returns error", func(t *testing.T) {
-		client, _ := NewRESTClient("http://localhost:8080", log)
-		_, err := client.Unseal(ctx, nil)
-		require.Error(t, err)
-		var qbErr *errors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-	})
-
-	t.Run("Unseal success", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "/api/v1/seal/unseal", r.URL.Path)
-			json.NewEncoder(w).Encode(service.UnsealResponse{
-				Sealed:         false,
-				SharesProvided: 3,
-				Threshold:      3,
-			})
-		}))
-		defer server.Close()
-
-		client, _ := NewRESTClient(server.URL, log)
-		resp, err := client.Unseal(ctx, &service.UnsealRequest{Share: []byte("test-share")})
-		require.NoError(t, err)
-		assert.False(t, resp.Sealed)
-	})
-}
-
 // TestClusterClientMethods tests the cluster client methods.
 func TestClusterClientMethods(t *testing.T) {
 	log := testLogger(t)
@@ -765,36 +693,6 @@ func TestKMSClearDEKSafetyClient(t *testing.T) {
 	t.Run("nil request returns error", func(t *testing.T) {
 		client, _ := NewRESTClient("http://localhost:8080", log)
 		_, err := client.KMSClearDEKSafety(ctx, nil)
-		require.Error(t, err)
-		var qbErr *errors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-	})
-}
-
-// TestSealInitClient tests SealInit client method.
-func TestSealInitClient(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		client, _ := NewRESTClient("http://localhost:8080", log)
-		_, err := client.SealInit(ctx, nil)
-		require.Error(t, err)
-		var qbErr *errors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-	})
-}
-
-// TestRekeyClient tests Rekey client method.
-func TestRekeyClient(t *testing.T) {
-	log := testLogger(t)
-	ctx := context.Background()
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		client, _ := NewRESTClient("http://localhost:8080", log)
-		_, err := client.Rekey(ctx, nil)
 		require.Error(t, err)
 		var qbErr *errors.QBError
 		require.ErrorAs(t, err, &qbErr)

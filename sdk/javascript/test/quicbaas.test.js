@@ -103,12 +103,6 @@ describe('QuicBaaS', () => {
       expect(db.auth()).toBe(auth);
     });
 
-    it('should return Seal client', () => {
-      const seal = db.seal();
-      expect(seal).toBeDefined();
-      expect(db.seal()).toBe(seal);
-    });
-
     // Cryptographic Services
     it('should return KMS client', () => {
       const kms = db.kms();
