@@ -435,11 +435,35 @@ func handleVerifyBackup(ctx context.Context, svc service.QuicBaaS, req interface
 // =============================================================================
 
 func handleLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.LoginRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Login", "*service.LoginRequest", typeNameOf(req))
+	// Accept *service.ExtendedLoginRequest, the type the auth client sends and
+	// the gRPC and REST transports take. Demanding *service.LoginRequest
+	// failed every in-process call (go-quicbaas#1544).
+	r, ok := req.(*service.ExtendedLoginRequest)
+	if !ok || r == nil {
+		return nil, NewInvalidRequestTypeError("quicbaas.Auth", "Login", "*service.ExtendedLoginRequest", typeNameOf(req))
 	}
-	return svc.Login(ctx, r)
+	// service.LoginRequest carries only the username. Refuse an MFA code or a
+	// tenant rather than drop it: forwarding without them would log in
+	// without the factor or outside the requested tenant.
+	if r.MFACode != "" || r.TenantID != "" {
+		return nil, errors.NewInvalidInput("embedded.quicbaas.Auth.Login",
+			"mfa code and tenant id are not supported by the service login")
+	}
+	resp, err := svc.Login(ctx, &service.LoginRequest{Username: r.Username})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		// Nothing to convert; the auth client reports a nil response.
+		return nil, nil
+	}
+	// Answer with the *service.ExtendedLoginResponse the auth client asserts.
+	// ExpiresAt is Unix seconds.
+	return &service.ExtendedLoginResponse{
+		AccessToken:  resp.AccessToken,
+		RefreshToken: resp.RefreshToken,
+		ExpiresAt:    time.Unix(resp.ExpiresAt, 0),
+	}, nil
 }
 
 func handleLogout(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
