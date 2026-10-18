@@ -26,30 +26,60 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
 
+// appAuthMethodState is the fake server's record of one app's
+// token_endpoint_auth_method. The handler goroutine writes it and the test
+// reads it, so every access goes through mu.
+type appAuthMethodState struct {
+	mu      sync.Mutex
+	method  string
+	present []bool
+}
+
+// record notes whether a write body carried the method, applies it when it
+// did, and returns the method the reply carries.
+func (s *appAuthMethodState) record(method string, ok bool) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.present = append(s.present, ok)
+	if ok {
+		s.method = method
+	}
+	return s.method
+}
+
+// current returns the stored method.
+func (s *appAuthMethodState) current() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.method
+}
+
+// snapshot returns the stored method and a copy of the presence record.
+func (s *appAuthMethodState) snapshot() (string, []bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.method, append([]bool(nil), s.present...)
+}
+
 // appAuthMethodServer holds one app's token_endpoint_auth_method behind the
 // app routes: a write applies the key when the body carries it, every reply
-// returns it. present records whether each write body carried the key.
-func appAuthMethodServer(t *testing.T, method *string, present *[]bool) http.Handler {
+// returns it. state.present records whether each write body carried the key.
+func appAuthMethodServer(t *testing.T, state *appAuthMethodState) http.Handler {
 	t.Helper()
-	var mu sync.Mutex
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
+		method := state.current()
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
 			var body map[string]interface{}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("decode body: %v", err)
 			}
 			got, ok := body["token_endpoint_auth_method"].(string)
-			*present = append(*present, ok)
-			if ok {
-				*method = got
-			}
+			method = state.record(got, ok)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
 			"client_id":                  "c1",
-			"token_endpoint_auth_method": *method,
+			"token_endpoint_auth_method": method,
 		}); err != nil {
 			t.Errorf("encode reply: %v", err)
 		}
@@ -61,9 +91,8 @@ func appAuthMethodServer(t *testing.T, method *string, present *[]bool) http.Han
 // reads back as client_secret_basic, and an update that omits the method
 // leaves it unchanged (#1473).
 func TestAppUpdateToClientSecretBasicOverHTTP3(t *testing.T) {
-	method := "client_secret_post"
-	var present []bool
-	addr, shutdown := startTestHTTP3Server(t, appAuthMethodServer(t, &method, &present))
+	state := &appAuthMethodState{method: "client_secret_post"}
+	addr, shutdown := startTestHTTP3Server(t, appAuthMethodServer(t, state))
 	defer shutdown()
 
 	tr, err := New(testTransportConfig(t, addr))
@@ -81,15 +110,15 @@ func TestAppUpdateToClientSecretBasicOverHTTP3(t *testing.T) {
 	app, err := apps.Get(ctx, "t1", "c1")
 	require.NoError(t, err)
 	assert.Equal(t, iam.TokenEndpointAuthClientSecretBasic, app.TokenEndpointAuthMethod)
+	_, present := state.snapshot()
 	assert.Equal(t, []bool{true, false}, present, "method key present per update")
 }
 
 // TestAppRegisterClientSecretPostOverHTTP3 proves Register sends
 // client_secret_post over QUIC and Get reads it back (#1473).
 func TestAppRegisterClientSecretPostOverHTTP3(t *testing.T) {
-	var method string
-	var present []bool
-	addr, shutdown := startTestHTTP3Server(t, appAuthMethodServer(t, &method, &present))
+	state := &appAuthMethodState{}
+	addr, shutdown := startTestHTTP3Server(t, appAuthMethodServer(t, state))
 	defer shutdown()
 
 	tr, err := New(testTransportConfig(t, addr))
@@ -105,6 +134,7 @@ func TestAppRegisterClientSecretPostOverHTTP3(t *testing.T) {
 		TokenEndpointAuthMethod: iam.TokenEndpointAuthClientSecretPost,
 	})
 	require.NoError(t, err)
+	method, present := state.snapshot()
 	assert.Equal(t, []bool{true}, present, "register body carries the method")
 	assert.Equal(t, "client_secret_post", method)
 
