@@ -123,6 +123,11 @@ type mockQuicBaaS struct {
 	timeSeriesQueryFunc   func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
 	validateTokenFunc     func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
 	introspectTokenFunc   func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
+	createAuthRoleFunc    func(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error)
+	deleteAuthRoleFunc    func(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error)
+	listAuthRolesFunc     func(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error)
+	assignRoleFunc        func(ctx context.Context, req *service.AuthAssignRoleRequest) (*service.AuthAssignRoleResponse, error)
+	revokeRoleFunc        func(ctx context.Context, req *service.AuthRevokeRoleRequest) (*service.AuthRevokeRoleResponse, error)
 	kmsService            service.KMSService
 	secretsService        service.SecretsService
 	parameterStoreService service.ParameterStoreService
@@ -312,22 +317,37 @@ func (m *mockQuicBaaS) IntrospectToken(ctx context.Context, req *service.Introsp
 // RBAC operations
 
 func (m *mockQuicBaaS) CreateAuthRole(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error) {
+	if m.createAuthRoleFunc != nil {
+		return m.createAuthRoleFunc(ctx, req)
+	}
 	return &service.AuthCreateRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) DeleteAuthRole(ctx context.Context, req *service.AuthDeleteRoleRequest) (*service.AuthDeleteRoleResponse, error) {
+	if m.deleteAuthRoleFunc != nil {
+		return m.deleteAuthRoleFunc(ctx, req)
+	}
 	return &service.AuthDeleteRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) ListAuthRoles(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error) {
+	if m.listAuthRolesFunc != nil {
+		return m.listAuthRolesFunc(ctx, req)
+	}
 	return &service.AuthListRolesResponse{}, nil
 }
 
 func (m *mockQuicBaaS) AssignRole(ctx context.Context, req *service.AuthAssignRoleRequest) (*service.AuthAssignRoleResponse, error) {
+	if m.assignRoleFunc != nil {
+		return m.assignRoleFunc(ctx, req)
+	}
 	return &service.AuthAssignRoleResponse{}, nil
 }
 
 func (m *mockQuicBaaS) RevokeRole(ctx context.Context, req *service.AuthRevokeRoleRequest) (*service.AuthRevokeRoleResponse, error) {
+	if m.revokeRoleFunc != nil {
+		return m.revokeRoleFunc(ctx, req)
+	}
 	return &service.AuthRevokeRoleResponse{}, nil
 }
 

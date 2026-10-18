@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -339,44 +340,96 @@ func handleIntrospectToken(ctx context.Context, svc service.QuicBaaS, req interf
 // RBAC Handlers
 // =============================================================================
 
+// The rbac SDK client sends its own request types and reads its own response
+// types, exactly as the REST and gRPC transports accept and return them. Each
+// role handler maps the client's request onto the service request and the
+// service's answer back; roles and decisions stay go-qrdb's.
+
 func handleCreateAuthRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthCreateRoleRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "CreateRole", "*service.AuthCreateRoleRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *rbac.CreateRoleRequest:
+		resp, err := svc.CreateAuthRole(ctx, &service.AuthCreateRoleRequest{RoleName: r.RoleName, Permissions: r.Permissions})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &rbac.CreateRoleResponse{RoleID: resp.RoleID, Timestamp: resp.Timestamp}, nil
+	case *service.AuthCreateRoleRequest:
+		return svc.CreateAuthRole(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "CreateRole", "*rbac.CreateRoleRequest", typeNameOf(req))
 	}
-	return svc.CreateAuthRole(ctx, r)
 }
 
 func handleDeleteAuthRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthDeleteRoleRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "DeleteRole", "*service.AuthDeleteRoleRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *rbac.DeleteRoleRequest:
+		resp, err := svc.DeleteAuthRole(ctx, &service.AuthDeleteRoleRequest{RoleName: r.RoleName})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &rbac.DeleteRoleResponse{Success: resp.Success, Message: resp.Message}, nil
+	case *service.AuthDeleteRoleRequest:
+		return svc.DeleteAuthRole(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "DeleteRole", "*rbac.DeleteRoleRequest", typeNameOf(req))
 	}
-	return svc.DeleteAuthRole(ctx, r)
 }
 
 func handleListAuthRoles(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthListRolesRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "ListRoles", "*service.AuthListRolesRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *rbac.ListRolesRequest:
+		resp, err := svc.ListAuthRoles(ctx, &service.AuthListRolesRequest{Limit: r.Limit, Offset: r.Offset})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		roles := make([]*rbac.RoleInfo, 0, len(resp.Roles))
+		for _, role := range resp.Roles {
+			if role == nil {
+				continue
+			}
+			roles = append(roles, &rbac.RoleInfo{
+				RoleID:      role.RoleID,
+				RoleName:    role.RoleName,
+				Permissions: role.Permissions,
+				CreatedAt:   role.CreatedAt,
+			})
+		}
+		return &rbac.ListRolesResponse{Roles: roles, TotalCount: resp.TotalCount}, nil
+	case *service.AuthListRolesRequest:
+		return svc.ListAuthRoles(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "ListRoles", "*rbac.ListRolesRequest", typeNameOf(req))
 	}
-	return svc.ListAuthRoles(ctx, r)
 }
 
 func handleAssignRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthAssignRoleRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "AssignRole", "*service.AuthAssignRoleRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *rbac.AssignRoleRequest:
+		resp, err := svc.AssignRole(ctx, &service.AuthAssignRoleRequest{Username: r.Username, RoleName: r.RoleName})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &rbac.AssignRoleResponse{Success: resp.Success, Message: resp.Message}, nil
+	case *service.AuthAssignRoleRequest:
+		return svc.AssignRole(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "AssignRole", "*rbac.AssignRoleRequest", typeNameOf(req))
 	}
-	return svc.AssignRole(ctx, r)
 }
 
 func handleRevokeRole(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.AuthRevokeRoleRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "RevokeRole", "*service.AuthRevokeRoleRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *rbac.RevokeRoleRequest:
+		resp, err := svc.RevokeRole(ctx, &service.AuthRevokeRoleRequest{Username: r.Username, RoleName: r.RoleName})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &rbac.RevokeRoleResponse{Success: resp.Success, Message: resp.Message}, nil
+	case *service.AuthRevokeRoleRequest:
+		return svc.RevokeRole(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.RBAC", "RevokeRole", "*rbac.RevokeRoleRequest", typeNameOf(req))
 	}
-	return svc.RevokeRole(ctx, r)
 }
 
 // =============================================================================
