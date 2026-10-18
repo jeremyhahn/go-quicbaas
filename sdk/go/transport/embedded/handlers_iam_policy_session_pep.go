@@ -87,7 +87,8 @@ func handleIAMPolicySimulate(ctx context.Context, svc service.QuicBaaS, req inte
 }
 
 // handleIAMPEPCheckBatch evaluates every check of the batch through the
-// policy engine, in request order. Each check acts in the tenant the call is
+// policy engine, in request order, stopping after the first denial when the
+// batch sets StopOnDeny. Each check acts in the tenant the call is
 // bound to; a check naming another tenant refuses the whole batch before
 // any check is evaluated.
 func handleIAMPEPCheckBatch(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -151,6 +152,9 @@ func handleIAMPEPCheckBatch(ctx context.Context, svc service.QuicBaaS, req inter
 		}
 		resp.TotalEvaluationTimeNs += decision.EvaluationTimeNs
 		resp.Results = append(resp.Results, result)
+		if batch.StopOnDeny && !decision.Allowed {
+			break
+		}
 	}
 	return resp, nil
 }

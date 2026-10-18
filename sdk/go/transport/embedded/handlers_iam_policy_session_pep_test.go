@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,6 +24,7 @@ import (
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -129,6 +131,73 @@ func TestHandleIAMPEPCheckBatch_TypedNilRequest(t *testing.T) {
 	_, err := handleIAMPEPCheckBatch(tenantCtx(policyConditionsTenant), svc, envelope)
 	var typeErr *InvalidRequestTypeError
 	require.ErrorAs(t, err, &typeErr)
+}
+
+// resourceDeniedError is the refusal countingAuthorizer returns for its
+// denied resource.
+type resourceDeniedError struct {
+	Resource string
+}
+
+func (e *resourceDeniedError) Error() string {
+	return "access denied to " + e.Resource
+}
+
+// countingAuthorizer counts every Authorize call and refuses one resource.
+type countingAuthorizer struct {
+	deny  string
+	calls atomic.Int32
+}
+
+func (a *countingAuthorizer) Authorize(_ context.Context, _ *iam.Subject, resource, _ string) error {
+	a.calls.Add(1)
+	if resource == a.deny {
+		return &resourceDeniedError{Resource: resource}
+	}
+	return nil
+}
+
+func checkBatchAllowDenyAllow(t *testing.T, stopOnDeny bool) (*iamsdk.CheckBatchResponse, *countingAuthorizer) {
+	t.Helper()
+	authz := &countingAuthorizer{deny: "doc/2"}
+	svc := newAuthorizedAdminTestService(t)
+	svc.policy = iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:        iam.NewMemoryStorage(),
+		RBACAuthorizer: authz,
+	})
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, svc))
+
+	resp, err := client.CheckBatch(tenantCtx(policyConditionsTenant), &iamsdk.CheckBatchRequest{
+		Requests: []iamsdk.CheckRequest{
+			{Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1"},
+			{Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/2"},
+			{Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/3"},
+		},
+		StopOnDeny: stopOnDeny,
+	})
+	require.NoError(t, err)
+	return resp, authz
+}
+
+func TestEmbeddedPEPCheckBatch_StopOnDenyStopsAtFirstDenial(t *testing.T) {
+	resp, authz := checkBatchAllowDenyAllow(t, true)
+
+	require.Len(t, resp.Results, 2)
+	assert.Equal(t, int32(2), authz.calls.Load())
+	assert.Equal(t, 1, resp.DeniedCount)
+	assert.Equal(t, 1, resp.AllowedCount)
+	assert.False(t, resp.AllAllowed)
+	assert.False(t, resp.Results[1].Allowed)
+}
+
+func TestEmbeddedPEPCheckBatch_WithoutStopOnDenyEvaluatesEveryCheck(t *testing.T) {
+	resp, authz := checkBatchAllowDenyAllow(t, false)
+
+	require.Len(t, resp.Results, 3)
+	assert.Equal(t, int32(3), authz.calls.Load())
+	assert.Equal(t, 1, resp.DeniedCount)
+	assert.Equal(t, 2, resp.AllowedCount)
+	assert.False(t, resp.AllAllowed)
 }
 
 func TestIAMPolicySessionPEPDispatchKeysRegistered(t *testing.T) {
