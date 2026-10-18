@@ -16,6 +16,7 @@
 package helpers
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -153,13 +154,42 @@ func TestDefaultDataGeneratorOptions(t *testing.T) {
 
 // TestClusterBuilderDefaults verifies cluster builder defaults.
 func TestClusterBuilderDefaults(t *testing.T) {
+	setClusterEnv(t, [3]string{}, [3]string{})
+
 	builder := NewClusterBuilder()
 
 	assert.NotNil(t, builder)
 	assert.Len(t, builder.endpoints, 3, "Should have 3 default endpoints")
-	assert.Equal(t, "test-node1:50051", builder.endpoints[0])
-	assert.Equal(t, "test-node2:50051", builder.endpoints[1])
-	assert.Equal(t, "test-node3:50051", builder.endpoints[2])
+	assert.Equal(t, []string{"localhost:50051", "localhost:50052", "localhost:50053"}, builder.endpoints)
+}
+
+// setClusterEnv pins the six variables GetClusterEndpoints reads, so a test
+// does not depend on the environment it runs in.
+func setClusterEnv(t *testing.T, grpc, plain [3]string) {
+	t.Helper()
+	for i := range 3 {
+		t.Setenv(fmt.Sprintf("QUICBAAS_NODE%d_GRPC", i+1), grpc[i])
+		t.Setenv(fmt.Sprintf("QUICBAAS_NODE%d", i+1), plain[i])
+	}
+}
+
+func TestClusterBuilderGRPCEnv(t *testing.T) {
+	grpc := [3]string{"grpc-node1:50051", "grpc-node2:50051", "grpc-node3:50051"}
+	plain := [3]string{"plain-node1:50051", "plain-node2:50051", "plain-node3:50051"}
+	setClusterEnv(t, grpc, plain)
+
+	builder := NewClusterBuilder()
+
+	assert.Equal(t, grpc[:], builder.endpoints, "gRPC-specific variables take precedence")
+}
+
+func TestClusterBuilderPlainEnvFallback(t *testing.T) {
+	plain := [3]string{"plain-node1:50051", "plain-node2:50051", "plain-node3:50051"}
+	setClusterEnv(t, [3]string{}, plain)
+
+	builder := NewClusterBuilder()
+
+	assert.Equal(t, plain[:], builder.endpoints, "QUICBAAS_NODE{n} is the fallback when the gRPC variable is empty")
 }
 
 // TestClusterBuilderFluent verifies fluent API.
