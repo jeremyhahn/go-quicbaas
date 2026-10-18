@@ -102,28 +102,29 @@ func requireStreamInvalidRequestType(t *testing.T, s recvStream) {
 // =============================================================================
 
 type mockQuicBaaS struct {
-	addNodeFunc          func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
-	putFunc              func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
-	getFunc              func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
-	deleteFunc           func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
-	listFunc             func(ctx context.Context, req *service.ListRequest, stream chan<- *service.ListResponse) error
-	watchFunc            func(ctx context.Context, req *service.WatchRequest, stream chan<- *service.WatchResponse) (int64, error)
-	listEntityTypesFunc  func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error)
-	batchPutFunc         func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
-	batchGetFunc         func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
-	batchDeleteFunc      func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
-	transactionFunc      func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
-	healthFunc           func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error)
-	livenessFunc         func(ctx context.Context, req *service.LivenessRequest) (*service.LivenessResponse, error)
-	readinessFunc        func(ctx context.Context, req *service.ReadinessRequest) (*service.ReadinessResponse, error)
-	queryFunc            func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error
-	scanIndexFunc        func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
-	timeSeriesQueryFunc  func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
-	validateTokenFunc    func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
-	introspectTokenFunc  func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
-	kmsService           service.KMSService
-	secretsService       service.SecretsService
-	objectStorageService service.ObjectStorageService
+	addNodeFunc           func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
+	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
+	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
+	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
+	listFunc              func(ctx context.Context, req *service.ListRequest, stream chan<- *service.ListResponse) error
+	watchFunc             func(ctx context.Context, req *service.WatchRequest, stream chan<- *service.WatchResponse) (int64, error)
+	listEntityTypesFunc   func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error)
+	batchPutFunc          func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
+	batchGetFunc          func(ctx context.Context, req *service.BatchGetRequest) (*service.BatchGetResponse, error)
+	batchDeleteFunc       func(ctx context.Context, req *service.BatchDeleteRequest) (*service.BatchDeleteResponse, error)
+	transactionFunc       func(ctx context.Context, req *service.TransactionRequest) (*service.TransactionResponse, error)
+	healthFunc            func(ctx context.Context, req *service.HealthRequest) (*service.HealthResponse, error)
+	livenessFunc          func(ctx context.Context, req *service.LivenessRequest) (*service.LivenessResponse, error)
+	readinessFunc         func(ctx context.Context, req *service.ReadinessRequest) (*service.ReadinessResponse, error)
+	queryFunc             func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error
+	scanIndexFunc         func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
+	timeSeriesQueryFunc   func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
+	validateTokenFunc     func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
+	introspectTokenFunc   func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
+	kmsService            service.KMSService
+	secretsService        service.SecretsService
+	parameterStoreService service.ParameterStoreService
+	objectStorageService  service.ObjectStorageService
 }
 
 // KV operations
@@ -486,34 +487,36 @@ func (m *mockQuicBaaS) ObjectStorageService() service.ObjectStorageService {
 	return m.objectStorageService
 }
 func (m *mockQuicBaaS) ObjectStorageAdminService() service.ObjectStorageAdminService { return nil }
-func (m *mockQuicBaaS) ParameterStoreService() service.ParameterStoreService         { return nil }
-func (m *mockQuicBaaS) ObjectTransferService() service.ObjectTransferService         { return nil }
-func (m *mockQuicBaaS) Scheduler() service.SchedulerService                          { return nil }
-func (m *mockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine                  { return nil }
-func (m *mockQuicBaaS) Agent() orchestration.AgentService                            { return nil }
-func (m *mockQuicBaaS) SSHClient() xkmsssh.Client                                    { return nil }
-func (m *mockQuicBaaS) SetIAMProvider(provider service.IAMComponents)                {}
-func (m *mockQuicBaaS) Messaging() messaging.Service                                 { return nil }
-func (m *mockQuicBaaS) SetMessagingService(ms messaging.Service)                     {}
-func (m *mockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsService)   {}
-func (m *mockQuicBaaS) SetAgentService(agent orchestration.AgentService)             {}
-func (m *mockQuicBaaS) SDLC() *service.SDLCService                                   { return nil }
-func (m *mockQuicBaaS) SetSDLCService(*service.SDLCService)                          {}
-func (m *mockQuicBaaS) Prompts() *service.PromptService                              { return nil }
-func (m *mockQuicBaaS) SetPromptService(*service.PromptService)                      {}
-func (m *mockQuicBaaS) SetProjectBindingReader(sdlc.BindingReader)                   {}
-func (m *mockQuicBaaS) WatchManager() *watch.Manager                                 { return nil }
-func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)            {}
-func (m *mockQuicBaaS) Database() service.DatabaseService                            { return nil }
-func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)                {}
-func (m *mockQuicBaaS) FleetAdmin() service.FleetAdminService                        { return nil }
-func (m *mockQuicBaaS) Project() service.ProjectService                              { return nil }
-func (m *mockQuicBaaS) Account() service.AccountService                              { return nil }
-func (m *mockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry                 { return nil }
-func (m *mockQuicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry)           {}
-func (m *mockQuicBaaS) Close() error                                                 { return nil }
-func (m *mockQuicBaaS) LoginCeremony() service.LoginServicer                         { return nil }
-func (m *mockQuicBaaS) SetLoginService(svc service.LoginServicer)                    {}
+func (m *mockQuicBaaS) ParameterStoreService() service.ParameterStoreService {
+	return m.parameterStoreService
+}
+func (m *mockQuicBaaS) ObjectTransferService() service.ObjectTransferService       { return nil }
+func (m *mockQuicBaaS) Scheduler() service.SchedulerService                        { return nil }
+func (m *mockQuicBaaS) SchedulerEngine() *scheduler.SchedulerEngine                { return nil }
+func (m *mockQuicBaaS) Agent() orchestration.AgentService                          { return nil }
+func (m *mockQuicBaaS) SSHClient() xkmsssh.Client                                  { return nil }
+func (m *mockQuicBaaS) SetIAMProvider(provider service.IAMComponents)              {}
+func (m *mockQuicBaaS) Messaging() messaging.Service                               { return nil }
+func (m *mockQuicBaaS) SetMessagingService(ms messaging.Service)                   {}
+func (m *mockQuicBaaS) SetDynamicSecretsService(svc service.DynamicSecretsService) {}
+func (m *mockQuicBaaS) SetAgentService(agent orchestration.AgentService)           {}
+func (m *mockQuicBaaS) SDLC() *service.SDLCService                                 { return nil }
+func (m *mockQuicBaaS) SetSDLCService(*service.SDLCService)                        {}
+func (m *mockQuicBaaS) Prompts() *service.PromptService                            { return nil }
+func (m *mockQuicBaaS) SetPromptService(*service.PromptService)                    {}
+func (m *mockQuicBaaS) SetProjectBindingReader(sdlc.BindingReader)                 {}
+func (m *mockQuicBaaS) WatchManager() *watch.Manager                               { return nil }
+func (m *mockQuicBaaS) SetQRDBClient(provider service.QRDBClientProvider)          {}
+func (m *mockQuicBaaS) Database() service.DatabaseService                          { return nil }
+func (m *mockQuicBaaS) SetDatabaseService(ds service.DatabaseService)              {}
+func (m *mockQuicBaaS) FleetAdmin() service.FleetAdminService                      { return nil }
+func (m *mockQuicBaaS) Project() service.ProjectService                            { return nil }
+func (m *mockQuicBaaS) Account() service.AccountService                            { return nil }
+func (m *mockQuicBaaS) SecretRegistry() *qrdbsecret.ResolverRegistry               { return nil }
+func (m *mockQuicBaaS) SetSecretRegistry(reg *qrdbsecret.ResolverRegistry)         {}
+func (m *mockQuicBaaS) Close() error                                               { return nil }
+func (m *mockQuicBaaS) LoginCeremony() service.LoginServicer                       { return nil }
+func (m *mockQuicBaaS) SetLoginService(svc service.LoginServicer)                  {}
 
 // =============================================================================
 // Mock KMS Service

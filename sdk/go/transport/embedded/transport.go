@@ -113,6 +113,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Secrets/ListVersions":      handleSecretsListVersions,
 	"quicbaas.Secrets/Rollback":          handleSecretsRollback,
 
+	// ParameterStore
+	"quicbaas.ParameterStore/GetParameter":     handleParameterStoreGetParameter,
+	"quicbaas.ParameterStore/SetParameter":     handleParameterStoreSetParameter,
+	"quicbaas.ParameterStore/DeleteParameter":  handleParameterStoreDeleteParameter,
+	"quicbaas.ParameterStore/GetParameters":    handleParameterStoreGetParameters,
+	"quicbaas.ParameterStore/SetParameters":    handleParameterStoreSetParameters,
+	"quicbaas.ParameterStore/DeleteParameters": handleParameterStoreDeleteParameters,
+	"quicbaas.ParameterStore/ListParameters":   handleParameterStoreListParameters,
+	"quicbaas.ParameterStore/SearchByTags":     handleParameterStoreSearchByTags,
+
 	// TimeSeries operations
 	"quicbaas.TimeSeries/Aggregate":          handleAggregate,
 	"quicbaas.TimeSeries/WritePoint":         handleWritePoint,
