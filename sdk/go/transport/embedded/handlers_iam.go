@@ -1255,19 +1255,56 @@ func handleIAMAppRotateSecret(ctx context.Context, svc service.QuicBaaS, req int
 // PEP handlers (quicbaas.IAM.PEP/*)
 // =============================================================================
 
-// handleIAMPEPCheck delegates to the PEP service when configured. The PEP
-// surface in the embedded build is intentionally minimal — production
-// authorisation goes via the gRPC PEP path; embedded callers receive a
-// "not configured" error when the PEP isn't wired so they can degrade.
+// handleIAMPEPCheck evaluates one PEP check through the policy engine, whose
+// decision is the composed qrdb authorizer's. It accepts the PEP client's
+// request envelope (Request *iam.CheckRequest), as the gRPC, REST and MCP
+// transports do, and scopes the check to the caller's tenant.
 func handleIAMPEPCheck(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	_, ok := req.(*pepsdk.CheckRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.IAM.PEP", "Check",
+	pe, err := policyEngineFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	sdkReq, ok := iamRequestStructPtr(req, "Request").(*pepsdk.CheckRequest)
+	if !ok || sdkReq == nil {
+		return nil, NewInvalidRequestTypeError(pepServiceName, "Check",
 			"*iam.CheckRequest", typeNameOf(req))
 	}
-	// PEP enforcement requires a fully wired policy engine; embedded path
-	// surfaces a "not configured" envelope rather than silently allowing.
-	return nil, NewServiceNotConfiguredError("IAM.PEP")
+	requested := sdkReq.TenantID
+	if requested == "" {
+		requested = sdkReq.Subject.TenantID
+	}
+	tenantID, err := tenantctx.Target(ctx, pepServiceName+"/Check", requested)
+	if err != nil {
+		return nil, err
+	}
+
+	decision, err := pe.Evaluate(ctx, &iam.CheckRequest{
+		Subject: iam.Subject{
+			ID:         sdkReq.Subject.ID,
+			TenantID:   tenantID,
+			Roles:      sdkReq.Subject.Roles,
+			Groups:     sdkReq.Subject.Groups,
+			Attributes: sdkReq.Subject.Attributes,
+		},
+		Action:   sdkReq.Action,
+		Resource: sdkReq.Resource,
+		Context:  sdkReq.Context,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp := &pepsdk.CheckResponse{
+		Allowed:          decision.Allowed,
+		Effect:           pepsdk.EffectDeny,
+		MatchedPolicy:    decision.MatchedPolicy,
+		MatchedRule:      decision.MatchedRule,
+		EvaluationTimeNs: decision.EvaluationTimeNs,
+		Reason:           decision.Reason,
+	}
+	if decision.Allowed {
+		resp.Effect = pepsdk.EffectAllow
+	}
+	return resp, nil
 }
 
 // =============================================================================
