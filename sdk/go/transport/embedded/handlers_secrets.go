@@ -371,18 +371,86 @@ func handleSecretsGetRotationPolicy(ctx context.Context, svc service.QuicBaaS, r
 	if r, ok := req.(*service.GetRotationPolicyRequest); ok {
 		return secretsSvc.GetRotationPolicy(ctx, r)
 	}
+	secretID, ok := secretIDFromRequest(req)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetRotationPolicy", "struct{SecretID string}", typeNameOf(req))
+	}
+	return secretsSvc.GetRotationPolicy(ctx, &service.GetRotationPolicyRequest{SecretID: secretID})
+}
+
+// secretIDFromRequest reads the SecretID string field of a struct (or pointer
+// to struct) request. The SDK secrets client sends unexported request types
+// for verbs that take only a secret ID, so the field is read by reflection.
+func secretIDFromRequest(req interface{}) (string, bool) {
 	reqVal := reflect.ValueOf(req)
 	if reqVal.Kind() == reflect.Ptr {
 		reqVal = reqVal.Elem()
 	}
 	if reqVal.Kind() != reflect.Struct {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetRotationPolicy", "struct{SecretID string}", typeNameOf(req))
+		return "", false
 	}
 	idField := reqVal.FieldByName("SecretID")
 	if !idField.IsValid() || idField.Kind() != reflect.String {
-		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetRotationPolicy", "struct{SecretID string}", typeNameOf(req))
+		return "", false
 	}
-	return secretsSvc.GetRotationPolicy(ctx, &service.GetRotationPolicyRequest{SecretID: idField.String()})
+	return idField.String(), true
+}
+
+func handleSecretsGetVersion(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.GetSecretVersionRequest); ok {
+		return secretsSvc.GetSecretVersion(ctx, r)
+	}
+	sdkReq, ok := req.(*secrets.GetSecretVersionRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetVersion", "*service.GetSecretVersionRequest or *secrets.GetSecretVersionRequest", typeNameOf(req))
+	}
+	if sdkReq.Version <= 0 {
+		return nil, errors.NewInvalidInput("embedded.secrets.GetVersion", "version must be positive")
+	}
+	return secretsSvc.GetSecretVersion(ctx, &service.GetSecretVersionRequest{
+		SecretID: sdkReq.SecretID,
+		Version:  uint64(sdkReq.Version),
+	})
+}
+
+func handleSecretsListVersions(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.ListSecretVersionsRequest); ok {
+		return secretsSvc.ListSecretVersions(ctx, r)
+	}
+	secretID, ok := secretIDFromRequest(req)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "ListVersions", "struct{SecretID string}", typeNameOf(req))
+	}
+	return secretsSvc.ListSecretVersions(ctx, &service.ListSecretVersionsRequest{SecretID: secretID})
+}
+
+func handleSecretsRollback(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.RollbackSecretRequest); ok {
+		return secretsSvc.RollbackSecret(ctx, r)
+	}
+	sdkReq, ok := req.(*secrets.RollbackSecretRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Rollback", "*service.RollbackSecretRequest or *secrets.RollbackSecretRequest", typeNameOf(req))
+	}
+	if sdkReq.TargetVersion <= 0 {
+		return nil, errors.NewInvalidInput("embedded.secrets.Rollback", "target version must be positive")
+	}
+	return secretsSvc.RollbackSecret(ctx, &service.RollbackSecretRequest{
+		SecretID:      sdkReq.SecretID,
+		TargetVersion: uint64(sdkReq.TargetVersion),
+	})
 }
 
 // =============================================================================

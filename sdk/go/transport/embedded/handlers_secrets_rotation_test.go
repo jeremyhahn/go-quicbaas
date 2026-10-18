@@ -189,6 +189,18 @@ func TestEmbeddedSecrets_RotationVerbs_ServiceNotConfigured(t *testing.T) {
 			_, err := client.GetRotationPolicy(ctx, "s")
 			return err
 		},
+		"GetVersion": func() error {
+			_, err := client.GetVersion(ctx, &secrets.GetSecretVersionRequest{SecretID: "s", Version: 1})
+			return err
+		},
+		"ListVersions": func() error {
+			_, err := client.ListVersions(ctx, "s")
+			return err
+		},
+		"Rollback": func() error {
+			_, err := client.Rollback(ctx, &secrets.RollbackSecretRequest{SecretID: "s", TargetVersion: 1})
+			return err
+		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
@@ -202,7 +214,7 @@ func TestEmbeddedSecrets_RotationVerbs_InvalidRequestType(t *testing.T) {
 	tr, err := New(&mockQuicBaaS{secretsService: &mockSecretsService{}})
 	require.NoError(t, err)
 
-	for _, method := range []string{"Rotate", "UpdateStatus", "SetRotationPolicy", "GetRotationPolicy"} {
+	for _, method := range []string{"Rotate", "UpdateStatus", "SetRotationPolicy", "GetRotationPolicy", "GetVersion", "ListVersions", "Rollback"} {
 		t.Run(method, func(t *testing.T) {
 			resp, reqErr := tr.Request(context.Background(), "quicbaas.Secrets", method, "not-a-request")
 			assert.Nil(t, resp)
@@ -210,15 +222,6 @@ func TestEmbeddedSecrets_RotationVerbs_InvalidRequestType(t *testing.T) {
 			assert.ErrorAs(t, reqErr, &invalid)
 		})
 	}
-}
-
-// secretsNotYetRouted lists secrets.Client methods with no embedded route.
-// Remove an entry when its route lands; the test below fails if one is routed
-// while still listed.
-var secretsNotYetRouted = map[string]bool{
-	"GetVersion":   true,
-	"ListVersions": true,
-	"Rollback":     true,
 }
 
 // secretsWireMethod maps a secrets.Client method to the wire method it sends,
@@ -237,11 +240,7 @@ func TestEmbeddedSecrets_CoversClient(t *testing.T) {
 		if !renamed {
 			wire = method
 		}
-		_, routed := unaryHandlers["quicbaas.Secrets/"+wire]
-		switch {
-		case secretsNotYetRouted[method] && routed:
-			t.Errorf("secrets.Client.%s is routed: remove it from secretsNotYetRouted", method)
-		case !secretsNotYetRouted[method] && !routed:
+		if _, routed := unaryHandlers["quicbaas.Secrets/"+wire]; !routed {
 			t.Errorf("secrets.Client.%s has no embedded handler", method)
 		}
 	}

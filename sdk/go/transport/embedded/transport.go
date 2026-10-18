@@ -109,6 +109,9 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Secrets/UpdateStatus":      handleSecretsUpdateStatus,
 	"quicbaas.Secrets/SetRotationPolicy": handleSecretsSetRotationPolicy,
 	"quicbaas.Secrets/GetRotationPolicy": handleSecretsGetRotationPolicy,
+	"quicbaas.Secrets/GetVersion":        handleSecretsGetVersion,
+	"quicbaas.Secrets/ListVersions":      handleSecretsListVersions,
+	"quicbaas.Secrets/Rollback":          handleSecretsRollback,
 
 	// TimeSeries operations
 	"quicbaas.TimeSeries/Aggregate":          handleAggregate,

@@ -40,6 +40,10 @@ type mockSecretsService struct {
 	updateStatusFunc func(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error)
 	setPolicyFunc    func(ctx context.Context, req *service.SetRotationPolicyRequest) (*service.SetRotationPolicyResponse, error)
 	getPolicyFunc    func(ctx context.Context, req *service.GetRotationPolicyRequest) (*service.GetRotationPolicyResponse, error)
+
+	getVersionFunc   func(ctx context.Context, req *service.GetSecretVersionRequest) (*service.GetSecretVersionResponse, error)
+	listVersionsFunc func(ctx context.Context, req *service.ListSecretVersionsRequest) (*service.ListSecretVersionsResponse, error)
+	rollbackFunc     func(ctx context.Context, req *service.RollbackSecretRequest) (*service.RollbackSecretResponse, error)
 }
 
 func (m *mockSecretsService) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
@@ -106,14 +110,23 @@ func (m *mockSecretsService) DeleteSecret(ctx context.Context, req *service.Dele
 }
 
 func (m *mockSecretsService) GetSecretVersion(ctx context.Context, req *service.GetSecretVersionRequest) (*service.GetSecretVersionResponse, error) {
+	if m.getVersionFunc != nil {
+		return m.getVersionFunc(ctx, req)
+	}
 	return &service.GetSecretVersionResponse{}, nil
 }
 
 func (m *mockSecretsService) ListSecretVersions(ctx context.Context, req *service.ListSecretVersionsRequest) (*service.ListSecretVersionsResponse, error) {
+	if m.listVersionsFunc != nil {
+		return m.listVersionsFunc(ctx, req)
+	}
 	return &service.ListSecretVersionsResponse{}, nil
 }
 
 func (m *mockSecretsService) RollbackSecret(ctx context.Context, req *service.RollbackSecretRequest) (*service.RollbackSecretResponse, error) {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx, req)
+	}
 	return &service.RollbackSecretResponse{}, nil
 }
 
