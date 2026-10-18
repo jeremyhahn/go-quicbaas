@@ -7,9 +7,1441 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0-alpha] - 2026-10-18
+
 ### Fixed
 
 - **A refresh request can no longer widen scope beyond the original grant (go-quicbaas#1436).**
+
+### Added
+
+- **An MCP interop leg driven by an independent client (go-quicbaas#203).**
+  `pkg/api/mcp/interop_official_client_test.go` serves the module tool
+  surface over streamable HTTP on a loopback listener and drives it with the
+  official MCP Go SDK (`github.com/modelcontextprotocol/go-sdk`, test-only).
+  It asserts the initialize handshake (negotiated protocol version, server
+  info, tools capability), `tools/list` against the server's tool registry,
+  a `tools/call` result, and a JSON-RPC error for an unknown tool. Until now
+  every MCP test was mark3labs/mcp-go talking to itself. The interop claims
+  audit and the MCP claim sentences in `README.md` and
+  `docs/mcp-server/api.md` now say what this leg proves.
+
+- **gRPC interop leg (go-quicbaas#203).** `pkg/api/grpc/interop_connect_test.go`
+  serves the gRPC facade behind the production interceptor chain, authorization
+  included, over TLS on loopback, and drives it with `connectrpc.com/connect`
+  in gRPC mode, a wire implementation that shares no code with grpc-go. It
+  asserts TLS 1.3 with `h2`, an authenticated call, Unauthenticated and
+  PermissionDenied refusals, Unimplemented for unknown methods, and an OK
+  trailer at the end of a server stream. The gRPC row of the interop claims
+  audit now names these tests.
+
+- **`iam.NewSigningKeyManagerFromSigner(signer, alg)`** wraps an in-process
+  `crypto.Signer` in a `SigningKeyManager`, deriving the `kid` from the public
+  key as for xkms-backed keys. It cannot rotate: `Rotate` returns
+  `SigningKeyRotationUnsupportedError`.
+
+- **An x/oauth2 + go-jose interop leg tests the OIDC/OAuth2 provider.**
+  `pkg/api/rest/oauth2_interop_test.go` drives discovery, the authorization
+  code grant with PKCE and refresh, the client credentials grant,
+  introspection (RFC 7662) and revocation (RFC 7009) through
+  `golang.org/x/oauth2` and `go-jose`. A revocation authenticated with HTTP
+  Basic answers 200 and the token then introspects as inactive.
+
+- **An HTTP/3 interop leg driven by quic-go's own client (go-quicbaas#203).**
+  `pkg/api/rest/http3_interop_test.go` serves the full REST router over
+  HTTP/3 on a loopback UDP socket (TLS 1.3, ALPN `h3`) and drives it with
+  quic-go's `http3.Transport`, not our SDK or `RESTClient`. It asserts that
+  the discovery document is answered over HTTP/3, that a client-credentials
+  token obtained through x/oauth2 over HTTP/3 introspects as active (and a
+  tampered one as inactive), and that a raw QUIC client offering only `h2` or
+  `http/1.1` is refused in the handshake with `no_application_protocol`. In
+  production the router is mounted on go-qrdb's unified REST server, which
+  owns the QUIC listener and its Alt-Svc advertisement; that listener is
+  tested in go-qrdb.
+
+- **`quicbaas iam invite show` and `quicbaas iam invite activate-piv`
+  (go-quicbaas#358).** `show` prints a pending invite's user, permitted auth
+  methods and expiry without consuming it. `activate-piv` binds a PEM PIV
+  certificate to the pending user and activates them. It refuses a file that
+  is not an X.509 certificate before any call. Both use the root `--tenant`
+  and a `--token` flag, and go through the SDK `InviteClient` on REST, gRPC,
+  QUIC, Unix and embedded. MCP serves no invite tools pending an owner ruling,
+  so on `--transport mcp` both verbs fail with the SDK's error. New CLI
+  integration tests cover `iam tenant provision` in cert and invite mode,
+  then show and redeem the invite.
+
+- **SDLC projects can bind to GitHub (go-quicbaas#617).** A binding with
+  `forge.type: github` is now accepted: the GitHub adapter implements the
+  whole forge surface (issues, labels, pull requests, reviews, check runs and
+  commit statuses, Actions rerun, cancel and logs, webhooks, onboarding and
+  collaborators) against the GitHub REST API, on github.com or a GitHub
+  Enterprise Server API root. A merge names the head it was reviewed at and
+  is refused, never retried, when the head moved. Deliveries are verified by
+  `X-Hub-Signature-256`. GitHub's native merge queue is not used; its REST API
+  has no route for it.
+
+- **SDLC projects can bind to GitLab (go-quicbaas#618).** A binding with
+  `forge.type: gitlab` is now accepted: the GitLab adapter implements the
+  whole forge surface (issues, labels, merge requests, approvals, pipeline
+  jobs and commit statuses, job rerun, cancel and logs, webhooks, onboarding
+  and collaborators) against the GitLab REST API v4, on GitLab.com or a
+  self-managed instance's API root. A merge names the head it was reviewed at
+  and is refused, never retried, when the head moved. Deliveries are verified
+  by comparing `X-Gitlab-Token` with the webhook secret in constant time.
+  GitLab cannot record a request-changes verdict, so the module does not
+  submit reviews there, and a protected branch names no required status
+  context, so branch protection is reported as unsupported.
+
+- **Design note for fleet placement, drift and actuation** (go-quicbaas#761).
+  `docs/agent-fleet/placement.md` maps the archived wp13 placement and wp14 actuation commits
+  onto today's fleet registry, host affinity and capacity admission. It covers
+  the desired-state model, the drift report's refusal rules, actuation that is
+  automatic for fungible work and needs per-move consent for everything else,
+  the salvage slices, and the open questions. Documentation only. No code
+  changes.
+
+- **Prompt sets are served over REST, gRPC and MCP (go-quicbaas#805).**
+  `service.PromptService` carries eight verbs over a tenant's prompt
+  overrides: List, Get (by version too), Effective (with the resolution
+  chain and its origin), Diff against the parent scope, History, Put
+  (compare-and-swap on `expected_version`, `note` required), Rollback and
+  Reset. Each verb is addressed by tenant, `scope` (`tenant`, `project` or
+  `system`, which is read-only) and project.
+- REST serves them under `/api/v1/prompts/{set}[/{name}]`. gRPC serves them as
+  `quicbaas.prompt.v1.PromptService`, which Unix also serves. MCP serves them
+  as the `prompt_*` tools. Reads need `prompts:read`, History needs
+  `prompts:history`, and changes need `prompts:write`.
+- Refusals map the same on every transport. A missing marker (named in
+  the body), an unknown set or name, or a write at `system` is 400 /
+  InvalidArgument. Not found is 404 / NotFound. A stale version is 409 /
+  Aborted. No prompt store is 503 / Unavailable. Naming another tenant is
+  403 / PermissionDenied.
+- **The Go SDK and the CLI carry the prompt verbs (go-quicbaas#805).**
+  `Client.Prompts()` returns `quicbaas.PromptsClient` with the same eight
+  verbs, served by every transport: REST, gRPC, MCP and embedded have their
+  own handlers, QUIC sends the REST routes over HTTP/3 and Unix delegates to
+  gRPC. Each refusal keeps its class in the SDK (`IsInvalidInput`,
+  `IsNotFound`, `IsConflict`, `IsUnavailable`); a transport without the
+  service is refused with `PromptTransportUnsupportedError`.
+- `quicbaas prompts list|get|effective|diff|history|put|rollback|reset` edits
+  them from the command line, with `--project`, `--scope`,
+  `--output table|json|yaml`, `--raw`, `-f FILE|-`, `--note`,
+  `--expected-version`, `--version` and `--yes`. `rollback` and `reset` ask
+  before they write unless `--yes` is given.
+- Every gRPC service on the unified listener now reads the caller qrdb
+  authenticated as its Subject, as REST and MCP already did, so prompt
+  writes there name their author instead of being refused.
+
+- **NPU sidecar device tier exercises the real tokenizer and startup (go-quicbaas#875).**
+  `make test-npu-sidecar-device` now loads `HuggingFaceTokenizer` from a tiny
+  WordPiece tokenizer built on disk at test time (no network, no download)
+  and pins its load errors, special-token ids, untruncated body encoding,
+  windowing at the model maximum and the padded attention mask. It also runs
+  `python -m npu_embedding`'s `main` end to end over the tiny IR plus that
+  tokenizer: warmup compiles every default bucket, and the served app embeds,
+  enforces its token, and reports a missing NPU driver. With both tiers
+  together `tokenizer.py` and `__main__.py` are above 90% coverage.
+
+- **TypeScript SDK `barrier.enableEncryption()` (go-quicbaas#946).** The REST
+  client posts go-qrdb's `BarrierEnableEncryptionRequest` (`strategy`,
+  `mechanism`, `availability`, base64 `passphrase`, `shamir_threshold`,
+  `shamir_total`, and `tenant_id` for a tenant barrier) to
+  `POST /v1/barrier/enable-encryption` and resolves to
+  `BarrierEnableEncryptionResponse` (`status`, `scope`). A refusal rejects with
+  `APIError`. `make verify-api-shapes` no longer exempts the two types.
+
+- **A truncated changed-file listing is an error, not a short list.** GitHub's
+  3,000-file cap and GitLab's partial diff (`changes_count` `"N+"`) return
+  `ChangedFilesTruncatedError` (`ErrChangedFilesTruncated`) from
+  `ListPullRequestFiles`. See `docs/sdlc/review.md#listpullrequestfiles`.
+
+- **The worker image installs the Gemini CLI** (`@google/gemini-cli`, pinned
+  by the Makefile's `GEMINI_CLI_VERSION`, 0.64.0) beside Claude Code and
+  Codex, for operators to use inside the container; nothing in the factory
+  drives it. The image carries `io.quicbaas.worker.gemini.version`, the
+  worker image probe checks `gemini --version` against `-gemini`, and the
+  refresh installs npm's latest Gemini and refuses a rebuild that would
+  downgrade it. Gemini is not in the content tag, so it never makes an image
+  stale by itself (#1391).
+
+- **The worker image declares its serena languages** in the
+  `io.quicbaas.worker.languages` label (`go python typescript bash yaml
+  markdown cpp rust ruby`), written once as the Dockerfile's
+  `WORKER_LANGUAGES` default. The build fails when a listed language's
+  server is not on the PATH, and the worker image refresh refuses a
+  candidate whose label is missing, empty or names an unknown language, so
+  the factory, which refuses an image without the label, is never handed
+  one (#1394).
+
+- **`Policy.Validate` checks the policy name against `metadata.name`
+  (go-quicbaas#1401).** `ValidatePolicyRequest` carries `name = 3`. The
+  server compares it with the document's `metadata.name` on gRPC, REST
+  (`?name=` on `POST /api/v1/tenants/{tenant_id}/policies/validate`) and
+  MCP (a top-level `name` argument); a mismatch returns `valid: false`
+  with `*iam.PolicyNameMismatchError`'s text. An empty name is not
+  checked. The SDK sends `policy.Name` on gRPC and Unix, REST and QUIC,
+  and MCP, and omits it when empty. The embedded transport does not serve
+  `Policy.Validate`.
+
+- **Flagged policy records carry `load_error` on every transport
+  (go-quicbaas#1411).** A policy whose stored record does not decode
+  strictly is flagged and is not applied. Its get and list entries now carry
+  `load_error`: the `reason` and the `unknown_keys` (key paths only, never
+  values). This holds on REST, gRPC (new `Policy.load_error` proto field,
+  message `PolicyLoadError`), MCP, and the embedded transport. The Go SDK's
+  `iam.Policy` gains `LoadError` (`*iam.PolicyLoadError`), and the SDK
+  REST, gRPC, MCP and embedded transports all fill it in.
+- An operator repairs a flagged record with a policy update carrying a
+  corrected document, or with a batch import of the same name and
+  `UpdateExisting`. Either one replaces the record, which then loads clean.
+  A delete removes it. Service-layer, REST and gRPC delete tests pin this. A
+  malformed corrected document is refused, and the flagged record is left
+  as it was.
+
+- **JavaScript `IAMClient.assignRole` / `revokeRole` (#1423).** The JS SDK's
+  only role-assignment verbs lived on `RBACClient`, whose `/api/v1/rbac/*`
+  routes quicbaasd never served. `db.iam().assignRole(tenantId, userId,
+  roleId)` now sends `POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles`
+  with `{"role_id": roleId}`, and `db.iam().revokeRole(tenantId, userId,
+  roleId)` sends `DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/roles/{role}`,
+  the routes the server serves and the TypeScript SDK already uses. Missing
+  arguments are refused with `ValidationError` before any request is sent.
+
+- **`make test-sdk-js` runs the JavaScript SDK's tests and lint
+  (go-quicbaas#1424).** It installs `sdk/javascript` from its tracked lockfile
+  with `npm ci`, then runs `npm test` and `npm run lint`. Lint now fails on
+  warnings (`--max-warnings 0`), so the gate holds the clean baseline.
+
+- **`iam.ErrRedirectURIRequired` (go-quicbaas#1439).** An authorization
+  request that omits `redirect_uri` for a client with several (or no)
+  registered redirect URIs is refused with this typed `invalid_request`
+  error, reachable with `errors.Is` through the `AuthorizeDirectError`.
+  The sole-URI default itself is described under go-quicbaas#1439 in
+  `1434a-redirect-uri-rules.md`.
+
+- **`authorization_response_iss_parameter_supported` (go-quicbaas#1444).** The
+  OpenID configuration and OAuth authorization server metadata documents (and
+  `iam.OAuthASMetadata`) advertise RFC 9207 §3 support; authorization success
+  and error redirects carry `iss` equal to the advertised `issuer`.
+
+- **Every KMS transport is tested for tenant scope (#1476).** On the
+  embedded, gRPC and REST transports, a table covers each key and DEK verb:
+  tenant B naming tenant A's key or DEK gets the same not-found a missing id
+  gets and leaves tenant A's keys, policies and DEK unchanged, and tenant A
+  still reaches its own. The tests run the real KMS service over
+  `pkg/testutil/kmstenant`, an in-memory key manager shared by the transport
+  tests.
+
+- **`sdk/go/xkms/backend` re-exports `ErrKeyNotFound` and `ErrKeyAlreadyExists`.**
+  They are the go-xkms key backends' own sentinels, so a consumer can match
+  a missing key or a taken key ID with `errors.Is` without importing go-xkms
+  (#1507).
+
+- **Real-producer tests for Tier 1 and Tier 2 (build tag `tpm_simulator`).**
+  They drive a provisioned go-xkms TPM on the simulator through
+  `TPMAttestingRuntime` and the Verifier. They cover a matching baseline, a
+  changed PCR, a quote over another nonce, and an AK certificate that does
+  not chain to the tenant root. `pkg/testutil/tpmsim` holds the shared
+  simulator provisioning. `attestationtest.CertifyAttestationKey` certifies a
+  key the caller already holds, such as a TPM's IAK.
+
+- **In-process container runtime core** (go-quicbaas#1349). `pkg/containerruntime`
+  now runs containers with runc libcontainer v1.5.2 in-process, pulls images
+  with go.podman.io/image/v5 (honouring the signature policy and digest pins)
+  and unpacks root filesystems with go.podman.io/storage under the runtime's
+  work directory. No external binaries or sockets are used.
+- **Container init entry point** (go-quicbaas#1349). The agent's `main` calls
+  `containerruntime.RunContainerInit` first on `linux && cgo` builds, so
+  libcontainer can re-execute the agent as the container init through nsenter.
+- **Make targets** (go-quicbaas#1349): `test-containerruntime`,
+  `coverage-containerruntime` and `bench-containerruntime`.
+- **Container runtime integration test** (go-quicbaas#1349).
+  `make integration-test-containerruntime` runs `test/integration/containerruntime`
+  in a privileged container against a local registry: containers that exit 0
+  and 5, logs, stop, forced delete, digest pins, and that delete removes the
+  root filesystem.
+
+- **`quicbaas fleet deploy --local` installs a node on this host with no
+  sshd.** The install primitives take `deploy.Target`; `*SSHClient` and the
+  new `LocalTarget` (os/exec, atomic rename) implement it. A local deploy runs
+  the same preflight minus the ssh, host-key and deploy-key checks, the same
+  rendered unit or nohup launcher, and the same `--systemd auto|yes|no`.
+  `--local` with `--ssh`, a spec `host`, or any ssh setting fails with
+  `LocalSSHConflictError`. See `docs/agent-fleet/cli.md#local-install`.
+- **`fleet stop`, `fleet start` and `fleet undeploy` take `--local`** and manage a `deploy --local` install with no ssh (`docs/agent-fleet/cli.md#lifecycle`).
+
+### Changed
+
+- **The service registry refuses a standalone qrdb node with a typed error.**
+  `registry.NewFromClient` now takes a context and checks the node's
+  capabilities first: a node without the raft Lease, MVCC and Watch planes
+  fails with `RegistryRequiresRaftError` naming its mode, reported as a failed
+  precondition on every transport, instead of the transport's raw
+  not-configured error from the first lease call. A standalone boot logs one
+  startup line saying so. See `docs/service-registry/architecture.md#run-mode-raft-only`.
+
+- **The interop claims audit names the HTTP/3 leg and says where HTTP/3 is served (go-quicbaas#203).**
+
+- **Admin, impersonation, GDPR and token-claim user ids are uint64
+  (go-quicbaas#389).** `AdminAssignment.UserID`, `AdminCheckRequest.UserID`,
+  `ImpersonationSession.AdminUserID` / `TargetUserID`, the admin and
+  impersonation option structs, GDPR `RequestedBy`, `interfaces.Subject.UserID`
+  and the platform token `uid` claim (`platformtoken.Claims.UserID`,
+  `AuthorizedContext.UserID`) now hold qrdb's uint64 Snowflake. In JSON each
+  is a decimal string, so an id above 2^53 keeps its precision.
+- `IAMServiceAdapter` and the `pkg/service` admin and GDPR requests take the
+  uint64 id. gRPC parses the proto string once in its handler; the embedded
+  transport parses once at the request edge.
+- REST parses `target_user_id`, `requested_by` and the `user_id` /
+  `admin_user_id` query filters once, answering `400` for a value that is
+  not a non-zero decimal uint64. The user-assignment and impersonation list
+  responses carry `user_id` as a decimal string. MCP parses `user_id`,
+  `target_user_id`, `admin_user_id` and `requested_by`, and its
+  `UserIDArgError` now names the argument it refused.
+- Still strings: OIDC subjects and the refresh token's `Subject`, which
+  name a user or a service; audit actor ids, since an actor may be a
+  service; and `BatchError.ID` and `UserImportItem.ID`, which are not
+  Snowflakes.
+
+- **Production `//nolint` directives drop from 39 to 13, each a proven
+  false positive with its linter and reason named (go-quicbaas#559).**
+  Stale directives are gone. Unchecked `sync.Map` type assertions in the
+  policy cache and the sharded client are now checked, helpers that only
+  tests called are deleted, and constants that tripped gosec's credential
+  heuristic by name alone are renamed.
+
+- **The Go SDK's test files carry no `//nolint` directives
+  (go-quicbaas#559).** Nil-context guard tests pass a nil `context.Context`
+  variable rather than the `nil` literal staticcheck flags, the QUIC
+  transport tests verify the loopback server certificate instead of
+  skipping verification, and the gRPC cost-settings test checks its type
+  assertion.
+
+- **Webhook deliveries are read by the bound forge's header names.** The event,
+  delivery id and signature are taken from the headers of the forge the
+  project is bound to. A delivery carrying another forge's headers is refused
+  as unsigned.
+
+- **`quicbaas_factory_spend_deferrals_total` gains a `reason` label
+  (go-quicbaas#1058).** The label set is now `{tenant, project, axis, reason}`.
+  `reason` is the quota refusal that deferred the project: `token_limit`,
+  `cost_limit` or `provider_hold`. Any other value, including an empty reason
+  and `within_limits`, is recorded as `other`, so the set is closed.
+  `Metrics.RecordFactorySpendDeferral` takes the reason and normalizes it
+  through `metrics.SpendDeferralReasonLabel`. Queries that aggregate the
+  counter by its old three labels still sum correctly.
+
+- **KMS documentation points at go-xkms (go-quicbaas#1258).**
+  `docs/kms/` no longer restates go-xkms's key management, backends, AEAD
+  safety limits and API schemas; each page links the go-xkms page and keeps
+  only QuicBaaS's surface: the `Security().KMS()` / `Security().Crypto()`
+  accessors, the transport and permission matrix, the CLI verbs and flags as
+  the code defines them, the `kms:` configuration keys and the build tags.
+  QuicBaaS's own key store, router and rotation are marked as being removed
+  (SPEC row `kms`). Configuration keys and CLI verbs that do not exist
+  (`kms.backends`, `kms.dek`, `kms.cluster_dek`, `kms policy`) are gone.
+- **IAM authentication-factor documentation points at go-xkms and go-qrdb
+  (go-quicbaas#1258).** `docs/iam/` no longer restates the go-xkms WebAuthn
+  ceremonies, PIV slot attestation and error mapping, or go-qrdb's factor
+  model and admin credential paths; it links them and keeps QuicBaaS's own
+  surface: the per-tenant WebAuthn mount and its permissions, the enrollment
+  assurance and AAGUID gates, the PIV attestation login rule, the invite and
+  PIV activation flow, TOTP MFA, and the `quicbaas auth` / `iam mfa` /
+  `iam webauthn` flags as the code defines them. Keys, routes and flags that
+  do not exist are gone: `iam.enabled`, `iam.auth.*`, the `/api/v1/iam/mfa/*`
+  routes, and the `auth factor rotate --new-*` flags.
+- **Authorization and composition documentation points at go-qrdb and go-xkms
+  (go-quicbaas#1258).** `docs/iam/` states that authorization decisions are
+  go-qrdb's RBAC + ABAC authorizer and names what QuicBaaS still owns: its own
+  policy store (being removed, SPEC row `iam`) and PEP policy distribution.
+  The fictional policy compiler, bytecode evaluator, bloom filters,
+  `pkg/abac`, `/api/v1/iam/pep/*` routes, and the dedicated-IAM-cluster and
+  remote-PEP deployment models (`iam.mode`, `iam.remote`, `iam.pep`,
+  `iam.oidc`) are gone. `docs/composition/api.md` links go-xkms for PIV,
+  FIDO2, the CA and PIN management and keeps QuicBaaS's transports,
+  permissions and per-tenant FIDO2 layer.
+
+- **Authorization docs now cover only what go-quicbaas adds (go-quicbaas#1258).**
+  `docs/authorization/architecture.md`, `engineering.md` and `user.md` link to
+  go-qrdb for the RBAC authorizer, the ABAC decorator and the policy schema.
+  They document only the per-tenant ABAC policy store, its sync into go-qrdb
+  and the CLI tasks. Content describing code that does not exist is removed.
+- **The KMS backend-selection section is reduced to the resolver as built
+  (go-quicbaas#1258).** `docs/kms/engineering.md` now describes the
+  `BackendResolver` surface, the hardware probe, the build tags, its callers
+  and the known gaps, instead of the implementation plan.
+- **A broken SDLC anchor in `docs/software-factory/requirements.md` is fixed
+  (go-quicbaas#1258).**
+
+- **Design and plan records moved out of `docs/` (go-quicbaas#1377).** The
+  built and committed content of `docs/design/` and
+  `docs/identity-refactor/PLAN.md` now lives in the owning feature folders.
+  Plan-only material is dropped:
+  - `docs/design/prompt-sets.md` → `docs/software-factory/prompt-sets.md`;
+  - `docs/design/autonomous-control-loop.md` → `docs/orchestration/autonomy-and-dispatch.md`;
+  - `docs/design/per-tenant-barrier-broker-api.md` → `docs/barrier/architecture.md`;
+  - `docs/design/messaging-roadmap.md` → `docs/messaging/architecture.md`;
+  - `docs/design/trusted-service-plane.md` → `docs/service-plane/architecture.md`;
+  - `docs/identity-refactor/PLAN.md` → `docs/identity-refactor/architecture.md`;
+  - `docs/design/orchestration-remaining-work.md` and
+    `docs/design/shard-consolidation.md` are removed: the first was plan-only
+    and the second is superseded by the multi-tenancy shard allocation.
+- **Docs carry no fleet host names, dated rulings or waivers.** The
+  embeddings NPU page names its measurement workstation by hardware class.
+  The public-releasability page states the host and path classes by role. The
+  SDLC and admission pages state owner rulings as rules.
+
+- **GitLab refuses a merge or rebase on a project whose `squash_option` is
+  `always`** with `ForgeUnsupportedError`, before the merge request is
+  written (`docs/sdlc/architecture.md#the-forge-seam`).
+- **A GitHub binding with no URL defaults to `https://api.github.com`.**
+- **`DefaultWebhookEvents` includes `pull_request_review`.**
+- **GitHub and Gitea redact the webhook secret from a refused create or update**
+  the same way GitLab does.
+
+- **`spec_yaml` is read as a full policy document only when it sets both
+  `apiVersion` and `kind`.** Otherwise it is read as the `spec`. REST,
+  gRPC, MCP and embedded now share one parser, `iam.ParsePolicyYAML`.
+  Before this change MCP took any YAML with an `apiVersion` as a full
+  document. The tenant and name always come from the request. YAML that
+  does not parse is refused with `ErrPolicyInvalid`.
+
+- **Stored policy records load strictly and fail closed
+  (go-quicbaas#1401).** A policy record read back from storage is decoded
+  with known keys only. A record with unknown keys, or one that does not
+  decode, is not applied, so it denies: the ABAC sync does not load it and a
+  simulate on it denies. `GetPolicy` returns `*iam.StoredPolicyDecodeError`
+  (`ErrPolicyRecordInvalid`), and an export of the tenant is refused with
+  that error.
+- Each load of such a record is logged at WARN with the tenant, the policy
+  name and the unknown keys.
+- `ListPolicies` returns the record as a flagged entry in its place. Clients
+  see its policy name and that it has no rules. The reason and the keys are
+  not on the entry; they are in the WARN log.
+- A flagged record is never skipped by the ABAC sync: until it is repaired or
+  deleted, every request in its tenant is denied (a record whose tenant is
+  unknown denies in every tenant), and the WARN log names the policy.
+- A repair or delete of a flagged record that is rolled back after a failed
+  ABAC sync restores the record's original stored bytes, so it stays flagged.
+- Policy validation with a name and no policy reports the policy as invalid
+  instead of panicking.
+- MCP policy validate accepts the record metadata an SDK policy carries
+  (`tenant_id`, `created_at`, `updated_at`) and still refuses unknown keys
+  by name.
+- REST policy validate of an SDK-format body checks the `spec_yaml`
+  document's own `metadata.name` against `?name=`.
+- Update and delete still reach the record, so an operator can repair it
+  with an update or remove it with a delete.
+- A well-formed stored record (with `when` and `unless` conditions,
+  metadata and variables) loads whole and makes the same decisions as the
+  same policy built in Go.
+
+- **Each vector REST route and MCP tool now requires the action go-qrdb
+  declares for that operation** (`qrdb.v1.permission` on its `Vector*`
+  RPCs), so all transports agree with the gRPC table. A role granted only
+  the old action loses access to these routes and tools. Parity tests on
+  REST, MCP and gRPC fail when a vector route, tool or RPC has no pinned
+  action. See `docs/authorization/engineering.md#vector-actions-reference`.
+
+  REST:
+
+  | Route | Was | Now |
+  |-------|-----|-----|
+  | `DELETE /api/v1/vector/namespaces/{namespace}/vectors/{id}` | `vector:namespace_delete` | `vector:delete` |
+  | `GET /api/v1/vector/namespaces/{namespace}/vectors/{id}` | `vector:namespace_list` | `vector:get` |
+  | `GET /api/v1/vector/namespaces/{namespace}` | `vector:namespace_list` | `vector:namespace_info` |
+  | `PUT /api/v1/vector/namespaces/{namespace}` | `vector:upsert` | `vector:namespace_create` |
+  | `PUT /api/v1/vector/namespaces/{namespace}/vectors/{id}/metadata` | `vector:upsert` | `vector:update_metadata` |
+  | `GET /api/v1/vector/admin/compact/progress` | `vector:get` | `vector:get_compaction_progress` |
+  | `POST /api/v1/vector/admin/export/{namespace}` | `vector:upsert` | `vector:list` |
+  | `POST /api/v1/vector/admin/import/{namespace}` | `vector:upsert` | `vector:batch_upsert` |
+
+  MCP:
+
+  | Tool | Was | Now |
+  |------|-----|-----|
+  | `qrdb_vector_delete_namespace` | `vector:delete` | `vector:namespace_delete` |
+  | `qrdb_vector_list_namespaces` | `vector:list` | `vector:namespace_list` |
+  | `qrdb_vector_get_namespace_info` | `vector:get` | `vector:namespace_info` |
+  | `qrdb_vector_search_by_id` | `vector:search_similar` | `vector:search_by_id` |
+
+  gRPC is unchanged. Vector health (`GET /api/v1/vector/health` and
+  `VectorDB/Health`) still requires `vector:namespace_list`, because
+  go-qrdb declares no health action.
+
+- **gRPC vector Export and Import refuse an unknown format or compression.**
+  A format other than `json`, or a compression other than `none` or `gzip`,
+  now returns `InvalidArgument` (on Import, the batch counts as failed).
+  Before, it fell back to json with no compression without saying so.
+
+- **SDK API change: a policy `version` is refused, not ignored (go-quicbaas#1409).**
+  Policies are not versioned and nothing compares and sets on a version.
+  Before, every transport accepted a `version` and dropped it silently.
+  - SDK `client/iam` `PolicyClient.Update` refuses a non-zero
+    `UpdatePolicyRequest.Version` with `PolicyVersionUnsupportedError`
+    before sending, on every transport. The doc comments on
+    `UpdatePolicyRequest.Version` and `Policy.Version` no longer promise
+    optimistic concurrency.
+  - REST `POST /policies/` and `PUT /policies/{policy_name}` answer 400
+    when the body carries a non-zero `version`, at the top level or inside
+    a `policy` object.
+  - MCP `quicbaas_iam_policy_create` and `quicbaas_iam_policy_update`
+    refuse a non-zero `version` argument or `policy.version` with
+    `PolicyVersionUnsupportedError`, and nothing is written.
+  - A zero or absent `version` creates and updates as before. gRPC has no
+    version field on the wire.
+
+- **Policy get returns the flagged entry (go-quicbaas#1411).** The policy
+  engine's `GetPolicy` returns the flagged entry (name, no rules, `LoadError`
+  set) instead of the decode error, the same entry the list returns. A REST
+  get of a flagged record now answers 200 with `load_error`.
+- **Update refuses a flagged entry (go-quicbaas#1411).** `UpdatePolicy`
+  refuses a policy whose `LoadError` is set, so a get-then-patch writer
+  cannot write a flagged entry back over the stored record. A batch import
+  now sees a flagged record as existing, so without `UpdateExisting` it
+  reports the policy as already present and leaves the record untouched.
+
+- **One object store resolver builder.** The reencrypt worker and the object
+  storage service now share `Server.newObjectStoreResolver`. In both, the node
+  `EnabledBackends` lists the configured storage backend names. The reencrypt
+  worker's copy used to list KMS backend types, which nothing read.
+
+- **`sdk/go/transport/grpc.StatusErrorCode`** exports the gRPC-status to SDK
+  error-code table. Both the gRPC client and the embedded transport use it,
+  so the two transports cannot drift apart.
+
+- **`make lint` is split into `make lint-pre` and `make lint-go` (#1416).**
+  `lint-pre` runs the prerequisites (`vet-integration`, `verify-naming`,
+  `check-nolint`, `secure-analyzer`, `secure-analyzer-self-test`); `lint-go`
+  runs golangci-lint alone with its `--timeout=20m` and signal-kill triage.
+  `make lint` is still their composition, with the same output and exit
+  codes, so CI is unchanged. Both share one canned recipe. The Makefile
+  comments record the wall times measured on a loaded lane node.
+- **`make secure-analyzer` is split per tag set (#1416).** It took 616 s on
+  a loaded lane node, past one 600 s call, so each unit tag set has its own
+  target (`secure-analyzer-maximal`, `-standard`, `-lean`, `-minimal`,
+  `-desktop`) and the integration, hardware and Go SDK integration passes
+  run as `secure-analyzer-integration`. `secure-analyzer` is their
+  composition, so `make lint-pre` and `make lint` run the same checks with
+  the same exit codes. The other prerequisites already fit on their own:
+  `vet-integration` 153 s, `secure-analyzer-self-test` 89 s, `verify-naming`
+  and `check-nolint` about 1 s.
+
+- **The JavaScript scheduler client speaks the server's REST contract.**
+  - `createJob` requires `handler`, validated client-side. A delayed job
+    requires `delaySeconds`.
+  - New request options: `handler`, `executeAt` (Date or RFC 3339 string),
+    `delaySeconds`, `priority`, `timeoutSeconds`, `labels` (string map),
+    `nodeAffinity`, `targetTenantId`. `listJobs` adds `cursor`, `handler`
+    and `targetTenantId`. `getJobHistory` adds `cursor`.
+  - `updateJob` sends `PUT` (the server has no `PATCH` route).
+  - `createJob` returns the full job. `deleteJob` returns `{ jobId, deleted }`.
+    Pause, resume and cancel return `{ jobId, previousStatus, newStatus }`.
+    `triggerJob` returns `{ jobId, status, triggeredAt }`. `listJobs` and
+    `getJobHistory` return `nextCursor` and `hasMore`. `getStatus` nests its
+    counters under `stats`. Execution records carry `endedAt` and `output`.
+    Job durations (`delayMs`, `timeoutMs`) are converted from nanoseconds.
+
+- **The legacy `/api/v1/seal` endpoints send `Deprecation` as an RFC 9745
+  Structured Field Date.** The value changes from the HTTP-date
+  `Sun, 01 May 2026 00:00:00 GMT` (an early draft's format) to
+  `@1777593600`, the same instant as RFC 9651 Date. A client that parsed the
+  old HTTP-date must parse the new form. `Sunset` stays an RFC 8594
+  HTTP-date and `Link` still names `/api/v1/barrier` as `successor-version`.
+
+- **The software-factory worker image carries jq (go-quicbaas#1431).** Release
+  scripts run in a worker need it, starting with go-enclave's `release.sh`.
+  The build asserts `jq --version` as the spawn's uid after the sudo proof, and
+  both install proofs (the Dockerfile's sudo proof and the runtime
+  `fullControlProbe`) now install Debian's `hello`, a package the image does
+  not carry, so they still prove an install happened.
+
+- **`code_challenge_method` is required (go-quicbaas#1435).** Per
+  draft-ietf-oauth-v2-1-16 §4.1.1, an authorization request that sends
+  `code_challenge` without `code_challenge_method` is now refused with
+  `invalid_request` (`iam.ErrPKCEMethodRequired`) instead of defaulting to
+  S256. Clients must send `code_challenge_method=S256`; `plain` stays refused.
+
+- **The JavaScript scheduler integration test fails when no server is
+  reachable.** `skipIfNoServer` is gone: `beforeAll` throws
+  `ServerUnreachableError` naming `QUICBAAS_URL`. The suite now runs in the
+  jest `node` environment. Under jsdom the old probe could never succeed
+  (`AbortSignal.timeout` is missing), so not a single case ever ran.
+- **`make integration-test-sdk-js[-<pkg>]` runs in Docker against a
+  standalone server.** It builds the image unless `QUICBAAS_IMAGE` is
+  supplied, starts `central` from
+  `sdk/javascript/test/integration/docker-compose.yml`, and runs jest in a
+  `node:22-bookworm-slim` container with `QUICBAAS_URL=https://central:8080`.
+  Nothing runs on the host.
+- **The JS integration compose starts a configured server.** `central` runs
+  `quicbaasd start` on `sdk/javascript/test/integration/quicbaas.yaml`
+  (REST only, scheduler on, anonymous dev posture), mounted read-only. The
+  `QUICBAAS_MODE` / `QUICBAAS_BIND` variables configured nothing and are
+  gone. The health check uses busybox `wget`, because the runtime image has
+  no `curl`. Jest trusts the daemon's CA chain from its data volume.
+
+- **IAM App Update applies every field it carries (go-quicbaas#1466).**
+  `AppManager.UpdateAppInTenant` now applies `Scopes`,
+  `TokenEndpointAuthMethod` and `MTLSCertThumbprint`; a new thumbprint
+  replaces the old pin in the same write, so the old certificate stops
+  binding at once, and clearing the pin of a `self_signed_tls_client_auth`
+  client is refused. Redirect URIs and grant types are validated as on
+  create. Fields `Application` does not store (description, contacts,
+  TTLs, JWKS, metadata, enabled, PKCE and the rest) are refused with
+  `AppFieldNotStoredError` instead of being silently dropped.
+
+- **App Update carries every field over REST, gRPC and MCP (go-quicbaas#1466).**
+  The REST handler and the MCP `quicbaas_iam_app_update` tool decode into
+  `service.UpdateAppRequest`, whose `Options()` maps every field to the app
+  manager. The gRPC `UpdateAppRequest` gains fields 8–23 (description,
+  post-logout redirect URIs, scopes, token endpoint auth method, contacts,
+  logo/policy/ToS/JWKS URIs, JWKS, the three token TTLs, metadata, enabled and
+  the mTLS certificate thumbprint), and the Go SDK gRPC client sends them. A
+  field the app cannot store comes back as invalid input on every transport:
+  HTTP 400, gRPC `InvalidArgument`, MCP invalid input.
+
+- **App Update over the embedded transport carries every field (go-quicbaas#1466).**
+  The embedded handler decodes the SDK request the way the MCP tool does,
+  so scopes, the auth method, a thumbprint re-bind and every other field
+  take effect, and a field the app cannot store is refused. An embedded Get
+  now returns the app's resource prefix, grant types and scopes.
+
+- **Breaking (Go SDK): `iam.UpdateAppRequest.TokenEndpointAuthMethod` is now
+  `*TokenEndpointAuthMethod` (go-quicbaas#1466).** Nil leaves the method
+  unchanged; a pointer to `TokenEndpointAuthClientSecretBasic` selects
+  `client_secret_basic`, which the zero-valued field could not express.
+
+- **The TypeScript SDK claims a Shamir share in two steps.** `ceremony.claimShare`
+  is gone; `claimShareBegin({username})` returns `{nonce_hex, expires_at}` and
+  `claimShareComplete({username, nonce_hex, signature})` (base64 signature)
+  returns `{share_index, share_json}`. REST calls
+  `POST /api/v1/init/officer-share/begin` and `/complete`; MCP calls
+  `qrdb_ceremony_begin_claim_share` and `qrdb_ceremony_complete_claim_share`,
+  decoding the tool's base64 share. The server binds both calls to the caller's
+  mTLS certificate thumbprint. QUIC and gRPC-Web refuse both verbs with their
+  typed not-implemented errors. The svelte-security `ClaimShareRequest` is now
+  `{username, challenge, signature_b64}`, and the frontend's Claim Share form
+  takes a challenge and a signature as the Claim Certificate form does.
+
+- **The full-tier CI legs wait on lint and test (#1517).** `test-full`, `race` and `web` now need `[merge, lint, test]` (`merge` stays for its `base_sha` output) and `docker` needs `[lint, test]`, so a red lint or test skips them instead of spending runner time on a head that cannot merge.
+
+- **Tier 1 host attestation is appraised by the Verifier (go-quicbaas#1346,
+  `measured-launch`).** `TPMAttestingRuntime` no longer compares PCRs itself.
+  It quotes the registers the named reference values cover, binds the PCR
+  read to the signed quote and hands the evidence to the Verifier's
+  `AppraiseQuote`. The Verifier checks the AK certificate against the tenant's
+  `ak-root`, the quote signature and the PCRs against the signed reference
+  values. The operator must store the `ak-root` and `reference-signer`
+  endorsements and the reference values before an `attested` launch. Reference
+  values for a `measured` launch must include the measurement PCR (16 by
+  default), because the comparison is an equal set.
+- **`NewTPMAttestingRuntime(base, tpm, appraiser, logger)` takes a
+  `HostAppraiser`** (`service.NewHostAppraiser(store)`); a nil appraiser is an
+  `InputValidationError`. `HostTPM` gains `IAKCertificate()`, which returns
+  the certificate of the key that signs the quote.
+
+- **A `sha1` measurement bank is refused at spec validation (go-quicbaas#1346,
+  `measured-launch`).** The Verifier does not parse a SHA-1 PCR selection, so
+  a launch measured into that bank could never be appraised.
+  `measurement_bank` now accepts `sha256`, `sha384` or `sha512`, and `sha1` is
+  an `InputValidationError`.
+- **The Verifier computes the reference baseline in the quoted bank's hash.**
+  It no longer uses the quote's signing hash, which can differ: a SHA-256 AK
+  can sign a quote over the SHA-384 bank.
+- **go-xkms `*tpm2.TPM2` is asserted to satisfy `HostTPM` at compile time.**
+  Its IAK needs an enrolled certificate in `tpm2.Params.CertStore` before
+  `IAKCertificate()` works, because go-xkms provisioning issues none.
+- **Host appraisal replays the boot event log over every quoted register except
+  the measurement PCR.** A measured launch on a host that supplied its event
+  log was refused, because the runtime's extension is never in that log. The
+  signed reference values judge the measurement PCR, and log events for it are
+  ignored.
+- **The runtime quotes only the reference PCRs in its IAK's bank.**
+  `HostAppraiser.ReferencePCRs` takes the bank hash and returns the registers
+  the signed reference values cover in that bank, not the union of banks.
+  Reference values with none in the bank are a `ReferenceBankUncoveredError`
+  before any quote. `HostTPM` gains `IAKAttributes`, which go-xkms
+  `*tpm2.TPM2` already provides.
+
+- **The TPM simulator tests run in every unit pass (go-quicbaas#1346,
+  `measured-launch`).** `tpm_simulator` moved from `TAG_GATE_EXEMPT` into
+  `TEST_EXTRA_TAGS`, so `make test`, the per-package targets and the CI unit
+  job compile and run the go-xkms quote-to-Verifier proof and the TPM2 seal
+  tests. The simulator is C built through cgo; the unit pass needs a C
+  compiler. `swtpm` and `pkcs11` stay exempt.
+
+- **No shell-outs from the container runtime** (go-quicbaas#1349). The crun,
+  podman and skopeo exec paths are gone, and `RuntimeConfig.OCIRuntime` is
+  removed. A test fails if a non-test file in the package imports `os/exec`.
+  Builds without linux and cgo return `ErrRuntimeRequiresLinuxCgo`.
+- **Container runtime fixes** (go-quicbaas#1349). Exit codes are the
+  process's real ones (128 plus the signal for a killed process); Stop and
+  Wait no longer poll with sleeps; `ContainerConfig.User` is applied; a
+  digest-pinned image must resolve to its pin at pull and at create.
+
+- **A deployed node's runtime binds its advertised host, not a wildcard.**
+  `--bind` and a spec's `node_bind` default to the ssh host on port 9091, or
+  under `--local` to the host of `raft.raft_address` (a wildcard there fails
+  with `RaftAdvertisedHostError`). `--bind 0.0.0.0:9091` is the explicit
+  opt-in. See `docs/agent-fleet/cli.md#bind-address`.
+
+### Changed — BREAKING: workflow roles start from a prompts-store charter; `system_prompt` is retired
+
+- **Workflow roles start with a charter from the prompts store; `system_prompt`
+  is retired (go-quicbaas#807, pre-release).** The lead, worker and reviewer
+  sessions and the `agent` validator's prompt now carry `charter_lead`,
+  `charter_worker`, `charter_reviewer` and `charter_validator`, rendered from
+  the job's resolved `workflow` prompt set, so a tenant or project overrides
+  them with `quicbaas prompts`. A charter that cannot be rendered is a
+  `CharterRenderError` (`ErrCharterRender`) and the session is not spawned.
+  `system_prompt` is removed from workflow role definitions on every
+  transport (proto field 6 is reserved), and the workflow loader refuses a
+  file that sets it with a `RetiredFieldError` (`ErrWorkflowRetiredField`).
+  Use `agents[].prompt_append` to add to a role's charter.
+
+### Removed
+
+- **`OIDCConfig.SigningKey` and `OIDCConfig.SigningKeyFile`.**
+  `SigningKeyManager` is the only OIDC signing source, and `NewOIDCProvider`
+  returns `OIDCConfigRequiredError` without one. `JWKSGenerationError` went
+  with the single-key JWKS path.
+
+- **`iam.NewTokenService`.** It built a token service with no signing key
+  manager, so its tokens carried no `kid` and failed an external relying
+  party's JWKS lookup. `NewOIDCProvider` is now the only constructor: every
+  token it issues carries a `kid` that `GetJWKS` publishes. See
+  `docs/iam/engineering.md#jwt-signing`.
+
+- **`quicbaas_orch_job_budget_utilization` is gone (go-quicbaas#1058).**
+  Nothing set the gauge, so it never emitted a value, and its `job_id` label
+  gave it unbounded cardinality. The `Metrics.OrchJobBudgetUtilization` field
+  and `Metrics.SetOrchJobBudgetUtilization` are removed, as is its row in the
+  orchestration metrics table.
+
+- **The JavaScript SDK's `RBACClient` and `db.rbac()` are gone** (pre-v1
+  removal, go-quicbaas#1400). They called `/api/v1/rbac/*`, which quicbaasd
+  does not serve. Role definitions (`createRole`, `listRoles`, `updateRole`)
+  remain on `IAMClient`.
+
+- Scheduler request options the server has no field for:
+  - `createJob`: `runAt` (use `executeAt`), `delayMs` (use `delaySeconds`),
+    `timeoutMs` (use `timeoutSeconds`), `tags` (use `labels`), `metadata`,
+    `retryDelayMs`.
+  - `updateJob`: `timeoutMs` (use `timeoutSeconds`), `tags` (use `labels`),
+    `metadata`, `retryDelayMs`.
+  - `listJobs`: `offset` (use `cursor`), `type`, `tags`.
+  - `getJobHistory`: `offset` (use `cursor`), `status`, `startTime`,
+    `endTime`.
+- Response fields the server never sends: `success` and `message` on delete
+  and on job actions, `executionId` on trigger, `totalCount` on history,
+  and `completedAt`, `result` and `attemptNumber` on executions.
+
+- **`IAMClient` group methods** (`createGroup`, `getGroup`, `updateGroup`,
+  `deleteGroup`, `listGroups`) and the `Group` typedef. The server serves no
+  group routes.
+
+- **The never-served Shamir share verbs.** `BarrierShamirListShares`,
+  `BarrierShamirDeleteShare`, `BarrierShamirDeleteAllShares` and
+  `BarrierShamirVerify` are gone from `quicbaas.barrier.v1`, along with their
+  messages, their authz rows and the `shamir-verify` sealed-window verb. The
+  TypeScript SDK drops `shamirListShares`, `shamirDeleteShare`,
+  `shamirDeleteAllShares` and `shamirVerify` from every transport. No
+  transport served them and they back no go-qrdb operation. Barrier share
+  management belongs to go-qrdb.
+- **The non-REST bootstrap stubs in the TypeScript SDK.** Trust bootstrap is
+  a client-side pre-trust fetch served over REST only
+  (`POST /api/v1/bootstrap/{auto,dane,noise,spki}`). `bootstrap` is now a
+  `RestClient` member, not part of the shared `Client` interface, and the MCP,
+  QUIC and grpc-web stub clients are deleted. `createBootstrapClient(config)`
+  always builds the REST client and takes no transport argument.
+
+- **`ExpectedPCRs` / `expected_pcrs` is replaced by `ReferenceValues` /
+  `reference_values`**, the name of the stored reference values, on
+  `ContainerSpec`, the session spec, `AttestContainer` (REST, gRPC, MCP, SDK)
+  and `SpawnSession`. There is no fallback. Proto fields
+  `AttestContainerRequest` 7 and `SpawnSessionRequest` 25 are reserved.
+- **`PCRMismatchError` is removed.** A host the Verifier does not verify
+  fails with `HostAppraisalError`. It carries the failed checks and the PCR
+  divergences, unwraps to `ErrHostNotVerified`, and also unwraps to
+  `ErrPCRMismatch` when a PCR diverged.
+
+### Fixed
+
+- **The data-plane principal's tenant is deleted when the test process ends
+  (#164).** `AuthDataPlane` provisions one tenant per cluster for the whole
+  test process, so no `t.Cleanup` could delete it and every run left it
+  behind. `helpers.ReleaseDataPlaneTenants` now deletes each such tenant as
+  the system admin, and the `batch`, `api/rest` and `api/grpc` integration
+  packages call it from `TestMain` after `m.Run`, keeping the exit code and
+  reporting a failed delete on stderr.
+
+- **The integration suites bind a tenant like a production caller; the soak
+  runs again (#164).** The system admin provisions each fixture tenant through
+  `POST /api/v1/tenants/{id}/provision` (cert mode) and the tenant's own admin,
+  logged in with the signed certificate, creates the data-plane role and user
+  and registers the auth suite's OAuth app. The fixtures no longer act for a
+  tenant with the system admin's bearer or with no credential, which the
+  tenant check refuses. `TestRegisterAppRequiresBoundTenant` keeps both
+  refusals covered.
+- **A soak keeps its tenant-admin access and leaves no fixture tenants behind
+  (#164).** The tenant admin's bearer lives about 15 minutes; the helpers'
+  `TenantAdminSession` and the CLI runner now log the admin in again with its
+  certificate when the bearer nears expiry. Every tenant a fixture provisions
+  is deleted by the system admin when its test ends, and the CLI runner
+  provisions only once a command actually runs, so a transport that skips
+  the test creates no tenant.
+
+- **Every OIDC token carries a `kid`.** Tokens signed through the removed
+  `SigningKey` path had no `kid` header, so a verifier that selects keys from
+  the JWKS by `kid` rejected them. See `docs/iam/engineering.md#jwt-signing`.
+
+- **A GDPR export or immediate deletion whose final status write fails is
+  marked failed (go-quicbaas#559).** The background worker used to drop the
+  error from `GenerateExport` and `ProcessDeletion`, which left the request
+  pending or processing with nothing to pick it up again. A request that
+  already reached a final status, a cancelled deletion included, keeps it.
+
+- **Tests outside `sdk/go` carry no `//nolint` directives (#559).** Each
+  finding is fixed in place: ignored errors from cleanup requests, flag
+  setters, gRPC `Serve`, `Close`, `Stop` and directory walks now fail the test,
+  type assertions are checked, cleanup response bodies are closed, and
+  nil-context guards take a typed nil `context.Context`. Two gRPC shutdown
+  tests wait for a READY client connection instead of sleeping, and the audit
+  compression test asserts its synchronous result instead of sleep-polling.
+
+- **GitLab approvals count again.** GitLab's approvals answer names who
+  approved but not when, so no approval could be bound to a head and every
+  merge request waited forever for approvals. An approval is now bound
+  through the system note GitLab writes when it is given, to the head that
+  was current just before; one that cannot be bound still does not count.
+- **Merge-train comments on GitLab reach the merge request.** GitLab numbers
+  merge requests apart from issues, so the train's landing, refusal and
+  ejection comments, posted through the issue discussion, landed on an
+  unrelated issue sharing the number or failed. The forge seam now has
+  `CommentOnPullRequest` and `ListPullRequestComments`; GitLab serves them
+  from the merge request's notes, and Gitea and GitHub, which share one
+  numbering, from the issue discussion as before.
+- **GitHub Actions cancel, rerun and logs reach the right job.** The adapter
+  sent a check run's id to the Actions job routes, but GitHub does not give
+  a job the id of its check run, so those calls hit another job or none. The
+  job is now resolved through GitHub's own data — the check run's suite, the
+  workflow run that owns it, and the job whose `check_run_url` names the check
+  run — and the job routes get the job's own id.
+- **Pull-request labels on GitLab reach the merge request.** The park and
+  unpark labels on a reviewed pull request and the train's ejection label
+  went through the issue label routes, so on GitLab they landed on an
+  unrelated issue sharing the number or failed. The forge seam now has
+  `AddPullRequestLabels` and `RemovePullRequestLabel`; GitLab edits the merge
+  request's labels and reads them back, and Gitea and GitHub use the issue
+  labels as before. A pull request now reads back with its labels, so
+  unparking removes them in the forge's own spelling.
+
+- **"N online" counts only nodes that are online (go-quicbaas#851).** The
+  dashboard's fleet tile counted nodes that were registered but had never
+  started, and nodes that had stopped heartbeating. `fleetStore.onlineNodes` now
+  counts a node only when it is `running` or `idle` and its `last_seen` is
+  within the server's 90-second heartbeat timeout (`DefaultFleetHeartbeatTimeout`).
+  A node with no `last_seen` is not counted. The spawn dialog uses the new
+  `fleetStore.spawnableNodes`, so it still offers registered nodes.
+
+- **CA issuance fails when the CA bundle cannot be read (go-quicbaas#1308).**
+  IssueCertificate, SignCSR, SignCSRPEM (the ACME issue path) and device
+  identity issuance discarded the go-xkms CA-bundle read error and returned
+  a certificate with an empty chain. They now return a
+  `CAServiceAdapterBundleError`, matching `ErrCAServiceAdapterBundle` and
+  wrapping the cause, and no certificate.
+
+- **Consensus-arbitration tests no longer time out on runners with busy
+  disks (#1340).** The in-process qrdb node from `pkg/testutil/qrdbnode`
+  fsynced every proposal into its throwaway temp directory. On a runner
+  sharing its disk with other jobs, one fsync could outlast the 5s per-record
+  deadline, so `pkg/orchestration`'s concurrent job-status tests failed with
+  `propose failed: quicraft: timeout`. The node now boots with
+  `WithNoSyncWrites`, which leaves the Raft commit order those tests assert
+  unchanged. This applies to every package that uses `qrdbnode.Shared`.
+
+- **A tenant admin can manage its own tenant's agent-account pool.** The
+  account writes no longer borrow go-qrdb's cross-tenant `credentials:*`
+  family, which no tenant principal could satisfy. They take QuicBaaS's own
+  tenant-scoped verbs, held only by the tenant-admin role:
+  `agent_accounts:write` (create, update, set-default, revoke),
+  `agent_accounts:rotate` (rotate) and `agent_accounts:delete` (delete).
+  REST, gRPC and MCP all map to them. Revoke is a write, because it keeps the
+  record and its usage history. Operator and User are refused, and a tenant
+  admin still cannot write another tenant's pool (go-quicbaas#1355).
+
+- **The fleet enrollment E2E reads the fleet listing the handler answers
+  with (go-quicbaas#1355).** The listing helpers decoded an `agents` key that
+  `GET /api/v1/fleet` stopped emitting when the endpoint moved to the paged
+  `nodes` envelope, so every listing read as empty. The enrollment flow
+  failed on its first positive check, and the "not listed under `system`"
+  check passed whatever the registry held. Both now read `nodes`.
+- **The pooled-account E2E seeds, revokes and rotates accounts the way an
+  operator does (go-quicbaas#1355).** It used to call the account service
+  with no caller bound, which the service has refused since go-quicbaas#1150.
+  It now sends each write as a tenant operator over the production routes,
+  behind the same mTLS and RBAC middleware the daemon's reads go through.
+  These tests still fail, with a 403: the write routes require go-qrdb's
+  `credentials:*` grants, which only a system-tenant principal can hold. The
+  service refuses a system caller acting for another tenant, so today no
+  principal can write a tenant's pool.
+
+- **`TestRuntimeStats_CPUPercent` no longer races the clock** (#1375). The
+  container runtime's `Stats` waits between its two `cpu.stat` samples
+  through an unexported seam, `cpuSampleWait`, which the test replaces to
+  rewrite `cpu.stat` before the second sample. It now asserts an exact
+  percentage, and a new test checks that a ctx cancelled during the window
+  returns its error. Production behaviour is unchanged.
+
+- **The Go SDK's RBAC verbs work over REST** (#1400). The REST transport sent
+  `CreateRole`, `ListRoles`, `DeleteRole`, `AssignRole` and `RevokeRole` to
+  `/api/v1/rbac/*`, which the server does not serve, so every call returned
+  404. They now reach the tenant-scoped IAM routes under
+  `/api/v1/tenants/{tenant_id}/`. The tenant comes from the request context,
+  then from `rest.WithDefaultTenant`. `CreateRole` uses the role name as the
+  role ID, and `AssignRole` / `RevokeRole` need the numeric user ID as
+  `Username`; a missing tenant or a non-numeric username is `INVALID_INPUT`.
+  Known gap: the JavaScript SDK's `RBACClient` (`sdk/javascript/src/clients/rbac.js`)
+  still calls `/api/v1/rbac/*` and is unchanged here; moving it onto the
+  tenant routes changes its method signatures and waits on an architecture
+  decision.
+
+- **Policies with nested ABAC conditions are refused, not stored in part
+  (go-quicbaas#1401).** go-qrdb's ABAC engine evaluates flat expressions
+  only. The `and`, `or` and `not` sub-conditions of a `when` or `unless`
+  entry used to be dropped when a policy was synced to qrdb or simulated,
+  so the policy granted more than it said. Create, update and import now
+  refuse them on every transport with `ErrConditionNested`
+  (`ErrValidation`; `*iam.NestedConditionError` names the field and
+  index), and nothing is stored. REST returns 400, gRPC `InvalidArgument`,
+  and MCP and embedded return invalid input. The sync and the simulator
+  return an error instead of dropping a condition.
+- **The embedded transport honours `spec_yaml` and refuses fields it
+  cannot translate.** Embedded `CreatePolicy` used to ignore `spec_yaml`,
+  structured `Conditions`, rule `Subjects` and `Targets`, and stored a
+  broader policy. It now parses `spec_yaml` the way REST and gRPC do. It
+  refuses any of those structured fields with `UnsupportedPolicyFieldError`
+  (invalid input).
+- **The SDK gRPC, Unix and MCP transports refuse structured policy
+  fields.** They used to drop `Rules`, `Targets` and `Conditions` and send
+  only `spec_yaml`. A create or update that sets any of them now fails
+  with invalid input naming the field, before any request is sent.
+- **Policy-level `effect: allow` and `enabled: false` are refused.** Stored
+  policies are enabled and deny by default; the SDK gRPC, Unix, MCP and
+  embedded transports used to drop these values. They now fail with
+  invalid input.
+- **Policy YAML refuses unknown keys.** A misspelt or unsupported key in
+  `spec_yaml` used to be ignored; it now fails with `ErrPolicyInvalid`.
+- **The MCP policy tools refuse SDK keys they cannot translate**, and
+  create and validate require `spec_yaml` instead of storing a policy with
+  no rules.
+- **SDK policy updates carry `spec_yaml`.** REST sends it and MCP now
+  delivers updates in the shape the server tool reads (they used to fail
+  with "policy must be an object"). gRPC and Unix refuse a `spec_yaml`
+  update, which the server would ignore.
+
+- **gRPC `ValidatePolicy` decodes with the same strict parser as
+  `CreatePolicy` (go-quicbaas#1401).** It used to decode `spec_yaml` with
+  a loose YAML unmarshal that dropped unknown keys without a word, so it
+  could report a document as valid even though `CreatePolicy` refused it.
+  It now uses `iam.ParsePolicyYAML`. A document that the parser refuses
+  (an unknown key, `none` next to an expression, a rule-level `subjects`)
+  is reported invalid, and the reason names the key.
+
+- **The MCP `quicbaas_iam_policy_validate` tool is registered.** The SDK
+  mapped `Policy.Validate` onto it, but the server registry never
+  declared it. It is now declared with `tenant_id`, `name` and `policy` in
+  its schema, and is default-denied like the other policy tools until
+  go-qrdb registers a policy write permission family.
+
+- **The embedded transport serves vector (go-quicbaas#1404).** Twenty
+  `quicbaas.Vector` RPCs (namespaces, vectors, search, index and compaction
+  admin, stats) now go to the embedded node's `VectorService` and stop
+  returning `UnknownMethodError`. Vector ids have to be decimal uint64, and
+  metadata filters accept only `eq`. Anything else gets a typed
+  `INVALID_INPUT` error. Export and Import are still not served on embedded.
+
+- **The embedded transport serves vector Export and Import (go-quicbaas#1404).**
+  `quicbaas.Vector/Export` and `quicbaas.Vector/Import` now work in process.
+  The batch codec (JSON batches, optional gzip, CRC32 checksum) moved from
+  the gRPC server into `pkg/service` (`ExportVectors`, `ImportVectors`), and
+  gRPC and embedded both call it. There is one wire format and it has not
+  changed. Import used to skip every vector whenever the lookup returned no
+  error. It now skips only vectors that already exist.
+
+- **Policy writes answer with the stored policy (go-quicbaas#1406).**
+  - gRPC `IAMService/UpdatePolicy` parses `spec_yaml` and keeps the stored
+    spec when it is absent. Before, a metadata-only update failed
+    validation and no update could land. A bad `spec_yaml` is
+    `InvalidArgument`, and an unknown policy is `NotFound`.
+  - gRPC `CreatePolicy` and `UpdatePolicy`, REST `POST /policies/` and
+    `PUT /policies/{policy_name}`, and MCP `quicbaas_iam_policy_update` now
+    answer with the policy read back from the store, not the request. The
+    response carries the stored timestamps and drops anything the store
+    did not keep.
+  - MCP `quicbaas_iam_policy_update` targets the policy the request's
+    `name` names. Before, it updated whichever policy the document named.
+    A document that names a different policy is refused with
+    `PolicyNameMismatchError`, and nothing is written.
+
+- **`pkg/apimodule` compiles with only the `mcp` tag (go-quicbaas#1412).**
+  `SurfaceComposingError` was declared in the `rest`-tagged
+  `module_http.go` but also returned by the `mcp`-tagged `module_mcp.go`, so
+  an MCP-only build failed with `undefined: SurfaceComposingError`. The type
+  now lives in the untagged `pkg/apimodule/errors.go`; its fields, message
+  and `ErrUnavailable` classification are unchanged.
+
+- **Object storage put and copy without `target_backend` reach a backend
+  (go-quicbaas#1413).** The server built its object store resolver with no
+  primary backend, so these requests failed with `ErrBackendNameEmpty`. The new
+  `object_storage.primary_backend` setting names the primary. When it is unset
+  and exactly one backend is configured (including the automatic in-memory
+  `default`), that backend is primary. Startup refuses an unknown name
+  (`UnknownPrimaryBackendError`) and several backends without a primary
+  (`PrimaryBackendUnresolvedError`, which names them).
+
+- **Embedded-transport errors carry the same SDK code as on the network
+  transports.** Every unary and stream handler error now crosses one boundary
+  (`classifyServiceError`) that turns a `pkg/errors` (go-qrdb) error into an
+  `sdk/go/errors.QBError` with the code a gRPC caller reads, plus the same Op
+  and message. `Unwrap` still returns the original error. An SDK error passes
+  through unchanged, the transport's own typed errors and context
+  cancellation keep their codes, and any other error is `CodeInternal` with
+  the original as its cause. Before this fix, `errors.As(err,
+  *sdkerrors.QBError)` found nothing on an embedded call, and the caller read
+  INTERNAL for a NOT_FOUND (#1414).
+
+- **REST policy create answers 409 for a duplicate name (go-quicbaas#1417).**
+  Creating a policy whose name already exists in the tenant returned HTTP 500.
+  The REST error mapping now answers `iam.PolicyExistsError`, wrapped or
+  not, with 409 Conflict and the `conflict` error body.
+
+- IAM: creating a policy whose name is already taken now answers
+  `AlreadyExists` on gRPC and the already-exists tool error on MCP, instead of
+  an internal error (#1421).
+
+- **The `test/quicbaas.test.js` suite loads again.** The ClusterDEK client was
+  deleted, but `src/quicbaas.js` and `src/index.js` still re-exported
+  `NodeDEKSyncStatus`, `ReencryptionState` and `RecoveryMethod`. Exporting an
+  undeclared binding is an ES module syntax error, so Babel refused the file
+  and Jest reported a parse error. The stale exports, the README entry and
+  the test of the removed `clusterDEK()` accessor are gone.
+- **`eslint src test` reports no problems.** `eslint --fix` cleared the
+  formatting rules; the rest were unused imports and parameters, a useless
+  regex escape, a duplicate `onmessage` key in a test double, and calls to
+  `fail()`, which Jest's default runner does not define.
+
+- **The JS integration server binds the compose network.**
+  `sdk/javascript/test/integration/quicbaas.yaml` sets `server.host: 0.0.0.0`
+  so the test-runner container can reach `central:8080`. The default
+  `127.0.0.1` accepted loopback only. The bind is for the isolated compose
+  network only.
+
+- **Authorization endpoint redirects errors to the client (go-quicbaas#1432).**
+  Per draft-ietf-oauth-v2-1-16 §4.1.2.1, once `client_id` and `redirect_uri`
+  are validated, `GET /oauth2/authorize` now reports errors as a `302` to the
+  redirect URI with `error`, `error_description`, `state` and `iss`, keeping
+  the registered URI's query, instead of a JSON `400`. An unknown client or a
+  missing or unregistered redirect URI still gets a direct `400` and is never
+  redirected; `pkg/iam` marks these with `*iam.AuthorizeDirectError`.
+  Successful authorization responses now carry `iss` as well.
+
+- **`WWW-Authenticate: Basic` on 401 `invalid_client` (go-quicbaas#1433).** Per draft-ietf-oauth-v2-1-16 §3.2.4, the token and introspection endpoints add a Basic challenge to their `401 invalid_client` when the client authenticated with HTTP Basic.
+
+- **Omitted `redirect_uri` resolves to the client's only one (go-quicbaas#1439).**
+  Per draft-ietf-oauth-v2-1-16 §4.1.1, a missing `redirect_uri` is now
+  resolved by the OIDC provider, not refused by the REST handler: when the
+  client registered exactly one redirect URI, `GET /oauth2/authorize` uses it
+  and stores it with the code. A client with several (or none) still gets a
+  direct `400 invalid_request` that is never redirected.
+- **Loopback redirect URIs match any port (go-quicbaas#1438).** Per
+  draft-ietf-oauth-v2-1-16 §2.3.1 and §8.4.2, a registered
+  `http://127.0.0.1` or `http://[::1]` redirect URI matches a request that
+  differs only in the port. `localhost` and every other host still match
+  exactly.
+- **Token endpoint compares `redirect_uri` only when sent (go-quicbaas#1434).**
+  Per draft-ietf-oauth-v2-1-16 §4.1.3, an authorization code exchange without
+  `redirect_uri` succeeds; one that sends it must equal the value the
+  authorize step resolved, or it gets `invalid_grant`.
+
+- **Redirect URIs with a fragment are refused (go-quicbaas#1440).**
+  draft-ietf-oauth-v2-1 §2.3 forbids a fragment component in a redirect URI.
+  App registration now refuses one with `RedirectURIFragmentError`, and
+  RFC 7591 dynamic client registration answers `invalid_redirect_uri`. A
+  trailing bare `#` counts as a fragment on both paths.
+- **The `crypto:` block link in `docs/kms/engineering.md` carries its anchor
+  (go-quicbaas#1258).**
+
+- **The JavaScript SDK's `IAMClient` calls routes the server serves
+  (go-quicbaas#1441).** Every method built its path from `/api/v1/iam/tenants/...`,
+  which no server route matches. Tenant, user, role, policy, app, session and
+  GDPR methods now call `/api/v1/tenants/{tenant_id}/...`, and `getAuditLog`
+  calls `/api/v1/iam/audit`. Request bodies now carry the fields the REST
+  handlers read, and list methods page with `limit`/`offset`. Signatures that
+  changed to take a field the handler requires: `createTenant(tenantId, name,
+  options)`, `createUser(tenantId, email, options)`, `createApp(tenantId, name,
+  redirectUris, options)`, `createSession(tenantId, userId, tokenHash,
+  options)` and `listSessions(tenantId, userId, options)`.
+
+- **`/oauth2/revoke` authenticates the client (go-quicbaas#1447).** The REST
+  handler never passed the client credentials to the provider, so every
+  revocation answered `400 invalid_client`. The endpoint now reads them as the
+  token endpoint does (HTTP Basic, else `client_id`/`client_secret` from the
+  form body, never the query string) and answers `401 invalid_client` on a
+  failed authentication, with the Basic challenge when Basic was used.
+- **A client may revoke only its own tokens (RFC 7009 §2.1).** A token issued
+  to another client is refused with `400 unauthorized_client`
+  (`iam.ErrRevokeTokenNotOwned`) and stays active. The owner is the `client_id`
+  claim of the verified access token, or the client recorded with a refresh
+  token.
+- **Revocation answers `200` (RFC 7009 §2.2)**, not `204`, including for a
+  token that is unknown, expired or already revoked.
+
+- **The embedded transport serves IAM policy Update, Validate and Test
+  (#1449).** `quicbaas.IAM.Policy/Update` merges the set fields into the
+  stored policy through `PolicyEngine.UpdatePolicy` (`spec_yaml` replaces the
+  rules) and refuses fields the engine cannot store with
+  `UnsupportedPolicyFieldError`. `Validate` parses the document with Create's
+  strict decoder, checks its name and reports failures as `Valid=false` with
+  the reasons in `Errors`, as gRPC does. A missing `spec_yaml` is an
+  `INVALID_INPUT` error. `Test` evaluates each case against the tenant's
+  stored policies, as gRPC does, and reports pass or fail per case.
+
+- **An app update now checks its redirect URIs as registration does
+  (go-quicbaas#1440).** `AppManager.UpdateAppInTenant` stored new redirect URIs
+  unchecked, so updating an app could store a URI with a fragment, or one with
+  a scheme registration refuses. Registration and update now share
+  `validateRedirectURIs`, which runs before any field is applied, so a refused
+  update returns the registration error and leaves the app unchanged.
+- **A refused redirect URI is a request error on every transport
+  (go-quicbaas#1463).** Registering or updating an app with a redirect URI that
+  `validateRedirectURIs` refuses was answered as a server fault. The refusal is
+  now the typed `iam.InvalidRedirectURIError`, carrying the URI and the reason;
+  REST (and QUIC) answer it 400, gRPC (and Unix) `codes.InvalidArgument`, and
+  MCP the invalid-input class, each naming the reason. A fragment refusal
+  still carries `RedirectURIFragmentError` as its cause.
+
+- **The embedded transport serves IAM App `Update` and `RotateSecret`
+  (go-quicbaas#1465).** The Go SDK sent both verbs, but the embedded dispatch
+  table registered only `Register`, `Get`, `List` and `Delete`. Both now call
+  the tenant-scoped `AppManager` methods, with the same tenant targeting as
+  the other App verbs.
+
+- **An unsupported grant type is invalid input (go-quicbaas#1466).** App
+  create and update now return a coded `INVALID_INPUT` error for a grant
+  such as `password`, so REST answers 400 and gRPC `InvalidArgument`
+  instead of 500 / `Internal`.
+
+- **Embedded handlers reject a nil request with a typed error** (#1467). A
+  handler given a nil request built its `InvalidRequestTypeError` from
+  `reflect.TypeOf(req).String()`, which panics on nil. It now names the type
+  through the nil-safe `typeNameOf`, so the caller gets the typed error.
+
+- **`make secure-analyzer-self-test` never writes a tracked file.** The
+  hardware-unit proof used to plant a memguard import into
+  `cmd/quicbaas/piv_local_pkcs11.go` and restore it from a trap, so a SIGKILL
+  left the plant in the working tree. Both planted sources now live in a temp
+  dir outside the clone and reach `go vet` through `GOFLAGS=-overlay`; a run
+  killed at any point leaves `git status` clean (#1471).
+
+- **The SDK can register and update an app with `client_secret_basic`
+  (go-quicbaas#1473).** `RegisterAppRequest` and `Application` now always
+  serialise `token_endpoint_auth_method`, so `client_secret_basic`, the
+  enum's zero value, is no longer dropped from a register body or from a
+  decoded app. `UpdateAppRequest.TokenEndpointAuthMethod` is a pointer: an
+  update that names `client_secret_basic` moves the app back to it, and an
+  update that omits the field leaves the method unchanged.
+- **Register stores `token_endpoint_auth_method` on every transport
+  (go-quicbaas#1473).** REST, gRPC, Unix, QUIC, MCP and the embedded
+  transport now carry the method into the stored app, and Get reads it back.
+  Register checks the method with the same validator as update: an
+  unsupported method is refused with `ErrInvalidTokenEndpointAuthMethod`
+  (400 on REST, `InvalidArgument` on gRPC). When the method is omitted the
+  app is stored as `client_secret_basic` (RFC 7591 §2). Register has no
+  certificate thumbprint field, so `self_signed_tls_client_auth` is refused
+  with `ErrMTLSThumbprintRequired`; register with another method, then
+  switch to it through update with the thumbprint.
+- **Dynamic client registration stores the method it answers with
+  (go-quicbaas#1473).** `POST /oauth2/register` passes `token_endpoint_auth_method` to register and reports the stored method, as RFC 7592 reads do; a method register refuses (including `none` and `private_key_jwt`, which it never supported) is `invalid_client_metadata` (400).
+
+- **A spawned child job no longer goes missing from its parent's status
+  (go-quicbaas#1474).** A JobRun status publish that raced `AddChildJob` (or
+  `RecordParent`) could store a snapshot built before the change, overwriting
+  the republish that carried it, so `Status().ChildJobIDs` lacked the child
+  until the next publish. The publish now copies the lineage and stores the
+  status under the same lock that the lineage writers hold.
+
+- **KMS verbs on gRPC and REST resolve keys in the caller's tenant (#1476).**
+  gRPC `RevokeKey`, `DeleteKey`, `GetKeyMetadata`, `UpdateKeyMetadata` and
+  `UpdateKeyStatus`, and REST `UpdateKeyStatus` and `ListKeyVersions`, called
+  the key manager with the raw key name and skipped the KMS service's tenant
+  scoping. They now go through the KMS service, the same as the other verbs;
+  the manager stays only as the fallback when no service is wired. gRPC
+  `RevokeKey` now reports the service's `COMPROMISED` status, where the
+  manager path reported `DISABLED`.
+
+- **A job's workspace pin and surfaced park no longer go missing from its
+  status (go-quicbaas#1477).** A JobRun status publish that raced a workspace
+  pin being recorded, or a park being surfaced, could store a snapshot built
+  before the change, overwriting the republish that carried it, so `Status()`
+  lacked the pin or showed the park unannounced until the next publish. The
+  publish now copies the pin and park under the lock the fan-out fix
+  (#1474) introduced, and the pin and park writers hold that same lock from
+  the change to the republish. The park is no longer read by a publish while
+  it is being written. `JobRun.Parked()` now returns a copy taken under that
+  lock, so the conclusion no longer reads the park while it is re-parked or
+  surfaced.
+
+- **`TestNewModule_RegistersRoleGrants` passes in any test order** (#1491).
+  The module's Admin/Owner gap fill is computed by the pure `roleGrantGaps`
+  and proved against qrdb's own placements, so a go-xkms module built earlier
+  in the process no longer fails it. A new test composes both modules as the
+  server does and pins the owner ruling of 2026-10-17: Admin holds `keys:sign`,
+  Operator still holds it, and the Security Officer does not. No grant changed.
+
+- **The TypeScript SDK's MCP transport serves barrier and ceremony.**
+  `McpBarrierClient` and `McpCeremonyClient` call the server's
+  `qrdb_barrier_*` and `qrdb_ceremony_*` MCP tools, with the tool names and
+  argument keys of the Go SDK's MCP transport. A tenant `enableEncryption`
+  calls `qrdb_tenant_barrier_enable_encryption`. Requests that carry an SO PIN
+  refuse a plaintext `http://` endpoint with `SOPINRequiresTLSError`, and a
+  tool error reply surfaces as `McpError`. The MCP tools return no share or
+  recovery-key material, so `initializeShamir`, `rekey` and
+  `generateRecoveryKeys` return empty `shares` / `keys` over MCP.
+- `ceremony.claimShare` still throws `McpNotImplementedError`: its tools need
+  an officer signature that its request cannot carry.
+
+- **App registration through the IAM service keeps `response_types` and
+  `resource_prefix`.** `iamServiceWrapper.RegisterApp` now passes the
+  request's `ResponseTypes` and `ResourcePrefix` to the app manager, so the
+  stored application carries them instead of the defaults (#1504).
+
+- **The agent-address prober's dial-refusal test no longer races a freed
+  port.** `TestAgentAddressProber_RefusesWhatItCannotReach` dialed a closed
+  loopback listener's port, which a parallel test could take first. It now
+  uses a dialer double that refuses the address, asserts the refusal cause,
+  and checks that resolve and parse refusals never dial.
+
+- **App register and update refuse bad metadata as invalid input on every transport.** REST answers 400, gRPC `InvalidArgument` and MCP invalid input for an `iam.AppMetadataError`; a storage failure answers a server error whose message carries no internal detail.
+
+- **Dynamic client update carries `token_endpoint_auth_method`
+  (go-quicbaas#1511).** `PUT /oauth2/register/{client_id}` (RFC 7592) now
+  applies the requested method and reports the stored one. It is checked by
+  the same validator register uses; a method it refuses is
+  `invalid_client_metadata` (400) and leaves the client unchanged.
+- **Dynamic client register and update answer 500 for server failures
+  (go-quicbaas#1511).** Only a metadata refusal, now the typed
+  `iam.AppMetadataError`, is `invalid_client_metadata` (400). Any other error,
+  such as a storage failure, is `server_error` (500) with a generic
+  description that carries no internal detail.
+
+- **App register and update refuse response types the server does not
+  serve** (#1512). A `response_types` value outside `response_types_supported`,
+  or `code` without the `authorization_code` grant (RFC 7591 §2.1), fails with
+  `iam.ErrInvalidResponseType` (invalid input) on every transport, and nothing
+  is stored; Dynamic Client Registration answers 400 `invalid_client_metadata`.
+  Discovery and validation read one list, `iam.SupportedResponseTypes()`.
+  The DCR request check reads that same list; its own copy, which accepted
+  `token` and `id_token`, is gone.
+
+- **The HTTP/3 auth-method tests no longer race their fake server** (#1516): the handler and the tests read and write its state only under one lock.
+
+- **A tenant update of DisplayName sets the display name, not the name.**
+  Every transport sent `DisplayName` as the tenant's `Name` or dropped it,
+  so the update renamed the tenant and a read back still showed the old
+  display name. REST, QUIC, gRPC, Unix, MCP and the embedded transport now
+  store it in `Settings.DisplayName`, starting from the stored settings so
+  no other setting is lost, and the SDK reads `Tenant.DisplayName` back
+  from `settings.display_name`. The REST server and the MCP
+  `quicbaas_iam_tenant_update` tool accept `display_name`; the gRPC
+  `TenantSettings` gains `display_name`, and its scalars are now optional,
+  so `mfa_required=false` and `max_users=0` are applied rather than
+  ignored.
+
+- **A tenant update that sets Description, Metadata or Status is refused,
+  not reported as stored.** None of the three is stored yet: Metadata and
+  Description wait on go-qrdb's tenant seam row, and Status on the owner
+  queue. `TenantClient.Update` now returns `TenantFieldNotStoredError`
+  (matching `ErrTenantFieldNotStored`), naming the fields in the order
+  description, metadata, status, before any transport call. The refusal is
+  whole: a DisplayName in the same update is not applied either. The
+  servers refuse the same fields: REST answers 400, the MCP
+  `quicbaas_iam_tenant_update` tool answers invalid input, and the embedded
+  handler returns the typed error. The gRPC `UpdateTenantRequest` cannot
+  carry the fields, so the SDK gRPC handler, which Unix shares, refuses
+  them before any call. A tenant read still returns no Metadata or Status.
+
+- **`TestClusterBuilderDefaults` holds in any environment (go-quicbaas#1520).**
+  The test pins the `QUICBAAS_NODE{n}_GRPC` and `QUICBAAS_NODE{n}` variables
+  and asserts the `localhost:5005{1,2,3}` defaults; new cases cover the gRPC
+  variables and the `QUICBAAS_NODE{n}` fallback.
+
+- **KV List returns one page and honours `PageToken` on every transport**
+  (#1534). `List` sorts entities by ID and returns at most `PageSize` of them
+  (default 100) with `NextPageToken` and `TotalCount`; the next call resumes
+  after the last ID of the previous page. A token that does not parse, or
+  that points past the last entity, fails with `service.InvalidPageTokenError`
+  (invalid input) instead of restarting at page 1. The service no longer
+  streams every page in one call, and the embedded transport no longer joins
+  pages; the MCP `list` tool now returns `nextPageToken` and `totalCount`.
+
+- **The embedded transport serves `quicbaas.Ollama` and `quicbaas.Embedding`**
+  (#1535). Every Ollama client verb (Embed, EmbedWithModel, EmbedBatch,
+  ListModels, GetModelInfo, Health, IsAvailable) and every Embedding client
+  verb (GenerateEmbedding, BatchGenerateEmbeddings, ListProviders,
+  GetProviderInfo, SetDefaultProvider, GetCacheStats, ClearCache) now reaches
+  the service facade in process instead of failing with `UnknownMethodError`.
+  When the facade has no provider, the call fails with
+  `ServiceNotConfiguredError` naming `Ollama` or `Embedding`.
+
+- **The embedded transport routes Secrets Rotate, UpdateStatus,
+  SetRotationPolicy and GetRotationPolicy** (#1540). The SDK secrets client
+  sent all four, and the embedded transport answered each with
+  `UnknownMethodError`. An unknown secret status is refused as invalid input
+  before it reaches the service.
+- **Embedded KMS UpdateKeyStatus accepts the request the SDK client sends**
+  (#1541). `handleKMSUpdateKeyStatus` took only the service request type, so
+  every `kms.Client.UpdateKeyStatus` call (disable, enable) failed with an
+  invalid request type. It now converts the client request; an unknown status
+  or a negative version is refused as invalid input.
+
+- **The `pkg/server` TPM2 seal simulator tests pass again.** go-xkms parents
+  every object its TPM key backend seals or creates under the Platform SRK
+  (0x81000002), which `TPM2.Provision` does not create, so
+  `NewBackendWithTPM` failed with `TPM_RC_HANDLE`. `tpmsim.Provision` now
+  creates a platform-policy-bound Platform SRK, as go-xkms does for a fresh
+  simulator. The round trip no longer returns early on that error.
+- **`TestBuildTPM2Strategy_FactoryDispatch_Simulator` closes its backend.**
+  It held the process-wide simulator open, so the next simulator test blocked
+  until the package timeout.
+
+### Security
+
+- **A webhook secret GitLab echoes back is redacted.** When GitLab refuses a
+  webhook write and quotes the request in its answer, the secret that
+  request carried is scrubbed before the refusal reaches an error or a log.
+
+- **The spend report takes its own permission, `spend_report:read`
+  (go-quicbaas#885).** `GET /api/v1/orchestrator/cost`, gRPC/Unix
+  `OrchestratorService/GetSpendReport` and MCP `quicbaas_orchestrator_cost`
+  were gated on `orchestrator:status`, the verb for reading one session's
+  status, so a role holding only that read the tenant's whole attribution
+  tree and its pooled-account roster. They now require `spend_report:read`,
+  registered tenant-scoped and granted to Admin and Operator, the holders of
+  the account roster read `agent_accounts:list`. A custom role that holds
+  `orchestrator:status` and should keep the report needs `spend_report:read`
+  added.
+
+- **Barrier seal verifies the Security Officer PIN when a PIN backend is
+  configured.** `BarrierService.BarrierSeal` takes a `BarrierSealRequest` and
+  refuses a missing or wrong SO PIN with a forbidden `QBError` (`403` on REST,
+  `PermissionDenied` on gRPC); the barrier is left unchanged. With no PIN
+  backend, seal behaves as before. REST (`so_pin` body), gRPC/Unix
+  (`BarrierSealRequest.so_pin`) and MCP (`so_pin` argument) carry it; the
+  Go SDK MCP transport sends a `WithSOPIN`-bound PIN over TLS only.
+  `quicbaas barrier seal` reads it from `--so-pin-stdin` or
+  `QUICBAAS_BARRIER_SO_PIN` (`--so-pin` stays accepted), and the TypeScript
+  `barrier.seal({ so_pin })` sends it on REST and MCP. See
+  `docs/barrier/api.md`.
+- **The TypeScript SDK refuses to send an SO PIN over a non-`https://`
+  endpoint.** `barrier.seal({ so_pin })` on REST and MCP throws
+  `SOPINRequiresTLSError` before any request, loopback included, as the Go
+  SDK does; a seal without a PIN still works over `http://`.
+
+- **The Go SDK's gRPC and Unix seal route verifies the SO PIN too.**
+  `/qrdb.v1.QRDBService/BarrierSeal` is now guarded by
+  `UnaryBarrierSealSOPINInterceptor`, which reads `x-qrdb-so-pin` (else
+  `so_pin`) and refuses a missing or wrong PIN with `PermissionDenied` through
+  the same verifier REST and MCP use. See `docs/barrier/api.md`.
+- **No QUIC route seals the barrier without the SO PIN.** quicbaasd serves
+  QUIC as REST over HTTP/3 only (the facade gates seal); the embedded node
+  never starts go-qrdb's native QUIC server, and a test now pins that.
+
+- **Token-endpoint parameters come only from the form body (#1437).** The
+  token, revocation, introspection and mTLS token endpoints read every OAuth
+  parameter from the POST body; a `client_secret`, `grant_type` or any other
+  parameter in the URL query is ignored (draft-ietf-oauth-v2-1-16 §3.2).
+- **A narrowed refresh keeps the refresh token's full scope (#1436).** A
+  `refresh_token` grant that asks for a subset of the original grant issues
+  that subset as the access token's scope, while the rotated refresh token
+  keeps the presented token's full scope, so a later refresh can ask for the
+  dropped scopes again (-16 §4.3.3).
+
+- **Token revocation acts only on a verified JWT (#1448).**
+  `TokenService.RevokeToken` used to read a JWT's `jti` and `tenant_id`
+  without checking its signature, so an unsigned or foreign-signed token could
+  revoke any token by `jti` in any tenant. It now revokes by `jti`, and takes
+  the tenant from `tenant_id`, only after the provider's verified parse
+  (`parseVerifiedAccessTokenClaims`, the one `Introspect` uses) accepts the
+  token. A token that fails verification, including an expired one, is not
+  revoked by `jti`; a stored refresh token is still revoked by its value.
+- **Logout with an expired or forged bearer now fails.**
+  `RevokeSessionToken` returns an error for a token that does not verify, so
+  `Logout` reports it as unauthorized instead of succeeding.
+
+- **App Update scopes pass the grantor gate (go-quicbaas#1466).** App Update
+  accepts permission scopes only when the caller holds every scope it
+  submits, including scopes the app already has, as resolved from the
+  caller's qrdb effective permissions in the app's tenant. Otherwise the
+  update is refused (HTTP 403, gRPC `PermissionDenied`, MCP permission
+  denied) and the app is unchanged. An unresolvable caller is refused the
+  same way; an update without scopes is unaffected.
+
+- **Every KMS verb carries the caller's tenant scope (#1476).**
+  `GetKey`, `RotateKey` and `DeleteKey` scoped their key id to the caller's
+  tenant, but the other verbs that address a key, policy, rotation policy,
+  metadata, version or DEK used the raw id. One tenant could therefore read
+  another tenant's public key (`GetPublicKey`), revoke its key, read or
+  overwrite its metadata and policies, or use its DEKs. These
+  verbs now refuse a context that has no tenant, and resolve every id inside
+  the caller's tenant, so another tenant's id is not found. Key policies,
+  rotation policies and version status are stored under the tenant-scoped id.
+  The default key and the default DEK are kept per tenant.
+- **`RotateKey` and `RevokeKey` report an absent key as not-found** (HTTP
+  404) instead of an internal error, matching `GetKey` and `DeleteKey`.
+
+- **KMS export, unwrap, re-encryption and gRPC key names are tenant scoped (go-quicbaas#1476).**
+  ExportKey and UnwrapKey resolve the key and the wrapping key under the
+  caller's tenant and bind the wrapped blob to the tenant-scoped key id, so
+  another tenant's key is not found and a blob exported by one tenant does not
+  unwrap for another. StartReencryption covers only the caller's tenant's keys,
+  and GetReencryptionProgress and CancelReencryption return not-found to any
+  other tenant. The gRPC KMS server no longer keeps a global key-name registry:
+  key names are unique within a tenant, checked in the service layer. DeleteKey
+  releases the name only in the caller's tenant.
+
+- **Crypto service key lookups are tenant scoped (go-quicbaas#1476).**
+  Encrypt, Decrypt, Rewrap, EncryptBatch, DecryptBatch, GenerateDataKey,
+  GenerateWrappedDataKey, Sign, Verify, GenerateHMAC and VerifyHMAC resolve the
+  key id under the caller's tenant, as the KMS verbs do. Another tenant's key
+  is not found, and a request whose context carries no tenant is refused.
+  Per-key policy checks and AEAD safety tracking use the tenant-scoped id.
+
+- **Six crypto verbs gate on per-key authorization (go-quicbaas#1480).**
+  Rewrap, EncryptBatch, DecryptBatch, GenerateWrappedDataKey, GenerateHMAC and
+  VerifyHMAC scoped the key to the caller's tenant but skipped the per-key
+  policy check that Encrypt and Decrypt make. A principal the key policy denies
+  could therefore still use the key through these verbs. Each now checks the
+  key policy before it records key usage or calls the crypto manager, and a
+  denial returns forbidden and is counted and audited as Encrypt's is. Rewrap
+  and EncryptBatch check the `encrypt` operation, DecryptBatch `decrypt`,
+  GenerateWrappedDataKey `generate_data_key`, GenerateHMAC `sign` and
+  VerifyHMAC `verify`.
+
+- **HMAC verbs check the MAC operations; Rewrap checks decrypt and encrypt
+  (go-quicbaas#1488).** A MAC key is not a signing key: GenerateHMAC now asks
+  the key policy for `generate_mac` and VerifyHMAC for `verify_mac`, instead of
+  `sign` and `verify`, so a key granted only signing operations can no longer
+  produce or check MACs. Rewrap decrypts under the source key version and
+  encrypts under the destination, so it now needs both `decrypt` and `encrypt`
+  on the key; it checked `encrypt` only. A denial on either check returns
+  forbidden before any key usage is recorded or the crypto manager is called.
+
+- **The merge-result test image is built with `--pull --no-cache`.** Its
+  `apk upgrade` layer was reused from the runner's cache, so the Trivy gate
+  failed on CVE-2026-77214 (libexpat 2.8.5-r0) after Alpine had shipped the
+  fix (2.9.0-r0). Every build now upgrades against the current Alpine index,
+  as the integration compose build already does (#1501).
 
 ## [0.15.0-alpha] - 2026-10-15
 

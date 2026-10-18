@@ -1,1 +1,0 @@
-- **App register and update refuse bad metadata as invalid input on every transport.** REST answers 400, gRPC `InvalidArgument` and MCP invalid input for an `iam.AppMetadataError`; a storage failure answers a server error whose message carries no internal detail.
