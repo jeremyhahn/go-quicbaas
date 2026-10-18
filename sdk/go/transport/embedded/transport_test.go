@@ -125,6 +125,7 @@ type mockQuicBaaS struct {
 	queryFunc             func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error
 	scanIndexFunc         func(ctx context.Context, req *service.ScanRequest, stream chan<- *service.ScanResponse) error
 	timeSeriesQueryFunc   func(ctx context.Context, req *service.TimeSeriesQueryRequest, stream chan<- *service.TimeSeriesQueryResponse) error
+	loginFunc             func(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error)
 	validateTokenFunc     func(ctx context.Context, req *service.ValidateTokenRequest) (*service.ValidateTokenResponse, error)
 	introspectTokenFunc   func(ctx context.Context, req *service.IntrospectTokenRequest) (*service.TokenIntrospection, error)
 	createAuthRoleFunc    func(ctx context.Context, req *service.AuthCreateRoleRequest) (*service.AuthCreateRoleResponse, error)
@@ -307,6 +308,9 @@ func (m *mockQuicBaaS) VerifyBackup(ctx context.Context, req *service.VerifyBack
 
 // Auth operations
 func (m *mockQuicBaaS) Login(ctx context.Context, req *service.LoginRequest) (*service.LoginResponse, error) {
+	if m.loginFunc != nil {
+		return m.loginFunc(ctx, req)
+	}
 	return &service.LoginResponse{AccessToken: "token"}, nil
 }
 
@@ -1965,7 +1969,7 @@ func TestTransport_AllAuthOperations(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Login", func(t *testing.T) {
-		req := &service.LoginRequest{}
+		req := &service.ExtendedLoginRequest{Username: "alice"}
 		resp, err := transport.Request(ctx, "quicbaas.Auth", "Login", req)
 		require.NoError(t, err)
 		assert.NotNil(t, resp)
