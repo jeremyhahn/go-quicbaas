@@ -184,6 +184,34 @@ func TestOnboardRepo_FirstRunCreatesWhatIsMissing(t *testing.T) {
 	}
 }
 
+// TestOnboardRepo_FreshRepoIsConformant is #1041's first verification line:
+// one run on a fresh repository leaves a project whose own conformance pass
+// is clean, every check passing, as the hand-driven onboarding did.
+func TestOnboardRepo_FreshRepoIsConformant(t *testing.T) {
+	rig := newOnboardRig(t)
+	onboarded := rig.onboard(t, onboardRequest())
+
+	report, err := rig.svc.Conformance(context.Background(), sdlcTestTenant, onboarded.ProjectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !report.Conformant || len(report.Findings) != 0 {
+		t.Fatalf("conformant = %v, findings = %+v, want conformant with none", report.Conformant, report.Findings)
+	}
+	// The conformance pass runs the binding check, then its forge checks in
+	// this order; the order is part of the report's contract.
+	want := []string{sdlc.CheckBinding, sdlc.CheckWebhook, sdlc.CheckLabels, sdlc.CheckWorkflows, sdlc.CheckProtection}
+	if len(report.Checks) != len(want) {
+		t.Fatalf("checks = %+v, want exactly %v", report.Checks, want)
+	}
+	for i, check := range report.Checks {
+		if check.Name != want[i] || check.Status != sdlc.StatusPass {
+			t.Fatalf("check %d = %s %s, want %s pass", i, check.Name, check.Status, want[i])
+		}
+	}
+}
+
 func TestOnboardRepo_SecondRunChangesNothing(t *testing.T) {
 	rig := newOnboardRig(t)
 	first := rig.onboard(t, onboardRequest())
@@ -353,12 +381,27 @@ func TestOnboardRepo_RefusesAnUnknownTemplate(t *testing.T) {
 	rig := newOnboardRig(t)
 	req := onboardRequest()
 	req.Like = "nope"
+	projects, secrets := len(rig.projects.projects), len(rig.secrets.secrets)
 
 	_, err := rig.svc.OnboardRepo(context.Background(), sdlcTestTenant, req)
 
 	var notFound *ProjectNotFoundError
 	if !errors.As(err, &notFound) {
 		t.Fatalf("err = %v, want ProjectNotFoundError", err)
+	}
+	if len(rig.projects.projects) != projects || len(rig.secrets.secrets) != secrets {
+		t.Fatalf("a refused onboarding wrote: projects %d -> %d, secrets %d -> %d",
+			projects, len(rig.projects.projects), secrets, len(rig.secrets.secrets))
+	}
+	bindings, err := rig.store.ListBindings(context.Background(), sdlcTestTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bindings) != 1 {
+		t.Fatalf("bindings = %d, want only the template's", len(bindings))
+	}
+	if hooks := rig.web.HookURLs(); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want none provisioned", hooks)
 	}
 }
 
