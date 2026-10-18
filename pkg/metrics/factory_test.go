@@ -56,11 +56,51 @@ func TestRecordFactoryCostMicrosKeepsTheBasesApart(t *testing.T) {
 func TestRecordFactorySpendDeferral(t *testing.T) {
 	Reset()
 	m := InitMetrics()
-	m.RecordFactorySpendDeferral("acme", "p1", "project_spend")
-	m.RecordFactorySpendDeferral("acme", "p1", "project_spend")
+	for _, reason := range []SpendDeferralReason{
+		SpendDeferralReasonTokenLimit, SpendDeferralReasonCostLimit, SpendDeferralReasonProviderHold,
+	} {
+		m.RecordFactorySpendDeferral("acme", "p1", "project_spend", string(reason))
+		m.RecordFactorySpendDeferral("acme", "p1", "project_spend", string(reason))
 
-	assert.Equal(t, 2.0, testutil.ToFloat64(m.FactorySpendDeferrals.With(
-		prometheus.Labels{"tenant": "acme", "project": "p1", "axis": "project_spend"})))
+		assert.Equal(t, 2.0, testutil.ToFloat64(m.FactorySpendDeferrals.With(prometheus.Labels{
+			"tenant": "acme", "project": "p1", "axis": "project_spend", "reason": string(reason),
+		})), "reason %s is recorded under its own label", reason)
+	}
+}
+
+func TestRecordFactorySpendDeferralFoldsUnknownReasonsIntoOther(t *testing.T) {
+	Reset()
+	m := InitMetrics()
+	for _, reason := range []string{"", "within_limits", "made_up", "TOKEN_LIMIT"} {
+		m.RecordFactorySpendDeferral("acme", "p1", "tenant_spend", reason)
+	}
+
+	assert.Equal(t, 4.0, testutil.ToFloat64(m.FactorySpendDeferrals.With(prometheus.Labels{
+		"tenant": "acme", "project": "p1", "axis": "tenant_spend", "reason": string(SpendDeferralReasonOther),
+	})))
+	assert.Equal(t, 1, testutil.CollectAndCount(m.FactorySpendDeferrals),
+		"every unknown reason shares the one other series")
+}
+
+func TestFactorySpendDeferralsLabelSet(t *testing.T) {
+	Reset()
+	m := InitMetrics()
+	m.RecordFactorySpendDeferral("acme", "p1", "project_spend", string(SpendDeferralReasonCostLimit))
+
+	_, err := m.FactorySpendDeferrals.GetMetricWith(prometheus.Labels{
+		"tenant": "acme", "project": "p1", "axis": "project_spend", "reason": "cost_limit",
+	})
+	assert.NoError(t, err, "the label set is tenant, project, axis, reason")
+
+	_, err = m.FactorySpendDeferrals.GetMetricWith(prometheus.Labels{
+		"tenant": "acme", "project": "p1", "axis": "project_spend",
+	})
+	assert.Error(t, err, "a label set without reason is refused")
+
+	_, err = m.FactorySpendDeferrals.GetMetricWith(prometheus.Labels{
+		"tenant": "acme", "project": "p1", "axis": "project_spend", "reason": "cost_limit", "model": "m",
+	})
+	assert.Error(t, err, "a fifth label is refused")
 }
 
 // TestFactoryMetricsCarryNoUnboundedLabel pins the label sets: a job, host,

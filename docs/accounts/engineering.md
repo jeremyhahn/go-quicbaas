@@ -256,7 +256,7 @@ they are KV records set through the API ([api.md](api.md)).
 | `quicbaas_orch_account_limit_holds_total` | per hold |
 | `quicbaas_factory_tokens_total` | `tenant`, `project`, `kind`, `provider`, `backend`, `model`, `direction` (`input`, `output`, `cache_read`, `cache_write`) |
 | `quicbaas_factory_cost_micros_total` | the same, with `basis` = `equivalent` or `billed` |
-| `quicbaas_factory_spend_deferrals_total` | `tenant`, `project`, `axis` (`project_spend`, `tenant_spend`), counted when a deferral starts or changes |
+| `quicbaas_factory_spend_deferrals_total` | `tenant`, `project`, `axis` (`project_spend`, `tenant_spend`), `reason` (`token_limit`, `cost_limit`, `provider_hold`; any other quota reason, empty or `within_limits` is `other`), counted when a deferral starts or changes |
 
 Every label is bounded. `model` is a name the price table lists (aliases
 included, `PriceBook.Lists`) or `other`. `provider` is a vendor the table names,

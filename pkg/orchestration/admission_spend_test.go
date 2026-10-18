@@ -16,6 +16,9 @@ package orchestration
 import (
 	"context"
 	stderrors "errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +90,7 @@ func TestPlan_DefersAProjectOverItsOwnSpendLimit(t *testing.T) {
 	rig.queued(admissionTenant, "funded", 5)
 	deferrals := func() float64 {
 		return promtestutil.ToFloat64(metrics.GetMetrics().FactorySpendDeferrals.WithLabelValues(
-			admissionTenant, "spent", string(AdmissionAxisProjectSpend)))
+			admissionTenant, "spent", string(AdmissionAxisProjectSpend), string(QuotaReasonTokenLimit)))
 	}
 	before := deferrals()
 
@@ -246,5 +249,108 @@ func TestSpendDeferralReasonNamesDollars(t *testing.T) {
 	})
 	if !strings.Contains(reason, "$12.50 of $10.00 at list price") || strings.Contains(reason, "frees up") {
 		t.Fatalf("reason = %q", reason)
+	}
+}
+
+// spendDeferralCount reads the deferral counter for one project, axis and
+// reason label.
+func spendDeferralCount(projectID string, axis AdmissionAxis, reason string) float64 {
+	return promtestutil.ToFloat64(metrics.GetMetrics().FactorySpendDeferrals.WithLabelValues(
+		admissionTenant, projectID, string(axis), reason))
+}
+
+// TestSpendDeferralCountsItsQuotaReason asserts a token-limit and a
+// cost-limit deferral each count under their own reason label.
+func TestSpendDeferralCountsItsQuotaReason(t *testing.T) {
+	rig := newSpendAxisRig(t)
+	reporter, ok := rig.reader.(*scopeSpendAdmission)
+	if !ok {
+		t.Fatalf("reader is %T, want *scopeSpendAdmission", rig.reader)
+	}
+	for _, reason := range []QuotaReason{QuotaReasonTokenLimit, QuotaReasonCostLimit} {
+		projectID := "reason-" + string(reason)
+		before := spendDeferralCount(projectID, AdmissionAxisProjectSpend, string(reason))
+		other := spendDeferralCount(projectID, AdmissionAxisProjectSpend, string(metrics.SpendDeferralReasonOther))
+
+		reporter.report(context.Background(), &Project{ID: projectID, TenantID: admissionTenant}, ScopeSpendVerdict{
+			Deferred: true, Axis: AdmissionAxisProjectSpend,
+			Decision: &QuotaDecision{Window: "daily", Reason: reason},
+		})
+
+		if got := spendDeferralCount(projectID, AdmissionAxisProjectSpend, string(reason)) - before; got != 1 {
+			t.Fatalf("%s deferral counted %v times under its reason, want once", reason, got)
+		}
+		if got := spendDeferralCount(projectID, AdmissionAxisProjectSpend, string(metrics.SpendDeferralReasonOther)); got != other {
+			t.Fatalf("%s deferral counted under other", reason)
+		}
+	}
+}
+
+// TestSpendDeferralWithoutDecisionCountsOther asserts a deferral that
+// carries no quota decision is counted as other and does not panic.
+func TestSpendDeferralWithoutDecisionCountsOther(t *testing.T) {
+	rig := newSpendAxisRig(t)
+	reporter, ok := rig.reader.(*scopeSpendAdmission)
+	if !ok {
+		t.Fatalf("reader is %T, want *scopeSpendAdmission", rig.reader)
+	}
+	other := string(metrics.SpendDeferralReasonOther)
+	before := spendDeferralCount("undecided", AdmissionAxisTenantSpend, other)
+
+	reporter.report(context.Background(), &Project{ID: "undecided", TenantID: admissionTenant}, ScopeSpendVerdict{
+		Deferred: true, Axis: AdmissionAxisTenantSpend, Reason: "spent",
+	})
+
+	if got := spendDeferralCount("undecided", AdmissionAxisTenantSpend, other) - before; got != 1 {
+		t.Fatalf("a deferral without a decision counted %v times as other, want once", got)
+	}
+	if events := rig.auditor.all(); len(events) != 1 || events[0].Action != AuditActionSpendDeferred {
+		t.Fatalf("audit = %+v, want one spend_deferred event", events)
+	}
+}
+
+// TestEveryQuotaRefusalHasASpendDeferralLabel parses account_quota.go and
+// fails when a refusing QuotaReason is added without its own value in the
+// metrics package's closed reason set, so the label would silently read
+// other.
+func TestEveryQuotaRefusalHasASpendDeferralLabel(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "account_quota.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse account_quota.go: %v", err)
+	}
+	var refusals []QuotaReason
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok || value.Type == nil || len(value.Values) != 1 {
+				continue
+			}
+			if ident, ok := value.Type.(*ast.Ident); !ok || ident.Name != "QuotaReason" {
+				continue
+			}
+			lit, ok := value.Values[0].(*ast.BasicLit)
+			if !ok {
+				t.Fatalf("QuotaReason %s is not a string literal", value.Names[0].Name)
+			}
+			reason := QuotaReason(strings.Trim(lit.Value, `"`))
+			if reason != QuotaReasonWithinLimits {
+				refusals = append(refusals, reason)
+			}
+		}
+	}
+	if len(refusals) == 0 {
+		t.Fatal("found no refusing QuotaReason constants in account_quota.go")
+	}
+	for _, reason := range refusals {
+		if got := metrics.SpendDeferralReasonLabel(string(reason)); string(got) != string(reason) {
+			t.Errorf("QuotaReason %q labels as %q: add it to metrics.SpendDeferralReason", reason, got)
+		}
+	}
+	if got := metrics.SpendDeferralReasonLabel(string(QuotaReasonWithinLimits)); got != metrics.SpendDeferralReasonOther {
+		t.Errorf("within_limits labels as %q, want other", got)
 	}
 }

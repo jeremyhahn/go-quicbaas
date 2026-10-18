@@ -85,8 +85,9 @@ type Metrics struct {
 
 	// FactorySpendDeferrals counts admission deferring a project because its
 	// own spend limits, or its tenant's, are spent, by axis
-	// ("project_spend" or "tenant_spend"). Counted when a deferral starts or
-	// changes reason, not on every sweep.
+	// ("project_spend" or "tenant_spend") and by reason (a
+	// SpendDeferralReason). Counted when a deferral starts or changes reason,
+	// not on every sweep.
 	FactorySpendDeferrals *prometheus.CounterVec
 
 	// OrchAccountPoolExhausted counts account resolutions that found every
@@ -315,9 +316,9 @@ func InitMetrics() *Metrics {
 			FactorySpendDeferrals: promauto.With(Registry).NewCounterVec(
 				prometheus.CounterOpts{
 					Name: "quicbaas_factory_spend_deferrals_total",
-					Help: "Admission deferrals of a project whose own or whose tenant's spend limits are spent, by axis",
+					Help: "Admission deferrals of a project whose own or whose tenant's spend limits are spent, by axis and by reason (token_limit, cost_limit, provider_hold or other)",
 				},
-				[]string{"tenant", "project", "axis"},
+				[]string{"tenant", "project", "axis", "reason"},
 			),
 
 			OrchAgentRestarts: promauto.With(Registry).NewCounterVec(
@@ -557,9 +558,47 @@ func (m *Metrics) RecordFactoryCostMicros(labels FactoryTurnLabels, basis string
 	m.FactoryCostMicrosTotal.WithLabelValues(labels.values(basis)...).Add(micros)
 }
 
-// RecordFactorySpendDeferral counts one admission deferral for spend.
-func (m *Metrics) RecordFactorySpendDeferral(tenant, project, axis string) {
-	m.FactorySpendDeferrals.WithLabelValues(tenant, project, axis).Inc()
+// SpendDeferralReason is a value of the reason label on
+// quicbaas_factory_spend_deferrals_total. The set is closed: it mirrors the
+// refusing values of orchestration.QuotaReason, and anything else is
+// SpendDeferralReasonOther, so no caller can widen the label's cardinality.
+type SpendDeferralReason string
+
+const (
+	// SpendDeferralReasonTokenLimit is a window's token allowance spent.
+	SpendDeferralReasonTokenLimit SpendDeferralReason = "token_limit"
+
+	// SpendDeferralReasonCostLimit is a window's dollar allowance spent.
+	SpendDeferralReasonCostLimit SpendDeferralReason = "cost_limit"
+
+	// SpendDeferralReasonProviderHold is a live provider hold.
+	SpendDeferralReasonProviderHold SpendDeferralReason = "provider_hold"
+
+	// SpendDeferralReasonOther is every reason outside the closed set,
+	// including the empty reason and within_limits.
+	SpendDeferralReasonOther SpendDeferralReason = "other"
+)
+
+// spendDeferralReasons is the closed set of known reason label values.
+var spendDeferralReasons = map[string]SpendDeferralReason{
+	string(SpendDeferralReasonTokenLimit):   SpendDeferralReasonTokenLimit,
+	string(SpendDeferralReasonCostLimit):    SpendDeferralReasonCostLimit,
+	string(SpendDeferralReasonProviderHold): SpendDeferralReasonProviderHold,
+}
+
+// SpendDeferralReasonLabel returns the closed-set label value for reason:
+// the reason itself when it is known, SpendDeferralReasonOther otherwise.
+func SpendDeferralReasonLabel(reason string) SpendDeferralReason {
+	if known, ok := spendDeferralReasons[reason]; ok {
+		return known
+	}
+	return SpendDeferralReasonOther
+}
+
+// RecordFactorySpendDeferral counts one admission deferral for spend. The
+// reason is normalized to the closed SpendDeferralReason set.
+func (m *Metrics) RecordFactorySpendDeferral(tenant, project, axis, reason string) {
+	m.FactorySpendDeferrals.WithLabelValues(tenant, project, axis, string(SpendDeferralReasonLabel(reason))).Inc()
 }
 
 // RecordOrchAccountPoolExhausted counts one resolution that found a provider's

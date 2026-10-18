@@ -211,7 +211,8 @@ func (s *scopeSpendAdmission) report(ctx context.Context, project *Project, verd
 		return
 	}
 	s.reported[key] = resourceID
-	metrics.GetMetrics().RecordFactorySpendDeferral(project.TenantID, project.ID, string(verdict.Axis))
+	metrics.GetMetrics().RecordFactorySpendDeferral(project.TenantID, project.ID, string(verdict.Axis),
+		string(spendDeferralQuotaReason(verdict)))
 	emitStoreAudit(ctx, s.auditor, StoreAuditEvent{
 		TenantID:   project.TenantID,
 		Resource:   AuditResourceProject,
@@ -229,5 +230,18 @@ func (s *scopeSpendAdmission) report(ctx context.Context, project *Project, verd
 // only — the project, which spender's limit, the refusal and the window —
 // like every other audit event.
 func spendDeferralResourceID(projectID string, verdict ScopeSpendVerdict) string {
-	return projectID + "/" + string(verdict.Axis) + "/" + string(verdict.Decision.Reason) + "/" + verdict.Decision.Window
+	window := ""
+	if verdict.Decision != nil {
+		window = verdict.Decision.Window
+	}
+	return projectID + "/" + string(verdict.Axis) + "/" + string(spendDeferralQuotaReason(verdict)) + "/" + window
+}
+
+// spendDeferralQuotaReason is the quota refusal behind a deferral, or the
+// empty reason when the verdict carries no decision.
+func spendDeferralQuotaReason(verdict ScopeSpendVerdict) QuotaReason {
+	if verdict.Decision == nil {
+		return ""
+	}
+	return verdict.Decision.Reason
 }

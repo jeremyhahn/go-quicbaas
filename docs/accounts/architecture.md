@@ -1150,7 +1150,9 @@ the project p1 spend window "5h" is spent: $41.20 of $40.00 at list price; it fr
 ```
 
 The deferral is reported when it starts or changes, never on every sweep: the
-counter `quicbaas_factory_spend_deferrals_total`, an audit event (project
+counter `quicbaas_factory_spend_deferrals_total{tenant,project,axis,reason}`
+(`reason` is the quota refusal: `token_limit`, `cost_limit` or
+`provider_hold`, and `other` for anything else), an audit event (project
 resource, action `spend_deferred`, resource ID
 `{project}/{axis}/{reason}/{window}`), and a warning log line. A window that
 could not be summed fails closed with `AdmissionUndecidableError`. The reader
