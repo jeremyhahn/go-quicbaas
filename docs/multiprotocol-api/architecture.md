@@ -935,3 +935,5 @@ See security.md
 ---
 
 **Last Updated:** 2026-02-03
+
+See also [grpc-web.md](grpc-web.md): the gRPC-Web seam for the TypeScript SDK (design note).
