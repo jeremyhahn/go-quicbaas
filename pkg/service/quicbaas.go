@@ -850,6 +850,21 @@ type kvService struct {
 	svc *quicBaaS
 }
 
+// contextError returns a typed error wrapping ctx.Err() when ctx is cancelled
+// or past its deadline, and nil while ctx is live. KV verbs call it before any
+// read or write so a cancelled caller never commits or observes data.
+func contextError(ctx context.Context, op string) error {
+	err := ctx.Err()
+	if err == nil {
+		return nil
+	}
+	code := errors.ErrCanceled
+	if stderrors.Is(err, context.DeadlineExceeded) {
+		code = errors.ErrDeadlineExceeded
+	}
+	return &errors.QBError{Code: code, Op: op, Err: err}
+}
+
 func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -865,6 +880,9 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Put", "invalid").Inc()
 		}
+		return nil, err
+	}
+	if err := contextError(ctx, "service.Put"); err != nil {
 		return nil, err
 	}
 
@@ -949,6 +967,9 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Get", "invalid").Inc()
 		}
+		return nil, err
+	}
+	if err := contextError(ctx, "service.Get"); err != nil {
 		return nil, err
 	}
 
@@ -1098,6 +1119,9 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 		if k.svc.metrics != nil {
 			k.svc.metrics.requestsTotal.With("Delete", "invalid").Inc()
 		}
+		return nil, err
+	}
+	if err := contextError(ctx, "service.Delete"); err != nil {
 		return nil, err
 	}
 

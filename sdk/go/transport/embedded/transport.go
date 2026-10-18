@@ -559,6 +559,11 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 	if !ok {
 		return nil, NewUnknownMethodError(svcName, method)
 	}
+	// A cancelled or expired caller never reaches the service, so no
+	// handler reads or writes on its behalf.
+	if err := ctx.Err(); err != nil {
+		return nil, classifyServiceError(svcName, method, err)
+	}
 
 	resp, err := handler(inProcessTenant(ctx), t.service, req)
 	return resp, classifyServiceError(svcName, method, err)
