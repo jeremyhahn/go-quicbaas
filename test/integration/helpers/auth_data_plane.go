@@ -17,6 +17,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,13 +61,42 @@ type dataPlanePrincipal struct {
 	token    pivCachedToken
 }
 
+// tenantDeleter deletes one tenant of the cluster at baseURL.
+type tenantDeleter func(ctx context.Context, baseURL, tenantID string) error
+
+// dataPlaneRegistry holds the data-plane principal of each cluster a suite
+// process has enrolled, keyed by base URL.
+type dataPlaneRegistry struct {
+	sync.Mutex
+	principals map[string]*dataPlanePrincipal
+}
+
+func newDataPlaneRegistry() *dataPlaneRegistry {
+	return &dataPlaneRegistry{principals: make(map[string]*dataPlanePrincipal)}
+}
+
+// release deletes the tenant of every enrolled principal and forgets each
+// one it deleted, so a second release deletes nothing. A principal whose
+// delete fails is kept and its failure returned as a *DataPlaneAuthError.
+func (r *dataPlaneRegistry) release(ctx context.Context, deleteTenant tenantDeleter) error {
+	r.Lock()
+	defer r.Unlock()
+
+	var errs []error
+	for baseURL, principal := range r.principals {
+		if err := deleteTenant(ctx, baseURL, principal.tenantID); err != nil {
+			errs = append(errs, &DataPlaneAuthError{Step: "delete tenant", TenantID: principal.tenantID, Cause: err})
+			continue
+		}
+		delete(r.principals, baseURL)
+	}
+	return errors.Join(errs...)
+}
+
 // dataPlaneAuth memoises one principal per base URL, so a suite process
 // provisions its tenant once and only logs in again when the bearer expires.
 // The mutex is held across enrollment so concurrent tests cannot enroll twice.
-var dataPlaneAuth = struct {
-	sync.Mutex
-	principals map[string]*dataPlanePrincipal
-}{principals: make(map[string]*dataPlanePrincipal)}
+var dataPlaneAuth = newDataPlaneRegistry()
 
 // AuthDataPlane returns a bearer for the data-plane principal of the cluster
 // at baseURL: a user of a tenant provisioned for this suite process whose only
@@ -80,6 +110,17 @@ func AuthDataPlane(t *testing.T, baseURL string) string {
 		t.Fatalf("AuthDataPlane(%q): %v", baseURL, err)
 	}
 	return bearer
+}
+
+// ReleaseDataPlaneTenants deletes the tenant AuthDataPlane provisioned for
+// each cluster this process used. The tenant outlives every test, so no
+// t.Cleanup can delete it: a package that uses the data-plane principal
+// calls this from TestMain after m.Run. Releasing when nothing was
+// provisioned is a no-op.
+func ReleaseDataPlaneTenants() error {
+	ctx, cancel := context.WithTimeout(context.Background(), tenantSetupTimeout)
+	defer cancel()
+	return dataPlaneAuth.release(ctx, deleteTenantAsSystemAdmin)
 }
 
 // DataPlaneGRPCCredentials returns per-RPC credentials that send the

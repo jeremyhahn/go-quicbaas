@@ -136,13 +136,19 @@ func deleteTestTenant(t *testing.T, baseURL, tenantID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), tenantSetupTimeout)
 	defer cancel()
 
-	systemBearer, err := AuthSystemAdminContext(ctx, baseURL)
-	if err == nil {
-		err = DeleteTenant(ctx, baseURL, tenantID, systemBearer)
-	}
-	if err != nil {
+	if err := deleteTenantAsSystemAdmin(ctx, baseURL, tenantID); err != nil {
 		t.Errorf("delete fixture tenant %q: %v", tenantID, err)
 	}
+}
+
+// deleteTenantAsSystemAdmin logs in as the system admin and deletes
+// tenantID, the one way a fixture tenant is removed.
+func deleteTenantAsSystemAdmin(ctx context.Context, baseURL, tenantID string) error {
+	systemBearer, err := AuthSystemAdminContext(ctx, baseURL)
+	if err != nil {
+		return err
+	}
+	return DeleteTenant(ctx, baseURL, tenantID, systemBearer)
 }
 
 // enrollTenantPIVUser has the fixture CA issue an ephemeral tenant-scoped
