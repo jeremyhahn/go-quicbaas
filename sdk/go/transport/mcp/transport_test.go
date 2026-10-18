@@ -237,7 +237,9 @@ func TestTransport_MapToToolName(t *testing.T) {
 
 		// Object storage
 		{"quicbaas.ObjectStorage", "Put", "quicbaas_object_put"},
-		{"quicbaas.ObjectStorageAdmin", "CreateBackend", "quicbaas_object_create_backend"},
+		{"quicbaas.ObjectStorageAdmin", "CreateBackend", "quicbaas_object_admin_create_backend"},
+		{"quicbaas.ObjectStorageAdmin", "RunGarbageCollection", "quicbaas_object_admin_run_gc"},
+		{"quicbaas.ObjectStorageAdmin", "GetGarbageCollectionProgress", "quicbaas_object_admin_get_gc_progress"},
 
 		// IAM Tenant operations
 		{"quicbaas.IAM.Tenant", "Create", "quicbaas_iam_tenant_create"},

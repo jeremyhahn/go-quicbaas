@@ -377,6 +377,12 @@ func (t *Transport) Request(ctx context.Context, service, method string, req int
 		return t.securityHandler.handleRequest(ctx, service, method, req)
 	}
 
+	// ObjectStorageAdmin verbs go to the /api/v1/admin object-backend,
+	// storage and object-repair routes with typed replies.
+	if isObjectStorageAdminService(service) {
+		return t.handleObjectStorageAdminRequest(ctx, method, req)
+	}
+
 	return t.requestWithRetry(ctx, service, method, req)
 }
 
@@ -655,8 +661,6 @@ func (t *Transport) mapToEndpoint(service, method string) (string, string) {
 		return t.mapOperationsMethod(method)
 	case "Embedding":
 		return t.mapEmbeddingMethod(method)
-	case "ObjectStorageAdmin":
-		return t.mapObjectStorageAdminMethod(method)
 	case "Scheduler":
 		return t.mapSchedulerMethod(method)
 	case "RAG":
@@ -1185,38 +1189,6 @@ func (t *Transport) mapEmbeddingMethod(method string) (string, string) {
 
 	default:
 		return "/api/v1/embedding/" + strings.ToLower(method), http.MethodPost
-	}
-}
-
-// mapObjectStorageAdminMethod maps ObjectStorageAdmin service methods to REST endpoints.
-func (t *Transport) mapObjectStorageAdminMethod(method string) (string, string) {
-	switch method {
-	// Backend management operations
-	case "CreateBackend":
-		return "/api/v1/storage/admin/backends", http.MethodPost
-	case "UpdateBackend":
-		return "/api/v1/storage/admin/backends/{id}", http.MethodPut
-	case "DeleteBackend":
-		return "/api/v1/storage/admin/backends/{id}", http.MethodDelete
-	case "SetBackendStatus":
-		return "/api/v1/storage/admin/backends/{id}/status", http.MethodPost
-
-	// Storage stats and maintenance operations
-	case "GetStorageStats":
-		return "/api/v1/storage/admin/stats", http.MethodGet
-	case "RunGarbageCollection":
-		return "/api/v1/storage/admin/gc", http.MethodPost
-	case "GetGarbageCollectionProgress":
-		return "/api/v1/storage/admin/gc/progress", http.MethodGet
-
-	// Object repair and compaction operations
-	case "RepairObject":
-		return "/api/v1/storage/admin/repair", http.MethodPost
-	case "CompactBackend":
-		return "/api/v1/storage/admin/backends/{id}/compact", http.MethodPost
-
-	default:
-		return "/api/v1/storage/admin/" + strings.ToLower(method), http.MethodPost
 	}
 }
 

@@ -178,18 +178,6 @@ func TestMapToEndpointAllServices(t *testing.T) {
 		{"Embedding/ClearCache", "Embedding", "ClearCache", "/api/v1/embedding/cache", http.MethodDelete},
 		{"Embedding/default", "Embedding", "Reindex", "/api/v1/embedding/reindex", http.MethodPost},
 
-		// ObjectStorageAdmin service
-		{"ObjectStorageAdmin/CreateBackend", "ObjectStorageAdmin", "CreateBackend", "/api/v1/storage/admin/backends", http.MethodPost},
-		{"ObjectStorageAdmin/UpdateBackend", "ObjectStorageAdmin", "UpdateBackend", "/api/v1/storage/admin/backends/{id}", http.MethodPut},
-		{"ObjectStorageAdmin/DeleteBackend", "ObjectStorageAdmin", "DeleteBackend", "/api/v1/storage/admin/backends/{id}", http.MethodDelete},
-		{"ObjectStorageAdmin/SetBackendStatus", "ObjectStorageAdmin", "SetBackendStatus", "/api/v1/storage/admin/backends/{id}/status", http.MethodPost},
-		{"ObjectStorageAdmin/GetStorageStats", "ObjectStorageAdmin", "GetStorageStats", "/api/v1/storage/admin/stats", http.MethodGet},
-		{"ObjectStorageAdmin/RunGarbageCollection", "ObjectStorageAdmin", "RunGarbageCollection", "/api/v1/storage/admin/gc", http.MethodPost},
-		{"ObjectStorageAdmin/GetGarbageCollectionProgress", "ObjectStorageAdmin", "GetGarbageCollectionProgress", "/api/v1/storage/admin/gc/progress", http.MethodGet},
-		{"ObjectStorageAdmin/RepairObject", "ObjectStorageAdmin", "RepairObject", "/api/v1/storage/admin/repair", http.MethodPost},
-		{"ObjectStorageAdmin/CompactBackend", "ObjectStorageAdmin", "CompactBackend", "/api/v1/storage/admin/backends/{id}/compact", http.MethodPost},
-		{"ObjectStorageAdmin/default", "ObjectStorageAdmin", "Rebalance", "/api/v1/storage/admin/rebalance", http.MethodPost},
-
 		// Scheduler service
 		{"Scheduler/CreateJob", "Scheduler", "CreateJob", "/api/v1/scheduler/jobs", http.MethodPost},
 		{"Scheduler/GetJob", "Scheduler", "GetJob", "/api/v1/scheduler/jobs/{id}", http.MethodGet},

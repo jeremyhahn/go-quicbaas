@@ -161,16 +161,7 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	// --- Object storage ----------------------------------------------------
 	// The whole admin surface is registered under quicbaas_object_admin_*; the
 	// SDK collapses ObjectStorageAdmin to the quicbaas_object_ prefix.
-	{"quicbaas.ObjectStorageAdmin", "CompactBackend"}:               gapNameDrift + "quicbaas_object_admin_compact_backend",
-	{"quicbaas.ObjectStorageAdmin", "CreateBackend"}:                gapNameDrift + "quicbaas_object_admin_create_backend",
-	{"quicbaas.ObjectStorageAdmin", "DeleteBackend"}:                gapNameDrift + "quicbaas_object_admin_delete_backend",
-	{"quicbaas.ObjectStorageAdmin", "UpdateBackend"}:                gapNameDrift + "quicbaas_object_admin_update_backend",
-	{"quicbaas.ObjectStorageAdmin", "SetBackendStatus"}:             gapNameDrift + "quicbaas_object_admin_set_backend_status",
-	{"quicbaas.ObjectStorageAdmin", "GetStorageStats"}:              gapNameDrift + "quicbaas_object_admin_get_storage_stats",
-	{"quicbaas.ObjectStorageAdmin", "RepairObject"}:                 gapNameDrift + "quicbaas_object_admin_repair_object",
-	{"quicbaas.ObjectStorageAdmin", "RunGarbageCollection"}:         gapNameDrift + "quicbaas_object_admin_run_gc",
-	{"quicbaas.ObjectStorageAdmin", "GetGarbageCollectionProgress"}: gapNameDrift + "quicbaas_object_admin_get_gc_progress",
-	{"quicbaas.ObjectTransfer", "FetchObject"}:                      gapNameDrift + "quicbaas_object_transfer_fetch",
+	{"quicbaas.ObjectTransfer", "FetchObject"}: gapNameDrift + "quicbaas_object_transfer_fetch",
 
 	// --- Ollama ------------------------------------------------------------
 	{"quicbaas.Ollama", "EmbedWithModel"}: gapAmbiguous + "quicbaas_ollama_embed",

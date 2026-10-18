@@ -345,6 +345,7 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	isCertificate := isMCPCertificateService(service)
 	isMessaging := isMCPMessagingService(service)
 	isObjectStorage := isMCPObjectStorageService(service)
+	isObjectStorageAdmin := isMCPObjectStorageAdminService(service)
 	isAttestation := isMCPAttestationService(service)
 	isDynamicSecrets := isMCPDynamicSecretsService(service)
 	isPIV := isMCPPIVService(service)
@@ -459,6 +460,11 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	} else if isMessaging {
 		mh := newMessagingHandler(t)
 		arguments, err = mh.transformRequest(method, reqBody)
+		if err != nil {
+			return nil, err
+		}
+	} else if isObjectStorageAdmin {
+		arguments, err = objectStorageAdminArguments(method, reqBody)
 		if err != nil {
 			return nil, err
 		}
@@ -639,6 +645,9 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 	if isObjectStorage {
 		oh := newObjectStorageHandler(t)
 		return oh.transformResponse(method, result)
+	}
+	if isObjectStorageAdmin {
+		return objectStorageAdminResponse(method, result)
 	}
 
 	return result, nil
@@ -1208,7 +1217,7 @@ func ToolName(service, method string) string {
 		}
 		return "quicbaas_object_" + camelToSnake(method)
 	case "ObjectStorageAdmin":
-		return "quicbaas_object_" + camelToSnake(method)
+		return objectStorageAdminToolName(method)
 	case "Scheduler":
 		return "quicbaas_scheduler_" + camelToSnake(method)
 	case "Embedding":
