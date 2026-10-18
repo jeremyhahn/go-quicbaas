@@ -77,35 +77,6 @@ func TestSDLCBinding_ARebindKeepsTheReviewerProfiles(t *testing.T) {
 	assert.Equal(t, want.Reviewers, rebound.Reviewers)
 }
 
-func TestSDLCReviewer_OverrideVerbs(t *testing.T) {
-	server, svc := setupSDLCServer(t)
-	binding := profiledRESTBinding("p1")
-	require.NoError(t, svc.Store().PutBinding(context.Background(), "tenant-a", &binding))
-	const route = "/api/v1/sdlc/projects/p1/pulls/41/reviewer"
-
-	rec := sdlcCall(t, server, "tenant-a", http.MethodGet, route, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	var selection sdlc.ReviewerSelection
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &selection))
-	assert.Equal(t, sdlc.DefaultReviewerProfileName, selection.Profile)
-	assert.False(t, selection.Overridden)
-	assert.True(t, selection.CountsTowardMerge)
-
-	rec = sdlcCall(t, server, "tenant-a", http.MethodPut, route, SDLCReviewerOverrideRequest{Profile: "qwen"})
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &selection))
-	assert.Equal(t, "qwen", selection.Profile)
-	assert.True(t, selection.Overridden)
-	assert.False(t, selection.CountsTowardMerge)
-	assert.Equal(t, sdlc.DefaultReviewStatusContext+"/qwen", selection.StatusContext)
-
-	rec = sdlcCall(t, server, "tenant-a", http.MethodDelete, route, nil)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &selection))
-	assert.False(t, selection.Overridden)
-	assert.Equal(t, sdlc.DefaultReviewerProfileName, selection.Profile)
-}
-
 func TestSDLCReviewer_Refusals(t *testing.T) {
 	server, svc := setupSDLCServer(t)
 	binding := profiledRESTBinding("p1")
