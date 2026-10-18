@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/rbac"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/operations"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -616,42 +617,120 @@ func handleListMetrics(ctx context.Context, svc service.QuicBaaS, req interface{
 // Operations Handlers
 // =============================================================================
 
+// The operations handlers serve the SDK operations client, which sends the
+// *operations.*Request types (as the gRPC transport accepts them) and
+// type-asserts *operations.*Response results. A *service.*Request passed by
+// an embedder calling the transport directly is served unchanged.
+
 func handleMigrateData(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.MigrateDataRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "MigrateData", "*service.MigrateDataRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *operations.MigrateDataRequest:
+		if r == nil {
+			break
+		}
+		resp, err := svc.MigrateData(ctx, &service.MigrateDataRequest{
+			SourceShard: r.SourceShard,
+			TargetShard: r.TargetShard,
+			EntityTypes: r.EntityTypes,
+			Concurrency: r.Concurrency,
+		})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &operations.MigrateDataResponse{
+			MigrationID:       resp.MigrationID,
+			Status:            resp.Status,
+			EstimatedDuration: resp.EstimatedDuration,
+		}, nil
+	case *service.MigrateDataRequest:
+		return svc.MigrateData(ctx, r)
 	}
-	return svc.MigrateData(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.Operations", "MigrateData", "*operations.MigrateDataRequest", typeNameOf(req))
 }
 
 func handleGetMigrationProgress(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.GetMigrationProgressRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetMigrationProgress", "*service.GetMigrationProgressRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *operations.GetMigrationProgressRequest:
+		if r == nil {
+			break
+		}
+		resp, err := svc.GetMigrationProgress(ctx, &service.GetMigrationProgressRequest{MigrationID: r.MigrationID})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &operations.GetMigrationProgressResponse{
+			MigrationID:   resp.MigrationID,
+			Progress:      resp.Progress,
+			Status:        resp.Status,
+			ItemsMigrated: resp.ItemsMigrated,
+			TotalItems:    resp.TotalItems,
+			ETA:           resp.ETA,
+		}, nil
+	case *service.GetMigrationProgressRequest:
+		return svc.GetMigrationProgress(ctx, r)
 	}
-	return svc.GetMigrationProgress(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetMigrationProgress", "*operations.GetMigrationProgressRequest", typeNameOf(req))
 }
 
 func handleReplaceNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.ReplaceNodeRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "ReplaceNode", "*service.ReplaceNodeRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *operations.ReplaceNodeRequest:
+		if r == nil {
+			break
+		}
+		resp, err := svc.ReplaceNode(ctx, &service.ReplaceNodeRequest{
+			ShardID:    r.ShardID,
+			OldNodeID:  r.OldNodeID,
+			NewNodeID:  r.NewNodeID,
+			NewAddress: r.NewAddress,
+		})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &operations.ReplaceNodeResponse{JobID: resp.JobID, Status: resp.Status}, nil
+	case *service.ReplaceNodeRequest:
+		return svc.ReplaceNode(ctx, r)
 	}
-	return svc.ReplaceNode(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.Operations", "ReplaceNode", "*operations.ReplaceNodeRequest", typeNameOf(req))
 }
 
 func handleUpgradeNode(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.UpgradeNodeRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "UpgradeNode", "*service.UpgradeNodeRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *operations.UpgradeNodeRequest:
+		if r == nil {
+			break
+		}
+		// NodeID 0 is the "upgrade all nodes" sentinel and is passed through.
+		resp, err := svc.UpgradeNode(ctx, &service.UpgradeNodeRequest{NodeID: r.NodeID, TargetVersion: r.TargetVersion})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &operations.UpgradeNodeResponse{JobID: resp.JobID, Status: resp.Status}, nil
+	case *service.UpgradeNodeRequest:
+		return svc.UpgradeNode(ctx, r)
 	}
-	return svc.UpgradeNode(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.Operations", "UpgradeNode", "*operations.UpgradeNodeRequest", typeNameOf(req))
 }
 
 func handleGetUpgradeStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.GetUpgradeStatusRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetUpgradeStatus", "*service.GetUpgradeStatusRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *operations.GetUpgradeStatusRequest:
+		if r == nil {
+			break
+		}
+		resp, err := svc.GetUpgradeStatus(ctx, &service.GetUpgradeStatusRequest{JobID: r.JobID})
+		if err != nil || resp == nil {
+			return nil, err
+		}
+		return &operations.GetUpgradeStatusResponse{
+			JobID:          resp.JobID,
+			Progress:       resp.Progress,
+			Status:         resp.Status,
+			CurrentVersion: resp.CurrentVersion,
+			TargetVersion:  resp.TargetVersion,
+		}, nil
+	case *service.GetUpgradeStatusRequest:
+		return svc.GetUpgradeStatus(ctx, r)
 	}
-	return svc.GetUpgradeStatus(ctx, r)
+	return nil, NewInvalidRequestTypeError("quicbaas.Operations", "GetUpgradeStatus", "*operations.GetUpgradeStatusRequest", typeNameOf(req))
 }

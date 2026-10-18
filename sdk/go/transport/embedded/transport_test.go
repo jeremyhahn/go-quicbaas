@@ -128,6 +128,11 @@ type mockQuicBaaS struct {
 	listAuthRolesFunc     func(ctx context.Context, req *service.AuthListRolesRequest) (*service.AuthListRolesResponse, error)
 	assignRoleFunc        func(ctx context.Context, req *service.AuthAssignRoleRequest) (*service.AuthAssignRoleResponse, error)
 	revokeRoleFunc        func(ctx context.Context, req *service.AuthRevokeRoleRequest) (*service.AuthRevokeRoleResponse, error)
+	migrateDataFunc       func(ctx context.Context, req *service.MigrateDataRequest) (*service.MigrateDataResponse, error)
+	migrationProgressFunc func(ctx context.Context, req *service.GetMigrationProgressRequest) (*service.GetMigrationProgressResponse, error)
+	replaceNodeFunc       func(ctx context.Context, req *service.ReplaceNodeRequest) (*service.ReplaceNodeResponse, error)
+	upgradeNodeFunc       func(ctx context.Context, req *service.UpgradeNodeRequest) (*service.UpgradeNodeResponse, error)
+	upgradeStatusFunc     func(ctx context.Context, req *service.GetUpgradeStatusRequest) (*service.GetUpgradeStatusResponse, error)
 	kmsService            service.KMSService
 	secretsService        service.SecretsService
 	parameterStoreService service.ParameterStoreService
@@ -437,22 +442,37 @@ func (m *mockQuicBaaS) ListMetrics(ctx context.Context, req *service.TSListMetri
 
 // Operations
 func (m *mockQuicBaaS) MigrateData(ctx context.Context, req *service.MigrateDataRequest) (*service.MigrateDataResponse, error) {
+	if m.migrateDataFunc != nil {
+		return m.migrateDataFunc(ctx, req)
+	}
 	return &service.MigrateDataResponse{MigrationID: "mig1"}, nil
 }
 
 func (m *mockQuicBaaS) GetMigrationProgress(ctx context.Context, req *service.GetMigrationProgressRequest) (*service.GetMigrationProgressResponse, error) {
+	if m.migrationProgressFunc != nil {
+		return m.migrationProgressFunc(ctx, req)
+	}
 	return &service.GetMigrationProgressResponse{Progress: 50.0}, nil
 }
 
 func (m *mockQuicBaaS) ReplaceNode(ctx context.Context, req *service.ReplaceNodeRequest) (*service.ReplaceNodeResponse, error) {
+	if m.replaceNodeFunc != nil {
+		return m.replaceNodeFunc(ctx, req)
+	}
 	return &service.ReplaceNodeResponse{JobID: "replace1"}, nil
 }
 
 func (m *mockQuicBaaS) UpgradeNode(ctx context.Context, req *service.UpgradeNodeRequest) (*service.UpgradeNodeResponse, error) {
+	if m.upgradeNodeFunc != nil {
+		return m.upgradeNodeFunc(ctx, req)
+	}
 	return &service.UpgradeNodeResponse{JobID: "upgrade1"}, nil
 }
 
 func (m *mockQuicBaaS) GetUpgradeStatus(ctx context.Context, req *service.GetUpgradeStatusRequest) (*service.GetUpgradeStatusResponse, error) {
+	if m.upgradeStatusFunc != nil {
+		return m.upgradeStatusFunc(ctx, req)
+	}
 	return &service.GetUpgradeStatusResponse{Status: "completed"}, nil
 }
 
