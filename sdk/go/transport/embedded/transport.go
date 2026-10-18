@@ -54,6 +54,7 @@ var unaryHandlers = map[string]handlerFunc{
 	// Cluster operations
 	"quicbaas.Cluster/Status":             handleClusterStatus,
 	"quicbaas.Cluster/GetLeader":          handleGetLeader,
+	"quicbaas.Cluster/Nodes":              handleClusterNodes,
 	"quicbaas.Cluster/AddNode":            handleAddNode,
 	"quicbaas.Cluster/RemoveNode":         handleRemoveNode,
 	"quicbaas.Cluster/CreateShard":        handleCreateShard,
@@ -137,6 +138,7 @@ var unaryHandlers = map[string]handlerFunc{
 
 	// TimeSeries operations
 	"quicbaas.TimeSeries/Aggregate":          handleAggregate,
+	"quicbaas.TimeSeries/Write":              handleTSWrite,
 	"quicbaas.TimeSeries/WritePoint":         handleWritePoint,
 	"quicbaas.TimeSeries/WriteBatch":         handleWriteBatch,
 	"quicbaas.TimeSeries/Query":              handleTSQuery,

@@ -16,6 +16,7 @@ var requestlessMethods = map[string]struct{}{
 	"quicbaas.Health/Ping":                 {},
 	"quicbaas.Health/Liveness":             {},
 	"quicbaas.Health/Readiness":            {},
+	"quicbaas.Cluster/Nodes":               {},
 	"quicbaas.Auth/ListSessions":           {},
 	"quicbaas.Auth/RevokeAllSessions":      {},
 	"quicbaas.Auth/GetJWKS":                {},

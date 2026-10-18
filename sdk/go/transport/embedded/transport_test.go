@@ -103,6 +103,8 @@ func requireStreamInvalidRequestType(t *testing.T, s recvStream) {
 
 type mockQuicBaaS struct {
 	addNodeFunc           func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
+	clusterStatusFunc     func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error)
+	writePointFunc        func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error)
 	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
@@ -226,6 +228,9 @@ func (m *mockQuicBaaS) ScanIndex(ctx context.Context, req *service.ScanRequest, 
 
 // Cluster operations
 func (m *mockQuicBaaS) ClusterStatus(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error) {
+	if m.clusterStatusFunc != nil {
+		return m.clusterStatusFunc(ctx, req)
+	}
 	return &service.ClusterStatusResponse{ClusterID: "test"}, nil
 }
 
@@ -380,6 +385,9 @@ func (m *mockQuicBaaS) TimeSeriesQuery(ctx context.Context, req *service.TimeSer
 }
 
 func (m *mockQuicBaaS) WritePoint(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error) {
+	if m.writePointFunc != nil {
+		return m.writePointFunc(ctx, req)
+	}
 	return &service.WritePointResponse{Success: true}, nil
 }
 

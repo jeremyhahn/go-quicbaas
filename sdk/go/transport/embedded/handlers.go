@@ -15,11 +15,13 @@ package embedded
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 	healthclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/health"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -141,6 +143,46 @@ func handleGetLeader(ctx context.Context, svc service.QuicBaaS, req interface{})
 		return nil, NewInvalidRequestTypeError("quicbaas.Cluster", "GetLeader", "*service.GetLeaderRequest", typeNameOf(req))
 	}
 	return svc.GetLeader(ctx, r)
+}
+
+// handleClusterNodes serves the SDK cluster client's Nodes call. The verb
+// takes no fields: the client sends its unexported nodesRequest, so the
+// request is not inspected. The nodes come from ClusterStatus, as the gRPC
+// transport serves them, converted to *cluster.NodesResponse so the SDK
+// client can type-assert the result.
+func handleClusterNodes(ctx context.Context, svc service.QuicBaaS, _ interface{}) (interface{}, error) {
+	status, err := svc.ClusterStatus(ctx, &service.ClusterStatusRequest{})
+	if err != nil {
+		return nil, err
+	}
+	resp := &cluster.NodesResponse{Nodes: []cluster.NodeInfo{}}
+	if status == nil {
+		return resp, nil
+	}
+	for _, node := range status.Nodes {
+		if node == nil {
+			continue
+		}
+		resp.Nodes = append(resp.Nodes, cluster.NodeInfo{
+			ID:      strconv.FormatUint(node.NodeID, 10),
+			Name:    node.Address,
+			Address: node.Address,
+			State:   nodeStateOf(node.HealthStatus),
+		})
+	}
+	return resp, nil
+}
+
+// nodeStateOf maps a service health status to the SDK cluster node state.
+func nodeStateOf(status service.HealthStatus) cluster.NodeState {
+	switch status {
+	case service.HealthStatusHealthy:
+		return cluster.NodeStateHealthy
+	case service.HealthStatusDegraded, service.HealthStatusUnhealthy:
+		return cluster.NodeStateUnhealthy
+	default:
+		return cluster.NodeStateUnknown
+	}
 }
 
 // handleAddNode adds a replica. It takes the SDK cluster client's request,
@@ -457,6 +499,28 @@ func handleWritePoint(ctx context.Context, svc service.QuicBaaS, req interface{}
 		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "WritePoint", "*service.WritePointRequest", typeNameOf(req))
 	}
 	return svc.WritePoint(ctx, r)
+}
+
+// handleTSWrite serves the SDK time-series client's Write call. The client
+// sends *timeseries.WriteRequest, converted here to the service point the
+// WritePoint verb writes; a *service.WritePointRequest is served as WritePoint.
+func handleTSWrite(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	switch r := req.(type) {
+	case *timeseries.WriteRequest:
+		if r == nil {
+			return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Write", "*timeseries.WriteRequest", typeNameOf(req))
+		}
+		return svc.WritePoint(ctx, &service.WritePointRequest{
+			Metric:    r.Metric,
+			Tags:      r.Tags,
+			Value:     r.Value,
+			Timestamp: r.Timestamp,
+		})
+	case *service.WritePointRequest:
+		return handleWritePoint(ctx, svc, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Write", "*timeseries.WriteRequest", typeNameOf(req))
+	}
 }
 
 func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
