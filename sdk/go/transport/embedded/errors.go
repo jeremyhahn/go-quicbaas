@@ -283,6 +283,27 @@ func NewPermissionDeniedError(service, method, reason string) *PermissionDeniedE
 	}
 }
 
+// JWKEncodeError reports a signing key the OIDC provider publishes that could
+// not be encoded as an RFC 7517 JWK for the SDK.
+type JWKEncodeError struct {
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *JWKEncodeError) Error() string {
+	return "INTERNAL: embedded: quicbaas.Auth/GetJWKS: encode JWK: " + e.Cause.Error()
+}
+
+// Unwrap returns the encoding failure.
+func (e *JWKEncodeError) Unwrap() error {
+	return e.Cause
+}
+
+// NewJWKEncodeError creates a new JWKEncodeError.
+func NewJWKEncodeError(cause error) *JWKEncodeError {
+	return &JWKEncodeError{Cause: cause}
+}
+
 // domainSentinelCodes classes the project and SDLC sentinels a service
 // returns the way the gRPC, REST and MCP transports do, so an embedded caller
 // reads an unknown project or binding as CodeNotFound like every other caller.

@@ -79,6 +79,18 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Auth/BeginLogin":  handleBeginLogin,
 	"quicbaas.Auth/FinishLogin": handleFinishLogin,
 
+	// Federation, provider, session and discovery verbs.
+	"quicbaas.Auth/BeginFederatedLogin":     handleBeginFederatedLogin,
+	"quicbaas.Auth/HandleFederatedCallback": handleHandleFederatedCallback,
+	"quicbaas.Auth/ListProviders":           handleAuthListProviders,
+	"quicbaas.Auth/GetProvider":             handleAuthGetProvider,
+	"quicbaas.Auth/GetSession":              handleAuthGetSession,
+	"quicbaas.Auth/ListSessions":            handleAuthListSessions,
+	"quicbaas.Auth/RevokeSession":           handleAuthRevokeSession,
+	"quicbaas.Auth/RevokeAllSessions":       handleAuthRevokeAllSessions,
+	"quicbaas.Auth/GetJWKS":                 handleAuthGetJWKS,
+	"quicbaas.Auth/GetOpenIDConfiguration":  handleAuthGetOpenIDConfiguration,
+
 	// RBAC operations
 	"quicbaas.RBAC/CreateRole": handleCreateAuthRole,
 	"quicbaas.RBAC/DeleteRole": handleDeleteAuthRole,

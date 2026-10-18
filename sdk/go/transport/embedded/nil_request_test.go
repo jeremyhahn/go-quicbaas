@@ -9,12 +9,17 @@ import (
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
-// requestlessMethods are the health probes. They carry no request fields and
-// accept any request value, a nil one included, by design.
+// requestlessMethods are the health probes and the Auth verbs the client sends
+// with an empty request struct. They carry no request fields and accept any
+// request value, a nil one included, by design.
 var requestlessMethods = map[string]struct{}{
-	"quicbaas.Health/Ping":      {},
-	"quicbaas.Health/Liveness":  {},
-	"quicbaas.Health/Readiness": {},
+	"quicbaas.Health/Ping":                 {},
+	"quicbaas.Health/Liveness":             {},
+	"quicbaas.Health/Readiness":            {},
+	"quicbaas.Auth/ListSessions":           {},
+	"quicbaas.Auth/RevokeAllSessions":      {},
+	"quicbaas.Auth/GetJWKS":                {},
+	"quicbaas.Auth/GetOpenIDConfiguration": {},
 }
 
 // callRecovering runs fn and returns any panic value so one bad handler
