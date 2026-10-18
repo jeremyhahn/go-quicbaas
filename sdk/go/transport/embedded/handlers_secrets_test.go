@@ -35,6 +35,11 @@ type mockSecretsService struct {
 	listFunc   func(ctx context.Context, req *service.ListSecretsRequest) (*service.ListSecretsResponse, error)
 	deleteFunc func(ctx context.Context, req *service.DeleteSecretRequest) (*service.DeleteSecretResponse, error)
 	ensureFunc func(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error)
+
+	rotateFunc       func(ctx context.Context, req *service.RotateSecretRequest) (*service.RotateSecretResponse, error)
+	updateStatusFunc func(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error)
+	setPolicyFunc    func(ctx context.Context, req *service.SetRotationPolicyRequest) (*service.SetRotationPolicyResponse, error)
+	getPolicyFunc    func(ctx context.Context, req *service.GetRotationPolicyRequest) (*service.GetRotationPolicyResponse, error)
 }
 
 func (m *mockSecretsService) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
@@ -113,18 +118,30 @@ func (m *mockSecretsService) RollbackSecret(ctx context.Context, req *service.Ro
 }
 
 func (m *mockSecretsService) RotateSecret(ctx context.Context, req *service.RotateSecretRequest) (*service.RotateSecretResponse, error) {
+	if m.rotateFunc != nil {
+		return m.rotateFunc(ctx, req)
+	}
 	return &service.RotateSecretResponse{}, nil
 }
 
 func (m *mockSecretsService) SetRotationPolicy(ctx context.Context, req *service.SetRotationPolicyRequest) (*service.SetRotationPolicyResponse, error) {
+	if m.setPolicyFunc != nil {
+		return m.setPolicyFunc(ctx, req)
+	}
 	return &service.SetRotationPolicyResponse{}, nil
 }
 
 func (m *mockSecretsService) GetRotationPolicy(ctx context.Context, req *service.GetRotationPolicyRequest) (*service.GetRotationPolicyResponse, error) {
+	if m.getPolicyFunc != nil {
+		return m.getPolicyFunc(ctx, req)
+	}
 	return &service.GetRotationPolicyResponse{}, nil
 }
 
 func (m *mockSecretsService) UpdateSecretStatus(ctx context.Context, req *service.UpdateSecretStatusRequest) (*service.UpdateSecretStatusResponse, error) {
+	if m.updateStatusFunc != nil {
+		return m.updateStatusFunc(ctx, req)
+	}
 	return &service.UpdateSecretStatusResponse{}, nil
 }
 

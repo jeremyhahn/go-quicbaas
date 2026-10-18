@@ -353,11 +353,36 @@ func handleKMSUpdateKeyStatus(ctx context.Context, svc service.QuicBaaS, req int
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.UpdateKeyStatusRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyStatus", "*service.UpdateKeyStatusRequest", typeNameOf(req))
+	if r, ok := req.(*service.UpdateKeyStatusRequest); ok {
+		return kms.UpdateKeyStatus(ctx, r)
 	}
-	return kms.UpdateKeyStatus(ctx, r)
+	sdkReq, ok := req.(*kmsclient.UpdateKeyStatusRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UpdateKeyStatus", "*service.UpdateKeyStatusRequest or *kms.UpdateKeyStatusRequest", typeNameOf(req))
+	}
+	status, known := kmsKeyStatusToService[sdkReq.Status]
+	if !known {
+		return nil, errors.NewInvalidInput("embedded.kms.UpdateKeyStatus", "unknown key status: "+sdkReq.Status.String())
+	}
+	if sdkReq.Version < 0 {
+		return nil, errors.NewInvalidInput("embedded.kms.UpdateKeyStatus", "key version must not be negative")
+	}
+	return kms.UpdateKeyStatus(ctx, &service.UpdateKeyStatusRequest{
+		KeyID:   sdkReq.KeyID,
+		Version: uint64(sdkReq.Version),
+		Status:  status,
+	})
+}
+
+// kmsKeyStatusToService maps every status the SDK KMS client can send to the
+// service status of the same name.
+var kmsKeyStatusToService = map[kmsclient.KeyStatus]service.KeyStatus{
+	kmsclient.KeyStatusEnabled:         service.KeyStatusEnabled,
+	kmsclient.KeyStatusDisabled:        service.KeyStatusDisabled,
+	kmsclient.KeyStatusPendingDeletion: service.KeyStatusPendingDeletion,
+	kmsclient.KeyStatusDeleted:         service.KeyStatusDeleted,
+	kmsclient.KeyStatusRotating:        service.KeyStatusRotating,
+	kmsclient.KeyStatusCompromised:     service.KeyStatusCompromised,
 }
 
 func handleKMSListKeyVersions(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

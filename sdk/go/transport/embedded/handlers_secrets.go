@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	secrets "github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -285,6 +286,103 @@ func handleSecretsDelete(ctx context.Context, svc service.QuicBaaS, req interfac
 
 	// The SDK client accepts nil response for delete
 	return nil, nil
+}
+
+// handleSecretsRotate routes Secrets/Rotate. The SDK client decodes the
+// service response directly, as it does from every other transport.
+func handleSecretsRotate(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.RotateSecretRequest); ok {
+		return secretsSvc.RotateSecret(ctx, r)
+	}
+	sdkReq, ok := req.(*secrets.RotateSecretRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "Rotate", "*service.RotateSecretRequest or *secrets.RotateSecretRequest", typeNameOf(req))
+	}
+	return secretsSvc.RotateSecret(ctx, &service.RotateSecretRequest{
+		SecretID: sdkReq.SecretID,
+		NewData:  sdkReq.NewData,
+		Metadata: sdkReq.Metadata,
+	})
+}
+
+// handleSecretsUpdateStatus routes Secrets/UpdateStatus. A status the service
+// model does not define is refused here rather than forwarded.
+func handleSecretsUpdateStatus(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	var svcReq *service.UpdateSecretStatusRequest
+	switch r := req.(type) {
+	case *service.UpdateSecretStatusRequest:
+		svcReq = r
+	case *secrets.UpdateSecretStatusRequest:
+		svcReq = &service.UpdateSecretStatusRequest{
+			SecretID: r.SecretID,
+			Status:   service.SecretStatus(r.Status),
+		}
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "UpdateStatus", "*service.UpdateSecretStatusRequest or *secrets.UpdateSecretStatusRequest", typeNameOf(req))
+	}
+	if !svcReq.Status.IsValid() {
+		return nil, errors.NewInvalidInput("embedded.secrets.UpdateStatus", "unknown secret status: "+string(svcReq.Status))
+	}
+	return secretsSvc.UpdateSecretStatus(ctx, svcReq)
+}
+
+// handleSecretsSetRotationPolicy routes Secrets/SetRotationPolicy.
+func handleSecretsSetRotationPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.SetRotationPolicyRequest); ok {
+		return secretsSvc.SetRotationPolicy(ctx, r)
+	}
+	sdkReq, ok := req.(*secrets.SetRotationPolicyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "SetRotationPolicy", "*service.SetRotationPolicyRequest or *secrets.SetRotationPolicyRequest", typeNameOf(req))
+	}
+	svcReq := &service.SetRotationPolicyRequest{SecretID: sdkReq.SecretID}
+	if p := sdkReq.Policy; p != nil {
+		svcReq.Policy = &service.SecretRotationPolicy{
+			Enabled:        p.Enabled,
+			Interval:       p.Interval,
+			NextRotation:   p.NextRotation,
+			RetainVersions: p.RetainVersions,
+			RotationLambda: p.RotationLambda,
+		}
+	}
+	return secretsSvc.SetRotationPolicy(ctx, svcReq)
+}
+
+// handleSecretsGetRotationPolicy routes Secrets/GetRotationPolicy. The SDK
+// client sends an unexported request type, so its SecretID field is read by
+// reflection, as handleSecretsGet does.
+func handleSecretsGetRotationPolicy(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	secretsSvc := svc.Secrets()
+	if secretsSvc == nil {
+		return nil, NewServiceNotConfiguredError("Secrets")
+	}
+	if r, ok := req.(*service.GetRotationPolicyRequest); ok {
+		return secretsSvc.GetRotationPolicy(ctx, r)
+	}
+	reqVal := reflect.ValueOf(req)
+	if reqVal.Kind() == reflect.Ptr {
+		reqVal = reqVal.Elem()
+	}
+	if reqVal.Kind() != reflect.Struct {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetRotationPolicy", "struct{SecretID string}", typeNameOf(req))
+	}
+	idField := reqVal.FieldByName("SecretID")
+	if !idField.IsValid() || idField.Kind() != reflect.String {
+		return nil, NewInvalidRequestTypeError("quicbaas.Secrets", "GetRotationPolicy", "struct{SecretID string}", typeNameOf(req))
+	}
+	return secretsSvc.GetRotationPolicy(ctx, &service.GetRotationPolicyRequest{SecretID: idField.String()})
 }
 
 // =============================================================================

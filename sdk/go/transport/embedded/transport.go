@@ -99,12 +99,16 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.Health/Ping":      handlePing,
 
 	// Secrets operations
-	"quicbaas.Secrets/Store":   handleSecretsStore,
-	"quicbaas.Secrets/Get":     handleSecretsGet,
-	"quicbaas.Secrets/GetData": handleSecretsGetData,
-	"quicbaas.Secrets/List":    handleSecretsList,
-	"quicbaas.Secrets/Delete":  handleSecretsDelete,
-	"quicbaas.Secrets/Ensure":  handleSecretsEnsure,
+	"quicbaas.Secrets/Store":             handleSecretsStore,
+	"quicbaas.Secrets/Get":               handleSecretsGet,
+	"quicbaas.Secrets/GetData":           handleSecretsGetData,
+	"quicbaas.Secrets/List":              handleSecretsList,
+	"quicbaas.Secrets/Delete":            handleSecretsDelete,
+	"quicbaas.Secrets/Ensure":            handleSecretsEnsure,
+	"quicbaas.Secrets/Rotate":            handleSecretsRotate,
+	"quicbaas.Secrets/UpdateStatus":      handleSecretsUpdateStatus,
+	"quicbaas.Secrets/SetRotationPolicy": handleSecretsSetRotationPolicy,
+	"quicbaas.Secrets/GetRotationPolicy": handleSecretsGetRotationPolicy,
 
 	// TimeSeries operations
 	"quicbaas.TimeSeries/Aggregate":          handleAggregate,
