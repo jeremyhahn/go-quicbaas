@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
@@ -432,8 +433,8 @@ func TestIAMServer_CreateTenant_Success(t *testing.T) {
 		Id:   "t1",
 		Name: "Tenant One",
 		Settings: &iampb.TenantSettings{
-			MaxUsers:      100,
-			MfaRequired:   true,
+			MaxUsers:      proto.Int32(100),
+			MfaRequired:   proto.Bool(true),
 			NamedNetworks: map[string]string{"office": "10.0.0.0/8"},
 		},
 	})
@@ -503,6 +504,7 @@ func TestIAMServer_GetTenant_MissingID(t *testing.T) {
 func TestIAMServer_UpdateTenant_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
+	svc.On("GetTenant", mock.Anything, "t1").Return(&iam.Tenant{ID: "t1", Name: "Before"}, nil)
 	svc.On("UpdateTenant", mock.Anything, mock.AnythingOfType("*iam.Tenant")).
 		Return(&iam.Tenant{ID: "t1", Name: "Updated"}, nil)
 
@@ -510,8 +512,8 @@ func TestIAMServer_UpdateTenant_Success(t *testing.T) {
 		Id:   "t1",
 		Name: "Updated",
 		Settings: &iampb.TenantSettings{
-			MaxUsers:      200,
-			MfaRequired:   false,
+			MaxUsers:      proto.Int32(200),
+			MfaRequired:   proto.Bool(false),
 			NamedNetworks: map[string]string{"vpn": "172.16.0.0/12"},
 		},
 	})

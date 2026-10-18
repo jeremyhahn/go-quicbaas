@@ -155,8 +155,11 @@ func TestIAMTenantUpdateSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if body["name"] != "Renamed" {
-		t.Errorf("expected display_name mapped to name, got %v", body["name"])
+	if body["display_name"] != "Renamed" {
+		t.Errorf("expected display_name sent as display_name, got %v", body["display_name"])
+	}
+	if _, renamed := body["name"]; renamed {
+		t.Errorf("display_name must not rename the tenant, got name %v", body["name"])
 	}
 	settings, ok := body["settings"].(map[string]interface{})
 	if !ok {

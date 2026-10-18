@@ -1810,12 +1810,12 @@ func mapTenantUpdateRequest(req map[string]interface{}) map[string]interface{} {
 	}
 	body := make(map[string]interface{})
 
-	// The SDK sends display_name, but the server expects name.
-	name := getString(req, "display_name")
-	if name == "" {
-		name = getString(req, "name")
+	// display_name is the tenant's display name, not its name: the server
+	// stores it in the tenant settings and leaves the name alone (#1518).
+	if displayName := getString(req, "display_name"); displayName != "" {
+		body["display_name"] = displayName
 	}
-	if name != "" {
+	if name := getString(req, "name"); name != "" {
 		body["name"] = name
 	}
 

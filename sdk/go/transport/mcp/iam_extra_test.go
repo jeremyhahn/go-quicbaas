@@ -446,15 +446,18 @@ func TestTransformIAMToolArguments(t *testing.T) {
 		}
 	})
 
-	t.Run("tenant update maps display_name and settings", func(t *testing.T) {
+	t.Run("tenant update passes display_name through and types settings", func(t *testing.T) {
 		out := transformIAMToolArguments("quicbaas_iam_tenant_update",
 			map[string]interface{}{
 				"tenant_id":    "t1",
 				"display_name": "Acme",
 				"settings":     map[string]interface{}{"max_users": "5"},
 			})
-		if out["name"] != "Acme" || out["id"] != "t1" {
+		if out["display_name"] != "Acme" || out["id"] != "t1" {
 			t.Errorf("update = %v", out)
+		}
+		if _, hasName := out["name"]; hasName {
+			t.Errorf("display_name must not be renamed to name: %v", out)
 		}
 		if out["settings"].(map[string]interface{})["max_users"] != 5 {
 			t.Errorf("settings not typed: %v", out["settings"])

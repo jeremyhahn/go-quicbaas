@@ -84,6 +84,44 @@ func (e *AppMetadataError) Unwrap() error {
 	return e.Cause
 }
 
+// TenantFieldNotStoredError is returned when a tenant update sets a field
+// the tenant does not store yet: description, metadata or status (#1518).
+// The update is refused whole, so a caller is never told a dropped field
+// was stored.
+type TenantFieldNotStoredError struct {
+	Fields []string
+}
+
+// Error implements the error interface.
+func (e *TenantFieldNotStoredError) Error() string {
+	return "tenant does not store field(s): " + strings.Join(e.Fields, ", ")
+}
+
+// Unwrap returns ErrTenantFieldNotStored so callers can match the coded sentinel.
+func (e *TenantFieldNotStoredError) Unwrap() error {
+	return ErrTenantFieldNotStored
+}
+
+// CheckTenantFieldsStored refuses a tenant update that sets description,
+// metadata or status. It returns nil when none is set, and otherwise a
+// TenantFieldNotStoredError naming the set fields in that fixed order.
+func CheckTenantFieldsStored(hasDescription, hasMetadata, hasStatus bool) error {
+	var fields []string
+	if hasDescription {
+		fields = append(fields, "description")
+	}
+	if hasMetadata {
+		fields = append(fields, "metadata")
+	}
+	if hasStatus {
+		fields = append(fields, "status")
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return &TenantFieldNotStoredError{Fields: fields}
+}
+
 // IAM-specific error types following QuicBaaS error conventions.
 var (
 	// ErrTenantNotFound is returned when a tenant is not found.
@@ -855,6 +893,13 @@ var (
 		Code: dberrors.ErrInvalidInput,
 		Op:   "iam.app.update",
 		Err:  &IAMMessageError{Message: "application update carries a field the application does not store"},
+	}
+
+	// ErrTenantFieldNotStored is the coded sentinel TenantFieldNotStoredError unwraps to.
+	ErrTenantFieldNotStored = &dberrors.QBError{
+		Code: dberrors.ErrInvalidInput,
+		Op:   "iam.tenant.update",
+		Err:  &IAMMessageError{Message: "tenant update carries a field the tenant does not store"},
 	}
 
 	// ErrInvalidTokenEndpointAuthMethod is returned when a token endpoint

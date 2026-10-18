@@ -183,10 +183,15 @@ message Tenant {
   google.protobuf.Timestamp updated_at = 5;
 }
 
+// TenantSettings scalars are optional so an UpdateTenant request can tell
+// "unchanged" (absent) from "set to false or 0" (present) (#1518).
 message TenantSettings {
-  int32 max_users = 1;
-  bool mfa_required = 2;
+  optional int32 max_users = 1;
+  optional bool mfa_required = 2;
   map<string, string> named_networks = 3;
+  // display_name is the tenant's human-readable display name. It is a
+  // setting, not the tenant's name (#1518).
+  optional string display_name = 4;
 }
 
 message User {

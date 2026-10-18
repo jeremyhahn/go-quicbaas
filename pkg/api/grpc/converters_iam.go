@@ -44,9 +44,10 @@ func convertProtoToTenant(pb *iampb.Tenant) *iam.Tenant {
 
 	if pb.Settings != nil {
 		tenant.Settings = iam.TenantSettings{
-			MaxUsers:      int(pb.Settings.MaxUsers),
-			MFAPolicy:     &iam.MFAPolicy{Required: pb.Settings.MfaRequired},
+			MaxUsers:      int(pb.Settings.GetMaxUsers()),
+			MFAPolicy:     &iam.MFAPolicy{Required: pb.Settings.GetMfaRequired()},
 			NamedNetworks: make(map[string][]string),
+			DisplayName:   pb.Settings.GetDisplayName(),
 		}
 
 		// Convert named networks
@@ -82,11 +83,15 @@ func convertTenantToProto(t *iam.Tenant) (*iampb.Tenant, error) {
 		Name: t.Name,
 	}
 
-	// Convert settings
+	// Convert settings. A response always carries every setting, so each
+	// optional scalar is present.
+	mfaRequired := t.Settings.MFAPolicy != nil && t.Settings.MFAPolicy.Required
+	displayName := t.Settings.DisplayName
 	settings := &iampb.TenantSettings{
-		MaxUsers:      maxUsers,
-		MfaRequired:   t.Settings.MFAPolicy != nil && t.Settings.MFAPolicy.Required,
+		MaxUsers:      &maxUsers,
+		MfaRequired:   &mfaRequired,
 		NamedNetworks: make(map[string]string),
+		DisplayName:   &displayName,
 	}
 
 	// Convert named networks (take first CIDR from slice)

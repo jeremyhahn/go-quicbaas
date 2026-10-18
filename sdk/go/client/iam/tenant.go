@@ -20,6 +20,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	iamcore "github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -418,6 +419,11 @@ func (c *tenantClient) Update(ctx context.Context, tenantID string, req *UpdateT
 		return nil, errors.NewInvalidInput("iam.tenant.Update", "context is required")
 	}
 
+	// Refuse whole, before dispatch, a field no server stores yet (#1518).
+	if err := iamcore.CheckTenantFieldsStored(req.Description != "", len(req.Metadata) > 0, req.Status != nil); err != nil {
+		return nil, err
+	}
+
 	resp, err := c.transport.Request(ctx, tenantServiceName, "Update", &updateTenantRequestInternal{
 		TenantID: tenantID,
 		Request:  req,
@@ -596,6 +602,12 @@ func parseTenantResponse(resp interface{}) (*Tenant, error) {
 	} else if v, ok := respMap["Name"].(string); ok {
 		// Fall back to capitalized Name for REST compatibility
 		tenant.DisplayName = v
+	}
+	// The server stores the display name in settings.display_name (#1518).
+	if settings, ok := respMap["settings"].(map[string]interface{}); ok {
+		if v, ok := settings["display_name"].(string); ok && v != "" {
+			tenant.DisplayName = v
+		}
 	}
 	// If DisplayName is still empty, use Name as fallback.
 	if tenant.DisplayName == "" && tenant.Name != "" {

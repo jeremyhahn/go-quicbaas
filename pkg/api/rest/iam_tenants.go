@@ -356,14 +356,24 @@ func (h *IAMHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request
 	var req struct {
-		Name     *string             `json:"name,omitempty"`
-		Settings *iam.TenantSettings `json:"settings,omitempty"`
-		Quotas   *iam.TenantQuotas   `json:"quotas,omitempty"`
+		Name        *string             `json:"name,omitempty"`
+		DisplayName *string             `json:"display_name,omitempty"`
+		Settings    *iam.TenantSettings `json:"settings,omitempty"`
+		Quotas      *iam.TenantQuotas   `json:"quotas,omitempty"`
+		// Description, Metadata and Status are not stored yet: they are
+		// parsed only so an update that sets one is refused (#1518).
+		Description string                 `json:"description,omitempty"`
+		Metadata    map[string]interface{} `json:"metadata,omitempty"`
+		Status      *json.RawMessage       `json:"status,omitempty"`
 	}
 
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+	if err := iam.CheckTenantFieldsStored(req.Description != "", len(req.Metadata) > 0, req.Status != nil); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest, NewIAMAPIError(ErrBadRequest, err.Error()))
 		return
 	}
 
@@ -386,6 +396,22 @@ func (h *IAMHandler) UpdateTenant(w http.ResponseWriter, r *http.Request) {
 		RespondIAMError(w, r, http.StatusInternalServerError,
 			NewIAMAPIError(ErrInternalError, "tenant manager not initialized"))
 		return
+	}
+
+	// display_name lives in the tenant settings, which UpdateTenant replaces
+	// whole: apply it over the supplied settings, or over the stored ones
+	// when none are supplied, so no other setting is lost (#1518).
+	if req.DisplayName != nil {
+		if req.Settings == nil {
+			current, err := mgr.GetTenant(ctx, tenantID)
+			if err != nil {
+				h.server.handleServiceError(w, r, err)
+				return
+			}
+			settings := current.Settings
+			req.Settings = &settings
+		}
+		req.Settings.DisplayName = *req.DisplayName
 	}
 
 	// Update tenant

@@ -147,6 +147,10 @@ func (r *ToolRegistry) registerTenantTools() {
 					"type":        "string",
 					"description": "Updated tenant name",
 				},
+				"display_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Updated human-readable tenant label (stored in settings.display_name)",
+				},
 				"settings": map[string]interface{}{
 					"type":        "object",
 					"description": "Updated tenant settings",
@@ -1339,6 +1343,10 @@ func (r *ToolRegistry) executeIAMTenantUpdate(ctx context.Context, args map[stri
 		return nil, err
 	}
 
+	if err := refuseUnstoredTenantFields(args); err != nil {
+		return nil, err
+	}
+
 	req := &service.UpdateTenantRequest{
 		ID: getString(args, "id"),
 	}
@@ -1364,11 +1372,47 @@ func (r *ToolRegistry) executeIAMTenantUpdate(ctx context.Context, args map[stri
 	}
 	// max_users is an engine-level quota owned by qrdb TenantServicer.
 
+	if displayName, ok := args["display_name"].(string); ok {
+		settings, settingsErr := tenantSettingsForUpdate(ctx, iamSvc, req)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		settings.DisplayName = displayName
+		req.Settings = settings
+	}
+
 	resp, err := iamSvc.UpdateTenant(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// tenantSettingsForUpdate returns the settings a display_name update is
+// applied to: the caller's settings when sent, otherwise a copy of the
+// stored tenant's settings so the other settings stay unchanged.
+// refuseUnstoredTenantFields refuses a tenant update whose arguments set
+// description, metadata or status, which no tenant stores yet (#1518).
+func refuseUnstoredTenantFields(args map[string]interface{}) error {
+	metadata, _ := args["metadata"].(map[string]interface{})
+	status, hasStatus := args["status"]
+	return iam.CheckTenantFieldsStored(
+		getString(args, "description") != "",
+		len(metadata) > 0,
+		hasStatus && status != nil,
+	)
+}
+
+func tenantSettingsForUpdate(ctx context.Context, iamSvc service.IAMService, req *service.UpdateTenantRequest) (*iam.TenantSettings, error) {
+	if req.Settings != nil {
+		return req.Settings, nil
+	}
+	current, err := iamSvc.GetTenant(ctx, &service.GetTenantRequest{ID: req.ID})
+	if err != nil {
+		return nil, err
+	}
+	settings := current.Tenant.Settings
+	return &settings, nil
 }
 
 func (r *ToolRegistry) executeIAMTenantDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {

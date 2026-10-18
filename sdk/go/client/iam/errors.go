@@ -13,7 +13,21 @@
 
 package iam
 
-import "strconv"
+import (
+	"strconv"
+
+	iamcore "github.com/jeremyhahn/go-quicbaas/pkg/iam"
+)
+
+// TenantFieldNotStoredError is returned by TenantClient.Update, before any
+// transport call, when the update sets Description, Metadata or Status:
+// go-quicbaas stores none of them until go-qrdb's tenant seam row lands
+// (#1518). Every server refuses the same fields with the same error.
+type TenantFieldNotStoredError = iamcore.TenantFieldNotStoredError
+
+// ErrTenantFieldNotStored is the coded sentinel TenantFieldNotStoredError
+// unwraps to; match it with errors.Is.
+var ErrTenantFieldNotStored = iamcore.ErrTenantFieldNotStored
 
 // UnknownEnumValueError is returned by an enum UnmarshalJSON when a string
 // value is not one of the enum's recognized names.

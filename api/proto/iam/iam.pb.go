@@ -610,11 +610,16 @@ func (x *Tenant) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// TenantSettings scalars are optional so an UpdateTenant request can tell
+// "unchanged" (absent) from "set to false or 0" (present) (#1518).
 type TenantSettings struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	MaxUsers      int32                  `protobuf:"varint,1,opt,name=max_users,json=maxUsers,proto3" json:"max_users,omitempty"`
-	MfaRequired   bool                   `protobuf:"varint,2,opt,name=mfa_required,json=mfaRequired,proto3" json:"mfa_required,omitempty"`
+	MaxUsers      *int32                 `protobuf:"varint,1,opt,name=max_users,json=maxUsers,proto3,oneof" json:"max_users,omitempty"`
+	MfaRequired   *bool                  `protobuf:"varint,2,opt,name=mfa_required,json=mfaRequired,proto3,oneof" json:"mfa_required,omitempty"`
 	NamedNetworks map[string]string      `protobuf:"bytes,3,rep,name=named_networks,json=namedNetworks,proto3" json:"named_networks,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// display_name is the tenant's human-readable display name. It is a
+	// setting, not the tenant's name (#1518).
+	DisplayName   *string `protobuf:"bytes,4,opt,name=display_name,json=displayName,proto3,oneof" json:"display_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -650,15 +655,15 @@ func (*TenantSettings) Descriptor() ([]byte, []int) {
 }
 
 func (x *TenantSettings) GetMaxUsers() int32 {
-	if x != nil {
-		return x.MaxUsers
+	if x != nil && x.MaxUsers != nil {
+		return *x.MaxUsers
 	}
 	return 0
 }
 
 func (x *TenantSettings) GetMfaRequired() bool {
-	if x != nil {
-		return x.MfaRequired
+	if x != nil && x.MfaRequired != nil {
+		return *x.MfaRequired
 	}
 	return false
 }
@@ -668,6 +673,13 @@ func (x *TenantSettings) GetNamedNetworks() map[string]string {
 		return x.NamedNetworks
 	}
 	return nil
+}
+
+func (x *TenantSettings) GetDisplayName() string {
+	if x != nil && x.DisplayName != nil {
+		return *x.DisplayName
+	}
+	return ""
 }
 
 type User struct {
@@ -13365,14 +13377,19 @@ const file_api_proto_iam_iam_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xed\x01\n" +
-	"\x0eTenantSettings\x12\x1b\n" +
-	"\tmax_users\x18\x01 \x01(\x05R\bmaxUsers\x12!\n" +
-	"\fmfa_required\x18\x02 \x01(\bR\vmfaRequired\x12Y\n" +
-	"\x0enamed_networks\x18\x03 \x03(\v22.quicbaas.iam.v1.TenantSettings.NamedNetworksEntryR\rnamedNetworks\x1a@\n" +
+	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xcf\x02\n" +
+	"\x0eTenantSettings\x12 \n" +
+	"\tmax_users\x18\x01 \x01(\x05H\x00R\bmaxUsers\x88\x01\x01\x12&\n" +
+	"\fmfa_required\x18\x02 \x01(\bH\x01R\vmfaRequired\x88\x01\x01\x12Y\n" +
+	"\x0enamed_networks\x18\x03 \x03(\v22.quicbaas.iam.v1.TenantSettings.NamedNetworksEntryR\rnamedNetworks\x12&\n" +
+	"\fdisplay_name\x18\x04 \x01(\tH\x02R\vdisplayName\x88\x01\x01\x1a@\n" +
 	"\x12NamedNetworksEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc6\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\f\n" +
+	"\n" +
+	"_max_usersB\x0f\n" +
+	"\r_mfa_requiredB\x0f\n" +
+	"\r_display_name\"\xc6\x05\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x14\n" +
@@ -15292,6 +15309,7 @@ func file_api_proto_iam_iam_proto_init() {
 	if File_api_proto_iam_iam_proto != nil {
 		return
 	}
+	file_api_proto_iam_iam_proto_msgTypes[1].OneofWrappers = []any{}
 	file_api_proto_iam_iam_proto_msgTypes[49].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

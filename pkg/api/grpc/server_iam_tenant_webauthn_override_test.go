@@ -62,6 +62,7 @@ func TestIAMServer_InvalidWebAuthnOverrideIsInvalidArgument(t *testing.T) {
 
 	t.Run("UpdateTenant", func(t *testing.T) {
 		srv, svc := newTestIAMServer(t)
+		svc.On("GetTenant", ctx, mock.Anything).Return(&iam.Tenant{ID: "t1"}, nil)
 		svc.On("UpdateTenant", ctx, mock.AnythingOfType("*iam.Tenant")).Return(nil, refusal)
 
 		_, err := srv.UpdateTenant(ctx, &iampb.UpdateTenantRequest{Id: "acme", Name: "Acme"})

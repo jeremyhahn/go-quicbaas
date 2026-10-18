@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -46,7 +47,7 @@ func TestIAMServer_CreateTenant_ForwardsEngineProvisioningKnobs(t *testing.T) {
 		Name:          "Acme",
 		IsolationType: string(qrdbsdk.TenantIsolationBarrier),
 		Settings: &iampb.TenantSettings{
-			MaxUsers:      100,
+			MaxUsers:      proto.Int32(100),
 			NamedNetworks: map[string]string{"office": "10.0.0.0/8"},
 		},
 		EngineQuotas: &iampb.TenantEngineQuotas{

@@ -262,6 +262,11 @@ func (h *iamHandler) transformResponse(service, method string, resp interface{})
 	key := subsystem + "." + method
 
 	switch key {
+	// Tenant operations: the server stores the display name in
+	// settings.display_name; the SDK Tenant reads a top-level display_name.
+	case "Tenant.Get", "Tenant.Update":
+		return liftTenantDisplayName(respMap), nil
+
 	// App operations: server returns {app: {client_id, ...}, client_secret: ...}
 	// SDK expects {client_id, ..., client_secret: ...} at the top level.
 	case "App.Register", "App.Get", "App.Update", "App.RotateSecret":
@@ -507,6 +512,24 @@ func unwrapAppResponse(respMap map[string]interface{}) interface{} {
 	return appMap
 }
 
+// liftTenantDisplayName copies settings.display_name to the tenant's
+// top-level display_name. The tenant is either the response itself or
+// nested under "tenant" ({tenant: {...}, timestamp: ...}).
+func liftTenantDisplayName(respMap map[string]interface{}) map[string]interface{} {
+	tenant := respMap
+	if nested, ok := respMap["tenant"].(map[string]interface{}); ok {
+		tenant = nested
+	}
+	settings, ok := tenant["settings"].(map[string]interface{})
+	if !ok {
+		return respMap
+	}
+	if displayName, ok := settings["display_name"].(string); ok {
+		tenant["display_name"] = displayName
+	}
+	return respMap
+}
+
 // unwrapListResponse extracts an array from a wrapper object. MCP server
 // returns {providers: [...], timestamp: ...} but SDK expects the array
 // when calling convertMapResponse on array types.
@@ -612,17 +635,6 @@ func transformIAMToolArguments(toolName string, args map[string]interface{}) map
 			if _, hasID := args["id"]; !hasID {
 				args["id"] = tid
 				delete(args, "tenant_id")
-			}
-		}
-
-		// Map display_name to name for tenant update. The SDK sends
-		// display_name but the MCP server expects name.
-		if toolName == "quicbaas_iam_tenant_update" {
-			if dn, ok := args["display_name"]; ok {
-				if _, hasName := args["name"]; !hasName {
-					args["name"] = dn
-				}
-				delete(args, "display_name")
 			}
 		}
 

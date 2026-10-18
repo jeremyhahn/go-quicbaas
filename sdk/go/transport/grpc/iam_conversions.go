@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	iamcore "github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -328,17 +329,27 @@ func (h *iamHandler) handleUpdateTenant(ctx context.Context, client iampb.IAMSer
 	tenantID, _ := getString(reqMap, "tenant_id")
 	requestData, _ := getMap(reqMap, "request")
 
-	name, _ := getString(requestData, "display_name")
-	settings, _ := getStringMap(requestData, "settings")
-
-	pbReq := &iampb.UpdateTenantRequest{
-		Id:   tenantID,
-		Name: name,
+	// The gRPC wire has no description, metadata or status: refuse them
+	// rather than drop them silently (#1518).
+	description, _ := getString(requestData, "description")
+	metadata, _ := getMap(requestData, "metadata")
+	if err := iamcore.CheckTenantFieldsStored(description != "", len(metadata) > 0, requestData["status"] != nil); err != nil {
+		return nil, err
 	}
 
-	if len(settings) > 0 {
-		pbReq.Settings = &iampb.TenantSettings{
-			NamedNetworks: settings,
+	// display_name is the tenant's display name, not its name: it travels
+	// in settings.display_name and the server leaves the name alone (#1518).
+	displayName, _ := getString(requestData, "display_name")
+	settings, _ := getStringMap(requestData, "settings")
+
+	pbReq := &iampb.UpdateTenantRequest{Id: tenantID}
+
+	// Settings scalars are optional: send only what the caller set, so a
+	// display-name update leaves mfa_required and max_users unchanged.
+	if displayName != "" || len(settings) > 0 {
+		pbReq.Settings = &iampb.TenantSettings{NamedNetworks: settings}
+		if displayName != "" {
+			pbReq.Settings.DisplayName = &displayName
 		}
 	}
 
@@ -676,7 +687,7 @@ func convertProtoTenantToSDK(t *iampb.Tenant) *iam.Tenant {
 	resp := &iam.Tenant{
 		ID:          t.Id,
 		Name:        t.Name,
-		DisplayName: t.Name,
+		DisplayName: t.GetSettings().GetDisplayName(),
 	}
 
 	if t.Settings != nil && len(t.Settings.NamedNetworks) > 0 {

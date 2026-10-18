@@ -119,3 +119,35 @@ func TestUpdateTenant_StoresAValidWebAuthnOverride(t *testing.T) {
 	assert.Equal(t, "acme.example.com", stored.Settings.WebAuthn.RPID)
 	assert.Equal(t, []string{"https://acme.example.com"}, stored.Settings.WebAuthn.RPOrigins)
 }
+
+// TestUpdateTenant_StoresDisplayNameInSettings proves a display_name update
+// lands in the tenant's display name, leaves its Name alone and keeps the
+// other stored settings (#1518).
+func TestUpdateTenant_StoresDisplayNameInSettings(t *testing.T) {
+	handler, tenants := newRealTenantManagerHandler(t)
+	ctx := context.Background()
+
+	w := putTenant(handler, "acme", `{"settings":{"max_users":42}}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	before, err := tenants.GetTenant(ctx, "acme")
+	require.NoError(t, err)
+
+	w = putTenant(handler, "acme", `{"display_name":"Acme Corp"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	stored, err := tenants.GetTenant(ctx, "acme")
+	require.NoError(t, err)
+	assert.Equal(t, "Acme Corp", stored.Settings.DisplayName)
+	assert.Equal(t, before.Name, stored.Name)
+	assert.Equal(t, 42, stored.Settings.MaxUsers)
+}
+
+// TestUpdateTenant_DisplayNameOfUnknownTenantIsNotFound proves a display_name
+// update of a tenant that does not exist answers 404.
+func TestUpdateTenant_DisplayNameOfUnknownTenantIsNotFound(t *testing.T) {
+	handler, _ := newRealTenantManagerHandler(t)
+
+	w := putTenant(handler, "missing", `{"display_name":"Nobody"}`)
+
+	assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+}

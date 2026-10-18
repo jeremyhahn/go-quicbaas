@@ -42,6 +42,7 @@ func TestIAMServer_GetTenant_ServiceError(t *testing.T) {
 
 func TestIAMServer_UpdateTenant_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
+	svc.On("GetTenant", mock.Anything, mock.Anything).Return(&iam.Tenant{ID: "t1"}, nil)
 	svc.On("UpdateTenant", mock.Anything, mock.Anything).Return(nil, &dberrors.QBError{Code: dberrors.ErrInternal, Op: "test"})
 
 	_, err := srv.UpdateTenant(callerContext("t-1"), &iampb.UpdateTenantRequest{Id: "t-1", Name: "n"})

@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -58,8 +59,8 @@ func TestConvertProtoToTenant(t *testing.T) {
 				Id:   "tenant-1",
 				Name: "Test Tenant",
 				Settings: &iampb.TenantSettings{
-					MaxUsers:    100,
-					MfaRequired: true,
+					MaxUsers:    proto.Int32(100),
+					MfaRequired: proto.Bool(true),
 					NamedNetworks: map[string]string{
 						"office": "10.0.0.0/8",
 					},
@@ -133,8 +134,8 @@ func TestConvertTenantToProto(t *testing.T) {
 				assert.Equal(t, "tenant-1", result.Id)
 				assert.Equal(t, "Test Tenant", result.Name)
 				require.NotNil(t, result.Settings)
-				assert.Equal(t, int32(100), result.Settings.MaxUsers)
-				assert.True(t, result.Settings.MfaRequired)
+				assert.Equal(t, int32(100), result.Settings.GetMaxUsers())
+				assert.True(t, result.Settings.GetMfaRequired())
 				// Only first CIDR is taken
 				assert.Equal(t, "10.0.0.0/8", result.Settings.NamedNetworks["office"])
 			},
@@ -835,8 +836,8 @@ func TestConvertProtoToTenant_Full(t *testing.T) {
 		Id:   "tenant-1",
 		Name: "Test Tenant",
 		Settings: &iampb.TenantSettings{
-			MaxUsers:      100,
-			MfaRequired:   true,
+			MaxUsers:      proto.Int32(100),
+			MfaRequired:   proto.Bool(true),
 			NamedNetworks: map[string]string{"office": "10.0.0.0/8"},
 		},
 		CreatedAt: timestamppb.New(now),
@@ -875,8 +876,8 @@ func TestConvertTenantToProto_Full(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "tenant-1", result.Id)
 	assert.Equal(t, "Test Tenant", result.Name)
-	assert.Equal(t, int32(50), result.Settings.MaxUsers)
-	assert.True(t, result.Settings.MfaRequired)
+	assert.Equal(t, int32(50), result.Settings.GetMaxUsers())
+	assert.True(t, result.Settings.GetMfaRequired())
 	assert.Equal(t, "10.0.0.0/8", result.Settings.NamedNetworks["office"])
 }
 

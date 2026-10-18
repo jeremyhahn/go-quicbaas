@@ -209,10 +209,21 @@ func handleIAMTenantUpdate(ctx context.Context, svc service.QuicBaaS, req interf
 		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Tenant", "Update",
 			"*iam.UpdateTenantRequest", typeNameOf(req))
 	}
-	name := sdkReq.DisplayName
+	if err := iam.CheckTenantFieldsStored(sdkReq.Description != "", len(sdkReq.Metadata) > 0, sdkReq.Status != nil); err != nil {
+		return nil, err
+	}
+	// DisplayName lives in Settings, which UpdateTenant replaces whole:
+	// start from the stored settings so no other setting is lost, and
+	// leave the tenant's Name alone.
+	current, err := mgr.GetTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
 	opts := iam.UpdateTenantOptions{}
-	if name != "" {
-		opts.Name = &name
+	if sdkReq.DisplayName != "" {
+		settings := current.Settings
+		settings.DisplayName = sdkReq.DisplayName
+		opts.Settings = &settings
 	}
 	t, err := mgr.UpdateTenant(ctx, tenantID, opts)
 	if err != nil {

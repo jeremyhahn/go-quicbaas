@@ -165,8 +165,9 @@ func (s *IAMServer) CreateTenant(ctx context.Context, req *iampb.CreateTenantReq
 
 	if req.Settings != nil {
 		settings := iam.TenantSettings{
-			MaxUsers:      int(req.Settings.MaxUsers),
-			MFAPolicy:     &iam.MFAPolicy{Required: req.Settings.MfaRequired},
+			MaxUsers:      int(req.Settings.GetMaxUsers()),
+			MFAPolicy:     &iam.MFAPolicy{Required: req.Settings.GetMfaRequired()},
+			DisplayName:   req.Settings.GetDisplayName(),
 			NamedNetworks: make(map[string][]string),
 		}
 
@@ -208,29 +209,55 @@ func (s *IAMServer) UpdateTenant(ctx context.Context, req *iampb.UpdateTenantReq
 		return nil, status.Error(codes.InvalidArgument, "tenant id is required")
 	}
 
-	tenant := &iam.Tenant{
-		ID:   req.Id,
-		Name: req.Name,
+	// UpdateTenant replaces the name and settings whole: start from the
+	// stored tenant so a field the request leaves unset is not lost (#1518).
+	current, err := s.iamService.GetTenant(ctx, req.Id)
+	if err != nil {
+		return nil, convertIAMError(err)
 	}
-
+	tenant := *current
+	if req.Name != "" {
+		tenant.Name = req.Name
+	}
 	if req.Settings != nil {
-		tenant.Settings = iam.TenantSettings{
-			MaxUsers:      int(req.Settings.MaxUsers),
-			MFAPolicy:     &iam.MFAPolicy{Required: req.Settings.MfaRequired},
-			NamedNetworks: make(map[string][]string),
-		}
-
-		for name, cidr := range req.Settings.NamedNetworks {
-			tenant.Settings.NamedNetworks[name] = []string{cidr}
-		}
+		tenant.Settings = applyTenantSettingsUpdate(tenant.Settings, req.Settings)
 	}
 
-	updated, err := s.iamService.UpdateTenant(ctx, tenant)
+	updated, err := s.iamService.UpdateTenant(ctx, &tenant)
 	if err != nil {
 		return nil, convertIAMError(err)
 	}
 
 	return convertTenantToProto(updated)
+}
+
+// applyTenantSettingsUpdate applies the set fields of an update's settings
+// over the stored settings. The scalars are optional: a present field is
+// applied, including false and 0, and an absent one leaves the stored
+// setting unchanged.
+func applyTenantSettingsUpdate(stored iam.TenantSettings, update *iampb.TenantSettings) iam.TenantSettings {
+	settings := stored
+	if update.MaxUsers != nil {
+		settings.MaxUsers = int(update.GetMaxUsers())
+	}
+	if update.MfaRequired != nil {
+		policy := iam.MFAPolicy{}
+		if stored.MFAPolicy != nil {
+			policy = *stored.MFAPolicy
+		}
+		policy.Required = update.GetMfaRequired()
+		settings.MFAPolicy = &policy
+	}
+	if len(update.NamedNetworks) > 0 {
+		settings.NamedNetworks = make(map[string][]string, len(update.NamedNetworks))
+		for name, cidr := range update.NamedNetworks {
+			settings.NamedNetworks[name] = []string{cidr}
+		}
+	}
+	if update.DisplayName != nil {
+		settings.DisplayName = update.GetDisplayName()
+	}
+	return settings
 }
 
 // DeleteTenant deletes a tenant.
