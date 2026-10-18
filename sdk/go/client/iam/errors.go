@@ -68,3 +68,17 @@ type IntParseError struct {
 func (e *IntParseError) Error() string {
 	return "cannot parse " + strconv.Quote(e.Value) + " as integer"
 }
+
+// UserSuspensionUnsupportedError is returned by UserClient.Suspend and
+// UserClient.Unsuspend, after input validation and before any transport
+// call. User suspension is go-qrdb IAM state, served once the go-qrdb
+// suspension seam lands (go-qrdb#801); no transport serves it until then.
+type UserSuspensionUnsupportedError struct {
+	// Op is the client operation that was refused (e.g. "iam.user.Suspend").
+	Op string
+}
+
+// Error implements the error interface.
+func (e *UserSuspensionUnsupportedError) Error() string {
+	return e.Op + ": user suspension is not supported until the go-qrdb suspension seam lands"
+}

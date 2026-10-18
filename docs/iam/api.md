@@ -87,6 +87,9 @@ every transport sees, so it is the shape to reason about:
 | `quicbaas.IAM.Tenant` | `Create`, `Delete`, `Get`, `List`, `Update` |
 | `quicbaas.IAM.User` | `Approve`, `AssignRole`, `Create`, `Delete`, `FindByUsername`, `Get`, `GetByEmail`, `List`, `Reject`, `RevokeRole`, `Suspend`, `Unsuspend`, `Update` |
 
+`Suspend` and `Unsuspend` return `UserSuspensionUnsupportedError` without
+calling the transport until the go-qrdb suspension seam lands (go-qrdb#801).
+
 Every transport resolves these names by table, not by derivation:
 
 - **gRPC and Unix** — `sdk/go/transport/grpc/transport.go` routes anything

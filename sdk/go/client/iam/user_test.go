@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 	"time"
 
@@ -583,84 +584,62 @@ func TestUserClient_RevokeRole(t *testing.T) {
 	})
 }
 
-func TestUserClient_Suspend(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mt := &mockTransport{
-			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-				if method != "Suspend" {
-					t.Errorf("expected method Suspend, got %s", method)
-				}
-				return nil, nil
-			},
-		}
+func TestUserClient_SuspendUnsupported(t *testing.T) {
+	verbs := map[string]func(UserClient, context.Context, string, string) error{
+		"iam.user.Suspend":   UserClient.Suspend,
+		"iam.user.Unsuspend": UserClient.Unsuspend,
+	}
+	for op, verb := range verbs {
+		t.Run(op, func(t *testing.T) {
+			calls := 0
+			mt := &mockTransport{
+				requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					calls++
+					return nil, nil
+				},
+			}
 
-		client := NewUserClient(mt)
-		err := client.Suspend(context.Background(), "tenant-123", "user-123")
+			err := verb(NewUserClient(mt), context.Background(), "tenant-123", "user-123")
 
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("nil context", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		err := client.Suspend(nil, "tenant-123", "user-123")
-		if err == nil {
-			t.Error("expected error for nil context")
-		}
-	})
-
-	t.Run("empty tenant ID", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		err := client.Suspend(context.Background(), "", "user-123")
-		if err == nil {
-			t.Error("expected error for empty tenant ID")
-		}
-	})
-
-	t.Run("empty user ID", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		err := client.Suspend(context.Background(), "tenant-123", "")
-		if err == nil {
-			t.Error("expected error for empty user ID")
-		}
-	})
+			var unsupported *UserSuspensionUnsupportedError
+			if !stderrors.As(err, &unsupported) {
+				t.Fatalf("expected UserSuspensionUnsupportedError, got %v", err)
+			}
+			if unsupported.Op != op {
+				t.Errorf("Op = %q, want %q", unsupported.Op, op)
+			}
+			if calls != 0 {
+				t.Errorf("transport called %d times, want 0", calls)
+			}
+		})
+	}
 }
 
-func TestUserClient_Unsuspend(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		mt := &mockTransport{
-			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-				if method != "Unsuspend" {
-					t.Errorf("expected method Unsuspend, got %s", method)
+func TestUserClient_SuspendInvalidInput(t *testing.T) {
+	verbs := map[string]func(UserClient, context.Context, string, string) error{
+		"Suspend":   UserClient.Suspend,
+		"Unsuspend": UserClient.Unsuspend,
+	}
+	cases := []struct {
+		name     string
+		ctx      context.Context
+		tenantID string
+		userID   string
+	}{
+		{"nil context", nil, "tenant-123", "user-123"},
+		{"empty tenant ID", context.Background(), "", "user-123"},
+		{"empty user ID", context.Background(), "tenant-123", ""},
+	}
+	for name, verb := range verbs {
+		for _, tc := range cases {
+			t.Run(name+"/"+tc.name, func(t *testing.T) {
+				err := verb(NewUserClient(&mockTransport{}), tc.ctx, tc.tenantID, tc.userID)
+				if !errors.IsInvalidInput(err) {
+					t.Errorf("expected invalid-input error, got %v", err)
 				}
-				return nil, nil
-			},
+			})
 		}
-
-		client := NewUserClient(mt)
-		err := client.Unsuspend(context.Background(), "tenant-123", "user-123")
-
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("nil context", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		err := client.Unsuspend(nil, "tenant-123", "user-123")
-		if err == nil {
-			t.Error("expected error for nil context")
-		}
-	})
-
-	t.Run("empty user ID", func(t *testing.T) {
-		client := NewUserClient(&mockTransport{})
-		err := client.Unsuspend(context.Background(), "tenant-123", "")
-		if err == nil {
-			t.Error("expected error for empty user ID")
-		}
-	})
+	}
 }
 
 func TestUserStatus_String(t *testing.T) {

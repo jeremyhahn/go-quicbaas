@@ -240,32 +240,6 @@ func TestUserClient_MemberOps_Branches(t *testing.T) {
 			t.Error("expected nil ctx error")
 		}
 	})
-	t.Run("Suspend/Unsuspend", func(t *testing.T) {
-		if err := NewUserClient(ok).Suspend(ctx, "t", "u"); err != nil {
-			t.Error(err)
-		}
-		if err := NewUserClient(fail).Suspend(ctx, "t", "u"); err == nil {
-			t.Error("expected fail")
-		}
-		if err := NewUserClient(errT).Suspend(ctx, "t", "u"); err == nil {
-			t.Error("expected error")
-		}
-		if err := NewUserClient(ok).Unsuspend(ctx, "t", "u"); err != nil {
-			t.Error(err)
-		}
-		if err := NewUserClient(fail).Unsuspend(ctx, "t", "u"); err == nil {
-			t.Error("expected fail")
-		}
-		if err := NewUserClient(errT).Unsuspend(ctx, "t", "u"); err == nil {
-			t.Error("expected error")
-		}
-		if err := NewUserClient(ok).Suspend(nil, "t", "u"); err == nil {
-			t.Error("expected nil ctx error")
-		}
-		if err := NewUserClient(ok).Unsuspend(nil, "t", "u"); err == nil {
-			t.Error("expected nil ctx error")
-		}
-	})
 }
 
 func TestUserClient_ApproveReject(t *testing.T) {

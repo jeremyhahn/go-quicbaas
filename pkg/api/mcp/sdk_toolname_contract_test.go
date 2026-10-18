@@ -149,10 +149,8 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 
 	{"quicbaas.IAM.Policy", "GetEffectivePermissions"}: gapNoTool,
 
-	{"quicbaas.IAM.User", "Approve"}:   gapNoTool,
-	{"quicbaas.IAM.User", "Reject"}:    gapNoTool,
-	{"quicbaas.IAM.User", "Suspend"}:   gapNoTool,
-	{"quicbaas.IAM.User", "Unsuspend"}: gapNoTool,
+	{"quicbaas.IAM.User", "Approve"}: gapNoTool,
+	{"quicbaas.IAM.User", "Reject"}:  gapNoTool,
 
 	// --- KMS ---------------------------------------------------------------
 	{"quicbaas.KMS", "ListKeyVersions"}: gapNameDrift + "quicbaas_kms_key_versions",

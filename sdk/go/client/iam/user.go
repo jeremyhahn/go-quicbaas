@@ -210,20 +210,6 @@ type userRoleRequest struct {
 
 type userRoleResponse struct{}
 
-type suspendUserRequest struct {
-	TenantID string `json:"tenant_id"`
-	UserID   string `json:"user_id"`
-}
-
-type suspendUserResponse struct{}
-
-type unsuspendUserRequest struct {
-	TenantID string `json:"tenant_id"`
-	UserID   string `json:"user_id"`
-}
-
-type unsuspendUserResponse struct{}
-
 type approveUserRequest struct {
 	TenantID string `json:"tenant_id"`
 	UserID   string `json:"user_id"`
@@ -411,7 +397,7 @@ func isUserSuccessResponse(resp interface{}) bool {
 
 	// Check for typed response structs.
 	switch resp.(type) {
-	case *deleteUserResponse, *userRoleResponse, *suspendUserResponse, *unsuspendUserResponse:
+	case *deleteUserResponse, *userRoleResponse:
 		return true
 	}
 
@@ -817,7 +803,9 @@ func (c *userClient) RevokeRole(ctx context.Context, tenantID, userID, roleID st
 	return nil
 }
 
-// Suspend suspends a user account.
+// Suspend suspends a user account. It waits on the go-qrdb suspension seam
+// (go-qrdb#801): after validating its input it returns
+// UserSuspensionUnsupportedError without calling the transport.
 func (c *userClient) Suspend(ctx context.Context, tenantID, userID string) error {
 	if tenantID == "" {
 		return errors.NewInvalidInput("iam.user.Suspend", "tenant ID is required")
@@ -831,23 +819,12 @@ func (c *userClient) Suspend(ctx context.Context, tenantID, userID string) error
 		return errors.NewInvalidInput("iam.user.Suspend", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, userServiceName, "Suspend", &suspendUserRequest{
-		TenantID: tenantID,
-		UserID:   userID,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Accept nil response or success response.
-	if !isUserSuccessResponse(resp) {
-		return errors.NewInternal("iam.user.Suspend", "suspend operation failed")
-	}
-
-	return nil
+	return &UserSuspensionUnsupportedError{Op: "iam.user.Suspend"}
 }
 
-// Unsuspend reactivates a suspended user account.
+// Unsuspend reactivates a suspended user account. It waits on the go-qrdb
+// suspension seam (go-qrdb#801): after validating its input it returns
+// UserSuspensionUnsupportedError without calling the transport.
 func (c *userClient) Unsuspend(ctx context.Context, tenantID, userID string) error {
 	if tenantID == "" {
 		return errors.NewInvalidInput("iam.user.Unsuspend", "tenant ID is required")
@@ -861,20 +838,7 @@ func (c *userClient) Unsuspend(ctx context.Context, tenantID, userID string) err
 		return errors.NewInvalidInput("iam.user.Unsuspend", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, userServiceName, "Unsuspend", &unsuspendUserRequest{
-		TenantID: tenantID,
-		UserID:   userID,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Accept nil response or success response.
-	if !isUserSuccessResponse(resp) {
-		return errors.NewInternal("iam.user.Unsuspend", "unsuspend operation failed")
-	}
-
-	return nil
+	return &UserSuspensionUnsupportedError{Op: "iam.user.Unsuspend"}
 }
 
 // Approve transitions a pending self-registered user to active state.
