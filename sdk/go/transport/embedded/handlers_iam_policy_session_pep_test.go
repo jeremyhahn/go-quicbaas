@@ -133,6 +133,73 @@ func TestHandleIAMPEPCheckBatch_TypedNilRequest(t *testing.T) {
 	require.ErrorAs(t, err, &typeErr)
 }
 
+func TestEmbeddedPEPCheck_Success(t *testing.T) {
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, newPolicyVerbsService(t)))
+
+	resp, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1",
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Allowed)
+	assert.Equal(t, iamsdk.EffectAllow, resp.Effect)
+}
+
+func TestEmbeddedPEPCheck_DenialIsThePolicyEngines(t *testing.T) {
+	authz := &countingAuthorizer{deny: "doc/2"}
+	svc := newAuthorizedAdminTestService(t)
+	svc.policy = iam.NewPolicyEngine(iam.PolicyEngineOptions{
+		Storage:        iam.NewMemoryStorage(),
+		RBACAuthorizer: authz,
+	})
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, svc))
+
+	resp, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/2",
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.Allowed)
+	assert.Equal(t, iamsdk.EffectDeny, resp.Effect)
+	assert.Equal(t, int32(1), authz.calls.Load())
+}
+
+func TestEmbeddedPEPCheck_CrossTenantRefused(t *testing.T) {
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, newPolicyVerbsService(t)))
+
+	_, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1", TenantID: "other",
+	})
+	require.Error(t, err)
+	var typeErr *InvalidRequestTypeError
+	assert.NotErrorAs(t, err, &typeErr)
+}
+
+func TestEmbeddedPEPCheck_NotConfigured(t *testing.T) {
+	client := iamsdk.NewPEPClient(newIAMVerbsTransport(t, &mockQuicBaaS{}))
+
+	_, err := client.Check(tenantCtx(policyConditionsTenant), &iamsdk.CheckRequest{
+		Subject: iamsdk.CheckSubject{ID: "u1"}, Action: "read", Resource: "doc/1",
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "IAM.Policy")
+}
+
+func TestHandleIAMPEPCheck_WrongRequestType(t *testing.T) {
+	svc := newPolicyVerbsService(t)
+
+	_, err := handleIAMPEPCheck(tenantCtx(policyConditionsTenant), svc, &iamsdk.CheckBatchRequest{})
+	var typeErr *InvalidRequestTypeError
+	require.ErrorAs(t, err, &typeErr)
+}
+
+func TestHandleIAMPEPCheck_TypedNilRequest(t *testing.T) {
+	svc := newPolicyVerbsService(t)
+	envelope := &struct{ Request *iamsdk.CheckRequest }{}
+
+	_, err := handleIAMPEPCheck(tenantCtx(policyConditionsTenant), svc, envelope)
+	var typeErr *InvalidRequestTypeError
+	require.ErrorAs(t, err, &typeErr)
+}
+
 // resourceDeniedError is the refusal countingAuthorizer returns for its
 // denied resource.
 type resourceDeniedError struct {
@@ -203,6 +270,7 @@ func TestEmbeddedPEPCheckBatch_WithoutStopOnDenyEvaluatesEveryCheck(t *testing.T
 func TestIAMPolicySessionPEPDispatchKeysRegistered(t *testing.T) {
 	for _, key := range []string{
 		"quicbaas.IAM.Policy/Simulate",
+		"quicbaas.IAM.PEP/Check",
 		"quicbaas.IAM.PEP/CheckBatch",
 	} {
 		_, ok := iamUnaryHandlers[key]
