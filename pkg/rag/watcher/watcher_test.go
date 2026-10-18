@@ -126,23 +126,30 @@ func TestWatcher_Events_Create(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Stop()
 
-	// Give watcher time to initialize
-	time.Sleep(500 * time.Millisecond)
-
-	// Create a file
+	// Start returns after the watches are added, so the write below is seen.
+	content := []byte("test content")
 	testFile := filepath.Join(tmpDir, "test.txt")
-	err = os.WriteFile(testFile, []byte("test content"), 0644)
+	err = os.WriteFile(testFile, content, 0644)
 	require.NoError(t, err)
 
-	// Wait for event - may be create or modify depending on OS
-	select {
-	case event := <-w.Events():
-		// Accept either create or modify (OS-dependent)
-		assert.True(t, event.Type == EventCreate || event.Type == EventModify)
-		assert.Equal(t, testFile, event.Path)
-		assert.Greater(t, event.Size, int64(0))
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for create event")
+	// os.WriteFile creates the file and then writes it, so the create can be
+	// stat'd, and flushed in its own batch, before the bytes land. Read events
+	// for the path until one reports the written size.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-w.Events():
+			if event.Path != testFile {
+				continue
+			}
+			// Accept either create or modify (OS-dependent)
+			assert.True(t, event.Type == EventCreate || event.Type == EventModify)
+			if event.Size == int64(len(content)) {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for an event reporting size %d", len(content))
+		}
 	}
 }
 
