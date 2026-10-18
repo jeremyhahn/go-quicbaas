@@ -131,15 +131,20 @@ curl -H "Accept: application/yaml" \
 
 ### QUIC (SDK client only)
 
-**No component in this repository serves HTTP/3 today.** There is no
-`pkg/api/quic` package, no QUIC server, no `--quic-port` on `quicbaasd` and no
-`http3.Server` anywhere under `pkg/`.
+**This repository has no QUIC server of its own.** There is no
+`pkg/api/quic` package, no `--quic-port` on `quicbaasd` and no
+`http3.Server` anywhere under `pkg/`. HTTP/3 is served by go-qrdb's unified
+REST server: quicbaas mounts its REST router there
+(`ModuleRESTServer` in `pkg/server/lifecycle_rest.go`), and when TLS is
+configured that server also serves HTTP/3 on the REST port and advertises it
+in `Alt-Svc`. HTTP/3 is therefore REST, on the REST port, not a separate
+listener.
 
-QUIC exists only as the SDK client transport `sdk/go/transport/quic`. It embeds
-`*rest.Transport` and swaps only the `http.Client` for quic-go's
-`http3.Transport` (`sdk/go/transport/quic/transport.go`), so it speaks the REST
-dialect over HTTP/3 and has no wire protocol of its own. Until something serves
-HTTP/3, that client has nothing to dial. Client usage:
+QUIC exists in this repository only as the SDK client transport
+`sdk/go/transport/quic`. It embeds `*rest.Transport` and swaps only the
+`http.Client` for quic-go's `http3.Transport`
+(`sdk/go/transport/quic/transport.go`), so it speaks the REST dialect over
+HTTP/3 and has no wire protocol of its own. Client usage:
 [api.md § QUIC API](api.md#quic-api).
 
 ### MCP (`pkg/api/mcp`)
@@ -386,7 +391,7 @@ rate(quicbaas_api_requests_total{status="error"}[5m])
 |----------|----------------|--------|
 | Service-to-service | gRPC | High performance, strong typing |
 | Web applications | REST | Universal compatibility |
-| Mobile apps | REST | QUIC has no server today (see [QUIC](#quic-sdk-client-only)) |
+| Mobile apps | REST | HTTP/3 is REST on the REST port, served by go-qrdb (see [QUIC](#quic-sdk-client-only)) |
 | AI agents | MCP | Native tool interface |
 | DevOps | CLI | Human-friendly, scriptable |
 
@@ -411,7 +416,7 @@ rate(quicbaas_api_requests_total{status="error"}[5m])
 ### Implementation
 - **gRPC Server** - `pkg/api/grpc/server.go`
 - **REST Server** - `pkg/api/rest/server.go`
-- **QUIC client transport** - `sdk/go/transport/quic/transport.go` (no server)
+- **QUIC client transport** - `sdk/go/transport/quic/transport.go` (HTTP/3 is served by go-qrdb's REST server)
 - **MCP Server** - `pkg/api/mcp/server.go`
 - **CLI** - `cmd/quicbaas/main.go`
 
@@ -453,7 +458,7 @@ table-driven harness.
 |-----------|--------------|------|------|-----------|
 | REST      | `:18080` (TLS) | HTTP/1.1 + JSON | OAuth2 / mTLS | NDJSON over chunked |
 | gRPC      | `:19090` (TLS, `h2` ALPN; facade and interceptor chain verified with connect in gRPC mode) | Protocol Buffers | OAuth2 / mTLS | bidi streams |
-| QUIC      | not served; see [QUIC](#quic-sdk-client-only) | — | — | — |
+| QUIC      | REST port, UDP (TLS 1.3, `h3` ALPN; served by go-qrdb's REST server, see [QUIC](#quic-sdk-client-only)) | HTTP/3 + JSON (REST dialect) | as REST (same router) | not verified over HTTP/3 |
 | MCP       | `:11443` (TLS) | JSON-RPC over WSS | OAuth2 / mTLS | server push |
 | Unix      | `/tmp/quicbaas.sock` | gRPC over UDS | filesystem perms (no TLS) | bidi streams |
 
@@ -545,7 +550,7 @@ QuicBaaS provides multiple API protocols for diverse client requirements. **All 
 | Protocol | Use Case | Transport | Performance | Documentation |
 |----------|----------|-----------|-------------|---------------|
 | gRPC | Service-to-service communication | Unix Socket/TCP, Binary | 150K+ ops/sec, <5ms P99 | grpc.md |
-| QUIC | Mobile clients, high-latency networks (SDK client only; no server today) | UDP/TLS 1.3, REST over HTTP/3 | not measured: nothing serves it | quic.md |
+| QUIC | Mobile clients, high-latency networks (REST over HTTP/3 on the REST port) | UDP/TLS 1.3, REST over HTTP/3 | not measured | quic.md |
 | REST | Web applications, HTTP clients | HTTP/1.1-2, JSON | 25K+ ops/sec, <15ms P99 | rest.md |
 | MCP | AI agents, LLM integration | Stdio/HTTP, JSON-RPC | Context-aware operations | mcp.md |
 | Unix | Local CLI / desktop GUI | gRPC over UDS, no TLS | gRPC-equivalent, lowest latency | (uses gRPC docs) |
@@ -772,7 +777,7 @@ Multiple protocol support for maximum flexibility:
 
 - **gRPC** - High-performance binary protocol (150K+ ops/sec, <5ms P99)
 - **REST** - HTTP/JSON for web clients (25K+ ops/sec, <15ms P99)
-- **QUIC** - Low-latency UDP protocol (100K+ ops/sec, <3ms P99)
+- **QUIC** - REST over HTTP/3 on the REST port (not measured)
 - **MCP** - Model Context Protocol for AI agents
 - **CLI** - Command-line interface with tab completion
 

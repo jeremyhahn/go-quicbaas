@@ -66,8 +66,9 @@ import (
 )
 
 // Seam injection points for unit testing.
-// NOTE: REST, QUIC, MCP, and Vector seams are defined in their respective
-// conditional compilation files (lifecycle_rest.go, lifecycle_quic.go, etc.).
+// NOTE: REST, MCP, and Vector seams are defined in their respective
+// conditional compilation files (lifecycle_rest.go, lifecycle_mcp.go,
+// lifecycle_vector.go).
 var (
 	seamMu sync.Mutex // Protects seam variables during testing
 

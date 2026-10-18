@@ -76,6 +76,22 @@ func newInteropFixture(t *testing.T) *interopFixture {
 
 	ts := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + ts.Listener.Addr().String()
+	router, provider, user := newInteropRouter(t, issuer)
+
+	ts.Config.Handler = router
+	ts.Start()
+	t.Cleanup(ts.Close)
+
+	f := &interopFixture{issuer: issuer, client: ts.Client(), provider: provider, user: user}
+	f.discovery = fetchInteropDiscovery(t, f)
+	return f
+}
+
+// newInteropRouter builds the full REST router over an OIDC provider whose
+// issuer is issuer, with one confidential client and one active user. The
+// caller serves the router on the listener issuer names.
+func newInteropRouter(t *testing.T, issuer string) (http.Handler, *iam.OIDCProvider, *iam.User) {
+	t.Helper()
 
 	// The xkms-backed key manager is the signing path the server ships
 	// (pkg/server/iam_init.go); it stamps the kid an external verifier
@@ -142,17 +158,11 @@ func newInteropFixture(t *testing.T) *interopFixture {
 	require.NoError(t, err)
 	server.service = mockSvc
 
-	ts.Config.Handler = server.router
-	ts.Start()
 	t.Cleanup(func() {
-		ts.Close()
 		server.Close()
 		require.NoError(t, auditLogger.Close())
 	})
-
-	f := &interopFixture{issuer: issuer, client: ts.Client(), provider: provider, user: user}
-	f.discovery = fetchInteropDiscovery(t, f)
-	return f
+	return server.router, provider, user
 }
 
 // initInteropXKMS initializes the process-wide xkms service over in-memory

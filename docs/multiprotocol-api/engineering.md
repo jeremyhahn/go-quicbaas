@@ -1006,7 +1006,10 @@ interceptor chain `startGRPCServer` composes, authorization included, over TLS
 on a loopback listener, and drives it with `connectrpc.com/connect` in gRPC
 mode, which implements the wire protocol on `net/http` and shares no code with
 grpc-go. The node's network listener is go-qrdb's unified server, which the leg
-does not start.
+does not start. The HTTP/3 leg is `pkg/api/rest/http3_interop_test.go`: it
+serves the REST router over quic-go's `http3.Server` (TLS 1.3, ALPN `h3`) on a
+loopback listener and drives it with quic-go's `http3.Transport`. Like the gRPC
+leg, it does not start go-qrdb's listener.
 
 | Claim | File | Enforced by / narrowed |
 |---|---|---|
@@ -1024,4 +1027,5 @@ does not start.
 | An independent MCP client completes initialize, tools/list and tools/call over streamable HTTP | `README.md`, `docs/mcp-server/api.md` | `TestOfficialClient_Initialize`, `TestOfficialClient_ListTools`, `TestOfficialClient_CallTool`, `TestOfficialClient_CallUnknownTool` |
 | MCP works with Claude, Codex, Gemini, Claude Desktop | `README.md`, `docs/mcp-server/api.md` | Narrowed: only mark3labs/mcp-go and the official MCP Go SDK have been run against the server, and stdio only with mark3labs/mcp-go |
 | gRPC over TLS with `h2`, standard status codes | `docs/multiprotocol-api/architecture.md`, `docs/multiprotocol-api/api.md` | `TestGRPCInterop_BaselineHealth` (TLS 1.3, `h2`), `TestGRPCInterop_AuthenticatedGet`, `TestGRPCInterop_RefusedCallsCarryStandardStatus` and `TestGRPCInterop_WatchStreamRefusedWithoutToken` (Unauthenticated, PermissionDenied), `TestGRPCInterop_UnknownMethodIsUnimplemented`, `TestGRPCInterop_WatchStreamEndsWithOKTrailer` |
-| QUIC transport served on `:10443`, with performance figures | `docs/multiprotocol-api/architecture.md` | Narrowed: nothing serves HTTP/3, so there is no server to measure |
+| REST over HTTP/3 (TLS 1.3, `h3`); clients without `h3` are refused | `docs/multiprotocol-api/architecture.md` | `TestHTTP3Interop_DiscoveryIsServedOverHTTP3`, `TestHTTP3Interop_ClientCredentialsAndIntrospection`, `TestHTTP3Interop_ALPNNegotiation` |
+| QUIC transport served on `:10443`, with performance figures | `docs/multiprotocol-api/architecture.md` | Narrowed: HTTP/3 is go-qrdb's REST server on the REST port (quicbaas mounts its router there through `pkg/server/lifecycle_rest.go`), not a QUIC listener of its own on `:10443`; no figures have been measured |
