@@ -41,7 +41,7 @@ import (
 // ONE TOOL IS THE DELIBERATE EXCEPTION: agent_account_materialize RELEASES an
 // envelope, because a pooled credential has to reach the worker host that runs
 // the agent (go-quicbaas#734). It carries its own permission rather than the
-// credentials:* grant the rest of this family takes, and it binds tenancy to
+// agent_accounts:write / :rotate / :delete the rest of this family takes, and it binds tenancy to
 // the AUTHENTICATED CALLER rather than to a tenant_id argument.
 // =============================================================================
 

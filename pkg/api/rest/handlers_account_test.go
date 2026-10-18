@@ -715,25 +715,23 @@ func containsCredentialType(rt, target reflect.Type, seen map[reflect.Type]bool)
 // (TestPEPMappingCoversEveryMountedRoute) only proves a mapping EXISTS; this
 // proves it is the intended one.
 //
-// THE SPLIT IS DELIBERATE AND LOAD-BEARING. The metadata READS and the
-// credential release take QuicBaaS's own tenant-scoped agent_accounts:* family;
-// the WRITES still take go-qrdb's credentials:*, which is registered
-// ScopeCross — system tenant only. The reads had to move because every agent
-// daemon is a tenant identity and could therefore never satisfy credentials:*,
-// which left it unable to list the pool it draws from (go-quicbaas#734). The
-// write half is go-quicbaas#737.
+// Every verb takes QuicBaaS's own tenant-scoped agent_accounts:* family, never
+// go-qrdb's ScopeCross credentials:*. The reads moved because every agent
+// daemon is a tenant identity and could never satisfy credentials:*
+// (go-quicbaas#734); the writes moved because no principal could write a
+// non-system tenant's pool under it (go-quicbaas#1355).
 func TestAccountRoutesResolveToRegisteredPermissions(t *testing.T) {
 	cases := []struct {
 		method, path, resource, action string
 	}{
-		{http.MethodPost, "/api/v1/agent-accounts", "credentials", "store"},
+		{http.MethodPost, "/api/v1/agent-accounts", "agent_accounts", "write"},
 		{http.MethodGet, "/api/v1/agent-accounts", "agent_accounts", "list"},
 		{http.MethodGet, "/api/v1/agent-accounts/a1", "agent_accounts", "read"},
-		{http.MethodPut, "/api/v1/agent-accounts/a1", "credentials", "store"},
-		{http.MethodDelete, "/api/v1/agent-accounts/a1", "credentials", "delete"},
-		{http.MethodPost, "/api/v1/agent-accounts/a1/rotate", "credentials", "rotate"},
-		{http.MethodPost, "/api/v1/agent-accounts/a1/revoke", "credentials", "delete"},
-		{http.MethodPost, "/api/v1/agent-accounts/a1/default", "credentials", "store"},
+		{http.MethodPut, "/api/v1/agent-accounts/a1", "agent_accounts", "write"},
+		{http.MethodDelete, "/api/v1/agent-accounts/a1", "agent_accounts", "delete"},
+		{http.MethodPost, "/api/v1/agent-accounts/a1/rotate", "agent_accounts", "rotate"},
+		{http.MethodPost, "/api/v1/agent-accounts/a1/revoke", "agent_accounts", "write"},
+		{http.MethodPost, "/api/v1/agent-accounts/a1/default", "agent_accounts", "write"},
 		{http.MethodGet, "/api/v1/agent-accounts/a1/usage", "agent_accounts", "read"},
 		{http.MethodPost, "/api/v1/agent-accounts/a1/materialize", "agent_accounts", "materialize"},
 	}

@@ -422,18 +422,18 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_sdlc_worker_image":         {"worker_images", "read"},
 	"quicbaas_sdlc_worker_image_refresh": {"worker_images", "refresh"},
 
-	// Pooled provider accounts -> credentials. An account custodies credential
-	// material (an Anthropic / Codex / OpenCode login), so it authorizes with
-	// the qrdb credentials:* family — matching the REST PEP mapping
-	// (pkg/api/rest/authz_pep_mapping.go) and the gRPC mapping
-	// (pkg/api/grpc/authz_mapping.go) exactly. qrdb registers no account:*
-	// family; when one is added these entries should move to it.
-	"quicbaas_agent_account_create": {"credentials", "store"},
+	// Pooled provider accounts -> agent_accounts. Every account is tenant
+	// data in the caller's own orchestration keyspace, so the surface takes
+	// QuicBaaS's tenant-scoped agent_accounts family (pkg/permission) rather
+	// than qrdb's ScopeCross credentials:*, which no tenant principal may hold
+	// (go-quicbaas#1355). This matches the REST PEP map and the gRPC method
+	// options (api/proto/account.proto) exactly.
+	"quicbaas_agent_account_create": {"agent_accounts", "write"},
 	"quicbaas_agent_account_get":    {"agent_accounts", "read"},
 	"quicbaas_agent_account_list":   {"agent_accounts", "list"},
-	"quicbaas_agent_account_update": {"credentials", "store"},
-	"quicbaas_agent_account_delete": {"credentials", "delete"},
-	"quicbaas_agent_account_rotate": {"credentials", "rotate"},
+	"quicbaas_agent_account_update": {"agent_accounts", "write"},
+	"quicbaas_agent_account_delete": {"agent_accounts", "delete"},
+	"quicbaas_agent_account_rotate": {"agent_accounts", "rotate"},
 	// Materializing RELEASES the envelope, so it takes QuicBaaS's own
 	// agent_accounts:materialize rather than a credentials:* grant — which is
 	// registered ScopeCross (system tenant only) and would deny the
@@ -443,8 +443,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// pkg/api/grpc/authz_mapping.go.
 	"quicbaas_agent_account_reserve_session": {"agent_accounts", "materialize"},
 	"quicbaas_agent_account_release_session": {"agent_accounts", "materialize"},
-	"quicbaas_agent_account_revoke":          {"credentials", "delete"},
-	"quicbaas_agent_account_set_default":     {"credentials", "store"},
+	"quicbaas_agent_account_revoke":          {"agent_accounts", "write"},
+	"quicbaas_agent_account_set_default":     {"agent_accounts", "write"},
 	"quicbaas_agent_account_usage":           {"agent_accounts", "read"},
 
 	// Certificate extensions -> ca / certs. The mapping MUST match the gRPC

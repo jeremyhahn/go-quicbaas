@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
@@ -288,13 +289,13 @@ type enrollmentFixture struct {
 	identity *iam.MemoryStorage
 	store    *tenantRoutingStore
 
-	// accounts is the tenant's pooled provider account pool, wired exactly as
-	// server bring-up wires it (metadata store + secret store + token manager).
-	accounts service.AccountService
-
 	// accountStore is the same metadata store the service writes through, kept
 	// so a scenario can move an account into a refusing state directly.
 	accountStore orchestration.AccountStore
+
+	// admin is the tenant admin's edge to the pool, minted on first use by
+	// adminEdge.
+	admin *httptest.Server
 }
 
 // newEnrollmentFixture wires the control plane.
@@ -364,7 +365,6 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 		registry:     registry,
 		identity:     identityRecords,
 		store:        store,
-		accounts:     accountSvc,
 		accountStore: accountStore,
 	}
 }

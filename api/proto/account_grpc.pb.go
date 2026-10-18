@@ -52,14 +52,16 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// The METADATA READS and the credential RELEASE take QuicBaaS's own
-// tenant-scoped agent_accounts:* family; the WRITES take go-qrdb's
-// credentials:*. That split is deliberate: credentials:* is registered
-// ScopeCross — system tenant only, because qrdb's named-credential store has no
-// tenant namespacing — while a pooled account is written into the requesting
-// tenant's own keyspace, so every tenant identity (including an enrolled agent
-// daemon) was denied a surface that is tenant data. See go-quicbaas#734, and
-// go-quicbaas#737 for the write half.
+// Every RPC takes QuicBaaS's own tenant-scoped agent_accounts:* family. The
+// writes take agent_accounts:write (create, update, set-default, revoke),
+// agent_accounts:rotate and agent_accounts:delete, registered ScopeSelf and
+// held by the tenant-admin role. They do not borrow go-qrdb's credentials:*:
+// that family is registered ScopeCross (system tenant only, because qrdb's
+// named-credential store has no tenant namespacing), while a pooled account
+// lives in the requesting tenant's own keyspace, so no principal could write
+// a non-system tenant's pool. Revoke keeps the record and its usage history,
+// so it is a write, not a delete. See go-quicbaas#734 for the reads,
+// go-quicbaas#737 for the write half and go-quicbaas#1355 for the write verbs.
 type AccountServiceClient interface {
 	CreateAccount(ctx context.Context, in *CreateAccountRequest, opts ...grpc.CallOption) (*CreateAccountResponse, error)
 	GetAccount(ctx context.Context, in *GetAccountRequest, opts ...grpc.CallOption) (*GetAccountResponse, error)
@@ -219,14 +221,16 @@ func (c *accountServiceClient) ReleaseAccountSession(ctx context.Context, in *Re
 // All implementations should embed UnimplementedAccountServiceServer
 // for forward compatibility.
 //
-// The METADATA READS and the credential RELEASE take QuicBaaS's own
-// tenant-scoped agent_accounts:* family; the WRITES take go-qrdb's
-// credentials:*. That split is deliberate: credentials:* is registered
-// ScopeCross — system tenant only, because qrdb's named-credential store has no
-// tenant namespacing — while a pooled account is written into the requesting
-// tenant's own keyspace, so every tenant identity (including an enrolled agent
-// daemon) was denied a surface that is tenant data. See go-quicbaas#734, and
-// go-quicbaas#737 for the write half.
+// Every RPC takes QuicBaaS's own tenant-scoped agent_accounts:* family. The
+// writes take agent_accounts:write (create, update, set-default, revoke),
+// agent_accounts:rotate and agent_accounts:delete, registered ScopeSelf and
+// held by the tenant-admin role. They do not borrow go-qrdb's credentials:*:
+// that family is registered ScopeCross (system tenant only, because qrdb's
+// named-credential store has no tenant namespacing), while a pooled account
+// lives in the requesting tenant's own keyspace, so no principal could write
+// a non-system tenant's pool. Revoke keeps the record and its usage history,
+// so it is a write, not a delete. See go-quicbaas#734 for the reads,
+// go-quicbaas#737 for the write half and go-quicbaas#1355 for the write verbs.
 type AccountServiceServer interface {
 	CreateAccount(context.Context, *CreateAccountRequest) (*CreateAccountResponse, error)
 	GetAccount(context.Context, *GetAccountRequest) (*GetAccountResponse, error)

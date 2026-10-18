@@ -846,18 +846,19 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// enrolled fleet node daemon that has to select over it (go-quicbaas#734). Same
 	// correction as go-quicbaas#534 made for /api/v1/secrets.
 	//
-	// The WRITE verbs deliberately still take credentials:*, so minting or
-	// rotating a pooled login remains a system-tenant operation.
-	"/quicbaas.account.v1.AccountService/CreateAccount":           {"credentials", "store"},
+	// The WRITE verbs take the same family's write / rotate / delete verbs, held
+	// by the tenant admin only, for the same reason: under credentials:* no
+	// principal could write a non-system tenant's pool (go-quicbaas#1355).
+	"/quicbaas.account.v1.AccountService/CreateAccount":           {"agent_accounts", "write"},
 	"/quicbaas.account.v1.AccountService/GetAccount":              {"agent_accounts", "read"},
 	"/quicbaas.account.v1.AccountService/ListAccounts":            {"agent_accounts", "list"},
-	"/quicbaas.account.v1.AccountService/UpdateAccount":           {"credentials", "store"},
-	"/quicbaas.account.v1.AccountService/DeleteAccount":           {"credentials", "delete"},
-	"/quicbaas.account.v1.AccountService/RotateAccountCredential": {"credentials", "rotate"},
-	// Revoking excludes the account from every selection strategy — a
-	// destructive lifecycle transition, so it takes the delete-grade verb.
-	"/quicbaas.account.v1.AccountService/RevokeAccount":     {"credentials", "delete"},
-	"/quicbaas.account.v1.AccountService/SetDefaultAccount": {"credentials", "store"},
+	"/quicbaas.account.v1.AccountService/UpdateAccount":           {"agent_accounts", "write"},
+	"/quicbaas.account.v1.AccountService/DeleteAccount":           {"agent_accounts", "delete"},
+	"/quicbaas.account.v1.AccountService/RotateAccountCredential": {"agent_accounts", "rotate"},
+	// Revoking excludes the account from every selection strategy but keeps
+	// the record and its usage history, so it is a write, not a delete.
+	"/quicbaas.account.v1.AccountService/RevokeAccount":     {"agent_accounts", "write"},
+	"/quicbaas.account.v1.AccountService/SetDefaultAccount": {"agent_accounts", "write"},
 	"/quicbaas.account.v1.AccountService/GetAccountUsage":   {"agent_accounts", "read"},
 	// Materializing RELEASES the credential envelope, so it is the ONE verb
 	// here that does not take a credentials:* grant. It carries QuicBaaS's own

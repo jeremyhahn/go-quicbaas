@@ -444,6 +444,49 @@ func TestAccountService_TenantNamespace_RefusesAnotherTenantsTarget(t *testing.T
 	}
 }
 
+// TestAccountService_TenantNamespace_RefusesAnotherTenantsRotateAndDelete
+// extends the create refusal to the other write verbs (go-quicbaas#1355): a
+// tenant admin holding agent_accounts:rotate / :delete in its own tenant
+// still cannot rotate or delete an account in another tenant's pool.
+func TestAccountService_TenantNamespace_RefusesAnotherTenantsRotateAndDelete(t *testing.T) {
+	ctx := orchestration.ContextWithTenant(tenantctx.WithTenant(context.Background(), "burnin"), "burnin")
+	verbs := map[string]func(f *tenantNamespaceFixture, accountID string) error{
+		"rotate": func(f *tenantNamespaceFixture, accountID string) error {
+			_, err := f.service.RotateAccountCredential(ctx, &RotateAccountCredentialRequest{
+				TenantID:  nsTenant,
+				AccountID: accountID,
+				Credential: &orchestration.AccountCredential{
+					AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+					AccessToken:       "sk-ant-oat01-rotated",
+				},
+			})
+			return err
+		},
+		"delete": func(f *tenantNamespaceFixture, accountID string) error {
+			_, err := f.service.DeleteAccount(ctx, &DeleteAccountRequest{
+				TenantID:  nsTenant,
+				AccountID: accountID,
+			})
+			return err
+		},
+	}
+	for name, call := range verbs {
+		t.Run(name, func(t *testing.T) {
+			f := newTenantNamespaceFixture(t)
+			account := f.createForTenant(t, tenantAdminContext(), "sk-ant-oat01-test")
+			err := call(f, account.ID)
+			var denied *TenantTargetDeniedError
+			if !errors.As(err, &denied) || !errors.Is(err, orchestration.ErrAccountTenantScope) {
+				t.Fatalf("%s naming %q error = %v, want TenantTargetDeniedError", name, nsTenant, err)
+			}
+			resolved, err := f.resolveAsSpawn(t)
+			if err != nil || resolved.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "sk-ant-oat01-test" {
+				t.Fatalf("refused %s changed the tenant's account: %+v, %v", name, resolved, err)
+			}
+		})
+	}
+}
+
 // TestAccountService_TenantNamespace_RefusesATenantlessCaller: a context that
 // carries no authenticated tenant on pkg/iam's key is refused rather than
 // trusted with whatever tenant the request names.

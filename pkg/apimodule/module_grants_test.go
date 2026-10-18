@@ -49,20 +49,19 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 	assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleOperator, "keys:sign"),
 		"keys:sign must still be reachable via the Operator role qrdb granted it to")
 
-	// credentials:store is declared by account.proto (this module's
-	// AccountService) and go-qrdb v0.5.1-alpha places it on NO built-in
+	// embedding:embed is declared by embedding.proto (this module's
+	// EmbeddingService) and go-qrdb v0.5.1-alpha places it on NO built-in
 	// role: a genuine gap the module must fill for Admin/Owner so its own
-	// AccountService is reachable by the built-in administrator.
+	// EmbeddingService is reachable by the built-in administrator.
 	//
-	// credentials:retrieve is deliberately NOT in this list any more. The
-	// account surface's metadata reads moved to QuicBaaS's own tenant-scoped
-	// agent_accounts:* family (go-quicbaas#734) because credentials:* is
-	// registered ScopeCross — system tenant only — and therefore denied every
-	// tenant identity, including the enrolled fleet node daemon that must select
-	// over the pool. No proto in this module declares credentials:retrieve now,
-	// so the gap fill has nothing to fill, and asserting the grant would pin a
+	// No credentials:* permission is in this list any more. The account
+	// surface moved to QuicBaaS's own tenant-scoped agent_accounts:* family —
+	// the reads for go-quicbaas#734, the writes for go-quicbaas#1355 — because
+	// credentials:* is registered ScopeCross (system tenant only) and therefore
+	// denied every tenant identity. No proto in this module declares a
+	// credentials:* permission now, so asserting its grant would pin a
 	// permission the module no longer references.
-	for _, perm := range []qrdbsdk.Permission{"credentials:store"} {
+	for _, perm := range []qrdbsdk.Permission{"embedding:embed"} {
 		assert.True(t, qrdbsdk.IsPermissionRegistered(perm), "%s must be registered", perm)
 		assert.True(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm),
 			"admin must hold %s (unclaimed gap fill)", perm)
@@ -72,7 +71,7 @@ func TestNewModule_RegistersRoleGrants(t *testing.T) {
 
 	// The SoD invariant: the Security Officer role receives nothing from
 	// this contribution, gap-fill included.
-	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "credentials:store"))
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "embedding:embed"))
 	assert.False(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleSO, "keys:sign"))
 }
 
@@ -109,7 +108,9 @@ func TestRoleGrantGaps_ModuleContributionAgainstQRDBPlacements(t *testing.T) {
 
 	perms := derivedPermissions()
 	require.Contains(t, perms, qrdbsdk.Permission("keys:sign"), "ssh.proto declares keys:sign")
-	require.Contains(t, perms, qrdbsdk.Permission("credentials:store"), "account.proto declares credentials:store")
+	require.Contains(t, perms, qrdbsdk.Permission("embedding:embed"), "embedding.proto declares embedding:embed")
+	require.NotContains(t, perms, qrdbsdk.Permission("credentials:store"),
+		"account.proto takes agent_accounts:write, not the ScopeCross credentials:store (#1355)")
 
 	nonAdminRoles := []string{
 		qrdbsdk.PermissionRoleSO,
@@ -128,7 +129,7 @@ func TestRoleGrantGaps_ModuleContributionAgainstQRDBPlacements(t *testing.T) {
 
 	gaps := roleGrantGaps(perms, heldByNonAdminRole)
 	assert.NotContains(t, gaps, qrdbsdk.Permission("keys:sign"), "keys:sign is held by Operator; the module must not grant it")
-	assert.Contains(t, gaps, qrdbsdk.Permission("credentials:store"), "credentials:store is held by no built-in role")
+	assert.Contains(t, gaps, qrdbsdk.Permission("embedding:embed"), "embedding:embed is held by no built-in role")
 	for _, p := range gaps {
 		assert.False(t, heldByNonAdminRole(p), "%s is already held by a built-in role", p)
 	}

@@ -2580,17 +2580,17 @@ const file_api_proto_account_proto_rawDesc = "" +
 	"\x0ereservation_id\x18\x03 \x01(\tR\rreservationId\"d\n" +
 	"\x1dReleaseAccountSessionResponse\x12%\n" +
 	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xaf\r\n" +
-	"\x0eAccountService\x12}\n" +
-	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12v\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xc4\r\n" +
+	"\x0eAccountService\x12\x80\x01\n" +
+	"\rCreateAccount\x12).quicbaas.account.v1.CreateAccountRequest\x1a*.quicbaas.account.v1.CreateAccountResponse\"\x18\xc2\xf3\x18\x14agent_accounts:write\x12v\n" +
 	"\n" +
 	"GetAccount\x12&.quicbaas.account.v1.GetAccountRequest\x1a'.quicbaas.account.v1.GetAccountResponse\"\x17\xc2\xf3\x18\x13agent_accounts:read\x12|\n" +
-	"\fListAccounts\x12(.quicbaas.account.v1.ListAccountsRequest\x1a).quicbaas.account.v1.ListAccountsResponse\"\x17\xc2\xf3\x18\x13agent_accounts:list\x12}\n" +
-	"\rUpdateAccount\x12).quicbaas.account.v1.UpdateAccountRequest\x1a*.quicbaas.account.v1.UpdateAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12~\n" +
-	"\rDeleteAccount\x12).quicbaas.account.v1.DeleteAccountRequest\x1a*.quicbaas.account.v1.DeleteAccountResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x9c\x01\n" +
-	"\x17RotateAccountCredential\x123.quicbaas.account.v1.RotateAccountCredentialRequest\x1a4.quicbaas.account.v1.RotateAccountCredentialResponse\"\x16\xc2\xf3\x18\x12credentials:rotate\x12~\n" +
-	"\rRevokeAccount\x12).quicbaas.account.v1.RevokeAccountRequest\x1a*.quicbaas.account.v1.RevokeAccountResponse\"\x16\xc2\xf3\x18\x12credentials:delete\x12\x89\x01\n" +
-	"\x11SetDefaultAccount\x12-.quicbaas.account.v1.SetDefaultAccountRequest\x1a..quicbaas.account.v1.SetDefaultAccountResponse\"\x15\xc2\xf3\x18\x11credentials:store\x12\x85\x01\n" +
+	"\fListAccounts\x12(.quicbaas.account.v1.ListAccountsRequest\x1a).quicbaas.account.v1.ListAccountsResponse\"\x17\xc2\xf3\x18\x13agent_accounts:list\x12\x80\x01\n" +
+	"\rUpdateAccount\x12).quicbaas.account.v1.UpdateAccountRequest\x1a*.quicbaas.account.v1.UpdateAccountResponse\"\x18\xc2\xf3\x18\x14agent_accounts:write\x12\x81\x01\n" +
+	"\rDeleteAccount\x12).quicbaas.account.v1.DeleteAccountRequest\x1a*.quicbaas.account.v1.DeleteAccountResponse\"\x19\xc2\xf3\x18\x15agent_accounts:delete\x12\x9f\x01\n" +
+	"\x17RotateAccountCredential\x123.quicbaas.account.v1.RotateAccountCredentialRequest\x1a4.quicbaas.account.v1.RotateAccountCredentialResponse\"\x19\xc2\xf3\x18\x15agent_accounts:rotate\x12\x80\x01\n" +
+	"\rRevokeAccount\x12).quicbaas.account.v1.RevokeAccountRequest\x1a*.quicbaas.account.v1.RevokeAccountResponse\"\x18\xc2\xf3\x18\x14agent_accounts:write\x12\x8c\x01\n" +
+	"\x11SetDefaultAccount\x12-.quicbaas.account.v1.SetDefaultAccountRequest\x1a..quicbaas.account.v1.SetDefaultAccountResponse\"\x18\xc2\xf3\x18\x14agent_accounts:write\x12\x85\x01\n" +
 	"\x0fGetAccountUsage\x12+.quicbaas.account.v1.GetAccountUsageRequest\x1a,.quicbaas.account.v1.GetAccountUsageResponse\"\x17\xc2\xf3\x18\x13agent_accounts:read\x12\xb3\x01\n" +
 	"\x1cMaterializeAccountCredential\x128.quicbaas.account.v1.MaterializeAccountCredentialRequest\x1a9.quicbaas.account.v1.MaterializeAccountCredentialResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materialize\x12\x9e\x01\n" +
 	"\x15ReserveAccountSession\x121.quicbaas.account.v1.ReserveAccountSessionRequest\x1a2.quicbaas.account.v1.ReserveAccountSessionResponse\"\x1e\xc2\xf3\x18\x1aagent_accounts:materialize\x12\x9e\x01\n" +

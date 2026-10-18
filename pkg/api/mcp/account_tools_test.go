@@ -391,14 +391,14 @@ func TestAccountCredentialFilesFromArgs_AbsentOrEmptyIsNil(t *testing.T) {
 // working. It also pins the exact permission so REST, gRPC, QUIC and MCP agree.
 func TestAccountToolsHaveQRDBPermissionMapping(t *testing.T) {
 	want := map[string][2]string{
-		"quicbaas_agent_account_create":      {"credentials", "store"},
+		"quicbaas_agent_account_create":      {"agent_accounts", "write"},
 		"quicbaas_agent_account_get":         {"agent_accounts", "read"},
 		"quicbaas_agent_account_list":        {"agent_accounts", "list"},
-		"quicbaas_agent_account_update":      {"credentials", "store"},
-		"quicbaas_agent_account_delete":      {"credentials", "delete"},
-		"quicbaas_agent_account_rotate":      {"credentials", "rotate"},
-		"quicbaas_agent_account_revoke":      {"credentials", "delete"},
-		"quicbaas_agent_account_set_default": {"credentials", "store"},
+		"quicbaas_agent_account_update":      {"agent_accounts", "write"},
+		"quicbaas_agent_account_delete":      {"agent_accounts", "delete"},
+		"quicbaas_agent_account_rotate":      {"agent_accounts", "rotate"},
+		"quicbaas_agent_account_revoke":      {"agent_accounts", "write"},
+		"quicbaas_agent_account_set_default": {"agent_accounts", "write"},
 		"quicbaas_agent_account_usage":       {"agent_accounts", "read"},
 		// The release verb is deliberately NOT a credentials:* grant: that
 		// family is registered ScopeCross (system tenant only) and would deny

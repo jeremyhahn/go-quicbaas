@@ -16,11 +16,15 @@
 package fleet_enrollment_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +35,7 @@ import (
 	qrdbmiddleware "github.com/jeremyhahn/go-qrdb/pkg/auth/middleware"
 	qrdbrbac "github.com/jeremyhahn/go-qrdb/pkg/auth/rbac"
 	qrdbpermission "github.com/jeremyhahn/go-qrdb/pkg/permission"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet"
@@ -38,7 +43,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	quicbaaspermission "github.com/jeremyhahn/go-quicbaas/pkg/permission"
-	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // =============================================================================
@@ -78,17 +82,45 @@ import (
 // The permission each one carries is NOT restated here — it is read out of the
 // production route table (restapi.Routes), so a route re-permissioned without
 // updating the daemon's grant fails this scenario rather than shipping.
-var daemonAccountRoutes = []struct{ method, pattern string }{
-	{http.MethodGet, "/api/v1/agent-accounts/"},
+var daemonAccountRoutes = []accountRoute{
+	{http.MethodGet, accountCollection},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}"},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}/usage"},
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
 }
 
+// adminAccountRoutes are the writes a tenant admin makes against the
+// pool on the central: add a seat, revoke it, rotate its credential.
+var adminAccountRoutes = []accountRoute{
+	{http.MethodPost, accountCollection},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/revoke"},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/rotate"},
+}
+
+// accountRoute names one pooled-account route by method and pattern, as the
+// REST route table spells it.
+type accountRoute struct{ method, pattern string }
+
+// accountCollection is the pooled-account collection route.
+const accountCollection = "/api/v1/agent-accounts/"
+
+// enrollAdmin is the tenant admin who manages the pool.
+const enrollAdmin = "pool-admin"
+
 // releaseEdge is the control plane the daemon talks to over HTTP: go-qrdb's
 // real REST middleware in front of the production account routes, with the
 // peer certificate injected the way a TLS listener injects it.
 func (f *enrollmentFixture) releaseEdge(t *testing.T, cert *x509.Certificate, bearer string) *httptest.Server {
+	t.Helper()
+	return f.accountEdge(t, cert, daemonAccountRoutes)
+}
+
+// accountEdge serves the named pooled-account routes behind the auth
+// middleware chain, at an edge that presents cert as the caller's
+// certificate. The middleware authenticates that certificate, binds the
+// caller's tenant to the request, and enforces the permission each route
+// declares, as the server's REST router does.
+func (f *enrollmentFixture) accountEdge(t *testing.T, cert *x509.Certificate, want []accountRoute) *httptest.Server {
 	t.Helper()
 
 	// The permissions these routes require must be in qrdb's registry before
@@ -104,24 +136,26 @@ func (f *enrollmentFixture) releaseEdge(t *testing.T, cert *x509.Certificate, be
 
 	routes := qrdbmiddleware.NewRESTRouteRegistry()
 	router := chi.NewRouter()
-	for _, want := range daemonAccountRoutes {
-		spec := f.routeSpec(t, want.method, want.pattern)
-		routes.Register(spec.Method, spec.Pattern,
-			qrdbpermission.Permission(spec.Resource+":"+spec.Action))
+	for _, route := range want {
+		spec := f.routeSpec(t, route.method, route.pattern)
+		required := qrdbpermission.Permission(spec.Resource + ":" + spec.Action)
+		routes.Register(spec.Method, spec.Pattern, required)
 		router.Method(spec.Method, spec.Pattern, f.server.BindRoute(spec))
+
+		// The collection route is served at the bare path too, exactly as
+		// the module registrar aliases it (pkg/apimodule RegisterHTTP).
+		if spec.Pattern == accountCollection {
+			bare := strings.TrimSuffix(accountCollection, "/")
+			routes.Register(spec.Method, bare, required)
+			router.Method(spec.Method, bare, f.server.BindRoute(spec))
+		}
 	}
-	// The collection route is served at the bare path too, exactly as the
-	// module registrar aliases it (pkg/apimodule RegisterHTTP).
-	collection := f.routeSpec(t, http.MethodGet, "/api/v1/agent-accounts/")
-	routes.Register(http.MethodGet, "/api/v1/agent-accounts",
-		qrdbpermission.Permission(collection.Resource+":"+collection.Action))
-	router.Method(http.MethodGet, "/api/v1/agent-accounts", f.server.BindRoute(collection))
 
 	guarded := authMiddleware.RESTMiddleware(routes, router)
 
 	// The TLS edge. A real listener presents the peer certificate on the
 	// connection; httptest over plain HTTP does not, so the harness sets it
-	// here. Nothing else about the request is synthesized — the daemon's own
+	// here. Nothing else about the request is synthesized — the caller's own
 	// client built the URL, the body and the bearer.
 	edge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.TLS = &tls.ConnectionState{
@@ -132,6 +166,86 @@ func (f *enrollmentFixture) releaseEdge(t *testing.T, cert *x509.Certificate, be
 	}))
 	t.Cleanup(edge.Close)
 	return edge
+}
+
+// adminEdge is the edge a tenant admin manages the pool through: an mTLS
+// principal of enrollTenant, bound to the tenant-admin role, which alone holds
+// the agent_accounts write verbs (go-quicbaas#1355). It is minted on first use.
+//
+// The admin's writes go through the same middleware as the daemon's
+// reads, because the account service acts only for the tenant the
+// authenticated caller belongs to (tenantctx.Target, go-quicbaas#1150): a
+// write with no caller bound is refused, so the pool can only be seeded the
+// way production seeds it.
+func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
+	t.Helper()
+	if f.admin != nil {
+		return f.admin
+	}
+
+	// The tenant admin holds go-qrdb's built-in admin role. The harness role
+	// store carries that role's grants for these routes, and only the grants
+	// the built-in role really holds: a route whose permission it does not
+	// hold fails here instead of passing on a hand-made grant.
+	grants := make([]string, 0, len(adminAccountRoutes))
+	for _, route := range adminAccountRoutes {
+		spec := f.routeSpec(t, route.method, route.pattern)
+		required := qrdbsdk.Permission(spec.Resource + ":" + spec.Action)
+		require.Truef(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, required),
+			"%s %s requires %s, which the tenant-admin role does not hold", route.method, route.pattern, required)
+		grants = append(grants, string(required))
+	}
+
+	ctx := context.Background()
+	role := &iam.Role{
+		ID:          qrdbsdk.PermissionRoleAdmin,
+		Name:        qrdbsdk.PermissionRoleAdmin,
+		TenantID:    enrollTenant,
+		Permissions: grants,
+	}
+	require.NoError(t, f.identity.CreateRole(ctx, role))
+
+	cert := agentCertificate(t, enrollTenant, enrollAdmin)
+	require.NoError(t, f.identity.CreateUser(ctx, &iam.User{
+		TenantID:    enrollTenant,
+		Username:    enrollAdmin,
+		Name:        enrollAdmin,
+		Roles:       []string{role.ID},
+		AuthMethods: []string{iam.AuthMethodMTLS},
+		Lifecycle:   iam.LifecycleActive,
+		CertBindings: []qrdbsdk.CertBinding{{
+			Thumbprint: qrdbsdk.ComputeSPKIThumbprint(cert),
+			Kind:       qrdbsdk.CertBindingSPKIThumbprint,
+			NotAfter:   cert.NotAfter,
+		}},
+	}))
+
+	f.admin = f.accountEdge(t, cert, adminAccountRoutes)
+	return f.admin
+}
+
+// operate sends one tenant-admin request through the admin edge, requires it
+// to succeed, and decodes the answer into out when out is not nil.
+func (f *enrollmentFixture) operate(t *testing.T, method, path string, body, out any) {
+	t.Helper()
+
+	edge := f.adminEdge(t)
+	payload, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(method, edge.URL+path, bytes.NewReader(payload))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := edge.Client().Do(req)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Less(t, resp.StatusCode, http.StatusMultipleChoices, "%s %s: %s", method, path, raw)
+
+	if out != nil {
+		require.NoError(t, json.Unmarshal(raw, out))
+	}
 }
 
 // routeSpec finds one route in the PRODUCTION route table, so the handler and
@@ -147,24 +261,25 @@ func (f *enrollmentFixture) routeSpec(t *testing.T, method, pattern string) rest
 	return restapi.RouteSpec{}
 }
 
-// seedAccount provisions one pooled account through the production service and
-// returns its ID.
+// seedAccount provisions one pooled account the way a tenant admin does,
+// through the production create route, and returns its ID.
 func (f *enrollmentFixture) seedAccount(t *testing.T, projectID string, isDefault bool) string {
 	t.Helper()
-	resp, err := f.accounts.CreateAccount(context.Background(), &service.CreateAccountRequest{
+	var created restapi.AccountEnvelopeRESTResponse
+	f.operate(t, http.MethodPost, accountCollection, &restapi.CreateAccountRESTRequest{
 		TenantID:      enrollTenant,
 		ProjectID:     projectID,
-		Provider:      orchestration.AccountProviderClaude,
+		Provider:      string(orchestration.AccountProviderClaude),
 		DisplayName:   "burnin-seat",
 		Default:       isDefault,
-		RefreshPolicy: orchestration.AccountRefreshNone,
-		Credential: &orchestration.AccountCredential{
+		RefreshPolicy: string(orchestration.AccountRefreshNone),
+		Credential: &restapi.AccountCredentialRESTRequest{
 			AccessToken:       "burn-in-pool-token",
 			AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
 		},
-	})
-	require.NoError(t, err)
-	return resp.Account.ID
+	}, &created)
+	require.NotNil(t, created.Account)
+	return created.Account.ID
 }
 
 // daemonAccountPool builds the daemon's resolver against the release edge,
@@ -269,15 +384,13 @@ func TestE2E_AgentEnrollment_RevokedAccountIsNotReleased(t *testing.T) {
 	f.register(t, cert)
 
 	accountID := f.seedAccount(t, "", true)
-	_, err := f.accounts.RevokeAccount(context.Background(), &service.RevokeAccountRequest{
-		TenantID: enrollTenant, AccountID: accountID, Reason: "seat cancelled",
-	})
-	require.NoError(t, err)
+	f.operate(t, http.MethodPost, "/api/v1/agent-accounts/"+accountID+"/revoke?tenant_id="+enrollTenant,
+		&restapi.RevokeAccountRESTRequest{Reason: "seat cancelled"}, nil)
 
 	edge := f.releaseEdge(t, cert, "enrollment-bearer")
 	pool := daemonAccountPool(t, edge, "enrollment-bearer")
 
-	_, err = pool.Resolver.Resolve(context.Background(), orchestration.AccountResolveRequest{
+	_, err := pool.Resolver.Resolve(context.Background(), orchestration.AccountResolveRequest{
 		TenantID:  enrollTenant,
 		Provider:  orchestration.AccountProviderClaude,
 		AccountID: accountID,
@@ -380,17 +493,15 @@ func TestE2E_AgentEnrollment_RotationOnTheCentralReachesTheDaemon(t *testing.T) 
 	before, err := pool.Resolver.Resolve(ctx, req)
 	require.NoError(t, err)
 
-	// The operator re-runs `claude setup-token` and rotates the pool entry.
-	_, err = f.accounts.RotateAccountCredential(ctx, &service.RotateAccountCredentialRequest{
-		TenantID:  enrollTenant,
-		AccountID: accountID,
-		Credential: &orchestration.AccountCredential{
-			AccessToken:       "rotated-pool-token",
-			AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
-			ExpiresAt:         time.Now().UTC().Add(24 * time.Hour),
-		},
-	})
-	require.NoError(t, err)
+	// The tenant admin re-runs `claude setup-token` and rotates the pool entry.
+	f.operate(t, http.MethodPost, "/api/v1/agent-accounts/"+accountID+"/rotate?tenant_id="+enrollTenant,
+		&restapi.RotateAccountCredentialRESTRequest{
+			Credential: &restapi.AccountCredentialRESTRequest{
+				AccessToken:       "rotated-pool-token",
+				AccessTokenEnvKey: "CLAUDE_CODE_OAUTH_TOKEN",
+				ExpiresAt:         time.Now().UTC().Add(24 * time.Hour),
+			},
+		}, nil)
 
 	after, err := pool.Resolver.Resolve(ctx, req)
 	require.NoError(t, err)

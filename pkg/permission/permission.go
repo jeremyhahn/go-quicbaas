@@ -247,13 +247,31 @@ const (
 	// tenant-scoped permission family rather than borrowing a system-scoped
 	// one. See docs/agent-orchestration/accounts.md.
 	//
-	// The WRITE verbs of the same surface (create / update / delete / rotate /
-	// revoke / set-default) deliberately still take credentials:*, and so are
-	// still system-tenant operations. Widening who may mint or rotate a pooled
-	// login is a policy change in its own right; it is filed separately rather
-	// than smuggled in behind a read fix.
+	// The WRITE verbs of the same surface take the agent_accounts write verbs
+	// below, for the same reason.
 	AgentAccountRead qrdbsdk.Permission = "agent_accounts:read"
 	AgentAccountList qrdbsdk.Permission = "agent_accounts:list"
+
+	// AgentAccountWrite ("agent_accounts:write"), AgentAccountRotate
+	// ("agent_accounts:rotate") and AgentAccountDelete ("agent_accounts:delete")
+	// authorize the WRITE half of the pooled provider account surface in the
+	// caller's own tenant: write covers create, update, set-default and revoke;
+	// rotate replaces an account's credential; delete removes the record.
+	//
+	// They replace go-qrdb's ScopeCross credentials:store / :rotate / :delete,
+	// which made the pool unwritable for every non-system tenant: a tenant
+	// principal failed the RBAC cross-scope rule, and a system principal was
+	// refused by the no-lift rule when it targeted the tenant's keyspace
+	// (go-quicbaas#1355). They are granted to the tenant-admin role only (CA
+	// m579): minting or rotating a pooled login is administration, not
+	// operation, so Operator keeps the reads and nothing more.
+	//
+	// Revoke stays on agent_accounts:write rather than :delete: it flips the
+	// record's state and keeps it (and its usage history) in the pool, which
+	// is an update, not a removal.
+	AgentAccountWrite  qrdbsdk.Permission = "agent_accounts:write"
+	AgentAccountRotate qrdbsdk.Permission = "agent_accounts:rotate"
+	AgentAccountDelete qrdbsdk.Permission = "agent_accounts:delete"
 
 	// The scheduler's workload placement verbs (pkg/scheduler/placement).
 	// go-qrdb owns the "scheduler" resource family outright — every job verb
@@ -665,6 +683,26 @@ var contributions = []contribution{
 		scope: scopeSelf,
 		roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator},
 		duty:  dutyOutsideSecurityOfficer,
+	},
+	{
+		// The pooled-account writes are tenant-scoped like the reads beside
+		// them, but held by the tenant admin alone (go-quicbaas#1355, CA m579).
+		permission: AgentAccountWrite,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		permission: AgentAccountRotate,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		duty:       dutyOutsideSecurityOfficer,
+	},
+	{
+		permission: AgentAccountDelete,
+		scope:      scopeSelf,
+		roles:      []string{qrdbsdk.PermissionRoleAdmin},
+		duty:       dutyOutsideSecurityOfficer,
 	},
 	// Workload placement follows the read/write split every family here
 	// takes. Reading the pool and placing or releasing a workload are the

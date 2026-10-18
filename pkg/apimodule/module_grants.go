@@ -97,12 +97,12 @@ var builtInRoleNames = []string{
 //     may reach SO, and quicbaas's broker data-plane surface is
 //     overwhelmingly operational, not module governance.
 //
-// As of go-qrdb v0.5.1-alpha the confirmed gap is the credentials:* family
-// (account.proto's AccountService: store/retrieve/list/delete/rotate) and
-// the embedding:* family (embedding:embed, embedding:list_models) — both
-// registered in pkg/permission/constants.go but held by no built-in role,
-// so Admin cannot drive quicbaas's own AccountService or EmbeddingService
-// without this contribution.
+// As of go-qrdb v0.5.1-alpha the confirmed gap is the embedding:* family
+// (embedding:embed, embedding:list_models) — registered in
+// pkg/permission/constants.go but held by no built-in role, so Admin cannot
+// drive quicbaas's own EmbeddingService without this contribution. The
+// AccountService no longer borrows credentials:*: its verbs are QuicBaaS's own
+// agent_accounts:* family (pkg/permission, go-quicbaas#734 and #1355).
 func registerRoleGrants() {
 	roleGrantOnce.Do(func() {
 		perms := derivedPermissions()

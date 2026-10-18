@@ -149,30 +149,23 @@ func (f *enrollmentFixture) heartbeat(t *testing.T, cert *x509.Certificate, agen
 func (f *enrollmentFixture) listAgents(t *testing.T, tenantID string) (int, []string) {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodGet, agentsPattern+"?tenant_id="+tenantID, nil)
-	w := httptest.NewRecorder()
-	f.server.HandleListFleetNodes(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "list body: %s", w.Body.String())
-
-	var decoded struct {
-		Count  int `json:"count"`
-		Agents []struct {
-			ID       string   `json:"id"`
-			Backends []string `json:"backends"`
-		} `json:"agents"`
+	count, nodes := f.listFleet(t, tenantID)
+	ids := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		ids = append(ids, node.ID)
 	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &decoded))
-
-	ids := make([]string, 0, len(decoded.Agents))
-	for _, agent := range decoded.Agents {
-		ids = append(ids, agent.ID)
-	}
-	return decoded.Count, ids
+	return count, ids
 }
 
-// listedBackends returns the "backends" the agents listing rendered for one
-// agent, which is what an operator reading the registry sees.
-func (f *enrollmentFixture) listedBackends(t *testing.T, tenantID, agentID string) []string {
+// listedNode is one record of the fleet listing, as an operator reads it.
+type listedNode struct {
+	ID       string   `json:"id"`
+	Backends []string `json:"backends"`
+}
+
+// listFleet answers GET /api/v1/fleet for tenantID: the page's "count" and
+// the records under "nodes", the envelope key the handler answers with.
+func (f *enrollmentFixture) listFleet(t *testing.T, tenantID string) (int, []listedNode) {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, agentsPattern+"?tenant_id="+tenantID, nil)
@@ -181,16 +174,22 @@ func (f *enrollmentFixture) listedBackends(t *testing.T, tenantID, agentID strin
 	require.Equal(t, http.StatusOK, w.Code, "list body: %s", w.Body.String())
 
 	var decoded struct {
-		Agents []struct {
-			ID       string   `json:"id"`
-			Backends []string `json:"backends"`
-		} `json:"agents"`
+		Count int          `json:"count"`
+		Nodes []listedNode `json:"nodes"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &decoded))
+	return decoded.Count, decoded.Nodes
+}
 
-	for _, agent := range decoded.Agents {
-		if agent.ID == agentID {
-			return agent.Backends
+// listedBackends returns the "backends" the agents listing rendered for one
+// agent, which is what an operator reading the registry sees.
+func (f *enrollmentFixture) listedBackends(t *testing.T, tenantID, agentID string) []string {
+	t.Helper()
+
+	_, nodes := f.listFleet(t, tenantID)
+	for _, node := range nodes {
+		if node.ID == agentID {
+			return node.Backends
 		}
 	}
 	t.Fatalf("agent %s is not in the listing", agentID)

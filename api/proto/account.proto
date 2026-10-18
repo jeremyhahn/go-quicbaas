@@ -27,17 +27,19 @@ import "api/proto/sdlc.proto";
 // AccountService — pooled provider account lifecycle
 // =============================================================================
 
-// The METADATA READS and the credential RELEASE take QuicBaaS's own
-// tenant-scoped agent_accounts:* family; the WRITES take go-qrdb's
-// credentials:*. That split is deliberate: credentials:* is registered
-// ScopeCross — system tenant only, because qrdb's named-credential store has no
-// tenant namespacing — while a pooled account is written into the requesting
-// tenant's own keyspace, so every tenant identity (including an enrolled agent
-// daemon) was denied a surface that is tenant data. See go-quicbaas#734, and
-// go-quicbaas#737 for the write half.
+// Every RPC takes QuicBaaS's own tenant-scoped agent_accounts:* family. The
+// writes take agent_accounts:write (create, update, set-default, revoke),
+// agent_accounts:rotate and agent_accounts:delete, registered ScopeSelf and
+// held by the tenant-admin role. They do not borrow go-qrdb's credentials:*:
+// that family is registered ScopeCross (system tenant only, because qrdb's
+// named-credential store has no tenant namespacing), while a pooled account
+// lives in the requesting tenant's own keyspace, so no principal could write
+// a non-system tenant's pool. Revoke keeps the record and its usage history,
+// so it is a write, not a delete. See go-quicbaas#734 for the reads,
+// go-quicbaas#737 for the write half and go-quicbaas#1355 for the write verbs.
 service AccountService {
     rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:store";
+        option (qrdb.v1.permission) = "agent_accounts:write";
     }
     rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
         option (qrdb.v1.permission) = "agent_accounts:read";
@@ -46,19 +48,19 @@ service AccountService {
         option (qrdb.v1.permission) = "agent_accounts:list";
     }
     rpc UpdateAccount(UpdateAccountRequest) returns (UpdateAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:store";
+        option (qrdb.v1.permission) = "agent_accounts:write";
     }
     rpc DeleteAccount(DeleteAccountRequest) returns (DeleteAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:delete";
+        option (qrdb.v1.permission) = "agent_accounts:delete";
     }
     rpc RotateAccountCredential(RotateAccountCredentialRequest) returns (RotateAccountCredentialResponse) {
-        option (qrdb.v1.permission) = "credentials:rotate";
+        option (qrdb.v1.permission) = "agent_accounts:rotate";
     }
     rpc RevokeAccount(RevokeAccountRequest) returns (RevokeAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:delete";
+        option (qrdb.v1.permission) = "agent_accounts:write";
     }
     rpc SetDefaultAccount(SetDefaultAccountRequest) returns (SetDefaultAccountResponse) {
-        option (qrdb.v1.permission) = "credentials:store";
+        option (qrdb.v1.permission) = "agent_accounts:write";
     }
     rpc GetAccountUsage(GetAccountUsageRequest) returns (GetAccountUsageResponse) {
         option (qrdb.v1.permission) = "agent_accounts:read";

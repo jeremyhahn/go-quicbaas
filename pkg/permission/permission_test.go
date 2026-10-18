@@ -556,6 +556,55 @@ func TestPlacement_PermissionsAreRegisteredWithTheRightRolePlacement(t *testing.
 		"placement:manage reshapes the node pool and must not be Operator's")
 }
 
+// TestAgentAccountWrites_AreTheTenantAdminsAlone pins the go-quicbaas#1355
+// ruling (CA m579): the pooled-account write verbs are tenant-scoped and
+// held by the tenant-admin role only, so a tenant's own Admin can write its
+// pool while Operator, User, Auditor and the Security Officer are refused.
+func TestAgentAccountWrites_AreTheTenantAdminsAlone(t *testing.T) {
+	Register()
+	resolver, err := permscope.New()
+	require.NoError(t, err)
+
+	contributed := make(map[qrdbsdk.Permission]contribution)
+	for _, c := range contributions {
+		contributed[c.permission] = c
+	}
+	refused := []string{
+		qrdbsdk.PermissionRoleOperator,
+		qrdbsdk.PermissionRoleUser,
+		qrdbsdk.PermissionRoleAuditor,
+		qrdbsdk.PermissionRoleSO,
+	}
+	for _, perm := range []qrdbsdk.Permission{AgentAccountWrite, AgentAccountRotate, AgentAccountDelete} {
+		c, ok := contributed[perm]
+		require.Truef(t, ok, "%s is not contributed", perm)
+		assert.Equalf(t, scopeSelf, c.scope, "%s is not self-scoped", perm)
+		assert.Equalf(t, dutyOutsideSecurityOfficer, c.duty, "%s carries a governance or crypto duty", perm)
+		assert.Equalf(t, []string{qrdbsdk.PermissionRoleAdmin}, c.roles, "%s must be the tenant admin's alone", perm)
+
+		got, err := resolver.Scope(context.Background(), perm)
+		require.NoError(t, err)
+		assert.Equalf(t, qrdbsdk.PermissionScopeSelf, got, "%s must resolve self-scoped in qrdb", perm)
+
+		assert.Truef(t, qrdbsdk.HasPermissionRoleGrant(qrdbsdk.PermissionRoleAdmin, perm),
+			"the tenant admin must hold %s", perm)
+		for _, role := range refused {
+			assert.Falsef(t, qrdbsdk.HasPermissionRoleGrant(role, perm), "%s must not hold %s", role, perm)
+		}
+	}
+}
+
+// TestAgentAccountWrites_DoNotBorrowTheCrossScopeCredentialFamily guards the
+// defect go-quicbaas#1355 fixed: the writes were mapped onto go-qrdb's
+// ScopeCross credentials:*, which no tenant principal may hold.
+func TestAgentAccountWrites_DoNotBorrowTheCrossScopeCredentialFamily(t *testing.T) {
+	for _, perm := range []qrdbsdk.Permission{AgentAccountWrite, AgentAccountRotate, AgentAccountDelete} {
+		resource, _, ok := strings.Cut(string(perm), ":")
+		require.Truef(t, ok, "%s is not resource:action", perm)
+		assert.Equalf(t, "agent_accounts", resource, "%s left the agent_accounts family", perm)
+	}
+}
+
 // TestPrompts_PermissionsAreRegisteredWithTheRightRolePlacement pins the
 // prompt store's verbs (go-quicbaas#804): all three tenant-scoped, Admin and
 // Operator hold each, the Auditor reads history and nothing else, and none is
