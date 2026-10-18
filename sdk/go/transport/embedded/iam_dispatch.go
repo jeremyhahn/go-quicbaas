@@ -50,6 +50,15 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.User/Delete": handleIAMUserDelete,
 	"quicbaas.IAM.User/List":   handleIAMUserList,
 
+	// User lookup, role and approval verbs. Suspend and Unsuspend are absent:
+	// no other transport serves them either.
+	"quicbaas.IAM.User/GetByEmail":     handleIAMUserGetByEmail,
+	"quicbaas.IAM.User/FindByUsername": handleIAMUserFindByUsername,
+	"quicbaas.IAM.User/AssignRole":     handleIAMUserAssignRole,
+	"quicbaas.IAM.User/RevokeRole":     handleIAMUserRevokeRole,
+	"quicbaas.IAM.User/Approve":        handleIAMUserApprove,
+	"quicbaas.IAM.User/Reject":         handleIAMUserReject,
+
 	// Role
 	"quicbaas.IAM.Role/Create": handleIAMRoleCreate,
 	"quicbaas.IAM.Role/Get":    handleIAMRoleGet,
