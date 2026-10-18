@@ -282,6 +282,10 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 		return nil, err
 	}
 
+	if !contains(app.GrantTypes, GrantTypeAuthorizationCode) {
+		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "authorization_code grant not allowed for this client")
+	}
+
 	// Validate request
 	if err := p.validateAuthorizeRequest(req); err != nil {
 		return nil, err
@@ -1022,6 +1026,20 @@ func (p *OIDCProvider) validateAuthorizeRequest(req *AuthorizeRequest) error {
 	return nil
 }
 
+// requireGrantType refuses a client whose registration does not list
+// grantType (RFC 6749 §5.2 unauthorized_client). Call it after the client has
+// authenticated, so the answer reveals nothing to an unauthenticated caller.
+func (p *OIDCProvider) requireGrantType(ctx context.Context, clientID, grantType string) error {
+	app, err := p.appStorage.GetApp(ctx, clientID)
+	if err != nil {
+		return NewOAuthError(ErrOAuthInvalidClient, "invalid client")
+	}
+	if !contains(app.GrantTypes, grantType) {
+		return NewOAuthError(ErrOAuthUnauthorizedClient, grantType+" grant not allowed for this client")
+	}
+	return nil
+}
+
 // validateAuthorizeClient checks that the authorization request names a
 // registered client and one of that client's registered redirect URIs. Its
 // errors are *AuthorizeDirectError: draft-ietf-oauth-v2-1-16 §4.1.2.1 forbids
@@ -1035,13 +1053,13 @@ func (p *OIDCProvider) validateAuthorizeClient(ctx context.Context, req *Authori
 		return nil, newAuthorizeDirectError(ErrOAuthInvalidClient, "invalid client_id")
 	}
 	if req.RedirectURI == "" {
-		// redirect_uri may be omitted only when the client registered exactly
-		// one (draft-ietf-oauth-v2-1-16 §4.1.1). The resolved value is stored
-		// with the code so the token endpoint compares against it.
-		if len(app.RedirectURIs) != 1 {
-			return nil, newAuthorizeDirectError(ErrOAuthInvalidRequest, "redirect_uri is required")
+		// The resolved value is stored with the code so the token endpoint
+		// compares against it.
+		resolved, resolveErr := resolveRedirectURI(app)
+		if resolveErr != nil {
+			return nil, &AuthorizeDirectError{OAuthError: resolveErr}
 		}
-		req.RedirectURI = app.RedirectURIs[0]
+		req.RedirectURI = resolved
 		return app, nil
 	}
 	if !redirectURIRegistered(app.RedirectURIs, req.RedirectURI) {
@@ -1050,11 +1068,32 @@ func (p *OIDCProvider) validateAuthorizeClient(ctx context.Context, req *Authori
 	return app, nil
 }
 
+// ErrRedirectURIRequired is returned when an authorization request omits
+// redirect_uri and the client did not register exactly one.
+var ErrRedirectURIRequired = &OAuthError{
+	ErrorCode:        ErrOAuthInvalidRequest,
+	ErrorDescription: "redirect_uri is required unless exactly one is registered",
+}
+
+// resolveRedirectURI returns the redirect URI for an authorization request
+// that omitted redirect_uri: the client's sole registered URI
+// (draft-ietf-oauth-v2-1-16 §4.1.1), or ErrRedirectURIRequired when the
+// client registered none or several.
+func resolveRedirectURI(app *Application) (string, *OAuthError) {
+	if len(app.RedirectURIs) != 1 {
+		return "", ErrRedirectURIRequired
+	}
+	return app.RedirectURIs[0], nil
+}
+
 func (p *OIDCProvider) handleAuthorizationCodeGrant(ctx context.Context, req *TokenRequest) (*TokenResponse, error) {
 	// Validate client
 	valid, err := p.appStorage.ValidateClientSecret(ctx, req.ClientID, req.ClientSecret)
 	if err != nil || !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
+	}
+	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeAuthorizationCode); err != nil {
+		return nil, err
 	}
 
 	// Get and validate authorization code
@@ -1206,6 +1245,9 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	if err != nil || !valid {
 		return nil, NewOAuthError(ErrOAuthInvalidClient, "client authentication failed")
 	}
+	if err := p.requireGrantType(ctx, req.ClientID, GrantTypeRefreshToken); err != nil {
+		return nil, err
+	}
 
 	// Get refresh token
 	token, err := p.tokenService.storage.GetTokenByValue(ctx, req.RefreshToken)
@@ -1274,7 +1316,7 @@ func (p *OIDCProvider) handleRefreshTokenGrant(ctx context.Context, req *TokenRe
 	// none, and the renewed token gets a fresh one — which reads to a client as
 	// a new session rather than as the same one, the safe direction.
 	return p.generateTokenResponseForSession(ctx, user, token.ClientID, scopes, "", "", cnf,
-		grantSession{ID: refreshedSessionID(token), Renewal: true})
+		grantSession{ID: refreshedSessionID(token), Renewal: true, RefreshScopes: token.Scopes})
 }
 
 // refreshGrantScopes returns the scope a refresh_token grant issues (OAuth 2.1
@@ -1370,6 +1412,12 @@ type grantSession struct {
 	// Renewal marks a grant that RENEWS an existing session rather than
 	// establishing one.
 	Renewal bool
+
+	// RefreshScopes is the scope the rotated refresh token carries when it
+	// differs from the access token's. A refresh that narrows the access token
+	// keeps the presented refresh token's scope (draft-ietf-oauth-v2-1-16
+	// §4.3.3). Nil means the refresh token carries the access token's scope.
+	RefreshScopes []string
 }
 
 // generateTokenResponse mints the credential set for a FRESH login: the access
@@ -1465,11 +1513,15 @@ func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user
 	if cnf != nil {
 		refreshSession.Jkt = cnf.Jkt
 	}
+	refreshScopes := scopes
+	if session.RefreshScopes != nil {
+		refreshScopes = session.RefreshScopes
+	}
 	refreshToken, err := p.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
 		Subject:  strconv.FormatUint(user.ID, 10),
 		TenantID: user.TenantID,
 		ClientID: clientID,
-		Scopes:   scopes,
+		Scopes:   refreshScopes,
 		Session:  refreshSession,
 	})
 	if err != nil {

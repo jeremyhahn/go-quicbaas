@@ -15,10 +15,3 @@
   Per draft-ietf-oauth-v2-1-16 §4.1.3, an authorization code exchange without
   `redirect_uri` succeeds; one that sends it must equal the value the
   authorize step resolved, or it gets `invalid_grant`.
-
-### Added
-
-- **`authorization_response_iss_parameter_supported` (go-quicbaas#1444).** The
-  OpenID configuration and OAuth authorization server metadata documents (and
-  `iam.OAuthASMetadata`) advertise RFC 9207 support; authorization success and
-  error redirects carry `iss` equal to the advertised `issuer`.

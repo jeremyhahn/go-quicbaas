@@ -225,7 +225,11 @@ Dedicated transport handlers: rest=yes, grpc=yes, mcp=yes; embedded routes regis
 GET /.well-known/openid-configuration
 ```
 
-Returns OpenID Connect discovery document.
+Returns OpenID Connect discovery document. It and
+`/.well-known/oauth-authorization-server` advertise
+`"authorization_response_iss_parameter_supported": true` (RFC 9207 §3):
+every authorization response, success or error, carries `iss` equal to the
+document's `issuer`, and clients should check it.
 
 ### Authorization
 

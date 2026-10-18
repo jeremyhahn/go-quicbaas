@@ -227,12 +227,14 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 	// OAuth2 libraries (including our own fleet node daemon) commonly send
 	// Authorization: Basic base64(client_id:client_secret) on the
 	// token endpoint. Body fields are an alternative fallback per the
-	// same section. Basic-auth values take precedence when both are
+	// same section. Every token-request parameter is read from the form
+	// body only (r.PostForm): draft-ietf-oauth-v2-1-16 §3.2 forbids them in
+	// the URL query, so a client_secret there is ignored. Basic-auth values take precedence when both are
 	// supplied because the spec forbids clients from mixing the two.
 	clientID, clientSecret, hasBasic := r.BasicAuth()
 	if !hasBasic {
-		clientID = r.FormValue("client_id")
-		clientSecret = r.FormValue("client_secret")
+		clientID = r.PostForm.Get("client_id")
+		clientSecret = r.PostForm.Get("client_secret")
 	}
 
 	// Scope the context to the tenant encoded in the clientID
@@ -246,18 +248,18 @@ func (h *IAMHandler) Token(w http.ResponseWriter, r *http.Request) {
 
 	// Build token request
 	req := &iam.TokenRequest{
-		GrantType:    r.FormValue("grant_type"),
-		Code:         r.FormValue("code"),
-		RedirectURI:  r.FormValue("redirect_uri"),
+		GrantType:    r.PostForm.Get("grant_type"),
+		Code:         r.PostForm.Get("code"),
+		RedirectURI:  r.PostForm.Get("redirect_uri"),
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
-		CodeVerifier: r.FormValue("code_verifier"),
-		RefreshToken: r.FormValue("refresh_token"),
-		Resource:     r.FormValue("resource"), // RFC 8707 Resource Indicators
+		CodeVerifier: r.PostForm.Get("code_verifier"),
+		RefreshToken: r.PostForm.Get("refresh_token"),
+		Resource:     r.PostForm.Get("resource"), // RFC 8707 Resource Indicators
 	}
 
 	// Parse scope
-	if scopeParam := r.FormValue("scope"); scopeParam != "" {
+	if scopeParam := r.PostForm.Get("scope"); scopeParam != "" {
 		req.Scope = strings.Fields(scopeParam)
 	}
 
@@ -427,14 +429,14 @@ func (h *IAMHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := r.FormValue("token")
+	token := r.PostForm.Get("token")
 	if token == "" {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("token is required"))
 		return
 	}
 
-	tokenTypeHint := r.FormValue("token_type_hint")
+	tokenTypeHint := r.PostForm.Get("token_type_hint")
 
 	// Get OIDC provider
 	oidcProvider, ok := h.server.service.(interface {

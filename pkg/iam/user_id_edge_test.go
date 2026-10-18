@@ -132,6 +132,7 @@ func TestOAuthRefreshGrant_RefusesANonIDSubject(t *testing.T) {
 		ClientID:     clientID,
 		ClientSecret: currentSecretHash(t, clientSecret),
 		TenantID:     burninTenant,
+		GrantTypes:   []string{GrantTypeRefreshToken},
 	}))
 
 	refreshWithSubject := func(subject string) error {

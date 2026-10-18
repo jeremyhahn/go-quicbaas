@@ -69,7 +69,7 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// client_id is required; client_secret is NOT used on this endpoint.
-	clientID := r.FormValue("client_id")
+	clientID := r.PostForm.Get("client_id")
 	if clientID == "" {
 		// Also accept Basic Auth username-only (no password) for tooling compatibility.
 		if id, _, ok := r.BasicAuth(); ok && id != "" {
@@ -82,7 +82,7 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grantType := r.FormValue("grant_type")
+	grantType := r.PostForm.Get("grant_type")
 	if grantType == "" {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("grant_type is required"))
@@ -133,10 +133,10 @@ func (h *IAMHandler) TokenMTLS(w http.ResponseWriter, r *http.Request) {
 	mtlsReq := &iam.MTLSTokenRequest{
 		GrantType:          grantType,
 		ClientID:           clientID,
-		Scope:              r.FormValue("scope"),
+		Scope:              r.PostForm.Get("scope"),
 		CertThumbprintS256: thumbprint,
 		AttestMethod:       attestMethod,
-		Resource:           r.FormValue("resource"),
+		Resource:           r.PostForm.Get("resource"),
 	}
 
 	tokenResp, err := provider.TokenMTLS(ctx, mtlsReq)

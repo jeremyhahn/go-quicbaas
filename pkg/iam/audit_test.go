@@ -1389,6 +1389,9 @@ func TestAppManager_UpdateApp_ValidatesRedirectURIs(t *testing.T) {
 		var uriErr *InvalidRedirectURIError
 		require.ErrorAs(t, err, &uriErr)
 		assert.Equal(t, badURIs[0], uriErr.URI)
+		var fragErr *RedirectURIFragmentError
+		require.ErrorAs(t, err, &fragErr)
+		assert.Equal(t, badURIs[0], fragErr.URI)
 	})
 
 	t.Run("valid redirect URIs are stored", func(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -81,8 +82,10 @@ func TestRefreshTokenGrant_RefusesScopeWiderThanTheGrant(t *testing.T) {
 }
 
 // TestRefreshTokenGrant_NarrowsToARequestedSubset covers the permitted half of
-// §4.3.1: a strict subset of the original grant is issued exactly, on the new
-// access token and on the rotated refresh credential alike.
+// §4.3.1: a strict subset of the original grant is issued exactly on the new
+// access token, while the rotated refresh credential keeps the original grant
+// (draft-ietf-oauth-v2-1-16 §4.3.3: a new refresh token's scope MUST be
+// identical to that of the refresh token the client presented).
 func TestRefreshTokenGrant_NarrowsToARequestedSubset(t *testing.T) {
 	t.Parallel()
 
@@ -108,8 +111,8 @@ func TestRefreshTokenGrant_NarrowsToARequestedSubset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve the rotated credential: %v", err)
 	}
-	if !reflect.DeepEqual(rotated.Scopes, subset) {
-		t.Fatalf("rotated refresh scope = %v, want %v", rotated.Scopes, subset)
+	if !reflect.DeepEqual(rotated.Scopes, refreshScopeGrant) {
+		t.Fatalf("rotated refresh scope = %v, want the original %v", rotated.Scopes, refreshScopeGrant)
 	}
 }
 
@@ -169,4 +172,126 @@ func TestRefreshGrantScopes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A refresh request may narrow the originally granted scope but never widen it
+// (draft-ietf-oauth-v2-1-16 §4.3.1, go-quicbaas#1436).
+func TestRefreshTokenGrant_ScopeMayNotWiden(t *testing.T) {
+	t.Parallel()
+
+	provider, storage := newSessionRefreshProvider(t, 15*time.Minute, 7*24*time.Hour)
+	ctx := context.Background()
+	user := seedCeremonyUser(t, storage, sessionIDTenant, sessionIDUser, []string{"operator"})
+
+	const clientID, clientSecret = "app_refresh_scope_client", "s3cret-for-the-test"
+	if err := provider.appStorage.CreateApp(ctx, &Application{
+		ClientID:     clientID,
+		ClientSecret: currentSecretHash(t, clientSecret),
+		TenantID:     sessionIDTenant,
+		GrantTypes:   []string{GrantTypeRefreshToken},
+	}); err != nil {
+		t.Fatalf("register app: %v", err)
+	}
+
+	granted := []string{"openid", "profile", "email"}
+
+	// redeem presents a refresh token with the requested scope.
+	redeem := func(t *testing.T, refreshToken string, requested []string) (*TokenResponse, error) {
+		t.Helper()
+		return provider.handleRefreshTokenGrant(ctx, &TokenRequest{
+			GrantType:    GrantTypeRefreshToken,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RefreshToken: refreshToken,
+			Scope:        requested,
+		})
+	}
+
+	// refresh mints a refresh token for the original grant and redeems it.
+	refresh := func(t *testing.T, requested []string) (*TokenResponse, error) {
+		t.Helper()
+		value, err := provider.tokenService.GenerateRefreshToken(ctx, SessionRefreshOptions{
+			Subject:  strconv.FormatUint(user.ID, 10),
+			TenantID: user.TenantID,
+			ClientID: clientID,
+			Scopes:   granted,
+			Session:  TokenSessionContext{UserID: user.ID},
+		})
+		if err != nil {
+			t.Fatalf("GenerateRefreshToken: %v", err)
+		}
+		return redeem(t, value, requested)
+	}
+
+	// issuedScopes reads the scope the rotated refresh credential carries.
+	issuedScopes := func(t *testing.T, resp *TokenResponse) []string {
+		t.Helper()
+		rotated, err := storage.GetTokenByValue(ctx, resp.RefreshToken)
+		if err != nil {
+			t.Fatalf("resolve the rotated credential: %v", err)
+		}
+		return rotated.Scopes
+	}
+
+	t.Run("a wider scope is refused with invalid_scope", func(t *testing.T) {
+		_, err := refresh(t, []string{"openid", "admin"})
+		var oauthErr *OAuthError
+		if !errors.As(err, &oauthErr) {
+			t.Fatalf("err = %v, want an *OAuthError", err)
+		}
+		if oauthErr.ErrorCode != ErrOAuthInvalidScope {
+			t.Fatalf("error code = %q, want %q", oauthErr.ErrorCode, ErrOAuthInvalidScope)
+		}
+	})
+
+	t.Run("a strict subset is issued with that subset", func(t *testing.T) {
+		resp, err := refresh(t, []string{"openid", "email"})
+		if err != nil {
+			t.Fatalf("refresh_token grant: %v", err)
+		}
+		if resp.Scope != "openid email" {
+			t.Fatalf("access token scope = %q, want \"openid email\"", resp.Scope)
+		}
+	})
+
+	// -16 §4.3.3: the rotated refresh token's scope is identical to the
+	// presented one's; only the access token carries the narrowed scope.
+	t.Run("a narrowed refresh keeps the refresh token's full scope", func(t *testing.T) {
+		narrowed, err := refresh(t, []string{"openid"})
+		if err != nil {
+			t.Fatalf("narrowed refresh_token grant: %v", err)
+		}
+		if narrowed.Scope != "openid" {
+			t.Fatalf("access token scope = %q, want openid", narrowed.Scope)
+		}
+		if got := issuedScopes(t, narrowed); !slices.Equal(got, granted) {
+			t.Fatalf("rotated refresh scope = %v, want the original %v", got, granted)
+		}
+
+		again, err := redeem(t, narrowed.RefreshToken, nil)
+		if err != nil {
+			t.Fatalf("second refresh with no scope: %v", err)
+		}
+		if got := issuedScopes(t, again); !slices.Equal(got, granted) {
+			t.Fatalf("second refresh scope = %v, want the original %v", got, granted)
+		}
+
+		dropped, err := redeem(t, again.RefreshToken, []string{"profile"})
+		if err != nil {
+			t.Fatalf("refresh asking for a scope the first refresh dropped: %v", err)
+		}
+		if dropped.Scope != "profile" {
+			t.Fatalf("access token scope = %q, want profile", dropped.Scope)
+		}
+	})
+
+	t.Run("no scope keeps the original grant", func(t *testing.T) {
+		resp, err := refresh(t, nil)
+		if err != nil {
+			t.Fatalf("refresh_token grant: %v", err)
+		}
+		if got := issuedScopes(t, resp); !slices.Equal(got, granted) {
+			t.Fatalf("issued scope = %v, want the original %v", got, granted)
+		}
+	})
 }

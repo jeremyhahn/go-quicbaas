@@ -94,6 +94,52 @@ func TestToken_InvalidClient(t *testing.T) {
 	assert.Equal(t, "invalid_client", resp["error"])
 }
 
+// A client registered only for client_credentials is refused the
+// refresh_token grant with unauthorized_client (RFC 6749 §5.2) on the wire.
+func TestToken_RefreshGrantNotRegistered_UnauthorizedClient(t *testing.T) {
+	handler, _, _, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", "any-refresh-token")
+	form.Set("client_id", introspectClientID)
+	form.Set("client_secret", introspectSecret)
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.Token(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "unauthorized_client", resp["error"])
+	assert.Empty(t, resp["access_token"])
+}
+
+// The same client is refused the authorization_code exchange.
+func TestToken_CodeGrantNotRegistered_UnauthorizedClient(t *testing.T) {
+	handler, _, _, cleanup := setupIntrospectHandler(t)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", "any-code")
+	form.Set("redirect_uri", "https://app.example/cb")
+	form.Set("client_id", introspectClientID)
+	form.Set("client_secret", introspectSecret)
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	handler.Token(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "unauthorized_client", resp["error"])
+	assert.Empty(t, resp["access_token"])
+}
+
 // TestToken_InvalidClientBasicChallenge pins draft-ietf-oauth-v2-1-16 §3.2.4:
 // a client that authenticated with HTTP Basic and fails gets 401 with a
 // WWW-Authenticate challenge for the Basic scheme; credentials sent in the

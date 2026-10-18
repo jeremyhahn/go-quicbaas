@@ -131,23 +131,53 @@ func TestOIDCAuthorizeDefaultRedirectURI(t *testing.T) {
 		}
 	})
 
-	t.Run("several registered URIs is a direct error", func(t *testing.T) {
-		req := authorizeRedirectTestApp(t, appStorage, "multi-uri", "https://app.example/a", "https://app.example/b")
-		_, err := provider.Authorize(ctx, req)
-		var directErr *AuthorizeDirectError
-		if !errors.As(err, &directErr) || directErr.ErrorCode != ErrOAuthInvalidRequest {
-			t.Fatalf("Authorize() error = %v, want direct invalid_request", err)
+	t.Run("single registered URI sent explicitly is unchanged", func(t *testing.T) {
+		req := authorizeRedirectTestApp(t, appStorage, "single-uri-sent", "https://app.example/cb")
+		req.RedirectURI = "https://app.example/cb"
+		resp, err := provider.Authorize(ctx, req)
+		if err != nil {
+			t.Fatalf("Authorize() error = %v", err)
+		}
+		if resp.RedirectURI != "https://app.example/cb" {
+			t.Errorf("Authorize() redirect_uri = %q, want the sent one", resp.RedirectURI)
 		}
 	})
 
-	t.Run("no registered URI is a direct error", func(t *testing.T) {
-		req := authorizeRedirectTestApp(t, appStorage, "no-uri")
-		_, err := provider.Authorize(ctx, req)
-		var directErr *AuthorizeDirectError
-		if !errors.As(err, &directErr) || directErr.ErrorCode != ErrOAuthInvalidRequest {
-			t.Fatalf("Authorize() error = %v, want direct invalid_request", err)
+	for _, tc := range []struct {
+		name         string
+		clientID     string
+		redirectURIs []string
+	}{
+		{name: "several registered URIs is a direct error", clientID: "multi-uri", redirectURIs: []string{"https://app.example/a", "https://app.example/b"}},
+		{name: "no registered URI is a direct error", clientID: "no-uri"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := authorizeRedirectTestApp(t, appStorage, tc.clientID, tc.redirectURIs...)
+			_, err := provider.Authorize(ctx, req)
+			var directErr *AuthorizeDirectError
+			if !errors.As(err, &directErr) || directErr.ErrorCode != ErrOAuthInvalidRequest {
+				t.Fatalf("Authorize() error = %v, want direct invalid_request", err)
+			}
+			if !errors.Is(err, ErrRedirectURIRequired) {
+				t.Errorf("Authorize() error = %v, want ErrRedirectURIRequired", err)
+			}
+		})
+	}
+}
+
+// TestResolveRedirectURI pins the §4.1.1 default: only a sole registered URI
+// stands in for an omitted redirect_uri.
+func TestResolveRedirectURI(t *testing.T) {
+	got, err := resolveRedirectURI(&Application{RedirectURIs: []string{"https://app.example/cb"}})
+	if err != nil || got != "https://app.example/cb" {
+		t.Errorf("resolveRedirectURI(one) = %q, %v; want the registered URI", got, err)
+	}
+	for _, uris := range [][]string{nil, {"https://app.example/a", "https://app.example/b"}} {
+		got, err := resolveRedirectURI(&Application{RedirectURIs: uris})
+		if !errors.Is(err, ErrRedirectURIRequired) || got != "" {
+			t.Errorf("resolveRedirectURI(%v) = %q, %v; want ErrRedirectURIRequired", uris, got, err)
 		}
-	})
+	}
 }
 
 // TestOIDCTokenRedirectURIOptional covers draft-ietf-oauth-v2-1-16 §4.1.3

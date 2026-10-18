@@ -43,17 +43,22 @@ func (m *authorizeService) GetOIDCProvider(_ context.Context) (*iam.OIDCProvider
 	return m.provider, nil
 }
 
-func setupAuthorizeHandler(t *testing.T) *IAMHandler {
+// setupAuthorizeHandler registers one client for grantTypes, or for
+// authorization_code alone when none are given.
+func setupAuthorizeHandler(t *testing.T, grantTypes ...string) *IAMHandler {
 	t.Helper()
 	const tenant = "tenant-auth"
 	const clientID = "app_tenant-auth_web"
+	if len(grantTypes) == 0 {
+		grantTypes = []string{iam.GrantTypeAuthorizationCode}
+	}
 
 	backend := iam.NewBackendStorage(newIntrospectMemKV())
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{
 		ClientID:      clientID,
 		TenantID:      tenant,
 		RedirectURIs:  []string{"https://app.example/callback", "https://app.example/cb?app=web"},
-		GrantTypes:    []string{iam.GrantTypeAuthorizationCode},
+		GrantTypes:    grantTypes,
 		ResponseTypes: []string{"code"},
 	}))
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{
@@ -142,6 +147,28 @@ func TestAuthorize_BadRedirect(t *testing.T) {
 	handler.Authorize(w, req)
 
 	assert.NotEqual(t, http.StatusFound, w.Code)
+}
+
+// A client not registered for authorization_code cannot start the flow. Its
+// redirect URI is validated, so unauthorized_client goes back to it as an
+// error redirect with the state echoed and no code (draft-ietf-oauth-v2-1-16
+// §4.1.2.1).
+func TestAuthorize_GrantNotRegistered_UnauthorizedClient(t *testing.T) {
+	handler := setupAuthorizeHandler(t, iam.GrantTypeRefreshToken)
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/oauth2/authorize?client_id=app_tenant-auth_web&redirect_uri=https://app.example/callback"+
+			"&response_type=code&state=xyz&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", nil)
+	w := httptest.NewRecorder()
+	handler.Authorize(w, req)
+
+	require.Equal(t, http.StatusFound, w.Code, "body: %s", w.Body.String())
+	loc, err := url.Parse(w.Header().Get("Location"))
+	require.NoError(t, err)
+	got := loc.Query()
+	assert.Equal(t, "unauthorized_client", got.Get("error"))
+	assert.Equal(t, "xyz", got.Get("state"))
+	assert.Empty(t, got.Get("code"))
 }
 
 // TestAuthorize_UnvalidatedClientIsNotRedirected pins draft-ietf-oauth-v2-1-16

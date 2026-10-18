@@ -49,7 +49,7 @@ func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := r.FormValue("token")
+	token := r.PostForm.Get("token")
 	if token == "" {
 		RespondOAuthError(w, r, http.StatusBadRequest,
 			NewInvalidRequestError("token is required"))
@@ -80,7 +80,7 @@ func (h *IAMHandler) Introspect(w http.ResponseWriter, r *http.Request) {
 	// the token's tenant_id claim, and checks the per-tenant revocation store.
 	introReq := &iam.IntrospectRequest{
 		Token:         token,
-		TokenTypeHint: r.FormValue("token_type_hint"),
+		TokenTypeHint: r.PostForm.Get("token_type_hint"),
 	}
 	resp, err := provider.Introspect(ctx, introReq)
 	if err != nil {
@@ -123,8 +123,8 @@ func (h *IAMHandler) authenticateIntrospectionCaller(
 ) (string, error) {
 	clientID, clientSecret, hasBasic := r.BasicAuth()
 	if !hasBasic {
-		clientID = r.FormValue("client_id")
-		clientSecret = r.FormValue("client_secret")
+		clientID = r.PostForm.Get("client_id")
+		clientSecret = r.PostForm.Get("client_secret")
 	}
 
 	// mTLS: a verified peer certificate authenticates the caller. When a
