@@ -140,6 +140,60 @@ func TestIAMServiceWrapper_AppLifecycle_HappyPath(t *testing.T) {
 	})
 }
 
+// TestIAMServiceWrapper_RegisterApp_PassesResponseTypesAndResourcePrefix
+// pins that the service hands the request's ResponseTypes and ResourcePrefix
+// to the app manager, so the stored app carries them (#1504).
+func TestIAMServiceWrapper_RegisterApp_PassesResponseTypesAndResourcePrefix(t *testing.T) {
+	provider, am := newHappyAppProvider()
+	w := &iamServiceWrapper{provider: provider}
+	const tenantID = "tenant-register-fields"
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
+	// Not the manager's default ([code]), so a dropped field shows.
+	responseTypes := []string{iam.ResponseTypeCode, "none"}
+
+	resp, err := w.RegisterApp(ctx, &RegisterAppRequest{
+		TenantID:       tenantID,
+		Name:           "reports",
+		RedirectURIs:   []string{"https://app.example.com/callback"},
+		GrantTypes:     []string{iam.GrantTypeAuthorizationCode},
+		ResponseTypes:  responseTypes,
+		ResourcePrefix: "reports/",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.App)
+
+	stored, err := am.GetAppInTenant(ctx, tenantID, resp.App.ClientID)
+	require.NoError(t, err)
+	assert.Equal(t, responseTypes, stored.ResponseTypes)
+	assert.Equal(t, "reports/", stored.ResourcePrefix)
+}
+
+// TestIAMServiceWrapper_RegisterApp_RefusedRequestStoresNothing pins that a
+// request the app manager refuses returns its typed error and stores no app,
+// even when ResponseTypes and ResourcePrefix are set.
+func TestIAMServiceWrapper_RegisterApp_RefusedRequestStoresNothing(t *testing.T) {
+	provider, _ := newHappyAppProvider()
+	w := &iamServiceWrapper{provider: provider}
+	const tenantID = "tenant-register-refused"
+	ctx := tenantctx.WithTenant(context.Background(), tenantID)
+
+	_, err := w.RegisterApp(ctx, &RegisterAppRequest{
+		TenantID:       tenantID,
+		Name:           "reports",
+		RedirectURIs:   []string{"https://app.example.com/callback"},
+		GrantTypes:     []string{"not-a-grant"},
+		ResponseTypes:  []string{iam.ResponseTypeCode},
+		ResourcePrefix: "reports/",
+	})
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+
+	list, err := w.ListApps(ctx, &ListAppsRequest{TenantID: tenantID, Limit: 10})
+	require.NoError(t, err)
+	assert.Empty(t, list.Apps)
+}
+
 // Error paths: invalid input flows through the manager and is propagated.
 func TestIAMServiceWrapper_App_BackendErrors(t *testing.T) {
 	provider, _ := newHappyAppProvider()
