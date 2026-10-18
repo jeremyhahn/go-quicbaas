@@ -79,6 +79,10 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.Policy/Validate": handleIAMPolicyValidate,
 	"quicbaas.IAM.Policy/Test":     handleIAMPolicyTest,
 
+	// Policy Simulate (go-quicbaas#1564): the TestPolicy evaluation the gRPC
+	// and REST transports map Simulate onto.
+	"quicbaas.IAM.Policy/Simulate": handleIAMPolicySimulate,
+
 	// App
 	"quicbaas.IAM.App/Register":     handleIAMAppRegister,
 	"quicbaas.IAM.App/Get":          handleIAMAppGet,
@@ -115,6 +119,10 @@ var iamUnaryHandlers = map[string]handlerFunc{
 
 	// PEP
 	"quicbaas.IAM.PEP/Check": handleIAMPEPCheck,
+
+	// PEP CheckBatch (go-quicbaas#1564): evaluated through the policy engine,
+	// as the gRPC PEP server's CheckBatch does.
+	"quicbaas.IAM.PEP/CheckBatch": handleIAMPEPCheckBatch,
 
 	// WebAuthn credential administration. Registered under the same
 	// quicbaas.IAM.WebAuthn service the SDK client dispatches on, so the
