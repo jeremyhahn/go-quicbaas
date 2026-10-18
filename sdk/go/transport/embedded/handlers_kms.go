@@ -773,11 +773,16 @@ func handleKMSSetDefaultDEK(ctx context.Context, svc service.QuicBaaS, req inter
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.SetDefaultDEKRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDefaultDEK", "*service.SetDefaultDEKRequest", typeNameOf(req))
+	if r, ok := req.(*service.SetDefaultDEKRequest); ok {
+		return kms.SetDefaultDEK(ctx, r)
 	}
-	return kms.SetDefaultDEK(ctx, r)
+	// SDK uses unexported setDefaultDEKRequest{Path}; accept anything with a Path field.
+	if path, ok := dekRequestPath(req); ok {
+		return kms.SetDefaultDEK(ctx, &service.SetDefaultDEKRequest{Path: path})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDefaultDEK",
+		"*service.SetDefaultDEKRequest or *dek.setDefaultDEKRequest",
+		typeNameOf(req))
 }
 
 func handleKMSSetDEKSafety(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -785,11 +790,20 @@ func handleKMSSetDEKSafety(ctx context.Context, svc service.QuicBaaS, req interf
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.SetDEKSafetyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDEKSafety", "*service.SetDEKSafetyRequest", typeNameOf(req))
+	if r, ok := req.(*service.SetDEKSafetyRequest); ok {
+		return kms.SetDEKSafety(ctx, r)
 	}
-	return kms.SetDEKSafety(ctx, r)
+	if r, ok := req.(*dekclient.SetDEKSafetyRequest); ok {
+		return kms.SetDEKSafety(ctx, &service.SetDEKSafetyRequest{
+			Path:           r.Path,
+			MaxOperations:  r.MaxOperations,
+			MaxBytes:       r.MaxBytes,
+			WarningPercent: r.WarningPercent,
+		})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.KMS", "SetDEKSafety",
+		"*service.SetDEKSafetyRequest or *dek.SetDEKSafetyRequest",
+		typeNameOf(req))
 }
 
 func handleKMSClearDEKSafety(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -797,11 +811,16 @@ func handleKMSClearDEKSafety(ctx context.Context, svc service.QuicBaaS, req inte
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.ClearDEKSafetyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearDEKSafety", "*service.ClearDEKSafetyRequest", typeNameOf(req))
+	if r, ok := req.(*service.ClearDEKSafetyRequest); ok {
+		return kms.ClearDEKSafety(ctx, r)
 	}
-	return kms.ClearDEKSafety(ctx, r)
+	// SDK uses unexported clearDEKSafetyRequest{Path}; accept anything with a Path field.
+	if path, ok := dekRequestPath(req); ok {
+		return kms.ClearDEKSafety(ctx, &service.ClearDEKSafetyRequest{Path: path})
+	}
+	return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ClearDEKSafety",
+		"*service.ClearDEKSafetyRequest or *dek.clearDEKSafetyRequest",
+		typeNameOf(req))
 }
 
 func handleKMSStartReencryption(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
