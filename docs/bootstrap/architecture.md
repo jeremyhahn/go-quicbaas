@@ -54,37 +54,9 @@ The following local packages were removed and replaced by QRDB SDK operations:
 
 No direct imports from `go-quicraft` or `go-qrdb/pkg/**` are permitted in production or test code. The single exception is `pkg/seal/barrier_qcseal.go`, which wraps the go-quicraft cryptographic Barrier behind a local interface.
 
-## Transport Factory
+## QRDB Client
 
-All QRDB SDK communication flows through a transport factory that uses map-based dispatch for O(1) transport selection.
-
-**Supported transports:**
-
-| Transport | Config Value | Use Case |
-|-----------|-------------|----------|
-| Embedded | `embedded` | In-process calls, zero network overhead (default) |
-| gRPC | `grpc` | Production network deployments, connection pooling |
-| REST | `rest` | HTTP-based integrations, browser clients |
-| QUIC | `quic` | Low-latency UDP-based transport, multiplexed streams |
-| Unix | `unix` | Same-host IPC via Unix domain socket |
-| MCP | `mcp` | Model Context Protocol for AI/LLM integrations |
-
-**Factory pattern:**
-
-```go
-// Map-based dispatch for O(1) transport selection
-var networkTransportHandlers = map[TransportType]networkTransportConstructor{
-    TransportGRPC: func(opts ...transport.Option) (transport.Transport, error) {
-        return grpctransport.New(opts...)
-    },
-    TransportREST: func(opts ...transport.Option) (transport.Transport, error) {
-        return resttransport.New(opts...)
-    },
-    // ... quic, mcp, unix
-}
-```
-
-The embedded transport is handled separately because it requires direct service references rather than network options.
+All QRDB SDK communication goes to the embedded go-qrdb node. go-qrdb under go-quicbaas is embedded only: the server's `ShardedClient` wraps the node's own SDK client (`node.Client()`), and every shard ID resolves to that client. go-quicbaas never connects to a separate go-qrdb daemon.
 
 ## Data Flow
 
@@ -92,21 +64,19 @@ The embedded transport is handled separately because it requires direct service 
 QuicBaaS Service Layer
         |
         v
-  ShardedClient (per-shard routing)
+  ShardedClient (every shard ID -> the node client)
         |
-        +-- Embedded: direct in-process dispatch, no serialization
-        |
-        +-- Network:  shared SDK client -> remote QRDB server
-                       (gRPC | REST | QUIC | Unix | MCP)
+        v
+  Embedded qrdb node: in-process dispatch, no serialization
 ```
 
-For embedded transport, each shard gets its own SDK client with service wrappers that route Raft proposals through the host's `SyncPropose`. For network transports, a single shared client handles shard routing on the server side.
+The node routes shards and Raft proposals itself.
 
 ## Key Architecture Decisions
 
 1. **SDK-only access** -- All database operations go through the QRDB SDK, ensuring a clean separation between BaaS features and the database engine.
 
-2. **Transport abstraction** -- The transport factory pattern allows switching between embedded and network transports without changing service code.
+2. **Embedded only** -- go-qrdb runs in the `quicbaasd` process; there is no network transport between go-quicbaas and go-qrdb.
 
 3. **Local interfaces** -- `pkg/interfaces/raft.go`, `pkg/interfaces/timeseries.go`, and `pkg/interfaces/statemachine.go` define local type aliases so QuicBaaS does not import QRDB internal types.
 

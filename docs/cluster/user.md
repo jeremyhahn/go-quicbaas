@@ -57,7 +57,7 @@ There are two distinct concerns, with distinct homes:
 - **Peer discovery** — finding Raft peers to form or join a cluster
   (static / multicast / DNS SRV / token). This lives in **go-qrdb**
   (`pkg/discovery` + `pkg/cluster`), the layer that owns the cluster. QuicBaaS
-  is a qrdb client and does not perform peer discovery itself. See go-qrdb's
+  embeds the go-qrdb node and does not perform peer discovery itself. See go-qrdb's
   `docs/discovery.md` and `docs/12-configuration.md` for configuration.
 - **Service discovery** — registering service instances and resolving them by
   name at runtime. QuicBaaS provides this via the registry, built on qrdb's

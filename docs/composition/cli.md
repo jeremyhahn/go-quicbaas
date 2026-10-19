@@ -18,7 +18,6 @@ the flags that select it at boot:
 | `quicbaasd start --data-dir` | Where the composed stack persists |
 | the `crypto:` config block | Which backend each crypto site resolves to |
 | the `xkms:` config block | The hardware/cloud KMS adapters built at startup |
-| the `qrdb:` config block | The transport the qrdb SDK client uses (`embedded` by default) |
 
 `engineering.md` is the reference for those keys. `quicbaasd`'s own flags are
 documented in [`../multiprotocol-api/cli.md`](../multiprotocol-api/cli.md).

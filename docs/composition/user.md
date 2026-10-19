@@ -9,7 +9,8 @@ QuicBaaS exposes six transports — REST, gRPC, QUIC, MCP, Unix, and
 **embedded**. The first five reach the server through a network
 listener. Embedded mode does not: the SDK client lives in the same
 process as `*server.Server`, and every method call resolves directly to
-in-memory state.
+in-memory state. go-qrdb itself is embedded only: it always runs inside
+the server process, and no transport reaches a separate go-qrdb daemon.
 
 Embedded mode is the foundation of:
 
@@ -36,10 +37,11 @@ Auth, Crypto, KMS, Secrets, Certificate, and ObjectStorage.
 
 It did **not** cover the qrdb sub-client surface (Barrier, Ceremony,
 Credential, Tenant, Share, CustodianGroup, AuthFactor). The reason:
-those services live behind a separate `qrdb_transport.Client` —
-created lazily on first call — that expects to dial a network
-endpoint. In embedded mode there is no network endpoint to dial, so
-the qrdb sub-client returned a transport-level error on every call.
+those services live behind a separate qrdb SDK sub-client
+(`qrdbsdk.Client`) — created lazily on first call — that expects to
+dial the server's network listener. In embedded mode there is no
+network endpoint to dial, so the qrdb sub-client returned a
+transport-level error on every call.
 
 Gap-1 closes that loop by adding a second SDK option,
 `WithEmbeddedQRDB(servicers)`, that installs a qrdb-side embedded
@@ -219,7 +221,7 @@ flowchart LR
     end
 
     subgraph SDKQRDB [qrdb SDK sub-client]
-        QRDBClient[qrdb_transport.Client]
+        QRDBClient[qrdbsdk.Client]
         QRDBEmbedded[qrdb embedded transport]
     end
 

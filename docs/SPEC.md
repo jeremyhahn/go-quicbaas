@@ -22,6 +22,8 @@ QuicBaaS re-exports every service of both through `sdk/go` (the `Security()` sub
 
 One cluster engine and one datastore per deployment: the embedded go-qrdb node. QuicBaaS keeps no second database, cluster or engine, and no store, service or client of its own for anything go-qrdb or go-xkms provides. System-level records of every layer live in the system tenant and tenant data in its tenant; tenants are strictly isolated, and there is no shared cross-tenant client.
 
+go-qrdb under go-quicbaas is embedded only, because the hardware implementations go-xkms passes into go-qrdb cross in-process. Each go-quicbaas process runs one go-qrdb node, and a clustered deployment embeds a node in each instance, with Raft over QUIC between them. There is no topology in which go-quicbaas reaches a separate or remote go-qrdb daemon.
+
 QuicBaaS adds, and owns:
 
 - The multi-protocol API server and the transports, plus OAuth 2.1 / OIDC on the go-qrdb user (token subjects are go-qrdb users).
@@ -53,7 +55,7 @@ Status is one of `shipped`, `in progress`, `planned`, `future`.
 | certificate-authority | in progress | Re-export of the go-xkms CA (`CAService`, `TCGCAService`) through `sdk/go` on every transport, for go-trusted-platform<br>Device identity is issued by the go-xkms CA; `IssueDeviceIdentity` returns the IAK certificate<br>QuicBaaS's own certificate service, CA adapters, SPIFFE SAN and device-identity logic, `/api/v1/certificate` verbs, and the second datastore in `pkg/server/lifecycle.go`: a parallel implementation, removed on the owner's word<br>Trust anchors | [certificate-authority/](certificate-authority/) |
 | cluster | in progress | Re-export of go-qrdb's cluster, membership and rebalance services through `sdk/go`<br>QuicBaaS's own cluster service and client: a parallel implementation, removed on the owner's word<br>No hardcoded bind, advertise or upstream addresses | [cluster/](cluster/) |
 | codec | in progress | go-qrdb's codec; no API surface of its own<br>QuicBaaS's own codec package (no importers): a parallel implementation, removed on the owner's word | [codec/](codec/) |
-| composition | in progress | Build go-xkms adapters and inject them into go-qrdb<br>Pin the released go-qrdb and go-xkms tags, no unreleased library main<br>The module route-collision guard does not depend on registration order | [composition/](composition/) |
+| composition | in progress | Build go-xkms adapters and inject them into go-qrdb<br>Pin the released go-qrdb and go-xkms tags, no unreleased library main<br>The module route-collision guard does not depend on registration order<br>go-qrdb is embedded only: one node per process, no remote-daemon topology ([Composition clean-up](#composition-clean-up)) | [composition/](composition/) |
 | credentials | shipped | Credential storage and lifecycle: go-qrdb's versioned named-credential rotation | [credentials/](credentials/) |
 | data-encryption-keys | in progress | Re-export of go-qrdb's DEK service (`DEKClient`) through `sdk/go`<br>QuicBaaS's own DEK store: a parallel implementation, removed on the owner's word<br>DEK lifecycle, rotation and re-encryption; the safety interlock | [data-encryption-keys/](data-encryption-keys/) |
 | data-services | in progress | Re-export of go-qrdb's KV, batch, transaction, MVCC, collection and index services through `sdk/go`<br>One datastore: the embedded go-qrdb node; no second store beside it<br>QuicBaaS's own data clients, storage backends, shards, leases, watch and routing: a parallel implementation, removed on the owner's word<br>`storage.data_dir` derives `wal_dir` | [data-services/](data-services/) |
@@ -128,6 +130,14 @@ go-objstore owns all object storage, buckets and multipart included. go-quicbaas
 | # | Departure | Where | Replaced by |
 |---|---|---|---|
 | S1 | `sdk/go` does not re-export go-objstore (`sdk/go/go.mod` carries it as `// indirect`), and the SDK object-storage clients define their own types | `sdk/go/client/objectstorage`, `sdk/go/client/objectstorageadmin`, `sdk/go/client/objecttransfer` | go-qrdb's object-storage abstraction, with go-objstore as its backend, re-exported through `sdk/go` and served on all six transports; buckets and multipart follow the go-qrdb seam and go-objstore #89 and #90. go-quicbaas then requires go-objstore only through go-qrdb |
+
+### Composition clean-up
+
+Configuration left from the withdrawn topology in which go-quicbaas reached a separate go-qrdb daemon. The row is removed when the departure is.
+
+| # | Departure | Where | Replaced by |
+|---|---|---|---|
+| C1 | The dead `qrdb.transport` setting (`QUICBAAS_QRDB_TRANSPORT`) and its `qrdb.address`, `qrdb.unix_socket_path` and `qrdb.tls_*` keys, which offer `grpc`, `rest`, `quic`, `mcp` and `unix` transports to a remote go-qrdb. Nothing reads it to pick a transport: outside tests nothing calls `NewShardedClient`, the one path that hands it to the transport factory, and the server builds its qrdb clients (`newNodeBackedShardedClient`, the sealed-window client) on a fixed embedded config | `pkg/config/config.go` (`QRDBConfig`, the `QRDBTransport*` constants), `pkg/config/defaults.go` (`DefaultQRDBConfig`), `pkg/server/sharded_client.go` (`NewShardedClient`, `WithTransportConfig`), the network branch of `pkg/server/transport_factory.go` | Nothing: removed in a later change ([#1617](../../../issues/1617)) with a release note; no code this week |
 
 ## Interfaces
 
