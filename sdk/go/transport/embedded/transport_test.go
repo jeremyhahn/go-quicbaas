@@ -105,6 +105,7 @@ type mockQuicBaaS struct {
 	addNodeFunc           func(ctx context.Context, req *service.AddNodeRequest) (*service.AddNodeResponse, error)
 	clusterStatusFunc     func(ctx context.Context, req *service.ClusterStatusRequest) (*service.ClusterStatusResponse, error)
 	writePointFunc        func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error)
+	tsQueryFunc           func(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error)
 	putFunc               func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 	getFunc               func(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 	deleteFunc            func(ctx context.Context, req *service.DeleteRequest) (*service.DeleteResponse, error)
@@ -421,6 +422,9 @@ func (m *mockQuicBaaS) WriteBatch(ctx context.Context, req *service.WriteBatchRe
 }
 
 func (m *mockQuicBaaS) TSQuery(ctx context.Context, req *service.TSQueryRequest) (*service.TSQueryResponse, error) {
+	if m.tsQueryFunc != nil {
+		return m.tsQueryFunc(ctx, req)
+	}
 	return &service.TSQueryResponse{}, nil
 }
 

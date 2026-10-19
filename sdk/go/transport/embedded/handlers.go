@@ -16,6 +16,7 @@ package embedded
 import (
 	"context"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -574,11 +575,47 @@ func handleWriteBatch(ctx context.Context, svc service.QuicBaaS, req interface{}
 }
 
 func handleTSQuery(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.TSQueryRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*service.TSQueryRequest", typeNameOf(req))
+	switch r := req.(type) {
+	case *timeseries.QueryRequest:
+		if r == nil {
+			return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*timeseries.QueryRequest", typeNameOf(req))
+		}
+		svcReq := &service.TSQueryRequest{
+			Metric:      r.Metric,
+			Tags:        r.Tags,
+			StartTime:   r.Start,
+			EndTime:     r.End,
+			IntervalSec: int64(r.Interval / time.Second),
+		}
+		if r.Aggregate != timeseries.AggregateNone {
+			svcReq.Aggregation = strings.ToLower(r.Aggregate.String())
+		}
+		resp, err := svc.TSQuery(ctx, svcReq)
+		if err != nil {
+			return nil, err
+		}
+		return tsQueryResponseToSDK(resp), nil
+	case *service.TSQueryRequest:
+		return svc.TSQuery(ctx, r)
+	default:
+		return nil, NewInvalidRequestTypeError("quicbaas.TimeSeries", "Query", "*timeseries.QueryRequest", typeNameOf(req))
 	}
-	return svc.TSQuery(ctx, r)
+}
+
+// tsQueryResponseToSDK converts a service query response into the points the
+// timeseries client reads.
+func tsQueryResponseToSDK(resp *service.TSQueryResponse) *timeseries.QueryResponse {
+	out := &timeseries.QueryResponse{Series: []timeseries.Point{}}
+	if resp == nil {
+		return out
+	}
+	for _, p := range resp.Points {
+		if p == nil {
+			continue
+		}
+		out.Series = append(out.Series, timeseries.Point{Timestamp: p.Timestamp, Value: p.Value})
+	}
+	return out
 }
 
 func handleDeleteSeries(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
