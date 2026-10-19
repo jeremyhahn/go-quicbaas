@@ -107,11 +107,17 @@ var kmsHandlerMap = map[string]kmsHandlerFunc{
 	"BackendStatus":           (*kmsHandler).handleBackendStatus,
 
 	// DEKManagement service (reachable under both quicbaas.KMS and quicbaas.DEK).
-	"CreateDEK": (*kmsHandler).handleCreateDEK,
-	"GetDEK":    (*kmsHandler).handleGetDEK,
-	"ListDEKs":  (*kmsHandler).handleListDEKs,
-	"RotateDEK": (*kmsHandler).handleRotateDEK,
-	"DeleteDEK": (*kmsHandler).handleDeleteDEK,
+	"CreateDEK":               (*kmsHandler).handleCreateDEK,
+	"GetDEK":                  (*kmsHandler).handleGetDEK,
+	"ListDEKs":                (*kmsHandler).handleListDEKs,
+	"RotateDEK":               (*kmsHandler).handleRotateDEK,
+	"DeleteDEK":               (*kmsHandler).handleDeleteDEK,
+	"GetDEKStatus":            (*kmsHandler).handleGetDEKStatus,
+	"SetDefaultDEK":           (*kmsHandler).handleSetDefaultDEK,
+	"SetDEKSafety":            (*kmsHandler).handleSetDEKSafety,
+	"ClearDEKSafety":          (*kmsHandler).handleClearDEKSafety,
+	"StartReencryption":       (*kmsHandler).handleStartReencryption,
+	"GetReencryptionProgress": (*kmsHandler).handleGetReencryptionProgress,
 }
 
 // handleRequest routes a KMS/DEK request to the appropriate handler based on
@@ -504,6 +510,81 @@ func (h *kmsHandler) handleDeleteDEK(ctx context.Context, req interface{}) (inte
 		Force:     sdkReq.Force,
 		MigrateTo: sdkReq.MigrateTo,
 	})
+}
+
+func (h *kmsHandler) handleGetDEKStatus(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.GetDEKStatusRequest); ok {
+		return h.client.KMSGetDEKStatus(ctx, r)
+	}
+	path, ok := stringFieldByName(req, "Path")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetDEKStatus",
+			"invalid request type, expected struct with Path field")
+	}
+	return h.client.KMSGetDEKStatus(ctx, &service.GetDEKStatusRequest{Path: path})
+}
+
+func (h *kmsHandler) handleSetDefaultDEK(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.SetDefaultDEKRequest); ok {
+		return h.client.KMSSetDefaultDEK(ctx, r)
+	}
+	path, ok := stringFieldByName(req, "Path")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleSetDefaultDEK",
+			"invalid request type, expected struct with Path field")
+	}
+	return h.client.KMSSetDefaultDEK(ctx, &service.SetDefaultDEKRequest{Path: path})
+}
+
+func (h *kmsHandler) handleSetDEKSafety(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.SetDEKSafetyRequest); ok {
+		return h.client.KMSSetDEKSafety(ctx, r)
+	}
+	sdkReq, ok := req.(*dekclient.SetDEKSafetyRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleSetDEKSafety",
+			"invalid request type, expected *dek.SetDEKSafetyRequest")
+	}
+	return h.client.KMSSetDEKSafety(ctx, &service.SetDEKSafetyRequest{
+		Path:           sdkReq.Path,
+		MaxOperations:  sdkReq.MaxOperations,
+		MaxBytes:       sdkReq.MaxBytes,
+		WarningPercent: sdkReq.WarningPercent,
+	})
+}
+
+func (h *kmsHandler) handleClearDEKSafety(ctx context.Context, req interface{}) (interface{}, error) {
+	if r, ok := req.(*service.ClearDEKSafetyRequest); ok {
+		return h.client.KMSClearDEKSafety(ctx, r)
+	}
+	path, ok := stringFieldByName(req, "Path")
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleClearDEKSafety",
+			"invalid request type, expected struct with Path field")
+	}
+	return h.client.KMSClearDEKSafety(ctx, &service.ClearDEKSafetyRequest{Path: path})
+}
+
+// handleStartReencryption accepts the service request the SDK DEK client
+// already builds for this verb.
+func (h *kmsHandler) handleStartReencryption(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.StartReencryptionRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleStartReencryption",
+			"invalid request type, expected *service.StartReencryptionRequest")
+	}
+	return h.client.KMSStartReencryption(ctx, r)
+}
+
+// handleGetReencryptionProgress accepts the service request the SDK DEK
+// client already builds for this verb.
+func (h *kmsHandler) handleGetReencryptionProgress(ctx context.Context, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.GetReencryptionProgressRequest)
+	if !ok {
+		return nil, errors.NewInvalidInput("kmsHandler.handleGetReencryptionProgress",
+			"invalid request type, expected *service.GetReencryptionProgressRequest")
+	}
+	return h.client.KMSGetReencryptionProgress(ctx, r)
 }
 
 // =============================================================================

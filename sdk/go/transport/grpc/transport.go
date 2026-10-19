@@ -364,6 +364,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handlePromptRequest(ctx, conn, method, req)
 	}
 
+	// A tenant's hierarchical parameters, served by
+	// quicbaas.parameterstore.v1.ParameterStore.
+	if isParameterStoreService(service) {
+		return handleParameterStoreRequest(ctx, conn, method, req)
+	}
+
 	// Check if this is a Certificate service request and route through the
 	// certificate handler. Certificate services use plain Go structs which
 	// don't implement proto.Message, so we need to convert them to the
@@ -488,9 +494,20 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handler.handleRequest(ctx, service, method, req)
 	}
 
+	// ObjectStorageAdmin: the SDK client sends plain Go structs; the handler
+	// converts them to the generated ObjectStorageAdmin proto types and
+	// decodes the reply back into the client/objectstorageadmin types.
+	if isObjectStorageAdminService(service) {
+		return newObjectStorageAdminHandler(conn).handleRequest(ctx, service, method, req)
+	}
+
 	// Async().Scheduler(): jobs and workload placement.
 	if isSchedulerService(service) {
 		return handleSchedulerRequest(ctx, conn, method, req)
+	}
+
+	if isTimeSeriesService(service) {
+		return handleTimeSeriesRequest(ctx, conn, method, req)
 	}
 
 	// Build full method path for other services.
