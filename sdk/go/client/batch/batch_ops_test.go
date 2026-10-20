@@ -67,33 +67,6 @@ func TestClient_Put(t *testing.T) {
 		}
 	})
 
-	t.Run("more responses than requests leaves entity type empty", func(t *testing.T) {
-		mockT := &mockTransport{
-			requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-				return &service.BatchPutResponse{
-					Responses: []*service.PutResponse{
-						{ID: 1, Version: 1},
-						{ID: 2, Version: 2},
-					},
-				}, nil
-			},
-		}
-		client := NewClient(mockT)
-		// Only one request but two responses.
-		resp, err := client.Put(context.Background(), []*service.PutRequest{
-			{EntityType: "users", ID: 1, Data: []byte("a")},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.Responses[0].EntityType != "users" {
-			t.Errorf("expected first entity type users, got %q", resp.Responses[0].EntityType)
-		}
-		if resp.Responses[1].EntityType != "" {
-			t.Errorf("expected second entity type empty, got %q", resp.Responses[1].EntityType)
-		}
-	})
-
 	t.Run("nil context", func(t *testing.T) {
 		client := NewClient(&mockTransport{})
 		_, err := client.Put(nil, []*service.PutRequest{{EntityType: "users"}})
@@ -223,32 +196,6 @@ func TestClient_Get(t *testing.T) {
 		second := resp.Responses[1]
 		if second.EntityType != "orders" || second.ID != 11 || second.Found {
 			t.Errorf("unexpected second result: %+v", second)
-		}
-	})
-
-	t.Run("more responses than requests leaves entity type empty", func(t *testing.T) {
-		mockT := &mockTransport{
-			requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-				return &service.BatchGetResponse{
-					Responses: []*service.GetResponse{
-						{ID: 1, Found: true},
-						{ID: 2, Found: true},
-					},
-				}, nil
-			},
-		}
-		client := NewClient(mockT)
-		resp, err := client.Get(context.Background(), []*service.GetRequest{
-			{EntityType: "users", ID: 1},
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.Responses[0].EntityType != "users" {
-			t.Errorf("expected first entity type users, got %q", resp.Responses[0].EntityType)
-		}
-		if resp.Responses[1].EntityType != "" {
-			t.Errorf("expected second entity type empty, got %q", resp.Responses[1].EntityType)
 		}
 	})
 
@@ -465,6 +412,171 @@ func TestClient_Delete(t *testing.T) {
 		}
 		if errors.Code(err) != errors.CodeInternal {
 			t.Errorf("expected Internal, got %v", errors.Code(err))
+		}
+	})
+}
+
+// batchVerb runs one positional batch verb against a server that returns
+// resultCount results for two requests, and reports the call's outcome.
+type batchVerb struct {
+	name string
+	call func(resultCount int) (resp interface{}, err error)
+}
+
+// positionalVerbs are the batch verbs that map each server result to the
+// request at the same position.
+var positionalVerbs = []batchVerb{
+	{
+		name: "Put",
+		call: func(resultCount int) (interface{}, error) {
+			results := make([]*service.PutResponse, resultCount)
+			for i := range results {
+				results[i] = &service.PutResponse{ID: uint64(100 + i), Version: uint64(i + 1)}
+			}
+			client := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+					return &service.BatchPutResponse{Responses: results}, nil
+				},
+			})
+			resp, err := client.Put(context.Background(), []*service.PutRequest{
+				{EntityType: "users"},
+				{EntityType: "orders"},
+			})
+			if resp == nil {
+				return nil, err
+			}
+			return resp, err
+		},
+	},
+	{
+		name: "Get",
+		call: func(resultCount int) (interface{}, error) {
+			results := make([]*service.GetResponse, resultCount)
+			for i := range results {
+				results[i] = &service.GetResponse{ID: uint64(100 + i), Version: uint64(i + 1), Found: true}
+			}
+			client := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+					return &service.BatchGetResponse{Responses: results}, nil
+				},
+			})
+			resp, err := client.Get(context.Background(), []*service.GetRequest{
+				{EntityType: "users", ID: 100},
+				{EntityType: "orders", ID: 101},
+			})
+			if resp == nil {
+				return nil, err
+			}
+			return resp, err
+		},
+	},
+	{
+		name: "Delete",
+		call: func(resultCount int) (interface{}, error) {
+			results := make([]*service.DeleteResponse, resultCount)
+			for i := range results {
+				results[i] = &service.DeleteResponse{Deleted: i%2 == 0}
+			}
+			client := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
+					return &service.BatchDeleteResponse{Responses: results}, nil
+				},
+			})
+			resp, err := client.Delete(context.Background(), []*service.DeleteRequest{
+				{EntityType: "users", ID: 100},
+				{EntityType: "orders", ID: 101},
+			})
+			if resp == nil {
+				return nil, err
+			}
+			return resp, err
+		},
+	},
+}
+
+func TestClient_PositionalVerbs_RefuseResultCountMismatch(t *testing.T) {
+	const requestCount = 2
+	for _, verb := range positionalVerbs {
+		for _, tc := range []struct {
+			name        string
+			resultCount int
+		}{
+			{name: "one result too many", resultCount: requestCount + 1},
+			{name: "one result too few", resultCount: requestCount - 1},
+		} {
+			t.Run(verb.name+"/"+tc.name, func(t *testing.T) {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s panicked on %d results for %d requests: %v",
+							verb.name, tc.resultCount, requestCount, r)
+					}
+				}()
+				resp, err := verb.call(tc.resultCount)
+				if err == nil {
+					t.Fatalf("expected an error for %d results, got response %+v", tc.resultCount, resp)
+				}
+				if errors.Code(err) != errors.CodeInternal {
+					t.Errorf("expected Internal, got %v", errors.Code(err))
+				}
+				if resp != nil {
+					t.Errorf("expected nil response, got %+v", resp)
+				}
+			})
+		}
+	}
+}
+
+func TestClient_PositionalVerbs_MatchingCountMapsInOrder(t *testing.T) {
+	const requestCount = 2
+	wantTypes := []string{"users", "orders"}
+
+	t.Run("Put", func(t *testing.T) {
+		resp, err := positionalVerbs[0].call(requestCount)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		items := resp.(*BatchPutResponse).Responses
+		if len(items) != requestCount {
+			t.Fatalf("expected %d items, got %d", requestCount, len(items))
+		}
+		for i, item := range items {
+			if item.EntityType != wantTypes[i] || item.ID != uint64(100+i) ||
+				item.Version != uint64(i+1) || !item.Success {
+				t.Errorf("item %d: unexpected %+v", i, item)
+			}
+		}
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		resp, err := positionalVerbs[1].call(requestCount)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		items := resp.(*BatchGetResponse).Responses
+		if len(items) != requestCount {
+			t.Fatalf("expected %d items, got %d", requestCount, len(items))
+		}
+		for i, item := range items {
+			if item.EntityType != wantTypes[i] || item.ID != uint64(100+i) ||
+				item.Version != uint64(i+1) || !item.Found {
+				t.Errorf("item %d: unexpected %+v", i, item)
+			}
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		resp, err := positionalVerbs[2].call(requestCount)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		items := resp.(*BatchDeleteResponse).Responses
+		if len(items) != requestCount {
+			t.Fatalf("expected %d items, got %d", requestCount, len(items))
+		}
+		for i, item := range items {
+			if item.EntityType != wantTypes[i] || item.ID != uint64(100+i) || item.Deleted != (i%2 == 0) {
+				t.Errorf("item %d: unexpected %+v", i, item)
+			}
 		}
 	})
 }

@@ -15,6 +15,7 @@ package batch
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -203,6 +204,10 @@ func (c *client) Put(ctx context.Context, requests []*service.PutRequest) (*Batc
 		return nil, errors.NewInternal("batch.Put", "invalid response type")
 	}
 
+	if err := checkResultCount("batch.Put", len(svcResp.Responses), len(requests)); err != nil {
+		return nil, err
+	}
+
 	// Convert service response to batch client response
 	result := &BatchPutResponse{
 		Responses: make([]*PutResultItem, len(svcResp.Responses)),
@@ -210,12 +215,8 @@ func (c *client) Put(ctx context.Context, requests []*service.PutRequest) (*Batc
 	}
 
 	for i, r := range svcResp.Responses {
-		var entityType string
-		if i < len(requests) {
-			entityType = requests[i].EntityType
-		}
 		result.Responses[i] = &PutResultItem{
-			EntityType: entityType,
+			EntityType: requests[i].EntityType,
 			ID:         r.ID,
 			Version:    r.Version,
 			Success:    true,
@@ -253,18 +254,18 @@ func (c *client) Get(ctx context.Context, requests []*service.GetRequest) (*Batc
 		return nil, errors.NewInternal("batch.Get", "invalid response type")
 	}
 
+	if err := checkResultCount("batch.Get", len(svcResp.Responses), len(requests)); err != nil {
+		return nil, err
+	}
+
 	// Convert service response to batch client response
 	result := &BatchGetResponse{
 		Responses: make([]*GetResultItem, len(svcResp.Responses)),
 	}
 
 	for i, r := range svcResp.Responses {
-		var entityType string
-		if i < len(requests) {
-			entityType = requests[i].EntityType
-		}
 		result.Responses[i] = &GetResultItem{
-			EntityType: entityType,
+			EntityType: requests[i].EntityType,
 			ID:         r.ID,
 			Data:       r.Data,
 			Version:    r.Version,
@@ -303,6 +304,10 @@ func (c *client) Delete(ctx context.Context, requests []*service.DeleteRequest) 
 		return nil, errors.NewInternal("batch.Delete", "invalid response type")
 	}
 
+	if err := checkResultCount("batch.Delete", len(svcResp.Responses), len(requests)); err != nil {
+		return nil, err
+	}
+
 	// Convert service response to batch client response
 	result := &BatchDeleteResponse{
 		Responses: make([]*DeleteResultItem, len(svcResp.Responses)),
@@ -310,12 +315,8 @@ func (c *client) Delete(ctx context.Context, requests []*service.DeleteRequest) 
 	}
 
 	for i, r := range svcResp.Responses {
-		var entityType string
-		if i < len(requests) {
-			entityType = requests[i].EntityType
-		}
 		result.Responses[i] = &DeleteResultItem{
-			EntityType: entityType,
+			EntityType: requests[i].EntityType,
 			ID:         requests[i].ID,
 			Deleted:    r.Deleted,
 		}
@@ -364,5 +365,16 @@ func validateBatchOperation(op *BatchOperation, index int) error {
 			WithContext("operation_type", int(op.Type))
 	}
 
+	return nil
+}
+
+// checkResultCount refuses a server result list whose length differs from the
+// request list. Put, Get and Delete map each result to the request at the
+// same position, so a mismatch would mislabel or drop results.
+func checkResultCount(op string, results, requests int) error {
+	if results != requests {
+		return errors.NewInternal(op, fmt.Sprintf(
+			"server returned %d results for %d requests", results, requests))
+	}
 	return nil
 }

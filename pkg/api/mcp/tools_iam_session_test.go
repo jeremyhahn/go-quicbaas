@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -33,12 +34,13 @@ import (
 // =============================================================================
 
 type mockSessionManager struct {
-	createFn       func(ctx context.Context, session *iam.SessionExt) error
-	listFn         func(ctx context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error)
-	getFn          func(ctx context.Context, sessionID string) (*iam.SessionExt, error)
-	revokeFn       func(ctx context.Context, sessionID string) error
-	revokeAllFn    func(ctx context.Context, userID uint64, tenantID string) error
-	revokeExceptFn func(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
+	createFn         func(ctx context.Context, session *iam.SessionExt) error
+	listFn           func(ctx context.Context, userID uint64, tenantID string) ([]*iam.SessionExt, error)
+	getFn            func(ctx context.Context, sessionID string) (*iam.SessionExt, error)
+	revokeFn         func(ctx context.Context, sessionID string) error
+	revokeAllFn      func(ctx context.Context, userID uint64, tenantID string) error
+	updateActivityFn func(ctx context.Context, sessionID string) error
+	revokeExceptFn   func(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 }
 
 func (m *mockSessionManager) Create(ctx context.Context, session *iam.SessionExt) error {
@@ -73,6 +75,13 @@ func (m *mockSessionManager) Get(ctx context.Context, sessionID string) (*iam.Se
 func (m *mockSessionManager) Revoke(ctx context.Context, sessionID string) error {
 	if m.revokeFn != nil {
 		return m.revokeFn(ctx, sessionID)
+	}
+	return nil
+}
+
+func (m *mockSessionManager) UpdateActivity(ctx context.Context, sessionID string) error {
+	if m.updateActivityFn != nil {
+		return m.updateActivityFn(ctx, sessionID)
 	}
 	return nil
 }
@@ -325,7 +334,17 @@ func TestExecuteIAMSessionRevokeOthers_Error(t *testing.T) {
 // =============================================================================
 
 func TestExecuteIAMSessionTouch_Success(t *testing.T) {
-	mgr := &mockSessionManager{}
+	var touchedID string
+	mgr := &mockSessionManager{
+		updateActivityFn: func(_ context.Context, sessionID string) error {
+			touchedID = sessionID
+			return nil
+		},
+		createFn: func(_ context.Context, _ *iam.SessionExt) error {
+			t.Fatal("Touch must not call Create")
+			return nil
+		},
+	}
 	reg := newSessionRegistry(t, mgr)
 
 	result, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
@@ -333,30 +352,34 @@ func TestExecuteIAMSessionTouch_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	assert.Equal(t, "sess-123", touchedID)
 
 	resultMap, ok := result.(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, true, resultMap["touched"])
+	assert.Contains(t, resultMap, "timestamp")
 }
 
-func TestExecuteIAMSessionTouch_GetError(t *testing.T) {
+func TestExecuteIAMSessionTouch_EmptySessionID(t *testing.T) {
 	mgr := &mockSessionManager{
-		getFn: func(_ context.Context, _ string) (*iam.SessionExt, error) {
-			return nil, errors.New("session not found")
+		updateActivityFn: func(_ context.Context, _ string) error {
+			t.Fatal("an empty session_id must be refused before any service call")
+			return nil
 		},
 	}
 	reg := newSessionRegistry(t, mgr)
 
-	_, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
-		"session_id": "nonexistent",
-	})
+	_, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{})
 	require.Error(t, err)
+	var qbErr *qberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, qberrors.ErrInvalidInput, qbErr.Code)
 }
 
-func TestExecuteIAMSessionTouch_CreateError(t *testing.T) {
+func TestExecuteIAMSessionTouch_UpdateActivityError(t *testing.T) {
 	mgr := &mockSessionManager{
-		createFn: func(_ context.Context, _ *iam.SessionExt) error {
-			return errors.New("create failed")
+		updateActivityFn: func(_ context.Context, _ string) error {
+			return iam.ErrSessionExpired
 		},
 	}
 	reg := newSessionRegistry(t, mgr)
@@ -364,5 +387,5 @@ func TestExecuteIAMSessionTouch_CreateError(t *testing.T) {
 	_, err := reg.executeIAMSessionTouch(context.Background(), map[string]interface{}{
 		"session_id": "sess-123",
 	})
-	require.Error(t, err)
+	assert.ErrorIs(t, err, iam.ErrSessionExpired)
 }

@@ -3058,6 +3058,10 @@ func (m *mockSessionManager) Revoke(ctx context.Context, sessionID string) error
 	return m.revokeErr
 }
 
+func (m *mockSessionManager) UpdateActivity(ctx context.Context, sessionID string) error {
+	return nil
+}
+
 func (m *mockSessionManager) RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error {
 	m.revokedUserID = userID
 	m.revokedTenantID = tenantID

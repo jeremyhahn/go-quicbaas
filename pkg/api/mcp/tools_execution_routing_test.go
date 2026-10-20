@@ -50,7 +50,7 @@ func TestKMSToolsServiceNotAvailable(t *testing.T) {
 			name:     "import key - service not available",
 			toolName: "quicbaas_kms_import_key",
 			args: map[string]interface{}{
-				"key_material":    "base64data",
+				"key_material":    "YmFzZTY0ZGF0YQ==",
 				"wrapping_key_id": "key-1",
 				"algorithm":       "AES-256-GCM",
 			},
@@ -366,7 +366,7 @@ func TestToolParameterExtraction(t *testing.T) {
 		ctx := context.Background()
 
 		args := map[string]interface{}{
-			"key_material":    "base64data",
+			"key_material":    "YmFzZTY0ZGF0YQ==",
 			"wrapping_key_id": "wrapping-key-1",
 			"algorithm":       "RSA-2048",
 			"name":            "imported-key",

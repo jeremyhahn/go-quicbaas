@@ -40,8 +40,8 @@ func TestExtendedBatchPut_Success(t *testing.T) {
 	// Use the correct format: operations array with entity_type, id, and data
 	result, err := registry.ExecuteTool(ctx, "quicbaas_batch_put", map[string]interface{}{
 		"operations": []interface{}{
-			map[string]interface{}{"entity_type": "users", "id": float64(1), "data": "value1"},
-			map[string]interface{}{"entity_type": "users", "id": float64(2), "data": "value2"},
+			map[string]interface{}{"entity_type": "users", "id": float64(1), "data": "dmFsdWUx"}, // base64("value1")
+			map[string]interface{}{"entity_type": "users", "id": float64(2), "data": "dmFsdWUy"}, // base64("value2")
 		},
 	})
 	// Mock service returns nil, nil for batch operations

@@ -152,10 +152,6 @@ var sdkCallsWithoutMCPTool = map[sdkCall]string{
 	{"quicbaas.IAM.User", "Approve"}: gapNoTool,
 	{"quicbaas.IAM.User", "Reject"}:  gapNoTool,
 
-	// --- KMS ---------------------------------------------------------------
-	{"quicbaas.KMS", "ListKeyVersions"}: gapNameDrift + "quicbaas_kms_key_versions",
-	{"quicbaas.KMS", "UpdateKeyStatus"}: gapNameDrift + "quicbaas_kms_key_status_update",
-
 	// --- Object storage ----------------------------------------------------
 	// The whole admin surface is registered under quicbaas_object_admin_*; the
 	// SDK collapses ObjectStorageAdmin to the quicbaas_object_ prefix.

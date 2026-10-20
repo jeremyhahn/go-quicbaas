@@ -329,6 +329,15 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return t.requestToolVerb(ctx, "mcp.ollama."+method, verb, reqBody)
 	}
 
+	// These KMS verbs decode into the client types; the rest keep the
+	// generic path below.
+	if verb, ok := kmsVerbs[method]; ok && isMCPKMSService(service) {
+		return t.requestToolVerb(ctx, "mcp.kms."+method, verb, reqBody)
+	}
+	if method == "GetPublicKey" && isMCPKMSService(service) {
+		return t.requestKMSPublicKey(ctx, reqBody)
+	}
+
 	// Check if this is a service that needs special handling
 	isVector := isMCPVectorService(service)
 	isScheduler := isMCPSchedulerService(service)
@@ -1131,6 +1140,8 @@ func ToolName(service, method string) string {
 			"SetKeyRotationPolicy":    "quicbaas_kms_set_rotation_policy",
 			"GetKeyRotationPolicy":    "quicbaas_kms_get_rotation_policy",
 			"DeleteKeyRotationPolicy": "quicbaas_kms_delete_rotation_policy",
+			"ListKeyVersions":         "quicbaas_kms_key_versions",
+			"UpdateKeyStatus":         "quicbaas_kms_key_status_update",
 		}
 		if name, ok := kmsToolMap[method]; ok {
 			return name

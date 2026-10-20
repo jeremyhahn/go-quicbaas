@@ -15,6 +15,8 @@ package objecttransfer
 
 import (
 	"context"
+	stderrors "errors"
+	"io"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -104,14 +106,25 @@ func (c *client) StreamFetchObjects(ctx context.Context, req *StreamFetchObjects
 // receiveStreamResponses receives responses from the stream and sends them to the channel.
 func (c *client) receiveStreamResponses(ctx context.Context, stream transport.Stream, responseChan chan<- *FetchObjectResponse) {
 	defer close(responseChan)
-	defer func() {
-		closeErr := stream.Close()
-		if closeErr != nil {
-			// Stream close error is logged but not propagated since channel is closed.
-			_ = closeErr
-		}
-	}()
 
+	failed := c.receiveUntilEnd(ctx, stream, responseChan)
+
+	// Close runs exactly once. Its error is reported only when the stream
+	// ended cleanly; an earlier failure already sent is the one that stands.
+	closeErr := stream.Close()
+	if closeErr != nil && !failed {
+		wrapped := errors.Wrap(closeErr, errors.CodeConnection, "objecttransfer.StreamFetchObjects", "failed to close stream")
+		responseChan <- &FetchObjectResponse{
+			Found:        false,
+			ErrorMessage: wrapped.Error(),
+		}
+	}
+}
+
+// receiveUntilEnd forwards stream responses to responseChan until the stream
+// ends. It reports whether the stream ended with an error, which it has
+// already sent as the final response.
+func (c *client) receiveUntilEnd(ctx context.Context, stream transport.Stream, responseChan chan<- *FetchObjectResponse) bool {
 	for {
 		select {
 		case <-ctx.Done():
@@ -120,7 +133,7 @@ func (c *client) receiveStreamResponses(ctx context.Context, stream transport.St
 				Found:        false,
 				ErrorMessage: ctx.Err().Error(),
 			}
-			return
+			return true
 		default:
 			// Continue receiving.
 		}
@@ -129,19 +142,19 @@ func (c *client) receiveStreamResponses(ctx context.Context, stream transport.St
 		if err != nil {
 			// Check if stream ended normally.
 			if isStreamEnded(err) {
-				return
+				return false
 			}
 			// Send error response.
 			responseChan <- &FetchObjectResponse{
 				Found:        false,
 				ErrorMessage: err.Error(),
 			}
-			return
+			return true
 		}
 
 		if resp == nil {
 			// Stream ended.
-			return
+			return false
 		}
 
 		fetchResp, ok := resp.(*FetchObjectResponse)
@@ -159,12 +172,7 @@ func (c *client) receiveStreamResponses(ctx context.Context, stream transport.St
 
 // isStreamEnded checks if the error indicates the stream has ended normally.
 func isStreamEnded(err error) bool {
-	if err == nil {
-		return false
-	}
-	// Check for common stream end indicators.
-	errMsg := err.Error()
-	return errMsg == "EOF" || errMsg == "io: read/write on closed pipe"
+	return stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrClosedPipe)
 }
 
 // =============================================================================

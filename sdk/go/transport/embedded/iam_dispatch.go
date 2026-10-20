@@ -92,10 +92,10 @@ var iamUnaryHandlers = map[string]handlerFunc{
 	"quicbaas.IAM.App/RotateSecret": handleIAMAppRotateSecret,
 
 	// Session. RevokeOther is the spelling the gRPC transport also accepts.
-	// Touch is deliberately absent: no other transport carries it either, and
-	// service.SessionManager has no activity-update operation to implement it
-	// against — an "unknown method" here matches gRPC's Unimplemented.
+	// Touch stamps server time through SessionManager.UpdateActivity, as the
+	// MCP transport does; the client's Timestamp field is not carried.
 	"quicbaas.IAM.Session/Get":          handleIAMSessionGet,
+	"quicbaas.IAM.Session/Touch":        handleIAMSessionTouch,
 	"quicbaas.IAM.Session/List":         handleIAMSessionList,
 	"quicbaas.IAM.Session/Revoke":       handleIAMSessionRevoke,
 	"quicbaas.IAM.Session/RevokeAll":    handleIAMSessionRevokeAll,

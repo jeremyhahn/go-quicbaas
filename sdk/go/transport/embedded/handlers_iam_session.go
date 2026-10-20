@@ -209,6 +209,35 @@ func handleIAMSessionRevoke(ctx context.Context, svc service.QuicBaaS, req inter
 	return nil, nil
 }
 
+// handleIAMSessionTouch records activity on a session through
+// SessionManager.UpdateActivity, which stamps server time: the client's
+// Timestamp field is not carried. Touch is a void operation, so success
+// returns nil.
+func handleIAMSessionTouch(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	id, ok := iamRequestField(req, "SessionID")
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.IAM.Session", "Touch",
+			"struct with SessionID field", typeNameOf(req))
+	}
+	mgr, err := sessionManagerFor(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	if subject, bound := auth.SubjectFromContext(ctx); bound {
+		s, getErr := mgr.Get(ctx, id)
+		if getErr != nil {
+			return nil, getErr
+		}
+		if err := requireSessionOwner(subject, s, "Touch"); err != nil {
+			return nil, err
+		}
+	}
+	if err := mgr.UpdateActivity(ctx, id); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
 func handleIAMSessionRevokeAll(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	mgr, err := sessionManagerFor(ctx, svc)
 	if err != nil {

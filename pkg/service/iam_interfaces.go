@@ -155,11 +155,17 @@ type SessionManager interface {
 	Get(ctx context.Context, sessionID string) (*iam.SessionExt, error)
 	// Revoke revokes a specific session
 	Revoke(ctx context.Context, sessionID string) error
+	// UpdateActivity stamps the session's last-active time with the server
+	// clock. It refuses an empty ID and refuses and removes an expired session.
+	UpdateActivity(ctx context.Context, sessionID string) error
 	// RevokeAllForUser revokes all sessions for a user
 	RevokeAllForUser(ctx context.Context, userID uint64, tenantID string) error
 	// RevokeAllExcept revokes all sessions for a user except the specified one
 	RevokeAllExcept(ctx context.Context, userID uint64, tenantID, exceptSessionID string) error
 }
+
+// The IAM components hand out an iam.SessionManager as this interface.
+var _ SessionManager = iam.SessionManager(nil)
 
 // TenantProvisioner creates a tenant, seeds its built-in roles and enrolls
 // its first admin through qrdb's bootstrap.ProvisionTenant. The server

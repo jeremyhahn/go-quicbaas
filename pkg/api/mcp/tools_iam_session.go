@@ -266,20 +266,20 @@ func (r *ToolRegistry) executeIAMSessionRevokeOthers(ctx context.Context, args m
 }
 
 func (r *ToolRegistry) executeIAMSessionTouch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getString(args, "session_id")
+	if sessionID == "" {
+		return nil, api.NewRequiredFieldError("session_id")
+	}
+
 	sessionMgr, err := r.getSessionManager(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	session, err := sessionMgr.Get(ctx, getString(args, "session_id"))
-	if err != nil {
+	// UpdateActivity stamps server time; it refuses and removes an expired
+	// session, and its error is returned unchanged.
+	if err := sessionMgr.UpdateActivity(ctx, sessionID); err != nil {
 		return nil, err
-	}
-
-	// Update last active timestamp
-	session.LastActive = time.Now()
-	if createErr := sessionMgr.Create(ctx, session); createErr != nil {
-		return nil, createErr
 	}
 
 	return marshalResult(map[string]interface{}{

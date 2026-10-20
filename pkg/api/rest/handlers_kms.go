@@ -337,13 +337,87 @@ type KeyPolicyResponse struct {
 	KeyID             string   `json:"key_id"`
 	Version           uint64   `json:"version"`
 	AllowedOperations []string `json:"allowed_operations"`
-	AllowedPrincipals []string `json:"allowed_principals,omitempty"`
-	DeniedPrincipals  []string `json:"denied_principals,omitempty"`
-	ExpiresAt         int64    `json:"expires_at,omitempty"`
-	RotationRequired  bool     `json:"rotation_required"`
-	MaxUsageCount     uint64   `json:"max_usage_count,omitempty"`
-	RequireMFA        bool     `json:"require_mfa"`
-	UpdatedAt         int64    `json:"updated_at"`
+	// AllowedPrincipals and DeniedPrincipals are always present; [] means
+	// no restriction.
+	AllowedPrincipals []string `json:"allowed_principals"`
+	DeniedPrincipals  []string `json:"denied_principals"`
+	// ExpiresAt is an RFC 3339 timestamp, or null when the policy never
+	// expires.
+	ExpiresAt        *string `json:"expires_at"`
+	RotationRequired bool    `json:"rotation_required"`
+	// MaxUsageCount is null when the key has no usage limit.
+	MaxUsageCount *uint64 `json:"max_usage_count"`
+	RequireMFA    bool    `json:"require_mfa"`
+	UpdatedAt     int64   `json:"updated_at"`
+}
+
+// KeyPolicyRequest is the policy a PUT carries. It reads the shape
+// KeyPolicyResponse writes, so a GET body sent back unchanged sets the same
+// policy. key_id and updated_at are set by the server and ignored here.
+type KeyPolicyRequest struct {
+	Version           uint64             `json:"version"`
+	AllowedOperations []service.KeyUsage `json:"allowed_operations"`
+	AllowedPrincipals []string           `json:"allowed_principals"`
+	DeniedPrincipals  []string           `json:"denied_principals"`
+	ExpiresAt         *time.Time         `json:"expires_at"`
+	RotationRequired  bool               `json:"rotation_required"`
+	MaxUsageCount     *uint64            `json:"max_usage_count"`
+	RequireMFA        bool               `json:"require_mfa"`
+}
+
+// SetKeyPolicyRESTRequest is the body of PUT /api/v1/kms/keys/{name}/policy.
+type SetKeyPolicyRESTRequest struct {
+	Policy *KeyPolicyRequest `json:"policy"`
+}
+
+// toService converts the PUT policy into the service KeyPolicy for keyID.
+func (p *KeyPolicyRequest) toService(keyID string) *service.KeyPolicy {
+	if p == nil {
+		return nil
+	}
+	return &service.KeyPolicy{
+		KeyID:             keyID,
+		Version:           p.Version,
+		AllowedOperations: p.AllowedOperations,
+		AllowedPrincipals: p.AllowedPrincipals,
+		DeniedPrincipals:  p.DeniedPrincipals,
+		ExpiresAt:         p.ExpiresAt,
+		RotationRequired:  p.RotationRequired,
+		MaxUsageCount:     p.MaxUsageCount,
+		RequireMFA:        p.RequireMFA,
+	}
+}
+
+// keyPolicyToREST converts a service KeyPolicy into its REST response shape,
+// writing every restriction explicitly: [] for an empty principal list and
+// null for no expiry or no usage limit.
+func keyPolicyToREST(p *service.KeyPolicy) *KeyPolicyResponse {
+	if p == nil {
+		return nil
+	}
+	allowedOps := make([]string, len(p.AllowedOperations))
+	for i, op := range p.AllowedOperations {
+		allowedOps[i] = string(op)
+	}
+	resp := &KeyPolicyResponse{
+		KeyID:             p.KeyID,
+		Version:           p.Version,
+		AllowedOperations: allowedOps,
+		AllowedPrincipals: append(make([]string, 0, len(p.AllowedPrincipals)), p.AllowedPrincipals...),
+		DeniedPrincipals:  append(make([]string, 0, len(p.DeniedPrincipals)), p.DeniedPrincipals...),
+		RotationRequired:  p.RotationRequired,
+		RequireMFA:        p.RequireMFA,
+		UpdatedAt:         p.UpdatedAt.Unix(),
+	}
+	if p.ExpiresAt != nil {
+		expiresAt := p.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		resp.ExpiresAt = &expiresAt
+	}
+	if p.MaxUsageCount != nil {
+		maxUsage := *p.MaxUsageCount
+		resp.MaxUsageCount = &maxUsage
+	}
+	return resp
 }
 
 // SetKeyPolicyRESTResponse represents the JSON response for setting key policy.
@@ -1691,13 +1765,16 @@ func (s *Server) HandleSetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var req service.SetKeyPolicyRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var restReq SetKeyPolicyRESTRequest
+	if err := json.Unmarshal(body, &restReq); err != nil {
 		RespondBadRequest(w, r, "invalid JSON body")
 		return
 	}
 
-	req.KeyID = keyID
+	req := service.SetKeyPolicyRequest{
+		KeyID:  keyID,
+		Policy: restReq.Policy.toService(keyID),
+	}
 
 	kmsService := s.service.KMS()
 	if kmsService == nil {
@@ -1748,41 +1825,8 @@ func (s *Server) HandleGetKeyPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert service response to REST response with int64 timestamp
-	var policyResp *KeyPolicyResponse
-	if svcResp.Policy != nil {
-		// Convert allowed operations from KeyUsage to strings
-		allowedOps := make([]string, len(svcResp.Policy.AllowedOperations))
-		for i, op := range svcResp.Policy.AllowedOperations {
-			allowedOps[i] = string(op)
-		}
-
-		var expiresAt int64
-		if svcResp.Policy.ExpiresAt != nil {
-			expiresAt = svcResp.Policy.ExpiresAt.Unix()
-		}
-
-		var maxUsageCount uint64
-		if svcResp.Policy.MaxUsageCount != nil {
-			maxUsageCount = *svcResp.Policy.MaxUsageCount
-		}
-
-		policyResp = &KeyPolicyResponse{
-			KeyID:             svcResp.Policy.KeyID,
-			Version:           svcResp.Policy.Version,
-			AllowedOperations: allowedOps,
-			AllowedPrincipals: svcResp.Policy.AllowedPrincipals,
-			DeniedPrincipals:  svcResp.Policy.DeniedPrincipals,
-			ExpiresAt:         expiresAt,
-			RotationRequired:  svcResp.Policy.RotationRequired,
-			MaxUsageCount:     maxUsageCount,
-			RequireMFA:        svcResp.Policy.RequireMFA,
-			UpdatedAt:         svcResp.Policy.UpdatedAt.Unix(),
-		}
-	}
-
 	resp := &GetKeyPolicyRESTResponse{
-		Policy:    policyResp,
+		Policy:    keyPolicyToREST(svcResp.Policy),
 		Timestamp: svcResp.Timestamp.Unix(),
 	}
 

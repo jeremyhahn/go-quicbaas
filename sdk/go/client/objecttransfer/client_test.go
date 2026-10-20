@@ -16,6 +16,7 @@ package objecttransfer
 import (
 	"context"
 	stderrors "errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -366,7 +367,7 @@ func TestClient_StreamFetchObjects_Validation(t *testing.T) {
 		requestStreamFn: func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
 			return &mockStream{
 				recvFn: func() (interface{}, error) {
-					return nil, stderrors.New("EOF")
+					return nil, io.EOF
 				},
 			}, nil
 		},
@@ -529,7 +530,7 @@ func TestClient_StreamFetchObjects_Success(t *testing.T) {
 						callCount++
 						return resp, nil
 					}
-					return nil, stderrors.New("EOF")
+					return nil, io.EOF
 				},
 			}, nil
 		},
@@ -594,7 +595,7 @@ func TestClient_StreamFetchObjects_ContextCancellation(t *testing.T) {
 			return &mockStream{
 				recvFn: func() (interface{}, error) {
 					if sent {
-						return nil, stderrors.New("EOF")
+						return nil, io.EOF
 					}
 					sent = true
 					close(recvStarted)
@@ -649,7 +650,7 @@ func TestClient_StreamFetchObjects_InvalidResponseType(t *testing.T) {
 						return "not-a-fetch-response", nil
 					}
 					// End the stream.
-					return nil, stderrors.New("EOF")
+					return nil, io.EOF
 				},
 			}, nil
 		},
@@ -764,23 +765,38 @@ func TestIsStreamEnded(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "EOF error",
-			err:      stderrors.New("EOF"),
+			name:     "bare io.EOF",
+			err:      io.EOF,
 			expected: true,
 		},
 		{
-			name:     "closed pipe error",
-			err:      stderrors.New("io: read/write on closed pipe"),
+			name:     "wrapped io.EOF",
+			err:      errors.Wrap(io.EOF, errors.CodeConnection, "test.Recv", "stream read"),
 			expected: true,
+		},
+		{
+			name:     "io.ErrClosedPipe",
+			err:      io.ErrClosedPipe,
+			expected: true,
+		},
+		{
+			name:     "wrapped io.ErrClosedPipe",
+			err:      errors.Wrap(io.ErrClosedPipe, errors.CodeConnection, "test.Recv", "stream read"),
+			expected: true,
+		},
+		{
+			name:     "unrelated error whose text is EOF",
+			err:      eofTextError{},
+			expected: false,
+		},
+		{
+			name:     "unrelated error whose text is the closed pipe message",
+			err:      stderrors.New("io: read/write on closed pipe"),
+			expected: false,
 		},
 		{
 			name:     "other error",
 			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-		{
-			name:     "partial EOF match",
-			err:      stderrors.New("got EOF unexpectedly"),
 			expected: false,
 		},
 		{
@@ -797,6 +813,94 @@ func TestIsStreamEnded(t *testing.T) {
 				t.Fatalf("isStreamEnded(%v) = %v, want %v", tc.err, result, tc.expected)
 			}
 		})
+	}
+}
+
+// eofTextError is an unrelated error whose text happens to be "EOF". It must
+// not be mistaken for the end of a stream.
+type eofTextError struct{}
+
+func (eofTextError) Error() string { return "EOF" }
+
+// drainStream starts StreamFetchObjects over a stream that returns recvErr
+// on its first Recv and closeErr from Close, and returns every response
+// sent plus the number of Close calls.
+func drainStream(t *testing.T, recvErr, closeErr error) ([]*FetchObjectResponse, int) {
+	t.Helper()
+	closeCalls := 0
+	c := NewClient(&mockTransport{
+		requestStreamFn: func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
+			return &mockStream{
+				recvFn: func() (interface{}, error) {
+					return nil, recvErr
+				},
+				closeFn: func() error {
+					closeCalls++
+					return closeErr
+				},
+			}, nil
+		},
+	})
+
+	ch, err := c.StreamFetchObjects(context.Background(), &StreamFetchObjectsRequest{
+		ShardID: 1,
+		Items:   []ObjectFetchItem{{ObjectRef: "bucket:key"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got []*FetchObjectResponse
+	for resp := range ch {
+		got = append(got, resp)
+	}
+	return got, closeCalls
+}
+
+func TestClient_StreamFetchObjects_WrappedEOFEndsCleanly(t *testing.T) {
+	recvErr := errors.Wrap(io.EOF, errors.CodeConnection, "test.Recv", "stream read")
+	got, closeCalls := drainStream(t, recvErr, nil)
+	if len(got) != 0 {
+		t.Fatalf("got %d responses, want 0 (wrapped io.EOF is a clean end): %+v", len(got), got[0])
+	}
+	if closeCalls != 1 {
+		t.Fatalf("Close called %d times, want 1", closeCalls)
+	}
+}
+
+func TestClient_StreamFetchObjects_ClosedPipeEndsCleanly(t *testing.T) {
+	got, closeCalls := drainStream(t, io.ErrClosedPipe, nil)
+	if len(got) != 0 {
+		t.Fatalf("got %d responses, want 0 (io.ErrClosedPipe is a clean end)", len(got))
+	}
+	if closeCalls != 1 {
+		t.Fatalf("Close called %d times, want 1", closeCalls)
+	}
+}
+
+func TestClient_StreamFetchObjects_EOFTextErrorIsReported(t *testing.T) {
+	got, closeCalls := drainStream(t, eofTextError{}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d responses, want 1 error response", len(got))
+	}
+	if got[0].Found || got[0].ErrorMessage != "EOF" {
+		t.Fatalf("got %+v, want a not-found response carrying the EOF-text error", got[0])
+	}
+	if closeCalls != 1 {
+		t.Fatalf("Close called %d times, want 1", closeCalls)
+	}
+}
+
+func TestClient_StreamFetchObjects_EarlierErrorKeptOverCloseError(t *testing.T) {
+	got, closeCalls := drainStream(t, stderrors.New("network failure"), stderrors.New("close error"))
+	if len(got) != 1 {
+		t.Fatalf("got %d responses, want only the earlier error", len(got))
+	}
+	if !strings.Contains(got[0].ErrorMessage, "network failure") {
+		t.Fatalf("got ErrorMessage %q, want the earlier network failure", got[0].ErrorMessage)
+	}
+	if closeCalls != 1 {
+		t.Fatalf("Close called %d times, want 1", closeCalls)
 	}
 }
 
@@ -1082,7 +1186,7 @@ func TestClient_StreamFetchObjects_ServiceAndMethodPropagation(t *testing.T) {
 			capturedMethod = method
 			return &mockStream{
 				recvFn: func() (interface{}, error) {
-					return nil, stderrors.New("EOF")
+					return nil, io.EOF
 				},
 			}, nil
 		},
@@ -1134,7 +1238,7 @@ func TestClient_StreamFetchObjects_ChannelBufferSize(t *testing.T) {
 						callCount++
 						return resp, nil
 					}
-					return nil, stderrors.New("EOF")
+					return nil, io.EOF
 				},
 			}, nil
 		},
@@ -1170,30 +1274,16 @@ func TestClient_StreamFetchObjects_ChannelBufferSize(t *testing.T) {
 // =============================================================================
 
 func TestClient_StreamFetchObjects_StreamCloseError(t *testing.T) {
-	// Verify that a stream.Close() error does not cause a panic or hang.
-	// The implementation logs but does not propagate close errors.
-	c := NewClient(&mockTransport{
-		requestStreamFn: func(ctx context.Context, service, method string, req interface{}) (transport.Stream, error) {
-			return &mockStream{
-				recvFn: func() (interface{}, error) {
-					return nil, stderrors.New("EOF")
-				},
-				closeFn: func() error {
-					return stderrors.New("close error")
-				},
-			}, nil
-		},
-	})
-
-	ch, err := c.StreamFetchObjects(context.Background(), &StreamFetchObjectsRequest{
-		ShardID: 1,
-		Items:   []ObjectFetchItem{{ObjectRef: "bucket:key"}},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// A stream that ended cleanly but failed to close reports the close
+	// error as one final response before the channel closes.
+	got, closeCalls := drainStream(t, io.EOF, stderrors.New("close error"))
+	if len(got) != 1 {
+		t.Fatalf("got %d responses, want 1 close-error response", len(got))
 	}
-
-	// Drain channel; should close cleanly despite stream.Close() error.
-	for range ch {
+	if got[0].Found || !strings.Contains(got[0].ErrorMessage, "close error") {
+		t.Fatalf("got %+v, want a not-found response carrying the close error", got[0])
+	}
+	if closeCalls != 1 {
+		t.Fatalf("Close called %d times, want 1", closeCalls)
 	}
 }

@@ -15,6 +15,7 @@ package embedded
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -96,6 +97,7 @@ func TestIAMSessionDispatchRegistered(t *testing.T) {
 		"quicbaas.IAM.Session/RevokeAll",
 		"quicbaas.IAM.Session/RevokeOthers",
 		"quicbaas.IAM.Session/RevokeOther",
+		"quicbaas.IAM.Session/Touch",
 	} {
 		if _, ok := unaryHandlers[method]; !ok {
 			t.Errorf("%s is not registered in the embedded dispatch table", method)
@@ -234,6 +236,72 @@ func TestHandleIAMSessionRevoke_BadRequest(t *testing.T) {
 	svc, _ := newSessionTestService(t)
 	if _, err := handleIAMSessionRevoke(context.Background(), svc, struct{ Other string }{}); err == nil {
 		t.Error("expected an error for a request with no SessionID field")
+	}
+}
+
+// TestHandleIAMSessionTouch drives the SDK session client's Touch over the
+// embedded transport and checks the stored LastActive moved forward.
+func TestHandleIAMSessionTouch(t *testing.T) {
+	svc, mgr := newSessionTestService(t)
+	ctx := context.Background()
+	seedSession(t, mgr, "sess-1", 10001, "t-1")
+	before, err := mgr.Get(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	beforeActive := before.LastActive
+
+	tr, err := New(svc)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := iamsdk.NewSessionClient(tr).Touch(ctx, "sess-1"); err != nil {
+		t.Fatalf("Touch failed: %v", err)
+	}
+
+	after, err := mgr.Get(ctx, "sess-1")
+	if err != nil {
+		t.Fatalf("Get after Touch failed: %v", err)
+	}
+	if !after.LastActive.After(beforeActive) {
+		t.Errorf("LastActive did not move forward: before %v, after %v", beforeActive, after.LastActive)
+	}
+}
+
+func TestHandleIAMSessionTouch_Errors(t *testing.T) {
+	svc, _ := newSessionTestService(t)
+	ctx := context.Background()
+
+	if _, err := handleIAMSessionTouch(ctx, svc, &embeddedSessionIDEnvelope{SessionID: "missing"}); !errors.Is(err, iam.ErrSessionNotFound) {
+		t.Errorf("expected ErrSessionNotFound for an unknown session, got %T: %v", err, err)
+	}
+
+	for name, req := range map[string]interface{}{
+		"wrong type":  struct{ Other string }{},
+		"nil request": nil,
+		"nil pointer": (*embeddedSessionIDEnvelope)(nil),
+	} {
+		if _, err := handleIAMSessionTouch(ctx, svc, req); err == nil {
+			t.Errorf("%s: expected an error", name)
+		} else if _, ok := err.(*InvalidRequestTypeError); !ok {
+			t.Errorf("%s: expected *InvalidRequestTypeError, got %T: %v", name, err, err)
+		}
+	}
+
+	if _, err := handleIAMSessionTouch(ctx, &mockQuicBaaSWithSessions{}, &embeddedSessionIDEnvelope{SessionID: "s1"}); err == nil {
+		t.Fatal("expected an error when the session manager is nil")
+	} else if _, ok := err.(*ServiceNotConfiguredError); !ok {
+		t.Errorf("expected *ServiceNotConfiguredError, got %T: %v", err, err)
+	}
+}
+
+func TestHandleIAMSessionTouch_DeniesAnotherSubjectsSession(t *testing.T) {
+	svc, mgr := newSessionTestService(t)
+	seedSession(t, mgr, "sess-other", 20002, "t-1")
+
+	_, err := handleIAMSessionTouch(subjectCtx("10001", "t-1"), svc, &embeddedSessionIDEnvelope{SessionID: "sess-other"})
+	if _, ok := err.(*PermissionDeniedError); !ok {
+		t.Errorf("expected *PermissionDeniedError, got %T: %v", err, err)
 	}
 }
 

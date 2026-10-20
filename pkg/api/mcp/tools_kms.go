@@ -20,6 +20,7 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/base64"
+	"math"
 	"strings"
 	"time"
 
@@ -322,6 +323,41 @@ func (r *ToolRegistry) registerKMSTools() {
 				"policy": map[string]interface{}{
 					"type":        "object",
 					"description": "Policy document with operations and principals",
+					"properties": map[string]interface{}{
+						"allowed_operations": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Operations the key may perform",
+						},
+						"allowed_principals": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Principals allowed to use the key; empty allows every principal",
+						},
+						"denied_principals": map[string]interface{}{
+							"type":        "array",
+							"items":       map[string]interface{}{"type": "string"},
+							"description": "Principals refused the key; a deny overrides an allow",
+						},
+						"expires_at": map[string]interface{}{
+							"type":        "string",
+							"format":      "date-time",
+							"description": "RFC 3339 time after which the policy refuses every operation",
+						},
+						"rotation_required": map[string]interface{}{
+							"type":        "boolean",
+							"description": "Whether key rotation is mandatory",
+						},
+						"max_usage_count": map[string]interface{}{
+							"type":        "integer",
+							"minimum":     0,
+							"description": "Maximum number of operations the key may perform",
+						},
+						"require_mfa": map[string]interface{}{
+							"type":        "boolean",
+							"description": "Whether operations require multi-factor authentication",
+						},
+					},
 				},
 			},
 			"required": []string{"key_id", "policy"},
@@ -836,12 +872,21 @@ func (r *ToolRegistry) executeKMSGenerateKey(ctx context.Context, args map[strin
 }
 
 func (r *ToolRegistry) executeKMSImportKey(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	keyMaterialB64 := getString(args, "key_material")
+	if keyMaterialB64 == "" {
+		return nil, api.NewRequiredFieldError("key_material")
+	}
+	keyMaterial, err := base64.StdEncoding.DecodeString(keyMaterialB64)
+	if err != nil {
+		return nil, api.NewInvalidBase64Error("key_material", err)
+	}
+
 	// Route through the service layer for tenant-aware key import
 	kmsSvc, svcErr := r.getKMSService()
 	if svcErr == nil {
 		attrs := mcpArgsToKeyAttributes(args)
 		svcReq := &service.ImportKeyRequest{
-			KeyMaterial:   []byte(getString(args, "key_material")),
+			KeyMaterial:   keyMaterial,
 			WrappingKeyID: getString(args, "wrapping_key_id"),
 			KeyAttributes: attrs,
 			Name:          getString(args, "name"),
@@ -868,12 +913,11 @@ func (r *ToolRegistry) executeKMSImportKey(ctx context.Context, args map[string]
 		return nil, err
 	}
 
-	keyMaterial := getString(args, "key_material")
 	algorithm := getString(args, "algorithm")
 	name := getString(args, "name")
 	keyID := name
 
-	result, err := kmsMgr.ImportKey(ctx, keyID, []byte(keyMaterial), algorithm)
+	result, err := kmsMgr.ImportKey(ctx, keyID, keyMaterial, algorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,27 +1415,15 @@ func (r *ToolRegistry) executeKMSSetPolicy(ctx context.Context, args map[string]
 		return nil, api.NewInvalidTypeError("policy", "an object")
 	}
 
+	policy, err := parseKMSPolicyArg(keyID, policyRaw)
+	if err != nil {
+		return nil, err
+	}
+
 	// Route through the service layer for tenant-aware policy operations
 	kmsSvc, svcErr := r.getKMSService()
 	if svcErr == nil {
-		// Build allowed operations from policy
-		var allowedOps []service.KeyUsage
-		if opsRaw, ok := policyRaw["allowed_operations"].([]interface{}); ok {
-			allowedOps = make([]service.KeyUsage, 0, len(opsRaw))
-			for _, op := range opsRaw {
-				if str, ok := op.(string); ok {
-					allowedOps = append(allowedOps, service.KeyUsage(str))
-				}
-			}
-		}
-
-		svcReq := &service.SetKeyPolicyRequest{
-			KeyID: keyID,
-			Policy: &service.KeyPolicy{
-				KeyID:             keyID,
-				AllowedOperations: allowedOps,
-			},
-		}
+		svcReq := &service.SetKeyPolicyRequest{KeyID: keyID, Policy: policy}
 
 		svcResp, err := kmsSvc.SetKeyPolicy(ctx, svcReq)
 		if err != nil {
@@ -1444,22 +1476,12 @@ func (r *ToolRegistry) executeKMSGetPolicy(ctx context.Context, args map[string]
 			return nil, err
 		}
 
-		// Convert allowed operations to strings
-		var allowedOps []string
-		if svcResp.Policy != nil {
-			allowedOps = make([]string, len(svcResp.Policy.AllowedOperations))
-			for i, op := range svcResp.Policy.AllowedOperations {
-				allowedOps[i] = string(op)
-			}
+		if svcResp.Policy == nil {
+			return nil, api.NewUnexpectedResponseError("KMS", "GetKeyPolicy")
 		}
 
 		return marshalResult(map[string]interface{}{
-			"policy": map[string]interface{}{
-				"key_id":             keyID,
-				"version":            svcResp.Policy.Version,
-				"allowed_operations": allowedOps,
-				"updated_at":         svcResp.Timestamp.Unix(),
-			},
+			"policy":    kmsPolicyResult(keyID, svcResp.Policy, svcResp.Timestamp),
 			"timestamp": svcResp.Timestamp.Unix(),
 		})
 	}
@@ -1486,6 +1508,165 @@ func (r *ToolRegistry) executeKMSGetPolicy(ctx context.Context, args map[string]
 		},
 		"timestamp": now.Unix(),
 	})
+}
+
+// parseKMSPolicyArg builds the service key policy from the tool's policy
+// object. Every field the service stores is read, and a field of the wrong
+// shape is refused rather than dropped: dropping a principal restriction or
+// an expiry would widen the policy the caller asked for.
+func parseKMSPolicyArg(keyID string, raw map[string]interface{}) (*service.KeyPolicy, error) {
+	operations, err := strictStringListArg(raw, "allowed_operations")
+	if err != nil {
+		return nil, err
+	}
+	allowed, err := strictStringListArg(raw, "allowed_principals")
+	if err != nil {
+		return nil, err
+	}
+	denied, err := strictStringListArg(raw, "denied_principals")
+	if err != nil {
+		return nil, err
+	}
+	expiresAt, err := rfc3339Arg(raw, "expires_at")
+	if err != nil {
+		return nil, err
+	}
+	rotationRequired, err := strictBoolArg(raw, "rotation_required")
+	if err != nil {
+		return nil, err
+	}
+	requireMFA, err := strictBoolArg(raw, "require_mfa")
+	if err != nil {
+		return nil, err
+	}
+	maxUsage, err := countArg(raw, "max_usage_count")
+	if err != nil {
+		return nil, err
+	}
+
+	usages := make([]service.KeyUsage, 0, len(operations))
+	for _, op := range operations {
+		usages = append(usages, service.KeyUsage(op))
+	}
+	return &service.KeyPolicy{
+		KeyID:             keyID,
+		AllowedOperations: usages,
+		AllowedPrincipals: allowed,
+		DeniedPrincipals:  denied,
+		ExpiresAt:         expiresAt,
+		RotationRequired:  rotationRequired,
+		MaxUsageCount:     maxUsage,
+		RequireMFA:        requireMFA,
+	}, nil
+}
+
+// kmsPolicyResult renders a service key policy as the tool's policy object.
+// Every field is always present: an empty principal list is [] and a policy
+// without an expiry or usage limit carries null, so a client never has to
+// guess whether a missing field means "unrestricted" or "not sent".
+func kmsPolicyResult(keyID string, policy *service.KeyPolicy, updatedAt time.Time) map[string]interface{} {
+	operations := make([]string, len(policy.AllowedOperations))
+	for i, op := range policy.AllowedOperations {
+		operations[i] = string(op)
+	}
+	allowed := make([]string, 0, len(policy.AllowedPrincipals))
+	allowed = append(allowed, policy.AllowedPrincipals...)
+	denied := make([]string, 0, len(policy.DeniedPrincipals))
+	denied = append(denied, policy.DeniedPrincipals...)
+
+	var expiresAt interface{}
+	if policy.ExpiresAt != nil {
+		expiresAt = policy.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	var maxUsage interface{}
+	if policy.MaxUsageCount != nil {
+		maxUsage = *policy.MaxUsageCount
+	}
+
+	return map[string]interface{}{
+		"key_id":             keyID,
+		"version":            policy.Version,
+		"allowed_operations": operations,
+		"allowed_principals": allowed,
+		"denied_principals":  denied,
+		"expires_at":         expiresAt,
+		"rotation_required":  policy.RotationRequired,
+		"max_usage_count":    maxUsage,
+		"require_mfa":        policy.RequireMFA,
+		"updated_at":         updatedAt.Unix(),
+	}
+}
+
+// strictStringListArg reads an optional list of strings. An absent or null
+// value is nil; any other shape, or a list holding a non-string, is refused.
+func strictStringListArg(args map[string]interface{}, key string) ([]string, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	if list, ok := raw.([]string); ok {
+		return list, nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil, api.NewInvalidTypeError(key, "an array of strings")
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		s, ok := item.(string)
+		if !ok {
+			return nil, api.NewInvalidTypeError(key, "an array of strings")
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// rfc3339Arg reads an optional RFC 3339 timestamp. An absent or null value is
+// nil; a non-string or an unparsable string is refused.
+func rfc3339Arg(args map[string]interface{}, key string) (*time.Time, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, api.NewInvalidTypeError(key, "an RFC 3339 timestamp string")
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, api.NewInvalidFormatError(key, err)
+	}
+	return &t, nil
+}
+
+// strictBoolArg reads an optional boolean. An absent or null value is false;
+// any other non-boolean is refused.
+func strictBoolArg(args map[string]interface{}, key string) (bool, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return false, nil
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, api.NewInvalidTypeError(key, "a boolean")
+	}
+	return b, nil
+}
+
+// countArg reads an optional non-negative whole number. An absent or null
+// value is nil; a negative, fractional or non-numeric value is refused.
+func countArg(args map[string]interface{}, key string) (*uint64, error) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	f, ok := raw.(float64)
+	if !ok || f < 0 || f != math.Trunc(f) || f >= math.MaxUint64 {
+		return nil, api.NewInvalidTypeError(key, "a non-negative whole number")
+	}
+	n := uint64(f)
+	return &n, nil
 }
 
 // =============================================================================

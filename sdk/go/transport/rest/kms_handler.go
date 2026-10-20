@@ -28,6 +28,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -208,17 +209,20 @@ type kmsUnwrapKeyWire struct {
 	Timestamp int64             `json:"timestamp"`
 }
 
+// kmsKeyPolicyWire is the REST policy shape. The principal lists, expiry and
+// usage limit are pointers or raw values so the decoder can tell a field the
+// server omitted from one it sent as [] or null.
 type kmsKeyPolicyWire struct {
-	KeyID             string   `json:"key_id"`
-	Version           uint64   `json:"version"`
-	AllowedOperations []string `json:"allowed_operations"`
-	AllowedPrincipals []string `json:"allowed_principals,omitempty"`
-	DeniedPrincipals  []string `json:"denied_principals,omitempty"`
-	ExpiresAt         int64    `json:"expires_at,omitempty"`
-	RotationRequired  bool     `json:"rotation_required"`
-	MaxUsageCount     uint64   `json:"max_usage_count,omitempty"`
-	RequireMFA        bool     `json:"require_mfa"`
-	UpdatedAt         int64    `json:"updated_at"`
+	KeyID             string          `json:"key_id"`
+	Version           uint64          `json:"version"`
+	AllowedOperations []string        `json:"allowed_operations"`
+	AllowedPrincipals *[]string       `json:"allowed_principals"`
+	DeniedPrincipals  *[]string       `json:"denied_principals"`
+	ExpiresAt         json.RawMessage `json:"expires_at"`
+	RotationRequired  bool            `json:"rotation_required"`
+	MaxUsageCount     json.RawMessage `json:"max_usage_count"`
+	RequireMFA        bool            `json:"require_mfa"`
+	UpdatedAt         int64           `json:"updated_at"`
 }
 
 type kmsSetKeyPolicyWire struct {
@@ -615,8 +619,12 @@ func (h *kmsRESTHandler) handleGetKeyPolicy(ctx context.Context, req interface{}
 	if err := h.transport.doJSONRequest(ctx, http.MethodGet, endpoint, nil, &wire); err != nil {
 		return nil, err
 	}
+	policy, err := kmsWireToPolicy(wire.Policy)
+	if err != nil {
+		return nil, err
+	}
 	return &service.GetKeyPolicyResponse{
-		Policy:    kmsWireToPolicy(wire.Policy),
+		Policy:    policy,
 		Timestamp: time.Unix(wire.Timestamp, 0).UTC(),
 	}, nil
 }
@@ -850,32 +858,80 @@ func kmsWireToKeyMetadata(wire *kmsKeyMetadataWire) *service.KeyMetadata {
 	return meta
 }
 
-func kmsWireToPolicy(wire *kmsKeyPolicyWire) *service.KeyPolicy {
+// kmsWireToPolicy converts the REST policy wire shape into the service
+// KeyPolicy. A restriction the result omits or garbles is refused, never read
+// as "unrestricted": a read-modify-write caller would otherwise erase it.
+func kmsWireToPolicy(wire *kmsKeyPolicyWire) (*service.KeyPolicy, error) {
+	const op = "rest.kms.GetKeyPolicy"
 	if wire == nil {
-		return nil
+		return nil, nil
+	}
+	if wire.AllowedPrincipals == nil {
+		return nil, errors.NewInternal(op, "policy has no allowed_principals list")
+	}
+	if wire.DeniedPrincipals == nil {
+		return nil, errors.NewInternal(op, "policy has no denied_principals list")
 	}
 	policy := &service.KeyPolicy{
 		KeyID:             wire.KeyID,
 		Version:           wire.Version,
 		AllowedOperations: make([]service.KeyUsage, 0, len(wire.AllowedOperations)),
-		AllowedPrincipals: wire.AllowedPrincipals,
-		DeniedPrincipals:  wire.DeniedPrincipals,
+		AllowedPrincipals: *wire.AllowedPrincipals,
+		DeniedPrincipals:  *wire.DeniedPrincipals,
 		RotationRequired:  wire.RotationRequired,
 		RequireMFA:        wire.RequireMFA,
 		UpdatedAt:         time.Unix(wire.UpdatedAt, 0).UTC(),
 	}
-	for _, op := range wire.AllowedOperations {
-		policy.AllowedOperations = append(policy.AllowedOperations, service.KeyUsage(op))
+	for _, usage := range wire.AllowedOperations {
+		policy.AllowedOperations = append(policy.AllowedOperations, service.KeyUsage(usage))
 	}
-	if wire.MaxUsageCount != 0 {
-		v := wire.MaxUsageCount
-		policy.MaxUsageCount = &v
+	expiresAt, err := kmsPolicyExpiry(op, wire.ExpiresAt)
+	if err != nil {
+		return nil, err
 	}
-	if wire.ExpiresAt != 0 {
-		t := time.Unix(wire.ExpiresAt, 0).UTC()
-		policy.ExpiresAt = &t
+	policy.ExpiresAt = expiresAt
+	maxUsage, err := kmsPolicyMaxUsage(op, wire.MaxUsageCount)
+	if err != nil {
+		return nil, err
 	}
-	return policy
+	policy.MaxUsageCount = maxUsage
+	return policy, nil
+}
+
+// kmsPolicyExpiry reads the policy expiry, which the result must carry as an
+// RFC 3339 string or as null for a policy that never expires.
+func kmsPolicyExpiry(op string, raw json.RawMessage) (*time.Time, error) {
+	if raw == nil {
+		return nil, errors.NewInternal(op, "policy has no expires_at")
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, errors.NewInternal(op, "policy expires_at is not an RFC 3339 string")
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, errors.NewInternal(op, "policy expires_at is not RFC 3339: "+err.Error())
+	}
+	return &t, nil
+}
+
+// kmsPolicyMaxUsage reads the usage limit, which the result must carry as a
+// number or as null for a key with no limit.
+func kmsPolicyMaxUsage(op string, raw json.RawMessage) (*uint64, error) {
+	if raw == nil {
+		return nil, errors.NewInternal(op, "policy has no max_usage_count")
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	var n uint64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return nil, errors.NewInternal(op, "policy max_usage_count is not a non-negative integer")
+	}
+	return &n, nil
 }
 
 // kmsWireToRotationPolicy converts the REST rotation-policy wire shape into the

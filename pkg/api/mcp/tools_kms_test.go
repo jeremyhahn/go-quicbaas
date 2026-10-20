@@ -18,6 +18,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 )
 
 // testQuicBaaSWithKMSManager wraps MockQuicBaaS and provides a configurable KMSManager.
@@ -2556,7 +2557,7 @@ func TestMCPCoverage91_KMSImportKey_FallbackSuccess(t *testing.T) {
 	registry := newTestRegistryWithMockKMS(t, mockKMS)
 
 	result, err := registry.executeKMSImportKey(context.Background(), map[string]interface{}{
-		"key_material":    "base64material",
+		"key_material":    "YmFzZTY0bWF0ZXJpYWw=",
 		"wrapping_key_id": "wrap-key",
 		"algorithm":       "AES-256-GCM",
 		"name":            "imported-key",
@@ -2568,6 +2569,116 @@ func TestMCPCoverage91_KMSImportKey_FallbackSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	mockKMS.AssertExpectations(t)
+}
+
+// importKeyRawMaterial is key material that is not valid UTF-8, so a tool that
+// passes the base64 text through instead of decoding it cannot match it.
+var importKeyRawMaterial = []byte{0x00, 0xff, 0xfe, 0x80, 0x7f, 0xc3, 0x28, 0x01}
+
+func TestExecuteKMSImportKey_DecodesBase64ForService(t *testing.T) {
+	svc := newTestQuicBaaSWithKMSOps()
+	registry := NewToolRegistry(svc, newTestLogger(t))
+
+	_, err := registry.ExecuteTool(context.Background(), "quicbaas_kms_import_key", map[string]interface{}{
+		"key_material":    base64.StdEncoding.EncodeToString(importKeyRawMaterial),
+		"wrapping_key_id": "wrapping-key-1",
+		"algorithm":       "AES-256-GCM",
+		"name":            "imported-key",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, svc.kmsSvc.importKeyReq)
+	assert.Equal(t, importKeyRawMaterial, svc.kmsSvc.importKeyReq.KeyMaterial)
+	assert.Equal(t, "wrapping-key-1", svc.kmsSvc.importKeyReq.WrappingKeyID)
+}
+
+func TestExecuteKMSImportKey_DecodesBase64ForManagerFallback(t *testing.T) {
+	mockKMS := NewMockKMSManager()
+	mockKMS.On("ImportKey", mock.Anything, "imported-key", importKeyRawMaterial, "AES-256-GCM").Return(
+		createTestKeyMetadata("imported-key", "", "AES-256-GCM"), nil)
+	registry := newTestRegistryWithMockKMS(t, mockKMS)
+
+	_, err := registry.executeKMSImportKey(context.Background(), map[string]interface{}{
+		"key_material": base64.StdEncoding.EncodeToString(importKeyRawMaterial),
+		"algorithm":    "AES-256-GCM",
+		"name":         "imported-key",
+	})
+	require.NoError(t, err)
+	mockKMS.AssertExpectations(t)
+}
+
+func TestExecuteKMSImportKey_RefusesBadKeyMaterial(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]interface{}
+		message string
+	}{
+		{
+			name:    "missing",
+			args:    map[string]interface{}{"algorithm": "AES-256-GCM"},
+			message: "key_material",
+		},
+		{
+			name:    "empty",
+			args:    map[string]interface{}{"key_material": "", "algorithm": "AES-256-GCM"},
+			message: "key_material",
+		},
+		{
+			name:    "invalid base64",
+			args:    map[string]interface{}{"key_material": "not-valid-base64!@#$", "algorithm": "AES-256-GCM"},
+			message: "invalid base64 key_material",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" via service", func(t *testing.T) {
+			svc := newTestQuicBaaSWithKMSOps()
+			registry := NewToolRegistry(svc, newTestLogger(t))
+
+			_, err := registry.executeKMSImportKey(context.Background(), tt.args)
+			require.Error(t, err)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr), "expected a typed QBError, got %T: %v", err, err)
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			assert.Contains(t, err.Error(), tt.message)
+			assert.Nil(t, svc.kmsSvc.importKeyReq, "the KMS service must not be called")
+		})
+
+		t.Run(tt.name+" via manager fallback", func(t *testing.T) {
+			mockKMS := NewMockKMSManager()
+			registry := newTestRegistryWithMockKMS(t, mockKMS)
+
+			_, err := registry.executeKMSImportKey(context.Background(), tt.args)
+			require.Error(t, err)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr), "expected a typed QBError, got %T: %v", err, err)
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			mockKMS.AssertNotCalled(t, "ImportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestKMSImportKeyRoundTrip_SDKRawBytesReachService drives the SDK KMS client
+// over the MCP transport into the real server tool: the bytes the caller hands
+// the SDK are the bytes the KMS service imports.
+func TestKMSImportKeyRoundTrip_SDKRawBytesReachService(t *testing.T) {
+	svc := newTestQuicBaaSWithKMSOps()
+	svc.kmsSvc.importKeyResp = &service.ImportKeyResponse{Metadata: &service.KeyMetadata{
+		KeyID:     "imported",
+		Name:      "imported",
+		Algorithm: service.KeyAlgAES256GCM,
+		Status:    service.KeyStatusEnabled,
+		Version:   1,
+	}}
+	tr := registryMCPTransport(t, NewToolRegistry(svc, newTestLogger(t)), nil, "quicbaas_kms_import_key")
+
+	resp, err := kmsclient.NewClient(tr).ImportKey(context.Background(), &kmsclient.ImportKeyRequest{
+		KeyMaterial: importKeyRawMaterial,
+		Name:        "imported",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "imported", resp.KeyID)
+	require.NotNil(t, svc.kmsSvc.importKeyReq)
+	assert.Equal(t, importKeyRawMaterial, svc.kmsSvc.importKeyReq.KeyMaterial)
 }
 
 func TestMCPCoverage91_KMSImportKey_UnexpectedResponse(t *testing.T) {

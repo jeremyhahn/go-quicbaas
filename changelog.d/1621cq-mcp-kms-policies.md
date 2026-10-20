@@ -1,0 +1,3 @@
+### Fixed
+
+- KMS SetKeyPolicy, GetKeyPolicy, SetKeyRotationPolicy, GetKeyRotationPolicy and DeleteKeyRotationPolicy over the SDK MCP transport now call `quicbaas_kms_set_policy`, `quicbaas_kms_get_policy`, `quicbaas_kms_set_rotation_policy`, `quicbaas_kms_get_rotation_policy` and `quicbaas_kms_delete_rotation_policy` and return the KMS client's typed `KeyPolicy` and `KeyRotationPolicy`. A request without a key ID, policy, `auto_rotate` or `interval_seconds` is refused with InvalidInput before any call. A result missing its key ID, policy, allowed operations, rotation interval or enabled flag, or naming an operation the client has no usage for, is a typed Internal error. A null rotation policy still reads as no policy configured (#1621).

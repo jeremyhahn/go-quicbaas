@@ -18,6 +18,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -285,7 +286,7 @@ func (r *ToolRegistry) registerTools() {
 			"properties": map[string]interface{}{
 				"entityType": map[string]interface{}{"type": "string", "description": "Entity type"},
 				"id":         map[string]interface{}{"type": "integer", "description": "Entity ID"},
-				"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded data"},
+				"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
 				"shardID":    map[string]interface{}{"type": "integer", "description": "Target shard ID"},
 			},
 			"required": []string{"entityType", "id", "data"},
@@ -349,7 +350,7 @@ func (r *ToolRegistry) registerTools() {
 						"properties": map[string]interface{}{
 							"entityType": map[string]interface{}{"type": "string"},
 							"id":         map[string]interface{}{"type": "integer"},
-							"data":       map[string]interface{}{"type": "string"},
+							"data":       map[string]interface{}{"type": "string", "description": "Base64-encoded (standard) data; the value alias is decoded the same way"},
 						},
 						"required": []string{"entityType", "id", "data"},
 					},
@@ -1642,13 +1643,16 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 	// If string key is provided, hash it to uint64 ID
 	id := getIDOrHashKey(entityType, args)
 
-	// Support both camelCase (data) and snake_case (value) for the value parameter
-	data := getStringAlt(args, "data", "value")
+	// Support both data and its value alias; both carry base64.
+	data, err := decodePutData(getStringAlt(args, "data", "value"))
+	if err != nil {
+		return nil, err
+	}
 
 	req := &service.PutRequest{
 		EntityType: entityType,
 		ID:         id,
-		Data:       []byte(data),
+		Data:       data,
 		ShardID:    getUint64(args, "shardID"),
 	}
 	resp, err := r.service.Put(ctx, req)
@@ -1656,6 +1660,17 @@ func (r *ToolRegistry) executePut(ctx context.Context, args map[string]interface
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// decodePutData decodes the data argument of the KV put tools (qrdb_put and
+// quicbaas_batch_put), whose schemas declare it standard base64. The value
+// alias carries the same encoding.
+func decodePutData(encoded string) ([]byte, error) {
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, &UserToolInvalidArgumentError{Arg: "data", Err: err}
+	}
+	return data, nil
 }
 
 func (r *ToolRegistry) executeGet(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -1797,11 +1812,19 @@ func (r *ToolRegistry) executeBatchPut(ctx context.Context, args map[string]inte
 				Message: "data is required",
 			}
 		}
+		decoded, err := decodePutData(data)
+		if err != nil {
+			return nil, &BatchOperationParseError{
+				Index:   i,
+				Field:   "data",
+				Message: "data must be base64-encoded",
+			}
+		}
 
 		requests = append(requests, &service.PutRequest{
 			EntityType: entityType,
 			ID:         id,
-			Data:       []byte(data),
+			Data:       decoded,
 			ShardID:    shardID,
 			WriteMode:  service.WriteModeBatched,
 		})

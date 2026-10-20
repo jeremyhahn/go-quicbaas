@@ -44,6 +44,8 @@ type testKMSService struct {
 	listKeyVersionsErr  error
 	updateKeyStatusResp *service.UpdateKeyStatusResponse
 	updateKeyStatusErr  error
+	importKeyReq        *service.ImportKeyRequest
+	importKeyResp       *service.ImportKeyResponse
 }
 
 func (s *testKMSService) GetSupportedAlgorithms(_ context.Context) ([]string, error) {
@@ -54,7 +56,11 @@ func (s *testKMSService) GenerateKey(_ context.Context, _ *service.GenerateKeyRe
 	return &service.GenerateKeyResponse{}, nil
 }
 
-func (s *testKMSService) ImportKey(_ context.Context, _ *service.ImportKeyRequest) (*service.ImportKeyResponse, error) {
+func (s *testKMSService) ImportKey(_ context.Context, req *service.ImportKeyRequest) (*service.ImportKeyResponse, error) {
+	s.importKeyReq = req
+	if s.importKeyResp != nil {
+		return s.importKeyResp, nil
+	}
 	return &service.ImportKeyResponse{}, nil
 }
 

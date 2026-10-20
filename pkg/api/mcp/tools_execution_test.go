@@ -41,7 +41,7 @@ func TestExecutePut(t *testing.T) {
 			args: map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(123),
-				"data":       `{"name":"test"}`,
+				"data":       "eyJuYW1lIjoidGVzdCJ9", // base64(`{"name":"test"}`)
 				"shardID":    float64(1),
 			},
 			setupMock: func(m *mockService) {
@@ -59,7 +59,7 @@ func TestExecutePut(t *testing.T) {
 			args: map[string]interface{}{
 				"entityType": "user",
 				"id":         float64(123),
-				"data":       `{"name":"test"}`,
+				"data":       "eyJuYW1lIjoidGVzdCJ9", // base64(`{"name":"test"}`)
 				"shardID":    float64(1),
 			},
 			setupMock: func(m *mockService) {

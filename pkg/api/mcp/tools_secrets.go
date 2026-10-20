@@ -18,6 +18,8 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"math"
+	"time"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -535,15 +537,23 @@ func (r *ToolRegistry) executeSecretsSetRotationPolicy(ctx context.Context, args
 		return nil, api.NewServiceUnavailableError("secrets")
 	}
 
-	_, ok := args["policy"].(map[string]interface{})
+	secretID := getString(args, "secret_id")
+	if secretID == "" {
+		return nil, api.NewRequiredFieldError("secret_id")
+	}
+
+	rawPolicy, ok := args["policy"].(map[string]interface{})
 	if !ok {
 		return nil, api.NewInvalidTypeError("policy", "an object")
 	}
 
-	policy := &service.SecretRotationPolicy{}
+	policy, err := decodeSecretRotationPolicy(rawPolicy)
+	if err != nil {
+		return nil, err
+	}
 
 	req := &service.SetRotationPolicyRequest{
-		SecretID: getString(args, "secret_id"),
+		SecretID: secretID,
 		Policy:   policy,
 	}
 
@@ -552,6 +562,88 @@ func (r *ToolRegistry) executeSecretsSetRotationPolicy(ctx context.Context, args
 		return nil, err
 	}
 	return marshalResult(resp)
+}
+
+// rotationPolicyDecodeOp names the operation in rotation policy decode errors.
+const rotationPolicyDecodeOp = "mcp.secrets_set_rotation_policy"
+
+// rotationPolicyFieldDecoder stores one policy field, given as its decoded
+// JSON value, into the service policy.
+type rotationPolicyFieldDecoder func(policy *service.SecretRotationPolicy, value interface{}) error
+
+// rotationPolicyFieldDecoders holds one decoder per policy field the
+// quicbaas_secrets_set_rotation_policy schema declares. next_rotation is not
+// declared: the service schedules it.
+var rotationPolicyFieldDecoders = map[string]rotationPolicyFieldDecoder{
+	"enabled":         decodeRotationPolicyEnabled,
+	"interval":        decodeRotationPolicyInterval,
+	"retain_versions": decodeRotationPolicyRetainVersions,
+	"rotation_lambda": decodeRotationPolicyLambda,
+}
+
+// decodeSecretRotationPolicy builds the service policy from the tool's policy
+// object. It refuses a field the schema does not declare and a field of the
+// wrong type.
+func decodeSecretRotationPolicy(raw map[string]interface{}) (*service.SecretRotationPolicy, error) {
+	policy := &service.SecretRotationPolicy{}
+	for field, value := range raw {
+		decode, ok := rotationPolicyFieldDecoders[field]
+		if !ok {
+			return nil, api.NewUnsupportedValueError(rotationPolicyDecodeOp, "policy field", field)
+		}
+		if err := decode(policy, value); err != nil {
+			return nil, err
+		}
+	}
+	return policy, nil
+}
+
+func decodeRotationPolicyEnabled(policy *service.SecretRotationPolicy, value interface{}) error {
+	enabled, ok := value.(bool)
+	if !ok {
+		return api.NewInvalidTypeError("policy.enabled", "a boolean")
+	}
+	policy.Enabled = enabled
+	return nil
+}
+
+func decodeRotationPolicyInterval(policy *service.SecretRotationPolicy, value interface{}) error {
+	text, ok := value.(string)
+	if !ok {
+		return api.NewInvalidTypeError("policy.interval", "a duration string")
+	}
+	interval, err := time.ParseDuration(text)
+	if err != nil {
+		return api.NewInvalidFormatError("policy.interval", err)
+	}
+	policy.Interval = interval
+	return nil
+}
+
+func decodeRotationPolicyRetainVersions(policy *service.SecretRotationPolicy, value interface{}) error {
+	switch n := value.(type) {
+	case int:
+		policy.RetainVersions = n
+		return nil
+	case float64:
+		// JSON numbers decode as float64: accept only whole values an int holds.
+		if n == math.Trunc(n) {
+			if versions, err := conv.SafeFloat64ToInt(n); err == nil {
+				policy.RetainVersions = versions
+				return nil
+			}
+		}
+	}
+	return api.NewInvalidTypeError("policy.retain_versions", "an integer")
+}
+
+func decodeRotationPolicyLambda(policy *service.SecretRotationPolicy, value interface{}) error {
+	lambda, ok := value.(string)
+	if !ok {
+		return api.NewInvalidTypeError("policy.rotation_lambda", "a string")
+	}
+	policy.RotationLambda = lambda
+	return nil
 }
 
 func (r *ToolRegistry) executeSecretsGetRotationPolicy(ctx context.Context, args map[string]interface{}) (interface{}, error) {

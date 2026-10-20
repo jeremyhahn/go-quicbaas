@@ -37,7 +37,7 @@ func TestKMSHandlerMethodsHappyPaths(t *testing.T) {
 		case "/api/v1/kms/keys/k1/versions":
 			_, _ = w.Write([]byte(`{"key_id":"k1","versions":[{"version":1,"status":"enabled","algorithm":"AES-256","created_at":1700000000}]}`))
 		case "/api/v1/kms/keys/k1/policy":
-			_, _ = w.Write([]byte(`{"policy":{"key_id":"k1","version":1,"allowed_operations":["encrypt"],"require_mfa":true,"max_usage_count":10,"expires_at":1800000000},"policy_version":1,"timestamp":1700000000}`))
+			_, _ = w.Write([]byte(`{"policy":{"key_id":"k1","version":1,"allowed_operations":["encrypt"],"allowed_principals":[],"denied_principals":[],"require_mfa":true,"max_usage_count":10,"expires_at":"2027-01-15T08:00:00Z"},"policy_version":1,"timestamp":1700000000}`))
 		default:
 			_, _ = w.Write([]byte(`{"key_id":"k1","status":"pending_deletion","timestamp":1700000000,` +
 				`"key":{"key_id":"k1","version":1,"algorithm":"AES-256","status":"enabled"},` +

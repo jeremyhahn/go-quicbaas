@@ -43,9 +43,13 @@ const parameterStoreServiceName = "quicbaas.ParameterStore"
 // toolVerb binds one SDK method to the MCP tool that serves it: the tool
 // name, the conversion of the SDK request into tool arguments, and the
 // decoding of the tool's JSON object result into the SDK response type.
+// A decode that returns an error value fails the request with that error.
 type toolVerb struct {
-	tool   string
-	args   func(req interface{}) (map[string]interface{}, error)
+	tool string
+	args func(req interface{}) (map[string]interface{}, error)
+	// check, when set, refuses a result missing a field decode cannot
+	// default.
+	check  func(op string, m map[string]interface{}) error
 	decode func(m map[string]interface{}) interface{}
 }
 
@@ -63,7 +67,49 @@ func (t *Transport) requestToolVerb(ctx context.Context, op string, verb toolVer
 	if err != nil {
 		return nil, err
 	}
-	return verb.decode(m), nil
+	if verb.check != nil {
+		if err := verb.check(op, m); err != nil {
+			return nil, err
+		}
+	}
+	decoded := verb.decode(m)
+	if err, ok := decoded.(error); ok {
+		return nil, err
+	}
+	return decoded, nil
+}
+
+// requireResultFields returns a toolVerb check that refuses a result lacking
+// one of the named fields, or carrying it empty or zero.
+func requireResultFields(names ...string) func(op string, m map[string]interface{}) error {
+	return func(op string, m map[string]interface{}) error {
+		for _, name := range names {
+			if isEmptyResultField(m[name]) {
+				return errors.New(errors.CodeInternal, op, "tool result has no "+name)
+			}
+		}
+		return nil
+	}
+}
+
+// isEmptyResultField reports whether a decoded JSON result value is absent,
+// null, an empty string or the number zero.
+func isEmptyResultField(v interface{}) bool {
+	switch value := v.(type) {
+	case nil:
+		return true
+	case string:
+		return value == ""
+	case float64:
+		return value == 0
+	case int64:
+		return value == 0
+	case json.Number:
+		number, err := value.Float64()
+		return err != nil || number == 0
+	default:
+		return false
+	}
 }
 
 // isMCPParameterStoreService reports whether the service name targets the
