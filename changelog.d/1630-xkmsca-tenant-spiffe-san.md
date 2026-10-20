@@ -1,0 +1,3 @@
+### Security
+
+- The go-xkms CA adapter (`pkg/api/rest/xkms_ca_servicer.go`) now resolves the `tenant_id` of a sign (`POST /api/v1/xkms/ca/sign`) or issue (`POST /api/v1/xkms/ca/issue`) request against the caller's own tenant before it builds the SPIFFE URI SAN: an empty `tenant_id` means the caller's tenant, a foreign one, or a call with no tenant bound, is refused with the typed `XKMSCATenantError`, which carries `tenantctx.CrossTenantError` or `tenantctx.MissingTenantError` and unwraps to `qrdbsdk.ErrTenantMissing`. Both refusals reach no CA call and answer REST 404, the status go-xkms gives a foreign tenant. Before, a caller holding `certs:generate` in one tenant could get a certificate whose SPIFFE ID named another tenant (#1630).

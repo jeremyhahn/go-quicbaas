@@ -23,7 +23,9 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -139,7 +141,11 @@ func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 		return nil, ErrXKMSCAMissingCSR
 	}
 
-	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, req.TenantID)
+	tenantID, err := a.resolveTenant(ctx, "sign csr", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	opts := a.signOptionsWithSPIFFE(req.Profile, req.ValidityDays, tenantID)
 
 	cert, err := a.ca.SignCSR(ctx, req.CSRPEM, opts)
 	if err != nil {
@@ -201,6 +207,23 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 	return opts
 }
 
+// resolveTenant returns the tenant SignCSR and IssueCertificate stamp into
+// the SPIFFE URI SAN. The request's tenant_id is caller-supplied, so it is
+// resolved against the tenant bound to ctx (tenantctx.Target): empty means
+// the caller's own tenant, and a foreign one is refused. A request that
+// names no tenant while SPIFFE synthesis is off needs no tenant, because
+// nothing is stamped.
+func (a *xkmsCAServicer) resolveTenant(ctx context.Context, op, requested string) (string, error) {
+	if requested == "" && a.spiffeTrustDomain == "" {
+		return "", nil
+	}
+	tenantID, err := tenantctx.Target(ctx, op, requested)
+	if err != nil {
+		return "", &XKMSCATenantError{Op: op, Err: err}
+	}
+	return tenantID, nil
+}
+
 // IssueCertificate asks the CA to generate a keypair and sign a certificate for
 // it. Mirrors XKMSService.IssueCertificate in go-xkms so REST clients see a
 // consistent surface — including the part that surprises people: the key is
@@ -221,6 +244,10 @@ func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 	if req.CommonName == "" {
 		return nil, ErrXKMSCAMissingCommonName
 	}
+	tenantID, err := a.resolveTenant(ctx, "issue certificate", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
 
 	sans := parseSANs(req.SANs)
 	certReq := &xkmssdk.TrustedCACertificateRequest{
@@ -237,7 +264,7 @@ func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 	// path. The CertificateRequest SPIFFE fields are forwarded by the CA into
 	// the same spiffe.BuildURI synthesis site SignCSR uses, so both paths emit
 	// the identical canonical SAN.
-	a.applyKeypairSPIFFE(certReq, req.Profile, req.TenantID)
+	a.applyKeypairSPIFFE(certReq, req.Profile, tenantID)
 
 	// Route through IssueCertificateWithProfile when a profile is named so
 	// the CA picks up the profile's KeyUsage/ExtKeyUsage/validity defaults.
@@ -245,7 +272,6 @@ func (a *xkmsCAServicer) IssueCertificate(ctx context.Context, req *xkmstranspor
 	// built-in heuristics (server cert when DNS SANs exist, client when
 	// only email SANs, etc.).
 	var issued *xkmssdk.TrustedCAIssuedCertificate
-	var err error
 	if strings.TrimSpace(req.Profile) != "" {
 		issued, err = a.ca.IssueCertificateWithProfile(ctx, certReq, req.Profile)
 	} else {
@@ -438,6 +464,32 @@ func (e *XKMSCAOperationError) Unwrap() error {
 
 // XKMSCAInvalidSerialError is returned when a serial-number hex string
 // cannot be decoded.
+// XKMSCATenantError reports that SignCSR or IssueCertificate refused the
+// request's tenant: the caller named a tenant other than its own
+// (tenantctx.CrossTenantError), or no tenant is bound to the call
+// (tenantctx.MissingTenantError). Like go-xkms's own tenant binding it
+// renders and unwraps to qrdbsdk.ErrTenantMissing, which go-xkms's CA
+// handlers answer with their not-found status, so a probe cannot tell a
+// foreign tenant from a nonexistent one. The typed cause stays reachable
+// through errors.As.
+type XKMSCATenantError struct {
+	// Op is the short operation label ("sign csr", "issue certificate").
+	Op string
+
+	// Err is the tenantctx refusal. Always non-nil.
+	Err error
+}
+
+// Error returns qrdbsdk.ErrTenantMissing's message verbatim.
+func (e *XKMSCATenantError) Error() string {
+	return qrdbsdk.ErrTenantMissing.Error()
+}
+
+// Unwrap exposes both the tenantctx refusal and qrdbsdk.ErrTenantMissing.
+func (e *XKMSCATenantError) Unwrap() []error {
+	return []error{e.Err, qrdbsdk.ErrTenantMissing}
+}
+
 type XKMSCAInvalidSerialError struct {
 	// Value is the malformed serial string.
 	Value string

@@ -20,6 +20,8 @@ import (
 	"encoding/base64"
 	"time"
 
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -91,6 +93,33 @@ type CeremonyFieldConflictError struct {
 // Error implements the error interface.
 func (e *CeremonyFieldConflictError) Error() string {
 	return "ceremony: " + e.Reason
+}
+
+// CeremonyFieldInvalidError is returned when a tool argument is present but
+// malformed (share_bytes that is not standard base64 on the external-officer
+// tool). It is classified as invalid input.
+type CeremonyFieldInvalidError struct {
+	Field  string
+	Reason string
+	Err    error
+}
+
+// Error implements the error interface.
+func (e *CeremonyFieldInvalidError) Error() string {
+	if e.Err != nil {
+		return "ceremony: invalid " + e.Field + ": " + e.Reason + ": " + e.Err.Error()
+	}
+	return "ceremony: invalid " + e.Field + ": " + e.Reason
+}
+
+// Unwrap returns the underlying decode error, if any.
+func (e *CeremonyFieldInvalidError) Unwrap() error {
+	return e.Err
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *CeremonyFieldInvalidError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrInvalidInput
 }
 
 // registerCeremonyTools adds every quicbaas_ceremony_* tool definition to the
@@ -467,13 +496,25 @@ func executeCeremonyEnrollExternalOfficer(ctx context.Context, svc service.Cerem
 		}
 	}
 
+	// share_bytes is optional; when present it is the base64 of a binary
+	// Shamir share, which a JSON string cannot carry raw.
+	var shareBytes []byte
+	if shareB64 := getString(args, "share_bytes"); shareB64 != "" {
+		decoded, decErr := base64.StdEncoding.DecodeString(shareB64)
+		if decErr != nil {
+			return nil, &CeremonyFieldInvalidError{Field: "share_bytes", Reason: "must be standard base64", Err: decErr}
+		}
+		shareBytes = decoded
+		defer secure.Wipe(shareBytes)
+	}
+
 	req := &service.CeremonyEnrollExternalOfficerRequest{
 		Username:   username,
 		CertPEM:    certPEM,
 		PubKeyPEM:  pubKeyPEM,
 		ShareIndex: getInt(args, "share_index"),
 		AuthFactor: authFactor,
-		ShareBytes: []byte(getString(args, "share_bytes")),
+		ShareBytes: shareBytes,
 	}
 	resp, err := svc.CeremonyEnrollExternalOfficer(ctx, req)
 	if err != nil {

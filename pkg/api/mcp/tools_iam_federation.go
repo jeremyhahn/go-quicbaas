@@ -491,7 +491,7 @@ func (r *ToolRegistry) executeIAMFederationCreateProvider(ctx context.Context, a
 	if err := fedMgr.RegisterProvider(ctx, provider); err != nil {
 		return nil, err
 	}
-	return marshalResult(provider)
+	return marshalResult(provider.Redacted())
 }
 
 func (r *ToolRegistry) executeIAMFederationGetProvider(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -504,7 +504,7 @@ func (r *ToolRegistry) executeIAMFederationGetProvider(ctx context.Context, args
 	if err != nil {
 		return nil, err
 	}
-	return marshalResult(provider)
+	return marshalResult(provider.Redacted())
 }
 
 func (r *ToolRegistry) executeIAMFederationUpdateProvider(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -547,7 +547,7 @@ func (r *ToolRegistry) executeIAMFederationUpdateProvider(ctx context.Context, a
 	if err := fedMgr.UpdateProvider(ctx, provider); err != nil {
 		return nil, err
 	}
-	return marshalResult(provider)
+	return marshalResult(provider.Redacted())
 }
 
 func (r *ToolRegistry) executeIAMFederationDeleteProvider(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -585,7 +585,7 @@ func (r *ToolRegistry) executeIAMFederationListProviders(ctx context.Context, ar
 		return nil, err
 	}
 	return marshalResult(map[string]interface{}{
-		"providers": providers,
+		"providers": iam.RedactProviders(providers),
 		"count":     len(providers),
 	})
 }

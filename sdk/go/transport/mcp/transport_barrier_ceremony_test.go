@@ -395,6 +395,54 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	}
 }
 
+// TestCeremonyEnrollExternalOfficer_ShareBytesTravelBase64 proves a binary
+// Shamir share crosses MCP base64-encoded, so bytes that are not valid UTF-8
+// reach the server unchanged, and that an empty share sends no share_bytes.
+func TestCeremonyEnrollExternalOfficer_ShareBytesTravelBase64(t *testing.T) {
+	cases := []struct {
+		name     string
+		share    []byte
+		wantSent bool
+	}{
+		{name: "binary share", share: []byte{0x00, 0xff, 0x80, 0xfe}, wantSent: true},
+		{name: "empty share", share: nil, wantSent: false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var (
+				got  interface{}
+				sent bool
+			)
+			tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+				if tool == "qrdb_ceremony_enroll_external_officer" {
+					got, sent = args["share_bytes"]
+				}
+				return map[string]interface{}{"sealed_share": "sealed"}
+			})
+			defer cleanup()
+
+			if _, err := tr.CeremonyEnrollExternalOfficer(context.Background(), &qrdbtransport.EnrollExternalOfficerRequest{
+				Username:   "bob",
+				AuthFactor: "piv",
+				CertPEM:    "CERT",
+				ShareBytes: c.share,
+			}); err != nil {
+				t.Fatalf("CeremonyEnrollExternalOfficer: %v", err)
+			}
+			if sent != c.wantSent {
+				t.Fatalf("share_bytes sent = %v, want %v", sent, c.wantSent)
+			}
+			if !c.wantSent {
+				return
+			}
+			want := base64.StdEncoding.EncodeToString(c.share)
+			if got != want {
+				t.Fatalf("share_bytes = %#v, want base64 %q", got, want)
+			}
+		})
+	}
+}
+
 func TestCeremonyNilRequestErrors(t *testing.T) {
 	tr, err := New(&transport.Config{Address: "http://localhost:1"})
 	if err != nil {

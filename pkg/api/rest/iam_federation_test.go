@@ -2025,13 +2025,119 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	assert.Equal(t, "google-updated", resp.Name)
 	assert.False(t, resp.Enabled)
 	assert.Equal(t, "new-client-id", resp.ClientID)
-	assert.Equal(t, "new-secret", resp.ClientSecret)
+	assert.Empty(t, resp.ClientSecret, "the response must not carry the upstream client secret")
+	assert.NotContains(t, rec.Body.String(), "new-secret")
+	stored, err := fedMgr.GetProvider(context.Background(), "tenant123", "prov_google")
+	require.NoError(t, err)
+	assert.Equal(t, "new-secret", stored.ClientSecret, "the stored provider must keep the secret")
 	assert.Equal(t, "https://new-issuer.com", resp.IssuerURL)
 	assert.Equal(t, "https://new-issuer.com/auth", resp.AuthURL)
 	assert.Equal(t, "https://new-issuer.com/token", resp.TokenURL)
 	assert.Equal(t, "https://new-issuer.com/userinfo", resp.UserInfoURL)
 	assert.Equal(t, newScopes, resp.Scopes)
 	_ = newClaimMapping
+}
+
+// assertNoProviderSecret fails when a provider response body carries the
+// upstream client secret or any non-empty client_secret value.
+func assertNoProviderSecret(t *testing.T, body []byte, secret string) {
+	t.Helper()
+	assert.NotContains(t, string(body), secret)
+	assert.NotRegexp(t, `"client_secret":\s*"[^"]`, string(body))
+}
+
+func TestProviderResponses_RedactClientSecret(t *testing.T) {
+	const secret = "upstream-idp-secret"
+	storedProvider := func() *iam.ExternalProvider {
+		return &iam.ExternalProvider{
+			ID:           "prov_google",
+			TenantID:     "tenant123",
+			Name:         "google",
+			Type:         "oidc",
+			Enabled:      true,
+			ClientID:     "client-id",
+			ClientSecret: secret,
+			IssuerURL:    "https://accounts.google.com",
+		}
+	}
+	routeRequest := func(method, target string, body []byte, providerID string) *http.Request {
+		req := httptest.NewRequest(method, target, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("tenant_id", "tenant123")
+		if providerID != "" {
+			rctx.URLParams.Add("provider_id", providerID)
+		}
+		return req.WithContext(callerRouteContext(req.Context(), rctx))
+	}
+
+	t.Run("create", func(t *testing.T) {
+		fedMgr := newMockFederationManager()
+		handler, _ := createFederationTestHandler(fedMgr)
+		body, err := json.Marshal(RegisterProviderOptions{
+			Name:         "google",
+			Type:         "oidc",
+			Enabled:      true,
+			ClientID:     "client-id",
+			ClientSecret: secret,
+			Issuer:       "https://accounts.google.com",
+		})
+		require.NoError(t, err)
+
+		rec := httptest.NewRecorder()
+		handler.RegisterProvider(rec, routeRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", body, ""))
+
+		require.Equal(t, http.StatusCreated, rec.Code)
+		assertNoProviderSecret(t, rec.Body.Bytes(), secret)
+		require.Len(t, fedMgr.providers, 1)
+		for _, stored := range fedMgr.providers {
+			assert.Equal(t, secret, stored.ClientSecret, "the stored provider must keep the secret")
+		}
+	})
+
+	t.Run("get", func(t *testing.T) {
+		fedMgr := newMockFederationManager()
+		fedMgr.providers["prov_google"] = storedProvider()
+		handler, _ := createFederationTestHandler(fedMgr)
+
+		rec := httptest.NewRecorder()
+		handler.GetProvider(rec, routeRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers/prov_google", nil, "prov_google"))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		assertNoProviderSecret(t, rec.Body.Bytes(), secret)
+		assert.Equal(t, secret, fedMgr.providers["prov_google"].ClientSecret)
+	})
+
+	t.Run("list", func(t *testing.T) {
+		fedMgr := newMockFederationManager()
+		fedMgr.providers["prov_google"] = storedProvider()
+		handler, _ := createFederationTestHandler(fedMgr)
+
+		rec := httptest.NewRecorder()
+		handler.ListProviders(rec, routeRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers", nil, ""))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "prov_google")
+		assertNoProviderSecret(t, rec.Body.Bytes(), secret)
+		assert.Equal(t, secret, fedMgr.providers["prov_google"].ClientSecret)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		fedMgr := newMockFederationManager()
+		fedMgr.providers["prov_google"] = storedProvider()
+		handler, _ := createFederationTestHandler(fedMgr)
+		newName := "google-renamed"
+		body, err := json.Marshal(UpdateProviderOptions{Name: &newName})
+		require.NoError(t, err)
+
+		rec := httptest.NewRecorder()
+		handler.UpdateProvider(rec, routeRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", body, "prov_google"))
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), newName)
+		assertNoProviderSecret(t, rec.Body.Bytes(), secret)
+		assert.Equal(t, secret, fedMgr.providers["prov_google"].ClientSecret)
+	})
 }
 
 // TestBeginFederatedLogin_WithOptionalParams tests login with optional parameters.

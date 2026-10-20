@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -2645,8 +2646,11 @@ func (r *ToolRegistry) executeIAMAuditDelete(ctx context.Context, args map[strin
 	}
 
 	tenantID := getString(args, "tenant_id")
-	beforeStr := getString(args, "before")
+	if err := r.requireAuditDeletePermission(ctx, tenantID); err != nil {
+		return nil, err
+	}
 
+	beforeStr := getString(args, "before")
 	before, parseErr := time.Parse(time.RFC3339, beforeStr)
 	if parseErr != nil {
 		return nil, api.NewInvalidFormatError("before", parseErr)
@@ -2661,6 +2665,36 @@ func (r *ToolRegistry) executeIAMAuditDelete(ctx context.Context, args map[strin
 		"deleted":   deleted,
 		"timestamp": time.Now(),
 	})
+}
+
+// requireAuditDeletePermission requires audit:delete on tenantID for the
+// authenticated subject, as REST DeleteOldAuditEvents and the embedded
+// transport do. The tool's route permission is audit:query, so this is the
+// check that keeps a query-only principal from pruning audit history. It
+// fails closed when no authenticated subject is bound.
+func (r *ToolRegistry) requireAuditDeletePermission(ctx context.Context, tenantID string) error {
+	const op = "mcp.iam.audit.delete"
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated || subject.ID == "" {
+		return api.NewInsufficientPermissionsError(op)
+	}
+	mgr, err := r.getAdminManager(ctx)
+	if err != nil {
+		return err
+	}
+	resp, err := mgr.CheckPermission(ctx, &iam.AdminCheckRequest{
+		UserID:       subject.UserID,
+		Permission:   iam.PermAuditDelete,
+		TenantID:     tenantID,
+		ResourceType: "audit",
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil || !resp.Allowed {
+		return api.NewInsufficientPermissionsError(op)
+	}
+	return nil
 }
 
 // =============================================================================

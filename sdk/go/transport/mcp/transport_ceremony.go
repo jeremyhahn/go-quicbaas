@@ -330,9 +330,10 @@ func (t *Transport) CeremonyEnrollExternalOfficer(ctx context.Context, req *qrdb
 		args["pubkey_pem"] = req.PubKeyPEM
 	}
 	if len(req.ShareBytes) > 0 {
-		// MCP tool ingests share_bytes as a string; the daemon converts
-		// back to bytes server-side.
-		args["share_bytes"] = string(req.ShareBytes)
+		// A Shamir share is binary and a JSON string cannot carry
+		// arbitrary bytes, so share_bytes travels base64; the server
+		// decodes it back to the dealt share.
+		args["share_bytes"] = base64.StdEncoding.EncodeToString(req.ShareBytes)
 	}
 
 	raw, err := t.callBarrier(ctx, "qrdb_ceremony_enroll_external_officer", args)

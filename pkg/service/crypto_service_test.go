@@ -16,6 +16,9 @@ package service
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 )
 
 // =============================================================================
@@ -682,6 +686,215 @@ func TestCryptoService_DecryptBatch_ManagerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, resp)
+}
+
+// aeadCryptoManager returns a crypto manager double that really seals with
+// AES-256-GCM and binds each ciphertext to its context (AAD), so a test can
+// prove the service passes every item's context through. batchCalls counts
+// the shared-context batch calls the service makes.
+func aeadCryptoManager(t *testing.T) (*mockCryptoManager, *int) {
+	t.Helper()
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	gcm, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+
+	seal := func(_ context.Context, _ string, plaintext, aad []byte) ([]byte, error) {
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, err
+		}
+		return gcm.Seal(nonce, nonce, plaintext, aad), nil
+	}
+	open := func(_ context.Context, _ string, ciphertext, aad []byte) ([]byte, error) {
+		if len(ciphertext) < gcm.NonceSize() {
+			return nil, errors.New("ciphertext too short")
+		}
+		nonce, sealed := ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():]
+		return gcm.Open(nil, nonce, sealed, aad)
+	}
+	batchCalls := 0
+	each := func(fn func(context.Context, string, []byte, []byte) ([]byte, error)) func(context.Context, string, [][]byte, []byte) ([][]byte, error) {
+		return func(ctx context.Context, keyID string, items [][]byte, aad []byte) ([][]byte, error) {
+			batchCalls++
+			out := make([][]byte, len(items))
+			for i, item := range items {
+				result, err := fn(ctx, keyID, item, aad)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = result
+			}
+			return out, nil
+		}
+	}
+
+	mgr := newMockCryptoManager()
+	mgr.encryptFn = seal
+	mgr.decryptFn = open
+	mgr.encryptBatchFn = each(seal)
+	mgr.decryptBatchFn = each(open)
+	return mgr, &batchCalls
+}
+
+func TestCryptoService_EncryptBatch_SharedContextBindsEveryItem(t *testing.T) {
+	cryptoMgr, batchCalls := aeadCryptoManager(t)
+	svc := newCryptoService(cryptoMgr, newMockKMSManager(), newMockLogger(), nil)
+	ctx := systemTenantCtx()
+	aad := []byte("tenant=a")
+
+	resp, err := svc.EncryptBatch(ctx, &EncryptBatchRequest{
+		KeyID: "test-key-1",
+		Items: []BatchEncryptItem{
+			{Plaintext: []byte("data1"), Context: aad},
+			{Plaintext: []byte("data2"), Context: aad},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 2)
+	assert.Equal(t, 1, *batchCalls, "a shared context uses one batch call")
+
+	for i, result := range resp.Results {
+		plain, err := svc.Decrypt(ctx, &DecryptRequest{KeyID: "test-key-1", Ciphertext: result.Ciphertext, Context: aad})
+		require.NoError(t, err)
+		assert.Equal(t, []byte{'d', 'a', 't', 'a', byte('1' + i)}, plain.Plaintext)
+
+		_, err = svc.Decrypt(ctx, &DecryptRequest{KeyID: "test-key-1", Ciphertext: result.Ciphertext})
+		assert.Error(t, err, "ciphertext bound to a context must not decrypt without it")
+	}
+}
+
+func TestCryptoService_EncryptBatch_DifferingContextsBindEachItem(t *testing.T) {
+	cryptoMgr, batchCalls := aeadCryptoManager(t)
+	svc := newCryptoService(cryptoMgr, newMockKMSManager(), newMockLogger(), nil)
+	ctx := systemTenantCtx()
+	contexts := [][]byte{[]byte("ctx-a"), []byte("ctx-b"), nil}
+
+	items := make([]BatchEncryptItem, len(contexts))
+	for i, c := range contexts {
+		items[i] = BatchEncryptItem{Plaintext: []byte("secret"), Context: c}
+	}
+	resp, err := svc.EncryptBatch(ctx, &EncryptBatchRequest{KeyID: "test-key-1", Items: items})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, len(contexts))
+	assert.Zero(t, *batchCalls, "differing contexts are encrypted item by item")
+
+	for i, result := range resp.Results {
+		for j, c := range contexts {
+			_, err := svc.Decrypt(ctx, &DecryptRequest{KeyID: "test-key-1", Ciphertext: result.Ciphertext, Context: c})
+			if i == j {
+				assert.NoError(t, err, "item %d must decrypt with its own context", i)
+			} else {
+				assert.Error(t, err, "item %d must not decrypt with item %d's context", i, j)
+			}
+		}
+	}
+}
+
+func TestCryptoService_DecryptBatch_PerItemContextsRoundTrip(t *testing.T) {
+	cryptoMgr, _ := aeadCryptoManager(t)
+	svc := newCryptoService(cryptoMgr, newMockKMSManager(), newMockLogger(), nil)
+	ctx := systemTenantCtx()
+	contexts := [][]byte{[]byte("ctx-a"), []byte("ctx-b")}
+
+	items := make([]BatchDecryptItem, len(contexts))
+	for i, c := range contexts {
+		enc, err := svc.Encrypt(ctx, &EncryptRequest{KeyID: "test-key-1", Plaintext: []byte{byte('a' + i)}, Context: c})
+		require.NoError(t, err)
+		items[i] = BatchDecryptItem{Ciphertext: enc.Ciphertext, Context: c}
+	}
+
+	resp, err := svc.DecryptBatch(ctx, &DecryptBatchRequest{KeyID: "test-key-1", Items: items})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 2)
+	assert.Equal(t, []byte("a"), resp.Results[0].Plaintext)
+	assert.Equal(t, []byte("b"), resp.Results[1].Plaintext)
+}
+
+func TestCryptoService_DecryptBatch_WrongOrMissingContextFails(t *testing.T) {
+	cases := map[string][]byte{
+		"wrong context":   []byte("ctx-other"),
+		"missing context": nil,
+	}
+	for name, badContext := range cases {
+		t.Run(name, func(t *testing.T) {
+			cryptoMgr, _ := aeadCryptoManager(t)
+			svc := newCryptoService(cryptoMgr, newMockKMSManager(), newMockLogger(), nil)
+			ctx := systemTenantCtx()
+
+			first, err := svc.Encrypt(ctx, &EncryptRequest{KeyID: "test-key-1", Plaintext: []byte("a"), Context: []byte("ctx-a")})
+			require.NoError(t, err)
+			second, err := svc.Encrypt(ctx, &EncryptRequest{KeyID: "test-key-1", Plaintext: []byte("b"), Context: []byte("ctx-b")})
+			require.NoError(t, err)
+
+			resp, err := svc.DecryptBatch(ctx, &DecryptBatchRequest{
+				KeyID: "test-key-1",
+				Items: []BatchDecryptItem{
+					{Ciphertext: first.Ciphertext, Context: []byte("ctx-a")},
+					{Ciphertext: second.Ciphertext, Context: badContext},
+				},
+			})
+			require.Error(t, err)
+			assert.Nil(t, resp, "a failed item must not yield partial results")
+			var qbErr *quicbaasErrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, quicbaasErrors.ErrDecryption, qbErr.Code)
+		})
+	}
+}
+
+func TestCryptoService_Batch_NoContextRoundTrips(t *testing.T) {
+	cryptoMgr, batchCalls := aeadCryptoManager(t)
+	svc := newCryptoService(cryptoMgr, newMockKMSManager(), newMockLogger(), nil)
+	ctx := systemTenantCtx()
+
+	enc, err := svc.EncryptBatch(ctx, &EncryptBatchRequest{
+		KeyID: "test-key-1",
+		Items: []BatchEncryptItem{{Plaintext: []byte("x")}, {Plaintext: []byte("y"), Context: []byte{}}},
+	})
+	require.NoError(t, err)
+
+	items := make([]BatchDecryptItem, len(enc.Results))
+	for i, result := range enc.Results {
+		items[i] = BatchDecryptItem{Ciphertext: result.Ciphertext}
+	}
+	dec, err := svc.DecryptBatch(ctx, &DecryptBatchRequest{KeyID: "test-key-1", Items: items})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("x"), dec.Results[0].Plaintext)
+	assert.Equal(t, []byte("y"), dec.Results[1].Plaintext)
+	assert.Equal(t, 2, *batchCalls, "nil and empty contexts share one batch call each way")
+}
+
+func TestCryptoService_EncryptBatch_ReportsKeyVersion(t *testing.T) {
+	kmsMgr := newMockKMSManager()
+	kmsMgr.getKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		return &kms.KeyMetadata{KeyID: keyID, Version: 4}, nil
+	}
+	svc := newCryptoService(newMockCryptoManager(), kmsMgr, newMockLogger(), nil)
+	ctx := systemTenantCtx()
+
+	single, err := svc.Encrypt(ctx, &EncryptRequest{KeyID: "test-key-1", Plaintext: []byte("p")})
+	require.NoError(t, err)
+	batch, err := svc.EncryptBatch(ctx, &EncryptBatchRequest{KeyID: "test-key-1", Items: []BatchEncryptItem{{Plaintext: []byte("p")}}})
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(4), single.KeyVersion)
+	assert.Equal(t, single.KeyVersion, batch.KeyVersion)
+}
+
+func TestCryptoService_EncryptBatch_KeyVersionDefaultsWhenLookupFails(t *testing.T) {
+	kmsMgr := newMockKMSManager()
+	kmsMgr.getKeyFn = func(ctx context.Context, keyID string) (interface{}, error) {
+		return nil, errors.New("lookup failed")
+	}
+	svc := newCryptoService(newMockCryptoManager(), kmsMgr, newMockLogger(), nil)
+
+	resp, err := svc.EncryptBatch(systemTenantCtx(), &EncryptBatchRequest{KeyID: "test-key-1", Items: []BatchEncryptItem{{Plaintext: []byte("p")}}})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), resp.KeyVersion)
 }
 
 // =============================================================================

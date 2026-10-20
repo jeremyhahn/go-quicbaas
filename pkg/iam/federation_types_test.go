@@ -15,6 +15,7 @@ package iam
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -178,4 +179,70 @@ func TestFederationStateExpiredError_Error(t *testing.T) {
 		err := &FederationStateExpiredError{}
 		assert.Equal(t, "federation state expired", err.Error())
 	})
+}
+
+func TestExternalProvider_Redacted_ClearsSecretOnly(t *testing.T) {
+	original := &ExternalProvider{
+		ID:            "p1",
+		TenantID:      "t1",
+		Name:          "Okta",
+		Type:          ProviderTypeOIDC,
+		Enabled:       true,
+		ClientID:      "client-id",
+		ClientSecret:  "upstream-secret",
+		IssuerURL:     "https://idp.example.com",
+		Scopes:        []string{"openid", "email"},
+		ClaimMappings: &ClaimMappings{Email: "email"},
+		DefaultRoles:  []string{"viewer"},
+		Created:       time.Unix(100, 0),
+		Updated:       time.Unix(200, 0),
+	}
+
+	redacted := original.Redacted()
+
+	assert.Empty(t, redacted.ClientSecret)
+	assert.NotSame(t, original, redacted)
+
+	expected := *original
+	expected.ClientSecret = ""
+	assert.Equal(t, &expected, redacted)
+}
+
+func TestExternalProvider_Redacted_LeavesOriginalUntouched(t *testing.T) {
+	original := &ExternalProvider{ID: "p1", ClientSecret: "upstream-secret"}
+
+	redacted := original.Redacted()
+	redacted.ID = "changed"
+
+	assert.Equal(t, "upstream-secret", original.ClientSecret)
+	assert.Equal(t, "p1", original.ID)
+}
+
+func TestExternalProvider_Redacted_NilReceiver(t *testing.T) {
+	var provider *ExternalProvider
+
+	assert.Nil(t, provider.Redacted())
+}
+
+func TestRedactProviders_ClearsEverySecret(t *testing.T) {
+	providers := []*ExternalProvider{
+		{ID: "p1", ClientSecret: "secret-1"},
+		{ID: "p2", ClientSecret: "secret-2"},
+	}
+
+	redacted := RedactProviders(providers)
+
+	assert.Len(t, redacted, 2)
+	assert.Equal(t, "p1", redacted[0].ID)
+	assert.Empty(t, redacted[0].ClientSecret)
+	assert.Equal(t, "p2", redacted[1].ID)
+	assert.Empty(t, redacted[1].ClientSecret)
+	assert.Equal(t, "secret-1", providers[0].ClientSecret)
+	assert.Equal(t, "secret-2", providers[1].ClientSecret)
+}
+
+func TestRedactProviders_EmptyAndNilInput(t *testing.T) {
+	assert.Empty(t, RedactProviders(nil))
+	assert.NotNil(t, RedactProviders(nil), "an empty list must encode as [] not null")
+	assert.Equal(t, []*ExternalProvider{nil}, RedactProviders([]*ExternalProvider{nil}))
 }

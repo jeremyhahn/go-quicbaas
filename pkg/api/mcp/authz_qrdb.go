@@ -721,8 +721,10 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	//   impersonation                 -> users:read / users:update (no
 	//                                    impersonation:* family is registered);
 	//   audit                         -> audit:query (filtered list, and the
-	//                                    retention prune, which has no
-	//                                    audit:delete to require) / audit:read;
+	//                                    retention prune, whose executor
+	//                                    then requires audit:delete on the
+	//                                    target tenant, as REST and embedded
+	//                                    do) / audit:read;
 	//   delegated-admin assignments   -> roles:read / list / assign / unassign;
 	//   permission checks             -> permissions:resolve.
 	"quicbaas_iam_user_create":      {"users", "create"},

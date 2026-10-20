@@ -518,6 +518,28 @@ type ExternalProvider struct {
 	Updated time.Time `json:"updated"`
 }
 
+// Redacted returns a shallow copy of the provider with ClientSecret cleared,
+// for use in API responses. The receiver is never modified: federation login
+// still reads the secret from the stored provider. A nil receiver returns nil.
+func (p *ExternalProvider) Redacted() *ExternalProvider {
+	if p == nil {
+		return nil
+	}
+	redacted := *p
+	redacted.ClientSecret = ""
+	return &redacted
+}
+
+// RedactProviders returns a new slice holding the Redacted copy of each
+// provider. The input slice and its providers are not modified.
+func RedactProviders(providers []*ExternalProvider) []*ExternalProvider {
+	redacted := make([]*ExternalProvider, len(providers))
+	for i, provider := range providers {
+		redacted[i] = provider.Redacted()
+	}
+	return redacted
+}
+
 // Validate validates an ExternalProvider for correctness.
 func (p *ExternalProvider) Validate() error {
 	if p.ID == "" {

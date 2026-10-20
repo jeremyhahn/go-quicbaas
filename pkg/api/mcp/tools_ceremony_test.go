@@ -25,8 +25,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // =============================================================================
@@ -67,6 +69,7 @@ type fakeCeremonyService struct {
 	gotSignCSR       string
 	gotSignRole      string
 	gotEnrollReq     *service.CeremonyEnrollExternalOfficerRequest
+	gotEnrollShare   []byte
 }
 
 func (f *fakeCeremonyService) CeremonyInitialize(_ context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
@@ -112,6 +115,9 @@ func (f *fakeCeremonyService) CeremonySignCSR(_ context.Context, username, soPin
 
 func (f *fakeCeremonyService) CeremonyEnrollExternalOfficer(_ context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
 	f.gotEnrollReq = req
+	// The executor wipes ShareBytes after the call, so keep a copy of what
+	// the service actually received.
+	f.gotEnrollShare = append([]byte(nil), req.ShareBytes...)
 	return f.enrollResp, f.enrollErr
 }
 
@@ -285,12 +291,14 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 	})
 
 	t.Run("enroll_external_officer_with_cert", func(t *testing.T) {
+		// A Shamir share is binary and not valid UTF-8; it travels base64.
+		share := []byte{0x00, 0xff, 0x80, 0xfe}
 		out, err := r.ExecuteTool(ctx, "qrdb_ceremony_enroll_external_officer", map[string]interface{}{
 			"username":    "ext",
 			"cert_pem":    "-----BEGIN CERT-----",
 			"share_index": 4,
 			"auth_factor": "mtls",
-			"share_bytes": "raw-share",
+			"share_bytes": base64.StdEncoding.EncodeToString(share),
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "sealed-share-b64", out.(map[string]interface{})["sealed_share"])
@@ -301,7 +309,8 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 		assert.Empty(t, fake.gotEnrollReq.PubKeyPEM)
 		assert.Equal(t, 4, fake.gotEnrollReq.ShareIndex)
 		assert.Equal(t, "mtls", fake.gotEnrollReq.AuthFactor)
-		assert.Equal(t, []byte("raw-share"), fake.gotEnrollReq.ShareBytes)
+		assert.Equal(t, share, fake.gotEnrollShare, "the service must seal the dealt share bytes unchanged")
+		assert.Equal(t, make([]byte, len(share)), fake.gotEnrollReq.ShareBytes, "executor must wipe the decoded share after the call")
 	})
 
 	t.Run("enroll_external_officer_with_pubkey", func(t *testing.T) {
@@ -315,7 +324,30 @@ func TestCeremonyToolsExecuteSuccess(t *testing.T) {
 		require.NotNil(t, fake.gotEnrollReq)
 		assert.Empty(t, fake.gotEnrollReq.CertPEM)
 		assert.Equal(t, "-----BEGIN PUBLIC KEY-----", fake.gotEnrollReq.PubKeyPEM)
+		assert.Empty(t, fake.gotEnrollReq.ShareBytes, "an absent share_bytes means no share")
 	})
+}
+
+// TestCeremonyEnrollExternalOfficerRejectsInvalidShareEncoding proves a
+// share_bytes value that is not base64 is refused with a typed error before
+// the service is called, so no mangled share is ever sealed.
+func TestCeremonyEnrollExternalOfficerRejectsInvalidShareEncoding(t *testing.T) {
+	fake := &fakeCeremonyService{}
+	r := newCeremonyTestRegistry(t, fake)
+
+	_, err := r.ExecuteTool(context.Background(), "qrdb_ceremony_enroll_external_officer", map[string]interface{}{
+		"username":    "ext",
+		"cert_pem":    "-----BEGIN CERT-----",
+		"auth_factor": "mtls",
+		"share_bytes": "raw-share",
+	})
+	require.Error(t, err)
+	var invalid *CeremonyFieldInvalidError
+	require.ErrorAs(t, err, &invalid)
+	assert.Equal(t, "share_bytes", invalid.Field)
+	assert.Equal(t, qberrors.ErrInvalidInput, invalid.ErrorCode())
+	assert.Equal(t, mcptransport.MCPInvalidInput, toolErrorCode(err), "bad base64 must reach the caller as invalid input")
+	assert.Nil(t, fake.gotEnrollReq, "the service must not be called with an undecodable share")
 }
 
 // TestCeremonyToolsValidation exercises required-field and mutual-exclusion

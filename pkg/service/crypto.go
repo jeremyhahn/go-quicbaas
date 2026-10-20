@@ -16,6 +16,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"time"
@@ -220,18 +221,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, keyOperationError(errors.ErrEncryption, "crypto.Encrypt", "encrypt data", err)
 	}
 
-	// Get key version from KMS (if available)
-	var keyVersion uint64 = 1
-	if t.kmsManager != nil {
-		if keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID); err == nil {
-			// Type assert to extract version (implementation-specific)
-			if km, ok := keyInfo.(map[string]interface{}); ok {
-				if v, ok := km["version"].(uint64); ok {
-					keyVersion = v
-				}
-			}
-		}
-	}
+	keyVersion := t.keyVersion(ctx, scopedKeyID)
 
 	resp := &EncryptResponse{
 		KeyID:      req.KeyID,
@@ -252,6 +242,71 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 	}
 
 	return resp, nil
+}
+
+// keyVersion returns the current version of scopedKeyID as the KMS manager
+// reports it. It returns 1 when no KMS manager is configured, the lookup
+// fails, or the metadata carries no version.
+func (t *cryptoService) keyVersion(ctx context.Context, scopedKeyID string) uint64 {
+	var version uint64 = 1
+	if t.kmsManager == nil {
+		return version
+	}
+	keyInfo, err := t.kmsManager.GetKey(ctx, scopedKeyID)
+	if err != nil {
+		return version
+	}
+	switch info := keyInfo.(type) {
+	case *kms.KeyMetadata:
+		if info.Version > 0 {
+			version = conv.ClampIntToUint64(info.Version)
+		}
+	case map[string]interface{}:
+		if v, ok := info["version"].(uint64); ok {
+			version = v
+		}
+	}
+	return version
+}
+
+// cryptoItemFunc encrypts or decrypts one item under keyID bound to encContext.
+type cryptoItemFunc func(ctx context.Context, keyID string, data, encContext []byte) ([]byte, error)
+
+// cryptoBatchFunc encrypts or decrypts every item under keyID bound to one
+// shared encContext.
+type cryptoBatchFunc func(ctx context.Context, keyID string, items [][]byte, encContext []byte) ([][]byte, error)
+
+// processBatchItems runs data[i] through the crypto manager bound to
+// contexts[i]. When every context is byte-equal (all empty included) it makes
+// one batch call with that context; otherwise it processes each item with its
+// own context. Any item failure fails the whole batch with no partial result.
+func processBatchItems(ctx context.Context, keyID string, data, contexts [][]byte, batch cryptoBatchFunc, single cryptoItemFunc) ([][]byte, error) {
+	if shared, ok := sharedBatchContext(contexts); ok {
+		return batch(ctx, keyID, data, shared)
+	}
+	results := make([][]byte, len(data))
+	for i := range data {
+		result, err := single(ctx, keyID, data[i], contexts[i])
+		if err != nil {
+			return nil, err
+		}
+		results[i] = result
+	}
+	return results, nil
+}
+
+// sharedBatchContext returns the context every item shares, and false when
+// the items' contexts differ. A nil and an empty context are equal.
+func sharedBatchContext(contexts [][]byte) ([]byte, bool) {
+	if len(contexts) == 0 {
+		return nil, true
+	}
+	for _, c := range contexts[1:] {
+		if !bytes.Equal(c, contexts[0]) {
+			return nil, false
+		}
+	}
+	return contexts[0], true
 }
 
 // Decrypt decrypts ciphertext that was encrypted with a named key.
@@ -464,14 +519,16 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		}
 	}
 
-	// Extract plaintexts from items
+	// Extract plaintexts and their per-item contexts (AAD)
 	plaintexts := make([][]byte, len(req.Items))
+	contexts := make([][]byte, len(req.Items))
 	for i, item := range req.Items {
 		plaintexts[i] = item.Plaintext
+		contexts[i] = item.Context
 	}
 
-	// Perform batch encryption
-	ciphertexts, err := t.cryptoManager.EncryptBatch(ctx, scopedKeyID, plaintexts, nil)
+	// Perform batch encryption, binding each item to its own context
+	ciphertexts, err := processBatchItems(ctx, scopedKeyID, plaintexts, contexts, t.cryptoManager.EncryptBatch, t.cryptoManager.Encrypt)
 	if err != nil {
 		t.metrics.encryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("encrypt_batch_error").Inc()
@@ -488,7 +545,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 
 	resp := &EncryptBatchResponse{
 		KeyID:      req.KeyID,
-		KeyVersion: 1,
+		KeyVersion: t.keyVersion(ctx, scopedKeyID),
 		Results:    results,
 		Timestamp:  time.Now(),
 	}
@@ -555,14 +612,16 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		}
 	}
 
-	// Extract ciphertexts from items
+	// Extract ciphertexts and their per-item contexts (AAD)
 	ciphertexts := make([][]byte, len(req.Items))
+	contexts := make([][]byte, len(req.Items))
 	for i, item := range req.Items {
 		ciphertexts[i] = item.Ciphertext
+		contexts[i] = item.Context
 	}
 
-	// Perform batch decryption
-	plaintexts, err := t.cryptoManager.DecryptBatch(ctx, scopedKeyID, ciphertexts, nil)
+	// Perform batch decryption, verifying each item against its own context
+	plaintexts, err := processBatchItems(ctx, scopedKeyID, ciphertexts, contexts, t.cryptoManager.DecryptBatch, t.cryptoManager.Decrypt)
 	if err != nil {
 		t.metrics.decryptOperationsTotal.With(req.KeyID, "error").Inc()
 		t.metrics.errorsByType.With("decrypt_batch_error").Inc()

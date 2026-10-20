@@ -24,7 +24,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // =============================================================================
@@ -73,17 +77,55 @@ var _ iam.AuditLogger = (*mockAuditLogger)(nil)
 type auditMockService struct {
 	mockService
 	auditLogger iam.AuditLogger
+	adminMgr    *iam.AdminManager
 }
 
 func (m *auditMockService) GetAuditLogger(_ context.Context) (iam.AuditLogger, error) {
 	return m.auditLogger, nil
 }
 
+func (m *auditMockService) GetAdminManager(_ context.Context) (*iam.AdminManager, error) {
+	return m.adminMgr, nil
+}
+
 func newAuditRegistry(t *testing.T, logger iam.AuditLogger) *ToolRegistry {
 	t.Helper()
 	log := newTestLogger(t)
-	svc := &auditMockService{auditLogger: logger}
+	svc := &auditMockService{auditLogger: logger, adminMgr: newAuditAdminManager(t)}
 	return &ToolRegistry{service: svc, logger: log}
+}
+
+const auditDeleteTenant = "t1"
+
+func newAuditAdminManager(t *testing.T) *iam.AdminManager {
+	t.Helper()
+	mgr, err := iam.NewAdminManager(iam.AdminManagerOptions{
+		AdminStorage:         iam.NewMemoryAdminStorage(),
+		ImpersonationStorage: iam.NewMemoryImpersonationStorage(),
+		TargetResolver:       mcpAllowAllTargetResolver{},
+	})
+	require.NoError(t, err)
+	return mgr
+}
+
+// auditDeleteCtx binds an authenticated subject (user 42) to the context and,
+// when grant is true, gives that user audit:delete on auditDeleteTenant.
+func auditDeleteCtx(t *testing.T, reg *ToolRegistry, grant bool) context.Context {
+	t.Helper()
+	const userID = uint64(42)
+	if grant {
+		mgr, err := reg.getAdminManager(context.Background())
+		require.NoError(t, err)
+		_, err = mgr.CreateAssignment(context.Background(), iam.CreateAdminAssignmentOptions{
+			UserID:      userID,
+			AdminRole:   iam.AdminRoleAuditAdmin,
+			TenantIDs:   []string{auditDeleteTenant},
+			Permissions: []iam.AdminPermission{iam.PermAuditDelete},
+			GrantedBy:   "test",
+		})
+		require.NoError(t, err)
+	}
+	return mcpCtxWithActor(userID)
 }
 
 // =============================================================================
@@ -236,8 +278,8 @@ func TestExecuteIAMAuditDelete_Success(t *testing.T) {
 	auditLog := &mockAuditLogger{}
 	reg := newAuditRegistry(t, auditLog)
 
-	result, err := reg.executeIAMAuditDelete(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
+	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
 		"before":    "2024-01-01T00:00:00Z",
 	})
 	require.NoError(t, err)
@@ -248,12 +290,103 @@ func TestExecuteIAMAuditDelete_Success(t *testing.T) {
 	assert.Equal(t, float64(5), resultMap["deleted"])
 }
 
+// TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the route
+// permission (audit:query) is not enough to prune audit history: the
+// executor refuses a subject lacking audit:delete, as REST and embedded do,
+// and never reaches DeleteOlderThan.
+func TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused(t *testing.T) {
+	deleteCalled := false
+	auditLog := &mockAuditLogger{
+		deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+			deleteCalled = true
+			return 5, nil
+		},
+	}
+	reg := newAuditRegistry(t, auditLog)
+
+	_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, false), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	var denied *api.InsufficientPermissionsError
+	require.ErrorAs(t, err, &denied)
+	assert.Equal(t, mcptransport.MCPPermissionDenied, toolErrorCode(err))
+	assert.False(t, deleteCalled, "DeleteOlderThan must not run for a denied subject")
+}
+
+// TestExecuteIAMAuditDelete_OtherTenantGrantRefused proves the check is made
+// against the target tenant: audit:delete on t1 does not reach t2.
+func TestExecuteIAMAuditDelete_OtherTenantGrantRefused(t *testing.T) {
+	reg := newAuditRegistry(t, &mockAuditLogger{})
+
+	_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+		"tenant_id": "t2",
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	var denied *api.InsufficientPermissionsError
+	require.ErrorAs(t, err, &denied)
+}
+
+func TestExecuteIAMAuditDelete_NoSubjectFailsClosed(t *testing.T) {
+	reg := newAuditRegistry(t, &mockAuditLogger{})
+
+	_, err := reg.executeIAMAuditDelete(context.Background(), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	var denied *api.InsufficientPermissionsError
+	require.ErrorAs(t, err, &denied)
+}
+
+func TestExecuteIAMAuditDelete_UnauthenticatedSubjectFailsClosed(t *testing.T) {
+	reg := newAuditRegistry(t, &mockAuditLogger{})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "42", UserID: 42})
+
+	_, err := reg.executeIAMAuditDelete(ctx, map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	var denied *api.InsufficientPermissionsError
+	require.ErrorAs(t, err, &denied)
+}
+
+// TestExecuteIAMAuditDelete_CheckPermissionErrorReturned proves a failing
+// CheckPermission (here: a subject with no numeric user ID) is returned as
+// is rather than reported as a denial or ignored.
+func TestExecuteIAMAuditDelete_CheckPermissionErrorReturned(t *testing.T) {
+	reg := newAuditRegistry(t, &mockAuditLogger{})
+	ctx := auth.SubjectIntoContext(context.Background(), interfaces.Subject{ID: "svc", Authenticated: true})
+
+	_, err := reg.executeIAMAuditDelete(ctx, map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	var required *api.RequiredFieldError
+	require.ErrorAs(t, err, &required)
+	assert.Equal(t, "user_id", required.Field)
+}
+
+func TestExecuteIAMAuditDelete_AdminManagerUnavailable(t *testing.T) {
+	reg := &ToolRegistry{
+		service: &auditMockService{auditLogger: &mockAuditLogger{}},
+		logger:  newTestLogger(t),
+	}
+
+	_, err := reg.executeIAMAuditDelete(mcpCtxWithActor(42), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+	})
+	require.Error(t, err)
+	var denied *api.InsufficientPermissionsError
+	assert.NotErrorAs(t, err, &denied)
+}
+
 func TestExecuteIAMAuditDelete_InvalidBefore(t *testing.T) {
 	auditLog := &mockAuditLogger{}
 	reg := newAuditRegistry(t, auditLog)
 
-	_, err := reg.executeIAMAuditDelete(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
+	_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
 		"before":    "not-a-date",
 	})
 	require.Error(t, err)
@@ -267,11 +400,11 @@ func TestExecuteIAMAuditDelete_Error(t *testing.T) {
 	}
 	reg := newAuditRegistry(t, auditLog)
 
-	_, err := reg.executeIAMAuditDelete(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
+	_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
 		"before":    "2024-01-01T00:00:00Z",
 	})
-	require.Error(t, err)
+	require.EqualError(t, err, "delete failed")
 }
 
 func TestExecuteIAMAuditDelete_ServiceUnavailable(t *testing.T) {

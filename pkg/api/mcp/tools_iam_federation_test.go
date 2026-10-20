@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -405,6 +406,86 @@ func TestExecuteIAMFederationListProviders_Success(t *testing.T) {
 	resultMap, ok := result.(map[string]interface{})
 	require.True(t, ok)
 	assert.NotNil(t, resultMap["providers"])
+}
+
+// assertNoProviderSecret fails when a federation tool result, encoded as the
+// MCP client receives it, carries the upstream client secret or any
+// non-empty client_secret value.
+func assertNoProviderSecret(t *testing.T, result interface{}, secret string) {
+	t.Helper()
+	body, err := json.Marshal(result)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), secret)
+	assert.NotRegexp(t, `"client_secret":\s*"[^"]`, string(body))
+}
+
+func TestExecuteIAMFederationProviderTools_RedactClientSecret(t *testing.T) {
+	const secret = "upstream-idp-secret"
+	storedProvider := &iam.ExternalProvider{
+		ID:           "google",
+		TenantID:     "t1",
+		Name:         "Google",
+		Type:         iam.ProviderTypeOIDC,
+		Enabled:      true,
+		ClientID:     "client-id",
+		ClientSecret: secret,
+		IssuerURL:    "https://accounts.example.com",
+	}
+	fedMgr := &mockFederationManager{
+		getProviderFn: func(ctx context.Context, tenantID, providerID string) (*iam.ExternalProvider, error) {
+			return storedProvider, nil
+		},
+		listProvidersFn: func(ctx context.Context, tenantID string, opts iam.ListOptions) ([]*iam.ExternalProvider, error) {
+			return []*iam.ExternalProvider{storedProvider}, nil
+		},
+	}
+	reg := newFederationRegistry(t, fedMgr)
+	ctx := context.Background()
+
+	t.Run("create", func(t *testing.T) {
+		result, err := reg.executeIAMFederationCreateProvider(ctx, map[string]interface{}{
+			"tenant_id":     "t1",
+			"name":          "Google",
+			"type":          "oidc",
+			"client_id":     "client-id",
+			"client_secret": secret,
+			"issuer_url":    "https://accounts.example.com",
+		})
+		require.NoError(t, err)
+		assertNoProviderSecret(t, result, secret)
+	})
+
+	t.Run("get", func(t *testing.T) {
+		result, err := reg.executeIAMFederationGetProvider(ctx, map[string]interface{}{
+			"id":        "google",
+			"tenant_id": "t1",
+		})
+		require.NoError(t, err)
+		assertNoProviderSecret(t, result, secret)
+	})
+
+	t.Run("list", func(t *testing.T) {
+		result, err := reg.executeIAMFederationListProviders(ctx, map[string]interface{}{
+			"tenant_id": "t1",
+		})
+		require.NoError(t, err)
+		body, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.Contains(t, string(body), `"id":"google"`)
+		assertNoProviderSecret(t, result, secret)
+	})
+
+	t.Run("update", func(t *testing.T) {
+		result, err := reg.executeIAMFederationUpdateProvider(ctx, map[string]interface{}{
+			"id":        "google",
+			"tenant_id": "t1",
+			"name":      "Google Renamed",
+		})
+		require.NoError(t, err)
+		assertNoProviderSecret(t, result, secret)
+	})
+
+	assert.Equal(t, secret, storedProvider.ClientSecret, "the stored provider must keep the secret")
 }
 
 func TestExecuteIAMFederationListProviders_WithPagination(t *testing.T) {

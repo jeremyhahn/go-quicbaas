@@ -314,7 +314,7 @@ func (h *IAMHandler) RegisterProvider(w http.ResponseWriter, r *http.Request) {
 		map[string]interface{}{"provider_type": string(provider.Type), "name": provider.Name},
 	)
 
-	RespondJSON(w, r, http.StatusCreated, provider)
+	RespondJSON(w, r, http.StatusCreated, provider.Redacted())
 }
 
 // ListProviders handles GET /api/v1/tenants/{tenant_id}/providers - List identity providers.
@@ -374,7 +374,7 @@ func (h *IAMHandler) ListProviders(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	resp := map[string]interface{}{
-		"providers": providers,
+		"providers": iam.RedactProviders(providers),
 		"limit":     limit,
 		"offset":    offset,
 	}
@@ -418,7 +418,7 @@ func (h *IAMHandler) GetProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, provider)
+	RespondJSON(w, r, http.StatusOK, provider.Redacted())
 }
 
 // UpdateProvider handles PUT /api/v1/tenants/{tenant_id}/providers/{provider_id} - Update a provider.
@@ -520,7 +520,7 @@ func (h *IAMHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		map[string]interface{}{"provider_id": providerID},
 	)
 
-	RespondJSON(w, r, http.StatusOK, existing)
+	RespondJSON(w, r, http.StatusOK, existing.Redacted())
 }
 
 // DeleteProvider handles DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id} - Delete a provider.
