@@ -114,18 +114,6 @@ func handleBatchDelete(ctx context.Context, svc service.QuicBaaS, req interface{
 }
 
 // =============================================================================
-// Transaction Handlers
-// =============================================================================
-
-func handleTransaction(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
-	r, ok := req.(*service.TransactionRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.Transaction", "Execute", "*service.TransactionRequest", typeNameOf(req))
-	}
-	return svc.Transaction(ctx, r)
-}
-
-// =============================================================================
 // Cluster Handlers
 // =============================================================================
 

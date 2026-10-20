@@ -216,16 +216,22 @@ func (s *FederationServer) BeginFederatedLogin(ctx context.Context, req *iampb.B
 	s.logger.WithFields(map[string]interface{}{
 		"tenant_id":     req.TenantId,
 		"provider_name": req.ProviderName,
+		"provider_id":   req.ProviderId,
 	}).Debug("Processing BeginFederatedLogin request")
 
 	if req.TenantId == "" {
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
-	if req.ProviderName == "" {
-		return nil, status.Error(codes.InvalidArgument, "provider_name is required")
+	if (req.ProviderName == "") == (req.ProviderId == "") {
+		return nil, status.Error(codes.InvalidArgument, "exactly one of provider_name and provider_id is required")
 	}
 
-	redirect, err := s.federationManager.BeginLogin(ctx, req.TenantId, req.ProviderName, req.RedirectUri)
+	providerName, err := s.loginProviderName(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	redirect, err := s.federationManager.BeginLogin(ctx, req.TenantId, providerName, req.RedirectUri)
 	if err != nil {
 		return nil, convertFederationError(err)
 	}
@@ -235,6 +241,21 @@ func (s *FederationServer) BeginFederatedLogin(ctx context.Context, req *iampb.B
 		State:     redirect.State,
 		ExpiresAt: timestamppb.New(redirect.ExpiresAt),
 	}, nil
+}
+
+// loginProviderName names the provider a login begins with. A provider ID is
+// resolved through the federation manager inside this public RPC, so an
+// anonymous caller never needs the authorized GetProvider; an unknown ID is
+// refused with the same error as an unknown name.
+func (s *FederationServer) loginProviderName(ctx context.Context, req *iampb.BeginFederatedLoginRequest) (string, error) {
+	if req.ProviderName != "" {
+		return req.ProviderName, nil
+	}
+	provider, err := s.federationManager.GetProvider(ctx, req.TenantId, req.ProviderId)
+	if err != nil {
+		return "", convertFederationError(err)
+	}
+	return provider.Name, nil
 }
 
 // HandleFederatedCallback processes the OAuth2/OIDC callback with authorization code.

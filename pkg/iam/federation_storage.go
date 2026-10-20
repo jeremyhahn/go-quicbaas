@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -272,17 +273,10 @@ func (m *MemoryProviderStorage) ListProviders(ctx context.Context, tenantID stri
 		}
 	}
 
-	// Apply pagination
-	start := opts.Offset
-	if start >= len(result) {
-		return []*ExternalProvider{}, nil
-	}
-	end := start + opts.Limit
-	if opts.Limit == 0 || end > len(result) {
-		end = len(result)
-	}
-
-	return result[start:end], nil
+	// Map iteration order is random: sort by ID so offset paging neither
+	// skips nor repeats a provider across pages.
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return paginateProviders(result, opts), nil
 }
 
 // MemoryFederationStorage implements FederationStorage using in-memory maps.

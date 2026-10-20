@@ -142,6 +142,28 @@ func (h *iamHandler) handleUpdateUser(ctx context.Context, client iampb.IAMServi
 	return convertProtoUserToSDK(resp), nil
 }
 
+// handleApproveUser activates a pending account through the ApproveUser RPC,
+// which carries REST's users:enable grant rather than UpdateUser's rights.
+func (h *iamHandler) handleApproveUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
+	reqMap, ok := toMap(req)
+	if !ok {
+		return nil, errors.NewInvalidInput("handleApproveUser", "invalid request type")
+	}
+
+	tenantID, _ := getString(reqMap, "tenant_id")
+	userID, _ := getString(reqMap, "user_id")
+
+	_, err := client.ApproveUser(ctx, &iampb.ApproveUserRequest{
+		TenantId: tenantID,
+		UserId:   userID,
+	})
+	if err != nil {
+		return nil, convertGRPCError(err, "handleApproveUser")
+	}
+
+	return nil, nil
+}
+
 // handleDeleteUser handles DeleteUser requests.
 func (h *iamHandler) handleDeleteUser(ctx context.Context, client iampb.IAMServiceClient, req interface{}) (interface{}, error) {
 	reqMap, ok := toMap(req)

@@ -30,6 +30,7 @@ const (
 	IAMService_UpdateUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/UpdateUser"
 	IAMService_DeleteUser_FullMethodName                = "/quicbaas.iam.v1.IAMService/DeleteUser"
 	IAMService_ListUsers_FullMethodName                 = "/quicbaas.iam.v1.IAMService/ListUsers"
+	IAMService_ApproveUser_FullMethodName               = "/quicbaas.iam.v1.IAMService/ApproveUser"
 	IAMService_ListWebAuthnCredentials_FullMethodName   = "/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials"
 	IAMService_DeleteWebAuthnCredential_FullMethodName  = "/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential"
 	IAMService_DeleteWebAuthnCredentials_FullMethodName = "/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials"
@@ -99,6 +100,11 @@ type IAMServiceClient interface {
 	UpdateUser(ctx context.Context, in *UpdateUserRequest, opts ...grpc.CallOption) (*User, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
 	ListUsers(ctx context.Context, in *ListUsersRequest, opts ...grpc.CallOption) (*ListUsersResponse, error)
+	// ApproveUser moves a pending user to active, as REST's
+	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
+	// users:enable grant. It is its own verb so approving never needs the
+	// broader rights of UpdateUser.
+	ApproveUser(ctx context.Context, in *ApproveUserRequest, opts ...grpc.CallOption) (*ApproveUserResponse, error)
 	// WebAuthn credential administration (user-scoped). The verbs are
 	// addressed by IAM user id like every other user-nested admin verb; the
 	// translation to the (tenant, email) key the credential store uses happens
@@ -289,6 +295,16 @@ func (c *iAMServiceClient) ListUsers(ctx context.Context, in *ListUsersRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListUsersResponse)
 	err := c.cc.Invoke(ctx, IAMService_ListUsers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *iAMServiceClient) ApproveUser(ctx context.Context, in *ApproveUserRequest, opts ...grpc.CallOption) (*ApproveUserResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ApproveUserResponse)
+	err := c.cc.Invoke(ctx, IAMService_ApproveUser_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -794,6 +810,11 @@ type IAMServiceServer interface {
 	UpdateUser(context.Context, *UpdateUserRequest) (*User, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
 	ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error)
+	// ApproveUser moves a pending user to active, as REST's
+	// POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
+	// users:enable grant. It is its own verb so approving never needs the
+	// broader rights of UpdateUser.
+	ApproveUser(context.Context, *ApproveUserRequest) (*ApproveUserResponse, error)
 	// WebAuthn credential administration (user-scoped). The verbs are
 	// addressed by IAM user id like every other user-nested admin verb; the
 	// translation to the (tenant, email) key the credential store uses happens
@@ -911,6 +932,9 @@ func (UnimplementedIAMServiceServer) DeleteUser(context.Context, *DeleteUserRequ
 }
 func (UnimplementedIAMServiceServer) ListUsers(context.Context, *ListUsersRequest) (*ListUsersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListUsers not implemented")
+}
+func (UnimplementedIAMServiceServer) ApproveUser(context.Context, *ApproveUserRequest) (*ApproveUserResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ApproveUser not implemented")
 }
 func (UnimplementedIAMServiceServer) ListWebAuthnCredentials(context.Context, *ListWebAuthnCredentialsRequest) (*ListWebAuthnCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListWebAuthnCredentials not implemented")
@@ -1270,6 +1294,24 @@ func _IAMService_ListUsers_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(IAMServiceServer).ListUsers(ctx, req.(*ListUsersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _IAMService_ApproveUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApproveUserRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IAMServiceServer).ApproveUser(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IAMService_ApproveUser_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IAMServiceServer).ApproveUser(ctx, req.(*ApproveUserRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2188,6 +2230,10 @@ var IAMService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListUsers",
 			Handler:    _IAMService_ListUsers_Handler,
+		},
+		{
+			MethodName: "ApproveUser",
+			Handler:    _IAMService_ApproveUser_Handler,
 		},
 		{
 			MethodName: "ListWebAuthnCredentials",

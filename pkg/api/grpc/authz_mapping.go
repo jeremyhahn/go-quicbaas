@@ -131,6 +131,13 @@ var publicGRPCMethods = map[string]bool{
 	"/quicbaas.iam.v1.IAMService/ActivateFIDO2Finish": true,
 	"/quicbaas.iam.v1.IAMService/ActivatePIV":         true,
 
+	// Federated login: the external identity provider authenticates the
+	// caller, who holds no token until the callback mints one. This mirrors
+	// the public REST routes
+	// /api/v1/auth/providers/{tenant_id}/{provider_name}/{login,callback}.
+	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin":     true,
+	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback": true,
+
 	// qrdb.v1 composition surface: Health is a liveness probe that carries no
 	// data, matching the public posture of /quicbaas.v1.QuicBaaS/Health. The
 	// qrdb SDK's gRPC and Unix transports probe it when building a client
@@ -252,8 +259,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// is stored, delete to remove it. Nothing new is granted — a caller needs
 	// exactly the user-admin rights it would need to delete the user outright.
 	//
+	// FederationService (provider and account-link management) and
+	// SessionService are registered from api/proto/iam alongside IAMService,
+	// also outside brokerServiceDescs; they are mapped below by REST parity,
+	// each taking the grant its REST twin requires (go-quicbaas#1624).
+	//
 	// Mapping the REST of IAMService is an authorization-policy decision for
-	// the owner, not a wiring change; it is tracked separately.
+	// the owner, not a wiring change; it is tracked separately. Until then it
+	// stays unmapped and default-denied.
+	// Mirrors REST POST /api/v1/iam/users/{user_id}/approve (users:enable).
+	"/quicbaas.iam.v1.IAMService/ApproveUser":               {"users", "enable"},
 	"/quicbaas.iam.v1.IAMService/ListWebAuthnCredentials":   {"users", "read"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredential":  {"users", "delete"},
 	"/quicbaas.iam.v1.IAMService/DeleteWebAuthnCredentials": {"users", "delete"},
@@ -275,6 +290,45 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// tenant-create family, the same grant REST's
 	// POST /api/v1/tenants/{tenant_id}/provision requires (go-quicbaas#358).
 	"/quicbaas.iam.v1.IAMService/ProvisionTenant": {"tenants", "create"},
+
+	// ---- quicbaas.iam.v1.FederationService: providers and account links ----
+	//
+	// Each RPC takes the grant its REST twin requires (go-quicbaas#1624).
+	// BeginFederatedLogin and HandleFederatedCallback are public
+	// (publicGRPCMethods) and carry no grant.
+	//
+	// POST /api/v1/tenants/{tenant_id}/providers/
+	"/quicbaas.iam.v1.FederationService/CreateProvider": {"tenants", "create"},
+	// GET /api/v1/tenants/{tenant_id}/providers/{provider_id}
+	"/quicbaas.iam.v1.FederationService/GetProvider": {"tenants", "read"},
+	// GET /api/v1/tenants/{tenant_id}/providers/
+	"/quicbaas.iam.v1.FederationService/ListProviders": {"tenants", "read"},
+	// PUT /api/v1/tenants/{tenant_id}/providers/{provider_id} — REST gates the
+	// update with tenants:create, and gRPC mirrors it.
+	"/quicbaas.iam.v1.FederationService/UpdateProvider": {"tenants", "create"},
+	// DELETE /api/v1/tenants/{tenant_id}/providers/{provider_id}
+	"/quicbaas.iam.v1.FederationService/DeleteProvider": {"tenants", "delete"},
+	// POST /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+	"/quicbaas.iam.v1.FederationService/LinkAccount": {"tenants", "create"},
+	// GET /api/v1/tenants/{tenant_id}/users/{user_id}/links/
+	"/quicbaas.iam.v1.FederationService/GetUserLinks": {"tenants", "read"},
+	// DELETE /api/v1/tenants/{tenant_id}/users/{user_id}/links/{provider_id}
+	"/quicbaas.iam.v1.FederationService/UnlinkAccount": {"tenants", "delete"},
+
+	// ---- quicbaas.iam.v1.SessionService ----
+	//
+	// Each RPC takes the grant its REST twin requires (go-quicbaas#1624).
+	//
+	// GET /api/v1/iam/sessions
+	"/quicbaas.iam.v1.SessionService/ListSessions": {"users", "read"},
+	// GET /api/v1/iam/sessions/{id}
+	"/quicbaas.iam.v1.SessionService/GetSession": {"users", "read"},
+	// DELETE /api/v1/iam/sessions/{id}
+	"/quicbaas.iam.v1.SessionService/RevokeSession": {"users", "update"},
+	// DELETE /api/v1/iam/sessions
+	"/quicbaas.iam.v1.SessionService/RevokeAllSessions": {"users", "update"},
+	// POST /api/v1/iam/sessions/revoke-others
+	"/quicbaas.iam.v1.SessionService/RevokeOtherSessions": {"users", "update"},
 
 	// ---- quicbaas.v1.QuicBaaS: auth (token lifecycle) ----
 	"/quicbaas.v1.QuicBaaS/Logout":        {"user_authfactors", "login"},

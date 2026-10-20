@@ -350,6 +350,25 @@ func TestUnaryAuthorizationInterceptor_UnmappedDenied(t *testing.T) {
 	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for an unmapped method")
 }
 
+// TestAuthorizeGRPCRequest_FederatedLoginIsPublic pins the gRPC twins of the
+// public REST routes /api/v1/auth/providers/{tenant_id}/{provider_name}/login
+// and /callback: an anonymous caller must be able to begin and finish a
+// federated login, and the validator is never consulted.
+func TestAuthorizeGRPCRequest_FederatedLoginIsPublic(t *testing.T) {
+	methods := []string{
+		"/quicbaas.iam.v1.FederationService/BeginFederatedLogin",
+		"/quicbaas.iam.v1.FederationService/HandleFederatedCallback",
+	}
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			authorizer := &fakeValidatorAuthorizer{denyErr: &platformtoken.InvalidTokenError{Detail: "should never be called"}}
+			_, err := authorizeGRPCRequest(context.Background(), method, authorizer, nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for a public method")
+		})
+	}
+}
+
 func TestStreamAuthorizationInterceptor_AllowAndDeny(t *testing.T) {
 	authorizer := &fakeValidatorAuthorizer{
 		token:       "good",

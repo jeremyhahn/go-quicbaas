@@ -107,6 +107,14 @@ func (m *mockIAMService) UpdateUser(ctx context.Context, user *iam.User) (*iam.U
 	return args.Get(0).(*iam.User), args.Error(1)
 }
 
+func (m *mockIAMService) ApproveUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
+	args := m.Called(ctx, tenantID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*iam.User), args.Error(1)
+}
+
 func (m *mockIAMService) DeleteUser(ctx context.Context, tenantID, userID string) error {
 	return m.Called(ctx, tenantID, userID).Error(0)
 }

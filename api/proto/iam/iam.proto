@@ -27,6 +27,14 @@ service IAMService {
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
 
+  // ApproveUser moves a pending user to active, as REST's
+  // POST /api/v1/iam/users/{user_id}/approve does, and carries that route's
+  // users:enable grant. It is its own verb so approving never needs the
+  // broader rights of UpdateUser.
+  rpc ApproveUser(ApproveUserRequest) returns (ApproveUserResponse) {
+      option (qrdb.v1.permission) = "users:enable";
+  }
+
   // WebAuthn credential administration (user-scoped). The verbs are
   // addressed by IAM user id like every other user-nested admin verb; the
   // translation to the (tenant, email) key the credential store uses happens
@@ -158,20 +166,36 @@ service MFAService {
 // Federation Service for OIDC Consumer federation with external identity providers
 service FederationService {
   // Provider management
-  rpc CreateProvider(CreateProviderRequest) returns (ExternalProvider);
-  rpc GetProvider(GetProviderRequest) returns (ExternalProvider);
-  rpc UpdateProvider(UpdateProviderRequest) returns (ExternalProvider);
-  rpc DeleteProvider(DeleteProviderRequest) returns (DeleteProviderResponse);
-  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc CreateProvider(CreateProviderRequest) returns (ExternalProvider) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  rpc GetProvider(GetProviderRequest) returns (ExternalProvider) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
+  rpc UpdateProvider(UpdateProviderRequest) returns (ExternalProvider) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  rpc DeleteProvider(DeleteProviderRequest) returns (DeleteProviderResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
 
   // Authentication flow
   rpc BeginFederatedLogin(BeginFederatedLoginRequest) returns (BeginFederatedLoginResponse);
   rpc HandleFederatedCallback(HandleFederatedCallbackRequest) returns (HandleFederatedCallbackResponse);
 
   // Account linking
-  rpc LinkAccount(LinkAccountRequest) returns (LinkAccountResponse);
-  rpc UnlinkAccount(UnlinkAccountRequest) returns (UnlinkAccountResponse);
-  rpc GetUserLinks(GetUserLinksRequest) returns (GetUserLinksResponse);
+  rpc LinkAccount(LinkAccountRequest) returns (LinkAccountResponse) {
+      option (qrdb.v1.permission) = "tenants:create";
+  }
+  rpc UnlinkAccount(UnlinkAccountRequest) returns (UnlinkAccountResponse) {
+      option (qrdb.v1.permission) = "tenants:delete";
+  }
+  rpc GetUserLinks(GetUserLinksRequest) returns (GetUserLinksResponse) {
+      option (qrdb.v1.permission) = "tenants:read";
+  }
 }
 
 // Core messages
@@ -568,6 +592,15 @@ message UpdateUserRequest {
   // independently of `name`: the two used to share one field, so a request
   // carrying both silently dropped this one.
   string username = 10;
+}
+
+message ApproveUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message ApproveUserResponse {
+  User user = 1;  // The approved user, now active
 }
 
 // AuthMethodsUpdate carries a replacement set of permitted authentication
@@ -1482,19 +1515,29 @@ message GetBackupCodeStatusResponse {
 // Session Service for managing user sessions
 service SessionService {
   // List sessions for a tenant/user
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+      option (qrdb.v1.permission) = "users:read";
+  }
 
   // Get a specific session
-  rpc GetSession(GetSessionRequest) returns (Session);
+  rpc GetSession(GetSessionRequest) returns (Session) {
+      option (qrdb.v1.permission) = "users:read";
+  }
 
   // Revoke a specific session
-  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse);
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
+      option (qrdb.v1.permission) = "users:update";
+  }
 
   // Revoke all sessions for a user/tenant
-  rpc RevokeAllSessions(RevokeAllSessionsRequest) returns (RevokeAllSessionsResponse);
+  rpc RevokeAllSessions(RevokeAllSessionsRequest) returns (RevokeAllSessionsResponse) {
+      option (qrdb.v1.permission) = "users:update";
+  }
 
   // Revoke all sessions except the specified one
-  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse);
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse) {
+      option (qrdb.v1.permission) = "users:update";
+  }
 }
 
 // Session represents a user session
@@ -1783,8 +1826,9 @@ message ListProvidersResponse {
 // BeginFederatedLoginRequest initiates the OAuth2/OIDC authorization flow
 message BeginFederatedLoginRequest {
   string tenant_id = 1;
-  string provider_name = 2;  // Provider name to use for login
+  string provider_name = 2;  // Provider name to use for login; set this or provider_id
   string redirect_uri = 3;   // URI to redirect after authentication
+  string provider_id = 4;    // Provider ID to use for login; set this or provider_name
 }
 
 // BeginFederatedLoginResponse contains the redirect URL for the IdP

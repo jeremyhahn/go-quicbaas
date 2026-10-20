@@ -22,15 +22,26 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // SessionServer implements the Session gRPC service.
+//
+// Every RPC acts only on the authenticated caller's own sessions, in the
+// caller's own tenant, as the REST /api/v1/iam/sessions routes do: the
+// session store keys a session by its ID alone, so the ownership check here
+// is what keeps a caller who learns another user's session ID from reading
+// or revoking it.
 type SessionServer struct {
 	iampb.UnimplementedSessionServiceServer
 	sessionService SessionService
+	callers        service.CallerAccountResolver
 	logger         *logger.Logger
 }
 
@@ -44,11 +55,67 @@ type SessionService interface {
 }
 
 // NewSessionServer creates a new Session gRPC server.
-func NewSessionServer(sessionService SessionService, log *logger.Logger) *SessionServer {
+func NewSessionServer(sessionService SessionService, callers service.CallerAccountResolver, log *logger.Logger) *SessionServer {
 	return &SessionServer{
 		sessionService: sessionService,
+		callers:        callers,
 		logger:         log.WithField("component", "session-grpc-server"),
 	}
+}
+
+// sessionCaller resolves the authenticated caller to its tenant and qrdb
+// user id, the identity REST's session routes take from
+// requireTenantUserSubject. A caller that is not a user account is refused.
+func (s *SessionServer) sessionCaller(ctx context.Context) (string, uint64, error) {
+	subject, ok := auth.SubjectFromContext(ctx)
+	if !ok || !subject.Authenticated {
+		return "", 0, status.Error(codes.Unauthenticated, "caller is not authenticated")
+	}
+	if qrdbsdk.IsSystemTenant(subject.TenantID) {
+		return "", 0, status.Error(codes.InvalidArgument, "tenant_id is required: the caller carries no tenant binding")
+	}
+	if s.callers == nil {
+		return "", 0, status.Error(codes.Internal, "caller account resolution not available")
+	}
+	userID, err := s.callers.ResolveCallerAccount(ctx, subject)
+	if err != nil {
+		if service.IsCallerAccountRefused(err) {
+			return "", 0, status.Error(codes.PermissionDenied, "caller is not a user")
+		}
+		return "", 0, toProtoError(err)
+	}
+	return subject.TenantID, userID, nil
+}
+
+// callerUserID checks an optional user_id against the caller: it may name
+// only the caller, and an empty one means the caller.
+func callerUserID(requested string, callerID uint64) (uint64, error) {
+	userID, err := parseOptionalUserID("user_id", requested)
+	if err != nil {
+		return 0, err
+	}
+	if userID != 0 && userID != callerID {
+		return 0, status.Error(codes.PermissionDenied, "access denied")
+	}
+	return callerID, nil
+}
+
+// ownedSession fetches a session and refuses it unless it belongs to the
+// caller, in the caller's tenant.
+func (s *SessionServer) ownedSession(ctx context.Context, sessionID string) (*iam.Session, error) {
+	tenantID, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	session, err := s.sessionService.GetSession(ctx, sessionID)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get session")
+		return nil, status.Errorf(codes.NotFound, "session not found: %v", err)
+	}
+	if session.UserID != callerID || session.TenantID != tenantID {
+		return nil, status.Error(codes.PermissionDenied, "access denied")
+	}
+	return session, nil
 }
 
 // ListSessions lists sessions for a tenant/user.
@@ -59,8 +126,11 @@ func (s *SessionServer) ListSessions(ctx context.Context, req *iampb.ListSession
 	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
 		return nil, err
 	}
-
-	userID, err := parseOptionalUserID("user_id", req.UserId)
+	_, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	userID, err := callerUserID(req.UserId, callerID)
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +158,9 @@ func (s *SessionServer) GetSession(ctx context.Context, req *iampb.GetSessionReq
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
 
-	session, err := s.sessionService.GetSession(ctx, req.SessionId)
+	session, err := s.ownedSession(ctx, req.SessionId)
 	if err != nil {
-		s.logger.WithError(err).Error("Failed to get session")
-		return nil, status.Errorf(codes.NotFound, "session not found: %v", err)
+		return nil, err
 	}
 
 	return sessionToProto(session), nil
@@ -101,6 +170,10 @@ func (s *SessionServer) GetSession(ctx context.Context, req *iampb.GetSessionReq
 func (s *SessionServer) RevokeSession(ctx context.Context, req *iampb.RevokeSessionRequest) (*iampb.RevokeSessionResponse, error) {
 	if req.SessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+
+	if _, err := s.ownedSession(ctx, req.SessionId); err != nil {
+		return nil, err
 	}
 
 	err := s.sessionService.RevokeSession(ctx, req.SessionId)
@@ -120,8 +193,11 @@ func (s *SessionServer) RevokeAllSessions(ctx context.Context, req *iampb.Revoke
 	if err := requireCallerTenant(ctx, "grpc.Session", req.TenantId); err != nil {
 		return nil, err
 	}
-
-	userID, err := parseOptionalUserID("user_id", req.UserId)
+	_, callerID, err := s.sessionCaller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	userID, err := callerUserID(req.UserId, callerID)
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +221,11 @@ func (s *SessionServer) RevokeOtherSessions(ctx context.Context, req *iampb.Revo
 	}
 	if req.KeepSessionId == "" {
 		return nil, status.Error(codes.InvalidArgument, "keep_session_id is required")
+	}
+	// The kept session names whose sessions are revoked, so it must be the
+	// caller's own.
+	if _, err := s.ownedSession(ctx, req.KeepSessionId); err != nil {
+		return nil, err
 	}
 
 	count, err := s.sessionService.RevokeOtherSessions(ctx, req.TenantId, req.KeepSessionId)

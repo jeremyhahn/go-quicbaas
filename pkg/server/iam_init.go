@@ -1903,7 +1903,13 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 		s.logger.Info("Using in-memory session storage fallback for gRPC")
 	}
 	sessionAdapter := grpcapi.NewSessionServiceAdapter(sessionStorage)
-	sessionServer := grpcapi.NewSessionServer(sessionAdapter, s.logger)
+	// The session RPCs act only on the caller's own sessions, so they resolve
+	// the caller's account the way the REST session routes do.
+	callers, ok := s.quicBaaSService.(service.CallerAccountResolver)
+	if !ok {
+		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
+	}
+	sessionServer := grpcapi.NewSessionServer(sessionAdapter, callers, s.logger)
 	iampb.RegisterSessionServiceServer(grpcServer, sessionServer)
 	s.logger.Info("Registered Session gRPC service")
 

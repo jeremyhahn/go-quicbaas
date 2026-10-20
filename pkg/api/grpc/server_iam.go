@@ -66,6 +66,7 @@ type IAMService interface {
 	CreateUser(ctx context.Context, user *iam.User, inviteTTL time.Duration) (*iam.User, string, *iam.InviteRecord, error)
 	GetUser(ctx context.Context, tenantID, userID string) (*iam.User, error)
 	UpdateUser(ctx context.Context, user *iam.User) (*iam.User, error)
+	ApproveUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error)
 	DeleteUser(ctx context.Context, tenantID, userID string) error
 	ListUsers(ctx context.Context, tenantID string, limit, offset int, filters map[string]string) ([]*iam.User, int, error)
 
@@ -447,6 +448,36 @@ func (s *IAMServer) UpdateUser(ctx context.Context, req *iampb.UpdateUserRequest
 	}
 
 	return convertUserToProto(updated), nil
+}
+
+// ApproveUser moves a pending user to active, the transition REST's
+// POST /api/v1/iam/users/{user_id}/approve makes.
+func (s *IAMServer) ApproveUser(ctx context.Context, req *iampb.ApproveUserRequest) (*iampb.ApproveUserResponse, error) {
+	s.logger.WithFields(map[string]interface{}{
+		"tenant_id": req.TenantId,
+		"user_id":   req.UserId,
+	}).Info("Processing ApproveUser request")
+
+	if req.TenantId == "" {
+		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
+	}
+	if err := requireCallerTenant(ctx, "grpc.IAM", req.TenantId); err != nil {
+		return nil, err
+	}
+	if req.UserId == "" {
+		return nil, status.Error(codes.InvalidArgument, "user_id is required")
+	}
+	userID, err := parseUserID("user_id", req.UserId)
+	if err != nil {
+		return nil, err
+	}
+
+	approved, err := s.iamService.ApproveUser(ctx, req.TenantId, userID)
+	if err != nil {
+		return nil, convertIAMError(err)
+	}
+
+	return &iampb.ApproveUserResponse{User: convertUserToProto(approved)}, nil
 }
 
 // DeleteUser deletes a user.

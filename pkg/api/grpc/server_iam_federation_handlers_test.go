@@ -324,6 +324,56 @@ func TestFederationServer_BeginFederatedLogin_MissingFields(t *testing.T) {
 	require.Error(t, err)
 }
 
+// An anonymous caller begins login by provider ID; the server resolves the
+// ID to the provider's name itself.
+func TestFederationServer_BeginFederatedLogin_ByProviderID(t *testing.T) {
+	srv, mgr := newTestFederationServer(t)
+	mgr.On("GetProvider", mock.Anything, "t1", "prov-1").Return(&iam.ExternalProvider{ID: "prov-1", TenantID: "t1", Name: "google"}, nil)
+	mgr.On("BeginLogin", mock.Anything, "t1", "google", "http://localhost/callback").Return(&iam.LoginRedirect{
+		AuthURL:   "https://accounts.google.com/auth",
+		State:     "state-1",
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}, nil)
+
+	resp, err := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{
+		TenantId: "t1", ProviderId: "prov-1", RedirectUri: "http://localhost/callback",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "state-1", resp.State)
+	mgr.AssertExpectations(t)
+}
+
+func TestFederationServer_BeginFederatedLogin_RequiresExactlyOneProvider(t *testing.T) {
+	srv, mgr := newTestFederationServer(t)
+
+	for name, req := range map[string]*iampb.BeginFederatedLoginRequest{
+		"neither": {TenantId: "t1"},
+		"both":    {TenantId: "t1", ProviderName: "google", ProviderId: "prov-1"},
+	} {
+		_, err := srv.BeginFederatedLogin(context.Background(), req)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
+	}
+	mgr.AssertNotCalled(t, "GetProvider", mock.Anything, mock.Anything, mock.Anything)
+	mgr.AssertNotCalled(t, "BeginLogin", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestFederationServer_BeginFederatedLogin_UnknownProviderIDMatchesUnknownName(t *testing.T) {
+	srv, mgr := newTestFederationServer(t)
+	mgr.On("GetProvider", mock.Anything, "t1", "missing").Return(nil, iam.ErrProviderNotFound)
+	mgr.On("BeginLogin", mock.Anything, "t1", "missing", "http://cb").Return(nil, iam.ErrProviderNotFound)
+
+	_, byID := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{
+		TenantId: "t1", ProviderId: "missing", RedirectUri: "http://cb",
+	})
+	_, byName := srv.BeginFederatedLogin(context.Background(), &iampb.BeginFederatedLoginRequest{
+		TenantId: "t1", ProviderName: "missing", RedirectUri: "http://cb",
+	})
+	require.Error(t, byID)
+	assert.Equal(t, codes.NotFound, status.Code(byID))
+	assert.Equal(t, status.Convert(byName).Proto().String(), status.Convert(byID).Proto().String())
+	mgr.AssertNumberOfCalls(t, "BeginLogin", 1)
+}
+
 func TestFederationServer_HandleFederatedCallback_Success(t *testing.T) {
 	srv, mgr := newTestFederationServer(t)
 

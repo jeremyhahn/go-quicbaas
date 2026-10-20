@@ -175,19 +175,19 @@ func TestSessionServerCoverage_ListSessions_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	svc.CreateTestSession("t1", 30001)
 	svc.CreateTestSession("t1", 30002)
-	server := NewSessionServer(svc, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
 
-	resp, err := server.ListSessions(callerContext("t1"), &iampb.ListSessionsRequest{TenantId: "t1"})
+	resp, err := server.ListSessions(sessionOwnerContext("t1", 30001), &iampb.ListSessionsRequest{TenantId: "t1"})
 	require.NoError(t, err)
-	assert.Equal(t, int32(2), resp.Total)
+	assert.Equal(t, int32(1), resp.Total, "the caller lists only its own sessions")
 }
 
 func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	sess := svc.CreateTestSession("t1", 30001)
-	server := NewSessionServer(svc, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
 
-	resp, err := server.GetSession(callerContext("t1"), &iampb.GetSessionRequest{SessionId: sess.ID})
+	resp, err := server.GetSession(sessionOwnerContext("t1", 30001), &iampb.GetSessionRequest{SessionId: sess.ID})
 	require.NoError(t, err)
 	assert.Equal(t, sess.ID, resp.Id)
 }
@@ -195,9 +195,9 @@ func TestSessionServerCoverage_GetSession_Success(t *testing.T) {
 func TestSessionServerCoverage_RevokeSession_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	sess := svc.CreateTestSession("t1", 30001)
-	server := NewSessionServer(svc, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
 
-	resp, err := server.RevokeSession(callerContext("t1"), &iampb.RevokeSessionRequest{SessionId: sess.ID})
+	resp, err := server.RevokeSession(sessionOwnerContext("t1", 30001), &iampb.RevokeSessionRequest{SessionId: sess.ID})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 }
@@ -207,9 +207,9 @@ func TestSessionServerCoverage_RevokeAllSessions_Success(t *testing.T) {
 	svc := NewMemorySessionService()
 	svc.AddSession(&iam.Session{ID: "a", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "b", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	server := NewSessionServer(svc, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
 
-	resp, err := server.RevokeAllSessions(callerContext("t1"), &iampb.RevokeAllSessionsRequest{TenantId: "t1", UserId: "30001"})
+	resp, err := server.RevokeAllSessions(sessionOwnerContext("t1", 30001), &iampb.RevokeAllSessionsRequest{TenantId: "t1", UserId: "30001"})
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), resp.RevokedCount)
 }
@@ -220,9 +220,9 @@ func TestSessionServerCoverage_RevokeOtherSessions_Success(t *testing.T) {
 	keep := svc.CreateTestSession("t1", 30001)
 	svc.AddSession(&iam.Session{ID: "o1", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
 	svc.AddSession(&iam.Session{ID: "o2", TenantID: "t1", UserID: 30001, Created: now, LastActivity: now, Expires: now.Add(time.Hour)})
-	server := NewSessionServer(svc, newTestSessionLogger())
+	server := NewSessionServer(svc, userIDCallerAccounts{}, newTestSessionLogger())
 
-	resp, err := server.RevokeOtherSessions(callerContext("t1"), &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: keep.ID})
+	resp, err := server.RevokeOtherSessions(sessionOwnerContext("t1", 30001), &iampb.RevokeOtherSessionsRequest{TenantId: "t1", KeepSessionId: keep.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), resp.RevokedCount)
 }
@@ -232,7 +232,7 @@ func TestSessionServerCoverage_RevokeOtherSessions_Success(t *testing.T) {
 // =============================================================================
 
 func TestSessionServerCoverage_ListSessions_EmptyTenantId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.ListSessions(callerContext("t1"), &iampb.ListSessionsRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -241,7 +241,7 @@ func TestSessionServerCoverage_ListSessions_EmptyTenantId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_GetSession_EmptySessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.GetSession(callerContext("t1"), &iampb.GetSessionRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -250,7 +250,7 @@ func TestSessionServerCoverage_GetSession_EmptySessionId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeSession_EmptySessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.RevokeSession(callerContext("t1"), &iampb.RevokeSessionRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -259,7 +259,7 @@ func TestSessionServerCoverage_RevokeSession_EmptySessionId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeAllSessions_EmptyTenantId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.RevokeAllSessions(callerContext("t1"), &iampb.RevokeAllSessionsRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -268,7 +268,7 @@ func TestSessionServerCoverage_RevokeAllSessions_EmptyTenantId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeOtherSessions_EmptyTenantId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.RevokeOtherSessions(callerContext("t1"), &iampb.RevokeOtherSessionsRequest{})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -277,7 +277,7 @@ func TestSessionServerCoverage_RevokeOtherSessions_EmptyTenantId(t *testing.T) {
 }
 
 func TestSessionServerCoverage_RevokeOtherSessions_EmptyKeepSessionId(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
 	_, err := server.RevokeOtherSessions(callerContext("t1"), &iampb.RevokeOtherSessionsRequest{TenantId: "t1"})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -286,8 +286,8 @@ func TestSessionServerCoverage_RevokeOtherSessions_EmptyKeepSessionId(t *testing
 }
 
 func TestSessionServerCoverage_GetSession_NotFound(t *testing.T) {
-	server := NewSessionServer(NewMemorySessionService(), newTestSessionLogger())
-	_, err := server.GetSession(callerContext("t1"), &iampb.GetSessionRequest{SessionId: "nonexistent-id"})
+	server := NewSessionServer(NewMemorySessionService(), userIDCallerAccounts{}, newTestSessionLogger())
+	_, err := server.GetSession(sessionOwnerContext("t1", 30001), &iampb.GetSessionRequest{SessionId: "nonexistent-id"})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)

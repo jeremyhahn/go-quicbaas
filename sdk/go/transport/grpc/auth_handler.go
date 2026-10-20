@@ -50,27 +50,46 @@ func newAuthHandler(conn *grpc.ClientConn) *authHandler {
 
 // handleRequest routes Auth requests to the appropriate handler based on method name.
 func (h *authHandler) handleRequest(ctx context.Context, svc, method string, req interface{}) (interface{}, error) {
-	client := pb.NewQuicBaaSClient(h.conn)
-
-	switch method {
-	case "Login":
-		return h.handleLogin(ctx, client, req)
-	case "Logout":
-		return h.handleLogout(ctx, client, req)
-	case "RefreshToken":
-		return h.handleRefreshToken(ctx, client, req)
-	case "ValidateToken":
-		return h.handleValidateToken(ctx, client, req)
-	case "IntrospectToken":
-		return h.handleIntrospectToken(ctx, client, req)
-	case "BeginLogin":
-		return h.handleBeginLogin(ctx, req)
-	case "FinishLogin":
-		return h.handleFinishLogin(ctx, req)
-	default:
+	verb, ok := authVerbs[method]
+	if !ok {
 		return nil, errors.NewUnimplemented("authHandler.handleRequest",
 			"unsupported method: "+method)
 	}
+	return verb(h, ctx, req)
+}
+
+// authVerb serves one quicbaas.Auth method.
+type authVerb func(h *authHandler, ctx context.Context, req interface{}) (interface{}, error)
+
+// quicbaasAuthVerb adapts a verb served by the QuicBaaS service.
+func quicbaasAuthVerb(fn func(*authHandler, context.Context, pb.QuicBaaSClient, interface{}) (interface{}, error)) authVerb {
+	return func(h *authHandler, ctx context.Context, req interface{}) (interface{}, error) {
+		return fn(h, ctx, pb.NewQuicBaaSClient(h.conn), req)
+	}
+}
+
+// authVerbs routes each quicbaas.Auth method to its handler.
+var authVerbs = map[string]authVerb{
+	"Login":                   quicbaasAuthVerb((*authHandler).handleLogin),
+	"Logout":                  quicbaasAuthVerb((*authHandler).handleLogout),
+	"RefreshToken":            quicbaasAuthVerb((*authHandler).handleRefreshToken),
+	"ValidateToken":           quicbaasAuthVerb((*authHandler).handleValidateToken),
+	"IntrospectToken":         quicbaasAuthVerb((*authHandler).handleIntrospectToken),
+	"BeginLogin":              (*authHandler).handleBeginLogin,
+	"FinishLogin":             (*authHandler).handleFinishLogin,
+	"BeginFederatedLogin":     (*authHandler).handleBeginFederatedLogin,
+	"HandleFederatedCallback": (*authHandler).handleHandleFederatedCallback,
+	"ListProviders":           (*authHandler).handleListProviders,
+	"GetProvider":             (*authHandler).handleGetProvider,
+	"GetSession":              (*authHandler).handleGetSession,
+	"RevokeSession":           (*authHandler).handleRevokeSession,
+	"GetJWKS":                 refuseAuthVerb("GetJWKS", "the server has no gRPC RPC for the JWKS"),
+	"GetOpenIDConfiguration":  refuseAuthVerb("GetOpenIDConfiguration", "the server has no gRPC RPC for the OpenID configuration"),
+	// The session RPCs take a tenant and user ID and, with no user, act on
+	// the whole tenant; the SDK verbs mean the caller's own sessions, whose
+	// user ID the client cannot learn.
+	"ListSessions":      refuseAuthVerb("ListSessions", "the gRPC RPC is tenant-scoped, not scoped to the caller"),
+	"RevokeAllSessions": refuseAuthVerb("RevokeAllSessions", "the gRPC RPC is tenant-scoped, not scoped to the caller"),
 }
 
 // handleLogin is the retired legacy username/password login verb. The locked

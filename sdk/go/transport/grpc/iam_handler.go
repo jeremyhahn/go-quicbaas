@@ -123,6 +123,8 @@ func (h *iamHandler) handleUserRequest(ctx context.Context, method string, req i
 		return h.handleAssignRole(ctx, client, req)
 	case "RevokeRole":
 		return h.handleRevokeRole(ctx, client, req)
+	case "Approve":
+		return h.handleApproveUser(ctx, client, req)
 	default:
 		return nil, errors.NewUnimplemented("iamHandler.handleUserRequest",
 			"unsupported method: "+method)

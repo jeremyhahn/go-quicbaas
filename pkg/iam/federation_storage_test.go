@@ -16,6 +16,9 @@ package iam
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -676,6 +679,64 @@ func TestMemoryProviderStorage_ListProviders(t *testing.T) {
 				t.Errorf("ListProviders() count = %v, want %v", len(providers), tt.wantCount)
 			}
 		})
+	}
+}
+
+// TestMemoryProviderStorage_ListProviders_StablePaging pages a tenant holding
+// more providers than one page: every provider must come back exactly once,
+// and two listings must agree on the order.
+func TestMemoryProviderStorage_ListProviders_StablePaging(t *testing.T) {
+	ctx := context.Background()
+	storage := NewMemoryProviderStorage()
+	const total = 250
+	for i := 0; i < total; i++ {
+		p := &ExternalProvider{
+			ID:        fmt.Sprintf("provider-%03d", i),
+			TenantID:  "tenant-1",
+			Name:      fmt.Sprintf("Provider %03d", i),
+			Type:      ProviderTypeOIDC,
+			ClientID:  "client",
+			IssuerURL: "https://issuer.example.com",
+		}
+		if err := storage.CreateProvider(ctx, p); err != nil {
+			t.Fatalf("CreateProvider(%s): %v", p.ID, err)
+		}
+	}
+
+	listAll := func() []string {
+		var ids []string
+		for offset := 0; ; offset += 100 {
+			page, err := storage.ListProviders(ctx, "tenant-1", ListOptions{Offset: offset, Limit: 100})
+			if err != nil {
+				t.Fatalf("ListProviders(offset=%d): %v", offset, err)
+			}
+			if len(page) == 0 {
+				return ids
+			}
+			for _, p := range page {
+				ids = append(ids, p.ID)
+			}
+		}
+	}
+
+	first := listAll()
+	if len(first) != total {
+		t.Fatalf("paged listing returned %d providers, want %d", len(first), total)
+	}
+	seen := make(map[string]bool, total)
+	for _, id := range first {
+		if seen[id] {
+			t.Fatalf("provider %s listed twice", id)
+		}
+		seen[id] = true
+	}
+	if !sort.StringsAreSorted(first) {
+		t.Errorf("paged listing is not ordered by provider ID")
+	}
+
+	second := listAll()
+	if !reflect.DeepEqual(first, second) {
+		t.Errorf("two listings disagree on order")
 	}
 }
 

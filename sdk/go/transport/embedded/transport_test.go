@@ -929,34 +929,6 @@ func TestTransport_Request_BatchOperations(t *testing.T) {
 	})
 }
 
-func TestTransport_Request_Transaction(t *testing.T) {
-	mock := &mockQuicBaaS{}
-	transport, err := New(mock)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	t.Run("success", func(t *testing.T) {
-		req := &service.TransactionRequest{
-			Compare: []*service.CompareCondition{{EntityType: "test", ID: 1}},
-			Success: []*service.TransactionOp{{OpType: service.TransactionOpTypePut}},
-		}
-		resp, err := transport.Request(ctx, "quicbaas.Transaction", "Execute", req)
-
-		require.NoError(t, err)
-		txnResp, ok := resp.(*service.TransactionResponse)
-		require.True(t, ok)
-		assert.True(t, txnResp.Succeeded)
-	})
-
-	t.Run("with wrong type", func(t *testing.T) {
-		_, err := transport.Request(ctx, "quicbaas.Transaction", "Execute", "invalid")
-		require.Error(t, err)
-		var invalidReqErr *InvalidRequestTypeError
-		assert.True(t, errors.As(err, &invalidReqErr))
-	})
-}
-
 func TestTransport_RequestStream(t *testing.T) {
 	mock := &mockQuicBaaS{}
 	transport, err := New(mock)

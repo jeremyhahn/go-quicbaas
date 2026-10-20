@@ -414,6 +414,13 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, req i
 		return handleRegistryRequest(ctx, conn, method, req)
 	}
 
+	// Peer object transfer. Its SDK types are plain Go structs, converted to
+	// the generated ObjectTransferService proto types. This branch also
+	// serves the Unix transport, which delegates to gRPC verbatim.
+	if isObjectTransferService(service) {
+		return handleObjectTransferRequest(ctx, conn, method, req)
+	}
+
 	// Check if this is a FIDO2 ceremony request and route through the FIDO2
 	// handler. The SDK FIDO2 surface exchanges the go-xkms transport wire
 	// structs, which don't implement proto.Message, so they must be
@@ -546,6 +553,17 @@ func (t *Transport) RequestStream(ctx context.Context, service, method string, r
 	// protos, converted to the SDK event on Recv.
 	if isRegistryService(service) {
 		s, streamErr := openRegistryWatch(ctx, t, conn, method, req)
+		if streamErr != nil {
+			t.returnConn(conn)
+			return nil, streamErr
+		}
+		return s, nil
+	}
+
+	// The object transfer bulk fetch is a server stream of
+	// FetchObjectResponse protos, converted to the SDK response on Recv.
+	if isObjectTransferService(service) {
+		s, streamErr := openObjectTransferStream(ctx, t, conn, method, req)
 		if streamErr != nil {
 			t.returnConn(conn)
 			return nil, streamErr

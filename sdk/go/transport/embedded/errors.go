@@ -178,6 +178,37 @@ func (e *InvalidVectorIDError) Error() string {
 // Unwrap returns the underlying strconv error.
 func (e *InvalidVectorIDError) Unwrap() error { return e.Err }
 
+// InvalidTransactionKeyError indicates a transaction client key that is not
+// the decimal uint64 entity id the QuicBaaS service addresses entities by.
+// Err is the strconv failure.
+type InvalidTransactionKeyError struct {
+	Key string
+	Err error
+}
+
+// Error implements error.
+func (e *InvalidTransactionKeyError) Error() string {
+	return "INVALID_INPUT: embedded: quicbaas.Transaction/Execute: key " +
+		strconv.Quote(e.Key) + " is not a decimal entity id: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying strconv error.
+func (e *InvalidTransactionKeyError) Unwrap() error { return e.Err }
+
+// UnsupportedTransactionFieldError indicates a transaction compare target,
+// compare result or operation type that has no counterpart on the other side
+// of the transaction client to QuicBaaS service conversion.
+type UnsupportedTransactionFieldError struct {
+	Field string
+	Value string
+}
+
+// Error implements error.
+func (e *UnsupportedTransactionFieldError) Error() string {
+	return "INVALID_INPUT: embedded: quicbaas.Transaction/Execute: " + e.Field + " " +
+		strconv.Quote(e.Value) + " has no counterpart"
+}
+
 // UnsupportedVectorFilterError indicates a metadata filter operator the
 // vector service cannot evaluate; it matches on equality only.
 type UnsupportedVectorFilterError struct {

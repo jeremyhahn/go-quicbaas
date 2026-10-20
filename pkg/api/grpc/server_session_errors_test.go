@@ -76,7 +76,15 @@ func newMockSessionServer(t *testing.T, svc SessionService) *SessionServer {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
-	return NewSessionServer(svc, log)
+	return NewSessionServer(svc, userIDCallerAccounts{}, log)
+}
+
+// sessionOwnedBy answers GetSession with a session of the given owner, so a
+// call by that owner passes the ownership check and reaches the service.
+func sessionOwnedBy(tenantID string, userID uint64) func(context.Context, string) (*iam.Session, error) {
+	return func(_ context.Context, sessionID string) (*iam.Session, error) {
+		return &iam.Session{ID: sessionID, TenantID: tenantID, UserID: userID}, nil
+	}
 }
 
 func TestSessionServerErrors_ListSessions_ServiceError(t *testing.T) {
@@ -87,7 +95,7 @@ func TestSessionServerErrors_ListSessions_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.ListSessions(callerContext("tenant-1"), &iampb.ListSessionsRequest{
+	_, err := srv.ListSessions(sessionOwnerContext("tenant-1", 10001), &iampb.ListSessionsRequest{
 		TenantId: "tenant-1",
 	})
 	require.Error(t, err)
@@ -96,13 +104,14 @@ func TestSessionServerErrors_ListSessions_ServiceError(t *testing.T) {
 
 func TestSessionServerErrors_RevokeSession_ServiceError(t *testing.T) {
 	svc := &mockSessionService{
+		getSessionFunc: sessionOwnedBy("tenant-1", 10001),
 		revokeSessionFunc: func(_ context.Context, _ string) error {
 			return errors.New("revoke failed")
 		},
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeSession(callerContext("tenant-1"), &iampb.RevokeSessionRequest{
+	_, err := srv.RevokeSession(sessionOwnerContext("tenant-1", 10001), &iampb.RevokeSessionRequest{
 		SessionId: "sess-1",
 	})
 	require.Error(t, err)
@@ -117,7 +126,7 @@ func TestSessionServerErrors_RevokeAllSessions_ServiceError(t *testing.T) {
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeAllSessions(callerContext("tenant-1"), &iampb.RevokeAllSessionsRequest{
+	_, err := srv.RevokeAllSessions(sessionOwnerContext("tenant-1", 10001), &iampb.RevokeAllSessionsRequest{
 		TenantId: "tenant-1",
 		UserId:   "10001",
 	})
@@ -127,13 +136,14 @@ func TestSessionServerErrors_RevokeAllSessions_ServiceError(t *testing.T) {
 
 func TestSessionServerErrors_RevokeOtherSessions_ServiceError(t *testing.T) {
 	svc := &mockSessionService{
+		getSessionFunc: sessionOwnedBy("tenant-1", 10001),
 		revokeOtherFunc: func(_ context.Context, _, _ string) (int, error) {
 			return 0, errors.New("revoke other failed")
 		},
 	}
 	srv := newMockSessionServer(t, svc)
 
-	_, err := srv.RevokeOtherSessions(callerContext("tenant-1"), &iampb.RevokeOtherSessionsRequest{
+	_, err := srv.RevokeOtherSessions(sessionOwnerContext("tenant-1", 10001), &iampb.RevokeOtherSessionsRequest{
 		TenantId:      "tenant-1",
 		KeepSessionId: "sess-keep",
 	})

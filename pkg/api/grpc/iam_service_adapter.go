@@ -400,6 +400,15 @@ func (a *IAMServiceAdapter) UpdateUser(ctx context.Context, user *iam.User) (*ia
 	return updated, nil
 }
 
+// ApproveUser moves a pending user to active through the identity store,
+// the same call REST's approve route makes.
+func (a *IAMServiceAdapter) ApproveUser(ctx context.Context, tenantID string, userID uint64) (*iam.User, error) {
+	active := iam.LifecycleActive
+	return a.identityStore.UpdateUser(ctx, tenantID, userID, iam.UpdateUserOptions{
+		Lifecycle: &active,
+	})
+}
+
 // DeleteUser deletes a user by ID or email.
 // If the userID looks like an email address (contains @), it will attempt
 // to resolve the email to a user ID first.
