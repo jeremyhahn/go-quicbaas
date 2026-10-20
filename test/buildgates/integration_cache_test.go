@@ -14,13 +14,10 @@
 package buildgates
 
 import (
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
-
-var makefilePath = filepath.Join(repoRoot, "Makefile")
 
 // integrationTarget is the recipe whose compose build must reuse the layer
 // cache: a `--no-cache` build and a `docker rmi` pre-clean of its images cost
@@ -33,10 +30,10 @@ var (
 	recipeLineRe = regexp.MustCompile(`^\t`)
 )
 
-// makeRecipe returns the recipe lines of target in makefile, or nil when the
+// makeRecipeLines returns the recipe lines of target in makefile, or nil when the
 // target is not defined. The recipe runs from the line after `target:` to the
 // first line that is neither blank nor tab-indented.
-func makeRecipe(makefile, target string) []string {
+func makeRecipeLines(makefile, target string) []string {
 	lines := strings.Split(makefile, "\n")
 	for i, line := range lines {
 		if !strings.HasPrefix(line, target+":") {
@@ -69,7 +66,7 @@ func cacheDefeats(recipe []string) []string {
 }
 
 func TestIntegrationBuildKeepsItsLayerCache(t *testing.T) {
-	recipe := makeRecipe(readFile(t, makefilePath), integrationTarget)
+	recipe := makeRecipeLines(readFile(t, makefilePath), integrationTarget)
 	if len(recipe) == 0 {
 		t.Fatalf("Makefile defines no %s recipe", integrationTarget)
 	}
@@ -124,7 +121,7 @@ func TestCacheDefeatsFindsEveryCacheDiscard(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			recipe := makeRecipe(tt.makefile, integrationTarget)
+			recipe := makeRecipeLines(tt.makefile, integrationTarget)
 			if got := recipe != nil; got != tt.defined {
 				t.Fatalf("recipe defined = %v, want %v", got, tt.defined)
 			}
