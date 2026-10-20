@@ -170,13 +170,15 @@ type DEKStatusResponse struct {
 
 // ReencryptionProgress tracks re-encryption operation progress.
 type ReencryptionProgress struct {
-	InProgress      bool
-	TotalKeys       int
-	ProcessedKeys   int
-	FailedKeys      int
-	PercentComplete float64
-	StartedAt       time.Time
-	ErrorMessage    string
+	Status              string
+	InProgress          bool
+	TotalKeys           int
+	ProcessedKeys       int
+	FailedKeys          int
+	PercentComplete     float64
+	StartedAt           time.Time
+	EstimatedCompletion time.Time
+	ErrorMessage        string
 }
 
 // SetDefaultDEKResponse is the response from setting a default DEK.
@@ -707,6 +709,7 @@ func serviceReencryptionToSDK(p *service.ReencryptionProgress) *ReencryptionProg
 		return nil
 	}
 	progress := &ReencryptionProgress{
+		Status:          p.Status,
 		InProgress:      p.InProgress,
 		TotalKeys:       int(p.TotalKeys),
 		ProcessedKeys:   int(p.ProcessedKeys),
@@ -716,6 +719,9 @@ func serviceReencryptionToSDK(p *service.ReencryptionProgress) *ReencryptionProg
 	}
 	if p.StartedAt != nil {
 		progress.StartedAt = *p.StartedAt
+	}
+	if p.EstimatedCompletion != nil {
+		progress.EstimatedCompletion = *p.EstimatedCompletion
 	}
 	return progress
 }

@@ -584,7 +584,16 @@ func (h *kmsHandler) handleGetReencryptionProgress(ctx context.Context, req inte
 		return nil, errors.NewInvalidInput("kmsHandler.handleGetReencryptionProgress",
 			"invalid request type, expected *service.GetReencryptionProgressRequest")
 	}
-	return h.client.KMSGetReencryptionProgress(ctx, r)
+	resp, err := h.client.KMSGetReencryptionProgress(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	// The proto ReencryptionProgress has no status field: the server sends
+	// the progress status as the response's top-level status.
+	if resp != nil && resp.Progress != nil && resp.Progress.Status == "" {
+		resp.Progress.Status = resp.Status
+	}
+	return resp, nil
 }
 
 // =============================================================================

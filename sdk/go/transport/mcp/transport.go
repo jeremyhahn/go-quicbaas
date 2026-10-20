@@ -659,6 +659,12 @@ func (t *Transport) doRequest(ctx context.Context, service, method string, reqBo
 		return objectStorageAdminResponse(method, result)
 	}
 
+	// Decode the DEK progress verbs into the service responses the DEK
+	// client accepts.
+	if isMCPDEKService(service) {
+		return transformDEKResponse(method, result)
+	}
+
 	return result, nil
 }
 

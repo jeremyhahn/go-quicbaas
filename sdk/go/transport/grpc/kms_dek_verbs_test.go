@@ -56,6 +56,7 @@ func (s *dekVerbsServer) GetDEKStatus(_ context.Context, req *pb.GetDEKStatusReq
 		Dek: &pb.DEKMetadata{Path: req.Path, Version: 3, Status: "active", IsDefault: true, UsageCount: 42},
 		ReencryptionProgress: &pb.ReencryptionProgress{
 			InProgress: true, TotalKeys: 10, ProcessedKeys: 5, FailedKeys: 1, StartedAt: 1700000000,
+			EstimatedCompletion: 1700003600,
 		},
 		Timestamp: 1700000001,
 	}, nil
@@ -97,9 +98,11 @@ func (s *dekVerbsServer) GetReencryptionProgress(_ context.Context, req *pb.GetR
 		OperationId: req.OperationId,
 		Path:        req.Path,
 		Status:      "running",
-		Progress:    &pb.ReencryptionProgress{InProgress: true, TotalKeys: 4, ProcessedKeys: 2},
-		Error:       "one key skipped",
-		Timestamp:   1,
+		Progress: &pb.ReencryptionProgress{
+			InProgress: true, TotalKeys: 4, ProcessedKeys: 2, EstimatedCompletion: 1700003600,
+		},
+		Error:     "one key skipped",
+		Timestamp: 1,
 	}, nil
 }
 
@@ -150,6 +153,7 @@ func TestDEKClientOverGRPC_GetDEKStatus(t *testing.T) {
 	assert.Equal(t, 5, resp.ReencryptionProgress.ProcessedKeys)
 	assert.Equal(t, 1, resp.ReencryptionProgress.FailedKeys)
 	assert.Equal(t, time.Unix(1700000000, 0), resp.ReencryptionProgress.StartedAt)
+	assert.Equal(t, time.Unix(1700003600, 0), resp.ReencryptionProgress.EstimatedCompletion)
 }
 
 func TestDEKClientOverGRPC_SetDefaultDEK(t *testing.T) {
@@ -230,6 +234,8 @@ func TestDEKClientOverGRPC_GetReencryptionProgress(t *testing.T) {
 	assert.Equal(t, 4, resp.Progress.TotalKeys)
 	assert.Equal(t, 2, resp.Progress.ProcessedKeys)
 	assert.InDelta(t, 50.0, resp.Progress.PercentComplete, 0.001)
+	assert.Equal(t, "running", resp.Progress.Status)
+	assert.Equal(t, time.Unix(1700003600, 0), resp.Progress.EstimatedCompletion)
 }
 
 // TestDEKClientOverGRPC_ServerErrorIsTyped checks that a NotFound status from
