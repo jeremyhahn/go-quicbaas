@@ -16,6 +16,7 @@
 package transactions
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -45,19 +46,33 @@ func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
 	client := helpers.NewHTTPClient(5 * time.Second)
 
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(endpoint + "/api/v1/health/ready")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				fmt.Println("Cluster is ready for transaction tests")
-				return true
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		if clusterReady(client, endpoint) {
+			fmt.Println("Cluster is ready for transaction tests")
+			return true
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
 	}
-	return false
+}
+
+// clusterReady reports whether the node's readiness check answers 200.
+func clusterReady(client *http.Client, endpoint string) bool {
+	resp, err := client.Get(endpoint + "/api/v1/health/ready")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // getRESTEndpoint returns the primary REST API endpoint.

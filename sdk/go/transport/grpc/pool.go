@@ -173,9 +173,7 @@ func (p *Pool) Put(conn *grpc.ClientConn) {
 
 	for _, pc := range p.connections {
 		if pc.conn == conn {
-			// Check if connection should be recycled
-			if p.isExpired(pc) || !p.isHealthy(pc) {
-				// Replace with new connection
+			if decidePut(pc.conn.GetState(), p.isExpired(pc)) == putReplace {
 				go p.replaceConnection(pc)
 			} else {
 				pc.inUse.Store(false)
@@ -183,6 +181,28 @@ func (p *Pool) Put(conn *grpc.ClientConn) {
 			return
 		}
 	}
+}
+
+// putDecision is what Put does with a connection handed back to the pool.
+type putDecision int
+
+const (
+	// putRelease marks the connection free; it stays in the pool.
+	putRelease putDecision = iota
+	// putReplace closes the connection and dials a replacement.
+	putReplace
+)
+
+// decidePut replaces a returned connection only when it can no longer be
+// used: it is shut down or older than MaxAge. A connection passing through
+// Connecting or TransientFailure is released: gRPC reconnects it on its own,
+// Get skips it until it is Ready or Idle, and the health-check loop replaces
+// it if it stays down.
+func decidePut(state connectivity.State, expired bool) putDecision {
+	if expired || state == connectivity.Shutdown {
+		return putReplace
+	}
+	return putRelease
 }
 
 // replaceConnection replaces an unhealthy or expired connection.

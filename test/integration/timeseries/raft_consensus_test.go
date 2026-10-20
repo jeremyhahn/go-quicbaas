@@ -514,23 +514,23 @@ func TestTimeSeriesRaft_LeaderFailover(t *testing.T) {
 		conn.Close()
 	}
 
-	// Wait for potential leader re-election
-	time.Sleep(5 * time.Second)
-
-	// Find a working node (not necessarily the new leader)
+	// Wait for potential leader re-election: poll until a node (not
+	// necessarily the new leader) answers a query again.
 	var workingEndpoint string
-	for _, endpoint := range endpoints {
-		testQuery := QueryRequest{
-			Metric:    preFailoverMetric,
-			StartTime: time.Now().Add(-5 * time.Minute),
-			EndTime:   time.Now().Add(5 * time.Minute),
+	pollUntil(ctx, 10*time.Second, 250*time.Millisecond, func() bool {
+		for _, endpoint := range endpoints {
+			testQuery := QueryRequest{
+				Metric:    preFailoverMetric,
+				StartTime: time.Now().Add(-5 * time.Minute),
+				EndTime:   time.Now().Add(5 * time.Minute),
+			}
+			if _, err := queryREST(ctx, endpoint, testQuery); err == nil {
+				workingEndpoint = endpoint
+				return true
+			}
 		}
-		_, err := queryREST(ctx, endpoint, testQuery)
-		if err == nil {
-			workingEndpoint = endpoint
-			break
-		}
-	}
+		return false
+	})
 	require.NotEmpty(t, workingEndpoint, "At least one node should be accessible")
 
 	// Verify pre-failover data is still accessible
@@ -614,7 +614,6 @@ func TestTimeSeriesRaft_ConsistencyAfterRestart(t *testing.T) {
 	// Simulate follower restart by brief network blip
 	// In a real test, we would restart a container
 	t.Logf("Simulating follower instability...")
-	time.Sleep(2 * time.Second)
 
 	// Verify follower catches up with latest data
 	for i, endpoint := range endpoints {
@@ -747,8 +746,25 @@ func TestTimeSeriesRaft_ConcurrentWrites(t *testing.T) {
 	assert.Greater(t, successes, failures, "Majority of concurrent writes should succeed")
 	assert.GreaterOrEqual(t, successes, totalWrites*8/10, "At least 80%% of writes should succeed")
 
-	// Wait for replication to complete
-	time.Sleep(5 * time.Second)
+	// Wait for replication: poll until every node returns points for every
+	// writer's metric. The checks below only log, so the outcome is logged too.
+	replicated := pollUntil(ctx, 10*time.Second, 250*time.Millisecond, func() bool {
+		for _, metric := range metrics {
+			for _, endpoint := range endpoints {
+				query := QueryRequest{
+					Metric:    metric,
+					StartTime: time.Now().Add(-5 * time.Minute),
+					EndTime:   time.Now().Add(5 * time.Minute),
+				}
+				queryResult, err := queryREST(ctx, endpoint, query)
+				if err != nil || len(queryResult.Points) == 0 {
+					return false
+				}
+			}
+		}
+		return true
+	})
+	t.Logf("Concurrent writes visible on every node: %t", replicated)
 
 	// Verify data on all nodes for each metric
 	for writerID, metric := range metrics {
@@ -856,8 +872,22 @@ func TestTimeSeriesRaft_ShardRouting(t *testing.T) {
 
 	t.Logf("Wrote %d metrics across shards", len(testMetrics))
 
-	// Wait for replication
-	time.Sleep(3 * time.Second)
+	// Wait until every metric's point is queryable on the node the checks
+	// below read from.
+	pollUntil(ctx, 10*time.Second, 250*time.Millisecond, func() bool {
+		for _, metric := range testMetrics {
+			query := QueryRequest{
+				Metric:    metric,
+				StartTime: timestamp.Add(-1 * time.Minute),
+				EndTime:   timestamp.Add(1 * time.Minute),
+			}
+			queryResult, err := queryREST(ctx, endpoints[0], query)
+			if err != nil || len(queryResult.Points) == 0 {
+				return false
+			}
+		}
+		return true
+	})
 
 	// Verify data for each metric is accessible
 	for i, metric := range testMetrics {

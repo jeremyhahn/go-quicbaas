@@ -63,6 +63,27 @@ func requireTimeseriesAvailableREST(t *testing.T) {
 	}
 }
 
+// pollUntil evaluates cond at once and then on every tick until cond reports
+// true, timeout elapses or ctx is done. It reports whether cond was met.
+func pollUntil(ctx context.Context, timeout, tick time.Duration, cond func() bool) bool {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+
+	for {
+		if cond() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
 // inMemoryTimeSeriesStorage is an in-memory implementation of interfaces.TimeSeriesStorage
 // used for integration testing of the time series test infrastructure.
 type inMemoryTimeSeriesStorage struct {

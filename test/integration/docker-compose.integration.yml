@@ -326,35 +326,36 @@ services:
         echo \"Ollama enabled: $${QUICBAAS_TEST_OLLAMA:-0}  |  Ollama test tags: $$RAG_TAGS  |  Ollama URL: $${OLLAMA_URL:-unset}\" &&
         echo 'Test configuration:' &&
         echo '  - Sequential execution (-p 1) to prevent connection storms' &&
-        echo '  - Total timeout: 60 minutes' &&
+        echo '  - Per package: go test -timeout 10m, killed at 11m (run_packages.sh)' &&
         echo '' &&
+        : > /test-results/integration-test.log &&
         OVERALL_EXIT=0 &&
         if [ -n \"$$QUICBAAS_TEST_FILTER\" ]; then
           echo \"Running filtered integration tests: $$QUICBAAS_TEST_FILTER\" &&
           echo '' &&
           FILTER_TAGS=\"integration $$TEST_BUILD_TAGS\" &&
           if [ \"$$QUICBAAS_TEST_GPU\" = 'true' ]; then FILTER_TAGS=\"$$FILTER_TAGS gpu\"; fi &&
-          go test -v -p 1 -tags \"$$FILTER_TAGS\" -timeout 60m $$QUICBAAS_TEST_FILTER 2>&1 | tee /test-results/integration-test.log;
-          OVERALL_EXIT=$${PIPESTATUS[0]};
+          sh test/integration/run_packages.sh --filter /test-results/integration-test.log \"$$FILTER_TAGS\" \"$$QUICBAAS_TEST_FILTER\";
+          OVERALL_EXIT=$$?;
         else
           echo 'Phase 1: non-ollama integration packages...' &&
           echo '' &&
           BASE_PKGS=$$(go list -tags \"$$BASE_TAGS\" $$ALL_PKG_ROOT $$CMD_E2E_PKGS | grep -vE \"$$OLLAMA_PKGS_RE\" | grep -vE \"$$SEAL_LANE_PKGS_RE\") &&
-          go test -v -p 1 -tags \"$$BASE_TAGS\" -timeout 60m $$BASE_PKGS 2>&1 | tee /test-results/integration-test.log;
-          OVERALL_EXIT=$${PIPESTATUS[0]};
+          sh test/integration/run_packages.sh /test-results/integration-test.log \"$$BASE_TAGS\" '' $$BASE_PKGS;
+          OVERALL_EXIT=$$?;
           if [ \"$$QUICBAAS_TEST_OLLAMA\" = '1' ] || [ \"$$QUICBAAS_TEST_OLLAMA\" = 'true' ]; then
             echo '' &&
             echo 'Phase 2: ollama-dependent packages (serialized, one inference at a time)...' &&
             echo '' &&
             OLLAMA_PKGS=$$(go list -tags \"$$RAG_TAGS\" $$ALL_PKG_ROOT | grep -E '/(agent|orchestration|orchestration_gpu|rag)$$') &&
-            go test -v -p 1 -tags \"$$RAG_TAGS\" -timeout 60m $$OLLAMA_PKGS 2>&1 | tee -a /test-results/integration-test.log;
-            OLLAMA_EXIT=$${PIPESTATUS[0]};
+            sh test/integration/run_packages.sh /test-results/integration-test.log \"$$RAG_TAGS\" '' $$OLLAMA_PKGS;
+            OLLAMA_EXIT=$$?;
             if [ $$OLLAMA_EXIT -ne 0 ]; then OVERALL_EXIT=$$OLLAMA_EXIT; fi;
             echo '' &&
             echo 'Phase 2b: cli orchestrator inference (ollama) subset...' &&
             echo '' &&
-            go test -v -p 1 -tags \"$$RAG_TAGS\" -timeout 60m -run 'TestOrchestratorInference_(Stateless_Ollama|StreamMode|TenantIsolation)$$' github.com/jeremyhahn/go-quicbaas/test/integration/cli/... 2>&1 | tee -a /test-results/integration-test.log;
-            CLI_EXIT=$${PIPESTATUS[0]};
+            sh test/integration/run_packages.sh /test-results/integration-test.log \"$$RAG_TAGS\" '-run TestOrchestratorInference_(Stateless_Ollama|StreamMode|TenantIsolation)$$' github.com/jeremyhahn/go-quicbaas/test/integration/cli/...;
+            CLI_EXIT=$$?;
             if [ $$CLI_EXIT -ne 0 ]; then OVERALL_EXIT=$$CLI_EXIT; fi;
           else
             echo '' &&

@@ -546,8 +546,6 @@ func TestConcurrentBatchDeadlock(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		time.Sleep(time.Millisecond * 50) // Slight delay to create interleaving
-
 		req := &pb.BatchPutRequest{
 			Requests: []*pb.PutRequest{
 				{EntityType: "deadlock_test", Id: entityB, Data: []byte(`{"order":"B-first"}`)},

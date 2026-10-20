@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/connectivity"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -227,5 +229,32 @@ func TestPooledConn_InUse(t *testing.T) {
 	pc.inUse.Store(true)
 	if !pc.inUse.Load() {
 		t.Error("expected inUse=true after Store")
+	}
+}
+
+// TestDecidePut pins Put's choice for every connectivity state: only a shut
+// down or expired connection is replaced; a transient state keeps the
+// connection in the pool and frees it (#1709).
+func TestDecidePut(t *testing.T) {
+	tests := []struct {
+		name    string
+		state   connectivity.State
+		expired bool
+		want    putDecision
+	}{
+		{"idle", connectivity.Idle, false, putRelease},
+		{"connecting", connectivity.Connecting, false, putRelease},
+		{"ready", connectivity.Ready, false, putRelease},
+		{"transient failure", connectivity.TransientFailure, false, putRelease},
+		{"shutdown", connectivity.Shutdown, false, putReplace},
+		{"ready but expired", connectivity.Ready, true, putReplace},
+		{"connecting and expired", connectivity.Connecting, true, putReplace},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := decidePut(tt.state, tt.expired); got != tt.want {
+				t.Errorf("decidePut(%v, %v) = %v, want %v", tt.state, tt.expired, got, tt.want)
+			}
+		})
 	}
 }

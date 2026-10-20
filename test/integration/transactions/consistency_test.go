@@ -112,7 +112,9 @@ func TestConsistencyLevels_Get(t *testing.T) {
 	resp.Body.Close()
 
 	// Wait for replication
-	time.Sleep(500 * time.Millisecond)
+	requireEventuallyReadable(t, client,
+		fmt.Sprintf("%s/api/v1/entities/%s/%d?consistency=eventual", baseURL, entityType, entityID),
+		5*time.Second, nil)
 
 	// Test different consistency levels
 	tests := []struct {
@@ -193,7 +195,9 @@ func TestConsistencyLevels_Delete(t *testing.T) {
 			resp.Body.Close()
 
 			// Wait for replication
-			time.Sleep(200 * time.Millisecond)
+			requireEventuallyReadable(t, client,
+				fmt.Sprintf("%s/api/v1/entities/%s/%d?consistency=eventual", baseURL, entityType, entityID),
+				5*time.Second, nil)
 
 			// Delete with consistency level
 			url := fmt.Sprintf("%s/api/v1/entities/%s/%d?consistency=%s",
@@ -250,13 +254,15 @@ func TestConsistencyLevels_List(t *testing.T) {
 				t.Logf("Entity creation returned status %d: %s", resp.StatusCode, string(bodyData))
 			}
 			resp.Body.Close()
-
-			// Small delay to ensure entities have different timestamps
-			time.Sleep(10 * time.Millisecond)
 		}
 
 		// Wait for replication before proceeding to list tests
-		time.Sleep(2 * time.Second)
+		requireEventuallyReadable(t, client,
+			fmt.Sprintf("%s/api/v1/entities/%s?consistency=eventual&limit=10", baseURL, entityType),
+			10*time.Second, func(body []byte) bool {
+				var listResp rest.ListResponse
+				return json.Unmarshal(body, &listResp) == nil && len(listResp.Entities) >= 5
+			})
 	})
 
 	// Test list with different consistency levels
@@ -336,4 +342,32 @@ func mustReadBody(t *testing.T, r io.Reader) []byte {
 	data, err := io.ReadAll(r)
 	require.NoError(t, err)
 	return data
+}
+
+// replicationTick paces the polls that wait for a write to replicate.
+const replicationTick = 100 * time.Millisecond
+
+// requireEventuallyReadable polls an eventual-consistency read of url until
+// it answers 200 and ready accepts its body, failing the test after timeout.
+// A nil ready accepts any body. An eventual read is served by the queried
+// node's local replica, so once it sees the write every consistency level
+// does.
+func requireEventuallyReadable(t *testing.T, client *http.Client, url string,
+	timeout time.Duration, ready func(body []byte) bool) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		resp, err := client.Get(url)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		if ready == nil {
+			return true
+		}
+		body, err := io.ReadAll(resp.Body)
+		return err == nil && ready(body)
+	}, timeout, replicationTick, "%s never became readable: the write did not replicate", url)
 }

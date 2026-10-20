@@ -1319,7 +1319,10 @@ check-case-collisions: ## Fail if two tracked paths differ only by letter case
 # Before go-quicbaas#399 each Dockerfile carried its own echo-built copy with a
 # literal go line, and the copies drifted from each other and from the base
 # image. This fails if a Dockerfile writes a go.work inline again, and runs the
-# script's own test against a temporary directory.
+# script's own test against a temporary directory. It also runs
+# run_packages_test.sh, which drives the per-package integration runner against
+# stub go, timeout and probe binaries, so the runner is proven without Docker
+# (#1591).
 WORKSPACE_INLINE_PATTERN := echo '(go [0-9]|use \(|replace \()|> *go\.work|<<.*go\.work
 check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of running mkworkspace.sh
 	@echo "$(BLUE)Checking Dockerfiles build go.work through mkworkspace.sh...$(NC)"
@@ -1330,6 +1333,7 @@ check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of
 		exit 1; \
 	fi
 	@sh test/integration/mkworkspace_test.sh
+	@sh test/integration/run_packages_test.sh
 
 .PHONY: check-package-targets
 # Lanes 124b and 124c could not reach pkg/api/grpc through `make test-api/grpc`

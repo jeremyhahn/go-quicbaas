@@ -16,6 +16,7 @@
 package timeseries
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -54,19 +55,18 @@ func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
 	client := helpers.NewHTTPClient(5 * time.Second)
 
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
+	ready := pollUntil(context.Background(), 3*time.Minute, 250*time.Millisecond, func() bool {
 		resp, err := client.Get(endpoint + "/api/v1/health/ready")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				fmt.Println("Cluster is ready for timeseries tests")
-				return true
-			}
+		if err != nil {
+			return false
 		}
-		time.Sleep(2 * time.Second)
+		resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	})
+	if ready {
+		fmt.Println("Cluster is ready for timeseries tests")
 	}
-	return false
+	return ready
 }
 
 // getRESTEndpoint returns the primary REST API endpoint.
