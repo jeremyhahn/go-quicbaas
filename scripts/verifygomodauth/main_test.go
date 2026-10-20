@@ -317,7 +317,7 @@ func TestCheckTargetReportsABuildThatIsNeverReached(t *testing.T) {
 	var reported []string
 	fail := func(format string, args ...any) { reported = append(reported, format) }
 	checkTarget(targetCase{target: "t", build: "build x", after: "run x"},
-		outcome{output: stagedMarker, stagedExists: true}, fail)
+		outcome{stagedExists: true}, fail)
 	if len(reported) != 1 || !strings.Contains(reported[0], "never reached its image build") {
 		t.Fatalf("reported %q, want one never-reached finding", reported)
 	}
@@ -327,12 +327,45 @@ func TestCheckTargetReportsCredentialsStillPresentAfterTheBuild(t *testing.T) {
 	var reported []string
 	fail := func(format string, args ...any) { reported = append(reported, format) }
 	checkTarget(targetCase{target: "t", build: "build x", after: "run x"}, outcome{
-		output:       stagedMarker,
 		stagedExists: true,
-		watch:        []watchedCall{{call: "compose build x", size: 10}, {call: "compose run x", size: 10}},
+		watch:        []watchedCall{{call: "compose build x", size: stagedSize}, {call: "compose run x", size: stagedSize}},
 	}, fail)
 	if len(reported) != 1 || !strings.Contains(reported[0], "still held the credentials") {
 		t.Fatalf("reported %q, want one still-held finding", reported)
+	}
+}
+
+// stage-gomodauth is silent, so staging is judged by what the image build saw:
+// an empty file means the target never staged, and a file of any other size is
+// not the section-6 file stage-gomodauth writes. A target that stages passes.
+func TestCheckTargetJudgesStagingByTheFileItsBuildSaw(t *testing.T) {
+	cases := []struct {
+		name      string
+		buildSize int64
+		want      string
+	}{
+		{name: "staged", buildSize: stagedSize},
+		{name: "never staged", buildSize: 0, want: "never staged the credentials"},
+		{name: "not the section-6 file", buildSize: stagedSize + 1, want: "not the %d-byte section-6 file"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var reported []string
+			fail := func(format string, args ...any) { reported = append(reported, format) }
+			checkTarget(targetCase{target: "t", build: "build x", after: "run x"}, outcome{
+				stagedExists: true,
+				watch:        []watchedCall{{call: "compose build x", size: tc.buildSize}, {call: "compose run x", size: 0}},
+			}, fail)
+			if tc.want == "" {
+				if len(reported) != 0 {
+					t.Fatalf("reported %q for a target that staged", reported)
+				}
+				return
+			}
+			if len(reported) != 1 || !strings.Contains(reported[0], tc.want) {
+				t.Fatalf("reported %q, want one finding containing %q", reported, tc.want)
+			}
+		})
 	}
 }
 

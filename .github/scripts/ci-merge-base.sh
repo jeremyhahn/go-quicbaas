@@ -34,8 +34,9 @@
 #   event-name       github.event_name. Anything other than `pull_request` is a
 #                    no-op: a push to main has no base to merge into.
 #   base-ref         github.base_ref, the branch the PR targets.
-#   pinned-base-sha  optional. The base commit resolved ONCE by the `merge` job
-#                    and handed to every other job, so all of them validate the
+#   pinned-base-sha  optional. The base commit resolved ONCE for the run (CI
+#                    passes github.event.pull_request.base.sha, which every job
+#                    of one run sees alike), so all of them validate the
 #                    same tree even when the base branch moves mid-run -- runs
 #                    here last up to two hours and pull requests do merge inside
 #                    that window. Omitted (or empty), the script resolves the
@@ -91,21 +92,26 @@ HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)" ||
 
 # Bring the base branch into the workspace. `actions/checkout` fetches only the
 # ref it checked out, so the base is not present until we ask for it, and a
-# depth-1 clone has no merge base to three-way merge against -- every job that
-# runs this script therefore sets fetch-depth: 0.
+# depth-1 clone has no merge base to three-way merge against. The ci-template's
+# checkout step is depth 1 and is not ours to change, so a shallow workspace is
+# deepened to full history here first.
+if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ] &&
+	! git fetch --no-tags --unshallow origin 2>&1; then
+	infra_fail "could not fetch the full history of this branch from origin."
+fi
 if ! git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" 2>&1; then
 	infra_fail "could not fetch base branch '${BASE_REF}' from origin."
 fi
 
 if [ -n "$PINNED_SHA" ]; then
 	BASE_SHA="$PINNED_SHA"
-	BASE_SOURCE="pinned by the merge job"
+	BASE_SOURCE="pinned for the run"
 	# A pinned base is an ancestor of the branch tip under normal operation --
 	# the base only moves forward, by merges. It fails to resolve only if the
 	# base was force-pushed or rewritten under the run, which is not a finding
 	# about this branch either.
 	git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null ||
-		infra_fail "the base commit ${BASE_SHA} pinned by the merge job is not reachable on '${BASE_REF}' (force-push or rewritten history under this run?)."
+		infra_fail "the base commit ${BASE_SHA} pinned for the run is not reachable on '${BASE_REF}' (force-push or rewritten history under this run?)."
 else
 	BASE_SHA="$(git rev-parse "refs/remotes/origin/${BASE_REF}" 2>/dev/null)" ||
 		infra_fail "could not resolve the tip of base branch '${BASE_REF}'."

@@ -20,3 +20,7 @@ import "os"
 func lockFile(*os.File) error {
 	return ErrWorkDirLockUnsupported
 }
+
+func unlockFile(*os.File) error {
+	return ErrWorkDirLockUnsupported
+}

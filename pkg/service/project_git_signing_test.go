@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/nsswrapper"
 )
 
 // =============================================================================
@@ -65,6 +66,17 @@ func ed25519TestSigner(t *testing.T) ssh.Signer {
 	return signer
 }
 
+// stockSSHKeygenResolvesTheUid lets the stock ssh-keygen that git signs and
+// verifies with run for a uid with no passwd entry, as the toolchain image
+// runs: the commit path inherits this process's environment.
+func stockSSHKeygenResolvesTheUid(t *testing.T) {
+	t.Helper()
+	for _, variable := range nsswrapper.Env(t, t.TempDir()) {
+		name, value, _ := strings.Cut(variable, "=")
+		t.Setenv(name, value)
+	}
+}
+
 // TestCommit_SignsAndTheSignatureVerifies is the slice's proof.
 //
 // It commits through the provisioner with signing enabled and then asks GIT to
@@ -73,6 +85,7 @@ func ed25519TestSigner(t *testing.T) ssh.Signer {
 // against an agent that never answered and a commit that carries no signature
 // at all.
 func TestCommit_SignsAndTheSignatureVerifies(t *testing.T) {
+	stockSSHKeygenResolvesTheUid(t)
 	signer := ed25519TestSigner(t)
 	dir := initGitRepo(t)
 
@@ -232,6 +245,7 @@ func TestCommit_AcceptsTheMatchingFIPSAlgorithm(t *testing.T) {
 // author and no signing, and the commit still carries the project's identity
 // and a signature that verifies against the project's key.
 func TestCommitForProject_ReadsAuthorAndSigningFromTheProject(t *testing.T) {
+	stockSSHKeygenResolvesTheUid(t)
 	signer := ed25519TestSigner(t)
 	dir := initGitRepo(t)
 	resolver := &fakeSignerResolver{signer: signer}

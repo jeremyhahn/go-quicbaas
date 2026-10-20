@@ -73,6 +73,7 @@ func signingTestProject() *orchestration.Project {
 // only that the flags were chosen would pass against an agent that never
 // answered and a commit carrying no signature at all.
 func TestSDLCSigningAgent_SignsAContainersCommitAndTheSignatureVerifies(t *testing.T) {
+	stockSSHKeygenResolvesTheUid(t)
 	signer := ed25519TestSigner(t)
 	resolver := &fakeSignerResolver{signer: signer}
 	agent, err := NewSDLCSigningAgent(&GitProvisioner{SSHSigner: resolver})

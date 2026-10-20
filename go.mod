@@ -6,40 +6,40 @@ go 1.27.2
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 
 require (
-	cloud.google.com/go/kms v1.31.0
+	cloud.google.com/go/kms v1.31.0 // held: #1597, the third-party bump to latest
 	connectrpc.com/connect v1.21.1
-	github.com/aws/aws-sdk-go-v2 v1.43.5
-	github.com/aws/aws-sdk-go-v2/config v1.32.36
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.35
-	github.com/aws/aws-sdk-go-v2/service/kms v1.52.2
+	github.com/aws/aws-sdk-go-v2 v1.43.5 // held: #1597, the third-party bump to latest
+	github.com/aws/aws-sdk-go-v2/config v1.32.36 // held: #1597, the third-party bump to latest
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.35 // held: #1597, the third-party bump to latest
+	github.com/aws/aws-sdk-go-v2/service/kms v1.52.2 // held: #1597, the third-party bump to latest
 	github.com/cockroachdb/pebble v1.1.5
-	github.com/cockroachdb/pebble/v2 v2.1.4
-	github.com/coder/websocket v1.8.14
+	github.com/cockroachdb/pebble/v2 v2.1.4 // held: #1597, the third-party bump to latest
+	github.com/coder/websocket v1.8.14 // held: #1597, the third-party bump to latest
 	github.com/cyphar/filepath-securejoin v0.7.0
-	github.com/descope/virtualwebauthn v1.0.3
+	github.com/descope/virtualwebauthn v1.0.3 // held: #1597, the third-party bump to latest
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-chi/chi/v5 v5.3.0
-	github.com/go-jose/go-jose/v4 v4.1.4
-	github.com/go-webauthn/webauthn v0.17.4
+	github.com/go-chi/chi/v5 v5.3.0 // held: #1597, the third-party bump to latest
+	github.com/go-jose/go-jose/v4 v4.1.4 // held: #1597, the third-party bump to latest
+	github.com/go-webauthn/webauthn v0.17.4 // held: #1597, the third-party bump to latest
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-msgpack/v2 v2.1.5
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/go-auth v0.4.0-alpha
+	github.com/jeremyhahn/go-auth v0.4.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-codec v1.4.0
-	github.com/jeremyhahn/go-enclave v0.6.1-alpha
-	github.com/jeremyhahn/go-libsignal v0.2.0-alpha
-	github.com/jeremyhahn/go-objstore v0.3.0-alpha
-	github.com/jeremyhahn/go-qrdb v0.30.1-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha
+	github.com/jeremyhahn/go-enclave v0.6.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-libsignal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-objstore v0.3.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-qrdb v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-quicbaas/sdk/go v0.16.0-alpha
-	github.com/jeremyhahn/go-signal v0.2.0-alpha
-	github.com/jeremyhahn/go-xkms v0.49.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha
-	github.com/klauspost/compress v1.19.1
+	github.com/jeremyhahn/go-signal v0.2.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/klauspost/compress v1.20.3 // held: #1597, the third-party bump to latest
 	github.com/lestrrat-go/jwx/v2 v2.1.7
-	github.com/mark3labs/mcp-go v0.45.0
+	github.com/mark3labs/mcp-go v0.45.0 // held: #1597, the third-party bump to latest
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
 	github.com/moby/sys/user v0.4.1
 	github.com/mochi-mqtt/server/v2 v2.7.9
@@ -47,11 +47,11 @@ require (
 	github.com/opencontainers/runc v1.5.2
 	github.com/opencontainers/runtime-spec v1.3.0
 	github.com/pelletier/go-toml/v2 v2.4.3
-	github.com/pkg/sftp v1.13.9
-	github.com/prometheus/client_golang v1.24.1
+	github.com/pkg/sftp v1.13.9 // held: #1597, the third-party bump to latest
+	github.com/prometheus/client_golang v1.24.1 // held: #1597, the third-party bump to latest
 	github.com/prometheus/client_model v0.6.3
-	github.com/quic-go/quic-go v0.63.0
-	github.com/redis/go-redis/v9 v9.18.0
+	github.com/quic-go/quic-go v0.63.0 // held: #1597, the third-party bump to latest
+	github.com/redis/go-redis/v9 v9.18.0 // held: #1597, the third-party bump to latest
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -61,21 +61,21 @@ require (
 	github.com/veraison/go-cose v1.3.0
 	github.com/veraison/swid v1.1.1-0.20230911094910-8ffdd07a22ca
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/wailsapp/wails/v2 v2.12.0
-	go.opentelemetry.io/otel v1.45.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
-	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0
-	go.opentelemetry.io/otel/sdk v1.45.0
-	go.opentelemetry.io/otel/trace v1.45.0
-	go.podman.io/image/v5 v5.41.2
-	go.podman.io/storage v1.64.2
-	golang.org/x/crypto v0.57.0
-	golang.org/x/mod v0.41.0
-	golang.org/x/net v0.60.0
-	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/term v0.46.0
-	google.golang.org/grpc v1.83.2
+	github.com/wailsapp/wails/v2 v2.12.0 // held: #1597, the third-party bump to latest
+	go.opentelemetry.io/otel v1.45.0 // held: #1597, the third-party bump to latest
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 // held: #1597, the third-party bump to latest
+	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0 // held: #1597, the third-party bump to latest
+	go.opentelemetry.io/otel/sdk v1.45.0 // held: #1597, the third-party bump to latest
+	go.opentelemetry.io/otel/trace v1.45.0 // held: #1597, the third-party bump to latest
+	go.podman.io/image/v5 v5.41.2 // held: v5.42.0 released 2026-10-20, under 7 days old (#1704)
+	go.podman.io/storage v1.65.0
+	golang.org/x/crypto v0.57.0 // held: #1597, the third-party bump to latest
+	golang.org/x/mod v0.41.0 // held: #1597, the third-party bump to latest
+	golang.org/x/net v0.60.0 // held: #1597, the third-party bump to latest
+	golang.org/x/oauth2 v0.36.0 // held: #1597, the third-party bump to latest
+	golang.org/x/sys v0.49.0 // held: #1597, the third-party bump to latest
+	golang.org/x/term v0.46.0 // held: #1597, the third-party bump to latest
+	google.golang.org/grpc v1.83.2 // held: #1597, the third-party bump to latest
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -156,7 +156,7 @@ require (
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
 	github.com/containerd/console v1.0.5 // indirect
-	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
+	github.com/containerd/stargz-snapshotter/estargz v0.19.0 // indirect
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/ocicrypt v1.3.2 // indirect
 	github.com/coreos/go-systemd/v22 v22.7.0 // indirect
@@ -232,7 +232,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
-	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/klauspost/pgzip v1.2.7 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -296,7 +296,7 @@ require (
 	github.com/sigstore/fulcio v1.8.7 // indirect
 	github.com/sigstore/protobuf-specs v0.5.1 // indirect
 	github.com/sigstore/sigstore v1.10.8 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/smallstep/pkcs7 v0.2.1 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -310,10 +310,11 @@ require (
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.2 // indirect
-	github.com/ulikunitz/xz v0.5.16 // indirect
+	github.com/ulikunitz/xz v0.5.17 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
+	github.com/varlink/go v0.4.1-0.20261015173642-c935be0c53f7 // indirect
 	github.com/vbatts/tar-split v0.12.3 // indirect
 	github.com/vbauerster/cupwriter v0.0.4 // indirect
 	github.com/vbauerster/mpb/v8 v8.14.0 // indirect
@@ -346,7 +347,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.30.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect

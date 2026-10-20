@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -33,7 +34,7 @@ type LocalTarget struct {
 // host is the name this host is advertised under; it appears in errors
 // and reports.
 func NewLocalTarget(host string) (*LocalTarget, error) {
-	current, err := user.Current()
+	username, err := currentUsername()
 	if err != nil {
 		return nil, &LocalTargetError{Cause: err}
 	}
@@ -41,7 +42,25 @@ func NewLocalTarget(host string) (*LocalTarget, error) {
 	if err != nil {
 		return nil, &LocalTargetError{Cause: err}
 	}
-	return &LocalTarget{host: host, user: current.Username, home: home, shell: localShell}, nil
+	return &LocalTarget{host: host, user: username, home: home, shell: localShell}, nil
+}
+
+// lookupCurrentUser resolves the running user; tests replace it to stand in
+// for a uid with no passwd entry.
+var lookupCurrentUser = user.Current
+
+// currentUsername names the running user. A uid with no passwd entry -- the
+// toolchain image runs as any non-root uid -- is named by the uid itself.
+func currentUsername() (string, error) {
+	current, err := lookupCurrentUser()
+	var unknown user.UnknownUserIdError
+	if errors.As(err, &unknown) {
+		return strconv.Itoa(int(unknown)), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return current.Username, nil
 }
 
 // Host returns the name this host is advertised under.

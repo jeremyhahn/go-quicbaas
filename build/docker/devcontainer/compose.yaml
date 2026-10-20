@@ -1,0 +1,74 @@
+# The devcontainer's compose services, one per image (handbook
+# devcontainer.md sections 3 and 6). Built with the repository root as context.
+# GO_VERSION and GO_IMAGE_DIGEST come from pkg/version/toolchain.mk:
+# the Makefile's DEVCONTAINER_COMPOSE exports them, along with TOOLCHAIN_IMAGE
+# and INTEGRATION_IMAGE, before calling compose (make docker-build,
+# make docker-run CMD=...).
+#
+# The integration stack is included, so the project this file names is the
+# whole stack: ci-template's teardown step runs
+#   docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes
+# with only IT_IMAGE set, and must remove the nodes, networks and volumes
+# `make integration-test` started. So nothing here is required at load time:
+# make supplies the build arguments, and the integration image falls back to
+# IT_IMAGE. The gomodauth secret is the included file's.
+include:
+  - ../../../test/integration/docker-compose.integration.yml
+
+x-build: &build
+  context: ../../..
+  dockerfile: build/docker/devcontainer/Dockerfile
+  args:
+    GO_VERSION: ${GO_VERSION:-}
+    GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
+    GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
+    GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
+  secrets:
+    - gomodauth
+
+x-ulimits: &ulimits
+  memlock:
+    soft: -1
+    hard: -1
+  core:
+    soft: 0
+    hard: 0
+
+services:
+  toolchain:
+    image: ${TOOLCHAIN_IMAGE:-quicbaas-devcontainer:toolchain}
+    build:
+      <<: *build
+      target: toolchain
+    user: "${RUN_UID:-1000}:${RUN_GID:-1000}"
+    volumes:
+      - ../../..:/src
+    working_dir: /src
+    ulimits: *ulimits
+
+  # Hardened (devcontainer.md section 3): read-only, no network, no
+  # capabilities. Writable scratch is a tmpfs.
+  integration:
+    image: ${INTEGRATION_IMAGE:-${IT_IMAGE:-quicbaas-devcontainer:integration}}
+    build:
+      <<: *build
+      target: integration
+      args:
+        GO_VERSION: ${GO_VERSION:-}
+        GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
+        GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
+        GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
+        # The Makefile's INTEGRATION_BUILD_TAGS, the tag set the test driver is
+        # built with, so the nodes and the driver agree.
+        BUILD_TAGS: ${INTEGRATION_BUILD_TAGS:-}
+        # COVER=1 builds a coverage-instrumented daemon (Dockerfile).
+        COVER: ${COVER:-}
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:exec
+    ulimits: *ulimits

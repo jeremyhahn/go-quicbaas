@@ -43,9 +43,11 @@ make benchmark-quick          # Quick benchmark (1 iteration)
 
 ## Docker
 ```bash
-make docker-build             # Build Docker image
-make docker-build-dev         # Build dev Docker image
-make docker-run               # Run Docker container
+make image-build              # Build the product Docker image
+make image-build-dev          # Build dev Docker image
+make image-run                # Run the product Docker image
+make docker-build             # Build the devcontainer images (toolchain, integration)
+make docker-run CMD='make test'  # Run CMD in the toolchain image
 make docker-compose-up        # Start docker-compose environment
 make docker-compose-down      # Stop docker-compose
 make docker-compose-logs      # Show logs

@@ -33,3 +33,10 @@ func lockFile(file *os.File) error {
 	}
 	return err
 }
+
+// unlockFile drops the flock on file. Close alone is not enough: a process
+// forked meanwhile shares the open file description until it execs, and the
+// lock lives as long as any copy of that description does.
+func unlockFile(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_UN)
+}

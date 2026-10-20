@@ -621,16 +621,23 @@ describe('a renewal cannot commit for a session that is no longer there', () => 
   it('still shares one renewal between concurrent callers in the SAME session', async () => {
     // The property the single-flight exists for, which the scoping must not
     // cost: one round trip, however many callers.
+    //
+    // Only renewals are counted. The renewed credential names another
+    // principal, so committing it announces a scope change, and the
+    // orchestrator's listener reloads its lists without being awaited. Those
+    // requests land before or after the last assertion depending on load.
+    const renewals = (): number =>
+      vi.mocked(window.fetch).mock.calls.filter(([input]) => String(input).includes('/api/v1/iam/refresh')).length;
     setAuthenticated({ access_token: sessionToken(), refresh_token: 'refresh-1' });
     const a = refreshAccessToken();
     const b = refreshAccessToken();
 
-    expect(window.fetch).toHaveBeenCalledTimes(1);
+    expect(renewals()).toBe(1);
 
     release();
     expect(await a).toBe(renewed);
     expect(await b).toBe(renewed);
-    expect(window.fetch).toHaveBeenCalledTimes(1);
+    expect(renewals()).toBe(1);
   });
 
   it('does not tear down a newer session when a 2xx carries no access token', async () => {

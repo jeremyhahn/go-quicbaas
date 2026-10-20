@@ -29,7 +29,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # takes them.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
-    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     go mod download
 
 COPY . .

@@ -67,7 +67,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # design, so the same Dockerfile builds against the public proxy.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
-    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     go mod download
 
 COPY . .

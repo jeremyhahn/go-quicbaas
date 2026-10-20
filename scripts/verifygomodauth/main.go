@@ -65,8 +65,11 @@ import (
 // that finding it anywhere in the output is unambiguous.
 const fakeToken = "gate0verifygomodauth0not0a0credential" //nolint:gosec // G101: a fixed fixture string the gate searches for, not a credential
 
-// stagedMarker is what stage-gomodauth prints when it wrote credentials.
-const stagedMarker = "Staged Gitea module credentials"
+// stagedSize is the size of the section-6 file stage-gomodauth writes for the
+// target cases' token and origin. stage-gomodauth runs silent (DS-2534), so a
+// target proves it staged by the staged file holding exactly that many bytes
+// at its image build, as the fake docker records.
+var stagedSize = int64(len(sectionSix(fakeToken, gateOrigin)))
 
 // gateOrigin is the forge every staging case names. The Makefile carries no
 // default origin, so each case passes one explicitly, as a real host does from
@@ -612,9 +615,6 @@ func checkTarget(tc targetCase, out outcome, fail func(string, ...any)) {
 	if tc.failMatch == "" && out.status != 0 {
 		fail("%s exited %d against a daemon that answered every call:\n%s", tc.target, out.status, out.output)
 	}
-	if !strings.Contains(out.output, stagedMarker) {
-		fail("%s never staged the credentials", tc.target)
-	}
 	buildAt := -1
 	for i, c := range out.watch {
 		if strings.Contains(c.call, tc.build) {
@@ -625,7 +625,10 @@ func checkTarget(tc targetCase, out outcome, fail func(string, ...any)) {
 	case buildAt < 0:
 		fail("%s never reached its image build (%q) — this case no longer exercises it", tc.target, tc.build)
 	case out.watch[buildAt].size <= 0:
-		fail("%s built its image with an empty credentials file", tc.target)
+		fail("%s never staged the credentials: its image build saw an empty credentials file", tc.target)
+	case out.watch[buildAt].size != stagedSize:
+		fail("%s built its image with %d bytes of credentials, not the %d-byte section-6 file stage-gomodauth writes",
+			tc.target, out.watch[buildAt].size, stagedSize)
 	}
 	if tc.after != "" && buildAt >= 0 {
 		seen := false

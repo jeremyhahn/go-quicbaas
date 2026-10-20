@@ -15,8 +15,10 @@ package buildgates
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -45,6 +47,33 @@ var (
 	checkLineRe = regexp.MustCompile(`(?m)^\s+check\s+(\S+)\s+"[^"]*"\s*(\S*)\s*$`)
 	jobIfRe     = regexp.MustCompile(`(?m)^    if:`)
 )
+
+// nonGatingJobs are the ci.yml jobs that run but deliberately do not gate
+// CI Gate: they are in neither its needs nor a check line.
+//
+// Integration still runs on every PR but does not gate until row #1700
+// closes (CA m787). Remove it from this set when the row closes, and restore
+// it in ci-gate's needs and as a pr check line.
+var nonGatingJobs = map[string]bool{
+	"integration": true,
+}
+
+// gateNeeds returns the jobs listed in the gate job's `needs: [...]` line.
+func gateNeeds(t *testing.T, gate string) []string {
+	t.Helper()
+	m := gateNeedsRe.FindStringSubmatch(gate)
+	if m == nil {
+		t.Fatalf("%s has no `needs: [...]` line. A gate that depends on nothing "+
+			"reports success the moment the workflow starts.", gateJobName)
+	}
+	var needs []string
+	for _, n := range strings.Split(m[1], ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			needs = append(needs, n)
+		}
+	}
+	return needs
+}
 
 // readFile returns a file's contents or fails the test.
 func readFile(t *testing.T, path string) string {
@@ -136,22 +165,12 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 
 	var substantive []string
 	for _, j := range order {
-		if j != gateJobName {
+		if j != gateJobName && !nonGatingJobs[j] {
 			substantive = append(substantive, j)
 		}
 	}
 
-	m := gateNeedsRe.FindStringSubmatch(gate)
-	if m == nil {
-		t.Fatalf("%s has no `needs: [...]` line. A gate that depends on nothing "+
-			"reports success the moment the workflow starts.", gateJobName)
-	}
-	var needs []string
-	for _, n := range strings.Split(m[1], ",") {
-		if n = strings.TrimSpace(n); n != "" {
-			needs = append(needs, n)
-		}
-	}
+	needs := gateNeeds(t, gate)
 
 	var checked []string
 	for j := range gateChecks(gate) {
@@ -182,6 +201,35 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 	}
 }
 
+// TestNonGatingJobsCannotHideAJob proves nonGatingJobs exempts only real,
+// deliberately ungated jobs: a stale or misspelled entry would silently exempt
+// nothing, and an entry still in the gate's needs or checks contradicts itself.
+func TestNonGatingJobsCannotHideAJob(t *testing.T) {
+	_, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
+	gate, ok := bodies[gateJobName]
+	if !ok {
+		t.Fatalf("ci.yml has no %q job", gateJobName)
+	}
+	needs := gateNeeds(t, gate)
+	checks := gateChecks(gate)
+
+	for j := range nonGatingJobs {
+		if j == gateJobName {
+			t.Errorf("%s itself cannot be non-gating", gateJobName)
+		}
+		if _, ok := bodies[j]; !ok {
+			t.Errorf("non-gating job %q does not exist in ci.yml; remove the stale entry", j)
+		}
+		if slices.Contains(needs, j) {
+			t.Errorf("job %q is non-gating but is in %s's needs; remove it from "+
+				"nonGatingJobs now that it gates", j, gateJobName)
+		}
+		if _, ok := checks[j]; ok {
+			t.Errorf("job %q is non-gating but has a check line in %s", j, gateJobName)
+		}
+	}
+}
+
 // TestCIGateRunsEvenWhenADependencyFails pins `if: always()` and the
 // fail-closed comparison.
 //
@@ -197,9 +245,18 @@ func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^    if: always\(\)\s*$`).MatchString(gate) {
 		t.Errorf("%s is missing `if: always()`:\n%s", gateJobName, gate)
 	}
-	if !strings.Contains(gate, `case "$2" in success)`) {
-		t.Errorf("%s's check does not compare against `success` explicitly. It must "+
-			"treat skipped and cancelled as failure.", gateJobName)
+	// The ci-template's check(): only success passes, a skip passes only for a
+	// full-tier job below the full tier, and every other result fails.
+	for _, line := range []string{
+		"            case \"$2\" in\n              success) echo \"OK   $1\";;\n              skipped)\n",
+		"                if [ \"$3\" = full ] && [ \"${FULL_TIER}\" != true ]; then\n",
+		"                  echo \"FAIL $1 (skipped)\"; BAD=1\n",
+		"              *) echo \"FAIL $1 ($2)\"; BAD=1;;\n",
+		"          exit $BAD\n",
+	} {
+		if !strings.Contains(gate, line) {
+			t.Errorf("%s's check differs from the ci-template; it lacks:\n%s", gateJobName, line)
+		}
 	}
 }
 
@@ -220,7 +277,7 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 
 	tiers := gateChecks(gate)
 	for _, j := range order {
-		if j == gateJobName {
+		if j == gateJobName || nonGatingJobs[j] {
 			continue
 		}
 		job := bodies[j]
@@ -247,11 +304,14 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 // PR's run in flight.
 func TestCIIgnoresLabelChanges(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
-	if !strings.Contains(body, "\n    types: [opened, synchronize, reopened]\n") {
-		t.Errorf("ci.yml's pull_request types are not [opened, synchronize, reopened]")
+	// The ci-template's pull_request trigger carries no types list, so it runs
+	// on the default opened, synchronize and reopened, never on a label change.
+	const trigger = "\n  pull_request:\n    branches: [main]\n  workflow_dispatch:"
+	if !strings.Contains(body, trigger) {
+		t.Errorf("ci.yml's pull_request trigger is not the ci-template's:%s", trigger)
 	}
-	if strings.Contains(body, "reopened, labeled]") {
-		t.Errorf("ci.yml's pull_request types still carry `labeled`")
+	if strings.Contains(body, "labeled") {
+		t.Errorf("ci.yml's triggers carry `labeled`; a label change must not start CI")
 	}
 }
 
@@ -260,17 +320,87 @@ func TestCIIgnoresLabelChanges(t *testing.T) {
 // group (devops.md §9b). The ref keeps one pull request from cancelling
 // another. `pull_request_target` is out of scope: its github.ref is the base
 // branch, so a ref-keyed group there would span every pull request.
+// cancelsEveryRef matches a concurrency key, not a comment, that cancels
+// in-progress runs on every ref, main included.
+var cancelsEveryRef = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
+
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
-	const want = "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n"
+	// The ci-template v1.22.1 block: one group per ref, a newer run cancels the
+	// older one off main, and a main run is never cancelled.
+	const want = "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n" +
+		"  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
 	for _, path := range workflowFiles(t) {
 		body := readFile(t, path)
+		if strings.Contains(body, "\n  push:\n") && cancelsEveryRef.MatchString(body) {
+			t.Errorf("%s runs on push and sets `cancel-in-progress: true`, which cancels main runs", path)
+		}
 		if !strings.Contains(body, "\n  pull_request:\n") {
 			continue
 		}
 		if !strings.Contains(body, "\n"+want) {
-			t.Errorf("%s runs on pull_request but lacks the ref-keyed group:\n%s", path, want)
+			t.Errorf("%s runs on pull_request but lacks the ci-template's concurrency block:\n%s", path, want)
 		}
 	}
+}
+
+// TestMakeBuildHonoursGoBuildTags proves that the ci-template's GO_BUILD_TAGS,
+// which the workflow passes to make build, reaches every go build line on top
+// of the repository's own tags, and that an empty value adds nothing (#1580).
+func TestMakeBuildHonoursGoBuildTags(t *testing.T) {
+	probes := []string{"gobuildtagsprobea", "gobuildtagsprobeb"}
+	cases := []struct {
+		name string
+		arg  string
+		want bool
+	}{
+		{name: "space separated list", arg: "GO_BUILD_TAGS=" + strings.Join(probes, " "), want: true},
+		{name: "empty", arg: "GO_BUILD_TAGS=", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, tags := range makeBuildTagSets(t, tc.arg) {
+				if !tags["gms_pure_go"] {
+					t.Errorf("go build line lost the repository tag gms_pure_go: %v", tags)
+				}
+				for _, probe := range probes {
+					if tags[probe] != tc.want {
+						t.Errorf("%s: tag %s present=%v, want %v", tc.arg, probe, tags[probe], tc.want)
+					}
+				}
+			}
+		})
+	}
+}
+
+// makeBuildTagSets dry-runs make build with arg and returns the -tags set of
+// every go build line it prints. It fails the test when there is none.
+func makeBuildTagSets(t *testing.T, arg string) []map[string]bool {
+	t.Helper()
+	out, err := exec.Command("make", "-n", "--no-print-directory", "-C", repoRoot, "build", arg).CombinedOutput()
+	if err != nil {
+		t.Fatalf("make -n build %s: %v\n%s", arg, err, out)
+	}
+	var sets []map[string]bool
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "go build ") {
+			continue
+		}
+		_, rest, found := strings.Cut(line, "-tags '")
+		if !found {
+			t.Errorf("go build line carries no -tags: %s", line)
+			continue
+		}
+		list, _, _ := strings.Cut(rest, "'")
+		set := map[string]bool{}
+		for _, tag := range strings.FieldsFunc(list, func(r rune) bool { return r == ' ' || r == ',' }) {
+			set[tag] = true
+		}
+		sets = append(sets, set)
+	}
+	if len(sets) == 0 {
+		t.Fatalf("make -n build %s printed no go build line:\n%s", arg, out)
+	}
+	return sets
 }
 
 // TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the

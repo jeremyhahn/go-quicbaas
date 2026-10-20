@@ -24,6 +24,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func mustLockWorkDir(t *testing.T, dir string) *WorkDirLock {
@@ -85,6 +87,54 @@ func TestLockWorkDir_ReleaseThenAcquireSucceeds(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 	mustLockWorkDir(t, dir)
+}
+
+// A process forked while the lock is held shares its open file description
+// until it execs. Release must drop the flock itself, not rely on Close, or
+// that child keeps the work dir locked after Release returns.
+func TestLockWorkDir_ReleaseFreesTheDirWhileAForkedCopyIsOpen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	first, err := LockWorkDir(dir)
+	if err != nil {
+		t.Fatalf("first LockWorkDir: %v", err)
+	}
+	childFD, err := unix.Dup(int(first.file.Fd()))
+	if err != nil {
+		t.Fatalf("dup lock fd: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := unix.Close(childFD); err != nil {
+			t.Errorf("close dup fd: %v", err)
+		}
+	})
+	if err := first.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	mustLockWorkDir(t, dir)
+}
+
+func TestLockWorkDir_ReleaseReportsAFailedUnlockAndClose(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	lock, err := LockWorkDir(dir)
+	if err != nil {
+		t.Fatalf("LockWorkDir: %v", err)
+	}
+	if err := lock.file.Close(); err != nil {
+		t.Fatalf("close lock file underneath: %v", err)
+	}
+	err = lock.Release()
+	var opErr *OpError
+	if !errors.As(err, &opErr) {
+		t.Fatalf("Release error = %v, want *OpError", err)
+	}
+	if !errors.Is(err, os.ErrClosed) {
+		t.Errorf("Release error = %v, want it to wrap os.ErrClosed", err)
+	}
+	if err := lock.Release(); err != nil {
+		t.Errorf("second Release = %v, want nil", err)
+	}
 }
 
 func TestLockWorkDir_ReleaseIsIdempotent(t *testing.T) {

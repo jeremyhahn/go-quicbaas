@@ -43,7 +43,8 @@ case "\$1 \${2:-}" in
 	esac
 	;;
 'test '*)
-	printf '%s\n' "\$@" >"$tmp/go-test-args"
+	# Keep the FIRST go test a target runs: coverage runs more passes after it.
+	[ -f "$tmp/go-test-args" ] || printf '%s\n' "\$@" >"$tmp/go-test-args"
 	for arg; do
 		case \$arg in
 		-coverprofile=*) echo 'mode: set' >"\${arg#-coverprofile=}" ;;
@@ -82,13 +83,17 @@ fail() {
 # run CODE TARGET runs TARGET with `go test` exiting CODE and prints make's
 # exit status. When go_list is set, `go list` answers from it instead of
 # running: "fail" exits 1 as a broken go.mod does, "pkgs:A B" prints A and B.
+# TEST_CHECKS is emptied because this tests the recipes, not the checks they
+# depend on: coverage lists check-package-targets, which runs this script.
+# COVERAGE_THRESHOLD is 0 because the stand-in profile holds no statements,
+# and coverage's gate would otherwise fail every run at 0.0%.
 go_list=
 run() {
 	code=0
 	rm -f "$tmp/go-test-args"
 	PATH="$tmp/bin:$PATH" FAKE_GO_TEST_EXIT=$1 FAKE_GO_LIST=$go_list \
 		$MAKE --no-print-directory "$2" GOCMD=go COVERAGE_DIR="$tmp/coverage" \
-		>"$tmp/out" 2>&1 || code=$?
+		TEST_CHECKS= COVERAGE_THRESHOLD=0 >"$tmp/out" 2>&1 || code=$?
 	echo "$code"
 }
 

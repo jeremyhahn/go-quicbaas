@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -303,6 +304,60 @@ func TestNewLocalTarget_CurrentUser(t *testing.T) {
 	}
 	if target.Host() != "node01" || target.User() == "" || target.home != home {
 		t.Fatalf("target = %+v", target)
+	}
+}
+
+// stubCurrentUser replaces the user lookup for one test.
+func stubCurrentUser(t *testing.T, lookup func() (*user.User, error)) {
+	t.Helper()
+	original := lookupCurrentUser
+	lookupCurrentUser = lookup
+	t.Cleanup(func() { lookupCurrentUser = original })
+}
+
+// A uid with no passwd entry (the toolchain image runs as any non-root uid)
+// names the target user by its uid instead of failing.
+func TestNewLocalTarget_UidWithoutPasswdEntry(t *testing.T) {
+	stubCurrentUser(t, func() (*user.User, error) {
+		return nil, user.UnknownUserIdError(10001)
+	})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	target, err := NewLocalTarget("node01")
+	if err != nil {
+		t.Fatalf("NewLocalTarget: %v", err)
+	}
+	if target.User() != "10001" || target.home != home {
+		t.Fatalf("target = %+v, want user 10001 and home %s", target, home)
+	}
+}
+
+// A uid that resolves keeps its user name.
+func TestNewLocalTarget_ResolvedUserKeepsItsName(t *testing.T) {
+	stubCurrentUser(t, func() (*user.User, error) {
+		return &user.User{Uid: "1000", Username: "builder"}, nil
+	})
+
+	target, err := NewLocalTarget("node01")
+	if err != nil {
+		t.Fatalf("NewLocalTarget: %v", err)
+	}
+	if target.User() != "builder" {
+		t.Fatalf("User() = %q, want builder", target.User())
+	}
+}
+
+// Any other lookup failure is still a LocalTargetError.
+func TestNewLocalTarget_LookupFailure(t *testing.T) {
+	cause := errors.New("nss unavailable")
+	stubCurrentUser(t, func() (*user.User, error) { return nil, cause })
+
+	_, err := NewLocalTarget("node01")
+
+	var targetErr *LocalTargetError
+	if !errors.As(err, &targetErr) || !errors.Is(err, cause) {
+		t.Fatalf("want LocalTargetError wrapping %v, got %v", cause, err)
 	}
 }
 

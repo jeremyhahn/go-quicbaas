@@ -64,7 +64,7 @@ RUN rm -f go.sum sdk/go/go.sum
 # compile at run time without credentials.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
-    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     GOSUMDB=off go mod download
 
 # Build the daemon WITH the cloud seal tags so the seal factories compile in.

@@ -531,7 +531,7 @@ make coverage          # Coverage report
 ### Docker
 
 ```bash
-make docker-build RUN_ID=local
+make image-build RUN_ID=local
 
 docker run -p 50051:50051 -p 8080:8080 quicbaas:latest-local
 ```

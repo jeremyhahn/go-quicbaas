@@ -40,7 +40,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # the public proxy once tags are mirrored.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
-    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     go mod download
 
 COPY . .
@@ -108,7 +108,7 @@ COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
-    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    if [ -f /run/secrets/gomodauth ]; then set -a; . /run/secrets/gomodauth; set +a; fi; \
     go mod download
 
 COPY . .

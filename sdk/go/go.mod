@@ -6,19 +6,21 @@ go 1.27.2
 replace github.com/armon/go-metrics => github.com/armon/go-metrics v0.4.1
 
 require (
-	github.com/go-chi/chi/v5 v5.3.0
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/descope/virtualwebauthn v1.0.3 // held: #1597, the third-party bump to latest
+	github.com/go-chi/chi/v5 v5.3.0 // held: #1597, the third-party bump to latest
+	github.com/go-jose/go-jose/v4 v4.1.4 // held: #1597, the third-party bump to latest
+	github.com/go-webauthn/webauthn v0.17.4 // held: #1597, the third-party bump to latest
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/jeremyhahn/go-qrdb v0.30.1-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha
+	github.com/jeremyhahn/go-qrdb v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.30.1-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
 	github.com/jeremyhahn/go-quicbaas v0.16.0-alpha
-	github.com/jeremyhahn/go-xkms v0.49.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha
-	github.com/mark3labs/mcp-go v0.45.0
-	github.com/quic-go/quic-go v0.63.0
+	github.com/jeremyhahn/go-xkms v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/jeremyhahn/go-xkms/sdk/go v0.49.0-alpha // held: #1389, the go-qrdb/go-xkms stack pin bump
+	github.com/mark3labs/mcp-go v0.45.0 // held: #1597, the third-party bump to latest
+	github.com/quic-go/quic-go v0.63.0 // held: #1597, the third-party bump to latest
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/crypto v0.57.0
-	google.golang.org/grpc v1.83.2
+	golang.org/x/crypto v0.57.0 // held: #1597, the third-party bump to latest
+	google.golang.org/grpc v1.83.2 // held: #1597, the third-party bump to latest
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -96,7 +98,6 @@ require (
 	github.com/cockroachdb/swiss v0.0.0-20260820225851-333444432258 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
-	github.com/descope/virtualwebauthn v1.0.3 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20260610153742-72563bc7ca83 // indirect
@@ -119,7 +120,6 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/go-webauthn/webauthn v0.17.4 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
@@ -164,7 +164,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.6.0 // indirect
-	github.com/klauspost/compress v1.19.1 // indirect
+	github.com/klauspost/compress v1.20.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
@@ -207,7 +207,7 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/sirupsen/logrus v1.9.4 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
@@ -253,8 +253,8 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

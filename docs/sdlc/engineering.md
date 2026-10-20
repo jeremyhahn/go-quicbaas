@@ -607,6 +607,80 @@ pins, and `make proto-gen` runs `make check-proto-tools` first, which refuses
 `go env GOVERSION`; `make check-workspace-script` (part of `make test`) fails if
 a Dockerfile writes one inline again (go-quicbaas#399).
 
+### CI stages in the devcontainer image
+
+CI runs its stages in the project's own devcontainer image (handbook
+`software/conventions/ci-standard.md`, `devcontainer.md`), built from
+`build/docker/devcontainer/Dockerfile` at the commit under test. The `toolchain`
+stage carries Go (`golang:<GO_VERSION>-trixie` by digest) and every pinned
+tool: golangci-lint, gosec, govulncheck, actionlint, shellcheck and trivy. Each
+pin, including the base image digest and the trivy and shellcheck SHA-256s,
+comes from `pkg/version/toolchain.mk`, the same file the Makefile includes.
+
+The `integration` stage is the integration stack's node image: `base` plus the
+`quicbaasd` and `quicbaas` binaries, `test/integration/node-entrypoint.sh` and
+the node config, with no source and no dev tools. The build-only
+`integration-build` stage compiles the binaries from the source at the commit,
+with the tags and flags `test/integration/Dockerfile.node` uses (`COVER=1` gives
+a coverage-instrumented daemon). Its devcontainer compose service
+(`build/docker/devcontainer/compose.yaml`) is hardened: a read-only filesystem
+with a `/tmp` tmpfs, `network_mode: none`, every capability dropped,
+`no-new-privileges`, and `memlock` and `core` ulimits.
+
+The Makefile drives both images with the handbook's target names:
+
+```
+make docker-build                       # build the toolchain and integration images
+make docker-run CMD='make build'        # build
+make docker-run CMD='make test'         # unit tests
+make docker-run CMD='make security'     # gosec, govulncheck, go mod verify, trivy fs
+make docker-run CMD='make deps-check'   # latest-version check
+make toolchain-image                    # print the toolchain image tag
+```
+
+`make toolchain-image` prints a tag hashed from the Dockerfile, the pin file and
+both modules' `go.mod`/`go.sum`. The integration image, which holds the source,
+is tagged `integration-<commit>`, plus `-dirty-<hash>` of the uncommitted
+changes when the tree is not clean, so any source change gives a new tag.
+`make docker-run` builds the toolchain image
+when that tag is missing, then runs `CMD` in the compose `toolchain` service as
+the calling uid, with the source mounted at `/src`. The product image's own
+targets are `make image-build`, `image-build-dev`, `image-build-fips`,
+`image-run`, `image-run-fips`, `image-stop` and `image-push`.
+
+The build fetches private modules through the `gomodauth` secret (see
+[private-modules.md](../testing/private-modules.md)) and uses
+`DEVCACHE_GOPROXY` / `DEVCACHE_GOPRIVATE` when the caller sets them. Both images
+run with `GOPROXY=off`.
+
+`make integration-test` runs the integration stack
+(`test/integration/docker-compose.integration.yml`) on the `integration` image.
+It first builds the image with `make docker-build-integration-image`, then exports
+the tag as `QUICBAAS_INTEGRATION_IMAGE` for compose. `make integration-bench`
+and `make cluster-down-integration` export the tag too. What runs where:
+
+- The node services (`test-node1` to `test-node5` and `test-selfreg`) run the
+  `integration` image. Each node is read-only with a `/tmp` tmpfs, has every
+  capability dropped, runs with `no-new-privileges`, and has the devcontainer's
+  `memlock` and `core` ulimits. The nodes stay on the compose bridge network,
+  because they talk to each other, and their data, log, socket and cert paths
+  are writable named volumes. `test-node1` to `test-node5` add back
+  `NET_ADMIN` and `NET_RAW` for multicast discovery. The nodes run as root, as
+  they did under `Dockerfile.node`: the per-run node keys are root-owned with
+  mode 0600, and a process with no capabilities can read only the files it owns.
+- The test driver (`integration-test`) and `certs-init` still build
+  `test/integration/Dockerfile` and are not hardened. The driver passes the
+  node image tag on to the compose calls it makes through the Docker socket.
+- The other compose files (`cluster`, `seal`, `kms-*`, `test`) still build
+  `test/integration/Dockerfile.node`.
+
+`make deps-check` fails when a direct requirement of `go.mod` or
+`sdk/go/go.mod` is behind its latest release and has no comment on its
+`require` or `replace` line giving the reason (handbook `devops.md` §9). It is
+the one stage that needs a module proxy at run time: it sets
+`DEPS_CHECK_GOPROXY` (the fleet cache if `DEVCACHE_GOPROXY` is set, then the
+public proxy) and resolves `github.com/jeremyhahn/*` as private.
+
 **No new `//nolint`.** Fix the cause the linter reports instead of suppressing
 it. `nolintlint` (`.golangci.yml`) requires every directive to name its linter,
 give a `// reason`, and still suppress something, and `make check-nolint` (part

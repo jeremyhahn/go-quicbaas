@@ -142,15 +142,19 @@ func (l *WorkDirLock) Dir() string {
 }
 
 // Release drops the lock. Releasing a nil or already released lock is a
-// no-op. The lock file stays in place: removing it would let a runtime that
-// opened the old file and one that creates a new one both hold "the" lock.
+// no-op. It unlocks before it closes the file: a process forked while the
+// lock was held shares the file's open description until it execs, so Close
+// alone would leave that child holding the lock. Both steps are attempted and
+// either failure is reported. The lock file stays in place: removing it would
+// let a runtime that opened the old file and one that creates a new one both
+// hold "the" lock.
 func (l *WorkDirLock) Release() error {
 	if l == nil || l.file == nil {
 		return nil
 	}
 	file := l.file
 	l.file = nil
-	if err := file.Close(); err != nil {
+	if err := errors.Join(unlockFile(file), file.Close()); err != nil {
 		return &OpError{Op: "agent: release work dir lock " + l.dir, Cause: err}
 	}
 	return nil

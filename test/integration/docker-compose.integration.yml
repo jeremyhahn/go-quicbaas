@@ -2,9 +2,34 @@
 # Complete isolated environment for running integration tests
 # Includes 3-node cluster + optional 4th/5th nodes and test runner with proper health checks
 #
-# All images are based on consistent tooling from the devcontainer setup.
-# The node images use a lightweight runtime, while the test runner includes
-# full Go tooling for test execution.
+# The node services (test-node1 to test-node5, test-selfreg) run the
+# devcontainer's hardened `integration` image, which `make integration-test`
+# builds and names in QUICBAAS_INTEGRATION_IMAGE (go-quicbaas#1383). The test
+# driver and certs-init still build test/integration/Dockerfile.
+
+# ci-standard.md section 2 and devcontainer.md section 3, applied to each node.
+# The nodes keep the compose bridge network, because they talk to each other;
+# their data, log, socket and cert paths are named volumes, which stay
+# writable under read_only.
+x-node-hardening: &node-hardening
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  ulimits:
+    memlock:
+      soft: -1
+      hard: -1
+    core:
+      soft: 0
+      hard: 0
+  # Root, as under Dockerfile.node: certs-init writes each node's key as root
+  # with mode 0600, and with every capability dropped (no CAP_DAC_OVERRIDE) only
+  # the owner can read it.
+  user: "0:0"
 
 services:
   # Ollama Embedding Service for vector/embedding tests
@@ -232,6 +257,9 @@ services:
       - QUICBAAS_NODE3_UNIX=/var/run/quicbaas/node3.sock
       - QUICBAAS_UNIX_ENABLED=true
       - QUICBAAS_UNIX_SOCKET=/var/run/quicbaas/node1.sock
+      # The node image tag, so a test that drives this compose file through
+      # the Docker socket (helpers.DockerManager) interpolates it.
+      - QUICBAAS_INTEGRATION_IMAGE=${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
       - QUICBAAS_QUIC_ENABLED=true
       - QUICBAAS_QUIC_ADDRESS=test-node1:4433
       - QUICBAAS_MCP_ENABLED=true
@@ -379,16 +407,11 @@ services:
 
   # Test Node 1 - Primary node
   test-node1:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-node1
-    # Add capabilities required for multicast networking
+    # Added back after the hardening's cap_drop: ALL, because node discovery
+    # joins a multicast group on the bridge network.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -513,16 +536,11 @@ services:
 
   # Test Node 2
   test-node2:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-node2
-    # Add capabilities required for multicast networking
+    # Added back after the hardening's cap_drop: ALL, because node discovery
+    # joins a multicast group on the bridge network.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -649,16 +667,11 @@ services:
 
   # Test Node 3
   test-node3:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-node3
-    # Add capabilities required for multicast networking
+    # Added back after the hardening's cap_drop: ALL, because node discovery
+    # joins a multicast group on the bridge network.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -791,14 +804,8 @@ services:
   # be exercised without opening the main cluster's flag-off surface.
   # Otherwise configured exactly like test-node1.
   test-selfreg:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-selfreg
     environment:
       - CGO_ENABLED=0
@@ -895,18 +902,13 @@ services:
   # Test Node 4 - For dynamic membership tests
   # Only started when needed via profiles
   test-node4:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-node4
     profiles:
       - membership-tests
-    # Add capabilities required for multicast networking
+    # Added back after the hardening's cap_drop: ALL, because node discovery
+    # joins a multicast group on the bridge network.
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -1019,18 +1021,13 @@ services:
 
   # Test Node 5 - For dynamic membership tests
   test-node5:
-    build:
-      context: ../..
-      dockerfile: test/integration/Dockerfile.node
-      args:
-        BUILD_TAGS: "${BUILD_TAGS:-local quic raft rest rag timeseries vector qrdb_vector iam mcp hashicorpmetrics codec_json codec_yaml codec_toml codec_msgpack codec_bson codec_cbor codec_protobuf gms_pure_go awss3 gcpstorage azureblob minio}"
-        COVER: "${COVER:-}"
-      secrets:
-        - gomodauth
+    image: ${QUICBAAS_INTEGRATION_IMAGE:-${IT_IMAGE}}
+    <<: *node-hardening
     hostname: test-node5
     profiles:
       - membership-tests
-    # Add capabilities required for multicast networking
+    # Added back after the hardening's cap_drop: ALL, because node discovery
+    # joins a multicast group on the bridge network.
     cap_add:
       - NET_ADMIN
       - NET_RAW

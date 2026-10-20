@@ -27,6 +27,8 @@ import (
 	"testing"
 
 	gossh "golang.org/x/crypto/ssh"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/nsswrapper"
 )
 
 // The acceptance tests point git's gpg.ssh.program at this test binary. When
@@ -93,7 +95,8 @@ func sessionKey(t *testing.T) session {
 }
 
 // isolatedEnv is an environment in which git reads no host configuration.
-func isolatedEnv(home string, extra ...string) []string {
+func isolatedEnv(t *testing.T, home string, extra ...string) []string {
+	t.Helper()
 	env := []string{
 		"HOME=" + home,
 		"PATH=" + os.Getenv("PATH"),
@@ -102,6 +105,9 @@ func isolatedEnv(home string, extra ...string) []string {
 		"GIT_AUTHOR_DATE=2026-10-13T12:00:00Z",
 		"GIT_COMMITTER_DATE=2026-10-13T12:00:00Z",
 	}
+	// The stock ssh-keygen, which git's verify-commit runs, exits for a uid
+	// with no passwd entry; the toolchain image runs as one.
+	env = append(env, nsswrapper.Env(t, home)...)
 	return append(env, extra...)
 }
 
@@ -145,7 +151,7 @@ func TestAcceptanceGitCommitVerifies(t *testing.T) {
 	home := t.TempDir()
 	repo := t.TempDir()
 	signers := allowedSigners(t, home, pub)
-	env := isolatedEnv(home, key.env...)
+	env := isolatedEnv(t, home, key.env...)
 
 	run(t, repo, env, nil, "git", "init", "-q", "-b", "main")
 	writeFile(t, repo, "README.md", []byte("signed through quicbaas\n"))
@@ -160,7 +166,7 @@ func TestAcceptanceGitCommitVerifies(t *testing.T) {
 		"commit", "-q", "-m", "signed commit")
 
 	// Verification uses the stock ssh-keygen: gpg.ssh.program is not set here.
-	out := run(t, repo, isolatedEnv(home), nil, "git",
+	out := run(t, repo, isolatedEnv(t, home), nil, "git",
 		"-c", "gpg.ssh.allowedSignersFile="+signers,
 		"verify-commit", "-v", "HEAD")
 	if !strings.Contains(out, `Good "git" signature for `+committerEmail) {
@@ -178,7 +184,7 @@ func TestAcceptanceSSHKeygenVerifies(t *testing.T) {
 	keyFile := writeKeyFile(t, dir, pub)
 	dataFile := writeFile(t, dir, "buffer", message)
 	signers := allowedSigners(t, dir, pub)
-	env := isolatedEnv(dir, key.env...)
+	env := isolatedEnv(t, dir, key.env...)
 	program := helperProgram(t)
 
 	run(t, dir, env, nil, program, signArgs(keyFile, dataFile)...)
@@ -187,7 +193,7 @@ func TestAcceptanceSSHKeygenVerifies(t *testing.T) {
 
 	for name, sigFile := range map[string]string{"data file": dataFile + signatureSuffix, "stdout": stdinSigFile} {
 		t.Run(name, func(t *testing.T) {
-			out := run(t, dir, isolatedEnv(dir), message, "ssh-keygen",
+			out := run(t, dir, isolatedEnv(t, dir), message, "ssh-keygen",
 				"-Y", "verify", "-f", signers, "-I", committerEmail, "-n", GitNamespace, "-s", sigFile)
 			if !strings.Contains(out, `Good "git" signature for `+committerEmail) {
 				t.Fatalf("ssh-keygen did not report a good signature:\n%s", out)
@@ -203,7 +209,7 @@ func TestAcceptanceRefusedCommitIsNotCreated(t *testing.T) {
 	other := newEd25519Signer(t).PublicKey()
 	home := t.TempDir()
 	repo := t.TempDir()
-	env := isolatedEnv(home, key.env...)
+	env := isolatedEnv(t, home, key.env...)
 
 	run(t, repo, env, nil, "git", "init", "-q", "-b", "main")
 	writeFile(t, repo, "README.md", []byte("refused\n"))

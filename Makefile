@@ -314,6 +314,12 @@ endif
 # semantics instead of quietly using different engines.
 BUILD_TAGS += gms_pure_go
 
+# ci-template GO_BUILD_TAGS: the workflow passes its space-separated tag list
+# to lint, build, coverage, security and integration-test (#1580). It is added
+# to the repository set here, before any tag list derives from BUILD_TAGS, so
+# every target honours it; an empty GO_BUILD_TAGS adds nothing.
+BUILD_TAGS += $(GO_BUILD_TAGS)
+
 # Strip leading/trailing spaces for go build
 BUILD_TAGS_ARG := $(if $(strip $(BUILD_TAGS)),-tags '$(strip $(BUILD_TAGS))',)
 # FIPS builds need to combine fips tag with optional features
@@ -341,7 +347,8 @@ DOCKER_FIPS_TAG := fips-$(RUN_ID_SLUG)
 DOCKER_TEST_TAG := test-$(RUN_ID_SLUG)
 DOCKER_RUN_LABEL := quicbaas.run=$(RUN_ID_SLUG)
 COMPOSE_PROJECT := quicbaas-$(RUN_ID_SLUG)
-COMPOSE_PROJECT_INTEGRATION := $(COMPOSE_PROJECT)-integration
+# CI names the integration stack per run (ci-template IT_PROJECT).
+COMPOSE_PROJECT_INTEGRATION := $(or $(IT_PROJECT),$(COMPOSE_PROJECT)-integration)
 COMPOSE_PROJECT_TEST := $(COMPOSE_PROJECT)-test
 COMPOSE_PROJECT_CACHE := $(COMPOSE_PROJECT)-cache
 COMPOSE_PROJECT_CLUSTER := $(COMPOSE_PROJECT)-cluster
@@ -579,7 +586,7 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist me
 		|| true); \
 	if [ -n "$$violations" ]; then \
 		echo "$(RED)FORBIDDEN InsecureSkipVerify in go-quicbaas (no allowlist entries):$(NC)"; \
-		printf '%s\n' "$$violations"; \
+		printf '%s\n' "$$violations" | cut -d: -f1,2; \
 		exit 1; \
 	fi
 	@echo "$(GREEN)InsecureSkipVerify allowlist check passed$(NC)"
@@ -1284,8 +1291,13 @@ IAM_TEST_TAGS := $(TEST_TAGS)
 # Keep prose OUT of the recipe: these lines sit inside a `\`-continued shell
 # command, where a `@#` line is handed to bash as a COMMAND and fails with
 # exit 127. That is exactly how this comment broke `make test` in CI run 4119.
+# TEST_CHECKS are the repository validations every unit-test pass runs first.
+# Both `test` and `coverage` (the CI test stage) list this one variable, so
+# CI cannot drop a check that `make test` runs.
+TEST_CHECKS := check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets
+
 .PHONY: test
-test: check-insecure-tls check-build-tags check-coded-sentinels check-local-keygen check-case-collisions check-library-pins check-workspace-script check-package-targets ## Run unit tests (excludes integration tests)
+test: $(TEST_CHECKS) ## Run unit tests (excludes integration tests)
 	@echo "$(BLUE)Running unit tests (excludes integration tests)...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(TEST_TAGS)$(NC)"
@@ -1329,7 +1341,7 @@ check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of
 	@bad=$$(git grep -nE "$(WORKSPACE_INLINE_PATTERN)" -- 'Dockerfile*' '**/Dockerfile*'); \
 	if [ -n "$$bad" ]; then \
 		echo "$(RED)Inline go.work in a Dockerfile; run test/integration/mkworkspace.sh instead:$(NC)"; \
-		echo "$$bad"; \
+		printf '%s\n' "$$bad" | cut -d: -f1,2; \
 		exit 1; \
 	fi
 	@sh test/integration/mkworkspace_test.sh
@@ -1394,7 +1406,7 @@ check-library-pins: ## Fail if go-qrdb, go-xkms or go-quicraft is taken from any
 	@bad=$$(grep -HnE '$(LIBRARY_PIN_MODULES)(/[^ ]*)? +v[^ ]*[0-9]{14}-[0-9a-f]{12}|$(LIBRARY_PIN_MODULES)(/[^ ]*)?( +v[^ ]*)? *=>' $(LIBRARY_PIN_FILES)); \
 	if [ -n "$$bad" ]; then \
 		echo "$(RED)Library pinned to an untagged commit or replaced:$(NC)"; \
-		echo "$$bad"; \
+		printf '%s\n' "$$bad" | cut -d: -f1,2; \
 		exit 1; \
 	fi
 	@echo "$(GREEN)Library pins are release tags$(NC)"
@@ -1490,6 +1502,11 @@ test-lean: check-insecure-tls check-build-tags check-local-keygen ## Run unit te
 	@echo "$(BLUE)Running unit tests with the transports on, data-model extras off...$(NC)"
 	@echo "$(YELLOW)Build tags: $(LEAN_TEST_TAGS)$(NC)"
 	$(GOTEST) -p 2 -tags '$(LEAN_TEST_TAGS)' -timeout=10m ./pkg/... ./cmd/...
+
+.PHONY: test-tooling
+test-tooling: ## Run the unit tests of the repository tooling (scripts, build gates)
+	@echo "$(BLUE)Running the repository tooling unit tests...$(NC)"
+	$(GOTEST) -p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/... ./test/buildgates/...
 
 .PHONY: test-desktop
 test-desktop: check-insecure-tls check-build-tags check-local-keygen ## Run the Wails desktop binding tests (needs webkit2gtk dev libraries)
@@ -1755,7 +1772,7 @@ COMPOSE_FILE="sdk/javascript/test/integration/docker-compose.yml"; \
 	if [ "$(origin QUICBAAS_IMAGE)" = "command line" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment" ] || [ "$(origin QUICBAAS_IMAGE)" = "environment override" ]; then \
 		echo "$(YELLOW)Using supplied QUICBAAS_IMAGE=$$QUICBAAS_IMAGE$(NC)"; \
 	else \
-		$(MAKE) --no-print-directory docker-build || exit 1; \
+		$(MAKE) --no-print-directory image-build || exit 1; \
 	fi; \
 	JS_TEST_PATTERN="$(JS_TEST_PATTERN)" $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE \
 		run --rm -T js-integration-test
@@ -2441,6 +2458,12 @@ test-integration-tagged: ## Run integration tests with build tag (in-process)
 # context would be baked into a layer (.dockerignore lists gomodauth* as a
 # second line of defence).
 GOMODAUTH_ENV ?= /tmp/quicbaas-$(RUN_ID_SLUG)-gomodauth.env
+# CI writes the module credential file itself and removes it after the build
+# (ci-template MODULE_ENV_FILE): the image builds read that file as it is, and
+# nothing here stages or clears it.
+ifneq ($(strip $(MODULE_ENV_FILE)),)
+GOMODAUTH_ENV := $(MODULE_ENV_FILE)
+endif
 export GOMODAUTH_ENV
 
 # Where integration-test backs go.mod up while the stack runs, restored after.
@@ -2474,9 +2497,18 @@ GOMODAUTH_OWNER ?= jeremyhahn
 # umask applies only to a file this creates; stage-gomodauth chmods an existing
 # one to 0600 before it writes a token into it.
 GOMODAUTH_CLEAR = { umask 077; : > "$(GOMODAUTH_ENV)"; } 2>/dev/null || true
+# A file CI supplied in MODULE_ENV_FILE belongs to the caller: no target stages
+# into it or clears it, so every recipe that arms GOMODAUTH_CLEAR or calls
+# stage-gomodauth leaves it as it was handed over.
+ifneq ($(strip $(MODULE_ENV_FILE)),)
+GOMODAUTH_CLEAR = true
+endif
 
 .PHONY: stage-gomodauth
 stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
+ifneq ($(strip $(MODULE_ENV_FILE)),)
+	@true
+else
 	@umask 077; : > "$(GOMODAUTH_ENV)" && chmod 600 "$(GOMODAUTH_ENV)"
 	@if [ -n "$${GIT_CONFIG_KEY_0:-}" ]; then \
 		umask 077; \
@@ -2486,7 +2518,6 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 			printf 'export GIT_CONFIG_KEY_0=%s\n' "$${GIT_CONFIG_KEY_0}"; \
 			printf 'export GIT_CONFIG_VALUE_0=%s\n' "$${GIT_CONFIG_VALUE_0:-}"; \
 		} > "$(GOMODAUTH_ENV)"; \
-		echo "$(GREEN)Staged Gitea module credentials for the image build (runner environment)$(NC)"; \
 		exit 0; \
 	fi; \
 	token="$${GITEA_READ_TOKEN:-}"; source=GITEA_READ_TOKEN; \
@@ -2496,7 +2527,7 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 	fi; \
 	if [ -z "$$token" ]; then \
 		echo "$(YELLOW)No Gitea module credentials: no GIT_CONFIG_KEY_0 (Gitea runner), no GITEA_READ_TOKEN,$(NC)"; \
-		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in $(GOMODAUTH_TOKENS_FILE).$(NC)"; \
+		echo "$(YELLOW)  and no $(GOMODAUTH_TOKEN_KEY) in the agent tokens file.$(NC)"; \
 		echo "$(YELLOW)  Image builds resolve modules from the public proxy, where private first-party$(NC)"; \
 		echo "$(YELLOW)  modules not yet mirrored fail with 'unknown revision' (docs/testing/private-modules.md)$(NC)"; \
 		exit 0; \
@@ -2512,7 +2543,7 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 	fi; \
 	if [ -z "$$origin" ]; then \
 		echo "$(RED)Error: a Gitea read token was found ($$source) but no Gitea origin is set; nothing staged$(NC)"; \
-		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in $(GOMODAUTH_TOKENS_FILE)$(NC)"; \
+		echo "$(RED)  Set GITEA_HTTP_ORIGIN (e.g. https://gitea.example.com:3000) in the environment or in the agent tokens file$(NC)"; \
 		exit 1; \
 	fi; \
 	origin="$${origin%/}"; \
@@ -2527,8 +2558,8 @@ stage-gomodauth: ## Stage Gitea module-fetch credentials for the image builds
 		printf 'export GIT_CONFIG_COUNT=1\n'; \
 		printf 'export GIT_CONFIG_KEY_0=url.%s://x:%s@%s/%s/.insteadOf\n' "$$scheme" "$$token" "$$hostport" "$(GOMODAUTH_OWNER)"; \
 		printf 'export GIT_CONFIG_VALUE_0=https://github.com/%s/\n' "$(GOMODAUTH_OWNER)"; \
-	} > "$(GOMODAUTH_ENV)"; \
-	echo "$(GREEN)Staged Gitea module credentials for the image build (token from $$source, origin $$origin)$(NC)"
+	} > "$(GOMODAUTH_ENV)"
+endif
 
 .PHONY: clear-gomodauth
 clear-gomodauth: ## Empty the staged Gitea module-fetch credentials file
@@ -2558,6 +2589,7 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		echo "$(YELLOW)  - Or run: sudo apt-get install docker-compose-plugin$(NC)"; \
 		exit 1; \
 	fi
+	@$(MAKE) --no-print-directory docker-build-integration-image
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@START_TIME=$$(date +%s); \
 	COMPOSE_FILE="test/integration/docker-compose.integration.yml"; \
@@ -3097,8 +3129,15 @@ stop-local: ## Stop local daemon and clean up zombie processes
 	@lsof -i :10443 2>/dev/null | awk 'NR==2{print $$2}' | xargs -r kill -9 2>/dev/null || true
 	@echo "$(GREEN)Daemon stopped$(NC)"
 
+# npm ci installs exactly sdk/typescript/package-lock.json, so a fresh checkout
+# (a clean CI runner) has vitest. svelte-security has no dependencies of its own.
+.PHONY: install-sdk-ts
+install-sdk-ts: ## Install TypeScript SDK dependencies from the tracked lockfile
+	@echo "$(BLUE)Installing TypeScript SDK dependencies...$(NC)"
+	@cd sdk/typescript && npm ci --silent
+
 .PHONY: test-sdk-ts
-test-sdk-ts: ## Run TypeScript SDK unit tests
+test-sdk-ts: install-sdk-ts ## Run TypeScript SDK unit tests
 	@echo "$(BLUE)Running TypeScript SDK tests...$(NC)"
 	@cd sdk/typescript && npx vitest run
 	@echo "$(GREEN)TypeScript SDK tests passed$(NC)"
@@ -3403,7 +3442,15 @@ lint: lint-pre ## Run linters (naming gate + golangci-lint)
 # 2026-10-16 (load average 70-217): vet-integration 153 s, verify-naming and
 # check-nolint about 1 s each, secure-analyzer-self-test 89 s. secure-analyzer
 # took 616 s, so it is split per tag set; see the times above its targets.
-lint-pre: fmt-check vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test ## Run the lint prerequisites (fmt-check, vet-integration, naming, nolint, secure-analyzer)
+lint-pre: fmt-check vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint ## Run the lint prerequisites (fmt-check, vet-integration, naming, nolint, secure-analyzer, actionlint)
+
+.PHONY: actionlint
+# actionlint with shellcheck over the workflows (ci-template v1.21 make lint;
+# both ship in the devcontainer toolchain image). ACTIONLINT_FILES names
+# ci.yml alone until release.yml's shellcheck findings are fixed.
+ACTIONLINT_FILES ?= .github/workflows/ci.yml
+actionlint: ## Lint the GitHub Actions workflows with actionlint and shellcheck
+	@actionlint $(ACTIONLINT_FILES)
 
 .PHONY: lint-go
 # 205 s wall on the same node right after lint-pre (load average 59-65,
@@ -3443,12 +3490,26 @@ define GOLANGCI_LINT_RECIPE
 	fi
 endef
 
+# COVER_PKGS is the package set `coverage` measures; narrow it to one package to
+# exercise the gate (make coverage COVER_PKGS=./pkg/x COVERAGE_THRESHOLD=100).
+COVER_PKGS ?= ./pkg/... ./cmd/...
+
+# RACE_TIMEOUT is the per-package -timeout of every -race pass (`race` and
+# `coverage`). pkg/iam alone takes 655s under contention, past Go's 10m
+# default; see the note in the `race` recipe for the measurements.
+RACE_TIMEOUT := 30m
+
+# ci-template's test stage runs `make coverage COVERAGE_THRESHOLD=<n>` as the
+# one unit-test pass (m601 (c)): it runs with -race and fails below the
+# threshold (see the Coverage Gate below). It runs the same TEST_CHECKS
+# validations as `make test` first, so replacing `make test` with it in CI
+# keeps every check.
 .PHONY: coverage
-coverage: ## Generate coverage report (unit only; excludes generated code)
+coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
 	@printf "$(BLUE)Generating coverage report...$(NC)\n"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(call go_packages,-tags '$(TEST_TAGS)' ./pkg/... ./cmd/...,/proto$$); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' $(GOTEST) -p 2 -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
+	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
 	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
 	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
@@ -3471,22 +3532,6 @@ coverage: ## Generate coverage report (unit only; excludes generated code)
 	@TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}'); \
 	echo "$(GREEN)  TOTAL COVERAGE: $$TOTAL$(NC)"
 	@echo "$(GREEN)========================================$(NC)"
-
-# ==============================================================================
-# Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)
-# ==============================================================================
-# COVER_MIN is the hard floor for total unit-test coverage. `check-coverage`
-# fails the build (exit 1) when aggregate coverage across ./pkg/... and
-# ./cmd/... drops below it. The `coverage` target it depends on already excludes
-# generated *.pb.go, mocks, stubs, and test helpers from the profile.
-#
-# Threshold choice: the project goal is 90% (see CLAUDE.md). Measured live
-# total on 2026-08-03 was 91.5%, so the floor sits at the goal itself with
-# ~1.5pt headroom for normal churn.
-COVER_MIN ?= 90
-
-.PHONY: check-coverage
-check-coverage: coverage ## Fail the build when total coverage is below COVER_MIN
 	@TOTAL=$$($(GOCMD) tool cover -func=$(COVERAGE_DIR)/coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	printf "$(BLUE)Coverage gate: %s%% (minimum %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"; \
 	if awk -v t="$$TOTAL" -v m="$(COVER_MIN)" 'BEGIN { exit !(t+0 < m+0) }'; then \
@@ -3494,6 +3539,25 @@ check-coverage: coverage ## Fail the build when total coverage is below COVER_MI
 		exit 1; \
 	fi; \
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
+	@$(MAKE) --no-print-directory test-sdk-go test-minimal test-standard test-lean test-tooling
+
+# ==============================================================================
+# Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)
+# ==============================================================================
+# COVER_MIN is the hard floor for total unit-test coverage. `coverage` fails
+# the build (exit 1) when aggregate coverage across COVER_PKGS drops below it,
+# after excluding generated *.pb.go, mocks, stubs, and test helpers from the
+# profile. ci-template passes the floor as COVERAGE_THRESHOLD.
+#
+# Threshold choice: the project goal is 90% (see CLAUDE.md). Measured live
+# total on 2026-08-03 was 91.5%, so the floor sits at the goal itself with
+# ~1.5pt headroom for normal churn.
+COVERAGE_THRESHOLD ?= 90
+COVER_MIN ?= $(COVERAGE_THRESHOLD)
+
+# check-coverage is the gate's older name; coverage enforces the floor itself.
+.PHONY: check-coverage
+check-coverage: coverage ## Fail the build when total coverage is below COVER_MIN
 
 .PHONY: coverage-fips
 coverage-fips: ## Generate coverage report for FIPS mode
@@ -3638,7 +3702,7 @@ TRIVY_IMAGES := $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) $(DOCKER_IMAGE):$(DOCKER_FIPS_
 # Mirrors the gate in the ci.yml docker job so the same failure reproduces
 # locally (devops.md §4). Not a prerequisite of `security`: it builds images,
 # which needs a Docker daemon and many minutes.
-trivy-image: docker-build docker-build-fips ## Build the shipped images and scan each with Trivy
+trivy-image: image-build image-build-fips ## Build the shipped images and scan each with Trivy
 	@echo "$(BLUE)Running Trivy vulnerability scan on Docker images...$(NC)"
 	@if command -v trivy >/dev/null 2>&1; then \
 		rc=0; \
@@ -3727,13 +3791,13 @@ race: ## Run tests with race detector
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
-	# 30m, not 10m. -timeout is PER PACKAGE, and pkg/iam alone measured 570.9s
+	# RACE_TIMEOUT is 30m, not 10m. -timeout is PER PACKAGE, and pkg/iam alone measured 570.9s
 	# cache-cold on an idle host on 2026-09-08 -- under 30 seconds of headroom
 	# in a 10m budget, and 655s on a loaded one, where the deadline panicked
 	# the package and took the whole target red. A budget exists to catch a
 	# hang, so it belongs well above the honest worst case rather than beside
 	# it. Do not buy headroom by trimming the package set: every package races.
-	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=30m ./pkg/... ./cmd/... || \
+	CGO_ENABLED=1 $(GOCMD) test -race -p 2 $(BUILD_TAGS_ARG) -timeout=$(RACE_TIMEOUT) ./pkg/... ./cmd/... || \
 		(echo "$(RED)Race detector found issues$(NC)" && exit 1)
 	@echo "$(GREEN)Race detector tests passed$(NC)"
 
@@ -3749,8 +3813,8 @@ security-scan: security ## Alias for `security` (kept for existing muscle memory
 
 ##@ Docker
 
-.PHONY: docker-build
-docker-build: ## Build Docker image
+.PHONY: image-build
+image-build: ## Build the product Docker image
 	@echo "$(BLUE)Building Docker image...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
@@ -3758,16 +3822,16 @@ endif
 	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -t $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) -t $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) .
 	@echo "$(GREEN)Docker image built: $(DOCKER_IMAGE):$(DOCKER_TAG_RUN)$(NC)"
 
-.PHONY: docker-build-dev
-docker-build-dev: ## Build development Docker image
+.PHONY: image-build-dev
+image-build-dev: ## Build development Docker image
 	@echo "$(BLUE)Building development Docker image...$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
 	@echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"
 endif
 	$(DOCKER) buildx build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" --label $(DOCKER_RUN_LABEL) -f test/integration/Dockerfile.dev -t $(DOCKER_IMAGE):$(DOCKER_DEV_TAG) .
 
-.PHONY: docker-build-fips
-docker-build-fips: ## Build FIPS 140-3 Docker image
+.PHONY: image-build-fips
+image-build-fips: ## Build FIPS 140-3 Docker image
 	@echo "$(BLUE)Building FIPS 140-3 Docker image...$(NC)"
 	@echo "$(YELLOW)Using GOFIPS140=latest (Go 1.24+)$(NC)"
 ifneq ($(strip $(BUILD_TAGS)),)
@@ -4003,24 +4067,24 @@ push-worker-image: ## Scan, then push the worker image to WORKER_IMAGE_REGISTRY 
 	fi; \
 	echo "WORKER_IMAGE_REF=$(WORKER_IMAGE_REMOTE_REF)@$$digest"
 
-.PHONY: docker-run
-docker-run: ## Run Docker container
+.PHONY: image-run
+image-run: ## Run the product Docker image
 	@echo "$(BLUE)Running Docker container...$(NC)"
 	$(DOCKER) run -p 8080 -p 9090 --name $(APP_NAME)-$(RUN_ID_SLUG) $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
 
-.PHONY: docker-run-fips
-docker-run-fips: ## Run FIPS Docker container
+.PHONY: image-run-fips
+image-run-fips: ## Run FIPS Docker container
 	@echo "$(BLUE)Running FIPS Docker container...$(NC)"
 	$(DOCKER) run -p 8080 -p 9090 --name $(APP_NAME)-fips-$(RUN_ID_SLUG) $(DOCKER_IMAGE):$(DOCKER_FIPS_TAG)
 
-.PHONY: docker-stop
-docker-stop: ## Stop Docker container
+.PHONY: image-stop
+image-stop: ## Stop Docker container
 	@echo "$(BLUE)Stopping Docker container...$(NC)"
 	$(DOCKER) stop $(APP_NAME)-$(RUN_ID_SLUG) $(APP_NAME)-fips-$(RUN_ID_SLUG) || true
 	$(DOCKER) rm $(APP_NAME)-$(RUN_ID_SLUG) $(APP_NAME)-fips-$(RUN_ID_SLUG) || true
 
-.PHONY: docker-push
-docker-push: ## Push Docker image to registry
+.PHONY: image-push
+image-push: ## Push Docker image to registry
 	@echo "$(BLUE)Pushing Docker image to registry...$(NC)"
 	$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_TAG_RUN) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_TAG_RUN)
 	$(DOCKER) tag $(DOCKER_IMAGE):$(DOCKER_LATEST_TAG) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)
@@ -4170,14 +4234,23 @@ install-govulncheck: ## Install govulncheck vulnerability scanner (pinned -- see
 	fi
 
 .PHONY: install-trivy
-install-trivy: ## Install Trivy vulnerability scanner
-	@echo "$(BLUE)Installing trivy...$(NC)"
-	@if ! command -v trivy >/dev/null 2>&1; then \
-		curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
-		echo "$(GREEN)trivy installed$(NC)"; \
-	else \
-		echo "$(GREEN)trivy already installed$(NC)"; \
-	fi
+install-trivy: ## Install trivy at TRIVY_VERSION from its checksum-verified release tarball
+	@echo "$(BLUE)Installing trivy $(TRIVY_VERSION)...$(NC)"
+	@set -e; \
+	case "$$(uname -m)" in \
+		x86_64) asset=Linux-64bit; sum=$(TRIVY_SHA256_X86_64) ;; \
+		aarch64|arm64) asset=Linux-ARM64; sum=$(TRIVY_SHA256_AARCH64) ;; \
+		*) echo "$(RED)no trivy pin for $$(uname -m)$(NC)" >&2; exit 1 ;; \
+	esac; \
+	gobin="$$(go env GOBIN)"; gobin="$${gobin:-$$(go env GOPATH)/bin}"; \
+	dir="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-trivy.XXXXXX)"; trap 'rm -rf "$$dir"' EXIT; \
+	tarball="trivy_$(TRIVY_VERSION:v%=%)_$$asset.tar.gz"; \
+	curl -fsSL -o "$$dir/$$tarball" "https://github.com/aquasecurity/trivy/releases/download/$(TRIVY_VERSION)/$$tarball"; \
+	echo "$$sum  $$dir/$$tarball" | sha256sum -c -; \
+	tar -xzf "$$dir/$$tarball" -C "$$dir" trivy; \
+	mkdir -p "$$gobin"; install -m 0755 "$$dir/trivy" "$$gobin/trivy"; \
+	"$$gobin/trivy" --version
+	@echo "$(GREEN)trivy installed$(NC)"
 
 .PHONY: install-golangci-lint
 install-golangci-lint: ## Install golangci-lint (pinned -- see GOLANGCI_VERSION)
@@ -4241,7 +4314,9 @@ fips-verify: ## Verify FIPS build
 clean: ## Clean build artifacts and test data
 	@echo "$(BLUE)Cleaning build artifacts and test data...$(NC)"
 	@# Clean build directories and binaries
-	rm -rf $(BIN_DIR) $(BUILD_DIR) $(DIST_DIR) $(COVERAGE_DIR)
+	rm -rf $(BIN_DIR) $(DIST_DIR) $(COVERAGE_DIR)
+	@# build/docker is the tracked devcontainer; everything else in build/ is output.
+	if [ -d $(BUILD_DIR) ]; then find $(BUILD_DIR) -mindepth 1 -maxdepth 1 ! -name docker -exec rm -rf {} +; fi
 	rm -f quicbaas quicbaasd coverage.out coverage.html *.log
 	@# Clean compiled test binaries (root and all subdirectories)
 	find . -name "*.test" -type f -delete 2>/dev/null || true
@@ -4438,7 +4513,7 @@ check: fmt vet lint gosec vuln ## Run all code quality checks (fmt, vet, lint, g
 ##@ Release
 
 .PHONY: release
-release: cross-compile docker-build trivy-image-release ## Create a new release with container security scan
+release: cross-compile image-build trivy-image-release ## Create a new release with container security scan
 	@echo "$(BLUE)Creating release $(VERSION)...$(NC)"
 	@mkdir -p $(DIST_DIR)
 	@cd $(BIN_DIR) && tar -czf ../$(DIST_DIR)/$(APP_NAME)-$(VERSION)-linux-amd64.tar.gz $(APP_NAME)-linux-amd64
@@ -4486,6 +4561,7 @@ all: clean deps lint test build ## Run all major targets
 	@echo "$(GREEN)All targets completed successfully$(NC)"
 .PHONY: integration-bench
 integration-bench: ## Run integration benchmarks
+	@$(MAKE) --no-print-directory docker-build-integration-image
 	@$(MAKE) --no-print-directory stage-gomodauth
 	@set -e; \
 	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_INTEGRATION)"; \
@@ -4732,7 +4808,7 @@ integration-test-fleet-runtime: ## Run fleet node daemon integration tests in Do
 		QUICBAAS_IMAGE="$(DOCKER_IMAGE):$(DOCKER_LATEST_TAG)"; \
 		export QUICBAAS_IMAGE; \
 		echo "$(YELLOW)Building fleet runtime image $$QUICBAAS_IMAGE...$(NC)"; \
-		$(MAKE) --no-print-directory docker-build; \
+		$(MAKE) --no-print-directory image-build; \
 	fi; \
 	export QUICBAAS_IMAGE; \
 	if command -v nvidia-smi > /dev/null 2>&1 && nvidia-smi > /dev/null 2>&1; then \
@@ -5567,6 +5643,111 @@ release-alpha:
 	git tag $$NEXT; \
 	for s in $(SUBMODULE_TAGS); do git tag "$$s/$$NEXT"; done; \
 	git push dev HEAD --tags && echo "Tagged $$NEXT"
+
+# deps-check is the fifth CI stage (handbook ci-standard.md section 1): it fails
+# when a direct requirement of either module, first-party or third-party, is
+# behind its latest release and its go.mod line carries no comment giving the
+# reason (devops.md section 9). It is the one stage that needs a module proxy at
+# run time, so it does not inherit GOPROXY=off from the toolchain image:
+# DEPS_CHECK_GOPROXY defaults to the fleet cache when DEVCACHE_GOPROXY is set,
+# then the public proxy. First-party modules resolve as GOPRIVATE through
+# whatever git credentials the environment carries (docs/testing/private-modules.md).
+DEPS_CHECK_GOPROXY ?= $(if $(DEVCACHE_GOPROXY),$(DEVCACHE_GOPROXY)|)https://proxy.golang.org|direct
+DEPS_CHECK_MODULES := . sdk/go
+# The JSON fields scripts/depscheck reads, written by a template rather than
+# `-json`: `-json` also resolves each module's retractions and deprecation,
+# which fetches go.mod files into the module cache and stalls on the toolchain
+# image's read-only cache.
+DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
+
+# The go command keeps the checksum database's state in $GOPATH/pkg/sumdb, and
+# the toolchain image's GOPATH is read-only, so deps-check points GOPATH at a
+# temporary directory. GOMODCACHE is pinned first so the module cache stays
+# where it was. Checksum verification stays on.
+.PHONY: deps-check
+deps-check: ## Fail when a direct dependency is behind its latest release without a reason in go.mod
+	@set -e; \
+	export GOWORK=off GOPROXY='$(DEPS_CHECK_GOPROXY)' GOFLAGS=-mod=readonly GIT_TERMINAL_PROMPT=0; \
+	export GOPRIVATE="$${GOPRIVATE:-github.com/jeremyhahn/*}"; \
+	export GONOPROXY="$$GOPRIVATE" GONOSUMDB="$$GOPRIVATE"; \
+	export GOMODCACHE="$$($(GOCMD) env GOMODCACHE)"; \
+	sumdb_gopath="$$(mktemp -d -t quicbaas-$(RUN_ID_SLUG)-gopath.XXXXXX)"; \
+	trap 'rm -rf "$$sumdb_gopath"' EXIT; \
+	export GOPATH="$$sumdb_gopath"; \
+	status=0; \
+	for dir in $(DEPS_CHECK_MODULES); do \
+		listing="$$(mktemp -t quicbaas-$(RUN_ID_SLUG)-deps.XXXXXX)"; \
+		direct="$$($(GOCMD) list -C "$$dir" -m -f '{{if not (or .Main .Indirect)}}{{.Path}}{{end}}' all)"; \
+		$(GOCMD) list -C "$$dir" -e -m -u -f '$(DEPS_CHECK_TEMPLATE)' $$direct > "$$listing"; \
+		$(GOCMD) run ./scripts/depscheck "$$dir/go.mod" < "$$listing" || status=1; \
+		rm -f "$$listing"; \
+	done; \
+	exit $$status
+
+# The devcontainer images every CI stage runs in (handbook devcontainer.md,
+# ci-standard.md section 2): `toolchain` for build, unit tests, lint, security
+# and deps-check; `integration` for the integration tests. The toolchain tag is
+# a hash of everything the toolchain image is built from, so a commit that
+# changes none of it reuses the image already built. The integration image
+# holds the whole source tree, so its tag is the commit, plus `-dirty-` and a
+# hash of the uncommitted changes when the tree is not clean: any source change
+# gives a new tag and never reuses a stale image. GO_VERSION and GO_IMAGE_DIGEST reach
+# the compose file from pkg/version/toolchain.mk; private modules reach the
+# build through the gomodauth secret (docs/testing/private-modules.md), and the
+# fleet's module cache through DEVCACHE_GOPROXY / DEVCACHE_GOPRIVATE
+# (devops.md section 2a).
+DEVCONTAINER_DIR := build/docker/devcontainer
+DEVCONTAINER_REPO := $(APP_NAME)-devcontainer
+DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk go.mod go.sum sdk/go/go.mod sdk/go/go.sum \
+	sdk/typescript/package.json sdk/typescript/package-lock.json sdk/typescript/svelte-security/package.json \
+	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json
+DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
+TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
+SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
+	printf -- '-dirty-%s' "$$( { git status --porcelain; git diff HEAD; } | sha256sum | cut -c1-12)"; fi)
+# CI names the integration image per run (ci-template IT_IMAGE), so its
+# trivy and teardown steps find the image this built.
+INTEGRATION_IMAGE = $(or $(IT_IMAGE),$(DEVCONTAINER_REPO):integration-$(shell git rev-parse HEAD)$(SOURCE_DIRTY))
+DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
+	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
+	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
+	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
+	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
+	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
+	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
+# Builds the named compose services with the module credentials staged for the
+# build only, unless CI handed them over in MODULE_ENV_FILE.
+DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
+	$(MAKE) --no-print-directory stage-gomodauth;) \
+	$(DEVCONTAINER_COMPOSE) build
+
+.PHONY: toolchain-image
+toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
+	@echo "$(TOOLCHAIN_IMAGE)"
+
+.PHONY: docker-build
+docker-build: ## Build both devcontainer images, toolchain and integration
+	@$(DEVCONTAINER_BUILD) toolchain integration
+
+# The integration image is the node image of the integration compose stack
+# (go-quicbaas#1383): the targets that drive that stack build it first and hand
+# its tag to compose as QUICBAAS_INTEGRATION_IMAGE.
+.PHONY: docker-build-integration-image
+docker-build-integration-image: ## Build the integration devcontainer image, the integration stack's node image
+	@$(DEVCONTAINER_BUILD) integration
+
+integration-test integration-bench cluster-down-integration: export QUICBAAS_INTEGRATION_IMAGE = $(INTEGRATION_IMAGE)
+
+.PHONY: docker-run
+docker-run: ## Run CMD in the toolchain compose service (e.g. CMD='make test'), building the image when it is missing
+	@if [ -z '$(strip $(CMD))' ]; then \
+		echo "$(RED)Error: set CMD, e.g. make docker-run CMD='make test'$(NC)"; \
+		exit 2; \
+	fi
+	@if ! $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+		$(DEVCONTAINER_BUILD) toolchain; \
+	fi
+	@$(DEVCONTAINER_COMPOSE) run --rm --no-deps -e DEVCACHE_GOPROXY -e DEVCACHE_GOPRIVATE toolchain $(CMD)
 
 deps-latest:
 	@GOWORK=off sh -c ' \

@@ -55,6 +55,17 @@ GOPLS_VERSION := v0.23.0
 # gates CI is the gosec in the image. Space-separated module@version pairs.
 # Drop an entry once the tools' own releases require that version or newer.
 GO_TOOL_DEPENDENCY_FLOORS := golang.org/x/mod@v0.41.0 golang.org/x/net@v0.60.0 golang.org/x/text@v0.42.0 golang.org/x/tools@v0.51.0 google.golang.org/grpc@v1.84.0
+# trivy, the scanner `make security` ends with (devops.md section 8). From its
+# release tarball, each architecture's SHA-256 as the release's own
+# trivy_<version>_checksums.txt publishes it: change all three together. Pins
+# the TOOL; trivy fetches its vulnerability database at run time.
+TRIVY_VERSION := v0.76.0
+TRIVY_SHA256_X86_64 := e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7
+TRIVY_SHA256_AARCH64 := aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af63a0e8f4c
+# The devcontainer's base image (build/docker/devcontainer/Dockerfile),
+# golang:$(GO_VERSION)-trixie by its multi-arch index digest, so a re-pushed
+# tag cannot change the toolchain under a pin. Change it with GO_VERSION.
+GO_IMAGE_DIGEST := sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e
 # Workflow linting. The fleet's `make lint` includes actionlint (devops.md
 # lint row), and actionlint delegates every SC* rule to shellcheck -- with
 # shellcheck absent it SILENTLY skips them and still exits 0, so a project's

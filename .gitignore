@@ -18,7 +18,9 @@ vendor/
 
 # Build artifacts
 /bin/
-/build/
+# build/ holds build output, except build/docker: the tracked devcontainer.
+/build/*
+!/build/docker/
 /dist/
 *.tar.gz
 

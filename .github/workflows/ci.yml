@@ -1,1128 +1,584 @@
-# ci-template: v1.15 (customized)
+# ci-template: v1.22.1 (customized)
+# v1.22.1 (Company Agent m636 item 2, 2026-10-18, after go-quicbaas main
+# fe167500f was left with no completed run): the concurrency block is
+# canonical. A newer push to a PR ref still cancels that ref's older run, but
+# a push to main never cancels an in-flight main run: each main commit keeps
+# its run, so every merge is validated. Every repository carried the block as
+# a CUSTOMIZE copy with `cancel-in-progress: true` on every ref, main included
+# (devops.md §9); the copy goes and the canonical block replaces it. Adopted
+# with the v1.22 rollout.
+# v1.22 (Company Agent m616 item 2, 2026-10-18, after CI job layers filled the
+# runner disks): the image job's stages keep the Go build, golangci-lint and
+# module caches in named volumes on the runner's Docker host, kept across jobs
+# and split by trust class (CI_CACHE_CLASS: `main` for a push to main, `pr`
+# otherwise), never in a job container's writable layer or its /tmp
+# (ci-standard.md §6; in-toolchain-image.sh v2). A new step,
+# trim-ci-caches.sh, bounds the repo's cache volumes on the host
+# (CI_CACHE_MAX_GIB, default 32).
+# v1.21.1 (Company Agent m605 item 8, 2026-10-18, after a forge token printed
+# in a go-xkms run): the image and integration jobs mask the forge
+# credentials first, and no step or make target prints an env file, the job
+# environment or a matched line; lint steps and `make check-public-literals`
+# report path and line only, and `make stage-gomodauth` runs silent
+# (ci-standard.md §5). Every v1.21 rollout PR adopts v1.21.1 before it merges.
+# v1.21 (Company Agent m598 items 1 and 2, 2026-10-18): every stage runs in
+# the project's own devcontainer image (ci-standard.md §2, devcontainer.md §7).
+# Through v1.20 lint, security, build and test installed Go with setup-go on
+# the runner and ran their own flag sets, which §2 ("not the runner image, ...
+# not a tool installed on the runner") and devops.md §4 and §8 rule out; a repo
+# that also ran the stages in its image (go-quicraft a141c3c) ran each twice.
+# Now one image job (m601 (a), go-quicraft's shape) builds the images once
+# (`make docker-build`) and runs each stage's make target in the toolchain
+# image as a step, through scripts/in-toolchain-image.sh (from go-quicraft,
+# ships beside this file): lint, build, test (`make coverage` with
+# COVERAGE_THRESHOLD, m601 (c)), security, deps-check (new, ci-standard.md
+# §1) and trivy image on the integration image (it leaves the CUSTOMIZE note).
+# The integration stage stays its own job, `make integration-test` in the
+# integration image. Both run on bigdisk (ubuntu-latest on github.com).
+# setup-go, the runner tool installs and the SARIF upload (m601 (d): CI runs
+# on Gitea) are gone, and with them GO_VERSION: the image pins Go. The tag
+# assertion moves to scripts/assert-build-tags.sh (ships beside this file).
+# CI Gate runs on ci-gate (m386) with go-quicraft's pr/full tier, and its
+# needs list and check lines are a CUSTOMIZE block (m598 item 2). The make
+# variables the jobs pass are in devcontainer.md §6 (m601 (b)).
 #
-# TIERED CI adopted 2026-10-11 (handbook sdlc §5a; go-quicbaas#1266). Two tiers:
+# v1.20 (Company Agent m270 items 1 and 9, 2026-10-16): the CUSTOMIZE image
+# job's `trivy image` also takes `--skip-dirs /opt/go/mod`, so a secret match
+# in a third-party module's source inside the image's Go module cache no
+# longer fails the scan; a secret in the repo's own layers still does, and no
+# repo carries its own trivy secret config. A new `arch-gates` job (from
+# go-xkms) fails a direct go-objstore import outside the repo's storage seam,
+# and CI Gate needs it.
+# v1.19 (Company Agent m262 items 3 and 4, 2026-10-16): the CUSTOMIZE image
+# job takes `trivy image --ignore-unfixed` (devops.md §8): a fixed CVE still
+# blocks, an advisory with no fixed package does not, and no repo adds a
+# .trivyignore for it. The github.com gosec install builds the latest gosec
+# tag against the latest x/tools in the one form of devcontainer.md §2.
 #
-#   PR tier   -- lint, build, security, unit-test legs default and sdk-go
-#                (`test`), plus the merge and snapshot gate infrastructure.
-#                Runs on every event.
-#   Full tier -- race, web, docker, unit-test legs standard, lean, minimal
-#                and coverage (`test-full`, #1272), and the FIPS build step
-#                inside `build`.
-#                Runs on push to main, on workflow_dispatch, and on a
-#                pull_request labelled `ci:full`. The rest of the full tier
-#                lives in integration.yml (same selection) and nightly.yml
-#                (workflow_dispatch only; the coordinator dispatches it
-#                nightly -- no workflow carries a `schedule:` trigger, owner
-#                ruling 2026-10-11).
+# v1.18 (dept-infra, 2026-10-12): a CUSTOMIZE integration job that starts
+# containers on the runner host runs scripts/reap-stale-ci-stacks.sh first
+# (ships beside this file). Its `if: always()` teardown dies with the job when
+# the host or the Docker daemon goes down, and nothing removed the stack after:
+# 11 exited stacks, with their networks and volumes, stayed on ci-runner-01 and
+# ci-runner-02 after the 2026-10-11/12 restarts. See the CUSTOMIZE note above
+# ci-gate.
 #
-# The full-tier condition is written out at every use rather than defined once:
-# a job-level `if:` sees only the github/needs/vars/inputs contexts, never
-# workflow `env`, so there is nowhere to name it. Every copy must read
+# v1.17 (handbook#44, #40): third-party actions pinned by commit, the tag in a
+# trailing comment (devops.md §9 "Actions are pinned by commit").
 #
-#   github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
-#   contains(github.event.pull_request.labels.*.name, 'ci:full')
+# v1.16 (dept-software#64, go-libsignal#42): gosec, govulncheck and actionlint
+# install only on github.com; Gitea jobs use the runner image's baked, pinned
+# tools.
 #
-# The pull_request trigger carries no `labeled` (#1445, as go-trusted-platform
-# #853; it superseded #1272), so `ci:full` takes effect on the PR's next push
-# or update-branch, or through workflow_dispatch. CI Gate tags every job `pr`
-# or `full`: it passes a full-tier job the tier skipped and fails every other
-# skip or failure.
-# test/buildgates asserts the tags and the `if:` agree.
+# v1.15 (2026-10-05, automatethethings#211; go-enclave#122): push runs on main
+# only again. automerge.yml v7 opens each merge train as a PR from
+# merge-train/* into main, so the train gets its CI from the pull_request
+# trigger like any PR, and block_on_outdated_branch stays on (owner,
+# 2026-10-04: "leave the block_on_outdated_branch turned on, we want to make
+# sure we are requiring the latest from main in all branches before they get
+# merged in"). The parallel stages of v1.14 stay.
 #
-# v1.15 adopted 2026-10-05 (#1156; automatethethings#209): test, security and
-# snapshot start at once and no longer wait on lint + build (v1.14). race,
-# docker, test-full and web wait on lint and test (#1517), so a lint or test
-# failure skips them. Jobs that read
-# needs.merge.outputs.base_sha still need `merge`. CI Gate still needs every
-# job and fails closed on each. push and pull_request run on main only:
-# automerge v7's merge trains are PRs into main and get CI from pull_request,
-# and feature/software-factory no longer exists on the server. This
-# supersedes the v1.9 staged ordering described below.
+# v1.14 (2026-10-04, automatethethings#207; go-enclave#118): every job starts
+# at once, so a run takes as long as its slowest job. security, test and any
+# CUSTOMIZE integration job no longer wait on lint + build; CI Gate, the one
+# required check, still needs every job and fails closed on any result but
+# success. (v1.14 also ran push on 'merge-train/**' for automerge.yml v6's
+# trains; v1.15 drops that.) Owner, 2026-10-04: "yes
+# lets batch the merges. make sure we are doing things efficiently!" and "use
+# merge trains where possible if that helps!". Supersedes v1.9's staged
+# ordering: a broken push now spends the heavy tier too, in exchange for the
+# shortest wall-clock to a green gate, which is what a train waits on.
 #
-# MERGE-RESULT VALIDATION added 2026-09-03 (#436). Every job that compiles code
-# now builds merge(base, head) instead of head alone. On github.com this is what
-# a pull_request run already does -- GitHub publishes refs/pull/<n>/merge and
-# points github.ref at it -- but GITEA PUBLISHES NO SUCH REF (measured: 118
-# refs/pull/* on this repo, every one .../head), so the workflow constructs the
-# merge itself in .github/scripts/ci-merge-base.sh. Without it two pull requests
-# that are each green against their own base can merge into a branch that does
-# not compile, which is what happened to feature/software-factory on 2026-09-03 (#374's
-# GetUserByEmail arity change against #385's caller of the old signature; no
-# textual conflict, so git merged both without complaint).
+# v1.13 (2026-09-27, automatethethings#189): GO_VERSION 1.26.7 -> 1.27.1, in
+# lockstep with nightly-template v1.6.
 #
-# v1.9 adopted 2026-08-20 (owner ruling -- STAGED FAIL-FAST): a fast tier
-# (lint + build, ~minutes) now gates the expensive tier (test, race, security,
-# docker). Gitea cannot cancel in-flight jobs, so ordering IS the fail-fast: a
-# broken push reports in minutes and burns nothing downstream, and a green push
-# pays one fast-tier of latency. `build` moved INTO the fast tier -- it used to
-# wait on `test`, so a compile break was not reported until the whole unit
-# suite had run. fips and trivy moved to nightly.yml: both were known-red on
-# every push, and a known-red job burning runner-hours verifies nothing. The
-# gate now names a SKIP as a skip (upstream stage failed) distinctly from a
-# FAIL, both failing closed. This supersedes the v1.8.1 lint-decoupling carried
-# here; its silent-skip hazard is closed at the source (the pinned linter) and
-# in the gate (named skips).
+# v1.12 (2026-08-28, go-blockstore #22 round 2): refresh install-shellcheck.sh to
+# the hardened version — the idempotency fast path that trusted an existing
+# binary on its `--version` string alone is removed, so the extracted binary's
+# SHA-256 is verified every run (an attacker who pre-seeds a matching --version
+# no longer bypasses the checksum). The v1.11 copy shipped the pre-round-2
+# script carrying that hole; this replaces it byte-for-byte with merged main.
 #
-# NOTE: this repo's integration suite lives in a separate workflow
-# (integration.yml). Cross-workflow `needs:` does not exist, so the staging
-# principle cannot be applied to it from here -- it is out of scope for v1.9
-# rather than overlooked.
+# v1.11 (2026-08-28, go-blockstore #22): the lint job installs a PINNED,
+# checksum-verified shellcheck (install-shellcheck.sh, ships beside this file)
+# so actionlint's SC* rules actually run — without shellcheck on PATH actionlint
+# silently disables them and exits 0, and a real SC2046 reached main that way.
+# SHIPS-WITH gains install-shellcheck.sh (chmod +x, copy to scripts/).
 #
-# v1.8 adopted 2026-08-19: gosec now triages its own exit code in the Makefile
-# target, the way `vuln` already did. A shell renders a signal death as 128+N,
-# so an OOM kill left 137 and the target's `|| exit 1` collapsed it into the
-# same red as a real finding -- the conflation that ci-template v1.8 was written
-# from, on this repository. v1.6 (GOMEMLIMIT/GOMAXPROCS on the security job) and
-# v1.7 (gosec -concurrency 4) were already carried here, so this closes the gap.
-# Reconciled against software/templates/github-actions/ci.yml in the
-# automatethethings repo (devops.md §1/§8/§9). Divergence outside the
-# repo-specific blocks below is a defect.
+# v1.10 (2026-08-27, go-blockstore #7 Codex review):
+#   - actionlint runs in the lint job. devops.md §4 lists actionlint in
+#     `make lint`, but through v1.9 the canonical CI never ran it — so the
+#     workflow files were the one thing in every repo no CI check read, and a
+#     misspelled runner label or invalid Actions YAML reached main having
+#     passed a green required gate. Ships with .github/actionlint.yaml (same
+#     template directory), which is what keeps self-hosted labels from
+#     reading as unknown runners.
+#   - the gosec SARIF upload is guarded on the PR head not being a fork.
+#     GitHub downgrades the token to read-only for a pull_request from a fork
+#     REGARDLESS of the `permissions:` block below, so the step failed the PR
+#     for something an external contributor could not fix.
+#
+# v1.9 (2026-08-20, owner ruling — FAIL-FAST STAGED PIPELINE): iterate fast.
+# Gitea cannot cancel in-flight jobs (no cancel route — task #90), so
+# fail-fast comes from ORDERING: a fast tier (lint + build, ~minutes) gates
+# the expensive tier (security, test, integration where present). A broken
+# push reports in minutes and burns nothing downstream; a green push pays
+# one fast-tier of extra latency. trivy and fips move to nightly.yml
+# (schedule + workflow_dispatch): both were known-red on every push (fips:
+# tracked per-repo fips140=only issues; trivy: undiagnosed install failure),
+# and a known-red job burning 60-90 runner-minutes per push verifies
+# nothing. The gate now distinguishes SKIP (upstream stage failed) from
+# FAIL, both failing closed — this supersedes v1.8.1's lint-decoupling,
+# whose silent-skip hazard is closed at the source (pinned linter) and in
+# the gate (named skips).
+#
+# v1.9.1 (2026-09-01, owner ruling — devops.md 8a): the trivy move above is
+# ALPHA-ONLY, and the note that it "gates nothing" is a phase, not a property.
+# Every repo here is private and unreleased; from the first release published to
+# the github.com mirror, that repo moves `trivy fs` BACK into ci.yml and into
+# the ci-gate `needs`, blocking on CRITICAL/HIGH. Two consequences for adopters:
+#   - the exposure window is real and accepted: in alpha a dependency CVE
+#     surfaces at the next nightly, not at the push that introduces it;
+#   - a repo where trivy is GREEN may keep it in ci.yml today and that is NOT a
+#     deviation. The "undiagnosed install failure" premise above is repo-
+#     specific and was measurably false in go-trusted-platform, where trivy fs
+#     caught two live HIGH x/mod CVEs on 2026-08-19. Nightly is the floor.
+# See conventions/devops.md 8a for the trigger and the reasoning.
+#
+# v1.8 (2026-08-19): gosec and govulncheck triage their own exit codes. A shell
+# reports a signal death as 128+N, so an OOM kill leaves 137 — indistinguishable
+# from a real finding in the job summary, which is all the Gitea API exposes
+# (task #97). Found on go-quicbaas: gosec reported `Issues : 0`, govulncheck was
+# SIGKILLed while four sibling repos ran heavy jobs on the same host, and the
+# Makefile reported it as "reachable vulnerabilities" — a phantom CVE hunt
+# waiting to happen. Both steps still exit non-zero; they only say WHICH it was.
+# The same conflation exists in every repo's Makefile vuln target — fix it there
+# too when adopting this version.
+#
+# v1.7 (2026-08-18): gosec -concurrency 4. The v1.6 GOMEMLIMIT/GOMAXPROCS
+# bound was PROVEN INSUFFICIENT: gosec sizes its pool from runtime.NumCPU()
+# (the host's 24 cores, GOMAXPROCS notwithstanding), so live SSA for ~24
+# packages exceeded the 16 GB container cap with all three observed scans
+# carrying GOMEMLIMIT=10GiB while pinned at 16/16 GiB. Live heap cannot be
+# GC'd away; only lower analysis concurrency shrinks it.
+#
+# v1.6 (2026-08-18): GOMEMLIMIT + GOMAXPROCS on the security job. The Go
+# toolchain does not see cgroup limits — inside a 16 GB container it read the
+# HOST's 24 cores and 94 GB, ran 24 gosec workers, and grew the heap until the
+# cgroup had to swap 10.9 GB of anonymous memory. It never OOMed (swap absorbed
+# it), so instead of failing it thrashed: memory PSI 98, 43% of the host's CPU
+# in iowait, every other job on the box starved. Full evidence in the job's
+# comment block below. This is a TUNING fix, not a capacity one: the host had
+# 56 GB free throughout.
+#
+# v1.5 (2026-08-18): triggers narrowed to `[main]`. The template shipped
+# `[master, main, develop]` with a "CUSTOMIZE" note, so 15 of 20 repos still
+# name branches that DO NOT EXIST — the template contradicted the ratified
+# trunk-based standard (company CLAUDE.md: "no branches, and the trunk is
+# main"), and a template that disagrees with the standard loses every time it
+# is copied. Inert today, because no event can fire for a branch that is
+# absent; the cost is latent, not current. Recreate `develop` in any of those
+# repos and its every commit runs CI twice — one push run and one
+# pull_request run for the same sha — with nothing to cancel the second
+# (only a ref-keyed concurrency group would cancel it: devops.md §9b).
+# Do NOT re-add a branch list "for safety": a repo that needs a second trunk
+# is a decision for the owner, not a default.
+#
+# v1.4 (2026-08-17): `fips` job added (owner mandate, security-review.md §6)
+# — build + unit tests under GOFIPS140=latest with GODEBUG=fips140=only, wired
+# into ci-gate. Rolls out per repo through each project agent's own issue
+# (NOT a blind template sweep): FIPS mode surfaces real incompatibilities
+# (non-approved primitives) that each agent must resolve or escalate as an
+# owner decision before its repo adopts v1.4.
+#
+# v1.3 (2026-08-14): `workflow_dispatch:` trigger added, so a phantom failure
+# (runner crash, host overload; see infra lessons.md) can be retried without
+# pushing an empty commit.
+#
+#   CORRECTION (2026-08-19): this entry originally claimed "Gitea's build
+#   exposes no rerun API, so without it the only way to retry a phantom
+#   failure is an empty commit." That premise is FALSE and it propagated to
+#   five repos. `swagger.v1.json` on 1.27.1 publishes three re-run routes:
+#     /repos/{owner}/{repo}/actions/runs/{run}/rerun
+#     /repos/{owner}/{repo}/actions/runs/{run}/rerun-failed-jobs
+#     /repos/{owner}/{repo}/actions/runs/{run}/jobs/{job_id}/rerun
+#   `rerun-failed-jobs` re-runs only a run's failed jobs. Note the job-level
+#   route is NESTED under the run — the flat `jobs/{id}/rerun` shape does not
+#   exist, and probing that shape is how two of us concluded the API was
+#   missing. A 404 does not distinguish a missing route from a missing
+#   resource; swagger is the authority.
+#
+#   Stated precisely, because the mistake is easy to make in reverse: these
+#   routes are PUBLISHED IN THE SPEC — verified. They have NOT yet been
+#   executed here, so do not upgrade this to "rerun works" until someone has
+#   actually run one. What IS measured: there is no `cancel` route at any
+#   path, and DELETE returns 400 "this workflow run is not done" on anything
+#   unfinished, so no REST call can shed a queued run (task #90).
+#
+#   `workflow_dispatch` KEEPS its place regardless, on an independent
+#   justification: re-run acts on an existing run, so it cannot help when a
+#   run was never created — the lazy-creation case where a fresh head shows
+#   no jobs for minutes. Removing the trigger because re-run exists would be
+#   an overcorrection.
+#
+# v1.2 (2026-08-14): actions/checkout and actions/setup-go moved to @v6 —
+# §9 already named checkout@v6 the standard and repos were shipping green on
+# v6/v6 while this file still said v4/v5 (same defect class as promising a
+# gate the template doesn't implement: the standard and the template must
+# never disagree).
+#
+# v1.1 (2026-08-14): gosec findings now also print to the job log (the SARIF
+# upload only exists on github.com, so on Gitea the findings were invisible).
+# Also NEVER add `GOPROXY: direct` / `GOSUMDB: off` to a repo's env block:
+# GOPRIVATE (injected by the runners, dependency-resolution.md §6) already
+# exempts first-party modules from proxy and sumdb; the blanket override
+# disables checksum-database verification for every third-party dependency
+# and breaks the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
+# 2026-08-14). `ghcr.io` likewise does not exist on Gitea — use the Gitea
+# registry (lessons.md).
+# Source of truth: software/templates/github-actions/ci.yml in the
+# automatethethings repo. Copied into each repo (never workflow_call: the
+# template lives inside the security boundary and cannot be referenced from
+# github.com). Blocks marked CUSTOMIZE are the only expected divergence;
+# everything else drifting from the template is a defect (devops.md §8).
+#
+# Runs identically on Gitea Actions (dev) and GitHub Actions (public mirror);
+# host-specific steps are guarded on github.server_url (devops.md §1).
 
 name: CI
 
 on:
   push:
-    # main is the ONLY trunk (v1.15). Every merge into it is validated on
-    # push, because two PRs can each be green against their own base and their
-    # union not compile (measured 2026-09-12: #879 + #914). The concurrency
-    # group below is ref-keyed, so consecutive merges supersede each other and
-    # only the latest trunk state is validated. automerge v7's merge trains are
-    # PRs into main and get their CI from pull_request.
+    # trunk-based: main is the ONLY trunk. automerge.yml's merge trains are
+    # PRs from merge-train/* and get CI from pull_request (v1.15).
     branches: [main]
   pull_request:
     branches: [main]
-    # No `labeled` (#1445, as go-trusted-platform #853). Gitea 1.27.1 sends
-    # every label add AND remove as `label_updated`, and its matcher maps that
-    # to `labeled` whichever label moved, with no `github.event.label` in the
-    # payload. Each `task:*` or `code-review` change then started a run that
-    # the `concurrency` block let cancel the PR's run in progress, and a run
-    # whose jobs an `if:` skips would post `skipped` over the real run's
-    # `CI / *` contexts, CI Gate included. An action outside `types` matches
-    # nothing: no run, no status. The cost: adding `ci:full` waits for the
-    # PR's next push or update-branch, or a workflow_dispatch.
-    types: [opened, synchronize, reopened]
-  # Gitea has no API to re-run a finished run (ci-template v1.3).
-  workflow_dispatch:
+  workflow_dispatch:                    # re-fire a whole workflow; also the
+                                        # only retry when a run was never
+                                        # created (see v1.3 correction above)
 
-# Cancel superseded runs (#579). A push to a branch that already has a run in
-# flight supersedes it: the older run's result has no consumer, and on a
-# `capacity: 3` pool it is holding a slot a live head needs. Measured on this
-# repository 2026-09-06, one `GET /actions/runs?limit=100`: five ci.yml runs on
-# refs/pull/557/head, three on refs/pull/567/head -- every one but the last on a
-# head nothing would ever merge.
-#
-# This block is on `main` (#527 / PR #578) and did not reach this file, because
-# Gitea runs a `pull_request` workflow from the HEAD ref: ci.yml here is a
-# different file from ci.yml on main (it carries the Merge Result job) and
-# inherits nothing from it. That is #579 item 2, and this is it being fixed on
-# the branch rather than waiting for the main reconciliation (#522 / #552).
-#
-# This is a deliberate divergence from ci-template v1.9 / devops.md §9, whose
-# note says Gitea does not honour `concurrency:`. That note was written from
-# #88, which used `group: task-worker-${{ github.repository }}` with
-# `cancel-in-progress: false` at JOB level on the label-triggered task-worker
-# workflow -- a key with no ref component, so every task worker in the portfolio
-# shared one group and saturated it. It says nothing about a ref-keyed group
-# with cancellation on.
-#
-# Measured on this Gitea (1.27.1) on 2026-09-06: the OLDER run is cancelled and
-# the newest survives -- go-netmon run 12242, go-recountly run 12261,
-# go-truststrap runs 12133 and 12232 all carry conclusion `cancelled`. The same
-# block is on main in go-truststrap, go-trusted-platform, go-qrdb, go-xkms,
-# go-netmon, go-sysmon and go-recountly. The narrower #90 finding still holds
-# and is why this is the only available mechanism: Gitea 1.27.1 exposes no
-# `cancel` REST route (a human can still cancel through the session-
-# authenticated web route, software/scripts/gitea-cancel-run.sh).
-#
-# `cancel-in-progress` is NOT expression-evaluated on 1.27.1 -- any non-empty
-# value is truthy -- so it is written as the literal `true`.
-#
-# The ref component is what keeps one pull request from cancelling another:
-# every run of this workflow is keyed by refs/pull/<n>/head (or refs/heads/main
-# on a push), so a group never spans two pull requests. The group leads with
-# ${{ github.workflow }}, so this `CI` group cannot reach the separate
-# `Code Review` workflow that gates the merge. A cancelled
-# run writes `failure` to its contexts, but only ever against the superseded
-# SHA, which is not the head a merge is evaluated on.
-#
-# Adoption boundary, expect it once: Gitea groups a run by the workflow file OF
-# THAT RUN, so a run created before this block landed is in no group and the
-# first push after it cannot supersede that run.
+# One group per ref (v1.22.1). On a PR ref the newer run cancels the older; on
+# main nothing is cancelled, and a newer main run waits for the older one, so
+# no main commit loses its run. Never set `cancel-in-progress: true` on main.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# GOPROXY / GOSUMDB are deliberately absent (ci-template v1.1). GOPRIVATE is
-# injected by the runners (dependency-resolution.md §6) and already exempts
-# github.com/jeremyhahn/* from both the proxy and the checksum database, which
-# is what makes the Gitea url-rewrite fire. Setting `GOPROXY: direct` and
-# `GOSUMDB: off` here additionally routed every *third-party* module around
-# proxy.golang.org and switched off sumdb verification for all of them --
-# resolving them from mutable VCS refs instead. That broke this repo on
-# 2026-08-14: upstream re-pointed the go-tpm-tools v0.4.8 tag 48 minutes after
-# publishing it, so a direct fetch produced a zip whose hash no longer matched
-# the (correct, sum.golang.org-backed) entry in go.sum.
+permissions:
+  contents: read
+
 env:
-  GO_VERSION: '1.27.2'
-  COVERAGE_THRESHOLD: 90
-  REGISTRY: ghcr.io
-  IMAGE_NAME: jeremyhahn/quicbaas
+  COVERAGE_THRESHOLD: 90      # CUSTOMIZE: per testing-guidelines.md
+  # CUSTOMIZE (v1.9.2): the repo's full build-tag set, SPACE separated — the go
+  # tool's own form. Leave EMPTY if no package is tag-gated. Every analysis step
+  # below derives its own form from this ONE value; never write the tag list
+  # twice. A tag-gated package that is not named here is analysed by NOTHING
+  # while the gate still reports green (automatethethings#7: go-signal had eight
+  # such packages, including its whole WebAuthn implementation).
+  GO_BUILD_TAGS: ""
 
 jobs:
-  # THE MERGE-RESULT CHECK (#436). It resolves the base commit ONCE and hands
-  # it to every other job, so all of them validate the same tree even when the
-  # base branch moves underneath a run -- runs here last up to two hours and
-  # pull requests do merge inside that window, so per-job resolution would let
-  # different jobs certify different trees.
+  # v1.21: every stage runs in the project's own devcontainer image and no
+  # other (ci-standard.md §2, devcontainer.md §7). One image job (Company Agent
+  # m601 (a)) builds the images once from build/docker/devcontainer/Dockerfile
+  # at this commit (`make docker-build`) and runs each stage's `make` target in
+  # the toolchain image as its own step, through scripts/in-toolchain-image.sh
+  # (ships beside this file), which copies the checkout into the container: a
+  # runner reaches its daemon through a socket, so a bind mount would resolve
+  # on the daemon's host. A failed step names its stage; `if: !cancelled()`
+  # runs every stage after a failed one, so one run reports them all.
   #
-  # It also fail-fasts a conflicted branch: nothing else starts on a tree that
-  # cannot exist, and a conflict is reported in about a minute instead of
-  # after every job has burned its runner-minutes.
+  # No job installs a Go toolchain or a tool on the runner: the image's pin file
+  # (devcontainer.md §2) decides every version, and the Makefile carries every
+  # flag set (devops.md §4; §8: CI runs gosec through the developers' target).
+  # GO_BUILD_TAGS reaches every target as a make variable, so the tag set is
+  # still written once. build, test and lint run with no network, on the
+  # image's module cache; security and deps-check get one (IN_IMAGE_NETWORK=
+  # bridge) for the vulnerability databases and the module proxy.
   #
-  # It carries NO `if:` on purpose. Gating it on pull_request would make it
-  # SKIP on push, and a skipped `needs:` dependency skips its dependents --
-  # which would silently disable the whole pipeline on main. Instead the script
-  # no-ops on any non-pull_request event, which costs one short job on a push.
-  merge:
-    name: Merge Result
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    outputs:
-      base_sha: ${{ steps.merge.outputs.base_sha }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- a depth-1 clone has no merge base to three-way
-          # merge against, and checkout fetches only the ref it checked out.
-          fetch-depth: 0
-
-      # No base sha is passed here: this is the job that RESOLVES it, publishes
-      # it as base_sha, and proves the branch merges at all.
-      - name: Resolve the base commit and prove the branch merges
-        id: merge
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}"
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    # #436: nothing compiles the head alone; the merge job resolves the base first.
-    needs: [merge]
-    # A job with no upper bound turns a HANGING test into a silently occupied
-    # runner instead of a fast red. One run on this workflow held a runner for
-    # 4h23m before a human noticed and cancelled it, on a fleet where other PRs
-    # were queued behind it. These ceilings sit well above the honest worst case
-    # — they exist to catch a hang, not to police a slow run on a loaded fleet.
-    # Lint takes 31-41 min on most runners. On the slowest runner, all three
-    # runs in the 12 h before 2026-10-12 07:00Z hit the old 45-minute ceiling
-    # (main run 48724 among them), so a slow runner turned main red. 75 leaves
-    # a margin for that runner and still catches a hang.
-    timeout-minutes: 75
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Check formatting
-        run: |
-          gofmt -l . > /tmp/gofmt.out
-          if [ -s /tmp/gofmt.out ]; then
-            echo "The following files are not formatted:"
-            cat /tmp/gofmt.out
-            exit 1
-          fi
-
-      # `make vet` is the contract (devops.md §4), for the same reason `make
-      # lint` is below: a bare `go vet ./...` typechecks the tag-gated packages
-      # in their disabled configuration and reports phantom errors (undefined
-      # accountToREST in pkg/api/rest under !rest). The Makefile target sweeps
-      # the maximal, minimal, desktop and integration tag sets instead, so a
-      # package is vetted in every configuration it actually ships in.
-      - name: Run go vet
-        run: make vet
-
-      # `make lint` is the contract (devops.md §4). It passes the Makefile's
-      # LINT_BUILD_TAGS, without which golangci-lint typechecks the tag-gated
-      # packages in their disabled configuration and reports phantom errors --
-      # e.g. undefined accountToREST in pkg/api/rest under !rest.
-      #
-      # PINNED, with the devops.md §9 documented reason: golangci-lint v2.13.0
-      # panics under Go 1.26, so @latest turns a green branch red for a reason
-      # that has nothing to do with the branch. Unpin tracker: go-qrdb#42.
-      #
-      # No job waits on this one (ci-template v1.14): a lint failure can no
-      # longer stop unit tests from running, so the go-qrdb#42 class -- a red
-      # that reads as a test failure while tests never ran -- cannot arise
-      # from lint. CI Gate reads lint's result on its own line.
-      #
-      # THE VERSION IS READ FROM THE MAKEFILE, not repeated here. It is also
-      # what `make install-tools` installs and what `make build-worker-image`
-      # bakes into the Software Factory worker (#772), and a second copy of a
-      # pin is a pin that drifts: a worker that lints with a different version
-      # than this job produces a review verdict the merge then contradicts.
-      - name: Install golangci-lint
-        run: |
-          version="$(make -s print-GOLANGCI_VERSION)"
-          test -n "$version" || { echo "Makefile GOLANGCI_VERSION is empty"; exit 1; }
-          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$version"
-
-      # `make lint` also runs the repository's naming gate
-      # (scripts/verifynaming, a milliseconds-long text scan of the
-      # tracked files) ahead of golangci-lint, so a naming regression reports
-      # before the 20-minute linter pass rather than after it. There is
-      # deliberately no separate step for it: two invocations of the same
-      # check is two places to forget.
-      - name: Run the naming gate and golangci-lint (make lint)
-        run: make lint
-
-      # Fast tier because it is a text parse of the repo's go.mod files: no
-      # build, no network, milliseconds.
-      #
-      # It catches a defect class a local build CANNOT see. Each module
-      # publishes its own go.mod, so a consumer importing sdk/go gets sdk/go's
-      # pins; MVS hides the disagreement from anyone importing both, and only
-      # an outside consumer of the tag ever feels it. This repo shipped exactly
-      # that — the root module on go-qrdb v0.8.0-alpha while sdk/go stayed on
-      # v0.7.0-alpha — from 32389ca until a review round found it, because the
-      # check existed company-side and nothing here ran it.
-      - name: Check module pins (make check-reciprocal-pins)
-        run: make check-reciprocal-pins
-
-  # SHARDED (#1006): the six full-suite passes used to run back to back in one
-  # job (~52 min). Each is now its own matrix leg, so they run in parallel and
-  # the job takes as long as its slowest leg. `fail-fast: false` lets every leg
-  # report. `needs.test.result` is success only when every leg succeeded, so
-  # CI Gate and its required context are unchanged.
+  # v1.22: every stage mounts the build and golangci-lint cache volumes, and a
+  # bridge stage the module cache volume, from the runner's Docker host
+  # (in-toolchain-image.sh v2, ci-standard.md §6), so a stage writes its
+  # caches there and not into its container's layer.
   #
-  # Each leg runs one `make` target; what each pass covers and why it exists is
-  # recorded on its matrix entry below.
+  # The forge credentials reach the image build only as the gomodauth BuildKit
+  # secret, from a file outside the context that the job removes.
+  # No step and no make target prints that file, the job environment (`env`,
+  # `printenv`, `set -x`) or a matched line: `make stage-gomodauth` and the
+  # file writes run silent, and lint steps and `make check-public-literals`
+  # report path and line only (ci-standard.md §5, Company Agent m605 item 8).
   #
-  # TIERED (#1272): the legs are split across two jobs, `test` (PR tier:
-  # default, sdk-go) and `test-full` (full tier: standard, lean, minimal,
-  # coverage). Two jobs rather than one matrix with a per-leg condition,
-  # because a job-level `if:` is evaluated before the matrix expands and
-  # cannot see `matrix.*`, and a step-level condition would still start a
-  # runner for every leg -- the slot this tier exists to save. Two jobs also
-  # give CI Gate one result per tier, so each `check` line carries one tag.
-  # The status names (`Unit Tests (<leg>)`) are unchanged.
-  test:
-    name: Unit Tests (${{ matrix.leg }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # No lint/build in `needs` (v1.14): starts with them, not after them.
-    # `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
-    needs: [merge]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # `make test` compiles the MAXIMAL feature set.
-          - leg: default
-            target: test
-          # `make test` covers ./pkg/... ./cmd/... in the ROOT module only, so
-          # the separate sdk/go module -- the one downstream consumers actually
-          # import -- had no CI coverage at all. It runs with -race and
-          # excludes sdk/go/test/, whose docker-compose harness needs Docker; it
-          # runs off the gate in nightly.yml's sdk-go-integration job.
-          - leg: sdk-go
-            target: test-sdk-go
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run unit tests (make ${{ matrix.target }})
-        run: make ${{ matrix.target }}
-
-  # The full-tier unit-test legs (#1272). Same steps as `test`, plus the
-  # coverage leg's threshold, upload and PR comment.
-  test-full:
-    name: Unit Tests (${{ matrix.leg }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs: [merge, lint, test]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # `make test` compiles the maximal set, so a file gated on a
-          # conjunction of an enabled and a disabled tag -- rag_stub.go is
-          # `rest && !rag` -- is compiled by neither it nor `make test-minimal`
-          # (which has no `rest` either). The REST route goldens froze the
-          # rag-enabled surface and were wrong by six routes for `make
-          # build-standard`, a binary we ship, and no gate could see it (#299).
-          # This pass is that configuration: REST on, AI features off.
-          - leg: standard
-            target: test-standard
-          # Transports on, optional data-model features off. The only pass that
-          # satisfies `mcp && !rag`, `rest && !otel` and `rest && !timeseries` —
-          # each needs one feature ON and another OFF, which the maximal pass
-          # (all on) and the minimal pass (all off) both miss by construction.
-          # `rest && !otel` is the sharpest: `otel` is TEST-ONLY, so the no-op
-          # tracing path it guards is what every shipped binary runs, and
-          # nothing compiled it. `make check-build-tags` now proves the
-          # coverage rather than assuming it (#305).
-          - leg: lean
-            target: test-lean
-          # The disabled-feature side of the tree. This is the ONLY pass that
-          # compiles the !rest / !quic / !mcp / !rag / !vector / !timeseries /
-          # !raft / !otel / !l2_redis / !quicbaas_{mqtt,amqp,stomp} stub and
-          # no-op files and the tests asserting their behaviour — a tag and its
-          # negation cannot coexist in one `go test`, so the maximal pass can
-          # never reach them. It was RED on the trunk because it was never
-          # wired in (#304): a pass nobody runs is a pass nobody notices going
-          # red.
-          - leg: minimal
-            target: test-minimal
-          # Coverage report; this leg alone checks the threshold, uploads the
-          # reports and comments on the PR. Full tier (#1272): the threshold
-          # holds on main and on a `ci:full` pull request, not on every push.
-          - leg: coverage
-            target: coverage
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run unit tests (make ${{ matrix.target }})
-        run: make ${{ matrix.target }}
-
-      - name: Check coverage threshold
-        if: matrix.leg == 'coverage'
-        id: coverage
-        run: |
-          COVERAGE=$(go tool cover -func=coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
-          echo "Total coverage: ${COVERAGE}%"
-          if ! awk -v c="$COVERAGE" -v t="${{ env.COVERAGE_THRESHOLD }}" 'BEGIN { if (c !~ /^[0-9]+(\.[0-9]+)?$/) exit 1; exit !(c + 0 >= t + 0) }'; then
-            echo "Coverage ${COVERAGE}% is below threshold ${{ env.COVERAGE_THRESHOLD }}%"
-            exit 1
-          fi
-
-      - name: Upload coverage to Codecov
-        if: matrix.leg == 'coverage'
-        uses: codecov/codecov-action@v5
-        with:
-          files: ./coverage/coverage.out
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-      # upload-artifact v4+ refuses to run against any server that is not
-      # github.com -- it detects one and reports "not currently supported on
-      # GHES", and Gitea presents as such (devops.md §1). Every such step in
-      # this file is guarded; the work it captures has already run.
-      - name: Upload coverage reports
-        if: matrix.leg == 'coverage' && github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-reports
-          path: |
-            coverage/coverage.out
-            coverage/coverage.html
-          retention-days: 30
-
-      - name: Comment PR with coverage
-        if: matrix.leg == 'coverage' && github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const coverage = '${{ steps.coverage.outputs.coverage }}';
-            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
-            const status = parseFloat(coverage) >= parseFloat(threshold) ? '✅' : '❌';
-
-            const comment = `## Coverage Report ${status}
-
-            **Total Coverage**: ${coverage}%
-            **Threshold**: ${threshold}%
-
-            ${parseFloat(coverage) >= parseFloat(threshold)
-              ? '✅ Coverage meets the required threshold!'
-              : '❌ Coverage is below the required threshold. Please add more tests.'}
-
-            [View detailed coverage report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            `;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-
-  # The integration suite lives in integration.yml, not here (devops.md §5).
-  # It stands up a five-node cluster in containers and takes on the order of an
-  # hour, which is not what this gate is for; that alone is why it is a
-  # workflow of its own. It is also currently red, tracked as #57. Gitea does
-  # not honour job-level continue-on-error for a run's conclusion, so an
-  # advisory job here could only lie or hold the whole gate red.
-
-  race:
-    name: Race Detector
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    # Waits on lint and test (#1517): a red head spends no runner on the race
-    # pass. `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
-    needs: [merge, lint, test]
-    # Full tier (header; sdlc §5a). The implicit success() still skips this job
-    # when `merge`, `lint` or `test` fails.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      # This deliberately does NOT run `make race`, which is what devops.md §4
-      # would otherwise ask for. Measured on 2026-08-14: the tagged race build
-      # reports 7 data races in the sealed-window boot path
-      # (server.startSealedRESTServer / runSealedWindow), fails two
-      # TestSealedBoot_* tests, and blows the target's 10m per-package timeout
-      # in pkg/security. All of it predates this workflow and none of it is a
-      # CI fix -- widening the gate is tracked separately. Left at the scope it
-      # has always had rather than pretending to a coverage it does not deliver.
-      # pkg/iam runs in its OWN step with its own bound. Measured on loaded
-      # runners: pkg/iam alone exceeds 600s under -race, so one shared
-      # -timeout=10m killed the whole invocation and made the gate
-      # unreachable for a reason that is capacity, not a race. The root cause
-      # (pkg/iam's -race runtime) is code work tracked in go-quicbaas#100;
-      # this split is the CI accommodation, mirrored from main so the two
-      # ci.yml files differ only by the pull_request trigger for this branch.
-      - name: Run tests with race detector
-        run: go test -race -timeout=10m $(go list ./pkg/... ./cmd/... | grep -v -e '^github.com/jeremyhahn/go-quicbaas/pkg/iam$' -e '^github.com/jeremyhahn/go-quicbaas/pkg/sdlc$' -e '^github.com/jeremyhahn/go-quicbaas/pkg/service$')
-
-      - name: Run pkg/iam with race detector (its own bound)
-        run: go test -race -timeout=20m ./pkg/iam
-
-      # pkg/sdlc and pkg/service persist through the qrdb DAO, whose codec is
-      # tag-gated: untagged, every test in them fails at CreateProject with
-      # `codec "json" is not supported in this build` — 287 failures and zero
-      # actual races in run 6149 (measured 2026-08-24; masked until then
-      # because the staged fail-fast skipped this job while Lint was red).
-      # They run in their own step with exactly the codec tag they need,
-      # NOT the full tag set — the tagged race build's known sealed-window
-      # findings (see the note above) stay out of scope. Same race-split
-      # accommodation pattern as pkg/iam above.
-      - name: Run pkg/sdlc and pkg/service with race detector (codec_json)
-        run: go test -race -tags codec_json -timeout=10m ./pkg/sdlc ./pkg/service
-
-  security:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    # No lint/build in `needs` (v1.14): starts with them, not after them.
-    # `merge` stays so the job can read needs.merge.outputs.base_sha (#436).
-    needs: [merge]
-    permissions:
-      security-events: write
-      contents: read
-    # ci-template v1.6: the Go toolchain is cgroup-unaware — in a 16 GB job
-    # container it sees the HOST's 24 cores and 94 GB, so gosec ran 24 workers
-    # and the GC grew the heap to ~27 GB, swapping 11 GB of anonymous memory
-    # and stalling the whole host (memory PSI 98, 43% CPU in iowait; measured
-    # 2026-08-18 from the live cgroup). GOMEMLIMIT makes the GC respect the
-    # container budget; GOMAXPROCS bounds the worker fan-out.
+  # Runners: the image and integration jobs run on bigdisk (Docker and the disk
+  # for the image builds) and CI Gate on ci-gate; on the github.com mirror all
+  # are ubuntu-latest, which has Docker (devops.md §1: host-specific choices
+  # are guarded on github.server_url).
+  image:
+    name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 180      # CUSTOMIZE: give the stages honest headroom
     env:
-      GOMEMLIMIT: 10GiB
-      GOMAXPROCS: 8
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      # v1.22: the cache volumes' trust class. Only a push to main writes the
+      # caches main's build reads; every other event, pull requests included,
+      # gets the `pr` set (ci-standard.md §6).
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+      IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}-image
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Verify module integrity
-        run: make modverify
-
-      # `make gosec` is the contract (devops.md §4/§8): CI runs the target a
-      # developer runs, so the exclude list, the excluded directories and the
-      # build tags cannot drift between the two. The tags matter here for the
-      # same reason they do in the Lint job -- without the Makefile's
-      # LINT_BUILD_TAGS gosec typechecks the tag-gated packages in their
-      # disabled configuration. GOSEC_EXCLUDE and the written justification for
-      # every rule in it live beside the target in the Makefile.
-      #
-      # The target passes -stdout -verbose=text, so findings are readable in
-      # the job log; the SARIF upload below only exists on github.com, and
-      # without that flag a Gitea failure exited 1 with the findings buried in
-      # a file nobody could see (ci-template v1.1).
-      # Scanners are PINNED, the golangci-lint discipline above (fleet
-      # ruling 2026-08-26): an unpinned gosec self-updated mid-day to v2.29.0
-      # and reddened every go-qrdb PR with a new rule (G703) on untouched
-      # code. A scanner that changes under a branch produces a red that has
-      # nothing to do with the branch. Bump deliberately, with a commit that
-      # owns the new findings. Pinning govulncheck pins the TOOL only -- its
-      # vulnerability database is fetched live on every run, so a pinned
-      # binary still reports today's CVEs.
-      # The pins live in the Makefile (GOSEC_VERSION, GOVULNCHECK_VERSION) and
-      # are read from it, so this job, `make install-tools` and the Software
-      # Factory worker image all scan with one version (#772). gosec is built
-      # by `make install-gosec`, not `go install`ed: its release requires a
-      # vulnerable grpc, so it is built with GO_TOOL_DEPENDENCY_FLOORS
-      # (pkg/version/toolchain.mk), exactly as the worker image builds it.
-      - name: Run gosec Security Scanner
+      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
+      # any other step. The runner injects them as plain environment
+      # (dependency-resolution.md §6), which the log does not mask by itself,
+      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
+      # as well.
+      - name: Mask the forge credentials
         run: |
-          make install-gosec
-          make gosec
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
 
-      - name: Upload gosec results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        if: always() && github.server_url == 'https://github.com'
-        with:
-          sarif_file: build/gosec.sarif
-          category: gosec
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
-      # Pinned for the same reason.
-      #
-      # This pins the TOOL, not the vulnerability DATABASE. govulncheck fetches
-      # its data from the Go vulnerability database at every run, so the scan
-      # stays as current as it was before: a CVE published an hour ago is still
-      # caught. What the pin removes is the analyzer changing underneath the
-      # gate without a commit -- the failure mode above, not the freshness the
-      # job exists for.
-      - name: Run govulncheck
+      # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
+      # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
+      # goes here; the container shares the runner's kernel.
+      # go-quicbaas: Gitea publishes no refs/pull/<n>/merge, so the merge
+      # result is built here against the base the run's event pinned (#436).
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the devcontainer images
         run: |
-          version="$(make -s print-GOVULNCHECK_VERSION)"
-          test -n "$version" || { echo "Makefile GOVULNCHECK_VERSION is empty"; exit 1; }
-          go install "golang.org/x/vuln/cmd/govulncheck@$version"
-          make vuln
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    # #436: nothing compiles the head alone; the merge job resolves the base first.
-    needs: [merge]
-    # Runs in parallel with every other job (v1.14); it gates nothing
-    # downstream, only CI Gate.
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+      # v1.22: bound this repo's cache volumes on the host before the stages
+      # add to them (ci-standard.md §6). It never fails the job.
+      - name: Trim the CI caches
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/trim-ci-caches.sh "$CI_STACK_PREFIX" "$TOOLCHAIN_IMAGE"
 
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
+      # make lint: gofmt, vet, golangci-lint, actionlint with shellcheck
+      # (devops.md §4). .golangci.yml enables staticcheck, errcheck, unused,
+      # ineffassign, misspell and gocritic (devops.md §8).
+      - name: make lint
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+      # v1.9.2, now in the image: the declared tag set must select code. Each
+      # tag is checked by removal: if dropping it changes no selected file
+      # (tests included), it is misspelled or dead. Compares files, not
+      # packages, and a tag may swap files (a `!foo` stub for a `foo` body).
+      - name: Assert every build tag selects code
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
-      - name: Download dependencies
-        run: go mod download
+      # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
+      # by `make build` itself, never by an extra step here.
+      - name: make build
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # `make build` produces the daemon and the client, and the client is
-      # always linked with the embedded desktop GUI (CGO + Wails/GTK/WebKit)
-      # after rsync-ing and npm-building the frontend. The runner image ships
-      # node and npm but neither rsync nor the GTK/WebKit development headers,
-      # so build-frontend died on a missing rsync and build-cli on its
-      # pkg-config guard. Provision them rather than narrowing what the Build
-      # gate covers.
-      - name: Install desktop and frontend build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            rsync libgtk-3-dev libwebkit2gtk-4.1-dev
+      # The test stage (m601 (c)): make coverage runs the whole unit suite with
+      # -race (make test's flags) and fails when total coverage is below
+      # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
+      # Tags matter here too: without them tag-gated packages are neither
+      # tested nor counted. The integration stage is its own job below.
+      - name: make coverage (unit tests and the threshold)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
-      - name: Build binaries
-        run: make build
+      # CUSTOMIZE: the TypeScript SDK, frontend and JavaScript SDK unit tests
+      # (make test-sdk-ts, test-frontend, test-sdk-js) are a gate: make build
+      # only compiles them, and the web job that ran them is gone (Codex
+      # 5785). Their npm ci runs offline from the npm cache the toolchain
+      # image seeds from the three lockfiles, so the step needs no network.
+      - name: make test-sdk-ts test-frontend test-sdk-js
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-sdk-ts test-frontend test-sdk-js"
 
-      # gms_pure_go for the same reason the Makefile sets it: these are
-      # CGO_ENABLED=0 builds and dolthub/go-mysql-server's internal/regex has
-      # no file that satisfies `cgo && !gms_pure_go` without cgo, so the build
-      # fails on "build constraints exclude all Go files".
-      #
-      # Full tier (header; sdlc §5a): a PR-tier run skips this step and the
-      # Build job still reports on the standard binaries.
-      - name: Build FIPS binaries
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
+      # make security: gosec, govulncheck, go mod verify (devops.md §8), with
+      # trivy fs per the phase (§8a). The target owns gosec's flags and its
+      # memory bounds (GOMEMLIMIT, GOMAXPROCS, -concurrency; v1.6 to v1.8) and
+      # reports a kill by signal as a kill, not a finding. Nothing is uploaded
+      # to code scanning (m601 (d): CI runs on Gitea).
+      - name: make security
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
         env:
-          GOFIPS140: v1.0.0
+          IN_IMAGE_NETWORK: bridge
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make security GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+
+      # Fails when a library, first-party or third-party, is behind its latest
+      # release without devops.md §9's documented reason (ci-standard.md §1).
+      - name: make deps-check
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
+
+      # The integration image is gated before any push to either registry
+      # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
+      # (v1.20). trivy fs and make security never take --ignore-unfixed.
+      - name: trivy image (integration image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        env:
+          IN_IMAGE_NETWORK: bridge
         run: |
-          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -o bin/quicbaasd-fips ./cmd/quicbaasd
-          CGO_ENABLED=0 go build -tags gms_pure_go -buildvcs=false -o bin/quicbaas-fips ./cmd/quicbaas
+          docker save -o it-image.tar "$IT_IMAGE"
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" \
+            trivy image --input it-image.tar --ignore-unfixed --skip-dirs /opt/go/mod --severity CRITICAL,HIGH --exit-code 1
 
-      - name: Upload build artifacts
-        if: github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v6
-        with:
-          name: binaries
-          path: bin/*
-          retention-days: 30
-
-  # THE WEB SUITES (#551). Until this job existed the TypeScript SDK and the
-  # frontend had no CI at all: `ci.yml` mentioned npm exactly twice, both in a
-  # comment on the Build job's dependency step. The suites are real and they
-  # pass -- `make test-sdk-ts` is 27 files / 359 tests, `make test-frontend` is
-  # 75 files / 1294 tests -- but nothing ran them, so a frontend suite that had
-  # gone red on this branch was only found when a human ran it by hand (#549).
-  # The Build job npm-builds the frontend, which proves it compiles and proves
-  # nothing whatsoever about its behaviour.
-  #
-  # Item 2 of #551 -- rebuilding the frontend and failing on a `dist/` diff, so
-  # the committed assets cannot drift from their source -- is an OWNER DECISION
-  # and is deliberately not implemented here. This job runs the tests; it does
-  # not judge the bundle. The JavaScript SDK (sdk/javascript) joined it in #1424.
-  web:
-    name: Web Tests
-    runs-on: ubuntu-latest
-    # #436: nothing validates the head alone; the merge job resolves the base
-    # first. TypeScript branches conflict the same way Go branches do -- two
-    # that are each green can together delete a store one of them still
-    # subscribes to, with no conflicting hunk anywhere.
-    needs: [merge, lint, test]
-    # FAST TIER by cost (seconds of npm ci, ~40 s of vitest), but DELIBERATELY
-    # NOT A GATE ON THE EXPENSIVE TIER the way lint and build are. #349 records
-    # a frontend test that flakes; putting this job in the Go tier's `needs:`
-    # would let one flake SKIP the unit, race, security and docker jobs and
-    # cost a re-run of the whole pipeline. It gates the merge through `CI Gate`
-    # below -- which is what #551 asked for -- and gates nothing else.
-    #
-    # Full tier (header; sdlc §5a). The implicit success() still skips this job
-    # when `merge`, `lint` or `test` fails.
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
-    timeout-minutes: 30
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      # No `actions/setup-node`, matching the Build job: the runner image ships
-      # node and npm, which is what makes `make build`'s npm frontend build
-      # work, and a version pinned here would be the repository's only
-      # declaration of one. The versions are printed so that a failure which is
-      # really a toolchain gap reads as one instead of as a test failure.
-      - name: Report the node toolchain
-        run: |
-          node --version
-          npm --version
-
-      # `npm ci` rather than `npm install`: both packages commit a lockfile and
-      # CI should install exactly it. Neither Makefile target installs anything
-      # -- they assume a populated node_modules, which holds on a developer
-      # machine and never on a fresh runner. The SDK is installed first because
-      # the frontend depends on it through `file:../../../sdk/typescript`.
-      - name: Install TypeScript SDK and frontend dependencies
-        run: |
-          (cd sdk/typescript && npm ci)
-          (cd cmd/quicbaas/frontend && npm ci)
-
-      # `make` is the contract (devops.md §4): the same targets a developer
-      # runs, so a green here means the same thing it means locally.
-      - name: Run the TypeScript SDK tests (make test-sdk-ts)
-        run: make test-sdk-ts
-
-      - name: Run the frontend tests (make test-frontend)
-        run: make test-frontend
-
-      # #1424: until this step nothing ran the JavaScript SDK, so a broken
-      # sdk/javascript could merge green. The target installs its own
-      # dependencies (`npm ci` from the committed lockfile), then runs jest and
-      # eslint.
-      - name: Run the JavaScript SDK tests and lint (make test-sdk-js)
-        run: make test-sdk-js
-
-  # THE MERGE-RESULT SNAPSHOT SUITE (#982). It is the only thing that measures
-  # what the tree a verification judges actually HOLDS: `git add --all` staged
-  # into an index that starts EMPTY silently drops every file the repository
-  # tracks despite an ignore rule (seven here, the vector-store markers), and a
-  # double that records the argument vector sees an identical command either
-  # way -- so only real git against a real working tree can tell the two apart.
-  #
-  # Nothing else in this pipeline runs it. `make test` never compiles it: the
-  # suite is `integration`-tagged, for what it TOUCHES rather than what it
-  # costs -- it spawns git and writes a working tree, which the unit tier
-  # forbids, and it finishes in well under a second. The Lint job's
-  # `make vet-integration` only TYPECHECKS it, and a suite that is only
-  # typechecked is a dark suite (integration-testing.md §8).
-  #
-  # It is here rather than in integration.yml because it is neither slow nor
-  # service-dependent (devops.md §5): no server, no credential, no network,
-  # and an image that is one alpine, one git and one static test binary. The
-  # regression it catches -- a snapshot that silently loses tracked files --
-  # is one a pull request introduces, so it belongs on the gate that judges
-  # pull requests.
-  #
-  # `make` is the contract (devops.md §4): the target bakes the source into
-  # the image and bind-mounts nothing, which is what lets this job run the
-  # same command a developer runs. A bind mount would not work here at all --
-  # act_runner talks to the host daemon, which cannot resolve a path inside
-  # this job container (see the Build Binaries step in release.yml).
-  #
-  # The job id is one word on purpose: every other job here is, and a
-  # hyphenated id has to survive `needs.<id>.result` in the gate's expression
-  # parser -- which is act_runner's, not GitHub's, on the forge this actually
-  # runs on.
-  snapshot:
-    name: Merge-Result Snapshot
-    runs-on: ubuntu-latest
-    # No lint/build in `needs` (v1.14). `merge` stays so the job can read
-    # needs.merge.outputs.base_sha (#436).
-    needs: [merge]
-    timeout-minutes: 30
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          # fetch-depth: 0 -- required by the merge-result step below (#436).
-          fetch-depth: 0
-
-      # #436: build merge(base, head), not head. The base commit is the one the
-      # `merge` job pinned, so every job validates the same tree.
-      - name: Validate the merge result, not the head
-        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ needs.merge.outputs.base_sha }}"
-
-      # THE IMAGE THIS JOB BUILDS IS SCANNED BEFORE ANYTHING RUNS FROM IT.
-      # devops.md §8 gates `trivy image` on every image this repository
-      # builds, CI images included, and the gate is inside the `make` target
-      # rather than a step here (§4) so a developer's run is the same run:
-      # `integration-test-merge-result` hands the id it just built to
-      # `trivy-image-merge-result`, which fails the target -- and therefore
-      # this job -- on a fixable CRITICAL or HIGH. The image carries no tag, so
-      # a concurrent run on this host cannot substitute another commit's image
-      # between the scan and the test (integration-testing.md §7).
-      #
-      # No `actions/setup-go`: everything compiles inside the image, from the
-      # module cache the build warms. The target's own `stage-gomodauth` reads
-      # the Gitea module-fetch credentials straight out of this job's shell
-      # environment, where the runner injects them (dependency-resolution.md
-      # §6), and hands them to the build as a BuildKit secret -- never a build
-      # arg, which `docker history` would recover. On GitHub none of those
-      # variables exist, the file is written empty, the Dockerfile's mount is
-      # optional, and the same build resolves from the public proxy.
-      - name: Run the merge-result snapshot suite (make integration-test-merge-result)
-        run: make integration-test-merge-result
-
-      # The staged file lives in this job container's /tmp and dies with it,
-      # but a credential is removed when it stops being needed rather than
-      # when its container happens to exit.
-      - name: Remove staged credentials
+      - name: Tear down
         if: always()
-        run: rm -f "$(make -s print-GOMODAUTH_ENV)"
-
-  docker:
-    name: Docker Build & Security Scan
-    runs-on: ubuntu-latest
-    # It consumes no artefact of another job (it checks out and builds the
-    # image itself), but it waits on lint and test (#1517): a lint or test
-    # failure skips it, so a red head spends no runner on the image. It does
-    # not wait on merge. Full tier (header; sdlc §5a).
-    needs: [lint, test]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')
-    permissions:
-      contents: read
-      packages: write
-      security-events: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # ghcr.io does not exist on Gitea and a Gitea token cannot authenticate to
-      # it (lessons.md). Nothing in this job pushes -- the build is load-only
-      # and the tag is a local name -- so the login is only there for GitHub's
-      # pull rate limits and is guarded accordingly.
-      - name: Log in to Container Registry
-        if: github.server_url == 'https://github.com'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-
-      # go.mod pins first-party modules published to the internal Gitea, which
-      # `go mod download` inside the image cannot reach on its own. The runner
-      # injects GOPRIVATE and the tokenised insteadOf rewrite into this job's
-      # environment (dependency-resolution.md §6), but a job environment does
-      # not cross into a docker build -- hence handing it over explicitly.
-      #
-      # Written under RUNNER_TEMP, deliberately OUTSIDE the build context: the
-      # Dockerfile does `COPY . .`, so a credentials file inside the workspace
-      # would be baked into a layer. .dockerignore lists gomodauth* as a second
-      # line of defence. It is a BuildKit secret, never a build arg -- an arg is
-      # recoverable with `docker history`.
-      #
-      # On GitHub none of these variables exist, the file is written empty, and
-      # the Dockerfile's mount is optional, so the same build works there
-      # against the public proxy.
-      #
-      # The variables are read straight from the shell environment, NOT through
-      # ${{ env.X }} -- that expression reads this workflow's `env:` block,
-      # which does not define them, and would quietly write blanks (the failure
-      # then surfaces as an unrelated-looking "unknown revision").
-      - name: Stage module-fetch credentials
         run: |
-          set -eu
+          rm -f "$RUNNER_TEMP/gomodauth.env" it-image.tar
+          docker image rm "$IT_IMAGE" || true
+
+  # Integration tests run in the integration image (ci-standard.md §2), as a
+  # compose stack on the runner host started by `make integration-test`. The
+  # stack is named per run under the repo's prefix, the job reaps stale stacks
+  # first (v1.18) and keeps its own teardown last under `if: always()`.
+  integration:
+    name: Integration [integration image]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    # CUSTOMIZE: a repo whose suite runs only on the full tier gates it here
+    # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
+    timeout-minutes: 120      # CUSTOMIZE
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      IT_IMAGE: ${{ github.event.repository.name }}-ci-it:${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
+      # any other step. The runner injects them as plain environment
+      # (dependency-resolution.md §6), which the log does not mask by itself,
+      # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
+      # as well.
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
+      # go-quicbaas: the merge result, against the same pinned base as the
+      # image job (#436).
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Write the module credential file
+        run: |
           umask 077
-          : > "${RUNNER_TEMP}/gomodauth.env"
-          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-            {
-              printf 'export GOPRIVATE=%s\n' "${GOPRIVATE:-}"
-              printf 'export GIT_CONFIG_COUNT=%s\n' "${GIT_CONFIG_COUNT:-}"
-              printf 'export GIT_CONFIG_KEY_0=%s\n' "${GIT_CONFIG_KEY_0}"
-              printf 'export GIT_CONFIG_VALUE_0=%s\n' "${GIT_CONFIG_VALUE_0:-}"
-            } > "${RUNNER_TEMP}/gomodauth.env"
-            echo "staged Gitea module credentials"
-          else
-            echo "no Gitea credentials in this environment; resolving from the public proxy"
-          fi
+          : > "$RUNNER_TEMP/gomodauth.env"
+          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+          done
 
-      - name: Build Docker image for scanning
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=dev
-            COMMIT=${{ github.sha }}
-            DATE=${{ github.event.repository.updated_at }}
-          # The GitHub Actions cache service is unreachable from a Gitea job
-          # container, and buildx treats a cache timeout as a fatal build error
-          # rather than a cache miss (lessons.md) -- so the cache is requested
-          # only on the server that has one.
-          cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
-          cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
-          secret-files: |
-            gomodauth=${{ runner.temp }}/gomodauth.env
+      - name: make integration-test (integration image)
+        run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
-      - name: Remove staged credentials
+      - name: Tear down
         if: always()
-        run: rm -f "${RUNNER_TEMP}/gomodauth.env"
-
-      # SARIF pass, for the Security tab only. trivy-action's setup cannot
-      # authenticate to github.com from a Gitea runner and the code scanning
-      # API is GitHub-only, so both steps are guarded. Neither gates -- the
-      # gate is the CLI step below, which runs on both servers.
-      - name: Run Trivy security scanner (SARIF for code scanning)
-        # @master, matching the two uses in nightly.yml's Trivy job (v1.9
-        # moved that job off the push path). The pinned "0.33.1"
-        # that used to be here does not exist as a ref, and act_runner resolves
-        # every action in a job before running any step -- including ones behind
-        # an `if:` that will never fire on this server -- so an unresolvable ref
-        # failed the whole Docker job with "reference not found" before a single
-        # step executed.
-        uses: aquasecurity/trivy-action@master
-        if: github.server_url == 'https://github.com'
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v4
-        if: always() && github.server_url == 'https://github.com'
-        continue-on-error: true
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: trivy
-
-      # THE GATE (devops.md §8): every image this repo builds is scanned and a
-      # CRITICAL/HIGH finding fails the job, on both servers. Trivy runs from
-      # its own image rather than the action, because the action installs
-      # itself through a nested checkout that a self-hosted runner resolves
-      # against its own server. Reproduce locally with `make trivy-image`.
-      - name: Trivy image gate (fail on CRITICAL/HIGH)
         run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-              --format table \
-              --severity CRITICAL,HIGH \
-              --exit-code 1 \
-              --no-progress \
-              "${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
+          docker image rm "$IT_IMAGE" || true
 
-      - name: Run Grype security scanner
-        uses: anchore/scan-action@v7
-        id: grype
-        continue-on-error: true
-        with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          fail-build: false
-          severity-cutoff: high
+  # CUSTOMIZE: further stages run in the image job as steps of the same
+  # shape (one `make` target in the toolchain image, `if: !cancelled()`). A
+  # suite that needs its own runner or stack (tagged suites, cross-arch,
+  # contrib modules) is a job of the integration job's shape and joins CI
+  # Gate's needs list and check lines.
 
-      - name: Upload Grype results
-        uses: github/codeql-action/upload-sarif@v4
-        if: always() && github.server_url == 'https://github.com'
-        continue-on-error: true
-        with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
-          category: grype
+  # Architecture gate (v1.20, Company Agent m270 item 9; go-xkms arch-gates).
+  # go-objstore owns every blob backend (docs/00), and a repo reaches it only
+  # through the packages that are its storage seam. Test files are exempt, and
+  # go-objstore itself passes. CUSTOMIZE: OBJSTORE_SEAMS, an extended regex of
+  # the paths that may import go-objstore (go-xkms: 'pkg/ca/|pkg/storage/');
+  # empty means none may. CUSTOMIZE: the repo's own layering rules (go-xkms:
+  # xkmsctl and xkey depend only on sdk/go) are further steps in this job.
+  # A source check with grep, not a stage: it runs on the runner's shell.
+  arch-gates:
+    name: Architecture Gates
+    runs-on: ubuntu-latest
+    env:
+      OBJSTORE_SEAMS: 'pkg/backup/|pkg/catalog/backend_manager\.go|pkg/config/storage\.go|pkg/security/storage_adapter\.go'      # CUSTOMIZE
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-  # The single required check (devops.md §1). Every job above appears in BOTH
-  # the needs list and the results check -- a gate that can pass vacuously is
-  # worse than no gate. join(needs.*.result) is deliberately not used: it
-  # evaluates empty on Gitea and reports success while jobs fail.
-  # v1.9: fips and trivy moved to nightly.yml (known-red/long-horizon jobs off
-  # the push path -- owner ruling 2026-08-20); they gate nothing here.
-  #
-  # Tiered CI (sdlc §5a, #1266, #1272): every `check` line is tagged `pr` or
-  # `full`. Anything other than `success`, including `cancelled`, fails, with
-  # one exception: `skipped` passes for a job tagged `full` when this run did
-  # not select the full tier (FULL_TIER is the same expression as the
-  # full-tier jobs' `if:`). A PR-tier job never skips legitimately, and in a
-  # full-tier run neither does a full-tier job, so `skipped` there still
-  # fails. A new job goes into `needs` AND a tagged `check` line;
-  # test/buildgates asserts the pairing. The job name must stay `CI Gate`:
-  # branch protection requires `CI / CI Gate (pull_request)`.
+      - name: No direct go-objstore import outside the storage seam
+        run: |
+          if [ "$(sed -n 's/^module //p' go.mod)" = github.com/jeremyhahn/go-objstore ]; then
+            echo "OK: this is go-objstore"; exit 0
+          fi
+          hits=$(grep -rln --include='*.go' '"github.com/jeremyhahn/go-objstore' . \
+                 | grep -v '_test\.go$' \
+                 | { if [ -n "$OBJSTORE_SEAMS" ]; then grep -vE "$OBJSTORE_SEAMS"; else cat; fi; } || true)
+          if [ -n "$hits" ]; then
+            echo "go-objstore may be imported only in the storage seam (OBJSTORE_SEAMS='$OBJSTORE_SEAMS'):"
+            echo "$hits"; exit 1
+          fi
+          echo "OK: no go-objstore import outside the storage seam"
+
+  # The single required check (devops.md §1). Every job above must appear in
+  # BOTH the needs list and the results check — a gate that can pass vacuously
+  # is worse than no gate. Do not use join(needs.*.result); it evaluates empty
+  # on Gitea and reports success while jobs fail.
+  # v1.21: on the ci-gate runners (Company Agent m386: only CI Gate runs there;
+  # a 1-CPU gate runner cannot hold a stage). trivy and fips are in nightly.yml
+  # (v1.9, devops.md §8a: the alpha regime).
   ci-gate:
     name: CI Gate
-    # The reserved 1-CPU gate runners (#1445): this job has no checkout and
-    # no `uses:` action, and must keep it that way to fit them.
-    runs-on: ci-gate
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'ci-gate' }}
     if: always()
-    needs: [merge, lint, test, test-full, race, security, build, web, snapshot, docker]
+    # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
+    # check line below; remove none of the template's jobs.
+    # Integration still runs on every PR but does not gate until row #1700
+    # closes (CA m787). Restore it then in needs and as a pr check line, and
+    # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
+    needs: [image, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
+          # The full tier (go-quicraft's form): push, workflow_dispatch and a PR
+          # labelled ci:full. A job marked `full` may be skipped below it; a
+          # `pr` job may never be skipped.
           FULL_TIER: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
           BAD=0
-          echo "full tier selected: ${FULL_TIER} (event=${{ github.event_name }})"
-          # skipped != failed, but a skip the tier did not choose fails the
-          # gate too: it means the merge-result job it needs failed, and
-          # NAMING it as a skip prevents the go-qrdb#42 class -- a red that
-          # reads as a test failure while the tests never ran at all.
+          echo "full tier selected: ${FULL_TIER}"
           check() { # <job> <result> <pr|full>
-            case "$2" in success) echo "OK   $1";;
+            case "$2" in
+              success) echo "OK   $1";;
               skipped)
                 if [ "$3" = full ] && [ "${FULL_TIER}" != true ]; then
                   echo "SKIP $1 (full tier not selected)"
                 else
-                  echo "FAIL $1 (skipped -- did not run; see Merge Result and its job)"; BAD=1
+                  echo "FAIL $1 (skipped)"; BAD=1
                 fi;;
               *) echo "FAIL $1 ($2)"; BAD=1;;
             esac
           }
-          # merge is the #436 merge-result check. It carries no `if:`, so it
-          # never legitimately skips. A non-success means this branch does not
-          # merge into its base, or the check could not run at all -- the gate
-          # names which job to open, so a MERGE CONFLICT does not read as
-          # "SKIP lint".
-          check merge     "${{ needs.merge.result }}" pr
-          if [ "${{ needs.merge.result }}" != success ]; then
-            echo "     Open the 'Merge Result' job: a conflict lists the conflicting paths, an infrastructure failure says CI INFRASTRUCTURE on its first line."
-          fi
-          check lint      "${{ needs.lint.result }}" pr
-          check test      "${{ needs.test.result }}" pr
-          check security  "${{ needs.security.result }}" pr
-          check build     "${{ needs.build.result }}" pr
-          # snapshot runs on every event, so a skip here means merge failed and
-          # nothing measured what a verification's tree holds (#982).
-          check snapshot  "${{ needs.snapshot.result }}" pr
-          check test-full "${{ needs.test-full.result }}" full
-          check race      "${{ needs.race.result }}" full
-          # web gates nothing downstream, so it never causes another job to
-          # skip (#551).
-          check web       "${{ needs.web.result }}" full
-          # docker waits on lint and test (#1517), so a lint or test failure
-          # skips it; it does not wait on merge, so on a full-tier event it
-          # runs even when merge fails. A full-tier skip still fails the gate.
-          check docker    "${{ needs.docker.result }}" full
+          # CUSTOMIZE: one line per job in needs above. A job gated to the
+          # full tier by its `if:` is marked full; every other job is pr.
+          check image       "${{ needs.image.result }}" pr
+          check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD
