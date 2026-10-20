@@ -17,6 +17,7 @@ package cluster
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,18 @@ import (
 )
 
 // TestClusterConsistency runs Phase 4 tests for data consistency verification.
+const (
+	// membershipChangeWindow stands in for a membership change while no
+	// AddNode/RemoveNode API exists. Five seconds spans several election
+	// timeouts, so a lost leader shows up within it.
+	membershipChangeWindow = 5 * time.Second
+
+	// postStabilizationWindow is how long operations run after the change to
+	// measure the settled success rate. At one operation per 100 ms it yields
+	// enough samples for the 99% threshold to mean something.
+	postStabilizationWindow = 5 * time.Second
+)
+
 func TestClusterConsistency(t *testing.T) {
 	// Check if cluster is running in standalone/embedded mode (no real Raft consensus).
 	// In standalone mode, there is no leader election, so cluster consistency tests
@@ -83,8 +96,7 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 	t.Log("NOTE: This test requires AddNode/RemoveNode API for membership changes")
 	t.Log("Simulating membership change scenario with current cluster...")
 
-	// Simulate membership change delay
-	time.Sleep(5 * time.Second)
+	holdSteady(t, membershipChangeWindow, "cluster keeps a leader during the simulated membership change", clusterHasLeader(cluster))
 
 	// Phase 2: Verify baseline data is still accessible
 	t.Log("Phase 2: Verifying baseline data after simulated membership change...")
@@ -101,8 +113,7 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 	allChecksums := helpers.ComputeChecksums(allEntities)
 	t.Logf("Total: %d entities, %d checksums", len(allEntities), len(allChecksums))
 
-	// Simulate another membership change
-	time.Sleep(5 * time.Second)
+	holdSteady(t, membershipChangeWindow, "cluster keeps a leader during the second simulated membership change", clusterHasLeader(cluster))
 
 	// Phase 4: Verify all 1000 entities are readable
 	t.Log("Phase 4: Verifying all 1000 entities after operations...")
@@ -150,12 +161,13 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 	defer cancel()
 
 	// Start 10 background goroutines
+	var workers sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		go helpers.ContinuousReadWrite(opCtx, t, leaderClient, metrics)
+		workers.Go(func() { helpers.ContinuousReadWrite(opCtx, t, leaderClient, metrics) })
 	}
 
-	// Wait for operations to start
-	time.Sleep(3 * time.Second)
+	pollUntil(t, replicationTimeout, "background operations complete a write",
+		func(context.Context) (bool, error) { return metrics.SuccessfulWrites.Load() > 0, nil })
 	t.Logf("Background operations started: %d writes, %d reads so far",
 		metrics.SuccessfulWrites.Load(), metrics.SuccessfulReads.Load())
 
@@ -163,19 +175,18 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 	t.Log("Simulating membership change operation...")
 	membershipChangeStart := time.Now()
 
-	// Note: Actual membership change would go here
-	// For now, we simulate the duration of such an operation
-	time.Sleep(10 * time.Second)
+	// No membership change API exists yet, so the window stands in for the
+	// change while the cluster must keep a leader under load.
+	holdSteady(t, membershipChangeWindow, "cluster keeps a leader during the membership change", clusterHasLeader(cluster))
 
 	membershipChangeDuration := time.Since(membershipChangeStart)
 	t.Logf("Simulated membership change completed in %v", membershipChangeDuration)
 
-	// Let operations continue for a bit after the change
-	time.Sleep(10 * time.Second)
+	holdSteady(t, membershipChangeWindow, "cluster keeps a leader after the membership change", clusterHasLeader(cluster))
 
-	// Stop background operations
+	// Stop background operations and wait for them to finish
 	cancel()
-	time.Sleep(2 * time.Second) // Allow goroutines to finish
+	workers.Wait()
 
 	// Analyze results
 	totalReads := metrics.SuccessfulReads.Load() + metrics.FailedReads.Load()
@@ -203,10 +214,11 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 	testCtx, testCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer testCancel()
 
-	go helpers.ContinuousReadWrite(testCtx, t, leaderClient, testMetrics)
-	time.Sleep(5 * time.Second)
+	var stabilized sync.WaitGroup
+	stabilized.Go(func() { helpers.ContinuousReadWrite(testCtx, t, leaderClient, testMetrics) })
+	pace(t, postStabilizationWindow)
 	testCancel()
-	time.Sleep(1 * time.Second)
+	stabilized.Wait()
 
 	postStabilizationWriteRate := testMetrics.GetWriteSuccessRate()
 	t.Logf("Post-stabilization write success rate: %.2f%%", postStabilizationWriteRate*100)
@@ -249,7 +261,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 
 	// Wait for replication
 	t.Log("Waiting for replication across cluster...")
-	time.Sleep(3 * time.Second)
+	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
 
 	// Perform linearizable reads from all nodes
 	t.Log("Performing linearizable reads from all nodes...")
@@ -385,8 +397,8 @@ func testZeroDataLossVerification(t *testing.T) {
 	t.Logf("Tracking %d entities with %d checksums", len(entityIDs), len(expectedChecksums))
 
 	// Wait for data to replicate across all nodes
-	t.Log("Waiting for data replication (5 seconds)...")
-	time.Sleep(5 * time.Second)
+	t.Log("Waiting for data replication...")
+	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
 
 	// Define test scenarios
 	scenarios := []struct {
@@ -396,8 +408,8 @@ func testZeroDataLossVerification(t *testing.T) {
 		{
 			Name: "StabilityCheck",
 			Operation: func() error {
-				t.Log("Performing stability check (5 second pause)...")
-				time.Sleep(5 * time.Second)
+				t.Log("Performing stability check...")
+				holdSteady(t, membershipChangeWindow, "cluster keeps a leader during the stability check", clusterHasLeader(cluster))
 				return nil
 			},
 		},
@@ -427,8 +439,8 @@ func testZeroDataLossVerification(t *testing.T) {
 			err := scenario.Operation()
 			require.NoError(t, err, "Scenario operation failed")
 
-			// Wait for stabilization
-			time.Sleep(3 * time.Second)
+			pollUntil(t, clusterSettleTimeout, "cluster has a leader after "+scenario.Name,
+				func(ctx context.Context) (bool, error) { return clusterHasLeader(cluster)(ctx) == nil, nil })
 
 			// Re-find the current leader for reads - leader may have changed
 			currentLeader, currentLeaderClient, err := cluster.FindLeader(ctx)

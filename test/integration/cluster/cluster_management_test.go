@@ -95,7 +95,21 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 
 	// Wait for shards to elect leaders
 	t.Log("Step 4: Waiting for leader election")
-	time.Sleep(5 * time.Second)
+	pollUntil(t, clusterSettleTimeout, "new shards created with elected leaders", func(ctx context.Context) (bool, error) {
+		resp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+		if err != nil {
+			return false, err
+		}
+		if len(resp.Shards) < initialShardCount+2 {
+			return false, nil
+		}
+		for _, shard := range resp.Shards {
+			if shard.LeaderId == 0 {
+				return false, nil
+			}
+		}
+		return true, nil
+	})
 
 	// Verify all shards exist
 	t.Log("Step 5: Verifying all shards exist and have leaders")
@@ -217,7 +231,7 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 			break
 		}
 
-		time.Sleep(2 * time.Second)
+		pace(t, 2*time.Second)
 	}
 
 	// Verify data integrity after rebalancing

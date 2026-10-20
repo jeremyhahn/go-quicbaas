@@ -527,10 +527,11 @@ func TestCacheTTLExpiration(t *testing.T) {
 
 	// Short TTL for testing
 	ttl := 5 * time.Second
+	cleanupInterval := 1 * time.Second
 	cacheManager, err := cache.NewManager(cache.Config{
 		L1Size:          1000,
 		L1TTL:           ttl,
-		CleanupInterval: 1 * time.Second,
+		CleanupInterval: cleanupInterval,
 	}, helpers.NewLoggerAdapter(log))
 	require.NoError(t, err)
 	defer cacheManager.Close()
@@ -549,8 +550,11 @@ func TestCacheTTLExpiration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, value, cachedValue)
 
-		t.Logf("Waiting %v for TTL expiration...", ttl+time.Second)
-		time.Sleep(ttl + time.Second)
+		t.Logf("Waiting up to %v for TTL expiration...", ttl+cleanupInterval)
+		requireExpiredWithin(t, ttl+cleanupInterval, func() error {
+			_, err := cacheManager.Get(ctx, key)
+			return err
+		})
 
 		// Should be expired
 		_, err = cacheManager.Get(ctx, key)
@@ -559,6 +563,8 @@ func TestCacheTTLExpiration(t *testing.T) {
 
 	t.Run("RollingExpiration", func(t *testing.T) {
 		// Set keys with staggered timing
+		stagger := time.NewTicker(500 * time.Millisecond)
+		defer stagger.Stop()
 		keys := make([]string, 10)
 		for i := 0; i < 10; i++ {
 			key := fmt.Sprintf("rolling-key-%d", i)
@@ -568,12 +574,19 @@ func TestCacheTTLExpiration(t *testing.T) {
 			require.NoError(t, err)
 			keys[i] = key
 
-			time.Sleep(500 * time.Millisecond)
+			select {
+			case <-stagger.C:
+			case <-ctx.Done():
+				require.NoError(t, ctx.Err())
+			}
 		}
 
 		// First keys should expire sooner
 		t.Logf("Waiting for early keys to expire...")
-		time.Sleep(ttl - 2*time.Second)
+		requireExpiredWithin(t, ttl+cleanupInterval, func() error {
+			_, err := cacheManager.Get(ctx, keys[0])
+			return err
+		})
 
 		// Early keys might be expired
 		_, err := cacheManager.Get(ctx, keys[0])
@@ -598,7 +611,9 @@ func TestCacheTTLExpiration(t *testing.T) {
 
 		// Wait for expiration + cleanup
 		t.Logf("Waiting for cleanup cycle...")
-		time.Sleep(ttl + 2*time.Second)
+		require.Eventually(t, func() bool {
+			return cacheManager.Stats().L1Size < beforeStats.L1Size
+		}, ttl+2*cleanupInterval, pollInterval, "cleanup cycle should remove expired entries")
 
 		afterStats := cacheManager.Stats()
 		t.Logf("Cache size after expiration: %d", afterStats.L1Size)

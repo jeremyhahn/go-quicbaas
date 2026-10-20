@@ -369,7 +369,7 @@ type targetCase struct {
 }
 
 var targetCases = []targetCase{
-	{target: "integration-test", build: "build --no-cache", failMatch: "build --no-cache"},
+	{target: "integration-test", build: "build --build-arg BUILD_TAGS", failMatch: "build --build-arg BUILD_TAGS"},
 	{target: "integration-test-seal", build: "build seal-test", after: "run --rm -T seal-test"},
 	{target: "test-e2e-docker", build: "build e2e", after: "run --rm e2e"},
 	{target: "test-e2e-acp-docker", makeVars: []string{"GPU_HOST=gpu.invalid"}, build: "build e2e", after: "run --rm e2e"},

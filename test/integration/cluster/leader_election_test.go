@@ -17,6 +17,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,11 +44,9 @@ func TestLeaderElection(t *testing.T) {
 
 	nodes := getNodeURLs()
 
-	// Wait for cluster to stabilize
-	t.Log("Waiting for cluster stabilization...")
-	time.Sleep(10 * time.Second)
-
-	maxRetries := 5
+	// The retries below poll for the cluster to stabilize; nine of them cover
+	// the settling time a fixed pre-wait used to give.
+	maxRetries := 9
 	retryInterval := 3 * time.Second
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -109,7 +108,7 @@ func TestLeaderElection(t *testing.T) {
 		}
 
 		if attempt < maxRetries {
-			time.Sleep(retryInterval)
+			pace(t, retryInterval)
 		}
 	}
 
@@ -219,6 +218,12 @@ func TestLeaderElectionTiming(t *testing.T) {
 }
 
 // TestLeaderStability validates that the leader remains stable over time
+// leaderStabilityWindow is how long TestLeaderStability watches the leader.
+// It spans many Raft election timeouts (each on the order of a second), so a
+// cluster whose followers keep timing out and electing a new leader changes
+// leader within it.
+const leaderStabilityWindow = 15 * time.Second
+
 func TestLeaderStability(t *testing.T) {
 	if helpers.IsStandaloneMode(t, helpers.GetClusterEndpoints()) {
 		t.Log("Cluster running in standalone/embedded mode - leader stability requires real Raft cluster")
@@ -226,37 +231,36 @@ func TestLeaderStability(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	duration := 60 * time.Second
+	duration := leaderStabilityWindow
 	checkInterval := 2 * time.Second
 
 	t.Logf("Monitoring leader stability for %v", duration)
 
 	// Get initial leader
 	var initialLeader string
-	for i := 0; i < 5; i++ {
-		resp, err := leaderHTTPClient.Get(nodes[0] + "/api/v1/cluster/status")
+	pollUntil(t, 20*time.Second, "initial leader reported by node 1", func(ctx context.Context) (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nodes[0]+"/api/v1/cluster/status", nil)
 		if err != nil {
-			time.Sleep(2 * time.Second)
-			continue
+			return false, err
 		}
-
-		if resp.StatusCode == http.StatusOK {
-			var status map[string]interface{}
-			if err := json.NewDecoder(resp.Body).Decode(&status); err == nil {
-				if lid, ok := status["leader_id"].(string); ok && lid != "" && lid != "0" {
-					initialLeader = lid
-					resp.Body.Close()
-					break
-				}
-			}
+		resp, err := leaderHTTPClient.Do(req)
+		if err != nil {
+			return false, err
 		}
-		resp.Body.Close()
-		time.Sleep(2 * time.Second)
-	}
-
-	if initialLeader == "" {
-		t.Fatal("FAIL: Could not determine initial leader")
-	}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false, nil
+		}
+		var status map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+			return false, err
+		}
+		if lid, ok := status["leader_id"].(string); ok && lid != "" && lid != "0" {
+			initialLeader = lid
+			return true, nil
+		}
+		return false, nil
+	})
 
 	t.Logf("Initial leader: %s", initialLeader)
 
@@ -320,8 +324,7 @@ func TestClusterMembershipConsistency(t *testing.T) {
 
 	t.Logf("Validating cluster membership consistency across %d active nodes", len(nodes))
 
-	// Wait for cluster to stabilize
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Collect membership info from each node
 	type MembershipInfo struct {
@@ -458,8 +461,7 @@ func TestShardLeaderAPI(t *testing.T) {
 
 	nodes := getNodeURLs()
 
-	// Wait for cluster to stabilize
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Test shard 1 leader endpoint
 	shardID := uint64(1)

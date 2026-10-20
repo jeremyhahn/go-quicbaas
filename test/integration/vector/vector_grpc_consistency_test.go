@@ -57,7 +57,7 @@ func TestVectorGRPC_ConsistencyLevel_QUORUM(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.Id)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-quorum", resp.Id)
 
 	// Read with QUORUM consistency from the same node (embedded transport has
 	// independent storage per node, so cross-node reads are not supported)
@@ -113,7 +113,7 @@ func TestVectorGRPC_ConsistencyLevel_ONE(t *testing.T) {
 	assert.Less(t, latency, 1*time.Second, "ONE consistency should be fast")
 
 	// Wait for background replication
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-one", resp.Id)
 
 	// Read with eventual consistency
 	getReq := &pb.GetVectorRequest{
@@ -154,8 +154,6 @@ func TestVectorGRPC_Consistency_AfterWrite(t *testing.T) {
 	// Embedded transport uses independent storage per node, so cross-node
 	// replication is not available. Log what each remote node returns for
 	// observability but do not assert replication.
-	time.Sleep(2 * time.Second)
-
 	for i := 1; i < 3; i++ {
 		_, crossErr := cluster.GetVector(i, "test-after-write", id)
 		if crossErr != nil {
@@ -182,7 +180,7 @@ func TestVectorGRPC_Consistency_CrossNode(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-cross-node", vector, nil)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-cross-node", id)
 
 	// Verify the write node (node 0) has the data
 	retrieved, err := cluster.GetVector(0, "test-cross-node", id)
@@ -225,8 +223,16 @@ func TestVectorGRPC_Consistency_DuringReplication(t *testing.T) {
 		ids[i] = id
 	}
 
-	// Wait for any async processing on node 0
-	time.Sleep(4 * time.Second)
+	// Wait for any async processing on node 0. The count below judges the
+	// outcome and logs each missing vector, so a timeout is not a failure.
+	waitUntil(settleTimeout, func() bool {
+		for _, id := range ids {
+			if _, getErr := cluster.GetVector(0, "test-during-repl", id); getErr != nil {
+				return false
+			}
+		}
+		return true
+	})
 
 	// Verify all vectors exist on the write node (node 0)
 	node0Count := 0
@@ -277,7 +283,7 @@ func TestVectorGRPC_Consistency_SearchResults(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-search-consistency", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(4 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-search-consistency", int64(numVectors))
 
 	// Perform search from multiple nodes
 	query := cluster.RandomVector(128)
@@ -331,7 +337,7 @@ func TestVectorGRPC_Consistency_BatchOperations(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-batch-consistency", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(4 * time.Second)
+	cluster.RequireListed(t, 0, "test-batch-consistency", 50, batchSize)
 
 	// Verify all vectors are on the write node (node 0)
 	listed, err := cluster.ListVectors(0, "test-batch-consistency", 50)
@@ -366,7 +372,7 @@ func TestVectorGRPC_Consistency_DeleteReplication(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-delete-consistency", vector, nil)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-delete-consistency", id)
 
 	// Verify vector exists on write node before delete
 	_, err = cluster.GetVector(0, "test-delete-consistency", id)
@@ -376,7 +382,11 @@ func TestVectorGRPC_Consistency_DeleteReplication(t *testing.T) {
 	err = cluster.DeleteVector(0, "test-delete-consistency", id)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	// The assertion below judges the outcome; this only waits.
+	waitUntil(settleTimeout, func() bool {
+		_, getErr := cluster.GetVector(0, "test-delete-consistency", id)
+		return getErr != nil
+	})
 
 	// Verify deletion on write node (node 0)
 	_, err = cluster.GetVector(0, "test-delete-consistency", id)
@@ -439,8 +449,8 @@ func TestVectorGRPC_Consistency_Linearizable(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Small delay to ensure ordering
-		time.Sleep(500 * time.Millisecond)
+		// Wait until the write is visible before checking its order
+		cluster.RequireVectorReadable(t, 0, "test-linearizable", id)
 
 		// Read from the same node (node 0) to verify linearizability
 		retrieved, err := cluster.GetVector(0, "test-linearizable", id)

@@ -108,7 +108,11 @@ func TestFailoverScenarios(t *testing.T) {
 
 		// Simulate leader failover
 		t.Logf("Simulating leader failover...")
-		time.Sleep(10 * time.Second)
+		holdSteady(t, simulatedFailureWindow, "node keeps answering cluster status during the failover",
+			func(ctx context.Context) error {
+				_, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+				return err
+			})
 
 		// Write data after failover
 		postFailoverStart := time.Now()
@@ -175,7 +179,7 @@ func TestFailoverScenarios(t *testing.T) {
 		// Simulate partition
 		tracer.AddEvent(ctx, "partition_started")
 		t.Logf("Simulating network partition...")
-		time.Sleep(5 * time.Second)
+		holdSteady(t, simulatedFailureWindow, "pre-partition write stays readable", entityReadable(client, putReq))
 
 		// Try to write during partition
 		tracer.AddEvent(ctx, "write_during_partition")
@@ -194,7 +198,8 @@ func TestFailoverScenarios(t *testing.T) {
 		// Heal partition
 		tracer.AddEvent(ctx, "partition_healed")
 		t.Logf("Healing partition...")
-		time.Sleep(5 * time.Second)
+		pollUntil(t, clusterSettleTimeout, "pre-partition write readable after healing",
+			func(ctx context.Context) (bool, error) { return entityReadable(client, putReq)(ctx) == nil, nil })
 
 		// Verify recovery
 		tracer.AddEvent(ctx, "verify_recovery")

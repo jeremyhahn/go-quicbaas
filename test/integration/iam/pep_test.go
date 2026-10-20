@@ -311,8 +311,15 @@ func TestPEPPolicySync(t *testing.T) {
 	var updated iam.Policy
 	require.NoError(t, cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, "sync-test-policy"), updateReq, &updated))
 
-	// Wait for policy sync (may need time to propagate)
-	time.Sleep(1 * time.Second)
+	// Wait for the policy update to propagate to the PEP
+	require.Eventually(t, func() bool {
+		var probe iam.CheckResponse
+		if err := cluster.postJSON("/api/v1/iam/check", checkReq, &probe); err != nil {
+			t.Logf("policy check not ready: %v", err)
+			return false
+		}
+		return probe.Allowed
+	}, 5*time.Second, 100*time.Millisecond, "the policy update should reach the PEP")
 
 	// Check should now be allowed
 	var response2 iam.CheckResponse
@@ -658,12 +665,10 @@ func TestPEPFailover(t *testing.T) {
 		"resource": "data/test.txt",
 	}
 
-	// Perform checks before and after a delay (simulating potential restart)
+	// Perform the check twice: the policy must hold across requests
 	var response1 iam.CheckResponse
 	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response1))
 	assert.True(t, response1.Allowed)
-
-	time.Sleep(2 * time.Second)
 
 	var response2 iam.CheckResponse
 	require.NoError(t, cluster.postJSON("/api/v1/iam/check", checkReq, &response2))

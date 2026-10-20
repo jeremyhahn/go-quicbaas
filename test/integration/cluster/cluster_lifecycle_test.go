@@ -129,8 +129,7 @@ func testDataReplication(t *testing.T) {
 
 	t.Logf("Wrote 100 entities in %v, waiting for replication...", writeTime)
 
-	// Wait for replication
-	time.Sleep(2 * time.Second)
+	waitForEntitiesOnAllNodes(t, cluster, entities)
 
 	// Verify data consistency across all nodes
 	startVerify := time.Now()
@@ -177,7 +176,7 @@ func testQuorumOperations(t *testing.T) {
 	t.Log("Writes successful with full quorum (3/3 nodes)")
 
 	// Verify all nodes have the data
-	time.Sleep(1 * time.Second)
+	waitForEntitiesOnAllNodes(t, cluster, entities[:5])
 	helpers.VerifyDataConsistency(t, cluster, entities[:5])
 
 	// Note: To properly test phases 2-4 (node failures), we would need to:

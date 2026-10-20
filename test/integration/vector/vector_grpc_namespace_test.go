@@ -38,7 +38,7 @@ func TestVectorGRPC_CreateNamespace(t *testing.T) {
 	err := cluster.EnsureNamespace(0, "test-create-ns", 256, pb.DistanceMetric_DISTANCE_METRIC_L2)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, "test-create-ns")
 
 	// Verify namespace exists
 	info, err := cluster.GetNamespaceInfo(0, "test-create-ns")
@@ -60,7 +60,7 @@ func TestVectorGRPC_CreateNamespace_AlreadyExists(t *testing.T) {
 	err := cluster.EnsureNamespace(0, "test-duplicate-ns", 128, pb.DistanceMetric_DISTANCE_METRIC_COSINE)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, "test-duplicate-ns")
 
 	// Try to create again with same name (should fail)
 	err = cluster.CreateNamespace(0, "test-duplicate-ns", 128, pb.DistanceMetric_DISTANCE_METRIC_COSINE)
@@ -79,13 +79,13 @@ func TestVectorGRPC_DeleteNamespace(t *testing.T) {
 	err := cluster.EnsureNamespace(0, "test-delete-ns", 128, pb.DistanceMetric_DISTANCE_METRIC_L2)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, "test-delete-ns")
 
 	// Delete namespace
 	err = cluster.DeleteNamespace(0, "test-delete-ns", true)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceGone(t, 0, "test-delete-ns")
 
 	// Verify namespace is gone
 	_, err = cluster.GetNamespaceInfo(0, "test-delete-ns")
@@ -112,7 +112,12 @@ func TestVectorGRPC_DeleteNamespace_NonEmpty(t *testing.T) {
 		vectorIDs[i] = id
 	}
 
-	time.Sleep(2 * time.Second)
+	// Let the stats count the vectors before the non-force delete; its
+	// result is only logged, so a timeout here is not a failure.
+	waitUntil(settleTimeout, func() bool {
+		info, infoErr := cluster.GetNamespaceInfo(0, "test-delete-nonempty")
+		return infoErr == nil && info.VectorCount >= int64(len(vectorIDs))
+	})
 
 	// Try to delete without force
 	err = cluster.DeleteNamespace(0, "test-delete-nonempty", false)
@@ -136,7 +141,10 @@ func TestVectorGRPC_DeleteNamespace_NonEmpty(t *testing.T) {
 			}
 		}
 
-		time.Sleep(1 * time.Second)
+		waitUntil(settleTimeout, func() bool {
+			listed, listErr := cluster.ListVectors(0, "test-delete-nonempty", 20)
+			return listErr == nil && len(listed) == 0
+		})
 
 		// Try deleting the now-empty namespace
 		err = cluster.DeleteNamespace(0, "test-delete-nonempty", true)
@@ -145,7 +153,11 @@ func TestVectorGRPC_DeleteNamespace_NonEmpty(t *testing.T) {
 		}
 	}
 
-	time.Sleep(1 * time.Second)
+	// The checks below accept a namespace that survives as long as it is
+	// empty, so a timeout here is not a failure.
+	waitUntil(settleTimeout, func() bool {
+		return !cluster.namespaceExists(0, "test-delete-nonempty")
+	})
 
 	// Verify deletion - namespace should be gone, or if the delete path has
 	// issues, at minimum no vectors should remain
@@ -180,7 +192,9 @@ func TestVectorGRPC_ListNamespaces(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(2 * time.Second)
+	for _, ns := range namespaces {
+		cluster.RequireNamespaceVisible(t, 0, ns)
+	}
 
 	// List namespaces
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -223,7 +237,7 @@ func TestVectorGRPC_GetNamespaceInfo(t *testing.T) {
 	err := cluster.EnsureNamespace(0, nsName, dimension, metric)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, nsName)
 
 	// Get namespace info
 	info, err := cluster.GetNamespaceInfo(0, nsName)
@@ -261,7 +275,7 @@ func TestVectorGRPC_GetNamespaceStats(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, nsName, vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, nsName, int64(numVectors))
 
 	// Get namespace info with stats
 	info, err := cluster.GetNamespaceInfo(0, nsName)
@@ -293,7 +307,9 @@ func TestVectorGRPC_MultipleNamespaces_Isolation(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(2 * time.Second)
+	for name := range namespaces {
+		cluster.RequireNamespaceVisible(t, 0, name)
+	}
 
 	// Insert vectors into each namespace
 	for name, dim := range namespaces {
@@ -307,7 +323,9 @@ func TestVectorGRPC_MultipleNamespaces_Isolation(t *testing.T) {
 		t.Logf("Inserted vector %s into namespace %s (dim=%d)", id, name, dim)
 	}
 
-	time.Sleep(2 * time.Second)
+	for name := range namespaces {
+		cluster.RequireVectorCount(t, 0, name, 1)
+	}
 
 	// Verify each namespace has correct dimensions
 	for name, expectedDim := range namespaces {
@@ -349,7 +367,7 @@ func TestVectorGRPC_NamespaceCount_AfterBatchUpsert(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, nsName, vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, nsName, initialCount+int64(batchSize))
 
 	// Get updated count
 	info, err = cluster.GetNamespaceInfo(0, nsName)
@@ -381,7 +399,9 @@ func TestVectorGRPC_NamespaceConfig_Different_Metrics(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(2 * time.Second)
+	for name := range metrics {
+		cluster.RequireNamespaceVisible(t, 0, name)
+	}
 
 	// Verify each namespace has correct metric
 	for name, expectedMetric := range metrics {
@@ -402,7 +422,7 @@ func TestVectorGRPC_NamespaceConfig_IndexTypes(t *testing.T) {
 
 	// Clean up any existing namespace from previous runs
 	_ = cluster.DeleteNamespace(0, "ns-hnsw", true)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(settleTimeout, func() bool { return !cluster.namespaceExists(0, "ns-hnsw") })
 
 	// Create namespace with HNSW index
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -425,7 +445,7 @@ func TestVectorGRPC_NamespaceConfig_IndexTypes(t *testing.T) {
 	_, err := cluster.clients[0].CreateNamespace(ctx, req)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, "ns-hnsw")
 
 	// Verify index configuration
 	info, err := cluster.GetNamespaceInfo(0, "ns-hnsw")
@@ -447,7 +467,7 @@ func TestVectorGRPC_NamespaceReplication(t *testing.T) {
 	err := cluster.EnsureNamespace(0, nsName, 128, pb.DistanceMetric_DISTANCE_METRIC_L2)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, nsName)
 
 	// Verify namespace exists on write node (node 0)
 	info, err := cluster.GetNamespaceInfo(0, nsName)
@@ -477,7 +497,7 @@ func TestVectorGRPC_NamespaceMetadata(t *testing.T) {
 
 	// Clean up any existing namespace from previous runs
 	_ = cluster.DeleteNamespace(0, "ns-with-metadata", true)
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(settleTimeout, func() bool { return !cluster.namespaceExists(0, "ns-with-metadata") })
 
 	// Create namespace with metadata
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -504,7 +524,7 @@ func TestVectorGRPC_NamespaceMetadata(t *testing.T) {
 	_, err := cluster.clients[0].CreateNamespace(ctx, req)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireNamespaceVisible(t, 0, "ns-with-metadata")
 
 	// Verify metadata
 	info, err := cluster.GetNamespaceInfo(0, "ns-with-metadata")
@@ -536,7 +556,7 @@ func TestVectorGRPC_DeleteNamespace_Cleanup(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, nsName, vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireListed(t, 0, nsName, 50, numVectors)
 
 	// Verify vectors exist
 	listed, err := cluster.ListVectors(0, nsName, 50)
@@ -547,7 +567,7 @@ func TestVectorGRPC_DeleteNamespace_Cleanup(t *testing.T) {
 	err = cluster.DeleteNamespace(0, nsName, true)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireNamespaceGone(t, 0, nsName)
 
 	// Verify namespace and vectors are gone
 	_, err = cluster.GetNamespaceInfo(0, nsName)

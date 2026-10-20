@@ -80,7 +80,6 @@ const (
 	schedulerSteadyExecutions = 5
 	schedulerResumeExecutions = 3
 	schedulerHistoryLimit     = 500
-	schedulerPollInterval     = 500 * time.Millisecond
 	schedulerRequestTimeout   = 10 * time.Second
 
 	schedulerProofStateEnv = "QUICBAAS_SCHEDULER_PROOF_STATE"
@@ -483,33 +482,6 @@ func assertNoMissedFiring(t *testing.T, execs []scheduler.JobExecution) {
 		gap := execs[i].StartedAt.Sub(execs[i-1].StartedAt)
 		assert.LessOrEqual(t, gap, schedulerMaxGap,
 			"runs %d and %d started %s apart: a firing was skipped", execs[i-1].ExecutionID, execs[i].ExecutionID, gap)
-	}
-}
-
-// pollUntil calls check every schedulerPollInterval until it reports done,
-// failing the test if timeout passes first. Each call gets its own request
-// deadline.
-func pollUntil(t *testing.T, timeout time.Duration, what string, check func(context.Context) (bool, error)) {
-	t.Helper()
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(schedulerPollInterval)
-	defer ticker.Stop()
-	var lastErr error
-	for {
-		ctx, cancel := context.WithTimeout(t.Context(), schedulerRequestTimeout)
-		done, err := check(ctx)
-		cancel()
-		if done {
-			return
-		}
-		if err != nil {
-			lastErr = err
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("%s: not reached within %s (last error: %v)", what, timeout, lastErr)
-		case <-ticker.C:
-		}
 	}
 }
 

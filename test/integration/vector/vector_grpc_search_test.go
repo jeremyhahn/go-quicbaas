@@ -49,7 +49,7 @@ func TestVectorGRPC_SearchSimilar_Euclidean(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-search-l2", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second) // Wait for indexing
+	cluster.RequireVectorCount(t, 0, "test-search-l2", int64(numVectors))
 
 	// Perform search
 	query := cluster.RandomVector(128)
@@ -90,7 +90,7 @@ func TestVectorGRPC_SearchSimilar_Cosine(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-search-cosine", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-search-cosine", int64(numVectors))
 
 	// Search with normalized query
 	query := cluster.NormalizedRandomVector(256)
@@ -128,7 +128,7 @@ func TestVectorGRPC_SearchSimilar_DotProduct(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-search-dot", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-search-dot", int64(numVectors))
 
 	// Search
 	query := cluster.NormalizedRandomVector(128)
@@ -181,24 +181,23 @@ func TestVectorGRPC_SearchSimilar_LargeK(t *testing.T) {
 	// Wait for indexing with retry logic - HNSW indexing in distributed systems
 	// may take variable time depending on cluster state and replication
 	var results []*pb.SimilarityResult
-	var lastCount int
-	maxRetries := 10
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		time.Sleep(1 * time.Second)
+	attempt := 0
+	waitUntil(settleTimeout, func() bool {
+		attempt++
 
 		// Search with K larger than dataset
 		query := cluster.RandomVector(128)
 		results, err = cluster.SearchSimilar(0, "test-large-k", query, 100)
 		require.NoError(t, err)
 
-		lastCount = len(results)
 		// Consider success if we have at least 80% of vectors indexed
 		// This accounts for HNSW approximate nature and distributed replication timing
-		if lastCount >= int(float64(numVectors)*0.8) {
-			break
+		if len(results) >= int(float64(numVectors)*0.8) {
+			return true
 		}
-		t.Logf("Attempt %d: got %d results, waiting for more vectors to be indexed...", attempt+1, lastCount)
-	}
+		t.Logf("Attempt %d: got %d results, waiting for more vectors to be indexed...", attempt, len(results))
+		return false
+	})
 
 	// Should return results (HNSW is approximate, distributed systems have replication lag)
 	assert.LessOrEqual(t, len(results), numVectors,
@@ -234,7 +233,7 @@ func TestVectorGRPC_ListVectors_Pagination(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-pagination", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-pagination", int64(numVectors))
 
 	// List with pagination
 	pageSize := int32(20)
@@ -271,7 +270,7 @@ func TestVectorGRPC_SearchSimilar_Performance(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(5 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-perf", int64(numVectors))
 
 	// Measure search performance
 	query := cluster.NormalizedRandomVector(256)
@@ -318,7 +317,7 @@ func TestVectorGRPC_SearchSimilar_DifferentK(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-k-values", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-k-values", int64(numVectors))
 
 	// Test different K values
 	query := cluster.RandomVector(128)
@@ -355,7 +354,7 @@ func TestVectorGRPC_SearchSimilar_Consistency(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-consistency", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-consistency", int64(numVectors))
 
 	// Search from different nodes
 	query := cluster.RandomVector(128)
@@ -407,7 +406,7 @@ func TestVectorGRPC_SearchSimilar_HighDimension(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-high-dim-search", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireVectorCount(t, 0, "test-high-dim-search", int64(numVectors))
 
 	// Search
 	query := cluster.NormalizedRandomVector(int(dimension))
@@ -437,7 +436,7 @@ func TestVectorGRPC_SearchSimilar_VectorNormalization(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-norm", knownVector, nil)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireSearchHits(t, 0, "test-norm", knownVector, 1, 1)
 
 	// Search with same vector (should be distance ~0)
 	results, err := cluster.SearchSimilar(0, "test-norm", knownVector, 1)

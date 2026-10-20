@@ -17,6 +17,7 @@ package vector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
+	"github.com/stretchr/testify/require"
 
 	googlegrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -109,9 +111,6 @@ func NewVectorCluster(t *testing.T) *VectorCluster {
 		t.Fatalf("Vector service must be available: ListNamespaces probe failed: %v", err)
 		return nil
 	}
-
-	// Wait for cluster to be ready
-	time.Sleep(2 * time.Second)
 
 	return cluster
 }
@@ -348,8 +347,9 @@ func (c *VectorCluster) CreateNamespace(nodeIdx int, namespace string, dimension
 func (c *VectorCluster) EnsureNamespace(nodeIdx int, namespace string, dimension int32, metric pb.DistanceMetric) error {
 	// Try to delete the namespace first (ignore errors if it doesn't exist)
 	_ = c.DeleteNamespace(nodeIdx, namespace, true)
-	// Wait a bit for deletion to propagate
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the deletion to land before re-creating. A timeout falls
+	// through to CreateNamespace, whose error then reports the leftover.
+	waitUntil(settleTimeout, func() bool { return !c.namespaceExists(nodeIdx, namespace) })
 	// Create the namespace
 	return c.CreateNamespace(nodeIdx, namespace, dimension, metric)
 }
@@ -388,26 +388,110 @@ func (c *VectorCluster) GetNamespaceInfo(nodeIdx int, namespace string) (*pb.Nam
 
 // WaitForReplication waits for a vector to be replicated across the cluster
 func (c *VectorCluster) WaitForReplication(namespace, id string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		allFound := true
+	readableEverywhere := func() bool {
 		for i := 0; i < 3; i++ {
-			_, err := c.GetVector(i, namespace, id)
-			if err != nil {
-				allFound = false
-				break
+			if _, err := c.GetVector(i, namespace, id); err != nil {
+				return false
 			}
 		}
-
-		if allFound {
-			return nil
-		}
-
-		time.Sleep(200 * time.Millisecond)
+		return true
 	}
+	if !waitUntil(timeout, readableEverywhere) {
+		return errReplicationTimeout
+	}
+	return nil
+}
 
-	return fmt.Errorf("timeout waiting for replication")
+// errReplicationTimeout reports that a vector did not become readable on
+// every node before the replication deadline.
+var errReplicationTimeout = errors.New("timeout waiting for replication")
+
+// Bounds for the polls that wait for the cluster to settle after a write.
+const (
+	settleTimeout = 10 * time.Second
+	settleTick    = 200 * time.Millisecond
+)
+
+// waitUntil evaluates cond every settleTick until it holds or timeout
+// passes, and reports whether it held. Callers whose assertions tolerate
+// the condition never holding use it instead of require.Eventually.
+func waitUntil(timeout time.Duration, cond func() bool) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(settleTick)
+	defer ticker.Stop()
+
+	for {
+		if cond() {
+			return true
+		}
+		select {
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+// namespaceExists reports whether node nodeIdx can read the namespace.
+func (c *VectorCluster) namespaceExists(nodeIdx int, namespace string) bool {
+	_, err := c.GetNamespaceInfo(nodeIdx, namespace)
+	return err == nil
+}
+
+// RequireNamespaceVisible polls until node nodeIdx can read the namespace.
+func (c *VectorCluster) RequireNamespaceVisible(t *testing.T, nodeIdx int, namespace string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return c.namespaceExists(nodeIdx, namespace)
+	}, settleTimeout, settleTick, "namespace %s should become visible on node %d", namespace, nodeIdx)
+}
+
+// RequireNamespaceGone polls until node nodeIdx no longer reads the namespace.
+func (c *VectorCluster) RequireNamespaceGone(t *testing.T, nodeIdx int, namespace string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		return !c.namespaceExists(nodeIdx, namespace)
+	}, settleTimeout, settleTick, "namespace %s should disappear from node %d", namespace, nodeIdx)
+}
+
+// RequireVectorCount polls until the namespace stats on node nodeIdx count
+// at least minCount vectors.
+func (c *VectorCluster) RequireVectorCount(t *testing.T, nodeIdx int, namespace string, minCount int64) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		info, err := c.GetNamespaceInfo(nodeIdx, namespace)
+		return err == nil && info.VectorCount >= minCount
+	}, settleTimeout, settleTick, "namespace %s on node %d should count %d vectors", namespace, nodeIdx, minCount)
+}
+
+// RequireListed polls until ListVectors on node nodeIdx returns at least
+// minCount vectors.
+func (c *VectorCluster) RequireListed(t *testing.T, nodeIdx int, namespace string, pageSize int32, minCount int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		listed, err := c.ListVectors(nodeIdx, namespace, pageSize)
+		return err == nil && len(listed) >= minCount
+	}, settleTimeout, settleTick, "namespace %s on node %d should list %d vectors", namespace, nodeIdx, minCount)
+}
+
+// RequireSearchHits polls until a k-NN search on node nodeIdx returns at
+// least minHits results.
+func (c *VectorCluster) RequireSearchHits(t *testing.T, nodeIdx int, namespace string, query []float32, k, minHits int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		results, err := c.SearchSimilar(nodeIdx, namespace, query, k)
+		return err == nil && len(results) >= minHits
+	}, settleTimeout, settleTick, "search in %s on node %d should return %d hits", namespace, nodeIdx, minHits)
+}
+
+// RequireVectorReadable polls until node nodeIdx reads the vector.
+func (c *VectorCluster) RequireVectorReadable(t *testing.T, nodeIdx int, namespace, id string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		_, err := c.GetVector(nodeIdx, namespace, id)
+		return err == nil
+	}, settleTimeout, settleTick, "vector %s in %s should become readable on node %d", id, namespace, nodeIdx)
 }
 
 // ListVectors lists all vectors in a namespace

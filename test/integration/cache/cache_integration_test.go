@@ -43,10 +43,12 @@ func TestCacheHitMiss(t *testing.T) {
 	require.NoError(t, err)
 
 	// Initialize cache
+	ttl := 5 * time.Second
+	cleanupInterval := 1 * time.Second
 	cacheManager, err := cache.NewManager(cache.Config{
 		L1Size:          10, // Small cache to test eviction
-		L1TTL:           5 * time.Second,
-		CleanupInterval: 1 * time.Second,
+		L1TTL:           ttl,
+		CleanupInterval: cleanupInterval,
 	}, helpers.NewLoggerAdapter(log))
 	require.NoError(t, err)
 	defer cacheManager.Close()
@@ -120,7 +122,10 @@ func TestCacheHitMiss(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for TTL to expire
-		time.Sleep(6 * time.Second)
+		requireExpiredWithin(t, ttl+cleanupInterval, func() error {
+			_, err := cacheManager.Get(ctx, key)
+			return err
+		})
 
 		// Should be expired now
 		_, err = cacheManager.Get(ctx, key)
@@ -128,4 +133,16 @@ func TestCacheHitMiss(t *testing.T) {
 
 		t.Logf("TTL expiration working correctly")
 	})
+}
+
+// pollInterval paces the polls that wait for a cache state to be reached.
+const pollInterval = 250 * time.Millisecond
+
+// requireExpiredWithin polls get until it reports the entry is gone and fails
+// the test if the entry outlives window: the configured TTL plus the margin
+// the store needs to act on it.
+func requireExpiredWithin(t *testing.T, window time.Duration, get func() error) {
+	t.Helper()
+	require.Eventually(t, func() bool { return get() != nil }, window, pollInterval,
+		"entry should expire within %v", window)
 }

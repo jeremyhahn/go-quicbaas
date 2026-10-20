@@ -271,12 +271,15 @@ func testMultiprotocol_SearchVectors(t *testing.T, ctx context.Context, protocol
 
 	t.Logf("[%s] SearchVectors: inserted %d vectors", protocol.Name(), numVectors)
 
-	// Wait for indexing
-	time.Sleep(500 * time.Millisecond)
-
 	// Search using first vector as query
 	queryVector := vectors[0]
 	k := 5
+
+	// Wait for indexing
+	require.Eventually(t, func() bool {
+		indexed, searchErr := protocol.SearchVectors(ctx, namespace, queryVector, k)
+		return searchErr == nil && len(indexed) > 0
+	}, settleTimeout, settleTick, "[%s] search should return the indexed vectors", protocol.Name())
 
 	results, err := protocol.SearchVectors(ctx, namespace, queryVector, k)
 	require.NoError(t, err, "[%s] SearchVectors must succeed: vector service must be available", protocol.Name())

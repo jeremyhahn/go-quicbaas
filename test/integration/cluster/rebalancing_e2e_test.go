@@ -221,7 +221,7 @@ func TestDataDistributionRebalancing(t *testing.T) {
 				break
 			}
 
-			time.Sleep(2 * time.Second)
+			pace(t, 2*time.Second)
 		}
 	})
 
@@ -281,10 +281,6 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 	err = waitForRaftReady(ctx, t, client, 60*time.Second)
 	require.NoError(t, err, "Cluster not ready for Raft operations")
 
-	// Additional stabilization time for concurrent write test
-	t.Log("Allowing cluster to stabilize before concurrent writes...")
-	time.Sleep(5 * time.Second)
-
 	var writeCount atomic.Int64
 	var writeErrors atomic.Int64
 	var transientErrors atomic.Int64
@@ -324,14 +320,21 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 						}
 
 						// Small delay to avoid overwhelming the cluster
-						time.Sleep(20 * time.Millisecond)
+						select {
+						case <-stopWriters:
+							return
+						case <-ctx.Done():
+							return
+						case <-time.After(20 * time.Millisecond):
+						}
 					}
 				}
 			}(w)
 		}
 
-		// Let writers run for a bit before rebalancing
-		time.Sleep(5 * time.Second)
+		// Let writers run before rebalancing
+		pollUntil(t, replicationTimeout, "concurrent writers land as many writes as there are writers",
+			func(context.Context) (bool, error) { return writeCount.Load() >= int64(numWriters), nil })
 		t.Logf("Started %d concurrent writers, %d writes so far", numWriters, writeCount.Load())
 	})
 
@@ -362,7 +365,7 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 				break
 			}
 
-			time.Sleep(2 * time.Second)
+			pace(t, 2*time.Second)
 		}
 	})
 
@@ -450,7 +453,7 @@ func TestRebalancingMultipleShards(t *testing.T) {
 				break
 			}
 
-			time.Sleep(2 * time.Second)
+			pace(t, 2*time.Second)
 		}
 	})
 
@@ -534,7 +537,7 @@ func TestRebalancingIdempotency(t *testing.T) {
 				if err != nil || progressResp.Status == "completed" {
 					break
 				}
-				time.Sleep(2 * time.Second)
+				pace(t, 2*time.Second)
 			}
 
 			// Verify data after each run
@@ -555,7 +558,7 @@ func TestRebalancingIdempotency(t *testing.T) {
 			t.Logf("Run %d: All 50 entities verified", run)
 
 			// Small delay between runs
-			time.Sleep(1 * time.Second)
+			pace(t, time.Second)
 		}
 	})
 

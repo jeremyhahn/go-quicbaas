@@ -48,7 +48,7 @@ func TestVectorGRPC_UpsertAndGet(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, id)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-upsert", id)
 
 	// Verify write node (node 0) has the vector with correct data
 	retrieved, err := cluster.GetVector(0, "test-upsert", id)
@@ -94,7 +94,7 @@ func TestVectorGRPC_UpsertWithMetadata(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-metadata", vector, metadata)
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second) // Wait for replication
+	cluster.RequireVectorReadable(t, 0, "test-metadata", id)
 
 	retrieved, err := cluster.GetVector(0, "test-metadata", id)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestVectorGRPC_DeleteVector(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-delete", vector, nil)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-delete", id)
 
 	// Verify exists
 	_, err = cluster.GetVector(0, "test-delete", id)
@@ -128,7 +128,15 @@ func TestVectorGRPC_DeleteVector(t *testing.T) {
 	err = cluster.DeleteVector(0, "test-delete", id)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	// The per-node assertions below judge the outcome; this only waits.
+	waitUntil(settleTimeout, func() bool {
+		for i := 0; i < 3; i++ {
+			if _, getErr := cluster.GetVector(i, "test-delete", id); getErr == nil {
+				return false
+			}
+		}
+		return true
+	})
 
 	// Verify deleted on all nodes
 	for i := 0; i < 3; i++ {
@@ -182,7 +190,7 @@ func TestVectorGRPC_BatchUpsert(t *testing.T) {
 	err = cluster.BatchUpsertVectors(0, "test-batch", vectors)
 	require.NoError(t, err)
 
-	time.Sleep(3 * time.Second) // Wait for replication
+	cluster.RequireListed(t, 0, "test-batch", 200, batchSize)
 
 	// Verify all vectors exist
 	listed, err := cluster.ListVectors(0, "test-batch", 200)
@@ -221,7 +229,7 @@ func TestVectorGRPC_BatchUpsert_LargeBatch(t *testing.T) {
 	t.Logf("Batch upsert of %d vectors took %v", batchSize, duration)
 	assert.Less(t, duration, 60*time.Second, "Batch upsert should complete in reasonable time")
 
-	time.Sleep(3 * time.Second)
+	cluster.RequireListed(t, 0, "test-large-batch", 1000, batchSize)
 
 	// Verify count
 	listed, err := cluster.ListVectors(0, "test-large-batch", 1000)
@@ -302,7 +310,8 @@ func TestVectorGRPC_NamespaceIsolation(t *testing.T) {
 	id2, err := cluster.UpsertVector(0, "namespace-b", vector2, map[string]string{"ns": "b"})
 	require.NoError(t, err)
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "namespace-a", id1)
+	cluster.RequireVectorReadable(t, 0, "namespace-b", id2)
 
 	// Verify namespace isolation
 	vec1, err := cluster.GetVector(0, "namespace-a", id1)
@@ -335,7 +344,7 @@ func TestVectorGRPC_HighDimensionVectors(t *testing.T) {
 	id, err := cluster.UpsertVector(0, "test-high-dim", vector, nil)
 	require.NoError(t, err)
 
-	time.Sleep(1 * time.Second)
+	cluster.RequireVectorReadable(t, 0, "test-high-dim", id)
 
 	retrieved, err := cluster.GetVector(0, "test-high-dim", id)
 	require.NoError(t, err)

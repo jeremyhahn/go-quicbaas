@@ -69,11 +69,6 @@ func TestMain(m *testing.M) {
 		fmt.Println(">>> Cluster not ready, exiting")
 		os.Exit(1)
 	}
-	// Give the Raft cluster extra time to stabilize after readiness check
-	// Increased from 10s to 20s to allow for full leader election stabilization
-	fmt.Println(">>> Cluster ready, waiting for additional stabilization...")
-	time.Sleep(20 * time.Second)
-
 	// Boot embedded server for multi-protocol tests
 	_, srv, err := helpers.SetupEmbeddedServer()
 	if err != nil {
@@ -99,43 +94,72 @@ func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
 	client := helpers.NewHTTPClient(5 * time.Second)
 
-	deadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	for {
 		resp, err := client.Get(endpoint + "/api/v1/health/ready")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				fmt.Println("Cluster is ready")
 				// Now wait for IAM shard to be ready
-				if waitForIAMReady(client, endpoint, deadline) {
+				if waitForIAMReady(ctx, client, endpoint) {
 					return true
 				}
 			}
 		}
-		time.Sleep(2 * time.Second)
+		if !pause(ctx, 2*time.Second) {
+			return false
+		}
 	}
-	return false
+}
+
+// pause blocks for d or until ctx ends, and reports whether ctx is still
+// live. It paces the readiness and retry loops of this package.
+func pause(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// retryBackoff paces an HTTP retry loop with a capped exponential delay.
+type retryBackoff struct {
+	delay time.Duration
+}
+
+// wait blocks for the current delay, then grows it by retryBackoffMult up
+// to retryMaxDelay.
+func (b *retryBackoff) wait() {
+	pause(context.Background(), b.delay)
+	b.delay = min(time.Duration(float64(b.delay)*retryBackoffMult), retryMaxDelay)
 }
 
 // waitForIAMReady waits for the IAM shard (shard 1) to be ready.
 // It does this by attempting multiple ListTenants operations which require
 // the IAM shard to be available for reads. We require multiple consecutive
 // successful responses to ensure the shard is stable.
-func waitForIAMReady(client *http.Client, endpoint string, deadline time.Time) bool {
+func waitForIAMReady(ctx context.Context, client *http.Client, endpoint string) bool {
 	fmt.Println("Waiting for IAM shard to be ready...")
 
-	// Require 10 consecutive successes with 2 second intervals = 20 seconds of stability
+	// Require 10 consecutive successes, 3 seconds apart, for 30 seconds of stability
 	const requiredSuccesses = 10
 	consecutiveSuccesses := 0
 
-	for time.Now().Before(deadline) {
+	for {
+		interval := 2 * time.Second
 		resp, err := client.Get(endpoint + "/api/v1/tenants")
 		if err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 
-			// Success: we get 200 OK (empty list is fine)
-			if resp.StatusCode == http.StatusOK {
+			switch {
+			case resp.StatusCode == http.StatusOK:
+				// Success: we get 200 OK (empty list is fine)
 				consecutiveSuccesses++
 				fmt.Printf("IAM shard check passed (%d/%d)\n", consecutiveSuccesses, requiredSuccesses)
 				if consecutiveSuccesses >= requiredSuccesses {
@@ -143,37 +167,35 @@ func waitForIAMReady(client *http.Client, endpoint string, deadline time.Time) b
 					return true
 				}
 				// Wait 3 seconds between successful checks to ensure stability
-				time.Sleep(3 * time.Second)
-				continue
-			}
-
-			// If we get "shard is not ready" error, reset counter and keep waiting
-			if resp.StatusCode == http.StatusInternalServerError {
-				bodyStr := string(body)
-				// Check for various shard/raft unavailability messages
-				if strings.Contains(bodyStr, "shard is not ready") ||
-					strings.Contains(bodyStr, "service operation failed") ||
-					strings.Contains(bodyStr, "raft") ||
-					strings.Contains(bodyStr, "leader") ||
-					strings.Contains(bodyStr, "timeout") {
-					if consecutiveSuccesses > 0 {
-						fmt.Printf("IAM shard unstable - resetting (was at %d/%d)\n", consecutiveSuccesses, requiredSuccesses)
-					}
-					consecutiveSuccesses = 0
-					time.Sleep(2 * time.Second)
-					continue
+				interval = 3 * time.Second
+			case resp.StatusCode == http.StatusInternalServerError && isShardUnavailable(string(body)):
+				// "shard is not ready" and similar errors reset the counter and keep waiting
+				if consecutiveSuccesses > 0 {
+					fmt.Printf("IAM shard unstable - resetting (was at %d/%d)\n", consecutiveSuccesses, requiredSuccesses)
 				}
+				consecutiveSuccesses = 0
+			default:
+				// Other non-OK responses reset the counter
+				consecutiveSuccesses = 0
 			}
-
-			// Other non-OK responses reset the counter
-			consecutiveSuccesses = 0
 		} else {
 			consecutiveSuccesses = 0
 		}
-		time.Sleep(2 * time.Second)
+		if !pause(ctx, interval) {
+			fmt.Println("Timeout waiting for IAM shard")
+			return false
+		}
 	}
-	fmt.Println("Timeout waiting for IAM shard")
-	return false
+}
+
+// isShardUnavailable reports whether a response body names a shard or Raft
+// unavailability.
+func isShardUnavailable(body string) bool {
+	return strings.Contains(body, "shard is not ready") ||
+		strings.Contains(body, "service operation failed") ||
+		strings.Contains(body, "raft") ||
+		strings.Contains(body, "leader") ||
+		strings.Contains(body, "timeout")
 }
 
 // getRESTEndpoint returns the primary REST API endpoint.
@@ -316,18 +338,13 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 // getJSON performs a GET request and unmarshals the JSON response.
 // Includes retry logic for transient Raft errors.
 func (tc *testCluster) getJSON(path string, target interface{}) error {
-	delay := retryDelay
+	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			fmt.Printf("Retry %d/%d for GET %s (waiting %v)\n", attempt, maxRetries, path, delay)
-			time.Sleep(delay)
-			// Exponential backoff with cap
-			delay = time.Duration(float64(delay) * retryBackoffMult)
-			if delay > retryMaxDelay {
-				delay = retryMaxDelay
-			}
+			fmt.Printf("Retry %d/%d for GET %s (waiting %v)\n", attempt, maxRetries, path, backoff.delay)
+			backoff.wait()
 		}
 
 		resp, err := tc.doHTTPRequest(http.MethodGet, path, nil)
@@ -359,18 +376,13 @@ func (tc *testCluster) getJSON(path string, target interface{}) error {
 // Returns nil if 404 is received (expected after deletion), error otherwise.
 // Includes retry logic to handle eventual consistency.
 func (tc *testCluster) getJSONExpectNotFound(path string) error {
-	delay := retryDelay
+	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			fmt.Printf("Retry %d/%d for GET (expect 404) %s (waiting %v)\n", attempt, maxRetries, path, delay)
-			time.Sleep(delay)
-			// Exponential backoff with cap
-			delay = time.Duration(float64(delay) * retryBackoffMult)
-			if delay > retryMaxDelay {
-				delay = retryMaxDelay
-			}
+			fmt.Printf("Retry %d/%d for GET (expect 404) %s (waiting %v)\n", attempt, maxRetries, path, backoff.delay)
+			backoff.wait()
 		}
 
 		resp, err := tc.doHTTPRequest(http.MethodGet, path, nil)
@@ -409,18 +421,13 @@ func (tc *testCluster) getJSONExpectNotFound(path string) error {
 // postJSON performs a POST request with JSON body.
 // Includes retry logic for transient Raft errors.
 func (tc *testCluster) postJSON(path string, body interface{}, target interface{}) error {
-	delay := retryDelay
+	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			fmt.Printf("Retry %d/%d for POST %s (waiting %v)\n", attempt, maxRetries, path, delay)
-			time.Sleep(delay)
-			// Exponential backoff with cap
-			delay = time.Duration(float64(delay) * retryBackoffMult)
-			if delay > retryMaxDelay {
-				delay = retryMaxDelay
-			}
+			fmt.Printf("Retry %d/%d for POST %s (waiting %v)\n", attempt, maxRetries, path, backoff.delay)
+			backoff.wait()
 		}
 
 		resp, err := tc.doHTTPRequest(http.MethodPost, path, body)
@@ -453,18 +460,13 @@ func (tc *testCluster) postJSON(path string, body interface{}, target interface{
 // putJSON performs a PUT request with JSON body.
 // Includes retry logic for transient Raft errors.
 func (tc *testCluster) putJSON(path string, body interface{}, target interface{}) error {
-	delay := retryDelay
+	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			fmt.Printf("Retry %d/%d for PUT %s (waiting %v)\n", attempt, maxRetries, path, delay)
-			time.Sleep(delay)
-			// Exponential backoff with cap
-			delay = time.Duration(float64(delay) * retryBackoffMult)
-			if delay > retryMaxDelay {
-				delay = retryMaxDelay
-			}
+			fmt.Printf("Retry %d/%d for PUT %s (waiting %v)\n", attempt, maxRetries, path, backoff.delay)
+			backoff.wait()
 		}
 
 		resp, err := tc.doHTTPRequest(http.MethodPut, path, body)
@@ -497,18 +499,13 @@ func (tc *testCluster) putJSON(path string, body interface{}, target interface{}
 // deleteJSON performs a DELETE request.
 // Includes retry logic for transient Raft errors.
 func (tc *testCluster) deleteJSON(path string) error {
-	delay := retryDelay
+	backoff := retryBackoff{delay: retryDelay}
 	var lastErr error
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			fmt.Printf("Retry %d/%d for DELETE %s (waiting %v)\n", attempt, maxRetries, path, delay)
-			time.Sleep(delay)
-			// Exponential backoff with cap
-			delay = time.Duration(float64(delay) * retryBackoffMult)
-			if delay > retryMaxDelay {
-				delay = retryMaxDelay
-			}
+			fmt.Printf("Retry %d/%d for DELETE %s (waiting %v)\n", attempt, maxRetries, path, backoff.delay)
+			backoff.wait()
 		}
 
 		resp, err := tc.doHTTPRequest(http.MethodDelete, path, nil)

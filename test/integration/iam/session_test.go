@@ -477,7 +477,6 @@ func TestSessionMultipleConcurrent(t *testing.T) {
 		session := createMockSession(t, cluster, tenantID, userID)
 		require.NotNil(t, session)
 		sessions[i] = session
-		time.Sleep(10 * time.Millisecond) // Small delay to ensure different timestamps
 	}
 
 	// List all sessions

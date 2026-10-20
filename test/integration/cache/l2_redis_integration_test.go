@@ -125,8 +125,11 @@ func TestRedisL2Cache_DirectOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for expiration
-		t.Logf("Waiting %v for TTL expiration...", ttl+time.Second)
-		time.Sleep(ttl + time.Second)
+		t.Logf("Waiting up to %v for TTL expiration...", ttl+time.Second)
+		requireExpiredWithin(t, ttl+time.Second, func() error {
+			_, err := redisCache.Get(ctx, key)
+			return err
+		})
 
 		// Should be expired
 		_, err = redisCache.Get(ctx, key)
@@ -331,7 +334,10 @@ func TestCacheManager_WithRedisL2(t *testing.T) {
 		require.NoError(t, err)
 
 		// Wait for async write
-		time.Sleep(200 * time.Millisecond)
+		require.Eventually(t, func() bool {
+			_, err := redisCache.Get(ctx, key)
+			return err == nil
+		}, 2*time.Second, 100*time.Millisecond, "async write should reach L2")
 
 		// Verify in L2 (async write should have completed)
 		l2Value, err := redisCache.Get(ctx, key)
@@ -364,7 +370,13 @@ func TestCacheManager_WithRedisL2(t *testing.T) {
 		}
 
 		// Wait for eviction callbacks to complete
-		time.Sleep(200 * time.Millisecond)
+		require.Eventually(t, func() bool {
+			if cm.Stats().WritebackSuccess == 0 {
+				return false
+			}
+			_, err := redisCache.Get(ctx, "writeback:key0")
+			return err == nil
+		}, 2*time.Second, 100*time.Millisecond, "eviction callbacks should write back to L2")
 
 		stats := cm.Stats()
 		t.Logf("WriteBack stats: L1 size=%d, evictions=%d, L2 sets=%d, writeback_success=%d",

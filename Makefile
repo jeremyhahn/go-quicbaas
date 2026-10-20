@@ -1893,7 +1893,7 @@ integration-test-merge-result: ## Run the merge-result snapshot suite in a conta
 	@# One logical line, because the EXIT trap has to outlive the build: make
 	@# runs every recipe line in a shell of its own.
 	@#
-	@# `--pull --no-cache`, as the integration compose build does: the image's
+	@# `--pull --no-cache`: the image's
 	@# `apk upgrade` RUN line never changes, so a cached layer freezes the
 	@# packages of the day it was built and the Trivy gate below fails on
 	@# advisories Alpine has already fixed (#1501, CVE-2026-77214 in libexpat).
@@ -2613,13 +2613,10 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 	echo "$(YELLOW)Cleaning up any previous test containers and volumes...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	echo ""; \
-	echo "$(YELLOW)Removing old integration test images to force complete rebuild...$(NC)"; \
-	docker rmi -f $(COMPOSE_PROJECT_INTEGRATION)-integration-test $(COMPOSE_PROJECT_INTEGRATION)-test-node1 $(COMPOSE_PROJECT_INTEGRATION)-test-node2 $(COMPOSE_PROJECT_INTEGRATION)-test-node3 $(COMPOSE_PROJECT_INTEGRATION)-test-node4 $(COMPOSE_PROJECT_INTEGRATION)-test-node5 $(COMPOSE_PROJECT_INTEGRATION)-test-selfreg 2>/dev/null || true; \
-	echo ""; \
-	echo "$(YELLOW)Building Docker images (forcing clean rebuild to ensure latest code)...$(NC)"; \
+	echo "$(YELLOW)Building Docker images (the layer cache rebuilds every layer whose inputs changed)...$(NC)"; \
 	echo "$(YELLOW)Build tags: $(INTEGRATION_BUILD_TAGS)$(NC)"; \
 	set -o pipefail; \
-	if ! $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build --no-cache --pull --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
+	if ! $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build --build-arg BUILD_TAGS="$(strip $(INTEGRATION_BUILD_TAGS))" 2>&1 | while IFS= read -r line; do \
 		echo "  $$line"; \
 	done; then \
 		echo "$(RED)Image build FAILED — refusing to run integration tests against stale images.$(NC)"; \

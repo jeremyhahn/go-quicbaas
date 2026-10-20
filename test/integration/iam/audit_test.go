@@ -154,8 +154,9 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
-	// Wait a bit for audit events to be written
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the user creation event to become queryable
+	waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
 
 	// Test filtering by event type
 	var typeResp AuditQueryResponse
@@ -213,8 +214,9 @@ func TestAuditEventQueryPagination(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Wait for audit events to be written
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the five user creation events to become queryable
+	waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 5)
 
 	// Test with limit
 	var limitResp AuditQueryResponse
@@ -256,8 +258,9 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 	require.NoError(t, err)
 
-	// Wait for audit events
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the user creation event to become queryable
+	waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 1)
 
 	afterCreate := time.Now().Add(1 * time.Second).UTC()
 
@@ -360,11 +363,11 @@ func TestAuditEventDelete(t *testing.T) {
 		}
 		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
-		time.Sleep(50 * time.Millisecond) // Space out the events
 	}
 
-	// Wait for all audit events to be written
-	time.Sleep(200 * time.Millisecond)
+	// Wait for the three user creation events to become queryable
+	waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenantID), 3)
 
 	// Get initial count of events
 	var beforeResp AuditQueryResponse
@@ -422,8 +425,10 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
 	require.NoError(t, err)
 
-	// Wait for audit events
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the tenant1 user creation and the tenant2 creation events to become queryable
+	waitForAuditEvents(t, cluster,
+		fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s&event_type=user_management", tenant1ID), 1)
+	waitForAuditEvents(t, cluster, fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenant2ID), 1)
 
 	// Query audit events for tenant1
 	var tenant1Resp AuditQueryResponse
@@ -520,8 +525,9 @@ func TestAuditEventGeneration(t *testing.T) {
 			err = tt.operation()
 			require.NoError(t, err, "Operation should succeed")
 
-			// Wait for audit event to be written
-			time.Sleep(100 * time.Millisecond)
+			// Wait for the operation's audit event to become queryable
+			waitForAuditEvents(t, cluster,
+				fmt.Sprintf("/api/v1/iam/audit?tenant_id=%s", tenantID), beforeCount+1)
 
 			// Get event count after operation
 			var afterResp AuditQueryResponse

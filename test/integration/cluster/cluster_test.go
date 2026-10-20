@@ -64,7 +64,7 @@ func TestClusterHealth(t *testing.T) {
 				if err != nil {
 					lastErr = err
 					t.Logf("Attempt %d: Failed to connect to node %d: %v", attempt+1, i+1, err)
-					time.Sleep(time.Duration(attempt+1) * time.Second)
+					pace(t, time.Duration(attempt+1)*time.Second)
 					continue
 				}
 				defer resp.Body.Close()
@@ -103,7 +103,7 @@ func TestClusterReadiness(t *testing.T) {
 				if err != nil {
 					lastErr = err
 					t.Logf("Attempt %d/%d: Failed to connect to node %d: %v", attempt+1, maxAttempts, i+1, err)
-					time.Sleep(baseDelay)
+					pace(t, baseDelay)
 					continue
 				}
 
@@ -118,7 +118,7 @@ func TestClusterReadiness(t *testing.T) {
 
 				lastErr = &qberrors.MessageError{Message: "status=" + strconv.Itoa(resp.StatusCode) + ", body=" + lastBody}
 				t.Logf("Attempt %d/%d: Node %d not ready: %v", attempt+1, maxAttempts, i+1, lastErr)
-				time.Sleep(baseDelay)
+				pace(t, baseDelay)
 			}
 			t.Errorf("Node %d not ready after %d attempts: %v", i+1, maxAttempts, lastErr)
 		})
@@ -267,7 +267,7 @@ func TestClusterMetrics(t *testing.T) {
 				if err != nil {
 					lastErr = err
 					t.Logf("Attempt %d: Failed to get metrics from node %d: %v", attempt+1, i+1, err)
-					time.Sleep(time.Duration(attempt+1) * time.Second)
+					pace(t, time.Duration(attempt+1)*time.Second)
 					continue
 				}
 				defer resp.Body.Close()
@@ -287,9 +287,14 @@ func TestClusterMetrics(t *testing.T) {
 }
 
 // TestClusterStability verifies cluster remains stable over time
+// clusterStabilityWindow is how long TestClusterStability watches liveness.
+// Five 2 s samples span several Raft election timeouts, so a node that
+// flaps or a cluster that churns leadership shows up within it.
+const clusterStabilityWindow = 10 * time.Second
+
 func TestClusterStability(t *testing.T) {
 	nodes := getNodeURLs()
-	duration := 30 * time.Second
+	duration := clusterStabilityWindow
 	interval := 2 * time.Second
 	client := newInsecureHTTPClient(10 * time.Second)
 

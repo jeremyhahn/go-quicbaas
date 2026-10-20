@@ -126,8 +126,7 @@ func testVerifyShardDistribution(t *testing.T) {
 	writtenEntities := helpers.WriteTestData(t, leaderClient, entities)
 	t.Logf("Successfully wrote %d entities across shards", len(writtenEntities))
 
-	// Wait for replication
-	time.Sleep(3 * time.Second)
+	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
 
 	// Verify data is accessible from all nodes
 	helpers.VerifyDataConsistency(t, cluster, writtenEntities)
@@ -190,7 +189,7 @@ func testShardRebalancingWhenNodeAdded(t *testing.T) {
 		defer docker.DownNode(ctx, t, "test-node4")
 
 		// Wait for node4 to join
-		time.Sleep(10 * time.Second)
+		require.True(t, waitReady(t, node4URL, clusterSettleTimeout), "node4 must join")
 
 		// Record final shard distribution
 		t.Log("Recording final shard distribution after node addition...")
@@ -271,12 +270,12 @@ func testDataMigrationDuringRebalancing(t *testing.T) {
 		}
 
 		// Wait for transfers to complete
-		time.Sleep(10 * time.Second)
+		_, err = helpers.WaitForAllShardLeaders(t, cluster, expectedShards, clusterSettleTimeout)
+		require.NoError(t, err, "shard leaders after transfer")
 	*/
 
 	// Verify data integrity after potential migration
-	t.Log("Verifying data integrity after stability period...")
-	time.Sleep(5 * time.Second) // Allow time for any background operations
+	t.Log("Verifying data integrity...")
 
 	helpers.VerifyDataIntegrity(t, leaderClient, writtenEntities, expectedChecksums)
 

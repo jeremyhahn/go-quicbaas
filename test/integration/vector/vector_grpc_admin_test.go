@@ -61,7 +61,8 @@ func TestVectorAdminCompaction(t *testing.T) {
 		}
 	}
 
-	time.Sleep(2 * time.Second)
+	// 25 of the 50 vectors survive the deletes.
+	cluster.RequireVectorCount(t, 0, namespace, 25)
 
 	t.Run("sync compaction completes", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -135,7 +136,7 @@ func TestVectorAdminClusterStats(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorCount(t, 0, namespace, 20)
 
 	t.Run("cluster stats returns info", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -168,7 +169,8 @@ func TestVectorAdminClusterStats(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		time.Sleep(time.Second)
+		// The namespace now holds the 20 vectors from setup plus these 5.
+		cluster.RequireVectorCount(t, 0, namespace, 25)
 
 		// Get updated stats
 		updatedResp, err := cluster.adminClient.GetClusterStats(ctx, req)
@@ -243,7 +245,7 @@ func TestVectorAdminNamespaceLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify it's gone
-		time.Sleep(time.Second)
+		cluster.RequireNamespaceGone(t, 0, namespace)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -314,11 +316,15 @@ func TestVectorAdminBatchOperations(t *testing.T) {
 	})
 
 	t.Run("list all vectors", func(t *testing.T) {
+		// Allow replication. The count below accepts any result, so a
+		// timeout here is not a failure.
+		waitUntil(settleTimeout, func() bool {
+			listed, listErr := cluster.ListVectors(0, namespace, 100)
+			return listErr == nil && len(listed) >= 100
+		})
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
-		// Allow replication
-		time.Sleep(2 * time.Second)
 
 		req := &pb.ListVectorsRequest{
 			Namespace: namespace,
@@ -387,7 +393,7 @@ func TestVectorAdminSearchConfiguration(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	time.Sleep(2 * time.Second)
+	cluster.RequireVectorCount(t, 0, namespace, 100)
 
 	t.Run("search with different K values", func(t *testing.T) {
 		query := cluster.RandomVector(64)

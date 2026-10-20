@@ -18,6 +18,7 @@ package cluster
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,7 +43,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "consistency_test"
 	entityID := uint64(100001)
@@ -59,7 +60,9 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 		t.Fatalf("Failed to write initial data: %v", err)
 	}
 
-	time.Sleep(2 * time.Second)
+	for _, nodeURL := range nodes {
+		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+	}
 
 	// Read from all nodes and verify
 	t.Log("Phase 2: Verifying data on all nodes...")
@@ -103,7 +106,12 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 		t.Fatalf("Failed to update data on any node: %v", updateErr)
 	}
 
-	time.Sleep(2 * time.Second)
+	for _, nodeURL := range nodes {
+		waitForEntity(t, nodeURL, entityType, entityID, func(data map[string]interface{}) bool {
+			version, ok := data["version"].(float64)
+			return ok && version == 2
+		})
+	}
 
 	// Read from all nodes and verify update
 	t.Log("Phase 4: Verifying updated data on all nodes...")
@@ -135,7 +143,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 // TestReadConsistencyLevels validates different consistency levels
 func TestReadConsistencyLevels(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "consistency_levels"
 	entityID := uint64(100002)
@@ -153,7 +161,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 		t.Skipf("Skipping consistency level test: cluster write unavailable: %v", err)
 	}
 
-	time.Sleep(2 * time.Second)
+	waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
 
 	// Test different consistency levels
 	consistencyLevels := []string{"linearizable", "strong", "eventual"}
@@ -188,7 +196,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 // For now, it validates the cluster can handle temporary node unavailability
 func TestClusterResilience(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "resilience_test"
 	baseID := uint64(100100)
@@ -199,6 +207,7 @@ func TestClusterResilience(t *testing.T) {
 	t.Log("Phase 1: Writing data across cluster...")
 
 	numEntities := 10
+	var written []uint64
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
 		data := map[string]interface{}{
@@ -213,10 +222,14 @@ func TestClusterResilience(t *testing.T) {
 				t.Skipf("Skipping resilience test: cluster write unavailable: %v", err)
 			}
 			t.Logf("Warning: Failed to write entity %d: %v", entityID, err)
+			continue
 		}
+		written = append(written, entityID)
 	}
 
-	time.Sleep(2 * time.Second)
+	for _, entityID := range written {
+		waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
+	}
 
 	// Verify all data is accessible
 	t.Log("Phase 2: Verifying all data is accessible...")
@@ -268,7 +281,7 @@ func TestDataPersistence(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "persistence_test"
 	baseID := uint64(100200)
@@ -278,6 +291,7 @@ func TestDataPersistence(t *testing.T) {
 	t.Logf("Writing %d entities...", numEntities)
 
 	writeSuccess := 0
+	var written []uint64
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
 		data := map[string]interface{}{
@@ -288,12 +302,15 @@ func TestDataPersistence(t *testing.T) {
 
 		if err := writeEntity(nodes[0], entityType, entityID, data); err == nil {
 			writeSuccess++
+			written = append(written, entityID)
 		}
 	}
 
 	t.Logf("Successfully wrote %d/%d entities", writeSuccess, numEntities)
 
-	time.Sleep(3 * time.Second)
+	for _, entityID := range written {
+		waitForEntity(t, nodes[1], entityType, entityID, anyEntity)
+	}
 
 	// Read back all entities
 	t.Log("Reading back entities...")
@@ -331,7 +348,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "concurrent_rw"
 	entityID := uint64(100300)
@@ -345,7 +362,9 @@ func TestConcurrentReadWrite(t *testing.T) {
 		t.Fatalf("Failed to write initial data: %v", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	for _, nodeURL := range nodes {
+		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+	}
 
 	// Concurrent reads
 	numReaders := 10
@@ -369,7 +388,13 @@ func TestConcurrentReadWrite(t *testing.T) {
 					return
 				}
 				readCount++
-				time.Sleep(100 * time.Millisecond)
+				select {
+				case <-t.Context().Done():
+					errors <- t.Context().Err()
+					done <- false
+					return
+				case <-time.After(100 * time.Millisecond):
+				}
 			}
 
 			t.Logf("Reader %d completed %d reads", readerID, readCount)
@@ -416,67 +441,62 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 	// POST to /api/v1/entities/{entityType} - ID is in the body, not the URL
 	apiURL := fmt.Sprintf("%s/api/v1/entities/%s", nodeURL, entityType)
 
-	// Retry on transient 503 (Raft proposal timeout, leader change). The
-	// cluster may briefly reject writes during leader elections.
-	// Keep attempts low so the total time is bounded. With 1 attempt per write
-	// and a 40s hard timeout, callers can always make progress.
-	const maxAttempts = 1
-	const retryDelay = 3 * time.Second
-
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		// Use a channel-based timeout to guarantee the write doesn't block
-		// beyond a fixed duration. A fresh transport avoids stale keepalive
-		// connections from prior tests that can cause the client to hang
-		// even when the server sends a response.
-		type result struct {
-			code int
-			body []byte
-			err  error
-		}
-		done := make(chan result, 1)
-		go func() {
-			cl := newInsecureHTTPClient(35 * time.Second)
-			resp, err := cl.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
-			if err != nil {
-				done <- result{err: err}
-				return
-			}
-			b, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			done <- result{code: resp.StatusCode, body: b}
-		}()
-
-		select {
-		case r := <-done:
-			if r.err != nil {
-				if attempt < maxAttempts {
-					time.Sleep(retryDelay)
-					continue
-				}
-				return &qberrors.WrappedMessageError{Message: "post failed", Cause: r.err}
-			}
-			if r.code == http.StatusCreated || r.code == http.StatusOK {
-				return nil
-			}
-			// 503 from a retryable Raft error (timeout/leader change): retry.
-			if r.code == http.StatusServiceUnavailable && attempt < maxAttempts {
-				time.Sleep(retryDelay)
-				continue
-			}
-			return &qberrors.MessageError{Message: "write failed with status " + strconv.Itoa(r.code) + ": " + string(r.body)}
-
-		case <-time.After(40 * time.Second):
-			// Hard timeout in case the http.Client.Timeout fails to cancel.
-			// This unblocks the caller even if the transport is stuck.
-			if attempt < maxAttempts {
-				time.Sleep(retryDelay)
-				continue
-			}
-			return &qberrors.MessageError{Message: "write timed out after 40s (attempt " + strconv.Itoa(attempt) + ")"}
-		}
+	// One attempt per write: with a 40s hard timeout, callers can always make
+	// progress. Use a channel-based timeout to guarantee the write doesn't
+	// block beyond a fixed duration. A fresh transport avoids stale keepalive
+	// connections from prior tests that can cause the client to hang even
+	// when the server sends a response.
+	type result struct {
+		code int
+		body []byte
+		err  error
 	}
-	return &qberrors.MessageError{Message: "write failed after " + strconv.Itoa(maxAttempts) + " attempts"}
+	done := make(chan result, 1)
+	go func() {
+		cl := newInsecureHTTPClient(35 * time.Second)
+		resp, err := cl.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		done <- result{code: resp.StatusCode, body: b}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return &qberrors.WrappedMessageError{Message: "post failed", Cause: r.err}
+		}
+		if r.code == http.StatusCreated || r.code == http.StatusOK {
+			return nil
+		}
+		return &qberrors.MessageError{Message: "write failed with status " + strconv.Itoa(r.code) + ": " + string(r.body)}
+
+	case <-time.After(40 * time.Second):
+		// Hard timeout in case the http.Client.Timeout fails to cancel.
+		// This unblocks the caller even if the transport is stuck.
+		return &qberrors.MessageError{Message: "write timed out after 40s"}
+	}
 }
+
+// waitForEntity polls nodeURL until the entity is readable there and match
+// accepts its data, failing the test once replicationTimeout elapses.
+func waitForEntity(t *testing.T, nodeURL, entityType string, entityID uint64, match func(map[string]interface{}) bool) {
+	t.Helper()
+	pollUntil(t, replicationTimeout, fmt.Sprintf("entity %s/%d replicated to %s", entityType, entityID, nodeURL),
+		func(context.Context) (bool, error) {
+			data, err := readEntity(nodeURL, entityType, entityID)
+			if err != nil {
+				return false, err
+			}
+			return match(data), nil
+		})
+}
+
+// anyEntity accepts any readable entity data.
+func anyEntity(map[string]interface{}) bool { return true }
 
 func readEntity(nodeURL, entityType string, entityID uint64) (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodeURL, entityType, entityID)

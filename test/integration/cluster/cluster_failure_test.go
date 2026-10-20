@@ -16,6 +16,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -31,6 +32,63 @@ import (
 )
 
 // TestNodeFailureAndRecovery tests that cluster continues operating when a node fails
+// simulatedFailureWindow stands in for a failure these tests cannot inject
+// yet (no process kill, iptables or tc). Five seconds spans several election
+// timeouts, so a cluster that loses its leader or its data shows it within
+// the window.
+const simulatedFailureWindow = 5 * time.Second
+
+// noLeaderError is a cluster status that names no leader node.
+type noLeaderError struct {
+	nodes int
+}
+
+func (e *noLeaderError) Error() string {
+	return fmt.Sprintf("cluster status lists %d nodes and no leader", e.nodes)
+}
+
+// entityMismatchError is a read that returned data other than what was written.
+type entityMismatchError struct {
+	entityType string
+	id         uint64
+}
+
+func (e *entityMismatchError) Error() string {
+	return fmt.Sprintf("entity %s/%d does not hold the written data", e.entityType, e.id)
+}
+
+// grpcClusterHasLeader returns a holdSteady check that fails while the
+// cluster status read through client names no leader.
+func grpcClusterHasLeader(client pb.QuicBaaSClient) func(context.Context) error {
+	return func(ctx context.Context) error {
+		resp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+		if err != nil {
+			return err
+		}
+		for _, node := range resp.Nodes {
+			if node.IsLeader {
+				return nil
+			}
+		}
+		return &noLeaderError{nodes: len(resp.Nodes)}
+	}
+}
+
+// entityReadable returns a holdSteady check that fails while the entity put
+// wrote cannot be read back through client with the same data.
+func entityReadable(client pb.QuicBaaSClient, put *pb.PutRequest) func(context.Context) error {
+	return func(ctx context.Context) error {
+		resp, err := client.Get(ctx, &pb.GetRequest{EntityType: put.EntityType, Id: put.Id})
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(resp.Data, put.Data) {
+			return &entityMismatchError{entityType: put.EntityType, id: put.Id}
+		}
+		return nil
+	}
+}
+
 func TestNodeFailureAndRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -87,9 +145,6 @@ func TestNodeFailureAndRecovery(t *testing.T) {
 		t.Logf("Simulating failure of node %d", followerIdx)
 		conns[followerIdx].Close()
 	}
-
-	// Wait for cluster to detect failure
-	time.Sleep(5 * time.Second)
 
 	// Cluster should still be operational
 	// Try to write more data
@@ -168,8 +223,7 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 	// In real deployment, you'd kill the leader process
 	// Here we'll just wait and check that system is still operational
 
-	// Wait for potential leader re-election
-	time.Sleep(10 * time.Second)
+	holdSteady(t, simulatedFailureWindow, "cluster status reports a leader", grpcClusterHasLeader(client))
 
 	// Verify cluster is still operational
 	// Try to perform operations
@@ -241,7 +295,7 @@ func TestNetworkPartition(t *testing.T) {
 	// Simulate network partition
 	// In real deployment, you'd use iptables or network namespaces
 	t.Logf("Simulating network partition...")
-	time.Sleep(5 * time.Second)
+	holdSteady(t, simulatedFailureWindow, "pre-partition write stays readable", entityReadable(client1, putReq))
 
 	// The majority partition should still accept writes
 	postPartitionKey := uint64(time.Now().UnixNano())
@@ -263,7 +317,8 @@ func TestNetworkPartition(t *testing.T) {
 
 	// Heal partition
 	t.Logf("Healing partition...")
-	time.Sleep(5 * time.Second)
+	pollUntil(t, clusterSettleTimeout, "pre-partition write readable after healing",
+		func(ctx context.Context) (bool, error) { return entityReadable(client1, putReq)(ctx) == nil, nil })
 
 	// After healing, read should work
 	getReq := &pb.GetRequest{
@@ -330,7 +385,7 @@ func TestNodeReplacement(t *testing.T) {
 	// 3. Start new node
 	// 4. Add to cluster
 	t.Logf("Simulating node replacement...")
-	time.Sleep(10 * time.Second)
+	holdSteady(t, simulatedFailureWindow, "test write stays readable during node replacement", entityReadable(client, putReq))
 
 	// After replacement, cluster should still have same number of nodes
 	statusCtx2, statusCancel2 := context.WithTimeout(ctx, 10*time.Second)
@@ -396,7 +451,6 @@ func TestSlowNode(t *testing.T) {
 	// Simulate slow node
 	// In real deployment, you'd add artificial delay using tc (traffic control)
 	t.Logf("Simulating slow node...")
-	time.Sleep(5 * time.Second)
 
 	// Measure latency with slow node
 	start = time.Now()
@@ -462,8 +516,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	// Note: This test doesn't actually kill nodes - it verifies data persistence
 	// across a brief pause (simulating network blip or restart scenario).
 	// For actual node failure testing, see TestNodeFailureAndRecovery.
-	t.Logf("Simulating cluster instability (2s pause)...")
-	time.Sleep(2 * time.Second)
+	t.Logf("Simulating cluster instability...")
 
 	// Reconnect and verify data persists
 	connCtx2, connCancel2 := context.WithTimeout(ctx, 10*time.Second)
@@ -475,7 +528,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	connCancel2()
 	if err != nil {
 		t.Logf("Reconnection delayed, retrying...")
-		time.Sleep(2 * time.Second)
+		pace(t, 2*time.Second)
 
 		// Try again
 		connCtx3, connCancel3 := context.WithTimeout(ctx, 10*time.Second)
@@ -555,13 +608,14 @@ func TestConcurrentFailuresAndWrites(t *testing.T) {
 				successCount++
 			}
 
-			time.Sleep(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
 		}
 		doneChan <- true
 	}()
 
-	// Simulate failures during writes
-	time.Sleep(5 * time.Second)
 	t.Logf("Simulating node failure during concurrent writes...")
 
 	// Wait for writes to complete

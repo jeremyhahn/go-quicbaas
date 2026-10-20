@@ -82,8 +82,10 @@ func waitReady(t *testing.T, nodeURL string, timeout time.Duration) bool {
 	// Use a dedicated transport (new connection per call) to avoid
 	// stale keepalive connections from the shared DefaultTransport pool.
 	client := newInsecureHTTPClient(5 * time.Second)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	for {
 		resp, err := client.Get(nodeURL + "/api/v1/health/ready")
 		if err == nil {
 			_ = resp.Body.Close()
@@ -91,9 +93,22 @@ func waitReady(t *testing.T, nodeURL string, timeout time.Duration) bool {
 				return true
 			}
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-deadline:
+			return false
+		case <-ticker.C:
+		}
 	}
-	return false
+}
+
+// waitForKey polls nodeURL until key is readable there, failing the test
+// once replicationTimeout elapses. Callers assert the value afterwards.
+func waitForKey(t *testing.T, nodeURL, key string) {
+	t.Helper()
+	pollUntil(t, replicationTimeout, fmt.Sprintf("key %s readable on %s", key, nodeURL),
+		func(context.Context) (bool, error) {
+			return kvGet(t, nodeURL, key) != nil, nil
+		})
 }
 
 // kvPut stores value under entityType/key via the REST KV API.
@@ -128,7 +143,7 @@ func kvPut(t *testing.T, nodeURL, key string, value []byte) {
 		if err != nil {
 			lastErr = err
 			t.Logf("kvPut attempt %d/%d: network error: %v", attempt, maxAttempts, err)
-			time.Sleep(retryDelay)
+			pace(t, retryDelay)
 			continue
 		}
 		lastStatus = resp.StatusCode
@@ -139,7 +154,7 @@ func kvPut(t *testing.T, nodeURL, key string, value []byte) {
 		lastErr = nil
 		t.Logf("kvPut attempt %d/%d: PUT %s returned %d (retrying in %v)",
 			attempt, maxAttempts, apiURL, resp.StatusCode, retryDelay)
-		time.Sleep(retryDelay)
+		pace(t, retryDelay)
 	}
 	if lastErr != nil {
 		require.NoError(t, lastErr, "PUT %s failed after %d attempts", apiURL, maxAttempts)
@@ -164,7 +179,7 @@ func kvGet(t *testing.T, nodeURL, key string) []byte {
 		resp, err := client.Get(apiURL)
 		if err != nil {
 			t.Logf("kvGet attempt %d/%d: network error: %v", attempt, maxAttempts, err)
-			time.Sleep(retryDelay)
+			pace(t, retryDelay)
 			continue
 		}
 		defer resp.Body.Close()
@@ -173,7 +188,7 @@ func kvGet(t *testing.T, nodeURL, key string) []byte {
 		}
 		if resp.StatusCode == http.StatusServiceUnavailable {
 			t.Logf("kvGet attempt %d/%d: 503 (retrying)", attempt, maxAttempts)
-			time.Sleep(retryDelay)
+			pace(t, retryDelay)
 			continue
 		}
 		require.True(t, resp.StatusCode < 300,
@@ -233,9 +248,9 @@ func TestQRDBCluster_ThreeNodeReplication(t *testing.T) {
 	// Write on node 1 (will route to the Raft leader via leader forwarding).
 	kvPut(t, node1, key, value)
 
-	// Allow Raft log application on followers — typical latency is < 100 ms
-	// but we give a generous 5 s to tolerate a slow CI environment.
-	time.Sleep(5 * time.Second)
+	// Wait for Raft log application on both followers.
+	waitForKey(t, node2, key)
+	waitForKey(t, node3, key)
 
 	// Read from node 2.
 	got2 := kvGet(t, node2, key)
@@ -263,7 +278,7 @@ func TestQRDBCluster_LeaderFailoverRecovers(t *testing.T) {
 	// Write a pre-failover key.
 	preKey := fmt.Sprintf("failover-pre-%d", time.Now().UnixNano())
 	kvPut(t, node1, preKey, []byte("pre-failover"))
-	time.Sleep(2 * time.Second)
+	waitForKey(t, node3, preKey)
 
 	// Simulate node1 outage: the test runner expects the orchestrator to have
 	// killed node1 before this test runs (see make integration-test-cluster-failover).
@@ -273,7 +288,7 @@ func TestQRDBCluster_LeaderFailoverRecovers(t *testing.T) {
 
 	postKey := fmt.Sprintf("failover-post-%d", time.Now().UnixNano())
 	kvPut(t, node2, postKey, []byte("post-failover"))
-	time.Sleep(3 * time.Second)
+	waitForKey(t, node3, postKey)
 
 	// node3 must see both the pre-failover and post-failover keys.
 	assert.Equal(t, []byte("pre-failover"), kvGet(t, node3, preKey),
@@ -285,7 +300,7 @@ func TestQRDBCluster_LeaderFailoverRecovers(t *testing.T) {
 // TestQRDBCluster_AtRestEncryptionAllNodes verifies that raw PebbleDB files
 // on all three cluster nodes do not contain the plaintext sentinel values.
 func TestQRDBCluster_AtRestEncryptionAllNodes(t *testing.T) {
-	node1, _, _ := nodeURLs(t)
+	node1, node2, node3 := nodeURLs(t)
 
 	dataDir1 := os.Getenv("QUICBAAS_NODE1_DATADIR")
 	dataDir2 := os.Getenv("QUICBAAS_NODE2_DATADIR")
@@ -299,7 +314,11 @@ func TestQRDBCluster_AtRestEncryptionAllNodes(t *testing.T) {
 
 	sentinel := fmt.Sprintf("ATREST-CLUSTER-%d", time.Now().UnixNano())
 	kvPut(t, node1, "atrest-cluster-sentinel", []byte(sentinel))
-	time.Sleep(3 * time.Second)
+	// The sentinel must reach every node's store before its absence on disk
+	// means anything.
+	for _, url := range []string{node2, node3} {
+		waitForKey(t, url, "atrest-cluster-sentinel")
+	}
 
 	for i, dataDir := range []string{dataDir1, dataDir2, dataDir3} {
 		t.Run(fmt.Sprintf("node%d", i+1), func(t *testing.T) {
@@ -387,13 +406,15 @@ func TestQRDBCluster_DynamicMembership(t *testing.T) {
 	// Write baseline data before node4 joins.
 	baseKey := fmt.Sprintf("membership-base-%d", time.Now().UnixNano())
 	kvPut(t, node1, baseKey, []byte("membership-base"))
-	time.Sleep(2 * time.Second)
+	for _, url := range []string{node2, node3} {
+		waitForKey(t, url, baseKey)
+	}
 
 	require.True(t, waitReady(t, node4, 60*time.Second),
 		"node4 must become ready after joining the cluster")
 
-	// Allow log catchup.
-	time.Sleep(5 * time.Second)
+	// Wait for node4's log catchup.
+	waitForKey(t, node4, baseKey)
 
 	// node4 must serve the baseline key.
 	got := kvGet(t, node4, baseKey)
@@ -403,10 +424,10 @@ func TestQRDBCluster_DynamicMembership(t *testing.T) {
 	// Write a new key through node4.
 	afterKey := fmt.Sprintf("membership-after-%d", time.Now().UnixNano())
 	kvPut(t, node4, afterKey, []byte("written-by-node4"))
-	time.Sleep(2 * time.Second)
 
 	// node1, 2, 3 must all serve the key written through node4.
 	for i, url := range []string{node1, node2, node3} {
+		waitForKey(t, url, afterKey)
 		got := kvGet(t, url, afterKey)
 		assert.Equal(t, []byte("written-by-node4"), got,
 			"node%d must see key written through node4", i+1)

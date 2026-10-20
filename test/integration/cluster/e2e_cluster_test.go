@@ -69,9 +69,7 @@ func TestE2EDataConsistency(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-
-	// Wait for cluster to stabilize
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Test data
 	entityType := "users"
@@ -113,7 +111,9 @@ func TestE2EDataConsistency(t *testing.T) {
 
 	// Step 2: Wait for replication
 	t.Log("Step 2: Waiting for replication...")
-	time.Sleep(5 * time.Second)
+	for _, nodeURL := range nodes {
+		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+	}
 
 	// Step 3: Read from all nodes to verify consistency
 	t.Log("Step 3: Verifying data on all nodes...")
@@ -161,7 +161,7 @@ func TestE2ELeaderElection(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Check cluster status to verify leader
 	statusURL := fmt.Sprintf("%s/api/v1/cluster/status", nodes[0])
@@ -196,7 +196,7 @@ func TestE2ELeaderElection(t *testing.T) {
 // TestE2EHealthChecks validates health check endpoints
 func TestE2EHealthChecks(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(5 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	for i, nodeURL := range nodes {
 		healthURL := fmt.Sprintf("%s/api/v1/health/live", nodeURL)
@@ -226,9 +226,6 @@ func TestE2EHealthChecks(t *testing.T) {
 
 // TestE2EMetricsEndpoint validates metrics endpoint
 func TestE2EMetricsEndpoint(t *testing.T) {
-	// Give cluster time to fully initialize metrics endpoint
-	time.Sleep(5 * time.Second)
-
 	// Metrics are served on the REST port at /api/v1/metrics
 	// Try multiple nodes in case one was killed by other tests
 	metricsURLs := []string{
@@ -253,7 +250,7 @@ func TestE2EMetricsEndpoint(t *testing.T) {
 				resp.Body.Close()
 			}
 			t.Logf("Attempt %d/%d on %s: not ready, retrying...", i+1, maxRetries, metricsURL)
-			time.Sleep(3 * time.Second)
+			pace(t, 3*time.Second)
 		}
 		if successURL != "" {
 			break
@@ -284,7 +281,7 @@ func TestE2EMetricsEndpoint(t *testing.T) {
 // TestE2EBasicCRUD validates basic Create, Read, Update, Delete operations
 func TestE2EBasicCRUD(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "products"
 	entityID := uint64(50000)
@@ -318,7 +315,7 @@ func TestE2EBasicCRUD(t *testing.T) {
 	t.Log("CREATE: Success")
 
 	// READ
-	time.Sleep(1 * time.Second)
+	waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
 	t.Log("Testing READ...")
 
 	readURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodes[0], entityType, entityID)
@@ -357,9 +354,7 @@ func TestE2EBasicCRUD(t *testing.T) {
 // TestE2EBatchOperations validates atomic batch operations
 func TestE2EBatchOperations(t *testing.T) {
 	nodes := getNodeURLs()
-
-	// Wait for cluster to stabilize
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Prepare batch write - use IDs that route to the same shard
 	// With 3 shards [1,2,3], IDs that are multiples of 3 route to shard 1
@@ -420,8 +415,6 @@ func TestE2EBatchOperations(t *testing.T) {
 	t.Log("Batch write completed successfully")
 
 	// Verify batch write results
-	time.Sleep(2 * time.Second)
-
 	t.Log("Verifying batch write results...")
 
 	successCount := 0
@@ -509,7 +502,7 @@ func discoverLeaderNode(t *testing.T, nodes []string) string {
 // TestE2EConcurrentWrites validates concurrent writes don't cause issues
 func TestE2EConcurrentWrites(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	// Overall test context bounds the total execution time
 	testCtx, testCancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -600,7 +593,6 @@ func TestE2EConcurrentWrites(t *testing.T) {
 	}
 
 	// Cleanup - route deletes through the leader as well
-	time.Sleep(1 * time.Second)
 	for i := 0; i < numConcurrent; i++ {
 		entityID := baseID + uint64(i)
 		deleteURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", leaderNode, entityType, entityID)
@@ -611,7 +603,7 @@ func TestE2EConcurrentWrites(t *testing.T) {
 // TestE2EListOperations validates list functionality
 func TestE2EListOperations(t *testing.T) {
 	nodes := getNodeURLs()
-	time.Sleep(10 * time.Second)
+	waitForQuorumReady(t, nodes)
 
 	entityType := "inventory"
 	numItems := 15
@@ -648,8 +640,6 @@ func TestE2EListOperations(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-
-	time.Sleep(2 * time.Second)
 
 	// Test list with pagination - query shard 1 where our entities are
 	t.Log("Testing list operation...")

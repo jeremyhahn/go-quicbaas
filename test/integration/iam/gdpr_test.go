@@ -18,6 +18,7 @@ package iam_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -777,10 +778,11 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 		"failed":     true,
 	}
 
-	deadline := time.Now().Add(30 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	lastStatus := "pending"
 
-	for time.Now().Before(deadline) {
+	for {
 		resp, err = cluster.client.Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/export/" + exportID,
 		)
@@ -801,7 +803,9 @@ func TestGDPR_GetExportStatus_Transitions(t *testing.T) {
 			break
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		if !pause(ctx, 250*time.Millisecond) {
+			break
+		}
 	}
 
 	// Verify we reached a terminal state
@@ -1170,19 +1174,25 @@ func TestGDPR_CancelDeletion_AfterProcessing(t *testing.T) {
 
 	deletionID := result.ID
 
-	// Wait briefly for processing to potentially start
-	time.Sleep(500 * time.Millisecond)
-
-	// Check current status
-	resp, err = cluster.client.Get(
-		cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
-	)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
+	// Poll the current status until processing starts (the status leaves
+	// "pending"), for at most 5 seconds: processing may not start at all
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var statusResult DeletionResponse
-	err = json.NewDecoder(resp.Body).Decode(&statusResult)
-	require.NoError(t, err)
+	for {
+		resp, err = cluster.client.Get(
+			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
+		)
+		require.NoError(t, err)
+
+		err = json.NewDecoder(resp.Body).Decode(&statusResult)
+		resp.Body.Close()
+		require.NoError(t, err)
+
+		if statusResult.Status != "pending" || !pause(ctx, 250*time.Millisecond) {
+			break
+		}
+	}
 
 	// If already processing or completed, cancellation should fail
 	if statusResult.Status == "processing" || statusResult.Status == "completed" {
@@ -1249,9 +1259,10 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 	deletionID := result.ID
 
 	// Wait for deletion to complete
-	deadline := time.Now().Add(60 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	var finalStatus DeletionResponse
-	for time.Now().Before(deadline) {
+	for {
 		resp, err = cluster.client.Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
@@ -1265,7 +1276,9 @@ func TestGDPR_ProcessDeletion_Success(t *testing.T) {
 			break
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		if !pause(ctx, 250*time.Millisecond) {
+			break
+		}
 	}
 
 	assert.Equal(t, "completed", finalStatus.Status, "Deletion should complete successfully")
@@ -1334,8 +1347,9 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 
 	// Wait for completion
 	deletionID := result.ID
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
 		resp, err = cluster.client.Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
@@ -1348,7 +1362,9 @@ func TestGDPR_ProcessDeletion_PartialCategories(t *testing.T) {
 		if status.Status == "completed" || status.Status == "failed" {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		if !pause(ctx, 250*time.Millisecond) {
+			break
+		}
 	}
 
 	// Profile should still exist
@@ -1425,8 +1441,9 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 	deletionID := result.ID
 
 	// Wait for completion
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for {
 		resp, err = cluster.client.Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/deletion/" + deletionID,
 		)
@@ -1452,7 +1469,9 @@ func TestGDPR_ProcessDeletion_PreserveCategories(t *testing.T) {
 			}
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
+		if !pause(ctx, 250*time.Millisecond) {
+			break
+		}
 	}
 }
 
@@ -2003,9 +2022,10 @@ func createTestUser(t *testing.T, cluster *testCluster, tenantID, userID string)
 func waitForExportCompletion(t *testing.T, cluster *testCluster, tenantID, userID, exportID string, timeout time.Duration) *UserDataExport {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	for time.Now().Before(deadline) {
+	for {
 		resp, err := cluster.client.Get(
 			cluster.httpEndpoint + "/api/v1/tenants/" + tenantID + "/users/" + userID + "/gdpr/export/" + exportID,
 		)
@@ -2052,7 +2072,9 @@ func waitForExportCompletion(t *testing.T, cluster *testCluster, tenantID, userI
 			t.Fatalf("Export failed: %s", status.ErrorMessage)
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		if !pause(ctx, 250*time.Millisecond) {
+			break
+		}
 	}
 
 	t.Fatalf("Export did not complete within timeout")
