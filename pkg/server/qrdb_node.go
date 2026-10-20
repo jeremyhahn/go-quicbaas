@@ -664,6 +664,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		apimodule.WithRESTServer(func() *restapi.Server { return s.ModuleRESTServer() }),
 		apimodule.WithMCPServer(func() *mcpapi.Server { return s.ModuleMCPServer() }),
 		apimodule.WithShardRouting(shardRouter, vectorShardID),
+		apimodule.WithSPIFFETrustDomain(s.config.IAM.SPIFFETrustDomain),
 	)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "new quicbaas module", Cause: err}

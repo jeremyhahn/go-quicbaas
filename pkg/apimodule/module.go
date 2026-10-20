@@ -257,6 +257,15 @@ func WithShardRouting(router ShardRouter, vectorShardID uint64) Option {
 	}
 }
 
+// WithSPIFFETrustDomain pins the SPIFFE trust domain the module's gRPC
+// surfaces read a verified client certificate's tenant under. It is the
+// trust domain the daemon's CA issues under (iam.spiffe_trust_domain).
+func WithSPIFFETrustDomain(trustDomain string) Option {
+	return func(m *Module) {
+		m.trustDomain = trustDomain
+	}
+}
+
 // Module is go-quicbaas's broker capability plane and quicbaas-native core
 // plane as a qrdb ServiceModule. It registers the Scheduler, Orchestrator,
 // Project, Account, SSH, Messaging, and Embedding broker surfaces, plus the
@@ -289,6 +298,9 @@ type Module struct {
 	shardRouter     ShardRouter
 	vectorShardID   uint64
 	shardRoutingSet bool
+
+	// trustDomain carries the WithSPIFFETrustDomain option.
+	trustDomain string
 
 	// servers memoizes the lazily-constructed gRPC server bundle. Lock-free:
 	// concurrent first calls may both construct, and CompareAndSwap keeps
@@ -427,7 +439,7 @@ func (m *Module) PublicGRPCMethods() []string {
 // never a nil dereference.
 func (m *Module) RegisterGRPC(reg grpc.ServiceRegistrar) {
 	for _, entry := range grpcRegistrations {
-		reg.RegisterService(lazyServiceDesc(entry.desc, m.server(entry)), nil)
+		reg.RegisterService(lazyServiceDesc(entry.desc, m.server(entry), m.trustDomain), nil)
 	}
 }
 
@@ -578,8 +590,9 @@ func (m *Module) bind() (*grpcServers, error) {
 // Every handler runs with the qrdb identity the unified server verified
 // projected onto the quicbaas Subject (auth.ContextWithIdentitySubject), as
 // the REST and MCP surfaces do, so services read their caller the same way
-// on every transport.
-func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.ServiceDesc {
+// on every transport. When that chain bound no tenant, the tenant of a
+// verified client certificate is bound under trustDomain (peerTenantContext).
+func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error), trustDomain string) *grpc.ServiceDesc {
 	desc := &grpc.ServiceDesc{
 		ServiceName: src.ServiceName,
 		HandlerType: src.HandlerType,
@@ -596,7 +609,7 @@ func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.Serv
 				if err != nil {
 					return nil, err
 				}
-				return handler(svc, ctx, dec, projectingInterceptor(interceptor))
+				return handler(svc, ctx, dec, projectingInterceptor(interceptor, trustDomain))
 			},
 		})
 	}
@@ -611,7 +624,11 @@ func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.Serv
 				if err != nil {
 					return err
 				}
-				return handler(svc, &subjectStream{ServerStream: ss, ctx: auth.ContextWithIdentitySubject(ss.Context())})
+				ctx, err := peerTenantContext(ss.Context(), trustDomain)
+				if err != nil {
+					return err
+				}
+				return handler(svc, &subjectStream{ServerStream: ss, ctx: auth.ContextWithIdentitySubject(ctx)})
 			},
 		})
 	}
@@ -621,10 +638,16 @@ func lazyServiceDesc(src *grpc.ServiceDesc, impl func() (any, error)) *grpc.Serv
 // projectingInterceptor runs the server's unary chain, if any, and projects
 // the identity it leaves on the context just before the method runs. A
 // generated unary handler calls the chain itself, so the projection has to
-// sit innermost: qrdb's auth chain is what binds the identity.
-func projectingInterceptor(chain grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
+// sit innermost: qrdb's auth chain is what binds the identity. The verified
+// certificate's tenant is bound at the same point, so it sees what the chain
+// bound and never replaces it.
+func projectingInterceptor(chain grpc.UnaryServerInterceptor, trustDomain string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		project := func(ctx context.Context, req any) (any, error) {
+			ctx, err := peerTenantContext(ctx, trustDomain)
+			if err != nil {
+				return nil, err
+			}
 			return handler(auth.ContextWithIdentitySubject(ctx), req)
 		}
 		if chain == nil {

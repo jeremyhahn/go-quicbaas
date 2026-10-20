@@ -50,6 +50,13 @@ type Transport string
 // (--tls-skip-verify is banned project-wide).
 const integrationCAPath = "/etc/quicbaas/certs/ca.crt"
 
+// The fixture's system-admin client certificate and key, mounted beside the
+// CA (test/integration/certfixture/topology.json, client "admin").
+const (
+	integrationAdminCertPath = "/etc/quicbaas/certs/admin.crt"
+	integrationAdminKeyPath  = "/etc/quicbaas/certs/admin.key"
+)
+
 const (
 	// TransportGRPC uses gRPC protocol.
 	TransportGRPC Transport = "grpc"
@@ -142,6 +149,14 @@ func NewTestRunner(t *testing.T, transport Transport, address string) *TestRunne
 	// test container mounts the cluster's CA at /etc/quicbaas/certs/ca.crt.
 	baseArgs = append(baseArgs, "--tls-ca", integrationCAPath)
 
+	// The system admin's gRPC calls authenticate by the fixture's admin
+	// client certificate. Its tenant SAN is what binds the call's tenant on
+	// the unified server; with no certificate a tenant-scoped verb is
+	// refused (go-quicbaas#1699).
+	if transport == TransportGRPC {
+		baseArgs = append(baseArgs, "--tls-cert", integrationAdminCertPath, "--tls-key", integrationAdminKeyPath)
+	}
+
 	return &TestRunner{
 		t:             t,
 		binary:        binary,
@@ -166,7 +181,8 @@ func (r *TestRunner) Authenticate() error {
 	}
 
 	// Only MCP needs an explicit bearer set up ahead of time. Other transports
-	// either use mTLS directly (gRPC/QUIC/Unix) or transparently fall back to
+	// either use mTLS directly (gRPC presents the admin certificate, see
+	// NewTestRunner) or transparently fall back to
 	// the same default token file (REST), so the same setup helps them too —
 	// but if no REST endpoint is reachable we skip rather than fail.
 	if r.transport != TransportMCP {

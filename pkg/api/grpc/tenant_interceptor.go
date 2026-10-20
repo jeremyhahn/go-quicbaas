@@ -34,20 +34,28 @@ func tenantContextFromClientCert(ctx context.Context, cert *x509.Certificate, tr
 	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(tenantID)), nil
 }
 
+// TenantContextFromVerifiedPeer binds the qrdb tenant of the caller's verified
+// mTLS peer certificate onto ctx. A call with no verified certificate returns
+// ctx unchanged; a present certificate that qrdb refuses returns qrdb's error.
+func TenantContextFromVerifiedPeer(ctx context.Context, trustDomain string) (context.Context, error) {
+	cert := verifiedPeerCertFromGRPC(ctx)
+	if cert == nil {
+		return ctx, nil
+	}
+	return tenantContextFromClientCert(ctx, cert, trustDomain)
+}
+
 // UnaryTenantInterceptor stamps the qrdb tenant derived from the caller's
 // verified mTLS peer certificate onto the request context. Certless calls still
 // pass through unchanged; a present certificate that qrdb refuses rejects the
 // call with qrdb's error.
 func UnaryTenantInterceptor(trustDomain string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if cert := verifiedPeerCertFromGRPC(ctx); cert != nil {
-			scoped, err := tenantContextFromClientCert(ctx, cert, trustDomain)
-			if err != nil {
-				return nil, err
-			}
-			ctx = scoped
+		scoped, err := TenantContextFromVerifiedPeer(ctx, trustDomain)
+		if err != nil {
+			return nil, err
 		}
-		return handler(ctx, req)
+		return handler(scoped, req)
 	}
 }
 
@@ -57,14 +65,12 @@ func UnaryTenantInterceptor(trustDomain string) grpc.UnaryServerInterceptor {
 func StreamTenantInterceptor(trustDomain string) grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx := ss.Context()
-		if cert := verifiedPeerCertFromGRPC(ctx); cert != nil {
-			scoped, err := tenantContextFromClientCert(ctx, cert, trustDomain)
-			if err != nil {
-				return err
-			}
-			if scoped != ctx {
-				ss = wrapServerStream(ss, scoped)
-			}
+		scoped, err := TenantContextFromVerifiedPeer(ctx, trustDomain)
+		if err != nil {
+			return err
+		}
+		if scoped != ctx {
+			ss = wrapServerStream(ss, scoped)
 		}
 		return handler(srv, ss)
 	}

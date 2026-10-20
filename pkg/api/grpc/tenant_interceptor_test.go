@@ -90,6 +90,39 @@ func TestUnaryTenantInterceptor_StampsQRDBTenant(t *testing.T) {
 	}
 }
 
+func TestTenantContextFromVerifiedPeer_BindsCertTenant(t *testing.T) {
+	ctx := mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))
+
+	scoped, err := TenantContextFromVerifiedPeer(ctx, tenantInterceptorTrustDomain)
+	if err != nil {
+		t.Fatalf("TenantContextFromVerifiedPeer: %v", err)
+	}
+	if tenantID, ok := qrdbsdk.TenantFromContext(scoped); !ok || tenantID != "tenant-a" {
+		t.Fatalf("bound tenant = %q (%v), want tenant-a", tenantID, ok)
+	}
+}
+
+func TestTenantContextFromVerifiedPeer_NoCertLeavesContextUnbound(t *testing.T) {
+	ctx := context.Background()
+
+	scoped, err := TenantContextFromVerifiedPeer(ctx, tenantInterceptorTrustDomain)
+	if err != nil {
+		t.Fatalf("TenantContextFromVerifiedPeer: %v", err)
+	}
+	if _, ok := qrdbsdk.TenantFromContext(scoped); ok {
+		t.Fatal("a certless call bound a tenant")
+	}
+}
+
+func TestTenantContextFromVerifiedPeer_ForeignTrustDomainFails(t *testing.T) {
+	ctx := mtlsPeerContext(tenantClientCert(t, "other.example", "tenant-a"))
+
+	_, err := TenantContextFromVerifiedPeer(ctx, tenantInterceptorTrustDomain)
+	if !errors.Is(err, qrdbsdk.ErrInvalidClientCertificate) {
+		t.Fatalf("err = %v, want ErrInvalidClientCertificate", err)
+	}
+}
+
 func TestUnaryTenantInterceptor_NoCertProceeds(t *testing.T) {
 	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
 	called := false

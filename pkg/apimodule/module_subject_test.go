@@ -77,7 +77,7 @@ func TestLazyServiceDesc_StreamSeesTheProjectedSubject(t *testing.T) {
 			return nil
 		}}},
 	}
-	desc := lazyServiceDesc(src, func() (any, error) { return struct{}{}, nil })
+	desc := lazyServiceDesc(src, func() (any, error) { return struct{}{}, nil }, "")
 	handler := desc.Streams[0].Handler
 
 	identified := qrdbsdk.WithIdentity(context.Background(), &qrdbsdk.Identity{Subject: "alice", TenantID: "tenant-a"})

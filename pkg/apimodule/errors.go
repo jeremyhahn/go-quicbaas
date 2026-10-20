@@ -14,8 +14,38 @@
 package apimodule
 
 import (
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
+
+// PeerCertificateTenantError reports a verified client certificate whose
+// tenant qrdb's certificate-to-tenant rule refuses, for example a tenant SAN
+// from another SPIFFE trust domain.
+type PeerCertificateTenantError struct {
+	// Cause is qrdb's refusal.
+	Cause error
+}
+
+// Error describes the refusal.
+func (e *PeerCertificateTenantError) Error() string {
+	return "quicbaas module: client certificate names no acceptable tenant: " + e.Cause.Error()
+}
+
+// Unwrap returns qrdb's refusal.
+func (e *PeerCertificateTenantError) Unwrap() error { return e.Cause }
+
+// ErrorCode classifies the refusal as unauthorized.
+func (e *PeerCertificateTenantError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrUnauthorized
+}
+
+// GRPCStatus answers the refusal as Unauthenticated: the caller's
+// credential, not its permissions, is what was refused.
+func (e *PeerCertificateTenantError) GRPCStatus() *status.Status {
+	return status.New(codes.Unauthenticated, e.Error())
+}
 
 // SurfaceComposingError reports a module surface consulted before the
 // backing engine finished composing. Authentication fails closed on it.
