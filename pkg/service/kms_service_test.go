@@ -2377,6 +2377,7 @@ func TestIsValidWrappingAlgorithm(t *testing.T) {
 		{"invalid", "INVALID", false},
 		{"empty", "", false},
 		{"ECDH-ES without KW", "ECDH-ES", false},
+		{"ECDH-ES with hyphen instead of plus", "ECDH-ES-A256KW", false},
 		{"wrong RSA-OAEP format", "RSA-OAEP-256", false},
 	}
 

@@ -1042,8 +1042,10 @@ func kmsStatusToString(s kmsclient.KeyStatus) string {
 	}
 }
 
-// kmsWrappingAlgToString maps the SDK wrapping-algorithm enum to the wire
-// string the server's xkms backend understands.
+// kmsWrappingAlgToString maps the SDK wrapping-algorithm enum to the name the
+// service's isValidWrappingAlgorithm check (pkg/service/kms_helpers.go)
+// accepts. ECDH-ES uses the RFC 7518 §4.6 name ECDH-ES+A256KW, as the gRPC
+// transport does. An unknown value maps to "", which the service refuses.
 func kmsWrappingAlgToString(a kmsclient.WrappingAlgorithm) string {
 	switch a {
 	case kmsclient.WrapAlgAESKW:
@@ -1059,7 +1061,7 @@ func kmsWrappingAlgToString(a kmsclient.WrappingAlgorithm) string {
 	case kmsclient.WrapAlgRSAOAEPSHA512:
 		return "RSA-OAEP-SHA512"
 	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES-A256KW"
+		return "ECDH-ES+A256KW"
 	default:
 		return ""
 	}

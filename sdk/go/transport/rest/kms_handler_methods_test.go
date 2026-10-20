@@ -7,6 +7,7 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,6 +197,103 @@ func TestKMSWrappingAlgConversions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("alg index %d: unexpected error: %v", i, err)
 		}
+	}
+}
+
+// TestKMSWrappingAlgToString pins each wrapping algorithm to the exact name
+// the service accepts (isValidWrappingAlgorithm in pkg/service/kms_helpers.go).
+// ECDH-ES uses the RFC 7518 §4.6 name ECDH-ES+A256KW (go-quicbaas#1620).
+func TestKMSWrappingAlgToString(t *testing.T) {
+	tests := []struct {
+		alg  kmsclient.WrappingAlgorithm
+		want string
+	}{
+		{kmsclient.WrapAlgAESKW, "AES-KW"},
+		{kmsclient.WrapAlgAESKWP, "AES-KWP"},
+		{kmsclient.WrapAlgAESGCM, "AES-GCM"},
+		{kmsclient.WrapAlgRSAOAEPSHA256, "RSA-OAEP-SHA256"},
+		{kmsclient.WrapAlgRSAOAEPSHA384, "RSA-OAEP-SHA384"},
+		{kmsclient.WrapAlgRSAOAEPSHA512, "RSA-OAEP-SHA512"},
+		{kmsclient.WrapAlgECDHESA256KW, "ECDH-ES+A256KW"},
+		{kmsclient.WrappingAlgorithm(255), ""},
+	}
+	for _, tt := range tests {
+		if got := kmsWrappingAlgToString(tt.alg); got != tt.want {
+			t.Errorf("kmsWrappingAlgToString(%d) = %q, want %q", tt.alg, got, tt.want)
+		}
+	}
+}
+
+// newWrappingAlgRecorder returns a server that records the wrapping_algorithm
+// field of each decoded JSON request body and answers with respBody.
+func newWrappingAlgRecorder(t *testing.T, respBody string) (*httptest.Server, <-chan string) {
+	t.Helper()
+	got := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			WrappingAlgorithm string `json:"wrapping_algorithm"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		got <- body.WrappingAlgorithm
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(respBody)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, got
+}
+
+// TestKMSHandlerECDHESWireName checks ExportKey and UnwrapKey with ECDH-ES
+// send the RFC 7518 name the service's algorithm check accepts.
+func TestKMSHandlerECDHESWireName(t *testing.T) {
+	tests := []struct {
+		method string
+		req    interface{}
+		resp   string
+	}{
+		{
+			method: "ExportKey",
+			req: &kmsclient.ExportKeyRequest{KeyID: "k1", WrappingKeyID: "wk",
+				WrappingAlgorithm: kmsclient.WrapAlgECDHESA256KW},
+			resp: `{"key_id":"k1","wrapped_key":"d3JhcA==","wrapping_key_id":"wk","wrapping_algorithm":"ECDH-ES+A256KW","format":"raw","timestamp":1700000000}`,
+		},
+		{
+			method: "UnwrapKey",
+			req: &kmsclient.UnwrapKeyRequest{KeyID: "k2", WrappingKeyID: "wk",
+				WrappedMaterial: []byte("wrap"), WrappingAlgorithm: kmsclient.WrapAlgECDHESA256KW},
+			resp: `{"key_id":"k2","version":1,"algorithm":"AES-256-GCM","status":"enabled","timestamp":1700000000}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			server, gotAlg := newWrappingAlgRecorder(t, tt.resp)
+			tr := newTestTransport(t, server)
+			if _, err := tr.Request(context.Background(), "KMS", tt.method, tt.req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := <-gotAlg; got != "ECDH-ES+A256KW" {
+				t.Errorf("wrapping_algorithm = %q, want %q", got, "ECDH-ES+A256KW")
+			}
+		})
+	}
+}
+
+// TestKMSHandlerExportKeyUnknownWrappingAlg checks an ExportKey with an
+// unknown wrapping algorithm sends an empty name, which the service refuses.
+// The transport itself does not refuse it.
+func TestKMSHandlerExportKeyUnknownWrappingAlg(t *testing.T) {
+	server, gotAlg := newWrappingAlgRecorder(t, `{"key_id":"k1","timestamp":1700000000}`)
+	tr := newTestTransport(t, server)
+	_, err := tr.Request(context.Background(), "KMS", "ExportKey",
+		&kmsclient.ExportKeyRequest{KeyID: "k1", WrappingAlgorithm: kmsclient.WrappingAlgorithm(255)})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := <-gotAlg; got != "" {
+		t.Errorf("wrapping_algorithm = %q, want empty", got)
 	}
 }
 
