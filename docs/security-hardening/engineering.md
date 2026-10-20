@@ -1794,8 +1794,25 @@ leaves a revoked certificate stored; the next boot skips the revocation,
 which the CA would refuse, and replaces the certificate. If the CA cannot
 answer, the server refuses to start.
 
-An operator-supplied `security.tls_cert_file` / `tls_key_file` is served as
-given and is never re-issued.
+`security.tls_cert_file` and `security.tls_key_file` decide where the server
+certificate comes from. There are four outcomes:
+
+- **Neither path configured.** The server issues its own certificate and
+  writes it to the default certs directory. On later boots the SAN check
+  above runs on it.
+- **Both files exist and hold this server's certificate.** The server treats
+  the certificate as self-issued when its leaf is byte-identical to the
+  certificate the CA stores for the server CN and chains to this CA. The
+  server keeps managing it: the SAN check runs on it, and a re-issued
+  certificate is written back to the configured paths.
+- **Both files exist and hold any other certificate.** This covers a
+  certificate from another CA, or one this CA has since superseded. The
+  server treats it as the operator's, serves it as given and never re-issues
+  it or writes over it.
+- **A configured path is absent, or only one of the two is configured.** The
+  boot fails with `ServerCertPathError` (matching `ErrServerCertPath`). The
+  error names both configured paths and says which key is absent or unset.
+  The server writes no certificate or key file.
 
 ### gRPC FIPS Validation
 

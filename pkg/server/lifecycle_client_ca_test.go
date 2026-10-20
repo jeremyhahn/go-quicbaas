@@ -87,8 +87,6 @@ func newClientCATestServer(t *testing.T, tlsClientAuth bool) *Server {
 	cfg.Security.TLSClientAuth = tlsClientAuth
 	cfg.Storage.DataDir = t.TempDir()
 	cfg.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
-	cfg.Security.TLSCertFile = filepath.Join(t.TempDir(), "server.crt")
-	cfg.Security.TLSKeyFile = filepath.Join(t.TempDir(), "server.key")
 	cfg.Security.TLSCAFile = filepath.Join(t.TempDir(), "ca-chain.crt")
 
 	srv, err := NewServer(cfg)

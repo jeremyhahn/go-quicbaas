@@ -604,15 +604,21 @@ func (s *Server) initializeCA() error {
 	// single CA across all nodes) bypass the auto-generated per-node CA path
 	// while keeping the default behaviour intact for plain installs.
 	//
-	// operatorCertPaths records whether the operator configured the cert or
-	// key path. Only then are files found there the operator's own: files at
-	// the defaulted paths are the server cert this CA issued on an earlier
-	// boot, and loading them would skip the SAN check in issueServerCert.
-	operatorCertPaths := s.config.Security.TLSCertFile != "" || s.config.Security.TLSKeyFile != ""
-	if s.config.Security.TLSCertFile == "" {
-		s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
+	// serverCertProvenance decides, from the configured cert and key paths,
+	// whether the server issues its own certificate (no path configured),
+	// keeps managing one its CA issued at the configured paths, or serves
+	// the operator's as given. A configured path that is unset or absent
+	// refuses the boot before anything is written.
+	certCN := s.config.Server.Host
+	if certCN == "" || certCN == "0.0.0.0" {
+		certCN = "localhost"
 	}
-	if s.config.Security.TLSKeyFile == "" {
+	certSource, err := serverCertProvenance(xkmsCA, s.config.Security.TLSCertFile, s.config.Security.TLSKeyFile, certCN)
+	if err != nil {
+		return err
+	}
+	if certSource == serverCertUnconfigured {
+		s.config.Security.TLSCertFile = filepath.Join(certsDir, "server.crt")
 		s.config.Security.TLSKeyFile = filepath.Join(certsDir, "server.key")
 	}
 	if s.config.Security.TLSCAFile == "" {
@@ -620,57 +626,50 @@ func (s *Server) initializeCA() error {
 	}
 	s.config.Security.TLSEnabled = true
 
-	// If the operator has provided an explicit server cert and key on disk
-	// (e.g. an integration cluster mounting a shared CA across all nodes,
-	// or a production deployment with externally-managed certs), load them
-	// directly and skip the per-boot CA-issued server cert path. This makes
-	// the listener serve the operator's cert chain instead of a freshly-
-	// issued, per-node cert that no external client can trust.
-	if operatorCertPaths {
-		if _, certErr := os.Stat(s.config.Security.TLSCertFile); certErr == nil {
-			if _, keyErr := os.Stat(s.config.Security.TLSKeyFile); keyErr == nil {
-				pair, loadErr := tls.LoadX509KeyPair(s.config.Security.TLSCertFile, s.config.Security.TLSKeyFile)
-				if loadErr != nil {
-					return api.NewOperationFailedError("load operator server cert/key", loadErr)
-				}
-				s.tlsConfig = &tls.Config{
-					Certificates: []tls.Certificate{pair},
-					MinVersion:   tls.VersionTLS13,
-					NextProtos:   []string{"h2", "http/1.1"},
-				}
-				// Wire the operator-provided CA for optional mTLS so per-route
-				// client-cert validation still works with externally-managed
-				// chains.
-				if s.config.Security.TLSCAFile != "" {
-					if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
-						pool := x509.NewCertPool()
-						if pool.AppendCertsFromPEM(caBytes) {
-							s.tlsConfig.ClientCAs = pool
-							if !s.config.Security.TLSClientAuth {
-								s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
-							}
-						}
+	// The operator's own cert and key (e.g. an integration cluster mounting
+	// a shared CA across all nodes, or a production deployment with
+	// externally-managed certs) are loaded directly and never re-issued, so
+	// the listener serves the operator's chain instead of a per-node cert
+	// that no external client can trust.
+	if certSource == serverCertOperator {
+		pair, loadErr := tls.LoadX509KeyPair(s.config.Security.TLSCertFile, s.config.Security.TLSKeyFile)
+		if loadErr != nil {
+			return api.NewOperationFailedError("load operator server cert/key", loadErr)
+		}
+		s.tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{pair},
+			MinVersion:   tls.VersionTLS13,
+			NextProtos:   []string{"h2", "http/1.1"},
+		}
+		// Wire the operator-provided CA for optional mTLS so per-route
+		// client-cert validation still works with externally-managed
+		// chains.
+		if s.config.Security.TLSCAFile != "" {
+			if caBytes, caErr := os.ReadFile(s.config.Security.TLSCAFile); caErr == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caBytes) {
+					s.tlsConfig.ClientCAs = pool
+					if !s.config.Security.TLSClientAuth {
+						s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 					}
 				}
-				// Full-mTLS clusters require every client to present a cert and
-				// must also trust the platform xkms CA so agent mTLS certs
-				// (OU=agents) verify alongside the operator's own client CAs.
-				if s.config.Security.TLSClientAuth {
-					if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
-						return err
-					}
-				}
-				s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
-				return nil
 			}
 		}
+		// Full-mTLS clusters require every client to present a cert and
+		// must also trust the platform xkms CA so agent mTLS certs
+		// (OU=agents) verify alongside the operator's own client CAs.
+		if s.config.Security.TLSClientAuth {
+			if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
+				return err
+			}
+		}
+		s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)
+		return nil
 	}
 
-	// Issue a server TLS certificate - CA generates the key through its keystore backend
-	certCN := s.config.Server.Host
-	if certCN == "" || certCN == "0.0.0.0" {
-		certCN = "localhost"
-	}
+	// Issue (or keep, or re-issue) the server TLS certificate - CA generates
+	// the key through its keystore backend. A self-issued cert at configured
+	// paths takes this path too, and is written back to those paths.
 
 	serverRequest := &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{

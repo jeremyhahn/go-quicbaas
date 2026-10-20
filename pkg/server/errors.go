@@ -16,6 +16,7 @@ package server
 import (
 	"errors"
 	"strconv"
+	"strings"
 )
 
 // Server package errors.
@@ -82,6 +83,10 @@ var (
 	// ErrUpdateCANotReady is returned by UpdateCA when the server has not yet
 	// started or when TLS is disabled (no CA adapter was wired at startup).
 	ErrUpdateCANotReady = errors.New("server: CA adapter not ready — server may not be started or TLS is disabled")
+
+	// ErrServerCertPath is returned when a configured server TLS cert or key
+	// path is unset or absent.
+	ErrServerCertPath = errors.New("server: configured TLS cert/key path refused")
 )
 
 // ServerCauseError wraps a server operation error with an underlying cause.
@@ -720,3 +725,36 @@ func (e *ClusterCAPassphraseError) Error() string {
 
 // Unwrap returns the underlying cause for errors.Is/As traversal.
 func (e *ClusterCAPassphraseError) Unwrap() error { return e.Cause }
+
+// ServerCertPathProblem says why a configured server TLS path is refused.
+type ServerCertPathProblem string
+
+const (
+	// ServerCertPathUnset: only one of security.tls_cert_file and
+	// security.tls_key_file is configured.
+	ServerCertPathUnset ServerCertPathProblem = "unset"
+	// ServerCertPathAbsent: a configured path has no file behind it.
+	ServerCertPathAbsent ServerCertPathProblem = "absent"
+)
+
+// ServerCertPathError refuses a boot whose configured server TLS paths
+// cannot be served. The server self-issues only when neither path is
+// configured, so it never writes a certificate to a configured path that
+// holds none. Keys names the config keys that are unset or absent.
+type ServerCertPathError struct {
+	CertFile string
+	KeyFile  string
+	Problem  ServerCertPathProblem
+	Keys     []string
+}
+
+// Error implements the error interface.
+func (e *ServerCertPathError) Error() string {
+	return "server TLS: " + strings.Join(e.Keys, " and ") + " " + string(e.Problem) +
+		" (security.tls_cert_file=" + strconv.Quote(e.CertFile) +
+		", security.tls_key_file=" + strconv.Quote(e.KeyFile) +
+		"); configure both files, or neither to let the server issue its own"
+}
+
+// Unwrap returns the sentinel error for errors.Is support.
+func (e *ServerCertPathError) Unwrap() error { return ErrServerCertPath }
