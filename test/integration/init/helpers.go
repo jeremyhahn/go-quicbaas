@@ -50,6 +50,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -465,6 +466,9 @@ const matrixPassphrase = "init-matrix-passphrase-2026"
 // init fails closed without it.
 const matrixTrustDomain = "quicbaas.integration.test"
 
+// trustDomainConfig is the iam section every matrix config file starts with.
+const trustDomainConfig = "iam:\n  spiffe_trust_domain: " + matrixTrustDomain + "\n"
+
 // writeInitConfig writes the minimal config file `quicbaasd init` needs and
 // returns its path.
 //
@@ -475,9 +479,27 @@ const matrixTrustDomain = "quicbaas.integration.test"
 // still exercising the real operator path.
 func writeInitConfig(dataDir string) (string, error) {
 	path := filepath.Join(dataDir, "init-config.yaml")
-	body := "iam:\n  spiffe_trust_domain: " + matrixTrustDomain + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(trustDomainConfig), 0o600); err != nil {
 		return "", fmt.Errorf("writeInitConfig: %w", err)
+	}
+	return path, nil
+}
+
+// backendConfigPath is where writeBackendConfig puts a cell's config file.
+func backendConfigPath(dataDir string) string {
+	return filepath.Join(dataDir, "backend-config.yaml")
+}
+
+// writeBackendConfig writes the config file the backend matrix hands to BOTH
+// `quicbaasd init` and `quicbaasd start`: the trust domain plus the storage
+// engine under test. Start needs the trust domain too, because on a
+// non-durable engine first-boot runs again at start and refuses to issue the
+// admin certificate without one (#1732).
+func writeBackendConfig(dataDir, backend string) (string, error) {
+	path := backendConfigPath(dataDir)
+	body := trustDomainConfig + "storage:\n  backend: " + backend + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return "", fmt.Errorf("writeBackendConfig: %w", err)
 	}
 	return path, nil
 }
@@ -565,12 +587,28 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 // per-subtest path under the data dir.
 func startDaemon(t *testing.T, binary string, dataDir string, strategy string, transport string, ports PortBundle) *DaemonProcess {
 	t.Helper()
+	return startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports)
+}
 
+// unknownTransportError reports a transport the harness cannot start.
+type unknownTransportError string
+
+func (e unknownTransportError) Error() string {
+	return "unknown transport " + strconv.Quote(string(e))
+}
+
+// daemonStartArgs builds the `quicbaasd start` command line for a transport.
+// A non-empty cfgPath is passed as --config, so start reads the same config
+// file init did.
+func daemonStartArgs(dataDir, cfgPath, transport string, ports PortBundle) ([]string, error) {
 	args := []string{
 		"start",
 		"--data-dir", dataDir,
 		"--log-level", "warn",
-		"--http-port", fmt.Sprintf("%d", ports.REST),
+		"--http-port", strconv.Itoa(ports.REST),
+	}
+	if cfgPath != "" {
+		args = append(args, "--config", cfgPath)
 	}
 
 	// Unix socket is the unconditional gRPC anchor. gRPC TCP is opt-in
@@ -578,11 +616,27 @@ func startDaemon(t *testing.T, binary string, dataDir string, strategy string, t
 	// transport and we do not want the daemon binding a stray TCP port.
 	switch transport {
 	case "grpc":
-		args = append(args, "--grpc-port", fmt.Sprintf("%d", ports.GRPC), "--unix-socket", ports.Unix)
+		args = append(args, "--grpc-port", strconv.Itoa(ports.GRPC), "--unix-socket", ports.Unix)
 	case "rest", "unix", "quic", "mcp":
 		args = append(args, "--grpc-port", "0", "--unix-socket", ports.Unix)
 	default:
-		t.Fatalf("startDaemon: unknown transport %q", transport)
+		return nil, unknownTransportError(transport)
+	}
+	return args, nil
+}
+
+// startDaemonWithConfig is startDaemon with an optional config file: a
+// non-empty cfgPath is handed to `quicbaasd start --config`.
+func startDaemonWithConfig(
+	t *testing.T,
+	binary, dataDir, cfgPath, strategy, transport string,
+	ports PortBundle,
+) *DaemonProcess {
+	t.Helper()
+
+	args, err := daemonStartArgs(dataDir, cfgPath, transport, ports)
+	if err != nil {
+		t.Fatalf("startDaemon: %v", err)
 	}
 
 	// Build the env-var override set that turns each transport on/off

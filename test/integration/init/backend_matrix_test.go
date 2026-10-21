@@ -103,7 +103,7 @@ func runBackendCell(t *testing.T, daemonBinary, cliBinary, backend, transport st
 	// Phase 2: start the daemon on the SAME backend and wait for the
 	// transport under test.
 	ports := allocPortBundle(t, transport, dataDir)
-	daemon := startDaemonOnBackend(t, daemonBinary, dataDir, transport, backend, ports)
+	daemon := startDaemonOnBackend(t, daemonBinary, dataDir, transport, ports)
 	if err := waitForTransportReady(ctx, t, daemon, transport, ports, dataDir); err != nil {
 		t.Fatalf("backend %q over %q never became ready: %v", backend, transport, err)
 	}
@@ -143,11 +143,9 @@ func runInitOnBackend(ctx context.Context, binary, dataDir, backend string) (str
 	if err := os.MkdirAll(dataDir, 0o750); err != nil {
 		return "", fmt.Errorf("runInitOnBackend: mkdir data dir: %w", err)
 	}
-	cfgPath := filepath.Join(dataDir, "backend-config.yaml")
-	body := "iam:\n  spiffe_trust_domain: " + matrixTrustDomain + "\n" +
-		"storage:\n  backend: " + backend + "\n"
-	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
-		return "", fmt.Errorf("runInitOnBackend: write config: %w", err)
+	cfgPath, err := writeBackendConfig(dataDir, backend)
+	if err != nil {
+		return "", err
 	}
 
 	args := []string{
@@ -162,16 +160,17 @@ func runInitOnBackend(ctx context.Context, binary, dataDir, backend string) (str
 	return string(out), err
 }
 
-// startDaemonOnBackend starts the daemon with the storage backend pinned via
-// the canonical env-var override, so start and init agree on the engine.
+// startDaemonOnBackend starts the daemon on the config file runInitOnBackend
+// wrote, so start and init agree on the engine and the trust domain. The
+// file is the only channel: spawnDaemon passes the child no environment
+// beyond what the harness sets, and the trust domain has no env binding.
 func startDaemonOnBackend(
 	t *testing.T,
-	binary, dataDir, transport, backend string,
+	binary, dataDir, transport string,
 	ports PortBundle,
 ) *DaemonProcess {
 	t.Helper()
-	t.Setenv("QUICBAAS_STORAGE_BACKEND", backend)
-	return startDaemon(t, binary, dataDir, "none", transport, ports)
+	return startDaemonWithConfig(t, binary, dataDir, backendConfigPath(dataDir), "none", transport, ports)
 }
 
 // verifyDataRoundTrip writes a key through the CLI and reads it back over the
