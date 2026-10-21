@@ -20,7 +20,13 @@
 # digest from RepoDigests on a line that starts with `WORKER-IMAGE-DIGEST`.
 # A content tag is never overwritten: when <tag> is already in the registry the
 # job pushes nothing and prints the existing digest. A host that does not hold
-# the image fails the job before anything is pushed; dispatch again.
+# the image fails the job before anything is pushed.
+#
+# WHERE IT RUNS (go-quicbaas#1750). The image is only on the host that built or
+# loaded it, and `ubuntu-latest` hands the job to any general runner, so a
+# publish could land on a host without the image and fail. The `runner` input
+# names a runner label carried only by the build host's runner; the publish job
+# runs there. Left empty, the job runs on `ubuntu-latest` as before.
 #
 # The job reaches the host's Docker daemon through the socket the runner mounts
 # into every job container (go-quicbaas#1168 tracks that exposure). Login uses a
@@ -40,7 +46,7 @@
 #
 # WHO RUNS IT. The coordinator, once per image:
 #   POST /repos/{owner}/{repo}/actions/workflows/worker-image.yml/dispatches
-#        {"ref":"main","inputs":{"image":"<image>","tag":"<tag>"}}
+#        {"ref":"main","inputs":{"image":"<image>","tag":"<tag>","runner":"<build host label>"}}
 # then pulls <registry>/<REGISTRY_USER>/<image>@<digest> on every node and
 # checks that each host holds TAG@digest. To move `current`, once per image:
 #        {"ref":"main","inputs":{"image":"<image>","current":"sha256:<hex>"}}
@@ -62,6 +68,10 @@ on:
         description: "Move the current tag to this already published digest (sha256:<64 hex>) instead of publishing"
         required: false
         default: ""
+      runner:
+        description: "Runner label of the host that holds the image; empty runs on ubuntu-latest"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -70,7 +80,7 @@ jobs:
   publish:
     name: Publish worker image
     if: ${{ inputs.current == '' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - name: Push and report the digest
