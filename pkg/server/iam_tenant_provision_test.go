@@ -854,6 +854,16 @@ func TestIAMComponents_GetTenantProvisioner(t *testing.T) {
 
 func newPIVChain(t *testing.T) (*x509.CertPool, []byte) {
 	t.Helper()
+	root, leafPEM := newPIVRootAndLeaf(t)
+	pool := x509.NewCertPool()
+	pool.AddCert(root)
+	return pool, leafPEM
+}
+
+// newPIVRootAndLeaf issues a self-signed root and a ClientAuth leaf under it,
+// returning the root and the leaf PEM.
+func newPIVRootAndLeaf(t *testing.T) (*x509.Certificate, []byte) {
+	t.Helper()
 	now := time.Now()
 
 	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -884,8 +894,5 @@ func newPIVChain(t *testing.T) (*x509.CertPool, []byte) {
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, root, &leafKey.PublicKey, rootKey)
 	require.NoError(t, err)
-
-	pool := x509.NewCertPool()
-	pool.AddCert(root)
-	return pool, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+	return root, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
 }

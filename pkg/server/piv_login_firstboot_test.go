@@ -33,6 +33,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // xkmsPIVLoginPath is the xkms module's own certificate login route, the one
@@ -44,7 +45,7 @@ const xkmsPIVLoginPath = "/api/v1/auth/login/piv"
 // a bootstrap admin PIV certificate, PIV login enabled and unattested login
 // allowed. It then runs IAM initialization, and so first boot, exactly as the
 // daemon does, and returns the server and the bound certificate.
-func newIntegrationLikeNode(t *testing.T) (*Server, *x509.Certificate) {
+func newIntegrationLikeNode(t *testing.T, configure ...func(*Server)) (*Server, service.IAMComponents, *x509.Certificate) {
 	t.Helper()
 	setupOIDCTestXKMS(t)
 	srv := newFreshInstallNode(t)
@@ -54,8 +55,11 @@ func newIntegrationLikeNode(t *testing.T) (*Server, *x509.Certificate) {
 	srv.config.IAM.PIVLogin.AllowUnattested = true
 	certPath, _ := writeBootstrapPIVCert(t)
 	srv.config.Auth.BootstrapAdminPIVCertPath = certPath
+	for _, fn := range configure {
+		fn(srv)
+	}
 
-	_, err := srv.initializeIAMComponents()
+	components, err := srv.initializeIAMComponents()
 	require.NoError(t, err, "first boot")
 
 	certPEM, err := os.ReadFile(certPath)
@@ -64,7 +68,7 @@ func newIntegrationLikeNode(t *testing.T) (*Server, *x509.Certificate) {
 	require.NotNil(t, block)
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
-	return srv, cert
+	return srv, components, cert
 }
 
 // xkmsPIVLoginRouter mounts the xkms module the way unifiedModuleServerOptions
@@ -119,7 +123,7 @@ func postXKMSPIVLogin(router http.Handler, cert *x509.Certificate) *httptest.Res
 // account's permitted-method policy for mtls, and first boot left the admin
 // on the webauthn default, so every data-plane helper got 401.
 func TestFirstBoot_BootstrapAdminPIVCertLogsInThroughXKMS(t *testing.T) {
-	srv, cert := newIntegrationLikeNode(t)
+	srv, _, cert := newIntegrationLikeNode(t)
 
 	rec := postXKMSPIVLogin(xkmsPIVLoginRouter(t, srv), cert)
 
@@ -130,7 +134,7 @@ func TestFirstBoot_BootstrapAdminPIVCertLogsInThroughXKMS(t *testing.T) {
 // TestFirstBoot_UnboundCertIsRefusedByXKMSPIVLogin is the refusal beside it:
 // a certificate first boot did not bind must not log in.
 func TestFirstBoot_UnboundCertIsRefusedByXKMSPIVLogin(t *testing.T) {
-	srv, _ := newIntegrationLikeNode(t)
+	srv, _, _ := newIntegrationLikeNode(t)
 	otherPath, _ := writeBootstrapPIVCert(t)
 	otherPEM, err := os.ReadFile(otherPath)
 	require.NoError(t, err)

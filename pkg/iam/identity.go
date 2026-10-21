@@ -572,15 +572,25 @@ func (s *IdentityStore) PermitCertificateLogin(ctx context.Context, tenantID str
 	if err != nil {
 		return nil, err
 	}
-	if len(user.AuthMethods) == 0 || slices.Contains(user.AuthMethods, AuthMethodMTLS) {
+	if !user.permitCertificateLogin() {
 		return user, nil
 	}
-	user.AuthMethods = append(user.AuthMethods, AuthMethodMTLS)
 	user.Updated = time.Now().UTC()
 	if err := s.userStorage.UpdateUser(ctx, user); err != nil {
 		return nil, err
 	}
 	return user, nil
+}
+
+// permitCertificateLogin adds AuthMethodMTLS to the user's permitted-method
+// policy and reports whether the policy changed. An empty policy permits
+// every method and is left alone, as is one that already permits mtls.
+func (u *User) permitCertificateLogin() bool {
+	if len(u.AuthMethods) == 0 || slices.Contains(u.AuthMethods, AuthMethodMTLS) {
+		return false
+	}
+	u.AuthMethods = append(u.AuthMethods, AuthMethodMTLS)
+	return true
 }
 
 // UpdateUser updates an existing user.

@@ -257,6 +257,9 @@ func (a *PIVActivator) commitActivation(ctx context.Context, tenantID, token str
 	// to clear.
 	user.Lifecycle = LifecycleActive
 	user.SetPIVThumbprints(qrdbsdk.ComputeSPKIThumbprint(cert), xkmssdk.PIVThumbprintSHA256(cert))
+	// go-xkms's certificate login admits the bound certificate only when the
+	// policy permits mtls; piv stays (CA Decision 103).
+	user.permitCertificateLogin()
 	user.Updated = time.Now().UTC()
 	if err := a.userStorage.UpdateUser(ctx, user); err != nil {
 		if a.activationPersisted(ctx, invite, cert) {
