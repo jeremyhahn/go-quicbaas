@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -401,6 +402,205 @@ func makeBuildTagSets(t *testing.T, arg string) []map[string]bool {
 		t.Fatalf("make -n build %s printed no go build line:\n%s", arg, out)
 	}
 	return sets
+}
+
+// makeRepoTagLines dry-runs make target with arg and returns every printed
+// line carrying the repository tag hashicorpmetrics. It fails the test when
+// there is none.
+// stageInvocation is one tool invocation in a CI stage's recipe that must
+// build with the repository tags. cmd finds the invocation whether or not it
+// still carries its tag argument, so an invocation that loses that argument
+// is reported, not skipped; tags captures the invocation's own tag list.
+type stageInvocation struct {
+	role  string
+	count int
+	cmd   *regexp.Regexp
+	tags  *regexp.Regexp
+}
+
+var (
+	singleQuotedTags = regexp.MustCompile(`\s-tags '([^']*)'`)
+	golangciTags     = regexp.MustCompile(`\s--build-tags '([^']*)'`)
+	gosecTags        = regexp.MustCompile(`\s-tags "\$\(echo '([^']*)'`)
+	secureTags       = regexp.MustCompile(`secure-analyzer\.sh \S+ '([^']*)'`)
+	selfTestTags     = regexp.MustCompile(`SECURE_ANALYZER_SELFTEST_TAGS='([^']*)'`)
+)
+
+// stageInvocations lists, per make target a CI stage runs, every invocation
+// that builds with the repository tags. Targets run in this order.
+var stageInvocations = []struct {
+	target      string
+	invocations []stageInvocation
+}{
+	{target: "coverage", invocations: []stageInvocation{
+		{role: "package discovery go list", count: 1, cmd: regexp.MustCompile(`^pkgs=\$\(go list .*\./pkg/\.\.\. \./cmd/\.\.\.\)`), tags: singleQuotedTags},
+		{role: "coverage go test", count: 1, cmd: regexp.MustCompile(`\bgo test -race .*-coverprofile=`), tags: singleQuotedTags},
+		{role: "tag-pass go test", count: 3, cmd: regexp.MustCompile(`^go test -p 2 .*\./pkg/\.\.\. \./cmd/\.\.\.$`), tags: singleQuotedTags},
+		{role: "tooling go test", count: 1, cmd: regexp.MustCompile(`^go test -p 2 .*\./scripts/\.\.\. \./test/buildgates/\.\.\.$`), tags: singleQuotedTags},
+	}},
+	{target: "lint", invocations: []stageInvocation{
+		{role: "go vet integration tree", count: 1, cmd: regexp.MustCompile(`^go vet .*\./test/\.\.\.$`), tags: singleQuotedTags},
+		{role: "go vet integration-tagged", count: 1, cmd: regexp.MustCompile(`^go vet .*\$scope$`), tags: singleQuotedTags},
+		{role: "go vet hardware unit", count: 1, cmd: regexp.MustCompile(`^go vet .*\$unit `), tags: singleQuotedTags},
+		{role: "go vet hardware integration", count: 1, cmd: regexp.MustCompile(`^go vet .*\$integ$`), tags: singleQuotedTags},
+		{role: "secure-analyzer maximal", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh maximal `), tags: secureTags},
+		{role: "secure-analyzer standard", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh standard `), tags: secureTags},
+		{role: "secure-analyzer lean", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh lean `), tags: secureTags},
+		{role: "secure-analyzer minimal", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh minimal `), tags: secureTags},
+		{role: "secure-analyzer desktop", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh desktop `), tags: secureTags},
+		{role: "secure-analyzer integration-test", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh integration-test `), tags: secureTags},
+		{role: "secure-analyzer integration-tagged", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh integration-tagged `), tags: secureTags},
+		{role: "secure-analyzer hardware-unit", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh hardware-unit `), tags: secureTags},
+		{role: "secure-analyzer hardware-integration", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh hardware-integration `), tags: secureTags},
+		{role: "secure-analyzer self-test", count: 1, cmd: regexp.MustCompile(`scripts/secure-analyzer_test\.sh `), tags: selfTestTags},
+		{role: "golangci-lint run", count: 1, cmd: regexp.MustCompile(`golangci-lint run `), tags: golangciTags},
+	}},
+	{target: "gosec", invocations: []stageInvocation{
+		{role: "gosec scan", count: 1, cmd: regexp.MustCompile(`^\$GOSEC_BIN `), tags: gosecTags},
+	}},
+}
+
+// makeDryRun prints target's commands from makefile without running them.
+// TEST_CHECKS is emptied: those checks run scripts even under -n and carry
+// none of the invocations stageInvocations names. MAKE carries makefile into
+// the recursive makes, so a scratch copy reaches their recipes too.
+func makeDryRun(t *testing.T, makefile, target, arg string) string {
+	t.Helper()
+	makefile, err := filepath.Abs(makefile)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", makefile, err)
+	}
+	out, err := exec.Command("make", "-n", "--no-print-directory", "-C", repoRoot, "-f", makefile, target, arg, "TEST_CHECKS=", "MAKE=make -f "+makefile).CombinedOutput()
+	if err != nil {
+		t.Fatalf("make -n %s %s: %v\n%s", target, arg, err, out)
+	}
+	return string(out)
+}
+
+// shellCommands splits make -n output into simple commands: continuation
+// lines are joined and the result is cut at newlines and semicolons, so each
+// command holds one tool invocation and the arguments it was given.
+func shellCommands(out string) []string {
+	joined := strings.ReplaceAll(out, "\\\n", " ")
+	var commands []string
+	for _, line := range strings.Split(joined, "\n") {
+		for _, command := range strings.Split(line, ";") {
+			if command = strings.TrimSpace(command); command != "" {
+				commands = append(commands, command)
+			}
+		}
+	}
+	return commands
+}
+
+// stageTagFindings checks every invocation of target in out. Each one must be
+// present count times and its own tag list must hold every probe (want) or
+// none of them (!want); a finding names the target and the invocation's role.
+func stageTagFindings(target string, invocations []stageInvocation, out string, probes []string, want bool) []string {
+	commands := shellCommands(out)
+	var findings []string
+	for _, inv := range invocations {
+		found := 0
+		for _, command := range commands {
+			if !inv.cmd.MatchString(command) {
+				continue
+			}
+			found++
+			match := inv.tags.FindStringSubmatch(command)
+			if match == nil {
+				findings = append(findings, target+" "+inv.role+": no tag argument in "+command)
+				continue
+			}
+			tags := strings.FieldsFunc(match[1], func(r rune) bool { return r == ' ' || r == ',' })
+			for _, probe := range probes {
+				if slices.Contains(tags, probe) != want {
+					findings = append(findings, target+" "+inv.role+": tag list "+match[1]+" carries probe "+probe+" = "+strconv.FormatBool(!want)+", want "+strconv.FormatBool(want))
+				}
+			}
+		}
+		if found != inv.count {
+			findings = append(findings, target+" "+inv.role+": found "+strconv.Itoa(found)+" invocations, want "+strconv.Itoa(inv.count))
+		}
+	}
+	return findings
+}
+
+// TestMakeStagesHonourGoBuildTags proves the ci-template v1.21 contract for the
+// non-build stages: a GO_BUILD_TAGS value passed as a make variable reaches the
+// go build/go test invocations of make coverage, lint and gosec (#1580).
+func TestMakeStagesHonourGoBuildTags(t *testing.T) {
+	probes := []string{"gobuildtagsprobea", "gobuildtagsprobeb"}
+	cases := []struct {
+		name string
+		arg  string
+		want bool
+	}{
+		{name: "space separated list", arg: "GO_BUILD_TAGS=" + strings.Join(probes, " "), want: true},
+		{name: "empty", arg: "GO_BUILD_TAGS=", want: false},
+	}
+	for _, stage := range stageInvocations {
+		for _, tc := range cases {
+			t.Run(stage.target+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				out := makeDryRun(t, makefilePath, stage.target, tc.arg)
+				for _, finding := range stageTagFindings(stage.target, stage.invocations, out, probes, tc.want) {
+					t.Error(finding)
+				}
+			})
+		}
+	}
+}
+
+// TestMakeStageTagCheckCatchesALostTagArgument deletes one invocation's tag
+// argument from a copy of the Makefile and requires the check to name it.
+func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
+	makefile := readFile(t, makefilePath)
+	probes := []string{"gobuildtagsprobea"}
+	cases := []struct {
+		target string
+		role   string
+		from   string
+		to     string
+	}{
+		{target: "coverage", role: "package discovery go list", from: "$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),", to: "$(call go_packages,$(COVER_PKGS),"},
+		{target: "coverage", role: "coverage go test", from: "-timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=", to: "-timeout=$(RACE_TIMEOUT) -coverprofile="},
+		{target: "coverage", role: "tag-pass go test", from: "-p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m", to: "-p 2 -timeout=10m"},
+		{target: "coverage", role: "tooling go test", from: "-p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/...", to: "-p 2 -timeout=10m ./scripts/..."},
+		{target: "lint", role: "go vet integration tree", from: "vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...", to: "vet ./test/..."},
+		{target: "lint", role: "go vet integration-tagged", from: "vet -tags '$(INTEGRATION_VET_TAGS)' $$scope", to: "vet $$scope"},
+		{target: "lint", role: "go vet hardware unit", from: "vet -tags '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $$unit", to: "vet $$unit"},
+		{target: "lint", role: "go vet hardware integration", from: "vet -tags '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' $$integ", to: "vet $$integ"},
+		{target: "lint", role: "secure-analyzer maximal", from: "secure-analyzer.sh $* '$(SECURE_ANALYZER_TAGS_$*)' ", to: "secure-analyzer.sh $* "},
+		{target: "lint", role: "secure-analyzer integration-test", from: "secure-analyzer.sh integration-test '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-test "},
+		{target: "lint", role: "secure-analyzer integration-tagged", from: "secure-analyzer.sh integration-tagged '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-tagged "},
+		{target: "lint", role: "secure-analyzer hardware-unit", from: "secure-analyzer.sh hardware-unit '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-unit "},
+		{target: "lint", role: "secure-analyzer hardware-integration", from: "secure-analyzer.sh hardware-integration '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-integration "},
+		{target: "lint", role: "secure-analyzer self-test", from: "SECURE_ANALYZER_SELFTEST_TAGS='$(TEST_TAGS)' ", to: ""},
+		{target: "lint", role: "golangci-lint run", from: "--build-tags '$(LINT_BUILD_TAGS)' ", to: ""},
+		{target: "gosec", role: "gosec scan", from: "-tags \"$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')\" ", to: ""},
+	}
+	invocations := map[string][]stageInvocation{}
+	for _, stage := range stageInvocations {
+		invocations[stage.target] = stage.invocations
+	}
+	for _, tc := range cases {
+		t.Run(tc.target+"/"+tc.role, func(t *testing.T) {
+			t.Parallel()
+			if strings.Count(makefile, tc.from) != 1 {
+				t.Fatalf("Makefile holds %q %d times, want once", tc.from, strings.Count(makefile, tc.from))
+			}
+			scratch := filepath.Join(t.TempDir(), "Makefile")
+			if err := os.WriteFile(scratch, []byte(strings.Replace(makefile, tc.from, tc.to, 1)), 0o600); err != nil {
+				t.Fatalf("write scratch Makefile: %v", err)
+			}
+			out := makeDryRun(t, scratch, tc.target, "GO_BUILD_TAGS="+probes[0])
+			want := tc.target + " " + tc.role + ": no tag argument"
+			findings := stageTagFindings(tc.target, invocations[tc.target], out, probes, true)
+			if !slices.ContainsFunc(findings, func(f string) bool { return strings.HasPrefix(f, want) }) {
+				t.Errorf("deleting %q: findings %q do not report %q", tc.from, findings, want)
+			}
+		})
+	}
 }
 
 // TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
