@@ -1,0 +1,3 @@
+### Fixed
+
+- Integration clients now act as a tenant principal. Before this fix they sent no bearer, or the system admin's bearer, which binds no tenant, so tenant-scoped services refused them: REST with 403 and gRPC with PermissionDenied "no tenant is bound to the request". Each test process now has the system admin provision a tenant and logs in as that tenant's admin through the PIV mTLS login. The resulting bearer is sent by REST, gRPC, Unix and SDK clients, and `ReleaseDataPlaneTenants` deletes the tenant when the run ends. Tests that drive a service in-process (storage/object, standalone) bind their tenant on the request context instead (#1731).

@@ -166,7 +166,7 @@ func storeProcessorTestSecret(t *testing.T, endpoint, path, value string) {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -190,7 +190,7 @@ func deleteProcessorTestSecret(t *testing.T, endpoint, path string) {
 		return
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Logf("Failed to delete secret %s: %v", path, err)
@@ -210,7 +210,7 @@ func deleteProcessorTestSecret(t *testing.T, endpoint, path string) {
 func createProcessorTestRegistry(t *testing.T, endpoint string) *secrets.ResolverRegistry {
 	t.Helper()
 
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	kmsResolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, kmsResolver)
 

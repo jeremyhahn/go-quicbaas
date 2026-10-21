@@ -158,6 +158,7 @@ func TestRaftDataReplication(t *testing.T) {
 	conn1, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn1.Close()
@@ -208,6 +209,7 @@ func TestRaftDataReplication(t *testing.T) {
 			conn, err = grpc.DialContext(ctx, endpoint,
 				grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
 				grpc.WithBlock(),
+				grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 			)
 			require.NoError(t, err, "Failed to connect to node %d", i+1)
 			defer conn.Close()
@@ -279,6 +281,7 @@ func TestRaftConsistentReads(t *testing.T) {
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn.Close()
@@ -361,6 +364,7 @@ func TestRaftDeleteOperation(t *testing.T) {
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn.Close()

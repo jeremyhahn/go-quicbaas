@@ -32,6 +32,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -85,15 +86,19 @@ func TestSessionAttachSSE_JSONHistoryReachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Session history is tenant-scoped: the tenant principal reads it and
+	// may only name its own tenant.
+	baseURL := quicbaasURL()
 	u := fmt.Sprintf(
-		"%s/api/v1/orchestrator/sessions/phase9-integration-probe/events?tenant_id=default",
-		quicbaasURL(),
+		"%s/api/v1/orchestrator/sessions/phase9-integration-probe/events?tenant_id=%s",
+		baseURL, url.QueryEscape(helpers.TenantPrincipalID(t, baseURL)),
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+helpers.AuthTenantPrincipal(t, baseURL))
 
 	resp, err := httpClient().Do(req)
 	if err != nil {

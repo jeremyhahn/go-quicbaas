@@ -32,6 +32,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"google.golang.org/grpc"
+
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config/secrets"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -210,7 +212,7 @@ func (c *RESTClient) Name() string {
 func (c *RESTClient) Setup(t *testing.T, ctx context.Context) error {
 	t.Helper()
 	c.endpoint = getRESTEndpoint()
-	c.client = helpers.NewHTTPClient(30 * time.Second)
+	c.client = helpers.NewTenantHTTPClient(t, 30*time.Second)
 
 	// Verify connectivity
 	url := fmt.Sprintf("%s/health", c.endpoint)
@@ -348,7 +350,8 @@ func (c *GRPCClient) Setup(t *testing.T, ctx context.Context) error {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(c.endpoint, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(c.endpoint, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "connecting to gRPC endpoint " + c.endpoint, Cause: err}
 	}
@@ -453,7 +456,8 @@ func (c *UnixClient) Setup(t *testing.T, ctx context.Context) error {
 	unixEndpoint := fmt.Sprintf("unix://%s", c.socketPath)
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(unixEndpoint, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(unixEndpoint, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC Unix socket client", Cause: err}
 	}

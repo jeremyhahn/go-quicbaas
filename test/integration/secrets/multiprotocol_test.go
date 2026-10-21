@@ -242,7 +242,7 @@ func testStoreComprehensive(t *testing.T, ctx context.Context, protocol secretsP
 			SecretID: basePath + "/tenant-only",
 			Name:     "tenant-secret",
 			Data:     secretData,
-			TenantID: "tenant-001",
+			TenantID: helpers.TenantPrincipalID(t, getRESTEndpoint()),
 		}
 
 		resp, err := protocol.StoreSecret(ctx, req)
@@ -353,7 +353,7 @@ func testStoreComprehensive(t *testing.T, ctx context.Context, protocol secretsP
 			SecretID:  basePath + "/tenant-algo",
 			Name:      "tenant-algo-secret",
 			Data:      secretData,
-			TenantID:  "tenant-002",
+			TenantID:  helpers.TenantPrincipalID(t, getRESTEndpoint()),
 			Algorithm: "AES-256-GCM",
 		}
 
@@ -399,7 +399,7 @@ func testStoreComprehensive(t *testing.T, ctx context.Context, protocol secretsP
 			SecretID:  basePath + "/all-flags",
 			Name:      "all-flags-secret",
 			Data:      secretData,
-			TenantID:  "tenant-003",
+			TenantID:  helpers.TenantPrincipalID(t, getRESTEndpoint()),
 			KeyID:     "custom-key-003",
 			Algorithm: "AES-256-GCM",
 		}
@@ -942,7 +942,9 @@ func testDataPersistence(t *testing.T, ctx context.Context, protocol secretsProt
 func testTenantIsolation(t *testing.T, ctx context.Context, protocol secretsProtocol, basePath string) {
 	t.Helper()
 
-	// Create secrets for different tenants
+	// Two paths in the caller's own tenant: one protocol client is one
+	// principal, so this checks the paths stay apart. Isolation between
+	// tenants, with a principal per tenant, is TestMultiProtocol_TenantIsolation.
 	tenant1Path := basePath + "/tenant1-secret"
 	tenant2Path := basePath + "/tenant2-secret"
 
@@ -963,7 +965,7 @@ func testTenantIsolation(t *testing.T, ctx context.Context, protocol secretsProt
 		SecretID: tenant1Path,
 		Name:     "tenant1-secret",
 		Data:     tenant1Data,
-		TenantID: "tenant-1",
+		TenantID: helpers.TenantPrincipalID(t, getRESTEndpoint()),
 	})
 	require.NoError(t, err)
 
@@ -972,7 +974,7 @@ func testTenantIsolation(t *testing.T, ctx context.Context, protocol secretsProt
 		SecretID: tenant2Path,
 		Name:     "tenant2-secret",
 		Data:     tenant2Data,
-		TenantID: "tenant-2",
+		TenantID: helpers.TenantPrincipalID(t, getRESTEndpoint()),
 	})
 	require.NoError(t, err)
 
@@ -1643,7 +1645,7 @@ func (c *restProtocolClient) GetSecret(ctx context.Context, req *service.GetSecr
 		return nil, err
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(c.t, 10*time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1698,7 +1700,7 @@ func (c *restProtocolClient) ListSecrets(ctx context.Context, req *service.ListS
 		return nil, err
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(c.t, 10*time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1767,7 +1769,7 @@ func (c *restProtocolClient) UpdateSecretStatus(ctx context.Context, req *servic
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(c.t, 10*time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -1816,7 +1818,8 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load integration TLS config: %w", err)
 	}
-	client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to create gRPC client: %w", err)
@@ -1908,7 +1911,8 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	}
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("failed to create gRPC client over unix socket: %w", err)

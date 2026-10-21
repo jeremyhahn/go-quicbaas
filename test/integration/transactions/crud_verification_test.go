@@ -32,7 +32,7 @@ func TestCRUDPutAndVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	// Generate unique key to avoid test interference
@@ -57,7 +57,7 @@ func TestCRUDDeleteAndVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("test-crud-delete-%d", time.Now().UnixNano())
@@ -86,7 +86,7 @@ func TestCRUDOverwrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("test-crud-overwrite-%d", time.Now().UnixNano())
@@ -120,7 +120,7 @@ func TestCRUDNonExistentGet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	// Try to get a key that definitely doesn't exist
@@ -136,7 +136,7 @@ func TestCRUDEmptyValue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("test-crud-empty-%d", time.Now().UnixNano())
@@ -160,7 +160,7 @@ func TestCRUDLargeValue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("test-crud-large-%d", time.Now().UnixNano())
@@ -189,7 +189,7 @@ func TestCRUDMultipleKeys(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("test-crud-multi-%d", time.Now().UnixNano())
@@ -223,7 +223,7 @@ func TestCRUDDeleteNonExistent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("nonexistent-delete-%d", time.Now().UnixNano())
@@ -239,7 +239,7 @@ func TestCRUDRapidPutGet(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("test-rapid-%d", time.Now().UnixNano())
@@ -266,7 +266,7 @@ func TestCRUDSpecialCharactersInKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	specialKeys := []string{

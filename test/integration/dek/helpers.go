@@ -239,7 +239,7 @@ func (c *restProtocolClient) Name() string { return "REST" }
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := getRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available")
-	c.client = NewRESTDEKClient(endpoints[0])
+	c.client = NewRESTDEKClient(t, endpoints[0])
 	return nil
 }
 
@@ -309,7 +309,8 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "Must connect to gRPC at %s", endpoints[0])
 	c.client = client
 
@@ -401,7 +402,8 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	require.NoError(t, err, "Must connect to unix socket at %s", socketPath)
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	if err != nil {
 		conn.Close()
 	}
@@ -478,11 +480,13 @@ type RESTDEKClient struct {
 	httpClient *http.Client
 }
 
-// NewRESTDEKClient creates a new REST DEK client.
-func NewRESTDEKClient(baseURL string) *RESTDEKClient {
+// NewRESTDEKClient creates a new REST DEK client acting as the tenant
+// principal.
+func NewRESTDEKClient(t *testing.T, baseURL string) *RESTDEKClient {
+	t.Helper()
 	return &RESTDEKClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantHTTPClient(t, 30*time.Second),
 	}
 }
 

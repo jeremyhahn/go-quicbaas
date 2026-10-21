@@ -101,9 +101,10 @@ type NodeInfo struct {
 	IsLeader bool   `json:"is_leader"`
 }
 
-// httpClient returns a configured HTTP client with appropriate timeout.
-func httpClient() *http.Client {
-	return helpers.NewHTTPClient(30 * time.Second)
+// httpClient returns an HTTP client with appropriate timeout that acts as the
+// tenant operator.
+func httpClient(ctx context.Context) (*http.Client, error) {
+	return helpers.TenantOperatorHTTPClient(ctx, 30*time.Second)
 }
 
 // writePointREST writes a single data point via REST API.
@@ -119,7 +120,11 @@ func writePointREST(ctx context.Context, endpoint string, point WritePointReques
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient().Do(req)
+	client, err := httpClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -155,7 +160,11 @@ func writeBatchREST(ctx context.Context, endpoint string, batch WriteBatchReques
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient().Do(req)
+	client, err := httpClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -191,7 +200,11 @@ func queryREST(ctx context.Context, endpoint string, query QueryRequest) (*Query
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient().Do(req)
+	client, err := httpClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

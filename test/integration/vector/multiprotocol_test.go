@@ -379,7 +379,7 @@ func (c *restVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 
 	c.baseURL = endpoints[0]
-	c.client = helpers.NewHTTPClient(30 * time.Second)
+	c.client = helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 
 	// Check if vector service is available by calling the health endpoint
 	healthURL := c.baseURL + "/api/v1/vector/health"
@@ -661,7 +661,8 @@ func (c *grpcVectorClient) Setup(t *testing.T, ctx context.Context) error {
 			conn.Close()
 			return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 		}
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg),
+			grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 		if err != nil {
 			conn.Close()
 			lastErr = err
@@ -868,6 +869,7 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
@@ -875,7 +877,8 @@ func (c *unixSocketVectorClient) Setup(t *testing.T, ctx context.Context) error 
 	}
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 	if err != nil {
 		conn.Close()
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}

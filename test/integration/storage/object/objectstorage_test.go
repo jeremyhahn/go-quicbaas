@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -232,7 +233,7 @@ func TestE2E_ObjectStoragePutAndGet(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("put and get object - verifies data stored in backend", func(t *testing.T) {
 		// Generate test data
@@ -313,7 +314,7 @@ func TestE2E_CatalogTracksBackendLocations(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("catalog correctly tracks primary backend location", func(t *testing.T) {
 		testData := generateRandomData(2048)
@@ -342,7 +343,8 @@ func TestE2E_CatalogTracksBackendLocations(t *testing.T) {
 		testData := generateRandomData(1024)
 
 		// Put for premium tenant - should use tenant-premium backend
-		putResp, err := setup.objectStorage.PutObject(ctx, &service.PutObjectRequest{
+		premiumCtx := tenantctx.WithTenant(context.Background(), "tenant-premium")
+		putResp, err := setup.objectStorage.PutObject(premiumCtx, &service.PutObjectRequest{
 			Key:      "premium:data/important.bin",
 			Value:    testData,
 			TenantID: "tenant-premium",
@@ -380,7 +382,7 @@ func TestE2E_MultipleBackendsAndRetrieval(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("objects stored in different backends are retrieved correctly", func(t *testing.T) {
 		// Store objects in different backends
@@ -448,14 +450,18 @@ func TestE2E_TenantIsolation(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
+
+	// Each tenant acts with its own tenant bound, as the transports bind it.
+	premiumCtx := tenantctx.WithTenant(context.Background(), "tenant-premium")
+	basicCtx := tenantctx.WithTenant(context.Background(), "tenant-basic")
 
 	t.Run("tenant data is stored in tenant-specific backend", func(t *testing.T) {
 		premiumData := []byte("Premium tenant confidential data")
 		basicData := []byte("Basic tenant data")
 
 		// Premium tenant
-		premiumResp, err := setup.objectStorage.PutObject(ctx, &service.PutObjectRequest{
+		premiumResp, err := setup.objectStorage.PutObject(premiumCtx, &service.PutObjectRequest{
 			Key:      "premium-data:secrets/api-keys.txt",
 			Value:    premiumData,
 			TenantID: "tenant-premium",
@@ -464,7 +470,7 @@ func TestE2E_TenantIsolation(t *testing.T) {
 		assert.Equal(t, "tenant-premium", premiumResp.Backend)
 
 		// Basic tenant
-		basicResp, err := setup.objectStorage.PutObject(ctx, &service.PutObjectRequest{
+		basicResp, err := setup.objectStorage.PutObject(basicCtx, &service.PutObjectRequest{
 			Key:      "basic-data:files/readme.txt",
 			Value:    basicData,
 			TenantID: "tenant-basic",
@@ -486,7 +492,7 @@ func TestE2E_TenantIsolation(t *testing.T) {
 		testData := []byte("Tenant A's private data")
 
 		// Put as tenant-premium
-		_, err := setup.objectStorage.PutObject(ctx, &service.PutObjectRequest{
+		_, err := setup.objectStorage.PutObject(premiumCtx, &service.PutObjectRequest{
 			Key:      "private:tenant-a/secret.txt",
 			Value:    testData,
 			TenantID: "tenant-premium",
@@ -494,7 +500,7 @@ func TestE2E_TenantIsolation(t *testing.T) {
 		require.NoError(t, err)
 
 		// Try to get as different tenant
-		_, err = setup.objectStorage.GetObject(ctx, &service.GetObjectRequest{
+		_, err = setup.objectStorage.GetObject(basicCtx, &service.GetObjectRequest{
 			Key:      "private:tenant-a/secret.txt",
 			TenantID: "tenant-basic", // Different tenant
 		})
@@ -507,7 +513,7 @@ func TestE2E_DeleteObject(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("delete removes object from backend and catalog", func(t *testing.T) {
 		testData := []byte("Data to be deleted")
@@ -547,7 +553,7 @@ func TestE2E_ListObjects(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("list objects by prefix", func(t *testing.T) {
 		// Create multiple objects with a common prefix
@@ -627,7 +633,7 @@ func TestE2E_ConcurrentOperations(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("concurrent puts and gets", func(t *testing.T) {
 		const numGoroutines = 20
@@ -712,7 +718,7 @@ func TestE2E_LargeObjectHandling(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("store and retrieve large objects", func(t *testing.T) {
 		sizes := []int{
@@ -758,7 +764,7 @@ func TestE2E_BackendHealthTracking(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("check backend health", func(t *testing.T) {
 		// Check individual backend health
@@ -789,7 +795,7 @@ func TestE2E_ObjectMetadata(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("metadata is preserved through put/get cycle", func(t *testing.T) {
 		testData := []byte("Document with rich metadata")
@@ -833,7 +839,7 @@ func TestE2E_WorkerRegistrationAndLifecycle(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("register and run background workers", func(t *testing.T) {
 		// Create workers
@@ -904,7 +910,7 @@ func TestE2E_EdgeCases(t *testing.T) {
 	setup := newE2ETestSetup(t)
 	defer setup.cleanup()
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 
 	t.Run("empty value object", func(t *testing.T) {
 		_, err := setup.objectStorage.PutObject(ctx, &service.PutObjectRequest{

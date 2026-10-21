@@ -75,6 +75,7 @@ func NewVectorCluster(t *testing.T) *VectorCluster {
 			ctx,
 			endpoints[i],
 			googlegrpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			googlegrpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 			googlegrpc.WithBlock(),
 		)
 		cancel()

@@ -62,6 +62,7 @@ func TestConcurrentOperations(t *testing.T) {
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn.Close()

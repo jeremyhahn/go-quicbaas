@@ -564,7 +564,7 @@ func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	c.baseURL = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
+	c.httpClient = helpers.NewTenantHTTPClient(t, 30*time.Second)
 	return nil
 }
 
@@ -998,6 +998,7 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
 	)
 	if err != nil {
 		return err
@@ -1211,6 +1212,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
 	)
 	if err != nil {
 		return err

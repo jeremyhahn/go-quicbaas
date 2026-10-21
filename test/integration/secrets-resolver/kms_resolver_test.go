@@ -41,11 +41,13 @@ type restKMSClient struct {
 	client   *http.Client
 }
 
-// newRESTKMSClient creates a new REST-based KMS client.
-func newRESTKMSClient(endpoint string) *restKMSClient {
+// newRESTKMSClient creates a new REST-based KMS client acting as the tenant
+// principal.
+func newRESTKMSClient(t *testing.T, endpoint string) *restKMSClient {
+	t.Helper()
 	return &restKMSClient{
 		endpoint: endpoint,
-		client:   helpers.NewHTTPClient(10 * time.Second),
+		client:   helpers.NewTenantHTTPClient(t, 10*time.Second),
 	}
 }
 
@@ -105,7 +107,7 @@ func storeTestSecret(t *testing.T, endpoint, path string, data map[string]interf
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -132,7 +134,7 @@ func deleteTestSecret(t *testing.T, endpoint, path string) {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Logf("Failed to delete test secret %s: %v", path, err)
@@ -168,7 +170,7 @@ func TestLocalKMSResolver_ResolveExistingSecret(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -200,7 +202,7 @@ func TestLocalKMSResolver_ResolveNonExistent(t *testing.T) {
 	endpoint := getRESTEndpoint()
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -221,7 +223,7 @@ func TestLocalKMSResolver_ResolveNonExistent(t *testing.T) {
 func TestLocalKMSResolver_CanResolve(t *testing.T) {
 	endpoint := getRESTEndpoint()
 
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -294,7 +296,7 @@ func TestLocalKMSResolver_CanResolve(t *testing.T) {
 func TestLocalKMSResolver_Scheme(t *testing.T) {
 	endpoint := getRESTEndpoint()
 
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -326,7 +328,7 @@ func TestLocalKMSResolver_NestedPath(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -388,7 +390,7 @@ func TestLocalKMSResolver_VersionedSecret(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -418,7 +420,7 @@ func TestLocalKMSResolver_InvalidURI(t *testing.T) {
 
 	endpoint := getRESTEndpoint()
 
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -464,7 +466,7 @@ func TestLocalKMSResolver_InvalidURI(t *testing.T) {
 func TestLocalKMSResolver_ContextCancellation(t *testing.T) {
 	endpoint := getRESTEndpoint()
 
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -509,7 +511,7 @@ func TestLocalKMSResolver_ResolverRegistry(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create resolver and register with registry
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -565,7 +567,7 @@ func TestLocalKMSResolver_BinaryData(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -609,7 +611,7 @@ func TestLocalKMSResolver_SpecialCharacters(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 
@@ -649,7 +651,7 @@ func TestLocalKMSResolver_LargeSecret(t *testing.T) {
 	defer deleteTestSecret(t, endpoint, path)
 
 	// Create the KMS client and resolver
-	kmsClient := newRESTKMSClient(endpoint)
+	kmsClient := newRESTKMSClient(t, endpoint)
 	resolver := secrets.NewLocalKMSResolver(kmsClient)
 	require.NotNil(t, resolver)
 

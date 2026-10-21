@@ -87,8 +87,10 @@ type TestClient struct {
 // NewTestClient creates a new TestClient with the given server URL.
 // The serverURL can be either an HTTP URL (e.g., https://test-node1:8080) or
 // a gRPC address (e.g., test-node1:50051). If an HTTP URL is provided,
-// it extracts the host and converts to the gRPC port (50051).
-func NewTestClient(serverURL string) *TestClient {
+// it extracts the host and converts to the gRPC port (50051). The client acts
+// as the tenant principal of the first REST endpoint's cluster.
+func NewTestClient(t *testing.T, serverURL string) *TestClient {
+	t.Helper()
 	grpcAddr := serverURL
 
 	// If the URL has a scheme, extract the host and use the gRPC port
@@ -105,8 +107,10 @@ func NewTestClient(serverURL string) *TestClient {
 		panic(fmt.Sprintf("failed to load integration TLS config: %v", err))
 	}
 
-	// Create a real SDK client connection
-	client, err := quicbaas.NewClient(grpcAddr, quicbaas.WithTLSConfig(tlsCfg))
+	// Create a real SDK client connection. Its KV and transaction calls need
+	// the grants go-qrdb gives the tenant's Operator role, not its Admin role.
+	bearer := tenantOperatorAuth.mustBearer(t, GetRESTEndpoints()[0])
+	client, err := quicbaas.NewClient(grpcAddr, quicbaas.WithTLSConfig(tlsCfg), quicbaas.WithAuthToken(bearer))
 	if err != nil {
 		panic(fmt.Sprintf("failed to create test client: %v", err))
 	}

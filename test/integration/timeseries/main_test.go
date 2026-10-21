@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 
 	// Run tests
 	code := m.Run()
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
 
 	// Cleanup
 	if srv != nil {

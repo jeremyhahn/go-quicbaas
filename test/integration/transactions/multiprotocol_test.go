@@ -519,7 +519,7 @@ func (c *restTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
+	c.httpClient = helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 	return nil
 }
 
@@ -693,6 +693,7 @@ func (c *grpcTransactionClient) Setup(t *testing.T, ctx context.Context) error {
 	conn, err := grpc.DialContext(dialCtx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
@@ -926,6 +927,7 @@ func (c *unixSocketTransactionClient) Setup(t *testing.T, ctx context.Context) e
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)
 		}),

@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
@@ -199,7 +200,9 @@ func TestStandalone_Secrets_CRUD(t *testing.T) {
 	secrets := svc.Secrets()
 	require.NotNil(t, secrets, "Secrets service must be available")
 
-	ctx := context.Background()
+	// The service layer acts for the tenant bound to the request; in a
+	// standalone node with no tenants provisioned that is the system tenant.
+	ctx := tenantctx.WithSystem(context.Background())
 	secretName := fmt.Sprintf("phase-f-secret-%d", time.Now().UnixNano())
 
 	storeResp, err := secrets.StoreSecret(ctx, &service.StoreSecretRequest{
@@ -243,7 +246,7 @@ func TestStandalone_Scheduler_CreateAndGet(t *testing.T) {
 	scheduler := svc.Scheduler()
 	require.NotNil(t, scheduler, "Scheduler must be available")
 
-	ctx := context.Background()
+	ctx := tenantctx.WithSystem(context.Background())
 	jobName := fmt.Sprintf("phase-f-job-%d", time.Now().UnixNano())
 
 	createResp, err := scheduler.CreateJob(ctx, &service.CreateSchedulerJobRequest{

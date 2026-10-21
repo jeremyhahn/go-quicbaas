@@ -63,6 +63,14 @@ func getRESTEndpoints() []string {
 
 // SecretOptions contains optional parameters for secret operations.
 type SecretOptions struct {
+	// Principal names the tenant principal that stores the secret (see
+	// helpers.NamedTenantPrincipalID). Empty is the package's shared
+	// tenant principal.
+	Principal string
+	// TenantID is the tenant the store names in the body and the
+	// X-Tenant-ID header. It defaults to Principal's tenant when Principal
+	// is set; otherwise no tenant is named. The server refuses a tenant
+	// that is not the caller's.
 	TenantID    string
 	KeyID       string
 	Algorithm   string
@@ -78,6 +86,7 @@ func createSecret(t *testing.T, endpoint, path string, data map[string]interface
 		"data": data,
 	}
 
+	var principal, tenantID string
 	if opts != nil {
 		if opts.Metadata != nil {
 			reqBody["metadata"] = opts.Metadata
@@ -85,8 +94,12 @@ func createSecret(t *testing.T, endpoint, path string, data map[string]interface
 		if opts.Description != "" {
 			reqBody["description"] = opts.Description
 		}
-		if opts.TenantID != "" {
-			reqBody["tenant_id"] = opts.TenantID
+		principal, tenantID = opts.Principal, opts.TenantID
+		if principal != "" && tenantID == "" {
+			tenantID = helpers.NamedTenantPrincipalID(t, endpoint, principal)
+		}
+		if tenantID != "" {
+			reqBody["tenant_id"] = tenantID
 		}
 		if opts.KeyID != "" {
 			reqBody["key_id"] = opts.KeyID
@@ -104,11 +117,11 @@ func createSecret(t *testing.T, endpoint, path string, data map[string]interface
 	require.NoError(t, err)
 
 	req.Header.Set("Content-Type", "application/json")
-	if opts != nil && opts.TenantID != "" {
-		req.Header.Set("X-Tenant-ID", opts.TenantID)
+	if tenantID != "" {
+		req.Header.Set("X-Tenant-ID", tenantID)
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, principal)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -130,12 +143,18 @@ func createSecret(t *testing.T, endpoint, path string, data map[string]interface
 // getSecret retrieves a secret at the given path.
 func getSecret(t *testing.T, endpoint, path string) *service.GetSecretResponse {
 	t.Helper()
+	return getSecretAs(t, "", endpoint, path)
+}
+
+// getSecretAs is getSecret as the tenant principal called principal.
+func getSecretAs(t *testing.T, principal, endpoint, path string) *service.GetSecretResponse {
+	t.Helper()
 
 	url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, path)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, principal)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -154,6 +173,16 @@ func getSecret(t *testing.T, endpoint, path string) *service.GetSecretResponse {
 	return &result
 }
 
+// secretsClient returns an HTTP client that authenticates as the tenant
+// principal called principal, or as the shared one when principal is empty.
+func secretsClient(t *testing.T, principal string) *http.Client {
+	t.Helper()
+	if principal == "" {
+		return helpers.NewTenantHTTPClient(t, 10*time.Second)
+	}
+	return helpers.NewNamedTenantHTTPClient(t, principal, 10*time.Second)
+}
+
 // getSecretVersion retrieves a specific version of a secret.
 func getSecretVersion(t *testing.T, endpoint, path string, version uint64) *service.GetSecretResponse {
 	t.Helper()
@@ -162,7 +191,7 @@ func getSecretVersion(t *testing.T, endpoint, path string, version uint64) *serv
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, "")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -184,6 +213,12 @@ func getSecretVersion(t *testing.T, endpoint, path string, version uint64) *serv
 // deleteSecret deletes a secret at the given path.
 func deleteSecret(t *testing.T, endpoint, path string, permanent bool) *service.DeleteSecretResponse {
 	t.Helper()
+	return deleteSecretAs(t, "", endpoint, path, permanent)
+}
+
+// deleteSecretAs is deleteSecret as the tenant principal called principal.
+func deleteSecretAs(t *testing.T, principal, endpoint, path string, permanent bool) *service.DeleteSecretResponse {
+	t.Helper()
 
 	url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, path)
 	if permanent {
@@ -193,7 +228,7 @@ func deleteSecret(t *testing.T, endpoint, path string, permanent bool) *service.
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, principal)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -226,7 +261,7 @@ func tryDeleteSecret(t *testing.T, endpoint, path string, permanent bool) bool {
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, "")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -250,6 +285,12 @@ func tryDeleteSecret(t *testing.T, endpoint, path string, permanent bool) bool {
 // listSecrets lists secrets with optional prefix filter.
 func listSecrets(t *testing.T, endpoint, prefix string) *service.ListSecretsResponse {
 	t.Helper()
+	return listSecretsAs(t, "", endpoint, prefix)
+}
+
+// listSecretsAs is listSecrets as the tenant principal called principal.
+func listSecretsAs(t *testing.T, principal, endpoint, prefix string) *service.ListSecretsResponse {
+	t.Helper()
 
 	url := fmt.Sprintf("%s/api/v1/secrets", endpoint)
 	if prefix != "" {
@@ -259,7 +300,7 @@ func listSecrets(t *testing.T, endpoint, prefix string) *service.ListSecretsResp
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, principal)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -295,7 +336,7 @@ func rollbackSecret(t *testing.T, endpoint, path string, version uint64) *servic
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, "")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -331,7 +372,7 @@ func rotateSecret(t *testing.T, endpoint, path string, newData map[string]interf
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, "")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -358,7 +399,7 @@ func listSecretVersions(t *testing.T, endpoint, path string) *service.ListSecret
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, "")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -380,12 +421,18 @@ func listSecretVersions(t *testing.T, endpoint, path string) *service.ListSecret
 // tryGetSecret attempts to get a secret and returns the error if it fails.
 func tryGetSecret(t *testing.T, endpoint, path string) (*service.GetSecretResponse, error) {
 	t.Helper()
+	return tryGetSecretAs(t, "", endpoint, path)
+}
+
+// tryGetSecretAs is tryGetSecret as the tenant principal called principal.
+func tryGetSecretAs(t *testing.T, principal, endpoint, path string) (*service.GetSecretResponse, error) {
+	t.Helper()
 
 	url := fmt.Sprintf("%s/api/v1/secrets/%s", endpoint, path)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	require.NoError(t, err)
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := secretsClient(t, principal)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

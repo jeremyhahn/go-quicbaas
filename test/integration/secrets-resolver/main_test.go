@@ -17,6 +17,7 @@ package secretsresolver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,6 +67,9 @@ func TestMain(m *testing.M) {
 	// Clean up test secrets after tests
 	if err := cleanupTestSecrets(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to clean up test secrets: %v\n", err)
+	}
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
 	}
 
 	// Exit with the test result code
@@ -149,7 +153,10 @@ func setupSecretsEncryptionKey() error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 30*time.Second)
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
@@ -172,7 +179,10 @@ func setupSecretsEncryptionKey() error {
 // setupTestSecrets creates test secrets in KMS for resolution testing.
 func setupTestSecrets() error {
 	endpoint := getRESTEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 30*time.Second)
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 
 	for _, secretName := range testSecrets {
 		fullName := testSecretPrefix + secretName
@@ -241,7 +251,10 @@ func setupTestSecrets() error {
 // cleanupTestSecrets removes test secrets after tests complete.
 func cleanupTestSecrets() error {
 	endpoint := getRESTEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 30*time.Second)
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 
 	var lastErr error
 	for _, secretName := range testSecrets {
@@ -294,7 +307,10 @@ func keyExists(endpoint, keyID string) (bool, error) {
 		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 10*time.Second)
+	if err != nil {
+		return false, &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
@@ -313,7 +329,10 @@ func secretExists(endpoint, secretID string) (bool, error) {
 		return false, &qberrors.WrappedMessageError{Message: "creating request", Cause: err}
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 10*time.Second)
+	if err != nil {
+		return false, &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, &qberrors.WrappedMessageError{Message: "sending request", Cause: err}

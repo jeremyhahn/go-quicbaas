@@ -17,6 +17,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -40,6 +41,9 @@ func TestMain(m *testing.M) {
 
 	// Run tests
 	code := m.Run()
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
 
 	// Exit with the test result code
 	os.Exit(code)
@@ -92,7 +96,10 @@ func setupSecretsEncryptionKey() error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 30*time.Second)
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "tenant principal client", Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "sending request", Cause: err}
@@ -121,7 +128,10 @@ func keyExists(endpoint, keyID string) (bool, error) {
 		return false, err
 	}
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client, err := helpers.TenantHTTPClient(context.Background(), 10*time.Second)
+	if err != nil {
+		return false, err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err

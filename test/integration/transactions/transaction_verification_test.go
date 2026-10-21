@@ -33,7 +33,7 @@ func TestTransactionCommitAndVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("tx-commit-%d", time.Now().UnixNano())
@@ -69,7 +69,7 @@ func TestTransactionRollbackVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("tx-rollback-%d", time.Now().UnixNano())
@@ -108,10 +108,10 @@ func TestTransactionIsolation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	client1 := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client1 := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client1.Close()
 
-	client2 := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client2 := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client2.Close()
 
 	prefix := fmt.Sprintf("tx-isolation-%d", time.Now().UnixNano())
@@ -163,7 +163,7 @@ func TestTransactionSequentialReads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("tx-sequential-%d", time.Now().UnixNano())
@@ -200,7 +200,7 @@ func TestTransactionConcurrentWrites(t *testing.T) {
 		wg.Add(1)
 		go func(writerID int) {
 			defer wg.Done()
-			client := helpers.NewTestClient(helpers.GetTestEndpoint())
+			client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 			defer client.Close()
 
 			value := []byte(fmt.Sprintf("writer-%d-value", writerID))
@@ -220,7 +220,7 @@ func TestTransactionConcurrentWrites(t *testing.T) {
 	assert.Greater(t, successCount, 0, "At least some concurrent writes should succeed")
 
 	// Verify key has a value (whichever write won)
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	actual, err := client.Get(ctx, key)
@@ -236,7 +236,7 @@ func TestTransactionAtomicityMultiKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("tx-atomic-%d", time.Now().UnixNano())
@@ -289,7 +289,7 @@ func TestTransactionDeleteAndVerify(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	prefix := fmt.Sprintf("tx-delete-%d", time.Now().UnixNano())
@@ -321,7 +321,7 @@ func TestTransactionReadAfterWrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client.Close()
 
 	key := fmt.Sprintf("tx-ryw-%d", time.Now().UnixNano())
@@ -349,10 +349,10 @@ func TestTransactionVersionConflict(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	client1 := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client1 := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client1.Close()
 
-	client2 := helpers.NewTestClient(helpers.GetTestEndpoint())
+	client2 := helpers.NewTestClient(t, helpers.GetTestEndpoint())
 	defer client2.Close()
 
 	key := fmt.Sprintf("tx-version-%d", time.Now().UnixNano())

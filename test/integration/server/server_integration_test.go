@@ -79,7 +79,7 @@ func TestServerHealthEndpoints(t *testing.T) {
 // TestServerRESTAPI tests REST API endpoints
 func TestServerRESTAPI(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 
 	entityType := "rest_test"
 	entityID := time.Now().UnixNano()
@@ -187,7 +187,7 @@ func TestServerClusterStatus(t *testing.T) {
 // TestServerFullLifecycle tests complete CRUD lifecycle
 func TestServerFullLifecycle(t *testing.T) {
 	baseURL := getRESTEndpoint()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 
 	entityType := "lifecycle_test"
 
@@ -297,7 +297,7 @@ func TestServerConcurrentOperations(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 
-			client := helpers.NewHTTPClient(30 * time.Second)
+			client := helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
 
 			data := map[string]interface{}{
 				"index": index,

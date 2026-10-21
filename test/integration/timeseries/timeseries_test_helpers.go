@@ -36,7 +36,7 @@ func requireTimeseriesAvailableREST(t *testing.T) {
 
 	endpoints := helpers.GetRESTEndpoints()
 	endpoint := endpoints[0]
-	probeClient := helpers.NewHTTPClient(15 * time.Second)
+	probeClient := helpers.NewTenantOperatorHTTPClient(t, 15*time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

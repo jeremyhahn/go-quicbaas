@@ -208,6 +208,8 @@ func TestTenantIsolation_TenantSpecificDEKVerification(t *testing.T) {
 
 	endpoint := getRESTEndpoint()
 	basePath := fmt.Sprintf("test/dek-verification/%d", time.Now().UnixNano())
+	const dekPrincipal = "dek"
+	dekTenantID := helpers.NamedTenantPrincipalID(t, endpoint, dekPrincipal)
 
 	// Store secret with tenant_id and verify DEK reference
 	t.Run("verify_tenant_dek_reference", func(t *testing.T) {
@@ -219,22 +221,27 @@ func TestTenantIsolation_TenantSpecificDEKVerification(t *testing.T) {
 		}
 
 		opts := &SecretOptions{
-			TenantID:    "tenant-1",
+			Principal:   dekPrincipal,
 			Description: "Secret with tenant-specific DEK",
 		}
 
 		resp := createSecret(t, endpoint, path, data, opts)
 		require.NotNil(t, resp)
 
+		// Another tenant's principal must not see the secret.
+		foreign, err := tryGetSecret(t, endpoint, path)
+		require.Error(t, err, "the shared tenant principal read the %s tenant's secret", dekPrincipal)
+		assert.Nil(t, foreign)
+
 		// Get the secret and verify key identifier contains tenant reference
-		secret := getSecret(t, endpoint, path)
+		secret := getSecretAs(t, dekPrincipal, endpoint, path)
 		require.NotNil(t, secret)
 
 		// The key identifier should reference the tenant-specific DEK
-		// Expected format: "dek:tenant:tenant-1" or similar
+		// Expected format: "dek:tenant:<tenant ID>" or similar
 		if secret.KeyIdentifier != "" {
 			assert.True(t,
-				strings.Contains(secret.KeyIdentifier, "tenant-1") ||
+				strings.Contains(secret.KeyIdentifier, dekTenantID) ||
 					strings.Contains(secret.KeyIdentifier, "dek:tenant"),
 				"Key identifier should reference tenant-specific DEK, got: %s", secret.KeyIdentifier)
 			t.Logf("Verified tenant DEK reference in key identifier: %s", secret.KeyIdentifier)
@@ -243,7 +250,7 @@ func TestTenantIsolation_TenantSpecificDEKVerification(t *testing.T) {
 			t.Logf("Key identifier not returned, secret metadata: %v", secret.Metadata)
 		}
 
-		deleteSecret(t, endpoint, path, true)
+		deleteSecretAs(t, dekPrincipal, endpoint, path, true)
 	})
 
 	// Store secret without tenant_id and verify global DEK reference
@@ -267,7 +274,7 @@ func TestTenantIsolation_TenantSpecificDEKVerification(t *testing.T) {
 		if secret.KeyIdentifier != "" {
 			t.Logf("Global secret key identifier: %s", secret.KeyIdentifier)
 			// Should not contain tenant-specific references
-			assert.False(t, strings.Contains(secret.KeyIdentifier, "tenant-1"),
+			assert.False(t, strings.Contains(secret.KeyIdentifier, dekTenantID),
 				"Global secret should not reference tenant-specific DEK")
 		}
 
@@ -297,7 +304,7 @@ func TestTenantIsolation_TenantSecretListing(t *testing.T) {
 		}
 
 		opts := &SecretOptions{
-			TenantID:    "tenant-a",
+			Principal:   "tenant-a",
 			Description: fmt.Sprintf("Tenant A secret %d", i),
 		}
 
@@ -318,7 +325,7 @@ func TestTenantIsolation_TenantSecretListing(t *testing.T) {
 		}
 
 		opts := &SecretOptions{
-			TenantID:    "tenant-b",
+			Principal:   "tenant-b",
 			Description: fmt.Sprintf("Tenant B secret %d", i),
 		}
 
@@ -329,7 +336,7 @@ func TestTenantIsolation_TenantSecretListing(t *testing.T) {
 
 	// List secrets and verify tenant-a secrets are present
 	t.Run("list_and_verify_tenant_a_secrets", func(t *testing.T) {
-		resp := listSecrets(t, endpoint, basePath+"/tenant-a")
+		resp := listSecretsAs(t, "tenant-a", endpoint, basePath+"/tenant-a")
 		require.NotNil(t, resp)
 
 		// Count tenant-a secrets
@@ -349,7 +356,7 @@ func TestTenantIsolation_TenantSecretListing(t *testing.T) {
 
 	// List secrets and verify tenant-b secrets are present
 	t.Run("list_and_verify_tenant_b_secrets", func(t *testing.T) {
-		resp := listSecrets(t, endpoint, basePath+"/tenant-b")
+		resp := listSecretsAs(t, "tenant-b", endpoint, basePath+"/tenant-b")
 		require.NotNil(t, resp)
 
 		// Count tenant-b secrets
@@ -367,12 +374,27 @@ func TestTenantIsolation_TenantSecretListing(t *testing.T) {
 		t.Logf("Found %d tenant-b secrets", count)
 	})
 
+	// Neither tenant lists or reads the other's secrets.
+	t.Run("tenants_do_not_see_each_other", func(t *testing.T) {
+		assert.Empty(t, listSecretsAs(t, "tenant-b", endpoint, basePath+"/tenant-a").Secrets,
+			"tenant B lists tenant A's secrets")
+		assert.Empty(t, listSecretsAs(t, "tenant-a", endpoint, basePath+"/tenant-b").Secrets,
+			"tenant A lists tenant B's secrets")
+
+		secret, err := tryGetSecretAs(t, "tenant-b", endpoint, tenantASecrets[0])
+		assert.Error(t, err, "tenant B read tenant A's secret")
+		assert.Nil(t, secret)
+		secret, err = tryGetSecretAs(t, "tenant-a", endpoint, tenantBSecrets[0])
+		assert.Error(t, err, "tenant A read tenant B's secret")
+		assert.Nil(t, secret)
+	})
+
 	// Cleanup
 	for _, path := range tenantASecrets {
-		deleteSecret(t, endpoint, path, true)
+		deleteSecretAs(t, "tenant-a", endpoint, path, true)
 	}
 	for _, path := range tenantBSecrets {
-		deleteSecret(t, endpoint, path, true)
+		deleteSecretAs(t, "tenant-b", endpoint, path, true)
 	}
 }
 
@@ -555,7 +577,7 @@ func TestAlgorithm_InvalidRejection(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantHTTPClient(t, 10*time.Second)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -662,7 +684,8 @@ func TestCrossProtocol_RESTToGRPC(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "Failed to create gRPC client")
 	defer grpcClient.Close()
 
@@ -705,7 +728,8 @@ func TestCrossProtocol_GRPCToREST(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
 	require.NoError(t, err, "Failed to create gRPC client")
 	defer grpcClient.Close()
 
@@ -1043,13 +1067,7 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 		require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 		defer conn.Close()
 
-		tlsCfg, err := helpers.IntegrationTLSConfig()
-		require.NoError(t, err, "load integration TLS config")
-		grpcClient, err := grpcclient.NewClient(grpcEndpoints[0], grpcclient.WithTLSConfig(tlsCfg))
-		require.NoError(t, err, "Failed to create gRPC client")
-		defer grpcClient.Close()
-
-		testTenantIsolationForGRPC(t, ctx, basePath+"/grpc", grpcClient, restEndpoint)
+		testTenantIsolationForGRPC(t, ctx, basePath+"/grpc", principalGRPCClient(grpcEndpoints[0]), "grpc-iso-1", "grpc-iso-2")
 	})
 
 	// Test tenant isolation via Unix Socket if available
@@ -1071,12 +1089,28 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 		require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 		defer conn.Close()
 
-		unixClient, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
-		require.NoError(t, err, "Failed to create unix socket client")
-		defer unixClient.Close()
-
-		testTenantIsolationForGRPC(t, ctx, basePath+"/unix", unixClient, restEndpoint)
+		testTenantIsolationForGRPC(t, ctx, basePath+"/unix", principalGRPCClient("unix://"+socketPath), "unix-iso-1", "unix-iso-2")
 	})
+}
+
+// principalGRPCClient dials target once per tenant principal. Each client
+// is closed when its test ends.
+func principalGRPCClient(target string) grpcClientFor {
+	return func(t *testing.T, principal string) *grpcclient.Client {
+		t.Helper()
+
+		tlsCfg, err := helpers.IntegrationTLSConfig()
+		require.NoError(t, err, "load integration TLS config")
+		client, err := grpcclient.NewClient(target, grpcclient.WithTLSConfig(tlsCfg),
+			grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.NamedTenantGRPCCredentials(t, principal))))
+		require.NoError(t, err, "create client for %s as %s", target, principal)
+		t.Cleanup(func() {
+			if err := client.Close(); err != nil {
+				t.Logf("close client for %s: %v", target, err)
+			}
+		})
+		return client
+	}
 }
 
 // testTenantIsolationForProtocol tests tenant isolation using REST API.
@@ -1108,62 +1142,95 @@ func testTenantIsolationForProtocol(t *testing.T, protocolName, basePath, endpoi
 }
 
 // testTenantIsolationForGRPC tests tenant isolation using gRPC client.
-func testTenantIsolationForGRPC(t *testing.T, ctx context.Context, basePath string, client *grpcclient.Client, restEndpoint string) {
+// grpcClientFor returns a client of one transport that authenticates as
+// the named tenant principal.
+type grpcClientFor func(t *testing.T, principal string) *grpcclient.Client
+
+// testTenantIsolationForGRPC writes the SAME path as two tenant principals
+// and checks that reads, updates and deletes stay in the caller's tenant.
+// The gRPC client sends no tenant ID, so the tenant comes only from the
+// bearer: a shared principal would prove nothing.
+func testTenantIsolationForGRPC(t *testing.T, ctx context.Context, path string, clientFor grpcClientFor, owner, other string) {
 	t.Helper()
 
-	tenant1Path := basePath + "/tenant1"
-	tenant2Path := basePath + "/tenant2"
+	ownerClient := clientFor(t, owner)
+	otherClient := clientFor(t, other)
 
-	// Create secrets via gRPC
-	tenant1Data, _ := json.Marshal(map[string]interface{}{
-		"api_key":  "grpc-tenant1-key",
-		"protocol": "gRPC",
-	})
-
-	tenant2Data, _ := json.Marshal(map[string]interface{}{
-		"api_key":  "grpc-tenant2-key",
-		"protocol": "gRPC",
-	})
-
-	// Store tenant1 secret
-	_, err := client.StoreSecret(ctx, &service.StoreSecretRequest{
-		SecretID: tenant1Path,
-		Name:     "tenant1-secret",
-		Data:     tenant1Data,
-		TenantID: "tenant-1",
-	})
+	ownerData, err := json.Marshal(map[string]string{"api_key": owner + "-key"})
+	require.NoError(t, err)
+	otherData, err := json.Marshal(map[string]string{"api_key": other + "-key"})
 	require.NoError(t, err)
 
-	// Store tenant2 secret
-	_, err = client.StoreSecret(ctx, &service.StoreSecretRequest{
-		SecretID: tenant2Path,
-		Name:     "tenant2-secret",
-		Data:     tenant2Data,
-		TenantID: "tenant-2",
+	_, err = ownerClient.StoreSecret(ctx, &service.StoreSecretRequest{
+		SecretID: path,
+		Name:     "isolation-secret",
+		Data:     ownerData,
 	})
 	require.NoError(t, err)
+	t.Cleanup(func() { deleteGRPCSecret(t, ownerClient, path) })
 
-	// Retrieve via gRPC and verify isolation
-	resp1, err := client.GetSecret(ctx, &service.GetSecretRequest{SecretID: tenant1Path})
+	t.Run("other tenant cannot touch the owner's secret", func(t *testing.T) {
+		resp, err := otherClient.GetSecret(ctx, &service.GetSecretRequest{SecretID: path})
+		require.Error(t, err, "%s read %s's secret", other, owner)
+		assert.Nil(t, resp)
+
+		_, err = otherClient.RotateSecret(ctx, &service.RotateSecretRequest{SecretID: path, NewData: otherData})
+		assert.Error(t, err, "%s rotated %s's secret", other, owner)
+
+		_, err = otherClient.UpdateSecretStatus(ctx, &service.UpdateSecretStatusRequest{
+			SecretID: path,
+			Status:   service.SecretStatusDisabled,
+		})
+		assert.Error(t, err, "%s disabled %s's secret", other, owner)
+
+		_, err = otherClient.DeleteSecret(ctx, &service.DeleteSecretRequest{SecretID: path, PermanentlyDelete: true})
+		assert.Error(t, err, "%s deleted %s's secret", other, owner)
+
+		assertGRPCSecret(t, ctx, ownerClient, path, ownerData)
+	})
+
+	_, err = otherClient.StoreSecret(ctx, &service.StoreSecretRequest{
+		SecretID: path,
+		Name:     "isolation-secret",
+		Data:     otherData,
+	})
+	require.NoError(t, err, "%s must be able to store its own copy of the path", other)
+	t.Cleanup(func() { deleteGRPCSecret(t, otherClient, path) })
+
+	t.Run("each tenant reads its own value of the path", func(t *testing.T) {
+		assertGRPCSecret(t, ctx, ownerClient, path, ownerData)
+		assertGRPCSecret(t, ctx, otherClient, path, otherData)
+	})
+
+	t.Run("deleting one tenant's copy leaves the other", func(t *testing.T) {
+		_, err := otherClient.DeleteSecret(ctx, &service.DeleteSecretRequest{SecretID: path, PermanentlyDelete: true})
+		require.NoError(t, err)
+
+		_, err = otherClient.GetSecret(ctx, &service.GetSecretRequest{SecretID: path})
+		require.Error(t, err, "%s's copy must be gone", other)
+		assertGRPCSecret(t, ctx, ownerClient, path, ownerData)
+	})
+}
+
+// assertGRPCSecret checks that client reads want at path.
+func assertGRPCSecret(t *testing.T, ctx context.Context, client *grpcclient.Client, path string, want []byte) {
+	t.Helper()
+
+	resp, err := client.GetSecret(ctx, &service.GetSecretRequest{SecretID: path})
 	require.NoError(t, err)
+	assert.JSONEq(t, string(want), string(resp.Data))
+}
 
-	resp2, err := client.GetSecret(ctx, &service.GetSecretRequest{SecretID: tenant2Path})
-	require.NoError(t, err)
+// deleteGRPCSecret removes path for the client's tenant. A secret already
+// deleted by the test is not an error.
+func deleteGRPCSecret(t *testing.T, client *grpcclient.Client, path string) {
+	t.Helper()
 
-	var data1, data2 map[string]interface{}
-	require.NoError(t, json.Unmarshal(resp1.Data, &data1))
-	require.NoError(t, json.Unmarshal(resp2.Data, &data2))
-
-	assert.Equal(t, "grpc-tenant1-key", data1["api_key"])
-	assert.Equal(t, "grpc-tenant2-key", data2["api_key"])
-	assert.NotEqual(t, data1["api_key"], data2["api_key"])
-
-	t.Logf("[gRPC] Tenant isolation verified")
-
-	// Cleanup via REST - use tryDeleteSecret since the secret may have been
-	// stored with different key format via gRPC or already cleaned up
-	tryDeleteSecret(t, restEndpoint, tenant1Path, true)
-	tryDeleteSecret(t, restEndpoint, tenant2Path, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := client.DeleteSecret(ctx, &service.DeleteSecretRequest{SecretID: path, PermanentlyDelete: true}); err != nil {
+		t.Logf("cleanup of %s: %v", path, err)
+	}
 }
 
 // =============================================================================

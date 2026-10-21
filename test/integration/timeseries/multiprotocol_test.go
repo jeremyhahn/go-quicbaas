@@ -34,6 +34,8 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/timeseries"
 
+	"google.golang.org/grpc"
+
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -670,9 +672,15 @@ func (e *embeddedTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, met
 // REST Protocol Implementation
 // =============================================================================
 
+// restTimeseriesProtocol acts as the tenant operator (client) on every route
+// but DELETE /api/v1/timeseries/series: that route requires
+// timeseries:delete_series, which go-qrdb's Operator role does not hold and
+// quicbaas grants to the tenant Admin, so it goes out as the tenant admin
+// (adminClient).
 type restTimeseriesProtocol struct {
-	endpoint string
-	client   *http.Client
+	endpoint    string
+	client      *http.Client
+	adminClient *http.Client
 }
 
 func (r *restTimeseriesProtocol) Name() string { return "REST" }
@@ -681,7 +689,8 @@ func (r *restTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	r.endpoint = endpoints[0]
-	r.client = helpers.NewHTTPClient(30 * time.Second)
+	r.client = helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
+	r.adminClient = helpers.NewTenantHTTPClient(t, 30*time.Second)
 	return nil
 }
 
@@ -838,7 +847,7 @@ func (r *restTimeseriesProtocol) Delete(ctx context.Context, metric string, star
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := r.client.Do(req)
+	resp, err := r.adminClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -973,8 +982,15 @@ func (r *restTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric 
 // gRPC Protocol Implementation
 // =============================================================================
 
+// grpcTimeseriesProtocol sends each RPC as a principal that holds its
+// permission. go-qrdb's Operator role holds timeseries:write_batch and
+// timeseries:query but not write_point, delete_series, get_retention,
+// set_retention or list_metrics, which quicbaas grants to the tenant Admin
+// (registerRoleGrants), so client acts as the tenant operator and adminClient
+// as the tenant admin.
 type grpcTimeseriesProtocol struct {
-	client *grpcclient.Client
+	client      *grpcclient.Client
+	adminClient *grpcclient.Client
 }
 
 func (g *grpcTimeseriesProtocol) Name() string { return "gRPC" }
@@ -987,11 +1003,19 @@ func (g *grpcTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoints[0], Cause: err}
 	}
 	g.client = client
+
+	adminClient, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoints[0] + " as the tenant admin", Cause: err}
+	}
+	g.adminClient = adminClient
 
 	return nil
 }
@@ -999,6 +1023,9 @@ func (g *grpcTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) error 
 func (g *grpcTimeseriesProtocol) Teardown(t *testing.T) error {
 	if g.client != nil {
 		g.client.Close()
+	}
+	if g.adminClient != nil {
+		g.adminClient.Close()
 	}
 	return nil
 }
@@ -1010,7 +1037,7 @@ func (g *grpcTimeseriesProtocol) WritePoint(ctx context.Context, metric string, 
 		Value:     value,
 		Timestamp: timestamp,
 	}
-	_, err := g.client.TSWritePoint(ctx, req)
+	_, err := g.adminClient.TSWritePoint(ctx, req)
 	return err
 }
 
@@ -1064,7 +1091,7 @@ func (g *grpcTimeseriesProtocol) Delete(ctx context.Context, metric string, star
 		StartTime: &start,
 		EndTime:   &end,
 	}
-	_, err := g.client.TSDeleteSeries(ctx, req)
+	_, err := g.adminClient.TSDeleteSeries(ctx, req)
 	return err
 }
 
@@ -1073,7 +1100,7 @@ func (g *grpcTimeseriesProtocol) ListMetrics(ctx context.Context, prefix string)
 		Prefix: prefix,
 	}
 
-	resp, err := g.client.TSListMetrics(ctx, req)
+	resp, err := g.adminClient.TSListMetrics(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,7 +1113,7 @@ func (g *grpcTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, metric 
 		Metric: metric,
 	}
 
-	resp, err := g.client.TSGetRetentionPolicy(ctx, req)
+	resp, err := g.adminClient.TSGetRetentionPolicy(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,7 +1138,7 @@ func (g *grpcTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric 
 			Aggregation: policy.Aggregation,
 		},
 	}
-	_, err := g.client.TSSetRetentionPolicy(ctx, req)
+	_, err := g.adminClient.TSSetRetentionPolicy(ctx, req)
 	return err
 }
 
@@ -1119,8 +1146,11 @@ func (g *grpcTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, metric 
 // Unix Socket Protocol Implementation
 // =============================================================================
 
+// unixSocketTimeseriesProtocol splits its RPCs between the tenant operator
+// (client) and the tenant admin (adminClient) as grpcTimeseriesProtocol does.
 type unixSocketTimeseriesProtocol struct {
-	client *grpcclient.Client
+	client      *grpcclient.Client
+	adminClient *grpcclient.Client
 }
 
 func (u *unixSocketTimeseriesProtocol) Name() string { return "UnixSocket" }
@@ -1144,11 +1174,19 @@ func (u *unixSocketTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) 
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t))))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket", Cause: err}
 	}
 	u.client = client
+
+	adminClient, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t))))
+	if err != nil {
+		return &qberrors.WrappedMessageError{Message: "failed to create gRPC client over unix socket as the tenant admin", Cause: err}
+	}
+	u.adminClient = adminClient
 
 	return nil
 }
@@ -1156,6 +1194,9 @@ func (u *unixSocketTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) 
 func (u *unixSocketTimeseriesProtocol) Teardown(t *testing.T) error {
 	if u.client != nil {
 		u.client.Close()
+	}
+	if u.adminClient != nil {
+		u.adminClient.Close()
 	}
 	return nil
 }
@@ -1167,7 +1208,7 @@ func (u *unixSocketTimeseriesProtocol) WritePoint(ctx context.Context, metric st
 		Value:     value,
 		Timestamp: timestamp,
 	}
-	_, err := u.client.TSWritePoint(ctx, req)
+	_, err := u.adminClient.TSWritePoint(ctx, req)
 	return err
 }
 
@@ -1221,7 +1262,7 @@ func (u *unixSocketTimeseriesProtocol) Delete(ctx context.Context, metric string
 		StartTime: &start,
 		EndTime:   &end,
 	}
-	_, err := u.client.TSDeleteSeries(ctx, req)
+	_, err := u.adminClient.TSDeleteSeries(ctx, req)
 	return err
 }
 
@@ -1230,7 +1271,7 @@ func (u *unixSocketTimeseriesProtocol) ListMetrics(ctx context.Context, prefix s
 		Prefix: prefix,
 	}
 
-	resp, err := u.client.TSListMetrics(ctx, req)
+	resp, err := u.adminClient.TSListMetrics(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1243,7 +1284,7 @@ func (u *unixSocketTimeseriesProtocol) GetRetentionPolicy(ctx context.Context, m
 		Metric: metric,
 	}
 
-	resp, err := u.client.TSGetRetentionPolicy(ctx, req)
+	resp, err := u.adminClient.TSGetRetentionPolicy(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -1268,6 +1309,6 @@ func (u *unixSocketTimeseriesProtocol) SetRetentionPolicy(ctx context.Context, m
 			Aggregation: policy.Aggregation,
 		},
 	}
-	_, err := u.client.TSSetRetentionPolicy(ctx, req)
+	_, err := u.adminClient.TSSetRetentionPolicy(ctx, req)
 	return err
 }

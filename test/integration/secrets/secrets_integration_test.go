@@ -285,7 +285,7 @@ func TestSecretsTenantIsolation(t *testing.T) {
 		}
 
 		opts := &SecretOptions{
-			TenantID: "tenant-a",
+			Principal: "tenant-a",
 			Metadata: map[string]string{
 				"tenant": "A",
 			},
@@ -304,7 +304,7 @@ func TestSecretsTenantIsolation(t *testing.T) {
 		}
 
 		opts := &SecretOptions{
-			TenantID: "tenant-b",
+			Principal: "tenant-b",
 			Metadata: map[string]string{
 				"tenant": "B",
 			},
@@ -317,7 +317,7 @@ func TestSecretsTenantIsolation(t *testing.T) {
 
 	// Verify tenant A can read their secret
 	t.Run("tenant A reads their secret", func(t *testing.T) {
-		secret := getSecret(t, endpoint, pathA)
+		secret := getSecretAs(t, "tenant-a", endpoint, pathA)
 		var data map[string]interface{}
 		err := json.Unmarshal(secret.Data, &data)
 		require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestSecretsTenantIsolation(t *testing.T) {
 
 	// Verify tenant B can read their secret
 	t.Run("tenant B reads their secret", func(t *testing.T) {
-		secret := getSecret(t, endpoint, pathB)
+		secret := getSecretAs(t, "tenant-b", endpoint, pathB)
 		var data map[string]interface{}
 		err := json.Unmarshal(secret.Data, &data)
 		require.NoError(t, err)
@@ -335,14 +335,21 @@ func TestSecretsTenantIsolation(t *testing.T) {
 		t.Logf("Tenant B successfully read their secret")
 	})
 
-	// Note: In a real multi-tenant setup with proper authorization,
-	// tenant A should not be able to read tenant B's secrets.
-	// This test documents the expected behavior.
+	// Neither tenant can read the other's secret.
+	t.Run("tenants cannot read each other's secrets", func(t *testing.T) {
+		secret, err := tryGetSecretAs(t, "tenant-a", endpoint, pathB)
+		assert.Error(t, err, "tenant A read tenant B's secret")
+		assert.Nil(t, secret)
+
+		secret, err = tryGetSecretAs(t, "tenant-b", endpoint, pathA)
+		assert.Error(t, err, "tenant B read tenant A's secret")
+		assert.Nil(t, secret)
+	})
 
 	// Clean up
 	t.Run("cleanup", func(t *testing.T) {
-		deleteSecret(t, endpoint, pathA, true)
-		deleteSecret(t, endpoint, pathB, true)
+		deleteSecretAs(t, "tenant-a", endpoint, pathA, true)
+		deleteSecretAs(t, "tenant-b", endpoint, pathB, true)
 	})
 }
 

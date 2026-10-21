@@ -35,7 +35,7 @@ import (
 // TestConsistencyLevels_Put tests different consistency levels for Put operations
 func TestConsistencyLevels_Put(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 10*time.Second)
 
 	entityType := "consistency_test"
 	entityID := uint64(time.Now().UnixNano())
@@ -87,7 +87,7 @@ func TestConsistencyLevels_Put(t *testing.T) {
 // TestConsistencyLevels_Get tests different consistency levels for Get operations
 func TestConsistencyLevels_Get(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 10*time.Second)
 
 	entityType := "consistency_get_test"
 	entityID := uint64(time.Now().UnixNano())
@@ -159,7 +159,7 @@ func TestConsistencyLevels_Get(t *testing.T) {
 // TestConsistencyLevels_Delete tests different consistency levels for Delete operations
 func TestConsistencyLevels_Delete(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 10*time.Second)
 
 	entityType := "consistency_delete_test"
 
@@ -219,7 +219,7 @@ func TestConsistencyLevels_Delete(t *testing.T) {
 // TestConsistencyLevels_List tests consistency levels for list operations
 func TestConsistencyLevels_List(t *testing.T) {
 	baseURL := getEnv("QUICBAAS_NODE1_URL", "https://test-node1:8080")
-	client := helpers.NewHTTPClient(10 * time.Second)
+	client := helpers.NewTenantOperatorHTTPClient(t, 10*time.Second)
 
 	entityType := "consistency_list_test"
 

@@ -1,0 +1,5 @@
+### Fixed
+
+- Integration clients that drive KV, transactions, vector or time-series now act as a tenant operator: a PIV user of the tenant principal's tenant whom the tenant admin binds to go-qrdb's built-in Operator role. The tenant admin holds only the Admin role, and Admin grants none of those data-plane verbs, so its KV and transaction calls were refused with PermissionDenied, and the vector and time-series availability probes failed. Suites that drive secrets, KMS, DEK or parameters stay on the tenant admin (#1731).
+- The shared SDK test client (`helpers.NewTestClient`) behind the CRUD and transaction verification suites also acts as the tenant operator; it still took the tenant admin's bearer, so its first KV write was refused (#1731).
+- The time-series multiprotocol clients send WritePoint, DeleteSeries, ListMetrics and the retention RPCs (and REST `DELETE /api/v1/timeseries/series`) as the tenant admin. go-qrdb's Operator role holds only `timeseries:write`, `write_batch`, `query` and `aggregate`; quicbaas grants the other time-series permissions to Admin, so those calls were refused as the operator (#1731).
