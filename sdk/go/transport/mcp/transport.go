@@ -155,9 +155,10 @@ func (t *Transport) buildHTTPClient() (*http.Client, error) {
 		}).DialContext,
 	}
 
-	// Configure TLS
+	// Configure TLS. This transport speaks HTTP/1.1 only, so it offers only
+	// http/1.1 through ALPN.
 	if t.cfg.TLSConfig != nil {
-		httpTransport.TLSClientConfig = t.cfg.TLSConfig
+		httpTransport.TLSClientConfig = transport.HTTP1TLSConfig(t.cfg.TLSConfig)
 	}
 
 	// Configure for Unix socket if needed

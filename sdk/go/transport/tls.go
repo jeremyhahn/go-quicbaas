@@ -110,3 +110,18 @@ func CloneTLSConfig(cfg *tls.Config) *tls.Config {
 	}
 	return cfg.Clone()
 }
+
+// HTTP1TLSConfig returns a clone of cfg that offers only "http/1.1" through
+// ALPN, or nil if cfg is nil. An HTTP/1.1-only transport must offer exactly
+// that: a server that also speaks HTTP/2 answers an offered "h2" with HTTP/2
+// frames. The clone also keeps the transport from inheriting an "h2" that
+// net/http adds in place to a config another, HTTP/2-capable, client shares
+// (go-quicbaas#1734).
+func HTTP1TLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	clone := cfg.Clone()
+	clone.NextProtos = []string{"http/1.1"}
+	return clone
+}

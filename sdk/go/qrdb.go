@@ -578,7 +578,10 @@ func (c *client) buildQRDBTransport() (qrdbtransport.Transport, error) {
 	buildOpts := func(address string) []qrdbtransport.Option {
 		opts := []qrdbtransport.Option{qrdbtransport.WithAddress(address)}
 		if tlsConfigured {
-			opts = append(opts, qrdbtransport.WithTLSConfig(c.opts.tlsConfig))
+			// A clone: go-qrdb's HTTP/2 transports let net/http add "h2"
+			// to the config they hold, and the caller's config must not
+			// change under the SDK's other transports (go-quicbaas#1734).
+			opts = append(opts, qrdbtransport.WithTLSConfig(c.opts.tlsConfig.Clone()))
 		}
 		if c.opts.timeout > 0 {
 			opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))
@@ -636,7 +639,7 @@ func (c *client) buildQRDBUnixTransport() (qrdbtransport.Transport, error) {
 	if c.opts.tlsEnabled && c.opts.tlsConfig != nil {
 		opts := []qrdbtransport.Option{
 			qrdbtransport.WithAddress(unixGRPCTarget(socketPath)),
-			qrdbtransport.WithTLSConfig(c.opts.tlsConfig),
+			qrdbtransport.WithTLSConfig(c.opts.tlsConfig.Clone()),
 		}
 		if c.opts.timeout > 0 {
 			opts = append(opts, qrdbtransport.WithTimeout(c.opts.timeout))

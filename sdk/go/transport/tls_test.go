@@ -368,6 +368,35 @@ func TestCloneTLSConfig_ValidConfig(t *testing.T) {
 	}
 }
 
+func TestHTTP1TLSConfig_NilConfig(t *testing.T) {
+	if got := HTTP1TLSConfig(nil); got != nil {
+		t.Errorf("expected nil result for nil input, got %v", got)
+	}
+}
+
+func TestHTTP1TLSConfig_OffersOnlyHTTP1AndLeavesTheOriginal(t *testing.T) {
+	original := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: "example.com",
+		NextProtos: []string{"h2", "http/1.1"},
+	}
+
+	got := HTTP1TLSConfig(original)
+
+	if got == original {
+		t.Fatal("expected a clone, got the caller's config")
+	}
+	if len(got.NextProtos) != 1 || got.NextProtos[0] != "http/1.1" {
+		t.Errorf("NextProtos = %v, want [http/1.1]", got.NextProtos)
+	}
+	if got.ServerName != original.ServerName || got.MinVersion != original.MinVersion {
+		t.Error("the clone must keep the rest of the configuration")
+	}
+	if len(original.NextProtos) != 2 || original.NextProtos[0] != "h2" {
+		t.Errorf("the caller's NextProtos changed: %v", original.NextProtos)
+	}
+}
+
 func TestTLSConfig_Struct(t *testing.T) {
 	cfg := TLSConfig{
 		CertFile:   "/path/to/cert.pem",
