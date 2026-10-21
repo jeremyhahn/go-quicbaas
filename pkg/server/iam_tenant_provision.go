@@ -158,13 +158,19 @@ func (p *tenantProvisioner) Provision(ctx context.Context, req *service.IAMProvi
 }
 
 // enrollAdminCert enrolls the certificate qrdb issued for the tenant admin as
-// that admin's mtls login factor, the same enrollment first-boot performs.
+// that admin's mtls login factor, the same enrollment first-boot performs, and
+// permits mtls in the admin's method policy: the certificate login checks it,
+// and the admin was created on the webauthn default (go-quicbaas#1727).
 func (p *tenantProvisioner) enrollAdminCert(ctx context.Context, tenantID string, adminUserID uint64, certPEM []byte) error {
 	cert, err := parseCertLoginPEM(certPEM)
 	if err != nil {
 		return err
 	}
-	return enrollCertLoginFactor(ctx, p.certLoginFactors, tenantID, adminUserID, cert, adminCertBindingSourceTenantProvision)
+	if err := enrollCertLoginFactor(ctx, p.certLoginFactors, tenantID, adminUserID, cert, adminCertBindingSourceTenantProvision); err != nil {
+		return err
+	}
+	_, err = p.identity.PermitCertificateLogin(ctx, tenantID, adminUserID)
+	return err
 }
 
 // finishCertEnrollment makes the cert-mode admin able to log in. The binding

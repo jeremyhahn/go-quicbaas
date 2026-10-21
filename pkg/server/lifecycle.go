@@ -163,6 +163,21 @@ func (s *Server) optionalMTLSClientAuth() tls.ClientAuthType {
 // (the pool seeded by xkms ServerTLSConfig, or an operator-supplied pool) rather
 // than replacing it, so operator clients and platform agents both verify.
 func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
+	if err := s.trustPlatformClientCAs(tlsConfig); err != nil {
+		return err
+	}
+	tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	s.logger.Info("TLS configured with mutual TLS (client certificate required, platform CA trusted)")
+	return nil
+}
+
+// trustPlatformClientCAs appends the platform xkms CA bundle to
+// tlsConfig.ClientCAs without changing the client-auth mode. The CA signs the
+// certificates this node hands out itself (cert-mode tenant admins, agent mTLS
+// certs), so its own listener must trust them in every posture. In TLS 1.3 a
+// client sends a certificate only when its issuer is among the CAs the server
+// names, so a missing platform CA means the certificate is never presented.
+func (s *Server) trustPlatformClientCAs(tlsConfig *tls.Config) error {
 	if s.xkmsCA != nil {
 		caBundle, err := s.xkmsCA.CABundle()
 		if err != nil {
@@ -177,8 +192,6 @@ func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
 			}
 		}
 	}
-	tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-	s.logger.Info("TLS configured with mutual TLS (client certificate required, platform CA trusted)")
 	return nil
 }
 
@@ -655,12 +668,21 @@ func (s *Server) initializeCA() error {
 				}
 			}
 		}
-		// Full-mTLS clusters require every client to present a cert and
-		// must also trust the platform xkms CA so agent mTLS certs
-		// (OU=agents) verify alongside the operator's own client CAs.
+		// Both postures trust the platform xkms CA alongside the operator's
+		// client CAs, so the certificates this node issues (agent mTLS certs,
+		// cert-mode tenant admins) verify on its own listener. Full-mTLS
+		// clusters also require every client to present a cert
+		// (go-quicbaas#1727).
 		if s.config.Security.TLSClientAuth {
 			if err := s.appendPlatformClientCAs(s.tlsConfig); err != nil {
 				return err
+			}
+		} else {
+			if err := s.trustPlatformClientCAs(s.tlsConfig); err != nil {
+				return err
+			}
+			if s.tlsConfig.ClientCAs != nil {
+				s.tlsConfig.ClientAuth = s.optionalMTLSClientAuth()
 			}
 		}
 		s.logger.Infof("TLS configured from operator-provided cert: %s", s.config.Security.TLSCertFile)

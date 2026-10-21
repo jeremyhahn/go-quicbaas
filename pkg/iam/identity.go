@@ -549,6 +549,40 @@ func (s *IdentityStore) GetUserByUsername(ctx context.Context, tenantID, usernam
 	return user, nil
 }
 
+// PermitCertificateLogin adds AuthMethodMTLS to a user's permitted-method
+// policy, so a login authenticated by the user's bound client certificate is
+// accepted. go-xkms's certificate login (/api/v1/auth/login/piv) and go-qrdb's
+// MTLSAuthenticator both check the policy for exactly that method.
+//
+// First boot calls it for the bootstrap admin whose certificate it binds:
+// CreateUser defaults a new account to webauthn, which refused the very
+// certificate first boot had just bound (go-quicbaas#1727).
+//
+// An empty policy already permits every method and is left alone, and a policy
+// that already names mtls is not written again. It is not on the human
+// create/update surface: mtls stays outside supportedAuthMethods.
+func (s *IdentityStore) PermitCertificateLogin(ctx context.Context, tenantID string, userID uint64) (*User, error) {
+	if err := validateTenantID(tenantID); err != nil {
+		return nil, err
+	}
+	if err := validateUserID(userID); err != nil {
+		return nil, err
+	}
+	user, err := s.userStorage.GetUser(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(user.AuthMethods) == 0 || slices.Contains(user.AuthMethods, AuthMethodMTLS) {
+		return user, nil
+	}
+	user.AuthMethods = append(user.AuthMethods, AuthMethodMTLS)
+	user.Updated = time.Now().UTC()
+	if err := s.userStorage.UpdateUser(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
 // UpdateUser updates an existing user.
 //
 // Changing the email address KEEPS the user's WebAuthn credentials, and says so

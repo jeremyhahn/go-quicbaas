@@ -80,8 +80,9 @@ const AgentSessionRoleName = "agent-session"
 //
 // It is deliberately absent from supportedAuthMethods, the closed set the
 // human create/update surface accepts: QuicBaaS accounts are passwordless and
-// activated by WebAuthn or PIV, and this is a MACHINE identity's method,
-// conferred only by EnrollFleetNodeCertIdentity.
+// activated by WebAuthn or PIV, and this is a CERTIFICATE identity's method,
+// conferred only by EnrollFleetNodeCertIdentity and, for the bootstrap admin
+// whose certificate first boot binds, by PermitCertificateLogin.
 const AuthMethodMTLS = "mtls"
 
 // MCP permissions a spawned agent session exercises. They are the

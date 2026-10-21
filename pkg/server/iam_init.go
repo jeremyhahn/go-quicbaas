@@ -1538,6 +1538,13 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID string, us
 	}); err != nil {
 		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
 	}
+
+	// The certificate is how this admin logs in, so the account's
+	// permitted-method policy must say so: the certificate login checks it for
+	// mtls, and CreateUser left the webauthn default (go-quicbaas#1727).
+	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {
+		return &PIVBootstrapError{Op: "permit bootstrap admin certificate login", Path: path, Cause: err}
+	}
 	return nil
 }
 
