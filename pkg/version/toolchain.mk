@@ -17,7 +17,7 @@
 # more (pkg/version, TestToolchain_EveryLineIsAnAssignment).
 
 # The Go toolchain the projects this factory builds pin in their go.mod.
-GO_VERSION := 1.27.2
+GO_VERSION := 1.27.3
 
 # Pinned per devops.md §9 and company task #122. $(GOBIN) is shared across
 # checkouts on the build hosts, so an unpinned install in one tree silently
@@ -65,7 +65,7 @@ TRIVY_SHA256_AARCH64 := aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af6
 # The devcontainer's base image (build/docker/devcontainer/Dockerfile),
 # golang:$(GO_VERSION)-trixie by its multi-arch index digest, so a re-pushed
 # tag cannot change the toolchain under a pin. Change it with GO_VERSION.
-GO_IMAGE_DIGEST := sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e
+GO_IMAGE_DIGEST := sha256:1896654cfc5c2b5ad74c07f29cb36f5d2d1cbed42e3054070fbfe444e521e83c
 # Workflow linting. The fleet's `make lint` includes actionlint (devops.md
 # lint row), and actionlint delegates every SC* rule to shellcheck -- with
 # shellcheck absent it SILENTLY skips them and still exits 0, so a project's

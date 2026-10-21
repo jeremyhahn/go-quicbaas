@@ -13,7 +13,7 @@
 # Used by test/integration/containerruntime/docker-compose.yml; run it with
 # `make integration-test-containerruntime`. The container must be privileged.
 
-FROM golang:1.27.2
+FROM golang:1.27.3
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends busybox-static \
