@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 const (
@@ -270,6 +271,18 @@ func (m *GDPRManager) ListUserConsents(ctx context.Context, tenantID string, use
 // RequestExport creates a new data export request and starts background processing.
 // The export will be processed asynchronously and its status can be checked via GetExportStatus.
 func (m *GDPRManager) RequestExport(ctx context.Context, tenantID string, userID, requestedBy uint64, format DataExportFormat, includeCategories, excludeCategories []string) (*DataExportRequest, error) {
+	// The export generator writes JSON only; an empty format means JSON.
+	if format == "" {
+		format = DataExportFormatJSON
+	}
+	if format != DataExportFormatJSON {
+		return nil, &dberrors.QBError{
+			Code: ErrDataExportInvalid.Code,
+			Op:   "iam.gdpr.request_export",
+			Err:  &UnsupportedDataExportFormatError{Format: format},
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

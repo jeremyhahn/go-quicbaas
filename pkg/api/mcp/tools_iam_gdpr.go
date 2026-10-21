@@ -202,8 +202,8 @@ func (r *ToolRegistry) registerGDPRTools() {
 				},
 				"format": map[string]interface{}{
 					"type":        "string",
-					"description": "Export format",
-					"enum":        []string{"json", "csv", "xml"},
+					"description": "Export format; the export is JSON only",
+					"enum":        []string{"json"},
 					"default":     "json",
 				},
 				"include_categories": map[string]interface{}{

@@ -154,14 +154,34 @@ func TestDownloadExport_WrongUser(t *testing.T) {
 }
 
 // DownloadExport sets a CSV content type for a CSV-format completed export.
-func TestDownloadExport_CSVFormat(t *testing.T) {
+func TestRequestDataExport_RefusesNonJSONFormats(t *testing.T) {
+	for _, format := range []string{"csv", "xml"} {
+		t.Run(format, func(t *testing.T) {
+			handler, _, cleanup := setupGDPRDownloadHandler(t)
+			defer cleanup()
+
+			w := httptest.NewRecorder()
+			body, err := json.Marshal(map[string]interface{}{"format": format})
+			require.NoError(t, err)
+			handler.RequestDataExport(w, withChiParams(
+				httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body)),
+				map[string]string{"tenant_id": gdprTenant, "user_id": gdprUser}))
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// The generator writes JSON only, so a stored request carrying another
+// format still downloads as JSON, never relabelled as CSV or XML (#1724).
+func TestDownloadExport_StoredCSVFormatDownloadsAsJSON(t *testing.T) {
 	handler, exportStore, cleanup := setupGDPRDownloadHandler(t)
 	defer cleanup()
 	ctx := context.Background()
 	userParams := map[string]string{"tenant_id": gdprTenant, "user_id": gdprUser}
 
 	w := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]interface{}{"format": "csv"})
+	body, err := json.Marshal(map[string]interface{}{"format": "json"})
+	require.NoError(t, err)
 	handler.RequestDataExport(w, withChiParams(
 		httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(body)), userParams))
 	require.Equal(t, http.StatusAccepted, w.Code)
@@ -172,13 +192,17 @@ func TestDownloadExport_CSVFormat(t *testing.T) {
 	rec, err := exportStore.GetExportRequest(ctx, exportID)
 	require.NoError(t, err)
 	rec.Status = iam.DataExportStatusCompleted
+	rec.Format = iam.DataExportFormatCSV
 	require.NoError(t, exportStore.UpdateExportRequest(ctx, rec))
 
 	w = httptest.NewRecorder()
 	handler.DownloadExport(w, withChiParams(httptest.NewRequest(http.MethodGet, "/x", nil),
 		map[string]string{"tenant_id": gdprTenant, "user_id": gdprUser, "export_id": exportID}))
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/csv", w.Header().Get("Content-Type"))
+	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+	assert.Equal(t, `attachment; filename="user_data_export.json"`, w.Header().Get("Content-Disposition"))
+	var downloaded map[string]interface{}
+	assert.NoError(t, json.NewDecoder(w.Body).Decode(&downloaded), "the body is JSON")
 }
 
 // GetExportStatus / GetDeletionStatus missing IDs -> 400.

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
 // =============================================================================
@@ -48,12 +49,49 @@ func TestExecuteIAMGDPRExportRequest_WithCategories(t *testing.T) {
 		"tenant_id":          "t1",
 		"user_id":            "30001",
 		"requested_by":       "50100",
-		"format":             "csv",
+		"format":             "json",
 		"include_categories": []interface{}{"profile", "sessions"},
 		"exclude_categories": []interface{}{"audit_logs"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+}
+
+// The export generator writes JSON only, so the tool refuses CSV and XML with
+// MCP's invalid-input code (#1724).
+func TestExecuteIAMGDPRExportRequest_RefusesNonJSONFormats(t *testing.T) {
+	for _, format := range []string{"csv", "xml"} {
+		t.Run(format, func(t *testing.T) {
+			reg := &ToolRegistry{service: newGDPRMockWithManager(t), logger: newTestLogger(t)}
+
+			result, err := reg.executeIAMGDPRExportRequest(context.Background(), map[string]interface{}{
+				"tenant_id":    "t1",
+				"user_id":      "30001",
+				"requested_by": "50100",
+				"format":       format,
+			})
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Equal(t, mcptransport.MCPInvalidInput, toolErrorCode(err), "error: %v", err)
+		})
+	}
+}
+
+func TestIAMGDPRExportRequestSchema_OffersJSONOnly(t *testing.T) {
+	reg := &ToolRegistry{service: newGDPRMockWithManager(t), logger: newTestLogger(t)}
+	reg.registerGDPRTools()
+	for _, tool := range reg.ListTools() {
+		if tool.Name != "quicbaas_iam_gdpr_export_request" {
+			continue
+		}
+		properties, ok := tool.InputSchema["properties"].(map[string]interface{})
+		require.True(t, ok)
+		format, ok := properties["format"].(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, []string{"json"}, format["enum"])
+		return
+	}
+	t.Fatal("quicbaas_iam_gdpr_export_request tool not registered")
 }
 
 func TestExecuteIAMGDPRExportRequest_DefaultFormat(t *testing.T) {

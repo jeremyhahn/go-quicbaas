@@ -2202,6 +2202,16 @@ func (e *BatchCSVNotSupportedError) Error() string {
 	return "CSV import not supported for " + e.OperationType
 }
 
+// UnsupportedDataExportFormatError reports a GDPR data export requested in a
+// format other than JSON, the only format the export generator writes.
+type UnsupportedDataExportFormatError struct {
+	Format DataExportFormat
+}
+
+func (e *UnsupportedDataExportFormatError) Error() string {
+	return "unsupported data export format " + strconv.Quote(string(e.Format)) + ": only json is supported"
+}
+
 // BatchCannotCancelError indicates the operation cannot be cancelled.
 type BatchCannotCancelError struct{}
 

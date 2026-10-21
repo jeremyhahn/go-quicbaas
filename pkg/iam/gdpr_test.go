@@ -437,24 +437,6 @@ func TestGDPRManager_RequestExport_PendingExists(t *testing.T) {
 	assert.ErrorIs(t, err, ErrDataExportPending)
 }
 
-func TestGDPRManager_RequestExport_AllFormats(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	formats := []DataExportFormat{
-		DataExportFormatJSON,
-		DataExportFormatCSV,
-		DataExportFormatXML,
-	}
-
-	for i, format := range formats {
-		userID := uint64(i) + 10
-		request, err := manager.RequestExport(ctx, "tenant1", userID, userID, format, nil, nil)
-		require.NoError(t, err, "Failed for format: %s", format)
-		assert.Equal(t, format, request.Format)
-	}
-}
-
 func TestGDPRManager_GetExportStatus(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()

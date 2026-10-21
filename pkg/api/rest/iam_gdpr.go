@@ -559,24 +559,10 @@ func (h *IAMHandler) DownloadExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set appropriate headers based on format
-	filename := "user_data_export"
-	contentType := "application/json"
-
-	switch exportReq.Format {
-	case iam.DataExportFormatJSON:
-		filename += ".json"
-		contentType = "application/json"
-	case iam.DataExportFormatCSV:
-		filename += ".csv"
-		contentType = "text/csv"
-	case iam.DataExportFormatXML:
-		filename += ".xml"
-		contentType = "application/xml"
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	// The generator writes JSON only, so the download is labelled JSON
+	// whatever format the stored request names (#1724).
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="user_data_export.json"`)
 	w.WriteHeader(http.StatusOK)
 
 	// Write export data. The header is already written, so a stream failure

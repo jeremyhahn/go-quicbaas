@@ -645,7 +645,8 @@ func TestGDPR_ListConsents_Multiple(t *testing.T) {
 // Data Export Tests
 // ============================================================================
 
-// TestGDPR_RequestExport_AllFormats tests requesting exports in all supported formats.
+// TestGDPR_RequestExport_AllFormats tests that JSON, the only format the
+// export generator writes, is accepted and CSV and XML are refused (#1724).
 func TestGDPR_RequestExport_AllFormats(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
@@ -654,9 +655,24 @@ func TestGDPR_RequestExport_AllFormats(t *testing.T) {
 	createTestTenant(t, cluster, tenantID)
 	defer cleanupTestTenant(t, cluster, tenantID)
 
-	formats := []string{"json", "csv", "xml"}
+	for _, format := range []string{"csv", "xml"} {
+		t.Run(format+"_refused", func(t *testing.T) {
+			body, err := json.Marshal(ExportRequest{Format: format})
+			require.NoError(t, err)
 
-	for _, format := range formats {
+			resp, err := cluster.client.Post(
+				cluster.httpEndpoint+"/api/v1/tenants/"+tenantID+"/users/"+generateGDPRUserID()+"/gdpr/export",
+				"application/json",
+				bytes.NewReader(body),
+			)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "Export request should be refused for format %s", format)
+		})
+	}
+
+	for _, format := range []string{"json"} {
 		t.Run(format, func(t *testing.T) {
 			userID := generateGDPRUserID()
 
@@ -1901,7 +1917,7 @@ func TestGDPR_ConsentHistory(t *testing.T) {
 	assert.Equal(t, "2.0", result["version"])
 }
 
-// TestGDPR_ExportFormats tests different export formats (legacy compatibility).
+// TestGDPR_ExportFormats tests that only JSON exports are accepted (#1724).
 func TestGDPR_ExportFormats(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
@@ -1928,6 +1944,10 @@ func TestGDPR_ExportFormats(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
+		if format != "json" {
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode, "format %s", format)
+			continue
+		}
 		assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 
 		var result map[string]interface{}
