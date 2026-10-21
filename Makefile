@@ -557,12 +557,20 @@ proto: proto-gen ## Alias for proto-gen
 .PHONY: fmt
 fmt: ## Format code (excludes vendor)
 	@echo "$(BLUE)Formatting code...$(NC)"
-	@find . -name '*.go' -not -path '*/vendor/*' -not -path '*/.deps/*' -not -path '*/.tmp/*' -not -path '*/tmp/*' | xargs $(GOFMT) -s -w
+	@$(REPO_GO_FILES) | xargs -0r $(GOFMT) -s -w
+
+# The Go files of this repository's own tree: tracked files plus new ones not
+# yet added, minus what .gitignore excludes (.deps/, tmp/, .tmp/). git names
+# no path outside the root and never descends into a nested repository or
+# worktree, so fmt, fmt-check and check-nolint see this checkout and nothing
+# beside or inside it (#302). A `find .` or `grep -r .` here would also scan
+# another lane's checkout nested under the tree.
+REPO_GO_FILES = git ls-files -z --cached --others --exclude-standard -- '*.go'
 
 .PHONY: fmt-check
 fmt-check: ## Check code formatting (fails if not formatted, excludes vendor)
 	@echo "$(BLUE)Checking code formatting...$(NC)"
-	@UNFORMATTED=$$(find . -name '*.go' -not -path '*/vendor/*' -not -path '*/.deps/*' -not -path '*/.tmp/*' -not -path '*/tmp/*' | xargs $(GOFMT) -l); \
+	@UNFORMATTED=$$($(REPO_GO_FILES) | xargs -0r $(GOFMT) -l); \
 	if [ -n "$$UNFORMATTED" ]; then \
 		echo "$(RED)Code not formatted. Run 'make fmt' to fix:$(NC)"; \
 		echo "$$UNFORMATTED"; \
@@ -581,9 +589,30 @@ check-insecure-tls: ## Enforce InsecureSkipVerify allowlist - empty allowlist me
 	@# matched a fully commented-out line (`^...: *//`), not a trailing
 	@# comment on real code, so this check failed on every run regardless of
 	@# the existing nolint annotation's intent.
-	@violations=$$(grep -rEn 'InsecureSkipVerify[[:space:]]*:[[:space:]]*true' --include="*.go" --exclude-dir='.deps' --exclude-dir='vendor' . \
-		| grep -Ev '^[^:]+:[0-9]+:[[:space:]]*//|//nolint:gosec' \
-		|| true); \
+	@# The files come from REPO_GO_FILES, not a walk of `.`: a walk reads a
+	@# nested checkout or lane clone that is not this repository (#302).
+	@# The gate fails closed: a failed or empty file listing (a source archive
+	@# or a build context with no .git) or a grep error (status 2 or more,
+	@# against 1 for no match) is an error, never a pass with nothing scanned.
+	@list=$$(mktemp) || exit 1; \
+	trap 'rm -f "$$list"' EXIT; \
+	if ! $(REPO_GO_FILES) > "$$list"; then \
+		echo "$(RED)check-insecure-tls: git cannot list this repository's Go files$(NC)"; \
+		exit 1; \
+	fi; \
+	if [ ! -s "$$list" ]; then \
+		echo "$(RED)check-insecure-tls: git listed no Go files, so nothing was scanned$(NC)"; \
+		exit 1; \
+	fi; \
+	if ! matches=$$(xargs -0 sh -c 'grep -HEn "InsecureSkipVerify[[:space:]]*:[[:space:]]*true" "$$@"; rc=$$?; [ $$rc -le 1 ] || exit $$rc' sh < "$$list"); then \
+		echo "$(RED)check-insecure-tls: grep failed while scanning the Go files$(NC)"; \
+		exit 1; \
+	fi; \
+	violations=$$(printf '%s\n' "$$matches" | grep -Ev '^[^:]+:[0-9]+:[[:space:]]*//|//nolint:gosec'); \
+	if [ $$? -gt 1 ]; then \
+		echo "$(RED)check-insecure-tls: grep failed while filtering the matches$(NC)"; \
+		exit 1; \
+	fi; \
 	if [ -n "$$violations" ]; then \
 		echo "$(RED)FORBIDDEN InsecureSkipVerify in go-quicbaas (no allowlist entries):$(NC)"; \
 		printf '%s\n' "$$violations" | cut -d: -f1,2; \
@@ -1441,7 +1470,7 @@ NOLINT_ALLOWLIST := scripts/nolint-allowlist.txt
 check-nolint: ## Fail if a //nolint directive is not on scripts/nolint-allowlist.txt, or an entry is stale
 	@echo "$(BLUE)Checking //nolint directives against $(NOLINT_ALLOWLIST)...$(NC)"
 	@LC_ALL=C sort -c $(NOLINT_ALLOWLIST) || { echo "$(RED)$(NOLINT_ALLOWLIST) must be sorted (LC_ALL=C sort)$(NC)"; exit 1; }
-	@found=$$(grep -rlE '//[[:space:]]*nolint' --include='*.go' --exclude-dir=.git --exclude-dir=.deps --exclude-dir=vendor . \
+	@found=$$($(REPO_GO_FILES) | xargs -0r grep -lE '//[[:space:]]*nolint' \
 		| xargs -r grep -LE '^// Code generated .* DO NOT EDIT\.$$' \
 		| xargs -r grep -HoE '//[[:space:]]*nolint(:[^[:space:]]*)?' \
 		| awk '{ sub(/^\.\//, ""); sub(/:\/\/[[:space:]]*nolint:?/, ":"); print }' | LC_ALL=C sort); \
