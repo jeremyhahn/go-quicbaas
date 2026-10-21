@@ -135,6 +135,15 @@ type Pins struct {
 	Marksman                  string
 	MarksmanSHA256X86_64      string
 	MarksmanSHA256Aarch64     string
+
+	// KotlinLsp is JetBrains' Kotlin language server, from its release
+	// tarball with the SHA-256 per architecture pinned beside it. OpenJDK is
+	// the major of Debian's headless JDK, the Java a Kotlin or Java project
+	// builds with (go-quicbaas#1746).
+	KotlinLsp              string
+	KotlinLspSHA256X86_64  string
+	KotlinLspSHA256Aarch64 string
+	OpenJDK                string
 }
 
 // ToolchainPins returns the repository's toolchain pins, as this binary
@@ -195,6 +204,11 @@ func ToolchainPins() (Pins, error) {
 		Marksman:                  toolchain["MARKSMAN_VERSION"],
 		MarksmanSHA256X86_64:      toolchain["MARKSMAN_SHA256_X86_64"],
 		MarksmanSHA256Aarch64:     toolchain["MARKSMAN_SHA256_AARCH64"],
+
+		KotlinLsp:              toolchain["KOTLIN_LSP_VERSION"],
+		KotlinLspSHA256X86_64:  toolchain["KOTLIN_LSP_SHA256_X86_64"],
+		KotlinLspSHA256Aarch64: toolchain["KOTLIN_LSP_SHA256_AARCH64"],
+		OpenJDK:                toolchain["OPENJDK_MAJOR"],
 	}
 	return pins, pins.Validate()
 }
@@ -267,6 +281,10 @@ func (p Pins) named() []namedPin {
 		{buildArg: "MARKSMAN_VERSION", label: LabelMarksmanVersion, value: p.Marksman},
 		{buildArg: "MARKSMAN_SHA256_X86_64", value: p.MarksmanSHA256X86_64},
 		{buildArg: "MARKSMAN_SHA256_AARCH64", value: p.MarksmanSHA256Aarch64},
+		{buildArg: "KOTLIN_LSP_VERSION", label: LabelKotlinLspVersion, value: p.KotlinLsp},
+		{buildArg: "KOTLIN_LSP_SHA256_X86_64", value: p.KotlinLspSHA256X86_64},
+		{buildArg: "KOTLIN_LSP_SHA256_AARCH64", value: p.KotlinLspSHA256Aarch64},
+		{buildArg: "OPENJDK_MAJOR", label: LabelOpenJDKVersion, value: p.OpenJDK},
 	}
 }
 
@@ -306,6 +324,8 @@ const (
 	LabelClangdVersion                   = "io.quicbaas.worker.clangd.version"
 	LabelRustAnalyzerVersion             = "io.quicbaas.worker.rust-analyzer.version"
 	LabelMarksmanVersion                 = "io.quicbaas.worker.marksman.version"
+	LabelKotlinLspVersion                = "io.quicbaas.worker.kotlin-lsp.version"
+	LabelOpenJDKVersion                  = "io.quicbaas.worker.openjdk.version"
 )
 
 // The npm packages the image installs the agents from.

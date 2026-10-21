@@ -62,6 +62,43 @@ func TestDockerfile_BaseImageCarriesJq(t *testing.T) {
 	}
 }
 
+// TestDockerfile_BaseImageCarriesTheJDK proves the runtime stage installs the
+// headless JDK at the pinned major (OPENJDK_MAJOR), from Debian's archive
+// beside the other apt packages, rather than a hard-coded major the pin and
+// its label could drift from.
+func TestDockerfile_BaseImageCarriesTheJDK(t *testing.T) {
+	packages := baseAptPackages(string(Dockerfile))
+	if !slices.Contains(packages, `"openjdk-${OPENJDK_MAJOR}-jdk-headless"`) {
+		t.Errorf("the image's apt list %v does not install the pinned headless JDK", packages)
+	}
+	if slices.Contains(packages, "openjdk-21-jdk-headless") {
+		t.Error("the JDK major must come from OPENJDK_MAJOR, not be written into the apt list")
+	}
+}
+
+// TestProbes_ToolchainChecksJavaAndKotlinLsp proves the toolchain probe fails
+// an image whose java is not the pinned major, or whose kotlin-lsp is not on
+// the login PATH: the two tools #1746 adds are certified like every other.
+func TestProbes_ToolchainChecksJavaAndKotlinLsp(t *testing.T) {
+	var script string
+	for _, p := range Probes() {
+		if p.Name == "toolchain, signing and every agent" {
+			script = p.Script
+		}
+	}
+	if script == "" {
+		t.Fatal("the toolchain probe was not found")
+	}
+	for _, want := range []string{
+		`java -version 2>&1 | head -1 | grep -qF "\"$EXPECTED_OPENJDK_MAJOR."`,
+		"command -v kotlin-lsp",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the toolchain probe does not run %q", want)
+		}
+	}
+}
+
 // TestInstallProof_PackageIsNotInTheImage proves both install proofs install a
 // package the image does not carry: an install of a package already present
 // installs nothing and proves nothing (go-quicbaas#1431).

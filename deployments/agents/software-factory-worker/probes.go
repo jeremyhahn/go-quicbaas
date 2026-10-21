@@ -93,6 +93,13 @@ const ProbePidsLimit = 64
 //go:embed pids-limit-probe.py
 var pidsLimitProbeScript []byte
 
+// kotlinLspProbeScript starts the Kotlin language server and completes an LSP
+// initialize over stdio, fed to python3 on stdin. Python bounds every read by
+// one deadline, which a shell pipe into the server cannot.
+//
+//go:embed kotlin-lsp-probe.py
+var kotlinLspProbeScript []byte
+
 // The environment variables a probe reads its expectations from.
 const (
 	EnvExpectedClaudeCode      = "EXPECTED_CLAUDE_CODE_VERSION"
@@ -107,6 +114,7 @@ const (
 	EnvExpectedProtocGenGo     = "EXPECTED_PROTOC_GEN_GO_VERSION"
 	EnvExpectedProtocGenGoGRPC = "EXPECTED_PROTOC_GEN_GO_GRPC_VERSION"
 	EnvProbePidsLimit          = "PROBE_PIDS_LIMIT"
+	EnvExpectedOpenJDK         = "EXPECTED_OPENJDK_MAJOR"
 
 	// EnvExpectedNpmBundledFloors is the space-separated name@version floors
 	// npm's bundled packages must meet: NPM_BUNDLED_DEPENDENCY_FLOORS without
@@ -143,6 +151,9 @@ func ProbeEnv(b Build) map[string]string {
 		EnvExpectedProtocGenGo:     b.Pins.ProtocGenGo,
 		EnvExpectedProtocGenGoGRPC: strings.TrimPrefix(b.Pins.ProtocGenGoGRPC, "v"),
 		EnvProbePidsLimit:          strconv.Itoa(ProbePidsLimit),
+		// java -version reports `openjdk version "21.0.8" ...`: the major
+		// is checked, as Debian's archive moves the patch release.
+		EnvExpectedOpenJDK: b.Pins.OpenJDK,
 
 		EnvExpectedNpmBundledFloors: npmBundledFloorSpecs(b.Pins.NpmBundledDependencyFloors),
 	}
@@ -168,6 +179,8 @@ func Probes() []Probe {
 		{Name: "serena answers an MCP initialize", Script: serenaHandshakeProbe, NetworkNone: true},
 		{Name: "serena reads every baked-in language by symbol, offline from an empty HOME",
 			Script: serenaLanguageServersProbe, Sandboxed: true, NetworkNone: true, Stdin: serenaFixtureArchive},
+		{Name: "the Kotlin language server starts offline and answers an LSP initialize",
+			Script: kotlinLspProbe, Sandboxed: true, NetworkNone: true, Stdin: kotlinLspProbeScript},
 		{Name: "lint and scan a Go module", Script: lintProbe, NetworkNone: true},
 		{Name: "lint GitHub Actions workflows", Script: workflowLintProbe, NetworkNone: true},
 		{Name: "protoc generates Go and gRPC code for a proto importing the well-known types", Script: protocProbe, NetworkNone: true},
@@ -196,6 +209,8 @@ claude --version | grep -qF "$EXPECTED_CLAUDE_CODE_VERSION" || { echo "claude is
 codex --version | grep -qF "$EXPECTED_CODEX_VERSION" || { echo "codex is not $EXPECTED_CODEX_VERSION: $(codex --version)"; exit 1; }
 gemini --version | grep -qF "$EXPECTED_GEMINI_CLI_VERSION" || { echo "gemini is not $EXPECTED_GEMINI_CLI_VERSION: $(gemini --version)"; exit 1; }
 opencode --version | grep -qxF "$EXPECTED_OPENCODE_VERSION" || { echo "opencode is not the pinned $EXPECTED_OPENCODE_VERSION: $(opencode --version)"; exit 1; }
+java -version 2>&1 | head -1 | grep -qF "\"$EXPECTED_OPENJDK_MAJOR." || { echo "java is not OpenJDK $EXPECTED_OPENJDK_MAJOR: $(java -version 2>&1 | head -1)"; exit 1; }
+command -v kotlin-lsp >/dev/null || { echo "kotlin-lsp is not on the PATH"; exit 1; }
 ssh-keygen -t ed25519 -N "" -f /tmp/signing-key -q
 git init -q /tmp/probe; cd /tmp/probe
 git -c user.name=worker -c user.email=worker@invalid -c gpg.format=ssh -c user.signingkey=/tmp/signing-key -c commit.gpgsign=true commit -q --allow-empty -m "the image can sign"
@@ -270,6 +285,12 @@ symbol_from bash greeter.sh greet || failed="$failed bash"
 symbol_from markdown greeting.md Greeting || failed="$failed markdown"
 symbol_from yaml greeting.yaml greeting || failed="$failed yaml"
 test -z "$failed" || { echo "serena read no symbol in:$failed"; exit 1; }`
+
+// kotlinLspProbe: the Kotlin language server the toolchain probe finds on the
+// PATH starts, offline and from an empty HOME, as the worker uid, and answers
+// an LSP initialize with its capabilities before shutting down
+// (go-quicbaas#1746). The script arrives on stdin (kotlin-lsp-probe.py).
+const kotlinLspProbe = `python3 -`
 
 // serenaFixtures are the fixture repositories serenaLanguageServersProbe
 // reads, one per language.

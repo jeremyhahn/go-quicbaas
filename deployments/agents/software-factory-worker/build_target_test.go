@@ -125,3 +125,24 @@ func TestBuildWorkerImage_BuildsWithNoDevcacheVariablesSet(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildWorkerImage_PassesEveryToolchainPin proves `make
+// build-worker-image` hands docker every toolchain pin Go's Build.BuildArgs
+// carries, at toolchain.mk's value: a pin added to one and not the other
+// fails the Dockerfile's required-argument check only at build time.
+func TestBuildWorkerImage_PassesEveryToolchainPin(t *testing.T) {
+	pins, err := ToolchainPins()
+	if err != nil {
+		t.Fatalf("ToolchainPins: %v", err)
+	}
+	run := runBuildTarget(t)
+	if run.err != nil {
+		t.Fatalf("make build-worker-image: %v\n%s", run.err, run.output)
+	}
+	log := strings.Join(run.calls, "\n")
+	for _, pin := range pins.named() {
+		if !strings.Contains(log, "--build-arg "+pin.buildArg+"="+pin.value) {
+			t.Errorf("docker build was not passed --build-arg %s=%s", pin.buildArg, pin.value)
+		}
+	}
+}

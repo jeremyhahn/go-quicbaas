@@ -112,7 +112,11 @@ func workerImageTestPins() softwarefactoryworker.Pins {
 		BashLanguageServer: "5.8.1", YamlLanguageServer: "1.24.0", RubyLsp: "0.26.11",
 		Clangd: "23.1.0", ClangdSHA256X86_64: "a1a1",
 		RustAnalyzer: "2026-10-05", RustAnalyzerSHA256X86_64: "b2b2", RustAnalyzerSHA256Aarch64: "c3c3",
-		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5"}
+		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5",
+		KotlinLsp:              "263.6379.0",
+		KotlinLspSHA256X86_64:  "ab8ca4455dc2fc5fe1a24db2bccc46c104254d2c465155c4251ee65df8f3f7cc",
+		KotlinLspSHA256Aarch64: "50999901ef8bcfa1e58561b6a8d782a72dea5620fcf92a64130807f8924a56fc",
+		OpenJDK:                "21"}
 }
 
 func workerImageTestDeps() workerimage.Deps {

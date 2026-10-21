@@ -172,3 +172,13 @@ RUST_ANALYZER_SHA256_AARCH64 := 3974c863acbbd96ef2cc02a7aaa79123935b05f27ffe4fd3
 MARKSMAN_VERSION := 2026-02-08
 MARKSMAN_SHA256_X86_64 := be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087
 MARKSMAN_SHA256_AARCH64 := db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb
+# Kotlin's server, JetBrains' kotlin-server release tarball, with each
+# architecture's SHA-256 as the release's own .sha256 files publish it. It runs
+# on its bundled JetBrains runtime; the JDK below is for the projects a worker
+# builds, Debian's headless package at this major (go-quicbaas#1746). A major
+# rather than a *_VERSION: Debian's archive moves its patch release, and the
+# currency check tracks no upstream for it.
+KOTLIN_LSP_VERSION := 263.6379.0
+KOTLIN_LSP_SHA256_X86_64 := ab8ca4455dc2fc5fe1a24db2bccc46c104254d2c465155c4251ee65df8f3f7cc
+KOTLIN_LSP_SHA256_AARCH64 := 50999901ef8bcfa1e58561b6a8d782a72dea5620fcf92a64130807f8924a56fc
+OPENJDK_MAJOR := 21

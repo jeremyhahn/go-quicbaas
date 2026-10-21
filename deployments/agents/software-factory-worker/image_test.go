@@ -56,7 +56,8 @@ func testPins() Pins {
 		BashLanguageServer: "5.8.1", YamlLanguageServer: "1.24.0", RubyLsp: "0.26.11",
 		Clangd: "23.1.0", ClangdSHA256X86_64: "a1a1",
 		RustAnalyzer: "2026-10-05", RustAnalyzerSHA256X86_64: "b2b2", RustAnalyzerSHA256Aarch64: "c3c3",
-		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5"}
+		Marksman: "2026-02-08", MarksmanSHA256X86_64: "d4d4", MarksmanSHA256Aarch64: "e5e5",
+		OpenJDK: "21", KotlinLsp: "263.6379.0", KotlinLspSHA256X86_64: "f6f6", KotlinLspSHA256Aarch64: "a7a7"}
 }
 
 func testBuild() Build {
@@ -126,6 +127,8 @@ func TestBuild_BuildArgsCarryEveryInput(t *testing.T) {
 		"CLANGD_VERSION": "23.1.0", "CLANGD_SHA256_X86_64": "a1a1",
 		"RUST_ANALYZER_VERSION": "2026-10-05", "RUST_ANALYZER_SHA256_X86_64": "b2b2", "RUST_ANALYZER_SHA256_AARCH64": "c3c3",
 		"MARKSMAN_VERSION": "2026-02-08", "MARKSMAN_SHA256_X86_64": "d4d4", "MARKSMAN_SHA256_AARCH64": "e5e5",
+		"OPENJDK_MAJOR": "21", "KOTLIN_LSP_VERSION": "263.6379.0",
+		"KOTLIN_LSP_SHA256_X86_64": "f6f6", "KOTLIN_LSP_SHA256_AARCH64": "a7a7",
 	}
 	for k, v := range want {
 		if args[k] != v {
@@ -318,15 +321,16 @@ func TestToolchainPins_AreTheRepositorysPins(t *testing.T) {
 func TestPins_ValidateNamesWhatIsMissing(t *testing.T) {
 	var missing *PinsMissingError
 	err := Pins{}.Validate()
-	if !errors.As(err, &missing) || len(missing.Missing) != 42 ||
+	if !errors.As(err, &missing) || len(missing.Missing) != 46 ||
 		!strings.Contains(err.Error(), "GOPLS_VERSION") || !strings.Contains(err.Error(), "SHELLCHECK_SHA256_AARCH64") ||
 		!strings.Contains(err.Error(), "OPENCODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "GO_TOOL_DEPENDENCY_FLOORS") ||
 		!strings.Contains(err.Error(), "SERENA_DEPENDENCY_FLOORS") || !strings.Contains(err.Error(), "PROTOC_VERSION") ||
 		!strings.Contains(err.Error(), "PROTOC_SHA256_AARCH64") || !strings.Contains(err.Error(), "PROTOC_GEN_GO_GRPC_VERSION") ||
 		!strings.Contains(err.Error(), "NODE_SHA256_AARCH64") || !strings.Contains(err.Error(), "UV_VERSION") ||
 		!strings.Contains(err.Error(), "TYPESCRIPT_LANGUAGE_SERVER_VERSION") || !strings.Contains(err.Error(), "CLANGD_SHA256_X86_64") ||
-		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") {
-		t.Fatalf("Validate() = %v, want all forty-two pins named", err)
+		!strings.Contains(err.Error(), "MARKSMAN_SHA256_AARCH64") || !strings.Contains(err.Error(), "NPM_BUNDLED_DEPENDENCY_FLOORS") ||
+		!strings.Contains(err.Error(), "OPENJDK_MAJOR") || !strings.Contains(err.Error(), "KOTLIN_LSP_SHA256_AARCH64") {
+		t.Fatalf("Validate() = %v, want all forty-six pins named", err)
 	}
 }
 
@@ -345,10 +349,13 @@ func TestBuild_LabelsRecordToolVersionsNotTarballDigests(t *testing.T) {
 		labels[LabelRustAnalyzerVersion] != "2026-10-05" || labels[LabelMarksmanVersion] != "2026-02-08" {
 		t.Fatalf("labels = %v, want node, uv and language-server versions recorded", labels)
 	}
+	if labels[LabelOpenJDKVersion] != "21" || labels[LabelKotlinLspVersion] != "263.6379.0" {
+		t.Fatalf("labels = %v, want the OpenJDK major and the Kotlin language server version recorded", labels)
+	}
 	for key, value := range labels {
 		switch value {
 		case "8c3b", "12b3", "1ce4", "abf3", "aaaa", "bbbb", "cccc", "dddd", "eeee", "ffff",
-			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
+			"a1a1", "b2b2", "c3c3", "d4d4", "e5e5", "f6f6", "a7a7", "golang.org/x/mod@v0.41.0", "urllib3>=2.8.0":
 			t.Fatalf("label %q=%q: a tarball digest or dependency floor is a build input, not a label", key, value)
 		}
 	}
@@ -489,6 +496,9 @@ func TestProbeEnv_CarriesExpectationsNotShell(t *testing.T) {
 	}
 	if env[EnvExpectedProtocGenGo] != "v1.36.12" || env[EnvExpectedProtocGenGoGRPC] != "1.6.2" {
 		t.Fatalf("protoc-gen-go reports its tag, protoc-gen-go-grpc its version without the v: got %v", env)
+	}
+	if env[EnvExpectedOpenJDK] != "21" {
+		t.Fatalf("java -version is checked against the JDK major: got %q", env[EnvExpectedOpenJDK])
 	}
 	if env[EnvExpectedClaudeCode] != "2.1.280" || env[EnvExpectedCodex] != "0.156.0" ||
 		env[EnvExpectedGemini] != "0.64.0" || env["HOME"] != "/tmp" {
