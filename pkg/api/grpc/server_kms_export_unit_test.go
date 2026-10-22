@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -466,6 +467,48 @@ func TestKMSServer_GenerateKey_KeyType(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, codes.InvalidArgument, st.Code())
 		assert.False(t, called)
+	})
+}
+
+func TestKMSServer_UnwrapKey_Exportable(t *testing.T) {
+	for _, exportable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("exportable_%t", exportable), func(t *testing.T) {
+			srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+			var got *service.UnwrapKeyRequest
+			mockSvc.unwrapKeyFn = func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
+				got = req
+				return &service.UnwrapKeyResponse{KeyID: req.KeyID}, nil
+			}
+
+			_, err := srv.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
+				KeyId:           "unwrapped-key",
+				WrappingKeyId:   "wrapping-key",
+				WrappedMaterial: []byte("wrapped"),
+				Exportable:      exportable,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.NotNil(t, got.KeyAttributes)
+			assert.Equal(t, exportable, got.KeyAttributes.Exportable)
+		})
+	}
+
+	t.Run("missing_wrapping_key_never_reaches_the_service", func(t *testing.T) {
+		srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+		called := false
+		mockSvc.unwrapKeyFn = func(ctx context.Context, req *service.UnwrapKeyRequest) (*service.UnwrapKeyResponse, error) {
+			called = true
+			return &service.UnwrapKeyResponse{}, nil
+		}
+
+		_, err := srv.UnwrapKey(context.Background(), &pb.UnwrapKeyRequest{
+			KeyId:           "unwrapped-key",
+			WrappedMaterial: []byte("wrapped"),
+			Exportable:      true,
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		assert.False(t, called, "the KMS service must not be called")
 	})
 }
 

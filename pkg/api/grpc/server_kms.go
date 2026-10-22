@@ -1312,6 +1312,7 @@ func (s *KMSServer) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*p
 		Name:              req.Name,
 		SourceKeyID:       req.SourceKeyId,
 		SourceVersion:     req.SourceVersion,
+		KeyAttributes:     &kctypes.KeyAttributes{Exportable: req.Exportable},
 	}
 
 	resp, err := s.kmsSvc.UnwrapKey(ctx, svcReq)
