@@ -1878,11 +1878,16 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	iampb.RegisterIAMServiceServer(grpcServer, iamServer)
 	s.logger.Info("Registered IAM gRPC service")
 
-	// Register Federation service if available
-	fedMgr, _ := getter.GetFederationManager(ctx)
-	if fedMgr != nil {
-		fedServer := grpcapi.NewFederationServer(fedMgr, s.logger)
-		iampb.RegisterFederationServiceServer(grpcServer, fedServer)
+	// Register Federation service if available. The Unix listener starts
+	// after startService has attached IAM, so the shared servers are built
+	// here over the real components; if IAM is not ready, neither host
+	// service is registered rather than one over missing components.
+	host, err := s.hostGRPCServers()
+	if err != nil {
+		s.logger.WithError(err).Warn("Federation and Session gRPC services are not registered on the Unix socket")
+	}
+	if host.Federation != nil {
+		iampb.RegisterFederationServiceServer(grpcServer, host.Federation)
 		s.logger.Info("Registered Federation gRPC service")
 	}
 
@@ -1903,22 +1908,12 @@ func (s *Server) registerIAMService(grpcServer *ggrpc.Server) {
 	iampb.RegisterPEPServiceServer(grpcServer, pepServer)
 	s.logger.Info("Registered PEP gRPC service")
 
-	// Register Session service with fallback to in-memory storage
-	sessionStorage, _ := getter.GetSessionStorage(ctx)
-	if sessionStorage == nil {
-		sessionStorage = iam.NewMemorySessionStorage()
-		s.logger.Info("Using in-memory session storage fallback for gRPC")
+	// Register Session service (in-memory storage fallback: see
+	// buildSessionServer)
+	if host.Session != nil {
+		iampb.RegisterSessionServiceServer(grpcServer, host.Session)
+		s.logger.Info("Registered Session gRPC service")
 	}
-	sessionAdapter := grpcapi.NewSessionServiceAdapter(sessionStorage)
-	// The session RPCs act only on the caller's own sessions, so they resolve
-	// the caller's account the way the REST session routes do.
-	callers, ok := s.quicBaaSService.(service.CallerAccountResolver)
-	if !ok {
-		s.logger.Warn("QuicBaaS service does not resolve caller accounts; gRPC session RPCs will refuse every caller")
-	}
-	sessionServer := grpcapi.NewSessionServer(sessionAdapter, callers, s.logger)
-	iampb.RegisterSessionServiceServer(grpcServer, sessionServer)
-	s.logger.Info("Registered Session gRPC service")
 
 	// Register Audit service. The audit logger is ALWAYS the node-backed
 	// NodeAuditLogger (node_audit_logger.go) once IAM composes — there is
