@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -27,7 +28,6 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // =============================================================================
