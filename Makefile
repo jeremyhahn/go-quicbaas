@@ -1363,7 +1363,10 @@ check-case-collisions: ## Fail if two tracked paths differ only by letter case
 # script's own test against a temporary directory. It also runs
 # run_packages_test.sh, which drives the per-package integration runner against
 # stub go, timeout and probe binaries, so the runner is proven without Docker
-# (#1591).
+# (#1591), and health_check_test.sh, which drives the integration health check
+# against stub curl, nc and sleep binaries, so every gate is proven without
+# Docker, and wait_stack_test.sh, which drives the integration-test and
+# integration-test-cluster wait loops (wait_stack.sh) the same way.
 WORKSPACE_INLINE_PATTERN := echo '(go [0-9]|use \(|replace \()|> *go\.work|<<.*go\.work
 check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of running mkworkspace.sh
 	@echo "$(BLUE)Checking Dockerfiles build go.work through mkworkspace.sh...$(NC)"
@@ -1375,6 +1378,8 @@ check-workspace-script: ## Fail if a Dockerfile writes go.work inline instead of
 	fi
 	@sh test/integration/mkworkspace_test.sh
 	@sh test/integration/run_packages_test.sh
+	@sh test/integration/health_check_test.sh
+	@sh test/integration/wait_stack_test.sh
 
 .PHONY: check-package-targets
 # Lanes 124b and 124c could not reach pkg/api/grpc through `make test-api/grpc`
@@ -2077,18 +2082,8 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	NODE2_HTTP_PORT=$${NODE2_HTTP##*:}; \
 	NODE3_HTTP_PORT=$${NODE3_HTTP##*:}; \
 	echo "$(YELLOW)Waiting for all 3 cluster nodes to become ready (up to 120s)...$(NC)"; \
-	DEADLINE=$$(( $$(date +%s) + 120 )); \
-	while [ $$(date +%s) -lt $$DEADLINE ]; do \
-		N1=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE1_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
-		N2=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE2_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
-		N3=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE3_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
-		if [ "$$N1" = "200" ] && [ "$$N2" = "200" ] && [ "$$N3" = "200" ]; then \
-			echo "$(GREEN)All 3 nodes ready (node1=$$N1, node2=$$N2, node3=$$N3)$(NC)"; \
-			break; \
-		fi; \
-		echo "  node1=$$N1 node2=$$N2 node3=$$N3 (waiting...)"; \
-		sleep 3; \
-	done; \
+	NODE_URLS="http://localhost:$$NODE1_HTTP_PORT http://localhost:$$NODE2_HTTP_PORT http://localhost:$$NODE3_HTTP_PORT"; \
+	bash test/integration/wait_stack.sh ready "cluster nodes 1-3" 120 $$NODE_URLS || exit 1; \
 	echo "$(YELLOW)Granting host read access to node data dirs (test runner needs to walk SST files)...$(NC)"; \
 	docker run --rm -v "$$PWD/$$CLUSTER_DIR/cluster-data:/data" alpine sh -c \
 		"chmod -R a+rX /data 2>/dev/null; true" || true; \
@@ -2097,43 +2092,11 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	NODE4_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node4 8080); \
 	NODE4_HTTP_PORT=$${NODE4_HTTP##*:}; \
 	echo "$(YELLOW)Adding node4 to the Raft cluster via REST AddNode API (trying all nodes to find the leader)...$(NC)"; \
-	ADD_DEADLINE=$$(( $$(date +%s) + 45 )); \
-	ADD_OK=0; \
-	while [ $$(date +%s) -lt $$ADD_DEADLINE ]; do \
-		for PORT in $$NODE1_HTTP_PORT $$NODE2_HTTP_PORT $$NODE3_HTTP_PORT; do \
-			CODE=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-				-X POST http://localhost:$$PORT/api/v1/cluster/nodes \
-				-H 'Content-Type: application/json' \
-				-d '{"shard_id":1,"node_id":4,"address":"quicbaas-node4:63004"}' \
-				2>/dev/null || echo 0); \
-			if [ "$$CODE" = "200" ]; then \
-				echo "$(GREEN)AddNode succeeded via node at port $$PORT$(NC)"; \
-				ADD_OK=1; \
-				break 2; \
-			fi; \
-		done; \
-		echo "  AddNode not yet accepted (retrying in 3s)..."; \
-		sleep 3; \
-	done; \
-	if [ $$ADD_OK -eq 0 ]; then \
-		echo "$(RED)AddNode failed within 45s — dynamic membership test will likely fail$(NC)"; \
-	fi; \
+	bash test/integration/wait_stack.sh add-node 45 $$NODE_URLS || exit 1; \
 	echo "$(YELLOW)Waiting for node4 to become ready (up to 90s)...$(NC)"; \
-	N4_DEADLINE=$$(( $$(date +%s) + 90 )); \
-	N4_READY=0; \
-	while [ $$(date +%s) -lt $$N4_DEADLINE ]; do \
-		N4=$$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:$$NODE4_HTTP_PORT/api/v1/health/ready 2>/dev/null || echo 0); \
-		if [ "$$N4" = "200" ]; then \
-			echo "$(GREEN)node4 ready$(NC)"; \
-			N4_READY=1; \
-			break; \
-		fi; \
-		echo "  node4=$$N4 (waiting...)"; \
-		sleep 3; \
-	done; \
-	if [ $$N4_READY -eq 0 ]; then \
-		echo "$(RED)node4 did not become ready within 60s$(NC)"; \
+	if ! bash test/integration/wait_stack.sh ready node4 90 http://localhost:$$NODE4_HTTP_PORT; then \
 		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs quicbaas-node4 --tail=50; \
+		exit 1; \
 	fi; \
 	echo "$(YELLOW)Granting host read access to all node data dirs (including node4, for at-rest test)...$(NC)"; \
 	docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/data" alpine sh -c \
@@ -2724,109 +2687,33 @@ integration-test: ## Run integration tests in Docker (Ollama tests EXCLUDED by d
 		exit 1; \
 	fi; \
 	echo ""; \
+	WAIT_COMPOSE="$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE"; \
 	echo "$(YELLOW)Verifying gRPC ports (50051) are ready...$(NC)"; \
-	GRPC_WAIT=0; \
-	GRPC_MAX_WAIT=30; \
-	while [ $$GRPC_WAIT -lt $$GRPC_MAX_WAIT ]; do \
-		GRPC_READY=0; \
-		for node in test-node1 test-node2 test-node3; do \
-			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 50051" 2>/dev/null; then \
-				GRPC_READY=$$((GRPC_READY + 1)); \
-			fi; \
-		done; \
-		if [ $$GRPC_READY -eq 3 ]; then \
-			echo "$(GREEN)  ✓ All gRPC ports ready after $${GRPC_WAIT}s$(NC)"; \
-			break; \
-		else \
-			echo "  [$$GRPC_WAIT s] $$GRPC_READY/3 gRPC ports ready..."; \
-		fi; \
-		sleep 2; \
-		GRPC_WAIT=$$((GRPC_WAIT + 2)); \
-	done; \
-	if [ $$GRPC_WAIT -ge $$GRPC_MAX_WAIT ]; then \
-		echo "$(YELLOW)  ⚠ gRPC port check timed out, tests may fail for gRPC transport$(NC)"; \
-	fi; \
+	COMPOSE="$$WAIT_COMPOSE" bash test/integration/wait_stack.sh grpc || exit 1; \
 	echo ""; \
 	echo "$(YELLOW)Verifying MCP ports (8888) are ready...$(NC)"; \
-	MCP_WAIT=0; \
-	MCP_MAX_WAIT=15; \
-	while [ $$MCP_WAIT -lt $$MCP_MAX_WAIT ]; do \
-		MCP_READY=0; \
-		for node in test-node1 test-node2 test-node3; do \
-			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T $$node sh -c "nc -z localhost 8888" 2>/dev/null; then \
-				MCP_READY=$$((MCP_READY + 1)); \
-			fi; \
-		done; \
-		if [ $$MCP_READY -eq 3 ]; then \
-			echo "$(GREEN)  ✓ All MCP ports ready after $${MCP_WAIT}s$(NC)"; \
-			break; \
-		else \
-			echo "  [$$MCP_WAIT s] $$MCP_READY/3 MCP ports ready..."; \
-		fi; \
-		sleep 2; \
-		MCP_WAIT=$$((MCP_WAIT + 2)); \
-	done; \
-	if [ $$MCP_WAIT -ge $$MCP_MAX_WAIT ]; then \
-		echo "$(YELLOW)  ⚠ MCP port check timed out, tests may fail for MCP transport$(NC)"; \
-	fi; \
+	COMPOSE="$$WAIT_COMPOSE" bash test/integration/wait_stack.sh mcp || exit 1; \
 	echo ""; \
 	echo "$(YELLOW)Waiting for storage backends (Floci, MinIO, Azurite) to be ready...$(NC)"; \
-	STORAGE_WAIT=0; \
-	STORAGE_MAX_WAIT=30; \
-	while [ $$STORAGE_WAIT -lt $$STORAGE_MAX_WAIT ]; do \
-		STORAGE_READY=0; \
-		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T floci sh -c "curl -sf http://localhost:4566/_floci/health | grep -q '\"s3\":\"running\"'" >/dev/null 2>&1; then \
-			STORAGE_READY=$$((STORAGE_READY + 1)); \
-		fi; \
-		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T minio sh -c "curl -sf http://localhost:9000/minio/health/live" >/dev/null 2>&1; then \
-			STORAGE_READY=$$((STORAGE_READY + 1)); \
-		fi; \
-		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T azurite sh -c "node -e \"require('http').get('http://localhost:10000',r=>{process.exit(r.statusCode===400?0:1)})\"" >/dev/null 2>&1; then \
-			STORAGE_READY=$$((STORAGE_READY + 1)); \
-		fi; \
-		if [ $$STORAGE_READY -ge 3 ]; then \
-			echo "$(GREEN)  ✓ All storage backends ready after $${STORAGE_WAIT}s$(NC)"; \
-			break; \
-		else \
-			echo "  [$$STORAGE_WAIT s] $$STORAGE_READY/3 storage backends ready..."; \
-		fi; \
-		sleep 2; \
-		STORAGE_WAIT=$$((STORAGE_WAIT + 2)); \
-	done; \
-	if [ $$STORAGE_WAIT -ge $$STORAGE_MAX_WAIT ]; then \
-		echo "$(YELLOW)  ⚠ Some storage backends not ready, backup tests may fail$(NC)"; \
-	fi; \
+	COMPOSE="$$WAIT_COMPOSE" DOCKER="$(DOCKER)" bash test/integration/wait_stack.sh storage || exit 1; \
 	echo ""; \
 	if [ $$START_LOCAL_OLLAMA -eq 1 ]; then \
 		echo "$(YELLOW)Waiting for local Ollama container to be ready...$(NC)"; \
-		OLLAMA_WAIT=0; \
-		OLLAMA_MAX_WAIT=120; \
-		while [ $$OLLAMA_WAIT -lt $$OLLAMA_MAX_WAIT ]; do \
-			if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list >/dev/null 2>&1; then \
-				echo "$(GREEN)  ✓ Ollama ready after $${OLLAMA_WAIT}s$(NC)"; \
-				MODEL_READY=0; \
-				if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
-					echo "$(GREEN)  ✓ all-minilm model loaded$(NC)"; \
-					MODEL_READY=1; \
-				fi; \
-				if [ $$MODEL_READY -eq 0 ]; then \
-					echo "$(YELLOW)  ⚠ Model not yet loaded, pulling all-minilm...$(NC)"; \
-					$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
-				fi; \
-				if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
-					echo "$(GREEN)  ✓ tinyllama model loaded$(NC)"; \
-				else \
-					echo "$(YELLOW)  ⚠ tinyllama not loaded, pulling...$(NC)"; \
-					$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
-				fi; \
-				break; \
-			fi; \
-			echo "  [$$OLLAMA_WAIT s] Ollama starting..."; \
-			sleep 5; \
-			OLLAMA_WAIT=$$((OLLAMA_WAIT + 5)); \
-		done; \
-		if [ $$OLLAMA_WAIT -ge $$OLLAMA_MAX_WAIT ]; then \
-			echo "$(YELLOW)  ⚠ Ollama not ready, embedding/RAG tests may fail$(NC)"; \
+		COMPOSE="$$WAIT_COMPOSE" bash test/integration/wait_stack.sh ollama || exit 1; \
+		MODEL_READY=0; \
+		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'all-minilm'; then \
+			echo "$(GREEN)  ✓ all-minilm model loaded$(NC)"; \
+			MODEL_READY=1; \
+		fi; \
+		if [ $$MODEL_READY -eq 0 ]; then \
+			echo "$(YELLOW)  ⚠ Model not yet loaded, pulling all-minilm...$(NC)"; \
+			$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull all-minilm 2>&1 | tail -1; \
+		fi; \
+		if $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama list 2>/dev/null | grep -q 'tinyllama'; then \
+			echo "$(GREEN)  ✓ tinyllama model loaded$(NC)"; \
+		else \
+			echo "$(YELLOW)  ⚠ tinyllama not loaded, pulling...$(NC)"; \
+			$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE exec -T ollama ollama pull tinyllama 2>&1 | tail -1; \
 		fi; \
 	elif [ $$OLLAMA_ENABLED -eq 1 ]; then \
 		echo "$(YELLOW)Probing remote Ollama host $$OLLAMA_URL ...$(NC)"; \
