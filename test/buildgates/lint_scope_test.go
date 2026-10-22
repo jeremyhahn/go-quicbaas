@@ -55,9 +55,11 @@ func lintScopeProblems(recipe string) []string {
 	return problems
 }
 
-// makeDryRun returns `make -n target` for the repository Makefile. GOPROXY=off
-// keeps the go commands the Makefile evaluates while parsing off the network.
-func makeDryRun(t *testing.T, target string) string {
+// repoMakeDryRun returns `make -n target` for the repository Makefile with
+// every variable at its default, TEST_CHECKS included, unlike makeDryRun.
+// GOPROXY=off keeps the go commands the Makefile evaluates while parsing off
+// the network.
+func repoMakeDryRun(t *testing.T, target string) string {
 	t.Helper()
 	cmd := exec.Command("make", "-n", "--no-print-directory", "-C", repoRoot, target)
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
@@ -69,7 +71,7 @@ func makeDryRun(t *testing.T, target string) string {
 }
 
 func TestLintScansOnlyTheRepositoryItRunsIn(t *testing.T) {
-	recipe := makeDryRun(t, "lint")
+	recipe := repoMakeDryRun(t, "lint")
 	if !strings.Contains(recipe, "golangci-lint run") {
 		t.Fatalf("make -n lint did not expand to the golangci-lint pass:\n%s", recipe)
 	}
@@ -85,7 +87,7 @@ func TestLintScansOnlyTheRepositoryItRunsIn(t *testing.T) {
 func TestChecksScanOnlyTheRepositoryItRunsIn(t *testing.T) {
 	for _, target := range []string{"check-insecure-tls"} {
 		t.Run(target, func(t *testing.T) {
-			recipe := makeDryRun(t, target)
+			recipe := repoMakeDryRun(t, target)
 			if !strings.Contains(recipe, "git ls-files") {
 				t.Errorf("make -n %s does not take its files from REPO_GO_FILES:\n%s", target, recipe)
 			}
@@ -189,7 +191,7 @@ func TestRepoGoFilesListsOnlyTheRepositoryTree(t *testing.T) {
 // runs outside the repository, so git there sees only what the test made.
 func runInsecureTLSGate(t *testing.T, dir string) (string, bool) {
 	t.Helper()
-	recipe := makeDryRun(t, "check-insecure-tls")
+	recipe := repoMakeDryRun(t, "check-insecure-tls")
 	cmd := exec.Command("sh", "-c", recipe)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
