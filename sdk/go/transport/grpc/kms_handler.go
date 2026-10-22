@@ -806,24 +806,11 @@ func sdkAlgToServiceString(alg kmsclient.KeyAlgorithm) string {
 // sdkWrappingAlgToService converts an SDK WrappingAlgorithm to the service
 // wrapping-algorithm string understood by the pkg/api/grpc converters.
 func sdkWrappingAlgToService(alg kmsclient.WrappingAlgorithm) string {
-	switch alg {
-	case kmsclient.WrapAlgAESKW:
-		return "AES-KW"
-	case kmsclient.WrapAlgAESKWP:
-		return "AES-KWP"
-	case kmsclient.WrapAlgAESGCM:
-		return "AES-GCM"
-	case kmsclient.WrapAlgRSAOAEPSHA256:
-		return "RSA-OAEP-SHA256"
-	case kmsclient.WrapAlgRSAOAEPSHA384:
-		return "RSA-OAEP-SHA384"
-	case kmsclient.WrapAlgRSAOAEPSHA512:
-		return "RSA-OAEP-SHA512"
-	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES+A256KW"
-	default:
+	name, known := alg.ServiceName()
+	if !known {
 		return ""
 	}
+	return name
 }
 
 // sdkExportFormatToService converts an SDK ExportFormat to the service

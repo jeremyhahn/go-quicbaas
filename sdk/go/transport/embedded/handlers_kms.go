@@ -136,11 +136,24 @@ func handleKMSImportKey(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.ImportKeyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest", typeNameOf(req))
+	if r, ok := req.(*service.ImportKeyRequest); ok {
+		return kms.ImportKey(ctx, r)
 	}
-	return kms.ImportKey(ctx, r)
+	sdkReq, ok := req.(*kmsclient.ImportKeyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "ImportKey", "*service.ImportKeyRequest or *kms.ImportKeyRequest", typeNameOf(req))
+	}
+	attrs := sdkAlgToKeyAttributes(sdkReq.Algorithm)
+	attrs.Exportable = sdkReq.Exportable
+	return kms.ImportKey(ctx, &service.ImportKeyRequest{
+		KeyMaterial:   sdkReq.KeyMaterial,
+		WrappingKeyID: sdkReq.WrappingKeyID,
+		KeyAttributes: attrs,
+		Name:          sdkReq.Name,
+		Description:   sdkReq.Description,
+		Usage:         convertSDKUsagesToService(sdkReq.Usage),
+		Tags:          sdkReq.Tags,
+	})
 }
 
 func handleKMSGetKey(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -478,11 +491,31 @@ func handleKMSUnwrapKey(ctx context.Context, svc service.QuicBaaS, req interface
 	if kms == nil {
 		return nil, NewServiceNotConfiguredError("KMS")
 	}
-	r, ok := req.(*service.UnwrapKeyRequest)
-	if !ok {
-		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest", typeNameOf(req))
+	if r, ok := req.(*service.UnwrapKeyRequest); ok {
+		return kms.UnwrapKey(ctx, r)
 	}
-	return kms.UnwrapKey(ctx, r)
+	sdkReq, ok := req.(*kmsclient.UnwrapKeyRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KMS", "UnwrapKey", "*service.UnwrapKeyRequest or *kms.UnwrapKeyRequest", typeNameOf(req))
+	}
+	wrapping, known := sdkReq.WrappingAlgorithm.ServiceName()
+	if !known {
+		return nil, errors.NewInvalidInput("embedded.kms.UnwrapKey", "unknown wrapping algorithm")
+	}
+	if sdkReq.SourceVersion < 0 {
+		return nil, errors.NewInvalidInput("embedded.kms.UnwrapKey", "source version must not be negative")
+	}
+	return kms.UnwrapKey(ctx, &service.UnwrapKeyRequest{
+		KeyID:             sdkReq.KeyID,
+		WrappedKey:        sdkReq.WrappedMaterial,
+		WrappingKeyID:     sdkReq.WrappingKeyID,
+		WrappingAlgorithm: wrapping,
+		Algorithm:         sdkReq.Algorithm.String(),
+		SourceKeyID:       sdkReq.SourceKeyID,
+		SourceVersion:     uint64(sdkReq.SourceVersion),
+		KeyAttributes:     &xkmssdk.KeyAttributes{Exportable: sdkReq.Exportable},
+		Name:              sdkReq.Name,
+	})
 }
 
 func handleKMSSetKeySafety(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {

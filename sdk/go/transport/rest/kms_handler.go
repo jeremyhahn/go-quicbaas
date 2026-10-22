@@ -1052,22 +1052,9 @@ func kmsStatusToString(s kmsclient.KeyStatus) string {
 // accepts. ECDH-ES uses the RFC 7518 §4.6 name ECDH-ES+A256KW, as the gRPC
 // transport does. An unknown value maps to "", which the service refuses.
 func kmsWrappingAlgToString(a kmsclient.WrappingAlgorithm) string {
-	switch a {
-	case kmsclient.WrapAlgAESKW:
-		return "AES-KW"
-	case kmsclient.WrapAlgAESKWP:
-		return "AES-KWP"
-	case kmsclient.WrapAlgAESGCM:
-		return "AES-GCM"
-	case kmsclient.WrapAlgRSAOAEPSHA256:
-		return "RSA-OAEP-SHA256"
-	case kmsclient.WrapAlgRSAOAEPSHA384:
-		return "RSA-OAEP-SHA384"
-	case kmsclient.WrapAlgRSAOAEPSHA512:
-		return "RSA-OAEP-SHA512"
-	case kmsclient.WrapAlgECDHESA256KW:
-		return "ECDH-ES+A256KW"
-	default:
+	name, known := a.ServiceName()
+	if !known {
 		return ""
 	}
+	return name
 }

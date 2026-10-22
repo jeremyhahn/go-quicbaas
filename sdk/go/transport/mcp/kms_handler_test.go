@@ -570,7 +570,7 @@ func TestKMSMCP_ImportKey(t *testing.T) {
 			req: &kmsclient.ImportKeyRequest{
 				KeyMaterial: kmsImportMaterial, WrappingKeyID: "wrap-1", Name: "imported",
 				Description: "imported signing key", Algorithm: kmsclient.AlgorithmED25519,
-				Usage: []kmsclient.KeyUsage{kmsclient.KeyUsageSign, kmsclient.KeyUsageVerify},
+				Usage:      []kmsclient.KeyUsage{kmsclient.KeyUsageSign, kmsclient.KeyUsageVerify},
 				Tags:       map[string]string{"team": "release"},
 				Exportable: true,
 			},

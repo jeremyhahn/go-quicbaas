@@ -273,6 +273,25 @@ const (
 	WrapAlgECDHESA256KW
 )
 
+// wrappingAlgorithmServiceNames maps each WrappingAlgorithm to the name the
+// KMS service uses for it.
+var wrappingAlgorithmServiceNames = map[WrappingAlgorithm]string{
+	WrapAlgAESKW:         "AES-KW",
+	WrapAlgAESKWP:        "AES-KWP",
+	WrapAlgAESGCM:        "AES-GCM",
+	WrapAlgRSAOAEPSHA256: "RSA-OAEP-SHA256",
+	WrapAlgRSAOAEPSHA384: "RSA-OAEP-SHA384",
+	WrapAlgRSAOAEPSHA512: "RSA-OAEP-SHA512",
+	WrapAlgECDHESA256KW:  "ECDH-ES+A256KW",
+}
+
+// ServiceName returns the name the KMS service uses for a, and false when a
+// is not a known wrapping algorithm.
+func (a WrappingAlgorithm) ServiceName() (string, bool) {
+	name, known := wrappingAlgorithmServiceNames[a]
+	return name, known
+}
+
 // GenerateKeyResponse is the response from key generation.
 type GenerateKeyResponse struct {
 	KeyID     string
