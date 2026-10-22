@@ -20,12 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 )
 
 // ListAuditEvents handles GET /api/v1/iam/audit - Query audit events with filters.
@@ -210,19 +212,47 @@ func (h *IAMHandler) GetAuditEvent(w http.ResponseWriter, r *http.Request) {
 func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// r.URL.Query() silently drops a malformed pair, so a malformed
+	// "dry_run=%ZZ" would vanish and the delete would run. Every query read
+	// below comes from this one strict parse, and a malformed query refuses
+	// the whole request before any delete.
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, "malformed query string: "+err.Error()))
+		return
+	}
+
+	// A repeated single-valued parameter is ambiguous: refuse it rather than
+	// let the first value win and run a delete the caller may not have meant.
+	if err := refuseRepeatedAuditDeleteParams(query); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return
+	}
+
+	// DeleteOlderThan has no dry run and no event-type filter, so a request
+	// asking for either is refused before the permission check and any
+	// delete, as on MCP and embedded.
+	if err := refuseAuditDeleteScope(query); err != nil {
+		RespondIAMError(w, r, http.StatusBadRequest,
+			NewIAMAPIError(ErrBadRequest, err.Error()))
+		return
+	}
+
 	// Tenant scoping mirrors ListAuditEvents/GetAuditEvent
 	// (iam.ResolveRequestTenant): the caller's own tenant only — no
 	// caller identity lifts it. This runs BEFORE the audit:delete
 	// permission check below so a caller targeting another tenant never
 	// reaches storage, exactly like the read path.
-	tenantID, err := iam.ResolveRequestTenant(ctx, r.URL.Query().Get("tenant_id"))
+	tenantID, err := iam.ResolveRequestTenant(ctx, query.Get("tenant_id"))
 	if err != nil {
 		RespondIAMError(w, r, http.StatusForbidden,
 			NewIAMAPIError(ErrForbidden, err.Error()))
 		return
 	}
 
-	beforeStr := r.URL.Query().Get("before")
+	beforeStr := query.Get("before")
 	if beforeStr == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "before parameter is required (ISO8601 timestamp)"))
@@ -319,6 +349,51 @@ func (h *IAMHandler) DeleteOldAuditEvents(w http.ResponseWriter, r *http.Request
 	}
 
 	RespondJSON(w, r, http.StatusOK, resp)
+}
+
+// refuseAuditDeleteScope returns the shared SDK refusal when the request asks
+// for a dry run or names event types. A dry_run value that does not parse as
+// false counts as a dry run, so a malformed preview never deletes.
+func refuseAuditDeleteScope(query url.Values) error {
+	dryRun := false
+	if query.Has("dry_run") {
+		parsed, err := strconv.ParseBool(query.Get("dry_run"))
+		dryRun = err != nil || parsed
+	}
+	eventTypeCount := 0
+	for _, value := range query["event_types"] {
+		if value != "" {
+			eventTypeCount++
+		}
+	}
+	return iamsdk.RefuseUnsupportedAuditDeleteScope(dryRun, eventTypeCount)
+}
+
+// auditDeleteSingleValuedParams are the audit-delete query parameters that
+// take exactly one value. url.Values.Get reads only the first of repeated
+// values, so "dry_run=false&dry_run=true" would read as false and delete
+// although the caller also asked for a preview.
+var auditDeleteSingleValuedParams = []string{"dry_run", "tenant_id", "before"}
+
+// AuditDeleteRepeatedParamError reports an audit-delete query that repeats a
+// single-valued parameter, whose meaning is then ambiguous.
+type AuditDeleteRepeatedParamError struct {
+	Name string
+}
+
+func (e *AuditDeleteRepeatedParamError) Error() string {
+	return "iam.audit.delete: query parameter " + e.Name + " must not be repeated"
+}
+
+// refuseRepeatedAuditDeleteParams returns an AuditDeleteRepeatedParamError
+// for the first single-valued parameter the query carries more than once.
+func refuseRepeatedAuditDeleteParams(query url.Values) error {
+	for _, name := range auditDeleteSingleValuedParams {
+		if len(query[name]) > 1 {
+			return &AuditDeleteRepeatedParamError{Name: name}
+		}
+	}
+	return nil
 }
 
 // RegisterAuditRoutes registers audit-related routes with the router.

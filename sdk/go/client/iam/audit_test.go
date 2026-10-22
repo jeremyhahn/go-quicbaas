@@ -15,6 +15,7 @@ package iam
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 	"time"
 
@@ -491,6 +492,20 @@ func TestAuditClient_Delete(t *testing.T) {
 			t.Error("expected error for invalid response type")
 		}
 	})
+}
+
+func TestRefuseUnsupportedAuditDeleteScope(t *testing.T) {
+	var dryRun *AuditDeleteDryRunUnsupportedError
+	if err := RefuseUnsupportedAuditDeleteScope(true, 0); !stderrors.As(err, &dryRun) {
+		t.Fatalf("dry run: err = %v, want AuditDeleteDryRunUnsupportedError", err)
+	}
+	var eventTypes *AuditDeleteEventTypesUnsupportedError
+	if err := RefuseUnsupportedAuditDeleteScope(false, 1); !stderrors.As(err, &eventTypes) {
+		t.Fatalf("event types: err = %v, want AuditDeleteEventTypesUnsupportedError", err)
+	}
+	if err := RefuseUnsupportedAuditDeleteScope(false, 0); err != nil {
+		t.Fatalf("plain delete: err = %v, want nil", err)
+	}
 }
 
 func TestAuditEventType_String(t *testing.T) {

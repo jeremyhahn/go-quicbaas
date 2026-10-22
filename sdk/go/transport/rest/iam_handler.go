@@ -572,6 +572,12 @@ type recordAuditWireRequest struct {
 	Async bool            `json:"async"`
 }
 
+// deleteAuditWireRequest mirrors the SDK's unexported deleteAuditRequest
+// envelope so the audit Delete criteria can be read from this package.
+type deleteAuditWireRequest struct {
+	Request *iam.AuditDeleteRequest `json:"request"`
+}
+
 // sdkAuditEventToServerWire converts an SDK client iam.AuditEvent into the
 // JSON shape the server's pkg/iam.AuditEvent (RecordAuditEvent,
 // pkg/api/rest/iam_audit.go) decodes: string enums (not the SDK's int
@@ -692,6 +698,36 @@ func (h *iamRESTHandler) handleAuditRequest(ctx context.Context, method string, 
 			"event": sdkAuditEventToServerWire(wire.Event),
 			"async": wire.Async,
 		})
+
+	case "Delete":
+		// DELETE /api/v1/iam/audit?tenant_id={tenant_id}&before={RFC3339}.
+		// The server's DeleteOldAuditEvents (pkg/api/rest/iam_audit.go)
+		// reads both from the query and has no dry run or event-type
+		// filter, so a request asking for either is refused here, before
+		// any request is sent, exactly as on MCP and embedded.
+		data, err := json.Marshal(req)
+		if err != nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "invalid request type")
+		}
+		var wire deleteAuditWireRequest
+		if err := json.Unmarshal(data, &wire); err != nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "invalid request type")
+		}
+		if wire.Request == nil {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "request is required")
+		}
+		if err := iam.RefuseUnsupportedAuditDeleteScope(wire.Request.DryRun, len(wire.Request.EventTypes)); err != nil {
+			return nil, err
+		}
+		if wire.Request.Before.IsZero() {
+			return nil, errors.NewInvalidInput("iamRESTHandler.handleAuditRequest", "before time is required")
+		}
+		query := url.Values{}
+		if wire.Request.TenantID != "" {
+			query.Set("tenant_id", wire.Request.TenantID)
+		}
+		query.Set("before", wire.Request.Before.UTC().Format(time.RFC3339Nano))
+		return h.doRequest(ctx, http.MethodDelete, "/api/v1/iam/audit?"+query.Encode(), nil)
 
 	default:
 		return nil, errors.NewUnimplemented("iamRESTHandler.handleAuditRequest", "unsupported method: "+method)

@@ -45,24 +45,6 @@ func init() {
 	}
 }
 
-// AuditDeleteDryRunUnsupportedError reports a dry-run Delete. The audit
-// logger cannot count the events DeleteOlderThan would remove without
-// removing them, so a preview is refused rather than answered destructively.
-type AuditDeleteDryRunUnsupportedError struct{}
-
-func (e *AuditDeleteDryRunUnsupportedError) Error() string {
-	return "embedded: " + auditServiceName + "/Delete: dry run is not supported by the audit service"
-}
-
-// AuditDeleteEventTypesUnsupportedError reports a Delete scoped to event
-// types. DeleteOlderThan removes every event before the cutoff, so honouring
-// the request would delete more than the caller asked for.
-type AuditDeleteEventTypesUnsupportedError struct{}
-
-func (e *AuditDeleteEventTypesUnsupportedError) Error() string {
-	return "embedded: " + auditServiceName + "/Delete: deleting by event type is not supported by the audit service"
-}
-
 // InvalidAuditRequestError reports an audit request the service cannot
 // honour, such as a filter field the audit logger has no counterpart for.
 // Refusing it is safer than dropping the field and returning a wider result.
@@ -258,11 +240,8 @@ func handleIAMAuditDelete(ctx context.Context, svc service.QuicBaaS, req interfa
 	}
 	// Both refusals come before the permission check and the logger: the
 	// only delete the service offers is unfiltered and destructive.
-	if r.DryRun {
-		return nil, &AuditDeleteDryRunUnsupportedError{}
-	}
-	if len(r.EventTypes) > 0 {
-		return nil, &AuditDeleteEventTypesUnsupportedError{}
+	if err := iamsdk.RefuseUnsupportedAuditDeleteScope(r.DryRun, len(r.EventTypes)); err != nil {
+		return nil, err
 	}
 	if err := requireAuditDeletePermission(ctx, svc, tenantID); err != nil {
 		return nil, err

@@ -194,13 +194,13 @@ func TestIAMAuditDelete_UnsupportedScopeRefused(t *testing.T) {
 	}{
 		{"dry run", &iamsdk.AuditDeleteRequest{TenantID: auditTenant, Before: before, Confirm: true, DryRun: true},
 			func(err error) bool {
-				var refused *AuditDeleteDryRunUnsupportedError
+				var refused *iamsdk.AuditDeleteDryRunUnsupportedError
 				return errors.As(err, &refused)
 			}},
 		{"event types", &iamsdk.AuditDeleteRequest{TenantID: auditTenant, Before: before, Confirm: true,
 			EventTypes: []iamsdk.AuditEventType{iamsdk.AuditEventTypeAuthorization}},
 			func(err error) bool {
-				var refused *AuditDeleteEventTypesUnsupportedError
+				var refused *iamsdk.AuditDeleteEventTypesUnsupportedError
 				return errors.As(err, &refused)
 			}},
 	}

@@ -721,6 +721,39 @@ func validateAuditDeleteRequest(req *AuditDeleteRequest) error {
 	return nil
 }
 
+// AuditDeleteDryRunUnsupportedError reports a dry-run Delete. The audit
+// service cannot count the events a delete would remove without removing
+// them, so every transport refuses a preview rather than answer it
+// destructively.
+type AuditDeleteDryRunUnsupportedError struct{}
+
+func (e *AuditDeleteDryRunUnsupportedError) Error() string {
+	return "iam.audit.Delete: dry run is not supported by the audit service"
+}
+
+// AuditDeleteEventTypesUnsupportedError reports a Delete scoped to event
+// types. The audit service removes every event before the cutoff, so
+// honouring the request would delete more than the caller asked for.
+type AuditDeleteEventTypesUnsupportedError struct{}
+
+func (e *AuditDeleteEventTypesUnsupportedError) Error() string {
+	return "iam.audit.Delete: deleting by event type is not supported by the audit service"
+}
+
+// RefuseUnsupportedAuditDeleteScope returns the typed refusal for a Delete
+// that asks for a dry run or an event-type filter, or nil when it asks for
+// neither. Transports call it before sending anything, so a request the
+// service would silently widen never deletes.
+func RefuseUnsupportedAuditDeleteScope(dryRun bool, eventTypeCount int) error {
+	if dryRun {
+		return &AuditDeleteDryRunUnsupportedError{}
+	}
+	if eventTypeCount > 0 {
+		return &AuditDeleteEventTypesUnsupportedError{}
+	}
+	return nil
+}
+
 // parseAuditQueryResponse parses the response from Query.
 func parseAuditQueryResponse(resp interface{}) (*AuditQueryResponse, error) {
 	if resp == nil {

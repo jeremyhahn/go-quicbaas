@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
@@ -228,6 +229,11 @@ func (h *iamHandler) transformRequest(service, method string, reqBody interface{
 		// drop structured rules, conditions and targets, so refuse them.
 		if toolName == "quicbaas_iam_policy_create" || toolName == "quicbaas_iam_policy_update" {
 			if err := policyfields.Refuse("mcp.iam."+method, "MCP", flatArgs); err != nil {
+				return nil, err
+			}
+		}
+		if toolName == "quicbaas_iam_audit_delete" {
+			if err := refuseAuditDeleteScope(flatArgs); err != nil {
 				return nil, err
 			}
 		}
@@ -602,6 +608,18 @@ func flattenIAMArguments(args map[string]interface{}) map[string]interface{} {
 	}
 
 	return result
+}
+
+// refuseAuditDeleteScope refuses an audit Delete that asks for a dry run or
+// an event-type filter. The audit service has neither, so sending one would
+// delete every event before the cutoff.
+func refuseAuditDeleteScope(args map[string]interface{}) error {
+	dryRun := args["dry_run"] == true
+	var eventTypeCount int
+	if eventTypes, ok := args["event_types"].([]interface{}); ok {
+		eventTypeCount = len(eventTypes)
+	}
+	return iamsdk.RefuseUnsupportedAuditDeleteScope(dryRun, eventTypeCount)
 }
 
 // isMCPIAMService returns true if the service is an IAM service.

@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -196,6 +197,8 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		strategy      *sdlc.StrategyNotRegisteredError
 		redirectURI   *iam.InvalidRedirectURIError
 		appMetadata   *iam.AppMetadataError
+		auditDryRun   *iamsdk.AuditDeleteDryRunUnsupportedError
+		auditTypes    *iamsdk.AuditDeleteEventTypesUnsupportedError
 	)
 	switch {
 	case stderrors.As(err, &accessDenied):
@@ -210,7 +213,8 @@ func domainErrorClass(err error) (qberrors.ErrorCode, bool) {
 		return qberrors.ErrConflict, true
 	case stderrors.As(err, &invalid), stderrors.As(err, &roleInvalid),
 		stderrors.As(err, &forge), stderrors.As(err, &strategy),
-		stderrors.As(err, &redirectURI), stderrors.As(err, &appMetadata):
+		stderrors.As(err, &redirectURI), stderrors.As(err, &appMetadata),
+		stderrors.As(err, &auditDryRun), stderrors.As(err, &auditTypes):
 		return qberrors.ErrInvalidInput, true
 	}
 	for _, class := range domainSentinelClasses {

@@ -26,8 +26,10 @@ import (
 
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -312,6 +314,131 @@ func TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused(t *testing.T) {
 	require.ErrorAs(t, err, &denied)
 	assert.Equal(t, mcptransport.MCPPermissionDenied, toolErrorCode(err))
 	assert.False(t, deleteCalled, "DeleteOlderThan must not run for a denied subject")
+}
+
+// TestExecuteIAMAuditDelete_UnsupportedScopeRefused proves a dry run or an
+// event-type filter is refused with the shared SDK typed error, classified as
+// invalid input, and never reaches DeleteOlderThan, which has neither and
+// would delete every event before the cutoff.
+func TestExecuteIAMAuditDelete_UnsupportedScopeRefused(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra map[string]interface{}
+		want  func(error) bool
+	}{
+		{"dry run", map[string]interface{}{"dry_run": true}, func(err error) bool {
+			var refused *iamsdk.AuditDeleteDryRunUnsupportedError
+			return errors.As(err, &refused)
+		}},
+		{"event types as sent by the SDK", map[string]interface{}{"event_types": []interface{}{float64(1)}}, func(err error) bool {
+			var refused *iamsdk.AuditDeleteEventTypesUnsupportedError
+			return errors.As(err, &refused)
+		}},
+		{"event types as names", map[string]interface{}{"event_types": []interface{}{"authorization"}}, func(err error) bool {
+			var refused *iamsdk.AuditDeleteEventTypesUnsupportedError
+			return errors.As(err, &refused)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalled := false
+			auditLog := &mockAuditLogger{
+				deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+					deleteCalled = true
+					return 5, nil
+				},
+			}
+			reg := newAuditRegistry(t, auditLog)
+			args := map[string]interface{}{
+				"tenant_id": auditDeleteTenant,
+				"before":    "2024-01-01T00:00:00Z",
+			}
+			for k, v := range tt.extra {
+				args[k] = v
+			}
+
+			_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), args)
+			require.True(t, tt.want(err), "err = %v, want the %s refusal", err, tt.name)
+			assert.Equal(t, toolErrorCodeOf(qberrors.ErrInvalidInput), toolErrorCode(err))
+			assert.False(t, deleteCalled, "a refused delete reached DeleteOlderThan")
+		})
+	}
+}
+
+// TestExecuteIAMAuditDelete_MalformedDryRunRefused pins that a dry_run that
+// is not a JSON boolean is refused as invalid input before any deletion,
+// never read as false (Codex review 6452).
+func TestExecuteIAMAuditDelete_MalformedDryRunRefused(t *testing.T) {
+	tests := []struct {
+		name   string
+		dryRun interface{}
+	}{
+		{"string true", "true"},
+		{"string false", "false"},
+		{"number", float64(1)},
+		{"null", nil},
+		{"object", map[string]interface{}{"value": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalled := false
+			auditLog := &mockAuditLogger{
+				deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+					deleteCalled = true
+					return 5, nil
+				},
+			}
+			reg := newAuditRegistry(t, auditLog)
+
+			_, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+				"tenant_id": auditDeleteTenant,
+				"before":    "2024-01-01T00:00:00Z",
+				"dry_run":   tt.dryRun,
+			})
+			var argErr *BoolArgError
+			require.ErrorAs(t, err, &argErr)
+			assert.Equal(t, "dry_run", argErr.Arg)
+			assert.Equal(t, toolErrorCodeOf(qberrors.ErrInvalidInput), toolErrorCode(err))
+			assert.False(t, deleteCalled, "a malformed dry_run reached DeleteOlderThan")
+		})
+	}
+}
+
+// TestExecuteIAMAuditDelete_DryRunFalseDeletes pins that an explicit boolean
+// false dry_run deletes exactly as an absent one does.
+func TestExecuteIAMAuditDelete_DryRunFalseDeletes(t *testing.T) {
+	deleteCalled := false
+	auditLog := &mockAuditLogger{
+		deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+			deleteCalled = true
+			return 5, nil
+		},
+	}
+	reg := newAuditRegistry(t, auditLog)
+
+	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
+		"tenant_id": auditDeleteTenant,
+		"before":    "2024-01-01T00:00:00Z",
+		"dry_run":   false,
+	})
+	require.NoError(t, err)
+	resultMap, ok := result.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(5), resultMap["deleted"])
+	assert.True(t, deleteCalled)
+}
+
+// TestIAMAuditDeleteSchemaDeclaresDryRun pins that the tool schema declares
+// dry_run as a boolean, so schema validation sees a malformed value too.
+func TestIAMAuditDeleteSchemaDeclaresDryRun(t *testing.T) {
+	reg := newAuditRegistry(t, &mockAuditLogger{})
+	reg.registerAuditTools()
+	tool := toolByName(t, reg, "quicbaas_iam_audit_delete")
+	props, ok := tool.InputSchema["properties"].(map[string]interface{})
+	require.True(t, ok)
+	dryRun, ok := props["dry_run"].(map[string]interface{})
+	require.True(t, ok, "dry_run is not declared in the schema")
+	assert.Equal(t, "boolean", dryRun["type"])
 }
 
 // TestExecuteIAMAuditDelete_OtherTenantGrantRefused proves the check is made

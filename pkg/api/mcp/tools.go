@@ -1533,6 +1533,37 @@ func getBool(args map[string]interface{}, key string) bool {
 	return false
 }
 
+// BoolArgError reports an optional tool argument that is present but is not
+// a JSON boolean.
+type BoolArgError struct {
+	Arg string
+}
+
+// Error implements the error interface.
+func (e *BoolArgError) Error() string {
+	return "mcp: " + e.Arg + " must be a boolean"
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *BoolArgError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrInvalidInput
+}
+
+// getStrictBool reads an optional boolean argument. An absent argument is
+// false; a present one must be a JSON boolean, so a string, number, null or
+// any other type returns *BoolArgError instead of reading as false.
+func getStrictBool(args map[string]interface{}, key string) (bool, error) {
+	raw, present := args[key]
+	if !present {
+		return false, nil
+	}
+	v, ok := raw.(bool)
+	if !ok {
+		return false, &BoolArgError{Arg: key}
+	}
+	return v, nil
+}
+
 // Helper function to extract int argument.
 func getInt(args map[string]interface{}, key string) int {
 	switch v := args[key].(type) {

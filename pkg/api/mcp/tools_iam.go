@@ -2640,6 +2640,18 @@ func (r *ToolRegistry) executeIAMAuditGet(ctx context.Context, args map[string]i
 }
 
 func (r *ToolRegistry) executeIAMAuditDelete(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// DeleteOlderThan has no dry run and no event-type filter, so a call
+	// asking for either is refused before anything is deleted. A dry_run
+	// that is not a JSON boolean is refused too, never read as false.
+	dryRun, err := getStrictBool(args, "dry_run")
+	if err != nil {
+		return nil, err
+	}
+	err = iamsdk.RefuseUnsupportedAuditDeleteScope(dryRun, auditDeleteEventTypeCount(args))
+	if err != nil {
+		return nil, err
+	}
+
 	auditLogger, err := r.getAuditLogger(ctx)
 	if err != nil {
 		return nil, err
@@ -2665,6 +2677,22 @@ func (r *ToolRegistry) executeIAMAuditDelete(ctx context.Context, args map[strin
 		"deleted":   deleted,
 		"timestamp": time.Now(),
 	})
+}
+
+// auditDeleteEventTypeCount counts the event types an audit delete asks to
+// be scoped to. The SDK encodes AuditEventType as an integer, so every entry
+// counts whatever its JSON type; any other non-nil value counts as one.
+func auditDeleteEventTypeCount(args map[string]interface{}) int {
+	switch v := args["event_types"].(type) {
+	case nil:
+		return 0
+	case []interface{}:
+		return len(v)
+	case []string:
+		return len(v)
+	default:
+		return 1
+	}
 }
 
 // requireAuditDeletePermission requires audit:delete on tenantID for the
@@ -2786,6 +2814,10 @@ func (r *ToolRegistry) registerAuditTools() {
 					"type":        "string",
 					"description": "Delete events before this time (RFC3339 format)",
 					"format":      "date-time",
+				},
+				"dry_run": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Unsupported: true is refused, as is any non-boolean value",
 				},
 			},
 			"required": []string{"tenant_id", "before"},
