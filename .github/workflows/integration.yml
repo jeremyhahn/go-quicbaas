@@ -58,12 +58,13 @@ on:
 permissions:
   contents: read
 
-# The ci-template v1.22.1 block, as in ci.yml (#1581): a newer push to a pull
-# request supersedes that ref's older run, but a main run is never cancelled,
-# so every main commit keeps its run.
+# The ci.yml block (DS-3161): Gitea does not evaluate an expression in
+# cancel-in-progress, so it is a literal true. A newer push to a pull request
+# cancels that ref's older run; on main the group key carries the commit sha,
+# so no main run is cancelled and every main commit keeps its run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION: '1.27.3'

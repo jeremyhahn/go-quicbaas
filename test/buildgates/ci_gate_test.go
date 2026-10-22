@@ -321,25 +321,31 @@ func TestCIIgnoresLabelChanges(t *testing.T) {
 // group (devops.md §9b). The ref keeps one pull request from cancelling
 // another. `pull_request_target` is out of scope: its github.ref is the base
 // branch, so a ref-keyed group there would span every pull request.
-// cancelsEveryRef matches a concurrency key, not a comment, that cancels
-// in-progress runs on every ref, main included.
-var cancelsEveryRef = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
+// cancelsInProgress matches a concurrency key, not a comment, that cancels
+// in-progress runs.
+var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
+
+// mainRunKey is the group-key term that gives each main commit its own group,
+// so a literal cancel-in-progress never cancels a main run.
+const mainRunKey = "github.ref == 'refs/heads/main' && github.sha"
 
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
-	// The ci-template v1.22.1 block: one group per ref, a newer run cancels the
-	// older one off main, and a main run is never cancelled.
-	const want = "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n" +
-		"  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
+	// The DS-3161 block: Gitea does not evaluate an expression in
+	// cancel-in-progress, so it is a literal true. A PR ref shares one group,
+	// so its newer run cancels the older; a main commit has a group of its own.
+	const want = "concurrency:\n" +
+		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
+		"  cancel-in-progress: true\n"
 	for _, path := range workflowFiles(t) {
 		body := readFile(t, path)
-		if strings.Contains(body, "\n  push:\n") && cancelsEveryRef.MatchString(body) {
-			t.Errorf("%s runs on push and sets `cancel-in-progress: true`, which cancels main runs", path)
+		if strings.Contains(body, "\n  push:\n") && cancelsInProgress.MatchString(body) && !strings.Contains(body, mainRunKey) {
+			t.Errorf("%s runs on push and sets `cancel-in-progress: true` without a per-commit main group, which cancels main runs", path)
 		}
 		if !strings.Contains(body, "\n  pull_request:\n") {
 			continue
 		}
 		if !strings.Contains(body, "\n"+want) {
-			t.Errorf("%s runs on pull_request but lacks the ci-template's concurrency block:\n%s", path, want)
+			t.Errorf("%s runs on pull_request but lacks the concurrency block:\n%s", path, want)
 		}
 	}
 }

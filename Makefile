@@ -5762,6 +5762,12 @@ toolchain-image: ## Print the toolchain image tag, hashed from the files it is b
 docker-build: ## Build both devcontainer images, toolchain and integration
 	@$(DEVCONTAINER_BUILD) toolchain integration
 
+# A docs-only pull request's CI runs lint alone, in the toolchain image
+# (DS-3161).
+.PHONY: docker-build-toolchain-image
+docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
+	@$(DEVCONTAINER_BUILD) toolchain
+
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
 # its tag to compose as QUICBAAS_INTEGRATION_IMAGE.

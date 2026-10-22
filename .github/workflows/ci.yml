@@ -1,4 +1,9 @@
 # ci-template: v1.22.1 (customized)
+# go-quicbaas (DS-3161, CA m967 (2), 2026-10-21; CI demand is the fleet
+# bottleneck): Gitea does not evaluate a ${{ }} expression in
+# cancel-in-progress, so the canonical v1.22.1 block below is replaced by a
+# literal `true` with each main commit in a group of its own. A changes job
+# marks a docs-only pull request, which then runs lint and CI Gate only.
 # v1.22.1 (Company Agent m636 item 2, 2026-10-18, after go-quicbaas main
 # fe167500f was left with no completed run): the concurrency block is
 # canonical. A newer push to a PR ref still cancels that ref's older run, but
@@ -258,12 +263,14 @@ on:
                                         # only retry when a run was never
                                         # created (see v1.3 correction above)
 
-# One group per ref (v1.22.1). On a PR ref the newer run cancels the older; on
-# main nothing is cancelled, and a newer main run waits for the older one, so
-# no main commit loses its run. Never set `cancel-in-progress: true` on main.
+# One group per PR ref, one group per main commit (DS-3161). Gitea does not
+# evaluate an expression in cancel-in-progress, so it is a literal true. On a
+# PR ref the newer run cancels the older. On main the group key carries the
+# commit sha, so no two main runs share a group: nothing on main is cancelled
+# and no main commit loses its run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -279,6 +286,28 @@ env:
   GO_BUILD_TAGS: ""
 
 jobs:
+  # DS-3161: a pull request whose every changed file is documentation runs
+  # lint and CI Gate only. Documentation is docs/, changelog.d/, a top-level
+  # *.md file and any README.md; a *.md file elsewhere can be a go:embed input
+  # (pkg/sdlc/prompts/triage.md) and is code. A push to main, a dispatch and
+  # a pull request with any other file run every stage.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Docs-only filter
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/docs-only.sh >> "$GITHUB_OUTPUT"
+
   # v1.21: every stage runs in the project's own devcontainer image and no
   # other (ci-standard.md §2, devcontainer.md §7). One image job (Company Agent
   # m601 (a)) builds the images once from build/docker/devcontainer/Dockerfile
@@ -317,7 +346,9 @@ jobs:
     name: Devcontainer image [lint, build, test, security, deps-check, trivy image]
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     timeout-minutes: 180      # CUSTOMIZE: give the stages honest headroom
+    needs: [changes]
     env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class. Only a push to main writes the
       # caches main's build reads; every other event, pull requests included,
@@ -358,7 +389,11 @@ jobs:
             for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
               if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
             done )
-          make docker-build MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
+          # A docs-only pull request runs lint alone, which needs only the
+          # toolchain image (DS-3161).
+          target=docker-build
+          if [ "$DOCS_ONLY" = true ]; then target=docker-build-toolchain-image; fi
+          make "$target" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_IMAGE="$IT_IMAGE"
           rm -f "$RUNNER_TEMP/gomodauth.env"
           echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
 
@@ -380,13 +415,13 @@ jobs:
       # (tests included), it is misspelled or dead. Compares files, not
       # packages, and a tag may swap files (a `!foo` stub for a `foo` body).
       - name: Assert every build tag selects code
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.GO_BUILD_TAGS != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' && env.GO_BUILD_TAGS != '' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "GO_BUILD_TAGS='$GO_BUILD_TAGS' sh scripts/assert-build-tags.sh"
 
       # CUSTOMIZE: nested modules (sdk/go, xkey) and variants (FIPS) are built
       # by `make build` itself, never by an extra step here.
       - name: make build
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # The test stage (m601 (c)): make coverage runs the whole unit suite with
@@ -395,7 +430,7 @@ jobs:
       # Tags matter here too: without them tag-gated packages are neither
       # tested nor counted. The integration stage is its own job below.
       - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
       # CUSTOMIZE: the TypeScript SDK, frontend and JavaScript SDK unit tests
@@ -404,7 +439,7 @@ jobs:
       # 5785). Their npm ci runs offline from the npm cache the toolchain
       # image seeds from the three lockfiles, so the step needs no network.
       - name: make test-sdk-ts test-frontend test-sdk-js
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-sdk-ts test-frontend test-sdk-js"
 
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
@@ -413,7 +448,7 @@ jobs:
       # reports a kill by signal as a kill, not a finding. Nothing is uploaded
       # to code scanning (m601 (d): CI runs on Gitea).
       - name: make security
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make security GO_BUILD_TAGS='$GO_BUILD_TAGS'"
@@ -421,7 +456,7 @@ jobs:
       # Fails when a library, first-party or third-party, is behind its latest
       # release without devops.md §9's documented reason (ci-standard.md §1).
       - name: make deps-check
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" make deps-check
@@ -430,7 +465,7 @@ jobs:
       # (devops.md §8): --ignore-unfixed (v1.19) and --skip-dirs /opt/go/mod
       # (v1.20). trivy fs and make security never take --ignore-unfixed.
       - name: trivy image (integration image)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         env:
           IN_IMAGE_NETWORK: bridge
         run: |
@@ -454,6 +489,8 @@ jobs:
     # CUSTOMIZE: a repo whose suite runs only on the full tier gates it here
     # with CI Gate's FULL_TIER expression as `if:`, and marks it full there.
     timeout-minutes: 120      # CUSTOMIZE
+    needs: [changes]
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -554,7 +591,7 @@ jobs:
     # Integration still runs on every PR but does not gate until row #1700
     # closes (CA m787). Restore it then in needs and as a pr check line, and
     # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
-    needs: [image, arch-gates]
+    needs: [changes, image, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -579,6 +616,7 @@ jobs:
           }
           # CUSTOMIZE: one line per job in needs above. A job gated to the
           # full tier by its `if:` is marked full; every other job is pr.
+          check changes     "${{ needs.changes.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD
