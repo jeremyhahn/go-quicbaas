@@ -571,12 +571,13 @@ func TestKMSMCP_ImportKey(t *testing.T) {
 				KeyMaterial: kmsImportMaterial, WrappingKeyID: "wrap-1", Name: "imported",
 				Description: "imported signing key", Algorithm: kmsclient.AlgorithmED25519,
 				Usage: []kmsclient.KeyUsage{kmsclient.KeyUsageSign, kmsclient.KeyUsageVerify},
-				Tags:  map[string]string{"team": "release"},
+				Tags:       map[string]string{"team": "release"},
+				Exportable: true,
 			},
 			wantArgs: map[string]interface{}{
 				"name": "imported", "algorithm": "ED25519", "wrapping_key_id": "wrap-1",
 				"description": "imported signing key", "usage": []interface{}{"sign", "verify"},
-				"tags": map[string]interface{}{"team": "release"},
+				"tags": map[string]interface{}{"team": "release"}, "exportable": true,
 			},
 		},
 		{
@@ -1672,11 +1673,12 @@ func TestKMSMCP_UnwrapKey(t *testing.T) {
 			name: "every optional field",
 			req: &kmsclient.UnwrapKeyRequest{KeyID: "key-2", WrappingKeyID: "wrap-1",
 				WrappingAlgorithm: kmsclient.WrapAlgRSAOAEPSHA256, WrappedMaterial: wrapped,
-				Algorithm: kmsclient.AlgorithmED25519, Name: "imported", SourceKeyID: "key-1", SourceVersion: 3},
+				Algorithm: kmsclient.AlgorithmED25519, Name: "imported", SourceKeyID: "key-1", SourceVersion: 3,
+				Exportable: true},
 			wantArgs: map[string]interface{}{
 				"key_id": "key-2", "wrapping_key_id": "wrap-1", "wrapping_algorithm": "RSA-OAEP-SHA256",
 				"wrapped_key": base64.StdEncoding.EncodeToString(wrapped), "algorithm": "ED25519",
-				"name": "imported", "source_key_id": "key-1", "source_version": float64(3),
+				"name": "imported", "source_key_id": "key-1", "source_version": float64(3), "exportable": true,
 			},
 			result: map[string]interface{}{
 				"key_id": "key-2", "version": 4, "algorithm": "ED25519", "status": "enabled",

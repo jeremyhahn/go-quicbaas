@@ -163,13 +163,15 @@ func (h *kmsHandler) handleImportKey(ctx context.Context, req interface{}) (inte
 		return nil, errors.NewInvalidInput("kmsHandler.handleImportKey",
 			"invalid request type, expected *kms.ImportKeyRequest")
 	}
+	attrs := sdkAlgToKeyAttributes(sdkReq.Algorithm)
+	attrs.Exportable = sdkReq.Exportable
 	return h.client.KMSImportKey(ctx, &service.ImportKeyRequest{
 		KeyMaterial:   sdkReq.KeyMaterial,
 		WrappingKeyID: sdkReq.WrappingKeyID,
 		Name:          sdkReq.Name,
 		Description:   sdkReq.Description,
 		Usage:         sdkUsagesToService(sdkReq.Usage),
-		KeyAttributes: sdkAlgToKeyAttributes(sdkReq.Algorithm),
+		KeyAttributes: attrs,
 		Tags:          sdkReq.Tags,
 	})
 }
@@ -414,6 +416,7 @@ func (h *kmsHandler) handleUnwrapKey(ctx context.Context, req interface{}) (inte
 		Name:              sdkReq.Name,
 		SourceKeyID:       sdkReq.SourceKeyID,
 		SourceVersion:     uint64(sdkReq.SourceVersion),
+		KeyAttributes:     &xkmssdk.KeyAttributes{Exportable: sdkReq.Exportable},
 	})
 }
 

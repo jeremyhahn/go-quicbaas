@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	kmsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/kms"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // kmsServicePrefix is the gRPC-style service identifier the SDK uses to route
@@ -378,8 +379,9 @@ func (h *kmsRESTHandler) handleImportKey(ctx context.Context, req interface{}) (
 		Description:   r.Description,
 		Tags:          r.Tags,
 		KeyAttributes: &kmsKeyAttributesRequest{
-			Algorithm: r.Algorithm.String(),
-			KeyUsage:  kmsUsagesToStrings(r.Usage),
+			Algorithm:  r.Algorithm.String(),
+			KeyUsage:   kmsUsagesToStrings(r.Usage),
+			Exportable: r.Exportable,
 		},
 	}
 	var wire kmsGenerateKeyWire
@@ -513,6 +515,9 @@ func (h *kmsRESTHandler) handleUnwrapKey(ctx context.Context, req interface{}) (
 		SourceKeyID:       r.SourceKeyID,
 		SourceVersion:     uint64(r.SourceVersion),
 		Name:              r.Name,
+	}
+	if r.Exportable {
+		body.KeyAttributes = &xkmssdk.KeyAttributes{Exportable: true}
 	}
 	var wire kmsUnwrapKeyWire
 	if err := h.transport.doJSONRequest(ctx, http.MethodPost, "/api/v1/kms/keys/unwrap", body, &wire); err != nil {

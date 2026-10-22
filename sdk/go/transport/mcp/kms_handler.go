@@ -225,6 +225,9 @@ func kmsImportKeyArgs(req interface{}) (map[string]interface{}, error) {
 	if r.Description != "" {
 		args["description"] = r.Description
 	}
+	if r.Exportable {
+		args["exportable"] = true
+	}
 	if len(r.Usage) > 0 {
 		usage := make([]string, 0, len(r.Usage))
 		for _, u := range r.Usage {
@@ -501,6 +504,9 @@ func kmsUnwrapKeyArgs(req interface{}) (map[string]interface{}, error) {
 	}
 	if r.SourceKeyID != "" {
 		args["source_key_id"] = r.SourceKeyID
+	}
+	if r.Exportable {
+		args["exportable"] = true
 	}
 	if r.SourceVersion > 0 {
 		args["source_version"] = r.SourceVersion

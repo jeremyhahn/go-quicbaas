@@ -336,6 +336,9 @@ type ImportKeyRequest struct {
 	// Usage specifies permitted operations.
 	Usage []KeyUsage
 
+	// Exportable allows the imported key to be exported (default false).
+	Exportable bool
+
 	// Tags are optional key-value metadata.
 	Tags map[string]string
 }
@@ -550,6 +553,9 @@ type UnwrapKeyRequest struct {
 
 	// SourceVersion is the source key version for AAD verification.
 	SourceVersion int
+
+	// Exportable allows the unwrapped key to be exported again (default false).
+	Exportable bool
 }
 
 // UnwrapKeyResponse is the response from unwrapping a key.
