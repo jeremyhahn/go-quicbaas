@@ -38,9 +38,11 @@ func newEmbeddedTSClient(t *testing.T) *qrdbsdk.Client {
 	cfg := createFTConfig(t)
 	cfg.Server.Mode = config.ServerModeStandalone
 	// The qrdb node only instantiates the time-series engine for a
-	// PebbleDB-backed store (the engine shares the pebble instance). The
-	// default createFTConfig backend is pebble with a temp data dir, so leave
-	// it as-is for a hermetic, on-disk-in-tempdir node.
+	// PebbleDB-backed store (the engine shares the pebble instance), and the
+	// memory engine has no time-series storage, so this fixture opts back in
+	// to pebble over createFTConfig's in-memory default (#1770). The store
+	// stays hermetic in the test's temp data dir.
+	cfg.Storage.Backend = config.StorageBackendPebble
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)

@@ -19,12 +19,14 @@
 // The unit half lives in pkg/server. start_partial_failure_cleanup_test.go
 // owns the RELEASE property -- that Shutdown closes and drops each orphan it
 // is handed -- without calling Start at all. start_failure_arrival_test.go
-// owns ARRIVAL for the in-memory resources: a real initialize over a temp
-// directory fails at orchestration, and Shutdown joins the cache-cleanup
-// goroutine (through its Done channel) and drops the KMS manager.
+// keeps only the arrival check that opens nothing: a Shutdown before any
+// start holds no cache or KMS manager.
 //
 // Two things cannot be proven there, and they are what this package exists
-// for. Both need a real Start over a real store, and a real Start cannot run
+// for. The unit tier's former arrival tests over a failed and a clean
+// initialize moved here (#1770) and are carried by the goroutine tests below,
+// which observe the same cache-cleanup and KMS key-cache goroutines from
+// their stack frames. Both need a real Start over a real store, and a real Start cannot run
 // in memory: the embedded qrdb node refuses an empty Raft DataDir while the
 // vector subsystem is compiled in, and buildDataPlaneBarrierService opens a
 // pebble seal sub-store for any non-empty Storage.DataDir regardless of the
