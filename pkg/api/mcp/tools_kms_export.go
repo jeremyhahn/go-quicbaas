@@ -20,6 +20,8 @@ import (
 	"encoding/base64"
 	"time"
 
+	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
+
 	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -116,6 +118,10 @@ func (r *ToolRegistry) registerKMSExportTools() {
 				"source_version": map[string]interface{}{
 					"type":        "integer",
 					"description": "Version of the source key that was exported (required for AAD verification)",
+				},
+				"exportable": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Whether the unwrapped key can be exported again (default false)",
 				},
 			},
 			"required": []string{"key_id", "wrapped_key", "wrapping_key_id", "algorithm"},
@@ -220,6 +226,7 @@ func (r *ToolRegistry) executeKMSUnwrapKey(ctx context.Context, args map[string]
 		Name:              getString(args, "name"),
 		SourceKeyID:       getString(args, "source_key_id"),
 		SourceVersion:     getUint64(args, "source_version"),
+		KeyAttributes:     &kctypes.KeyAttributes{Exportable: getBool(args, "exportable")},
 	}
 
 	resp, err := kmsSvc.UnwrapKey(ctx, req)
