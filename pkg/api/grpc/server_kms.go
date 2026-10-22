@@ -180,7 +180,7 @@ func (s *KMSServer) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*p
 	algorithm := protoKeyAlgorithmToString(req.KeySpec.Algorithm)
 
 	// Call KMS manager to import key
-	result, err := s.kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	result, err := s.kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, req.KeySpec.Exportable)
 	if err != nil {
 		return nil, convertKMSError(err)
 	}

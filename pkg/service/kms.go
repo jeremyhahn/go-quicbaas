@@ -629,8 +629,9 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	// Get algorithm string from attributes
 	algorithm := attrsToAlgorithm(req.KeyAttributes)
 
-	// Call KMS manager to import key
-	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	// Call KMS manager to import key. go-xkms records Exportable at import and
+	// enforces it on export; the quicbaas metadata below only mirrors it.
+	keyMetadata, err := k.kmsManager.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, req.KeyAttributes.Exportable)
 	if err != nil {
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()

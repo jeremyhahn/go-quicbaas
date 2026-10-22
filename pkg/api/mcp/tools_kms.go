@@ -917,7 +917,7 @@ func (r *ToolRegistry) executeKMSImportKey(ctx context.Context, args map[string]
 	name := getString(args, "name")
 	keyID := name
 
-	result, err := kmsMgr.ImportKey(ctx, keyID, keyMaterial, algorithm)
+	result, err := kmsMgr.ImportKey(ctx, keyID, keyMaterial, algorithm, getBool(args, "exportable"))
 	if err != nil {
 		return nil, err
 	}

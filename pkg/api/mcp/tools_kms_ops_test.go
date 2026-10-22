@@ -356,7 +356,7 @@ func (m *testKMSManagerForOps) GenerateKey(_ context.Context, _ *xkmssdk.KeyAttr
 	}, nil
 }
 
-func (m *testKMSManagerForOps) ImportKey(_ context.Context, keyID string, _ []byte, algorithm string) (interface{}, error) {
+func (m *testKMSManagerForOps) ImportKey(_ context.Context, keyID string, _ []byte, algorithm string, _ bool) (interface{}, error) {
 	now := time.Now()
 	return &kms.KeyMetadata{
 		KeyID:     keyID,

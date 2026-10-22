@@ -260,8 +260,11 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 		return nil, ErrKeyMaterialEmpty
 	}
 
-	// Build key attributes for the imported key
+	// Build key attributes for the imported key. go-xkms records Exportable
+	// from these attributes at import and enforces it on export, so the flag
+	// has to reach it here; the metadata below only mirrors it (#1779).
 	attrs := kb.algorithmToKeyAttributes(keyID, algorithm)
+	attrs.Exportable = options["exportable"] == true
 
 	// Symmetric and asymmetric import are ONE operation. The algorithm rides on
 	// attrs, and go-xkms interprets the material accordingly: raw bytes for a
@@ -284,22 +287,18 @@ func (kb *XKMSBackend) ImportKey(ctx context.Context, keyID string, material []b
 	// Build metadata
 	now := time.Now()
 	meta := &KeyMetadata{
-		KeyID:     keyID,
-		Algorithm: algorithm,
-		State:     KeyStateEnabled,
-		Version:   1,
-		Created:   now,
-		Updated:   now,
+		KeyID:      keyID,
+		Algorithm:  algorithm,
+		State:      KeyStateEnabled,
+		Version:    1,
+		Exportable: attrs.Exportable,
+		Created:    now,
+		Updated:    now,
 	}
 
 	// Extract options if provided
-	if options != nil {
-		if desc, ok := options["description"].(string); ok {
-			meta.Description = desc
-		}
-		if exp, ok := options["exportable"].(bool); ok {
-			meta.Exportable = exp
-		}
+	if desc, ok := options["description"].(string); ok {
+		meta.Description = desc
 	}
 
 	// Cache metadata

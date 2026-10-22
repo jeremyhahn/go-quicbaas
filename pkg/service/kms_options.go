@@ -341,8 +341,10 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		return nil, err
 	}
 
-	// Import the unwrapped key into the KMS
-	_, err = k.kmsManager.ImportKey(ctx, scopedKeyID, unwrappedKeyMaterial, req.Algorithm)
+	// Import the unwrapped key into the KMS. go-xkms records Exportable at
+	// import and enforces it on export.
+	exportable := req.KeyAttributes != nil && req.KeyAttributes.Exportable
+	_, err = k.kmsManager.ImportKey(ctx, scopedKeyID, unwrappedKeyMaterial, req.Algorithm, exportable)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
 		return nil, WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key")

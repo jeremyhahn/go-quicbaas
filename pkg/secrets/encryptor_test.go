@@ -170,7 +170,7 @@ func (m *encryptorMockKMSManager) GenerateKey(ctx context.Context, attrs *xkmssd
 	return nil, nil
 }
 
-func (m *encryptorMockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+func (m *encryptorMockKMSManager) ImportKey(ctx context.Context, keyID string, material []byte, algorithm string, _ bool) (interface{}, error) {
 	return nil, nil
 }
 

@@ -643,7 +643,8 @@ func (s *Server) HandleImportKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Call KMS manager to import key
-	result, err := kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm)
+	exportable := req.KeyAttributes != nil && req.KeyAttributes.Exportable
+	result, err := kmsMgr.ImportKey(ctx, keyID, req.KeyMaterial, algorithm, exportable)
 	if err != nil {
 		s.handleKMSError(w, r, err)
 		return

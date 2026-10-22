@@ -182,7 +182,7 @@ func (m *Manager) GenerateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (
 }
 
 // ImportKey stores a key under keyID.
-func (m *Manager) ImportKey(_ context.Context, keyID string, _ []byte, algorithm string) (interface{}, error) {
+func (m *Manager) ImportKey(_ context.Context, keyID string, _ []byte, algorithm string, _ bool) (interface{}, error) {
 	return m.store(keyID, algorithm), nil
 }
 
