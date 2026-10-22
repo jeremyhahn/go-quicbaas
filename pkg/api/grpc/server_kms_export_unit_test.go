@@ -26,6 +26,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // =============================================================================
@@ -413,6 +414,59 @@ func TestKMSServer_UnwrapKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestKMSServer_GenerateKey_KeyType checks that the key type reaching the KMS
+// service is the service's default for the requested algorithm, since KeySpec
+// carries no key type of its own.
+func TestKMSServer_GenerateKey_KeyType(t *testing.T) {
+	tests := []struct {
+		name      string
+		algorithm pb.KeyAlgorithm
+		wantType  xkmssdk.KeyType
+	}{
+		{"symmetric_key_is_secret", pb.KeyAlgorithm_KEY_ALG_AES_256_GCM, xkmssdk.KeyTypeSecret},
+		{"asymmetric_key_signs", pb.KeyAlgorithm_KEY_ALG_ECDSA_P256, xkmssdk.KeyTypeSigning},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+			var got *service.GenerateKeyRequest
+			mockSvc.generateKeyFn = func(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+				got = req
+				return &service.GenerateKeyResponse{}, nil
+			}
+
+			_, err := srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+				Name:    "typed-key",
+				KeySpec: &pb.KeySpec{Algorithm: tt.algorithm},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			require.NotNil(t, got.KeyAttributes)
+			assert.Equal(t, tt.wantType, got.KeyAttributes.KeyType)
+		})
+	}
+
+	t.Run("unspecified_algorithm_never_reaches_the_service", func(t *testing.T) {
+		srv, mockSvc, _ := createTestKMSServerWithSafetyService(t)
+		called := false
+		mockSvc.generateKeyFn = func(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
+			called = true
+			return &service.GenerateKeyResponse{}, nil
+		}
+
+		_, err := srv.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+			Name:    "typed-key",
+			KeySpec: &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED},
+		})
+		require.Error(t, err)
+		st, ok := status.FromError(err)
+		require.True(t, ok)
+		assert.Equal(t, codes.InvalidArgument, st.Code())
+		assert.False(t, called)
+	})
 }
 
 // =============================================================================

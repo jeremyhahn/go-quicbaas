@@ -403,6 +403,42 @@ func TestHandleGenerateKey(t *testing.T) {
 			expectedStatus: http.StatusCreated,
 		},
 		{
+			name: "generate symmetric key reaches the service with the secret key type",
+			body: map[string]interface{}{
+				"name": "secret-key",
+				"key_attributes": map[string]interface{}{
+					"algorithm": "AES-256-GCM",
+					"key_usage": []string{"encrypt", "decrypt"},
+				},
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				now := time.Now()
+				m.On("GenerateKey", mock.Anything, mock.MatchedBy(func(req *service.GenerateKeyRequest) bool {
+					return req.KeyAttributes != nil && req.KeyAttributes.KeyType == xkmssdk.KeyTypeSecret
+				})).Return(&service.GenerateKeyResponse{
+					Key: &service.KeyHandle{
+						KeyID:     "secret-key",
+						Version:   1,
+						Algorithm: service.KeyAlgorithm("aes256-gcm"),
+						Status:    service.KeyStatusEnabled,
+						CreatedAt: now,
+					},
+					Metadata: &service.KeyMetadata{
+						KeyID:     "secret-key",
+						Name:      "secret-key",
+						Algorithm: service.KeyAlgorithm("aes256-gcm"),
+						Status:    service.KeyStatusEnabled,
+						Usage:     []service.KeyUsage{"encrypt", "decrypt"},
+						Version:   1,
+						CreatedAt: now,
+						UpdatedAt: now,
+					},
+					Timestamp: now,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusCreated,
+		},
+		{
 			name: "generate key via KMS service layer - service error",
 			body: map[string]interface{}{
 				"key_attributes": map[string]interface{}{
@@ -1457,7 +1493,7 @@ func TestKeyAttributesRequestToXKMS(t *testing.T) {
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, "test-key", attrs.CN)
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 				assert.True(t, attrs.Exportable)
 			},
 		},
@@ -1501,7 +1537,7 @@ func TestKeyAttributesRequestToXKMS(t *testing.T) {
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, "metadata-key", attrs.CN)
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1541,7 +1577,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "AES-128-GCM",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES128GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1549,7 +1585,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "AES128",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES128GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1557,7 +1593,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "AES-192-GCM",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES192GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1565,7 +1601,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "AES192",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES192GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1573,7 +1609,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "AES256",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1581,7 +1617,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "CHACHA20-POLY1305",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricChaCha20Poly1305, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1589,7 +1625,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "XCHACHA20-POLY1305",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricXChaCha20Poly1305, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1706,7 +1742,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "UNKNOWN-ALGORITHM",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1714,7 +1750,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 		{
@@ -1722,7 +1758,7 @@ func TestKeyAttributesRequestToXKMS_AllAlgorithms(t *testing.T) {
 			algorithm: "aes-256-gcm",
 			validate: func(t *testing.T, attrs *xkmssdk.KeyAttributes) {
 				assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-				assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+				assert.Equal(t, xkmssdk.KeyTypeSecret, attrs.KeyType)
 			},
 		},
 	}
