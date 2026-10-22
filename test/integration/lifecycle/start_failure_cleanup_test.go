@@ -16,23 +16,24 @@
 // Package lifecycle holds the integration half of the Server start/shutdown
 // resource-release contract (go-quicbaas#62).
 //
-// The unit half lives in pkg/server/start_partial_failure_cleanup_test.go. It
+// The unit half lives in pkg/server. start_partial_failure_cleanup_test.go
 // owns the RELEASE property -- that Shutdown closes and drops each orphan it
-// is handed -- and it proves that without calling Start at all, which is what
-// lets it stay in memory as the Unit Test Contract requires (AGENTS.md, "Unit
-// Testing": ALWAYS run in memory).
+// is handed -- without calling Start at all. start_failure_arrival_test.go
+// owns ARRIVAL for the in-memory resources: a real initialize over a temp
+// directory fails at orchestration, and Shutdown joins the cache-cleanup
+// goroutine (through its Done channel) and drops the KMS manager.
 //
-// Two things cannot be proven that way, and they are what this package exists
+// Two things cannot be proven there, and they are what this package exists
 // for. Both need a real Start over a real store, and a real Start cannot run
 // in memory: the embedded qrdb node refuses an empty Raft DataDir while the
 // vector subsystem is compiled in, and buildDataPlaneBarrierService opens a
 // pebble seal sub-store for any non-empty Storage.DataDir regardless of the
 // configured storage backend.
 //
-//  1. That a mid-Start failure really lands in the window where the orphan
-//     exists, and that Shutdown afterwards joins the background goroutines it
-//     left running. Goroutine stack frames carry that assertion because they
-//     cross the package boundary that Server's unexported fields do not.
+//  1. That Shutdown, after a failed or a clean real Start, joins the KMS
+//     key-cache goroutine rather than merely dropping the manager from a
+//     field. pkg/server sees only the field; goroutine stack frames carry
+//     this assertion because they cross the package boundary.
 //
 //  2. That a released PERSISTENT store really let go of the operating
 //     system's handle, rather than merely being dropped from a field. A
@@ -266,8 +267,8 @@ func countGoroutinesWithFrame(frame string) int {
 	}
 }
 
-// requireGoroutinesDownTo polls until the count of goroutines in frame is back
-// to want. Polling rather than sleeping: each pass re-checks the real
+// requireGoroutinesDownTo polls with helpers.Poll until the count of
+// goroutines in frame is back to want. Polling rather than sleeping: each pass re-checks the real
 // condition (go-style.md, "No time.Sleep"). Both Close paths this covers join
 // their goroutine before returning -- CacheManager.Close and KeyCache.Close
 // both wait for the channel their Done method returns -- so this normally succeeds
@@ -276,21 +277,12 @@ func countGoroutinesWithFrame(frame string) int {
 func requireGoroutinesDownTo(t *testing.T, frame string, want int, msg string) {
 	t.Helper()
 
-	deadline := time.After(30 * time.Second)
-	tick := time.NewTicker(5 * time.Millisecond)
-	defer tick.Stop()
-
-	for {
-		if countGoroutinesWithFrame(frame) <= want {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("%s (still %d goroutines in %s, want <= %d)",
-				msg, countGoroutinesWithFrame(frame), frame, want)
-		case <-tick.C:
-		}
-	}
+	err := helpers.Poll(context.Background(), 5*time.Millisecond, 30*time.Second,
+		func(context.Context) (bool, error) {
+			return countGoroutinesWithFrame(frame) <= want, nil
+		})
+	require.NoError(t, err, "%s (still %d goroutines in %s, want <= %d)",
+		msg, countGoroutinesWithFrame(frame), frame, want)
 }
 
 // failingEmbeddedConfig is embeddedConfig plus the configuration that aborts

@@ -13,25 +13,16 @@
 
 //go:build integration
 
-// Package standalone contains Phase F end-to-end integration tests for
-// QuicBaaS standalone mode (no Raft, single-node qrdb engine). These tests
-// use a real in-process embedded server backed by the qrdb engine — no
-// mocks, no stubs, no docker required for the standalone suite.
-//
-// Tests cover:
-//   - BaaS KV round-trips through the real qrdb engine.
-//   - Scheduler, secrets, vector, and timeseries operations.
-//   - Tenant lifecycle: create → write → seal → reads fail → unseal → reads ok → delete → crypto-shred.
-//   - At-rest encryption: sentinel values absent from raw on-disk pebble files.
-//   - Passphrase barrier auto-unseal via server.WithSealPassphrase.
-//
-// Reference: plan ~/.claude/plans/unified-doodling-grove.md, Phase F.
+// Package standalone drives a real standalone QuicBaaS server (single-node
+// qrdb engine on PebbleDB, no Raft) whose store lives in the test's temp
+// directory: KV, secrets and scheduler round trips, a restart over the same
+// data directory, a passphrase-sealed boot, and what the server leaves on disk.
 package standalone
 
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,16 +38,11 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// ---------------------------------------------------------------------------
-// Shared server lifecycle
-// ---------------------------------------------------------------------------
+const sealPassphrase = "integration-test-barrier-passphrase"
 
-// standaloneServer boots a real embedded QuicBaaS server backed by the qrdb
-// engine using PebbleDB in dataDir. The caller is responsible for calling
-// srv.Shutdown when done.
-func standaloneServer(t *testing.T, dataDir string, extraOpts ...server.ServerOption) *server.Server {
-	t.Helper()
-
+// standaloneConfig is a standalone server with KMS and secrets on, storing its
+// PebbleDB data and WAL under dataDir.
+func standaloneConfig(dataDir string) *config.Config {
 	cfg := config.EmbeddedConfig()
 	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
 	cfg.Storage.Backend = config.StorageBackendPebble
@@ -66,341 +52,178 @@ func standaloneServer(t *testing.T, dataDir string, extraOpts ...server.ServerOp
 	cfg.Logging.Level = "error"
 	cfg.KMS.Enabled = true
 	cfg.Secrets.Enabled = true
-
-	srv, err := server.NewServer(cfg, extraOpts...)
-	require.NoError(t, err, "NewServer must succeed")
-
-	require.NoError(t, srv.Start(), "Start must succeed")
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
-	})
-	return srv
+	return cfg
 }
 
-// ---------------------------------------------------------------------------
-// KV round-trip
-// ---------------------------------------------------------------------------
-
-// TestStandalone_KV_CRUD verifies that basic KV put/get/delete round-trips
-// work through the real qrdb engine in standalone (no-Raft) mode.
-func TestStandalone_KV_CRUD(t *testing.T) {
-	dataDir := t.TempDir()
-	srv := standaloneServer(t, dataDir)
-
-	kv := srv.GetKVStore(1)
-	require.NotNil(t, kv, "GetKVStore(1) must return a non-nil KVStore")
-
-	ctx := context.Background()
-	key := "phase-f/kv/testkey"
-	value := []byte("hello-qrdb-engine")
-
-	require.NoError(t, kv.Put(ctx, key, value), "Put must succeed")
-
-	got, err := kv.Get(ctx, key)
-	require.NoError(t, err, "Get must succeed after Put")
-	assert.Equal(t, value, got, "retrieved value must match stored value")
-
-	require.NoError(t, kv.Delete(ctx, key), "Delete must succeed")
-
-	_, err = kv.Get(ctx, key)
-	require.Error(t, err, "Get after Delete must return an error")
-}
-
-// TestStandalone_KV_MultipleKeysAndScan verifies that multiple keys can be
-// written and scanned by prefix through the qrdb engine.
-func TestStandalone_KV_MultipleKeysAndScan(t *testing.T) {
-	dataDir := t.TempDir()
-	srv := standaloneServer(t, dataDir)
-
-	kv := srv.GetKVStore(1)
-	ctx := context.Background()
-
-	prefix := fmt.Sprintf("phase-f/scan/%d/", time.Now().UnixNano())
-	keys := []string{prefix + "a", prefix + "b", prefix + "c"}
-	for i, k := range keys {
-		require.NoError(t, kv.Put(ctx, k, []byte(fmt.Sprintf("val%d", i))))
-	}
-
-	// Scan collects all matching keys via the callback.
-	seen := make(map[string][]byte)
-	require.NoError(t, kv.Scan(ctx, prefix, func(key string, value []byte) error {
-		seen[key] = value
-		return nil
-	}))
-
-	for i, k := range keys {
-		v, ok := seen[k]
-		assert.True(t, ok, "scan must include key %q", k)
-		assert.Equal(t, []byte(fmt.Sprintf("val%d", i)), v)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Persistence round-trip (data survives a server restart)
-// ---------------------------------------------------------------------------
-
-// TestStandalone_PersistenceAcrossRestart writes a sentinel key before the
-// first server shutdown, then boots a fresh server against the same data
-// directory and reads the key back. This validates that the qrdb PebbleDB
-// backend flushes and recovers correctly.
-func TestStandalone_PersistenceAcrossRestart(t *testing.T) {
-	dataDir := t.TempDir()
-	sentinel := []byte("persistence-sentinel")
-
-	// First boot: write the key then shut down.
-	{
-		srv := standaloneServer(t, dataDir)
-		kv := srv.GetKVStore(1)
-		ctx := context.Background()
-		require.NoError(t, kv.Put(ctx, "phase-f/persist/key", sentinel))
-		ctx2, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		require.NoError(t, srv.Shutdown(ctx2))
-	}
-
-	// Second boot: read the key back without any Put.
-	cfg := config.EmbeddedConfig()
-	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
-	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
-	cfg.Raft.NodeID = 1
-	cfg.Logging.Level = "error"
-
-	srv2, err := server.NewServer(cfg)
-	require.NoError(t, err)
-	require.NoError(t, srv2.Start())
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv2.Shutdown(ctx)
-	}()
-
-	kv2 := srv2.GetKVStore(1)
-	got, err := kv2.Get(context.Background(), "phase-f/persist/key")
-	require.NoError(t, err, "key must survive server restart")
-	assert.Equal(t, sentinel, got, "value must be identical after restart")
-}
-
-// ---------------------------------------------------------------------------
-// Secrets (KV-backed)
-// ---------------------------------------------------------------------------
-
-// TestStandalone_Secrets_CRUD verifies that the secrets manager (backed by
-// the qrdb KV engine) can store and retrieve named secrets.
-func TestStandalone_Secrets_CRUD(t *testing.T) {
-	dataDir := t.TempDir()
-	srv := standaloneServer(t, dataDir)
-
-	svc := srv.Service()
-	require.NotNil(t, svc, "Service() must be non-nil after Start")
-
-	secrets := svc.Secrets()
-	require.NotNil(t, secrets, "Secrets service must be available")
-
-	// The service layer acts for the tenant bound to the request; in a
-	// standalone node with no tenants provisioned that is the system tenant.
-	ctx := tenantctx.WithSystem(context.Background())
-	secretName := fmt.Sprintf("phase-f-secret-%d", time.Now().UnixNano())
-
-	storeResp, err := secrets.StoreSecret(ctx, &service.StoreSecretRequest{
-		Name: secretName,
-		Data: []byte("my-secret-value"),
-	})
-	require.NoError(t, err, "StoreSecret must succeed")
-	require.NotEmpty(t, storeResp.SecretID, "StoreSecret must return a non-empty SecretID")
-
-	getResp, err := secrets.GetSecret(ctx, &service.GetSecretRequest{
-		SecretID: storeResp.SecretID,
-	})
-	require.NoError(t, err, "GetSecret must succeed")
-	assert.Equal(t, []byte("my-secret-value"), getResp.Data, "retrieved secret must match stored value")
-
-	_, err = secrets.DeleteSecret(ctx, &service.DeleteSecretRequest{
-		SecretID: storeResp.SecretID,
-	})
-	require.NoError(t, err, "DeleteSecret must succeed")
-
-	_, err = secrets.GetSecret(ctx, &service.GetSecretRequest{
-		SecretID: storeResp.SecretID,
-	})
-	require.Error(t, err, "GetSecret after DeleteSecret must return an error")
-}
-
-// ---------------------------------------------------------------------------
-// Scheduler (task scheduling backed by KV)
-// ---------------------------------------------------------------------------
-
-// TestStandalone_Scheduler_CreateAndGet verifies that the scheduler can
-// create a job and retrieve it by ID. This exercises the scheduler's
-// KV-backed persistence through the qrdb engine.
-func TestStandalone_Scheduler_CreateAndGet(t *testing.T) {
-	dataDir := t.TempDir()
-	srv := standaloneServer(t, dataDir)
-
-	svc := srv.Service()
-	require.NotNil(t, svc)
-
-	scheduler := svc.Scheduler()
-	require.NotNil(t, scheduler, "Scheduler must be available")
-
-	ctx := tenantctx.WithSystem(context.Background())
-	jobName := fmt.Sprintf("phase-f-job-%d", time.Now().UnixNano())
-
-	createResp, err := scheduler.CreateJob(ctx, &service.CreateSchedulerJobRequest{
-		Name:      jobName,
-		Type:      service.SchedulerJobTypeOneShot,
-		ExecuteAt: time.Now().Add(time.Hour),
-		Handler:   "noop",
-		Payload:   []byte(`{"action":"integration-test"}`),
-	})
-	require.NoError(t, err, "CreateJob must succeed")
-	require.NotNil(t, createResp.Job, "CreateJob must return a non-nil job")
-	assert.NotZero(t, createResp.Job.ID, "job ID must be non-zero")
-
-	getResp, err := scheduler.GetJob(ctx, &service.GetSchedulerJobRequest{
-		JobID: createResp.Job.ID,
-	})
-	require.NoError(t, err, "GetJob must succeed after CreateJob")
-	assert.Equal(t, jobName, getResp.Job.Name, "GetJob must return the same job name")
-}
-
-// ---------------------------------------------------------------------------
-// At-rest encryption assertion
-// ---------------------------------------------------------------------------
-
-// TestStandalone_AtRest_SentinelAbsentFromDisk writes a known plaintext
-// sentinel under a passphrase-sealed barrier, shuts down the server, then
-// scans the raw on-disk PebbleDB files (*.sst) to confirm the plaintext bytes
-// do NOT appear in any block. This validates end-to-end at-rest encryption
-// through the qrdb seal barrier.
-//
-// This test requires Pebble storage (no memory/file backends) and a passphrase
-// seal strategy so the blocks are encrypted before being flushed to disk.
-func TestStandalone_AtRest_SentinelAbsentFromDisk(t *testing.T) {
-	dataDir := t.TempDir()
-
-	// Sentinel is a unique string that should NOT appear in plaintext on disk.
-	sentinel := fmt.Sprintf("ATREST-SENTINEL-%d", time.Now().UnixNano())
-
-	// Build a sealed config: PebbleDB + passphrase strategy.
-	passphrase := "integration-test-barrier-passphrase"
-
-	cfg := config.EmbeddedConfig()
-	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
-	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
-	cfg.Raft.NodeID = 1
-	cfg.Logging.Level = "error"
+// sealedStandaloneConfig is standaloneConfig behind a passphrase barrier.
+func sealedStandaloneConfig(dataDir string) *config.Config {
+	cfg := standaloneConfig(dataDir)
 	cfg.Seal.Enabled = true
 	cfg.Seal.Strategy = "passphrase"
+	return cfg
+}
 
-	// WithSealPassphrase causes NewStandaloneNode to auto-unseal on startup.
-	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(passphrase)))
+// runStandalone starts a server on cfg (auto-unsealed with sealPassphrase when
+// cfg is sealed), hands it to use, then shuts it down cleanly.
+func runStandalone(t *testing.T, cfg *config.Config, use func(srv *server.Server)) {
+	t.Helper()
+	var opts []server.ServerOption
+	if cfg.Seal.Enabled {
+		opts = append(opts, server.WithSealPassphrase([]byte(sealPassphrase)))
+	}
+	srv, err := server.NewServer(cfg, opts...)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
-
-	// Initialize the barrier with the passphrase so the seal store is written.
-	barrierSvc := srv.GetDataPlaneBarrierService()
-	if barrierSvc != nil {
-		initCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = barrierSvc.BarrierInitialize(initCtx, []byte(passphrase)) // idempotent on second call
-	}
+		assert.NoError(t, srv.Shutdown(ctx), "clean shutdown must succeed")
+	}()
+	use(srv)
+}
 
-	// Write the sentinel through the KV engine (should be encrypted at rest).
-	kv := srv.GetKVStore(1)
-	require.NotNil(t, kv)
-	require.NoError(t, kv.Put(context.Background(), "atrest/sentinel", []byte(sentinel)))
-
-	// Force a compaction / flush so the data lands in .sst files.
-	// Then shut down cleanly so Pebble finalises all in-flight writes.
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer shutCancel()
-	require.NoError(t, srv.Shutdown(shutCtx), "clean shutdown must succeed")
-
-	// Scan every .sst file in the data directory and confirm the sentinel is
-	// absent as plaintext.
-	var sstFiles []string
-	err = filepath.Walk(filepath.Join(dataDir, "data"), func(path string, info os.FileInfo, err error) error {
+// filesContaining walks root and returns every regular file holding needle,
+// plus how many PebbleDB table files (.sst) the walk saw.
+func filesContaining(t *testing.T, root string, needle []byte) (hits []string, tables int) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		if filepath.Ext(path) == ".sst" {
+			tables++
+		}
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && (filepath.Ext(path) == ".sst" || filepath.Ext(path) == ".vlog") {
-			sstFiles = append(sstFiles, path)
+		if bytes.Contains(raw, needle) {
+			hits = append(hits, path)
 		}
 		return nil
 	})
-	require.NoError(t, err, "walking data dir must not error")
-
-	if len(sstFiles) == 0 {
-		// No .sst files yet (in-memory flush only) — the test is vacuously true
-		// but we cannot assert encryption. This is acceptable for very small
-		// writes that Pebble keeps in memtable.
-		t.Logf("No .sst files found in %s after shutdown (data may still be in memtable); at-rest encryption check skipped", dataDir)
-		return
-	}
-
-	sentinelBytes := []byte(sentinel)
-	for _, sst := range sstFiles {
-		raw, err := os.ReadFile(sst)
-		if err != nil {
-			t.Logf("could not read %s: %v (skipping)", sst, err)
-			continue
-		}
-		assert.False(t, bytes.Contains(raw, sentinelBytes),
-			"plaintext sentinel %q must not appear in on-disk file %s (at-rest encryption broken)",
-			sentinel, filepath.Base(sst))
-	}
+	require.NoError(t, err, "walking the data directory must not fail")
+	return hits, tables
 }
 
-// ---------------------------------------------------------------------------
-// Passphrase barrier: sealed boot → WithSealPassphrase → fully operational
-// ---------------------------------------------------------------------------
-
-// TestStandalone_PassphraseBarrier_AutoUnseal verifies that a server
-// constructed with server.WithSealPassphrase comes up fully operational
-// (GetKVStore returns a working store, GetQRDBNodeClient is non-nil) when a
-// passphrase seal strategy is configured. This is the critical regression test
-// for the "vector storage init: barrier is sealed" init failure.
-func TestStandalone_PassphraseBarrier_AutoUnseal(t *testing.T) {
+// A passphrase-sealed standalone server must keep no plaintext on disk. A
+// small write sits in the memtable and the WAL, so the server is restarted on
+// the same directory before the scan: PebbleDB flushes the replayed WAL into
+// a table on open, and the read-back proves the scan covers the written data.
+// Every file is scanned, tables, WAL and manifests alike.
+func TestStandalone_AtRest_SentinelAbsentFromDisk(t *testing.T) {
 	dataDir := t.TempDir()
-	passphrase := "auto-unseal-test-pp"
+	cfg := sealedStandaloneConfig(dataDir)
+	sentinel := []byte("ATREST-SENTINEL-c0ffee-1596")
+	const key = "atrest/sentinel"
 
-	cfg := config.EmbeddedConfig()
-	cfg.IAM.SPIFFETrustDomain = helpers.SPIFFETrustDomain
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = filepath.Join(dataDir, "data")
-	cfg.Storage.WALDir = filepath.Join(dataDir, "wal")
-	cfg.Raft.NodeID = 1
-	cfg.Logging.Level = "error"
-	cfg.Seal.Enabled = true
-	cfg.Seal.Strategy = "passphrase"
-
-	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(passphrase)))
-	require.NoError(t, err)
-	require.NoError(t, srv.Start())
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(ctx)
+	runStandalone(t, cfg, func(srv *server.Server) {
+		require.NoError(t, srv.GetKVStore(1).Put(context.Background(), key, sentinel))
+	})
+	runStandalone(t, cfg, func(srv *server.Server) {
+		got, err := srv.GetKVStore(1).Get(context.Background(), key)
+		require.NoError(t, err, "the sentinel must survive the restart that flushes it")
+		require.Equal(t, sentinel, got)
 	})
 
-	// node.Client() must NOT be nil after auto-unseal.
-	nodeClient := srv.GetQRDBNodeClient()
-	assert.NotNil(t, nodeClient, "qrdb node client must be non-nil after WithSealPassphrase auto-unseal")
+	hits, tables := filesContaining(t, dataDir, sentinel)
+	require.Positive(t, tables, "the restart must have flushed data into at least one .sst table")
+	require.Empty(t, hits, "plaintext sentinel %q found on disk (at-rest encryption broken)", sentinel)
+}
 
-	// GetKVStore must return a working store (not panic, not return nil).
-	kv := srv.GetKVStore(1)
-	require.NotNil(t, kv, "GetKVStore must not panic or return nil after auto-unseal")
+func TestStandalone_KVRoundTripAndScan(t *testing.T) {
+	runStandalone(t, standaloneConfig(t.TempDir()), func(srv *server.Server) {
+		kv := srv.GetKVStore(1)
+		ctx := context.Background()
 
-	// Confirm end-to-end KV operation works.
-	ctx := context.Background()
-	require.NoError(t, kv.Put(ctx, "atrest/seal-test", []byte("value")))
-	got, err := kv.Get(ctx, "atrest/seal-test")
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value"), got)
+		want := map[string]string{"scan/a": "val0", "scan/b": "val1", "scan/c": "val2"}
+		for k, v := range want {
+			require.NoError(t, kv.Put(ctx, k, []byte(v)))
+		}
+
+		got := make(map[string]string)
+		require.NoError(t, kv.Scan(ctx, "scan/", func(key string, value []byte) error {
+			got[key] = string(value)
+			return nil
+		}))
+		assert.Equal(t, want, got)
+
+		require.NoError(t, kv.Delete(ctx, "scan/a"))
+		_, err := kv.Get(ctx, "scan/a")
+		require.Error(t, err, "a deleted key must not read back")
+	})
+}
+
+// TestStandalone_KVSurvivesRestart boots a second server over the first
+// server's data directory and reads back what the first one wrote.
+func TestStandalone_KVSurvivesRestart(t *testing.T) {
+	cfg := standaloneConfig(t.TempDir())
+
+	runStandalone(t, cfg, func(srv *server.Server) {
+		require.NoError(t, srv.GetKVStore(1).Put(context.Background(), "persist/key", []byte("sentinel")))
+	})
+	runStandalone(t, cfg, func(srv *server.Server) {
+		got, err := srv.GetKVStore(1).Get(context.Background(), "persist/key")
+		require.NoError(t, err, "the key must survive the restart")
+		assert.Equal(t, []byte("sentinel"), got)
+	})
+}
+
+func TestStandalone_SecretsRoundTrip(t *testing.T) {
+	runStandalone(t, standaloneConfig(t.TempDir()), func(srv *server.Server) {
+		secrets := srv.Service().Secrets()
+		require.NotNil(t, secrets)
+		// Secrets are tenant-scoped; first boot creates the system tenant.
+		ctx := tenantctx.WithSystem(context.Background())
+
+		stored, err := secrets.StoreSecret(ctx, &service.StoreSecretRequest{Name: "standalone-secret", Data: []byte("my-secret-value")})
+		require.NoError(t, err)
+		require.NotEmpty(t, stored.SecretID)
+
+		got, err := secrets.GetSecret(ctx, &service.GetSecretRequest{SecretID: stored.SecretID})
+		require.NoError(t, err)
+		assert.Equal(t, []byte("my-secret-value"), got.Data)
+
+		_, err = secrets.DeleteSecret(ctx, &service.DeleteSecretRequest{SecretID: stored.SecretID})
+		require.NoError(t, err)
+		_, err = secrets.GetSecret(ctx, &service.GetSecretRequest{SecretID: stored.SecretID})
+		require.Error(t, err, "a deleted secret must not read back")
+	})
+}
+
+func TestStandalone_SchedulerCreateAndGet(t *testing.T) {
+	runStandalone(t, standaloneConfig(t.TempDir()), func(srv *server.Server) {
+		scheduler := srv.Service().Scheduler()
+		require.NotNil(t, scheduler)
+		ctx := tenantctx.WithSystem(context.Background())
+
+		created, err := scheduler.CreateJob(ctx, &service.CreateSchedulerJobRequest{
+			Name:      "standalone-job",
+			Type:      service.SchedulerJobTypeOneShot,
+			ExecuteAt: time.Now().Add(time.Hour),
+			Handler:   "noop",
+			Payload:   []byte(`{"action":"integration-test"}`),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, created.Job)
+		require.NotZero(t, created.Job.ID)
+
+		got, err := scheduler.GetJob(ctx, &service.GetSchedulerJobRequest{JobID: created.Job.ID})
+		require.NoError(t, err)
+		assert.Equal(t, "standalone-job", got.Job.Name)
+	})
+}
+
+// TestStandalone_PassphraseSealedStartServesKV proves the passphrase barrier
+// auto-unseals at Start and the KV store then serves reads and writes.
+func TestStandalone_PassphraseSealedStartServesKV(t *testing.T) {
+	runStandalone(t, sealedStandaloneConfig(t.TempDir()), func(srv *server.Server) {
+		require.NotNil(t, srv.GetQRDBNodeClient(), "the node client must be online after the auto-unseal")
+
+		kv := srv.GetKVStore(1)
+		require.NoError(t, kv.Put(context.Background(), "sealed/key", []byte("value")))
+		got, err := kv.Get(context.Background(), "sealed/key")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("value"), got)
+	})
 }

@@ -170,6 +170,32 @@ type testUser struct {
 type directoryUserServicer struct {
 	byName map[string]testUser // key: tenantID + "\x00" + username
 	byID   map[uint64]testUser
+
+	mu         sync.Mutex
+	stateCalls []userStateCall // every SetUserActive call, in order
+}
+
+// userStateCall records one SetUserActive call the factor service made.
+type userStateCall struct {
+	userID uint64
+	active bool
+}
+
+// SetUserActive records the call. The factor service is wired with the
+// directory as its UserStateUpdater, so a forced Remove of a user's last
+// factor disables that user here.
+func (d *directoryUserServicer) SetUserActive(_ context.Context, userID uint64, active bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stateCalls = append(d.stateCalls, userStateCall{userID: userID, active: active})
+	return nil
+}
+
+// userStateCalls returns a copy of every SetUserActive call so far.
+func (d *directoryUserServicer) userStateCalls() []userStateCall {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]userStateCall(nil), d.stateCalls...)
 }
 
 func newDirectory(users ...testUser) *directoryUserServicer {
@@ -257,7 +283,10 @@ func (d *directoryUserServicer) DisableUser(context.Context, uint64) error { ret
 func buildLoginFactorRoundtrip(t *testing.T, dir *directoryUserServicer) (*client, qrdbsdk.UserAuthFactorServicer) {
 	t.Helper()
 	kv := newMemKV()
-	factorSvc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{KV: kv})
+	factorSvc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{
+		KV:               kv,
+		UserStateUpdater: dir,
+	})
 	if err != nil {
 		t.Fatalf("NewUserAuthFactorService: %v", err)
 	}

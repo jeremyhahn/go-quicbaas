@@ -11,28 +11,30 @@ reimplementation paths.
 
 `make integration-test` runs every package under `test/integration/` plus the integration-tagged end-to-end tests in `cmd/quicbaasd` (the SDLC loop and webhook suites); `make integration-test-quicbaasd` runs that package alone.
 
-### Standalone (no-Raft, in-process, no docker required)
+### Standalone (no-Raft, in-process)
 
-Location: `test/integration/standalone/`
-
-Uses a real in-process embedded `server.Server` backed by the qrdb engine (PebbleDB).
-Each test manages its own `t.TempDir()` data directory for complete isolation.
+Location: `test/integration/standalone/` (`TestStandalone_*`). The cases need
+no container, but each starts a real embedded `server.Server` backed by the
+qrdb engine on PebbleDB in its own `t.TempDir()` data directory, so they run in
+the integration tier, not the unit tier. `make integration-test-standalone`
+(the generic `integration-test-%` rule) runs `./test/integration/standalone/...`
+in the integration container; the `go test` line runs the same cases directly:
 
 ```
 make integration-test-standalone
+go test -count=1 -tags integration -run 'TestStandalone_' ./test/integration/standalone/
 ```
 
 Covers:
-- KV CRUD round-trips through the real qrdb engine
-- Multi-key scan by prefix
-- Data persistence across server restarts (PebbleDB recovery)
-- Secrets CRUD (KV-backed persistent secrets manager)
+- KV put/get/delete and prefix scan through the real qrdb engine
+- Data persistence across a server restart (PebbleDB recovery)
+- Secrets store/get/delete (KV-backed secrets manager)
 - Scheduler job create / get (KV-backed persistence)
-- At-rest encryption: `TestStandalone_AtRest_SentinelAbsentFromDisk` — writes a
-  known plaintext sentinel under a passphrase-sealed barrier, shuts down the
-  server, then walks the raw `.sst` files to confirm the sentinel is absent.
-- Passphrase barrier auto-unseal: `TestStandalone_PassphraseBarrier_AutoUnseal` —
-  regression test for "vector storage init: barrier is sealed" init panic.
+- Passphrase-sealed start: `TestStandalone_PassphraseSealedStartServesKV` —
+  a server started under a passphrase barrier unseals and serves KV.
+- At rest: `TestStandalone_AtRest_SentinelAbsentFromDisk` restarts a
+  passphrase-sealed server so PebbleDB flushes its WAL into a table, then
+  scans every file for a plaintext sentinel.
 
 ### Clustered (3-node Raft, docker-compose)
 
