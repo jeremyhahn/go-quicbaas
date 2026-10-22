@@ -107,6 +107,26 @@ func TestPrincipalBearer_EnrollFailureIsNotRemembered(t *testing.T) {
 	require.Equal(t, 2, fake.enrolls, "a failed enrollment is retried")
 }
 
+func TestPrincipalGRPCCredentials_CarriesTheBearer(t *testing.T) {
+	registry := newFakeRegistry(&fakeEnrollment{})
+
+	creds, err := registry.newGRPCCredentials(context.Background())
+	require.NoError(t, err)
+	md, err := creds.GetRequestMetadata(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"authorization": "Bearer bearer-1"}, md)
+}
+
+// A session goroutine cannot call t.Fatalf (#1593), so the enrollment
+// failure must come back as the returned error, with no credentials.
+func TestPrincipalGRPCCredentials_EnrollFailureIsReturned(t *testing.T) {
+	registry := newFakeRegistry(&fakeEnrollment{enrollFail: true})
+
+	creds, err := registry.newGRPCCredentials(context.Background())
+	require.ErrorIs(t, err, errEnrollRefused)
+	require.Nil(t, creds)
+}
+
 func TestPrincipalBearer_LoginFailureIsTyped(t *testing.T) {
 	fake := &fakeEnrollment{loginFail: true}
 	registry := newFakeRegistry(fake)

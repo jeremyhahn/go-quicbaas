@@ -199,11 +199,26 @@ func (r *principalRegistry) tokenSource(t *testing.T) dataplane.TokenSource {
 // bearer on every gRPC call, over TCP or the Unix socket alike.
 func (r *principalRegistry) grpcCredentials(t *testing.T) credentials.PerRPCCredentials {
 	t.Helper()
-	creds, err := dataplane.NewBearerCredentials(r.tokenSource(t))
+	creds, err := r.newGRPCCredentials(context.Background())
 	if err != nil {
 		t.Fatalf("%s gRPC credentials: %v", r.name, err)
 	}
 	return creds
+}
+
+// newGRPCCredentials is grpcCredentials returning its error, for callers
+// off the test goroutine, where t.Fatalf would exit through runtime.Goexit
+// and skip the caller's cleanup.
+func (r *principalRegistry) newGRPCCredentials(ctx context.Context) (credentials.PerRPCCredentials, error) {
+	source, err := r.newTokenSource(ctx)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := dataplane.NewBearerCredentials(source)
+	if err != nil {
+		return nil, err
+	}
+	return creds, nil
 }
 
 // newHTTPClient returns NewHTTPClient's client with every request carrying

@@ -67,6 +67,14 @@ func DataPlaneGRPCCredentials(t *testing.T) credentials.PerRPCCredentials {
 	return dataPlaneAuth.grpcCredentials(t)
 }
 
+// DataPlaneGRPCCredentialsE is DataPlaneGRPCCredentials for a goroutine
+// other than the test goroutine: it returns the enrollment error instead of
+// failing the test, because t.FailNow off the test goroutine exits it
+// through runtime.Goexit and skips the caller's cleanup (#1593).
+func DataPlaneGRPCCredentialsE(ctx context.Context) (credentials.PerRPCCredentials, error) {
+	return dataPlaneAuth.newGRPCCredentials(ctx)
+}
+
 // NewDataPlaneHTTPClient returns NewHTTPClient's client with every request
 // carrying the data-plane bearer of the first REST endpoint's cluster.
 func NewDataPlaneHTTPClient(t *testing.T, timeout time.Duration) *http.Client {

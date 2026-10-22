@@ -17,6 +17,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -753,113 +754,12 @@ func TestStreamingBatchConcurrentSessions(t *testing.T) {
 	opsPerSession := 100
 	chunkSize := 20
 
-	type sessionResult struct {
-		sessionID int
-		succeeded bool
-		committed int64
-		err       error
-	}
-
 	var wg sync.WaitGroup
-	results := make(chan sessionResult, numSessions)
+	results := make(chan streamingSessionResult, numSessions)
 
 	for s := 0; s < numSessions; s++ {
 		wg.Add(1)
-		go func(sessionID int) {
-			sessionCtx, sessionCancel := context.WithTimeout(ctx, 60*time.Second)
-			defer sessionCancel()
-
-			sendResult := func(succeeded bool, committed int64, err error) {
-				results <- sessionResult{sessionID, succeeded, committed, err}
-				wg.Done()
-			}
-
-			conn := setupStreamingConnection(t, sessionCtx)
-			defer conn.Close()
-
-			client := pb.NewQuicBaaSClient(conn)
-
-			timestamp := time.Now().UnixNano() + int64(sessionID*1000000)
-			entityType := fmt.Sprintf("stream_concurrent_%d", sessionID)
-
-			stream, err := client.StreamBatchPut(sessionCtx)
-			if err != nil {
-				sendResult(false, 0, err)
-				return
-			}
-
-			header := &pb.StreamBatchHeader{
-				ShardId:         1,
-				TotalOperations: int64(opsPerSession),
-				ChunkSize:       int32(chunkSize),
-				Consistency:     pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
-			}
-
-			if err := stream.Send(&pb.StreamBatchPutRequest{
-				Payload: &pb.StreamBatchPutRequest_Header{Header: header},
-			}); err != nil {
-				sendResult(false, 0, err)
-				return
-			}
-
-			if _, err := stream.Recv(); err != nil {
-				sendResult(false, 0, err)
-				return
-			}
-
-			numChunks := (opsPerSession + chunkSize - 1) / chunkSize
-			for chunkIdx := 0; chunkIdx < numChunks; chunkIdx++ {
-				startOp := chunkIdx * chunkSize
-				endOp := startOp + chunkSize
-				if endOp > opsPerSession {
-					endOp = opsPerSession
-				}
-
-				operations := make([]*pb.PutRequest, endOp-startOp)
-				for i := startOp; i < endOp; i++ {
-					operations[i-startOp] = &pb.PutRequest{
-						EntityType: entityType,
-						Id:         uint64(timestamp + int64(i)),
-						Data:       []byte(fmt.Sprintf(`{"session":%d,"index":%d}`, sessionID, i)),
-					}
-				}
-
-				chunk := &pb.StreamBatchChunk{
-					ChunkIndex: int32(chunkIdx),
-					Operations: operations,
-				}
-
-				if err := stream.Send(&pb.StreamBatchPutRequest{
-					Payload: &pb.StreamBatchPutRequest_Chunk{Chunk: chunk},
-				}); err != nil {
-					sendResult(false, 0, err)
-					return
-				}
-
-				if _, err := stream.Recv(); err != nil {
-					sendResult(false, 0, err)
-					return
-				}
-			}
-
-			if err := stream.Send(&pb.StreamBatchPutRequest{
-				Payload: &pb.StreamBatchPutRequest_Complete{
-					Complete: &pb.StreamBatchComplete{Commit: true},
-				},
-			}); err != nil {
-				sendResult(false, 0, err)
-				return
-			}
-
-			resp, err := stream.Recv()
-			if err != nil {
-				sendResult(false, 0, err)
-				return
-			}
-
-			result := resp.Payload.(*pb.StreamBatchPutResponse_Result)
-			sendResult(result.Result.Succeeded, result.Result.OperationsCommitted, nil)
-		}(s)
+		go runStreamingSession(ctx, &wg, results, dialStreaming, s, opsPerSession, chunkSize)
 	}
 
 	wg.Wait()
@@ -889,6 +789,173 @@ func TestStreamingBatchConcurrentSessions(t *testing.T) {
 
 	t.Logf("Concurrent sessions: %d/%d succeeded, %d total operations",
 		successCount, numSessions, totalCommitted)
+}
+
+// streamingDialer opens the gRPC connection a streaming session uses.
+type streamingDialer func(ctx context.Context) (*grpc.ClientConn, error)
+
+// streamingSessionResult is the one result a streaming session reports.
+type streamingSessionResult struct {
+	sessionID int
+	succeeded bool
+	committed int64
+	err       error
+}
+
+// runStreamingSession streams opsPerSession puts in chunks of chunkSize over a
+// connection from dial and sends exactly one result. It runs off the test
+// goroutine, so it never calls t.FailNow: a FailNow there exits through
+// runtime.Goexit, and a skipped Done blocks wg.Wait until the package timeout
+// (#1593).
+func runStreamingSession(ctx context.Context, wg *sync.WaitGroup, results chan<- streamingSessionResult,
+	dial streamingDialer, sessionID, opsPerSession, chunkSize int,
+) {
+	defer wg.Done()
+
+	sessionCtx, sessionCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer sessionCancel()
+
+	sendResult := func(succeeded bool, committed int64, err error) {
+		results <- streamingSessionResult{sessionID, succeeded, committed, err}
+	}
+
+	conn, err := dial(sessionCtx)
+	if err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+	defer conn.Close()
+
+	client := pb.NewQuicBaaSClient(conn)
+
+	timestamp := time.Now().UnixNano() + int64(sessionID*1000000)
+	entityType := fmt.Sprintf("stream_concurrent_%d", sessionID)
+
+	stream, err := client.StreamBatchPut(sessionCtx)
+	if err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+
+	header := &pb.StreamBatchHeader{
+		ShardId:         1,
+		TotalOperations: int64(opsPerSession),
+		ChunkSize:       int32(chunkSize),
+		Consistency:     pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
+	}
+
+	if err := stream.Send(&pb.StreamBatchPutRequest{
+		Payload: &pb.StreamBatchPutRequest_Header{Header: header},
+	}); err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+
+	if _, err := stream.Recv(); err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+
+	numChunks := (opsPerSession + chunkSize - 1) / chunkSize
+	for chunkIdx := 0; chunkIdx < numChunks; chunkIdx++ {
+		startOp := chunkIdx * chunkSize
+		endOp := startOp + chunkSize
+		if endOp > opsPerSession {
+			endOp = opsPerSession
+		}
+
+		operations := make([]*pb.PutRequest, endOp-startOp)
+		for i := startOp; i < endOp; i++ {
+			operations[i-startOp] = &pb.PutRequest{
+				EntityType: entityType,
+				Id:         uint64(timestamp + int64(i)),
+				Data:       []byte(fmt.Sprintf(`{"session":%d,"index":%d}`, sessionID, i)),
+			}
+		}
+
+		chunk := &pb.StreamBatchChunk{
+			ChunkIndex: int32(chunkIdx),
+			Operations: operations,
+		}
+
+		if err := stream.Send(&pb.StreamBatchPutRequest{
+			Payload: &pb.StreamBatchPutRequest_Chunk{Chunk: chunk},
+		}); err != nil {
+			sendResult(false, 0, err)
+			return
+		}
+
+		if _, err := stream.Recv(); err != nil {
+			sendResult(false, 0, err)
+			return
+		}
+	}
+
+	if err := stream.Send(&pb.StreamBatchPutRequest{
+		Payload: &pb.StreamBatchPutRequest_Complete{
+			Complete: &pb.StreamBatchComplete{Commit: true},
+		},
+	}); err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+
+	resp, err := stream.Recv()
+	if err != nil {
+		sendResult(false, 0, err)
+		return
+	}
+
+	result := resp.Payload.(*pb.StreamBatchPutResponse_Result)
+	sendResult(result.Result.Succeeded, result.Result.OperationsCommitted, nil)
+}
+
+// injectedDialFailure is the cause a failing streamingDialer reports.
+type injectedDialFailure struct{}
+
+func (injectedDialFailure) Error() string { return "injected dial failure" }
+
+// TestStreamingBatchSessionDialFailure needs no cluster: every session's dial
+// fails, and every session must still report one error and call wg.Done, so
+// wg.Wait returns instead of blocking until the package timeout (#1593).
+func TestStreamingBatchSessionDialFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const numSessions = 5
+	failingDial := func(context.Context) (*grpc.ClientConn, error) {
+		return nil, &streamingDialError{Endpoint: "unreachable", Step: "dial", Cause: injectedDialFailure{}}
+	}
+
+	var wg sync.WaitGroup
+	results := make(chan streamingSessionResult, numSessions)
+	for s := 0; s < numSessions; s++ {
+		wg.Add(1)
+		go runStreamingSession(ctx, &wg, results, failingDial, s, 100, 20)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatalf("sessions did not all call wg.Done after a failed dial: %v", ctx.Err())
+	}
+	close(results)
+
+	perSession := make(map[int]int, numSessions)
+	for r := range results {
+		perSession[r.sessionID]++
+		assert.False(t, r.succeeded, "session %d", r.sessionID)
+		assert.ErrorIs(t, r.err, injectedDialFailure{}, "session %d", r.sessionID)
+	}
+	for s := 0; s < numSessions; s++ {
+		assert.Equal(t, 1, perSession[s], "results from session %d", s)
+	}
 }
 
 // TestStreamingBatchValidationErrors tests handling of validation errors
@@ -1107,19 +1174,55 @@ func TestStreamingBatchInvalidHeader(t *testing.T) {
 
 // setupStreamingConnection establishes a gRPC connection optimized for streaming.
 func setupStreamingConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
-	endpoints := helpers.GetClusterEndpoints()
-	endpoint := endpoints[0]
+	t.Helper()
+	conn, err := dialStreaming(ctx)
+	require.NoError(t, err)
+	return conn
+}
+
+// streamingDialError reports a streaming gRPC connection that could not be
+// set up: Step names the failed step, State the last connectivity state.
+type streamingDialError struct {
+	Endpoint string
+	Step     string
+	State    connectivity.State
+	Cause    error
+}
+
+func (e *streamingDialError) Error() string {
+	msg := "streaming dial " + e.Endpoint + ": " + e.Step + " (state " + e.State.String() + ")"
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+func (e *streamingDialError) Unwrap() error { return e.Cause }
+
+// dialStreaming opens a Ready gRPC connection to the first cluster endpoint.
+// It returns errors rather than failing a test, so a session goroutine can
+// call it and report the error through its results channel.
+func dialStreaming(ctx context.Context) (*grpc.ClientConn, error) {
+	endpoint := helpers.GetClusterEndpoints()[0]
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
-	require.NoError(t, err, "load integration TLS config")
+	if err != nil {
+		return nil, &streamingDialError{Endpoint: endpoint, Step: "load integration TLS config", Cause: err}
+	}
+	perRPC, err := helpers.DataPlaneGRPCCredentialsE(ctx)
+	if err != nil {
+		return nil, &streamingDialError{Endpoint: endpoint, Step: "data-plane credentials", Cause: err}
+	}
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
-		grpc.WithPerRPCCredentials(helpers.DataPlaneGRPCCredentials(t)),
+		grpc.WithPerRPCCredentials(perRPC),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64*1024*1024)), // 64MB max message
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(64*1024*1024)), // 64MB max message
 	)
-	require.NoError(t, err, "Failed to dial gRPC server at %s", endpoint)
+	if err != nil {
+		return nil, &streamingDialError{Endpoint: endpoint, Step: "dial", Cause: err}
+	}
 
 	dialCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -1127,15 +1230,13 @@ func setupStreamingConnection(t *testing.T, ctx context.Context) *grpc.ClientCon
 	for {
 		state := conn.GetState()
 		if state == connectivity.Ready {
-			return conn
+			return conn, nil
 		}
 		if state == connectivity.TransientFailure || state == connectivity.Shutdown {
-			conn.Close()
-			require.Fail(t, "Connection failed", "state=%v for endpoint %s", state, endpoint)
+			return nil, &streamingDialError{Endpoint: endpoint, Step: "connect", State: state, Cause: conn.Close()}
 		}
 		if !conn.WaitForStateChange(dialCtx, state) {
-			conn.Close()
-			require.Fail(t, "Connection timeout", "timeout waiting for connection to %s", endpoint)
+			return nil, &streamingDialError{Endpoint: endpoint, Step: "wait for ready", State: state, Cause: errors.Join(dialCtx.Err(), conn.Close())}
 		}
 	}
 }
