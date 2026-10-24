@@ -80,4 +80,5 @@ Layer 4 of the stack, one product in layers: the application-layer framework and
 ## Dependencies
 - Up, pinned to release tags (`make check-library-pins`): go-xkms v0.49.0-alpha (the release without a firmware dependency is needed, [#1185](../../issues/1185)), go-qrdb v0.30.1-alpha, go-quicraft v0.15.0-alpha (indirect), go-signal v0.2.0-alpha (a `pkg/*` import), go-libsignal v0.2.0-alpha, go-objstore v0.3.0-alpha (a direct require: go-objstore owns all object storage and go-quicbaas re-exports it; buckets and multipart wait on go-objstore #89 and #90), go-enclave v0.6.1-alpha, go-auth v0.4.0-alpha, go-codec v1.4.0. Down: go-trusted-platform and go-recountly
 - Seam waits on go-qrdb#1128: the compliance-mode switch, read through sdk/go, that the iam row's SO separation of duties follows (owner ruling 132)
+- Seam waits on go-xkms#1697: the per-repository signing-key binding, tenant release key by default, that the attestation row re-exports (owner rulings 133 (a), 134)
 - Standards watch: draft-ietf-oauth-v2-1 (The OAuth 2.1 Authorization Framework), pinned at revision -16, implemented by `pkg/iam` ([copy and index](docs/reference/README.md))
