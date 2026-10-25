@@ -23,14 +23,29 @@ import (
 )
 
 // The CLI's embedded client runs as the server's service principal
-// (ServicePrincipalIdentity, cmd/quicbaas/client.go), and its qrdb sub-client
-// installs no AuthMiddleware for it. This records why: go-quicbaas's
-// production grant set, which the tenant-hosting node's principal holds,
-// covers the KV and tenant verbs but none of the barrier, ceremony or
-// credential verbs the CLI drives through Security(), so the node's
-// middleware would refuse them. The service-principal path stays as it is
-// until those grants are settled (Codex review 7296 P1 1 on #1841).
-func TestEmbeddedQRDB_ServicePrincipalGrantsLackTheCLISecurityVerbs(t *testing.T) {
+// (ServicePrincipalIdentity, cmd/quicbaas/client.go). Ruling 179: the node's
+// authorization middleware bounds it, and go-quicbaas's production grant set,
+// which the tenant-hosting node's principal holds, carries the barrier,
+// ceremony and credential verbs the CLI drives through Security().
+
+// newServicePrincipalQRDBClient builds an embedded client whose qrdb
+// sub-client runs as the tenant-hosting node's service principal over
+// barrier, with stub KV and admin servicers.
+func newServicePrincipalQRDBClient(t *testing.T, barrier *tenantRecordingBarrier, index QRDBIndexServicer) *client {
+	t.Helper()
+	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+		KV:      &tenantRecordingKV{memKV: newMemKV()},
+		Admin:   stubAdminService{},
+		Barrier: barrier,
+		Index:   index,
+	})
+	if err := WithEmbeddedIdentity(ServicePrincipalIdentity(qrdbnode.TenantHost(t).Node))(c.opts); err != nil {
+		t.Fatalf("WithEmbeddedIdentity: %v", err)
+	}
+	return c
+}
+
+func TestEmbeddedQRDB_ServicePrincipalHoldsTheCLISecurityVerbs(t *testing.T) {
 	host := qrdbnode.TenantHost(t)
 	mw := nodeAuthMiddleware(t)
 	ctx, err := host.Node.ServiceContext(context.Background())
@@ -42,12 +57,13 @@ func TestEmbeddedQRDB_ServicePrincipalGrantsLackTheCLISecurityVerbs(t *testing.T
 		"kv:get":                             true,
 		permKVPut:                            true,
 		qrdbsdk.PermissionTenantsCreate:      true,
-		permSealStatus:                       false,
-		qrdbsdk.PermissionSealUnseal:         false,
-		qrdbsdk.PermissionSealSeal:           false,
-		qrdbsdk.PermissionSealRekey:          false,
-		qrdbsdk.PermissionCeremonyInitialize: false,
-		qrdbsdk.PermissionCredentialsRotate:  false,
+		permSealStatus:                       true,
+		qrdbsdk.PermissionSealUnseal:         true,
+		qrdbsdk.PermissionSealSeal:           true,
+		qrdbsdk.PermissionSealRekey:          true,
+		qrdbsdk.PermissionCeremonyInitialize: true,
+		qrdbsdk.PermissionCredentialsRotate:  true,
+		"index:drop":                         false,
 	}
 	for perm, allowed := range cases {
 		err := mw.AuthorizeTenant(ctx, qrdbsdk.SystemTenantID, perm)
@@ -55,18 +71,13 @@ func TestEmbeddedQRDB_ServicePrincipalGrantsLackTheCLISecurityVerbs(t *testing.T
 			t.Errorf("service principal %s: error = %v, want allowed=%v", perm, err, allowed)
 		}
 	}
+}
 
-	// Without the middleware the sub-client runs a verb the grants refuse.
+// A verb the service principal holds reaches the servicer through the
+// node's middleware.
+func TestEmbeddedQRDB_ServicePrincipalRunsAGrantedVerb(t *testing.T) {
 	barrier := &tenantRecordingBarrier{}
-	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
-		KV:      &tenantRecordingKV{memKV: newMemKV()},
-		Admin:   stubAdminService{},
-		Barrier: barrier,
-	})
-	if err := WithEmbeddedIdentity(ServicePrincipalIdentity(host.Node))(c.opts); err != nil {
-		t.Fatalf("WithEmbeddedIdentity: %v", err)
-	}
-	b, err := c.Security().Barrier()
+	b, err := newServicePrincipalQRDBClient(t, barrier, nil).Security().Barrier()
 	if err != nil {
 		t.Fatalf("Barrier: %v", err)
 	}
@@ -75,5 +86,38 @@ func TestEmbeddedQRDB_ServicePrincipalGrantsLackTheCLISecurityVerbs(t *testing.T
 	}
 	if len(barrier.tenants) != 1 {
 		t.Fatalf("barrier servicer reached %d times, want 1", len(barrier.tenants))
+	}
+}
+
+// droppingIndex records the indexes an IndexDrop reaches it with. Only the
+// drops are served; the test calls nothing else.
+type droppingIndex struct {
+	qrdbsdk.IndexServicer
+	dropped []string
+}
+
+func (x *droppingIndex) DropIndex(_ context.Context, name string) error {
+	x.dropped = append(x.dropped, name)
+	return nil
+}
+
+func (x *droppingIndex) DropOwnedIndex(_ context.Context, name, _ string) error {
+	x.dropped = append(x.dropped, name)
+	return nil
+}
+
+// A verb the service principal does not hold (index:drop) is refused by the
+// node's middleware before it reaches the servicer: the path is not exempt.
+func TestEmbeddedQRDB_ServicePrincipalUngrantedVerbIsRefused(t *testing.T) {
+	index := &droppingIndex{}
+	qc, err := newServicePrincipalQRDBClient(t, &tenantRecordingBarrier{}, index).qrdbClient()
+	if err != nil {
+		t.Fatalf("qrdbClient: %v", err)
+	}
+	if err := qc.Index().IndexDrop(context.Background(), "users_by_email"); err == nil {
+		t.Fatal("IndexDrop as the service principal succeeded, want a refusal")
+	}
+	if len(index.dropped) != 0 {
+		t.Fatalf("index servicer dropped %v, want the node's middleware to refuse the call", index.dropped)
 	}
 }

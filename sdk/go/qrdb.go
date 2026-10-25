@@ -595,9 +595,10 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Index != nil {
 		embOpts = append(embOpts, qrdbembedded.WithIndexService(s.Index))
 	}
-	// A delegated identity's grants are enforced by the node's own
-	// AuthMiddleware, the one its network transports authorize with; a
-	// delegation without it is refused rather than run unbounded.
+	// The identity's grants, the service principal's or a delegation's, are
+	// enforced by the node's own AuthMiddleware, the one its network
+	// transports authorize with; a delegation without it is refused rather
+	// than run unbounded.
 	mw, err := c.opts.embeddedIdentity.authMiddleware()
 	if err != nil {
 		return nil, err

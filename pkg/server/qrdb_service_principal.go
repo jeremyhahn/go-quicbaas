@@ -110,8 +110,8 @@ func (s *Server) DelegatedContext(ctx context.Context, chain []*x509.Certificate
 }
 
 // AuthMiddleware returns the embedded node's authorization middleware, the
-// one its network transports enforce with, so an embedded client running a
-// delegation is bounded by the delegation's grants
+// one its network transports enforce with, so an embedded client running as
+// the service principal or a delegation is bounded by that identity's grants
 // (quicbaas.EmbeddedAuthorizer). It is nil when no node runs or the node
 // has authorization disabled.
 func (s *Server) AuthMiddleware() *qrdbsdk.AuthMiddleware {

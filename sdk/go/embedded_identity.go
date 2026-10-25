@@ -39,6 +39,10 @@ type EmbeddedIdentity struct {
 	// delegator is the binder of a delegated identity, nil for the service
 	// principal. A delegation's grants are enforced by its AuthMiddleware.
 	delegator EmbeddedIdentityBinder
+	// principal is the binder of the service principal, nil for a
+	// delegation. The principal's grants are enforced by its AuthMiddleware
+	// when the node runs authorization.
+	principal EmbeddedIdentityBinder
 }
 
 // ServicePrincipalIdentity names the embedding server's service principal,
@@ -48,7 +52,7 @@ func ServicePrincipalIdentity(binder EmbeddedIdentityBinder) EmbeddedIdentity {
 	if binder == nil {
 		return EmbeddedIdentity{}
 	}
-	return EmbeddedIdentity{bind: binder.ServiceContext}
+	return EmbeddedIdentity{bind: binder.ServiceContext, principal: binder}
 }
 
 // DelegatedIdentity names the identity a tenant-issued delegation certificate
@@ -103,12 +107,15 @@ func (*DelegationWithoutAuthorizationError) Error() string {
 	return "quicbaas: delegated identity: the binder supplies no qrdb AuthMiddleware to enforce the delegation's grants"
 }
 
-// authMiddleware returns the middleware that enforces a delegated identity's
-// grants, taken from its binder. It returns nil for the service principal,
-// and DelegationWithoutAuthorizationError for a delegation whose binder
-// supplies none.
+// authMiddleware returns the middleware that enforces the identity's grants,
+// taken from its binder. For the service principal it is the node's
+// middleware, or nil when the node runs no authorization; a delegation whose
+// binder supplies none gets DelegationWithoutAuthorizationError.
 func (id EmbeddedIdentity) authMiddleware() (*qrdbsdk.AuthMiddleware, error) {
 	if id.delegator == nil {
+		if authorizer, ok := id.principal.(EmbeddedAuthorizer); ok {
+			return authorizer.AuthMiddleware(), nil
+		}
 		return nil, nil
 	}
 	authorizer, ok := id.delegator.(EmbeddedAuthorizer)
