@@ -122,6 +122,23 @@ func (e *UserIDError) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// UnscopedKeyImportError reports a tenant-scoped ImportKey call on a KMS
+// server that has no tenant-aware KMS service. Only the service namespaces a
+// key under tenant/{tenantID}/, so the import is refused rather than written
+// into the shared key namespace.
+type UnscopedKeyImportError struct {
+	TenantID string
+}
+
+func (e *UnscopedKeyImportError) Error() string {
+	return fmt.Sprintf("tenant %q: key import requires the tenant-aware KMS service", e.TenantID)
+}
+
+// GRPCStatus maps the error to FailedPrecondition for gRPC callers.
+func (e *UnscopedKeyImportError) GRPCStatus() *status.Status {
+	return status.New(codes.FailedPrecondition, e.Error())
+}
+
 // PolicySpecYAMLError reports a policy spec_yaml document that does not parse.
 type PolicySpecYAMLError struct {
 	Err error

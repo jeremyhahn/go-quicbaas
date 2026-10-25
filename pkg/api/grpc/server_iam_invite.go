@@ -141,6 +141,9 @@ func (s *IAMServer) ActivatePIV(ctx context.Context, req *iampb.ActivatePIVReque
 // because the code of a spent invite is also the code of a rejected PIV chain
 // or a sealed tenant (go-quicbaas#434).
 func convertInviteError(err error) error {
+	if refused := tenantLoginRefusedStatus(err); refused != nil {
+		return refused
+	}
 	switch {
 	case iam.IsInviteUnusable(err):
 		return status.Error(codes.NotFound, "invite link is not valid")

@@ -26,13 +26,18 @@ import (
 )
 
 // TestTable_EveryVerbPresent asserts every canonical verb has a Table entry
-// and the verb count is go-qrdb's canonical 27-verb table (v0.25) plus
-// quicbaas's two documented divergences: the ceremony officer list (a
-// quicbaas extra) and the strictly excluded external officer enrollment.
+// and the verb set is go-qrdb's canonical table (18 verbs at v0.47) plus the
+// one documented quicbaas extra, the ceremony officer list.
 func TestTable_EveryVerbPresent(t *testing.T) {
-	require.Len(t, Verbs, 29, "verb set must be qrdb's 27-verb table plus quicbaas's two documented divergences")
+	want := make(map[Verb]struct{}, len(qrdbsealedwindow.Verbs))
+	for _, v := range qrdbsealedwindow.Verbs {
+		want[Verb(v)] = struct{}{}
+	}
+	require.Len(t, Verbs, len(want), "verb set must be exactly qrdb's sealed surface")
 	seen := make(map[Verb]struct{}, len(Verbs))
 	for _, v := range Verbs {
+		_, canonical := want[v]
+		assert.True(t, canonical, "verb %q is not in qrdb's sealed surface", v)
 		_, dup := seen[v]
 		require.False(t, dup, "duplicate verb %q", v)
 		seen[v] = struct{}{}
@@ -114,8 +119,8 @@ func TestRESTAllowlist_Deduplicated(t *testing.T) {
 
 // TestGRPCAllowlist_NoDriftFromQRDB asserts every method tail in qrdb's
 // canonical gRPC sealed-window allowlist is present in the quicbaas
-// derivation, and the quicbaas extra is exactly the one documented
-// quicbaas-only mirror surface (CeremonyListOfficers on quicbaas.ceremony.v1).
+// derivation, and that quicbaas adds no gRPC tail of its own (the
+// CeremonyListOfficers mirror left with the go-qrdb v0.47 ceremony cut).
 //
 // qrdb's re-exported allowlist is service-qualified
 // ("/qrdb.v1.QRDBService/BarrierUnseal"); the tail is the unit both canonical
@@ -147,15 +152,9 @@ func TestGRPCAllowlist_NoDriftFromQRDB(t *testing.T) {
 		assert.True(t, ok, "qrdb canonical gRPC allowlist tail %q (from %q) missing from quicbaas derivation", tail, m)
 	}
 
-	extras := map[string]struct{}{
-		"CeremonyListOfficers": {},
-	}
 	for m := range ours {
-		if _, ok := canonical[m]; ok {
-			continue
-		}
-		_, allowed := extras[m]
-		assert.True(t, allowed, "unexpected quicbaas-only gRPC allowlist tail %q (extend the documented extras deliberately)", m)
+		_, ok := canonical[m]
+		assert.True(t, ok, "unexpected quicbaas-only gRPC allowlist tail %q", m)
 	}
 }
 
@@ -190,17 +189,25 @@ func TestGRPCFullMethodAllowlist_ServicePinned(t *testing.T) {
 		assert.True(t, ok, "qrdb canonical full method %q missing from quicbaas derivation", m)
 	}
 
-	// 2. The quicbaas mirror surfaces are qualified onto their own services,
-	// including the two documented quicbaas-only extras. The ceremony verbs
-	// that mint or sign credential material are absent by design.
+	// 2. The quicbaas mirror surfaces are qualified onto their own services.
+	// The ceremony verbs that mint or sign credential material are absent by
+	// design.
 	for _, m := range []string{
 		"/quicbaas.barrier.v1.Barrier/BarrierUnseal",
 		"/quicbaas.barrier.v1.Barrier/BarrierStatus",
-		"/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers",
-		"/quicbaas.v1.QuicBaaS/Health",
 	} {
 		_, ok := set[m]
 		assert.True(t, ok, "quicbaas mirror full method %q missing from derivation", m)
+	}
+
+	// A sealed node answers no status question but barrier status (go-qrdb
+	// v0.50): health and ceremony status stay sealed on the mirrors too.
+	for _, m := range []string{
+		"/quicbaas.ceremony.v1.Ceremony/CeremonyStatus",
+		"/quicbaas.v1.QuicBaaS/Health",
+	} {
+		_, ok := set[m]
+		assert.False(t, ok, "status mirror %q must NOT be reachable through the sealed window", m)
 	}
 
 	// 3. The excluded ceremony mirrors are unreachable on the quicbaas
@@ -209,7 +216,6 @@ func TestGRPCFullMethodAllowlist_ServicePinned(t *testing.T) {
 	for _, m := range []string{
 		"/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize",
 		"/quicbaas.ceremony.v1.Ceremony/CeremonySignCSR",
-		"/quicbaas.ceremony.v1.Ceremony/CeremonyEnrollExternalOfficer",
 	} {
 		_, ok := set[m]
 		assert.False(t, ok, "strictly excluded ceremony mirror %q must NOT be reachable through the sealed window", m)
@@ -250,10 +256,8 @@ func TestGRPCFullMethodAllowlist_NoTailCollisionAdmitted(t *testing.T) {
 
 // TestQRDBQUICAllowlist_NoDriftFromQRDB asserts the qrdb-quic ALPN bridge
 // allowlist covers qrdb's canonical native-QUIC sealed-window allowlist
-// verbatim (the bridge speaks qrdb's wire method names), plus exactly one
-// documented quicbaas extra: the bridge serves ceremony.EnrollExternalOfficer
-// as a real handler while qrdb's own native QUIC surface does not carry the
-// verb (it is REST/gRPC-only there).
+// verbatim (the bridge speaks qrdb's wire method names) minus the strict
+// exclusions, with no quicbaas extra.
 func TestQRDBQUICAllowlist_NoDriftFromQRDB(t *testing.T) {
 	ours := QRDBQUICAllowlist()
 
@@ -277,10 +281,6 @@ func TestQRDBQUICAllowlist_NoDriftFromQRDB(t *testing.T) {
 		_, ok := ours[m]
 		assert.True(t, ok, "qrdb canonical QUIC method %q missing from quicbaas bridge allowlist", m)
 	}
-	// The bridge serves ceremony.EnrollExternalOfficer as a real handler while
-	// qrdb's own native QUIC surface does not carry the verb, so it would be
-	// the one quicbaas-only entry — except that the strict model excludes it,
-	// leaving no extras at all.
 	for m := range ours {
 		_, ok := qrdbsdk.QUICSealedWindowAllowlist[m]
 		assert.True(t, ok, "unexpected quicbaas-only qrdb-quic bridge allowlist method %q", m)
@@ -304,11 +304,6 @@ func TestMCPAllowlist_NoDriftFromQRDB(t *testing.T) {
 	}
 
 	for tool := range canonical {
-		// qrdb_health / qrdb_status have no quicbaas MCP tool (MCP health is
-		// an HTTP endpoint outside the tool dispatcher, always reachable).
-		if tool == "qrdb_health" || tool == "qrdb_status" {
-			continue
-		}
 		if _, strict := excluded[tool]; strict {
 			_, present := ours[tool]
 			assert.False(t, present,
@@ -319,15 +314,9 @@ func TestMCPAllowlist_NoDriftFromQRDB(t *testing.T) {
 		assert.True(t, ok, "qrdb canonical MCP tool %q missing from quicbaas derivation", tool)
 	}
 
-	extras := map[string]struct{}{
-		"quicbaas_ceremony_list_officers": {},
-	}
 	for tool := range ours {
-		if _, ok := canonical[tool]; ok {
-			continue
-		}
-		_, allowed := extras[tool]
-		assert.True(t, allowed, "unexpected quicbaas-only MCP allowlist tool %q", tool)
+		_, ok := canonical[tool]
+		assert.True(t, ok, "unexpected quicbaas-only MCP allowlist tool %q", tool)
 	}
 }
 
@@ -411,14 +400,6 @@ func TestAllowlists_DeliberateExclusions(t *testing.T) {
 // covers a strictly excluded ceremony path.
 func TestRESTAllowlist_ExactSet(t *testing.T) {
 	want := []string{
-		// Health / status probes.
-		"/health",
-		"/v1/health",
-		"/api/v1/health",
-		"/api/v1/health/live",
-		"/api/v1/health/ready",
-		"/status",
-
 		// Barrier lifecycle: status, first initialization, and every route
 		// back to an unsealed data plane.
 		"/v1/barrier/status",
@@ -429,40 +410,30 @@ func TestRESTAllowlist_ExactSet(t *testing.T) {
 		"/api/v1/barrier/unseal",
 		"/v1/barrier/shamir/initialize",
 		"/api/v1/barrier/shamir/initialize",
-		"/v1/barrier/shamir/unseal-share",
-		"/api/v1/barrier/shamir/unseal-share",
-		"/v1/barrier/shamir/unseal-shares",
-		"/api/v1/barrier/shamir/unseal-shares",
-		"/v1/barrier/recovery/recover",
-		"/api/v1/barrier/recovery/recover",
-		"/v1/barrier/root-token",
-		"/api/v1/barrier/root-token",
 
-		// Officer / custodian registries.
+		// Officer registration and the one-segment share-claim patterns.
 		"POST /v1/barrier/officers",
-		"/v1/ceremony/officers",
-		"/api/v1/init/officers",
-		"/v1/barrier/officers/claim-status",
-		"/v1/barrier/officers/",
+		"POST /api/v1/barrier/officers",
+		"POST /v1/barrier/officers/{username}/claim/begin",
+		"POST /api/v1/barrier/officers/{username}/claim/begin",
+		"POST /v1/barrier/officers/{username}/claim/complete",
+		"POST /api/v1/barrier/officers/{username}/claim/complete",
 		"POST /v1/barrier/recovery/officers",
-		"/v1/barrier/recovery/officers/",
+		"POST /api/v1/barrier/recovery/officers",
+		"POST /v1/barrier/recovery/officers/{username}/claim/begin",
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/begin",
+		"POST /v1/barrier/recovery/officers/{username}/claim/complete",
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/complete",
 
-		// Ceremony: the read-only status probe and the self-authorizing claim
-		// handshakes. initialize, sign-csr and enroll-external-officer are
-		// absent by StrictCeremonyExclusions.
-		"/v1/ceremony/status",
-		"/api/v1/init/status",
-		"/v1/ceremony/claim-cert/begin",
-		"/api/v1/init/claim-cert/begin",
-		"/v1/ceremony/claim-cert/complete",
-		"/api/v1/init/claim-cert/complete",
-		"/v1/ceremony/officer-share/begin",
-		"/api/v1/init/officer-share/begin",
-		"/v1/ceremony/officer-share/complete",
-		"/api/v1/init/officer-share/complete",
-		"/v1/ceremony/claim-share/begin",
-		"/v1/ceremony/claim-share/complete",
-		"/v1/barrier/unseal-share",
+		// The holder quorum.
+		"/v1/barrier/quorum/begin",
+		"/api/v1/barrier/quorum/begin",
+		"/v1/barrier/quorum/submit",
+		"/api/v1/barrier/quorum/submit",
+
+		// AuthenticatedOnly: admitted by the deny gate, never auth-exempt.
+		"/v1/barrier/cluster-unseal",
+		"/api/v1/barrier/cluster-unseal",
 
 		// RESTExtra: first-touch trust bootstrap and the cluster peer
 		// key-transport receiver.
@@ -476,10 +447,9 @@ func TestRESTAllowlist_ExactSet(t *testing.T) {
 // TestAllowlists_StrictExclusionsAppliedOnEveryTransport is the cross-transport
 // guard for the strict ceremony model.
 //
-// StrictCeremonyExclusions withholds the three ceremony verbs that MINT or
-// DISTRIBUTE trust — initialize (mints the CA, the server TLS identity and the
-// SO credential), sign-csr (issues from the ceremony CA) and
-// enroll-external-officer (seals a Shamir share to an operator-supplied key).
+// StrictCeremonyExclusions withholds the ceremony verbs that MINT trust —
+// initialize (mints the CA, the server TLS identity and the SO credential) and
+// sign-csr (issues from the ceremony CA).
 // The package contract is that the exclusion is a property of the TABLE, so
 // all five derivations inherit it from one place.
 //
@@ -546,20 +516,17 @@ func TestAllowlists_StrictExclusionsAppliedOnEveryTransport(t *testing.T) {
 	}
 }
 
-// TestQUICAllowlist_HealthAndUnsealFlow asserts the native QUIC allowlist
-// admits the health opcode and the core barrier / ceremony unseal-flow
-// sub-ops derived from the table.
-func TestQUICAllowlist_HealthAndUnsealFlow(t *testing.T) {
+// TestQUICAllowlist_UnsealFlow asserts the native QUIC allowlist admits the
+// core barrier unseal-flow sub-ops derived from the table, and neither the
+// health opcode nor ceremony status: a sealed node answers no status question
+// but barrier status (go-qrdb v0.50).
+func TestQUICAllowlist_UnsealFlow(t *testing.T) {
 	quic := QUICAllowlist()
 	expected := []QUICOp{
-		{Opcode: opHealth},
 		{Opcode: opBarrier, SubOp: subBarrierStatus},
 		{Opcode: opBarrier, SubOp: subBarrierInitialize},
 		{Opcode: opBarrier, SubOp: subBarrierUnseal},
-		{Opcode: opBarrier, SubOp: subBarrierShamirUnsealShare},
-		{Opcode: opBarrier, SubOp: subBarrierShamirUnsealShares},
-		{Opcode: opBarrier, SubOp: subBarrierRootToken},
-		{Opcode: opCeremony, SubOp: subCeremonyStatus},
+		{Opcode: opBarrier, SubOp: subBarrierShamirInitialize},
 	}
 	for _, op := range expected {
 		_, ok := quic[op]
@@ -572,11 +539,19 @@ func TestQUICAllowlist_HealthAndUnsealFlow(t *testing.T) {
 	for _, op := range []QUICOp{
 		{Opcode: opCeremony, SubOp: subCeremonyInitialize},
 		{Opcode: opCeremony, SubOp: subCeremonySignCSR},
-		{Opcode: opCeremony, SubOp: subCeremonyEnrollExternalOfficer},
 	} {
 		_, ok := quic[op]
 		assert.False(t, ok,
 			"strictly excluded ceremony sub-op 0x%02X must NOT be on the native QUIC allowlist", op.SubOp)
+	}
+
+	for _, op := range []QUICOp{
+		{Opcode: opHealth},
+		{Opcode: opCeremony, SubOp: subCeremonyStatus},
+	} {
+		_, ok := quic[op]
+		assert.False(t, ok,
+			"status opcode 0x%02X sub 0x%02X must NOT be on the native QUIC allowlist", op.Opcode, op.SubOp)
 	}
 }
 
@@ -602,20 +577,59 @@ func TestGRPCAllowlist_Deduplicated(t *testing.T) {
 // as such; UN-flagging either officer verb reopens that hole and must never
 // happen.
 func TestPreOperationalOnlyFlags(t *testing.T) {
+	// go-qrdb v0.50's PreOperationalOnly set, exactly.
 	want := map[Verb]bool{
-		VerbOfficerRegister:              true,
-		VerbRecoveryOfficerRegister:      true,
-		VerbCeremonyStatus:               true,
-		VerbCeremonyClaimCertBegin:       true,
-		VerbCeremonyClaimCertComplete:    true,
-		VerbCeremonyOfficerShareBegin:    true,
-		VerbCeremonyOfficerShareComplete: true,
-		VerbCeremonyClaimShareBegin:      true,
-		VerbCeremonyClaimShareEnd:        true,
+		VerbBarrierInitialize:       true,
+		VerbShamirInitialize:        true,
+		VerbOfficerRegister:         true,
+		VerbRecoveryOfficerRegister: true,
+		VerbCeremonyInitialize:      true,
+		VerbCeremonySignCSR:         true,
 	}
 	for _, v := range Verbs {
 		assert.Equalf(t, want[v], Table[v].PreOperationalOnly,
 			"PreOperationalOnly(%q) drifted from the locked set", v)
+	}
+}
+
+// TestAuthenticatedOnly_NeverAuthExempt pins the AuthenticatedOnly contract
+// mirrored from qrdb on every transport: cluster unseal is in the deny gate's
+// ScopeAll allowlist but in neither authentication-bypass scope. The qrdb.v1
+// gRPC method arrives from qrdbsdk.GRPCSealedWindowAllowlist, which carries no
+// flag, so its exclusion from the bypass scopes is checked on the full-method
+// derivation the bypass actually consumes.
+func TestAuthenticatedOnly_NeverAuthExempt(t *testing.T) {
+	var authOnly []Verb
+	for _, v := range Verbs {
+		if Table[v].AuthenticatedOnly {
+			authOnly = append(authOnly, v)
+		}
+	}
+	require.Equal(t, []Verb{VerbBarrierClusterUnseal}, authOnly, "the AuthenticatedOnly set is locked")
+
+	names := Table[VerbBarrierClusterUnseal]
+	assert.False(t, names.PreOperationalOnly, "AuthenticatedOnly and PreOperationalOnly are exclusive")
+	assert.True(t, InScope(VerbBarrierClusterUnseal, ScopeAll))
+	assert.False(t, InScope(VerbBarrierClusterUnseal, ScopeAlways))
+	assert.False(t, InScope(VerbBarrierClusterUnseal, ScopePreOperational))
+
+	const grpcMethod = "/qrdb.v1.QRDBService/BarrierClusterUnseal"
+	require.Contains(t, qrdbsdk.GRPCSealedWindowAllowlist, grpcMethod, "qrdb still allowlists cluster unseal")
+	assert.Contains(t, GRPCFullMethodAllowlistScoped(ScopeAll), grpcMethod)
+	for _, scope := range []Scope{ScopeAlways, ScopePreOperational} {
+		assert.NotContains(t, GRPCFullMethodAllowlistScoped(scope), grpcMethod)
+		for _, p := range names.REST {
+			assert.NotContains(t, RESTAllowlistScoped(scope), p)
+		}
+		for _, m := range names.QRDBQUIC {
+			assert.NotContains(t, QRDBQUICAllowlistScoped(scope), m)
+		}
+		for _, tool := range names.MCP {
+			assert.NotContains(t, MCPAllowlistScoped(scope), tool)
+		}
+	}
+	for _, p := range names.REST {
+		assert.Contains(t, RESTAllowlist(), p)
 	}
 }
 

@@ -135,29 +135,20 @@ func TestAuthBypass_GRPC(t *testing.T) {
 		{"qrdb.v1 unseal", "/qrdb.v1.QRDBService/BarrierUnseal", true, true},
 		{"quicbaas mirror unseal", "/quicbaas.barrier.v1.Barrier/BarrierUnseal", true, true},
 		{"barrier status", "/qrdb.v1.QRDBService/BarrierStatus", true, true},
-		{"shamir unseal-share", "/qrdb.v1.QRDBService/BarrierShamirUnsealShare", true, true},
-		{"shamir unseal-shares", "/qrdb.v1.QRDBService/BarrierShamirUnsealShares", true, true},
-		{"submit unseal-share", "/qrdb.v1.QRDBService/CeremonySubmitUnsealShare", true, true},
-		{"recovery recover", "/qrdb.v1.QRDBService/BarrierRecoveryRecover", true, true},
-		{"root token", "/qrdb.v1.QRDBService/BarrierRootToken", true, true},
 		{"barrier share-claim begin", "/qrdb.v1.QRDBService/BarrierShareClaimBegin", true, true},
 		{"barrier share-claim complete", "/qrdb.v1.QRDBService/BarrierShareClaimComplete", true, true},
-		{"ceremony list-officers mirror", "/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers", true, true},
-		{"quicbaas health", "/quicbaas.v1.QuicBaaS/Health", true, true},
+		{"barrier quorum begin", "/qrdb.v1.QRDBService/BarrierQuorumBegin", true, true},
+		{"barrier quorum submit", "/qrdb.v1.QRDBService/BarrierQuorumSubmit", true, true},
 
-		// ScopePreOperational: the self-authorizing ceremony claim handshakes
-		// and the read-only status probe. Exempt only while the ceremony is
-		// unfinished; on an already-initialized sealed daemon they require
-		// authentication.
-		{"ceremony status", "/qrdb.v1.QRDBService/CeremonyStatus", true, false},
-		{"ceremony status mirror", "/quicbaas.ceremony.v1.Ceremony/CeremonyStatus", true, false},
-		{"claim-cert begin", "/qrdb.v1.QRDBService/CeremonyClaimCertBegin", true, false},
-		{"claim-cert begin mirror", "/quicbaas.ceremony.v1.Ceremony/CeremonyClaimCertBegin", true, false},
-		{"claim-cert complete", "/qrdb.v1.QRDBService/CeremonyClaimCertComplete", true, false},
-		{"officer-share begin", "/qrdb.v1.QRDBService/CeremonyBeginClaimShare", true, false},
-		{"officer-share complete", "/qrdb.v1.QRDBService/CeremonyCompleteClaimShare", true, false},
-		{"custodian claim-share begin", "/qrdb.v1.QRDBService/CeremonyClaimShareBegin", true, false},
-		{"custodian claim-share complete", "/qrdb.v1.QRDBService/CeremonyClaimShareComplete", true, false},
+		// ScopePreOperational: the officer registration verbs. Exempt only
+		// while the ceremony is unfinished; on an already-initialized sealed
+		// daemon they require authentication.
+		{"officer register", "/qrdb.v1.QRDBService/BarrierOfficerRegister", true, false},
+		{"recovery officer register", "/qrdb.v1.QRDBService/BarrierRecoveryOfficerRegister", true, false},
+
+		// AuthenticatedOnly: cluster unseal passes the deny gate while sealed
+		// but is never exempt from authentication, in either state.
+		{"cluster unseal authenticated only", "/qrdb.v1.QRDBService/BarrierClusterUnseal", false, false},
 
 		// Strict ceremony model: the verbs that MINT or SIGN credential
 		// material never bypass authentication, in EITHER state. qrdb keeps
@@ -166,8 +157,13 @@ func TestAuthBypass_GRPC(t *testing.T) {
 		// local CLI against a daemon with no listener up.
 		{"ceremony initialize excluded", "/qrdb.v1.QRDBService/CeremonyInitialize", false, false},
 		{"ceremony sign-csr excluded", "/qrdb.v1.QRDBService/CeremonySignCSR", false, false},
-		{"ceremony enroll-ext-officer excluded", "/qrdb.v1.QRDBService/CeremonyEnrollExternalOfficer", false, false},
 		{"ceremony mirror initialize excluded", "/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize", false, false},
+
+		// A sealed node answers no status question but barrier status
+		// (go-qrdb v0.50): health and ceremony status stay sealed.
+		{"quicbaas health", "/quicbaas.v1.QuicBaaS/Health", false, false},
+		{"ceremony status", "/qrdb.v1.QRDBService/CeremonyStatus", false, false},
+		{"ceremony status mirror", "/quicbaas.ceremony.v1.Ceremony/CeremonyStatus", false, false},
 
 		{"KV get denied", "/quicbaas.v1.QuicBaaS/Get", false, false},
 		{"barrier SEAL excluded", "/qrdb.v1.QRDBService/BarrierSeal", false, false},
@@ -212,31 +208,33 @@ func TestAuthBypass_RESTPath(t *testing.T) {
 		{"unseal wire mount", "/v1/barrier/unseal", true, true, ""},
 		{"unseal api mirror", "/api/v1/barrier/unseal", true, true, ""},
 		{"barrier status", "/v1/barrier/status", true, true, ""},
-		{"shamir unseal-share", "/v1/barrier/shamir/unseal-share", true, true, ""},
-		{"submit unseal-share", "/v1/barrier/unseal-share", true, true, ""},
-		{"recovery recover", "/v1/barrier/recovery/recover", true, true, ""},
-		{"officer claim prefix", "/v1/barrier/officers/alice/claim/begin", true, true, ""},
-		{"officer list init mirror", "/api/v1/init/officers", true, true, ""},
+		{"officer claim begin", "/v1/barrier/officers/alice/claim/begin", true, true, ""},
+		{"officer claim complete api mirror", "/api/v1/barrier/officers/alice/claim/complete", true, true, ""},
+		{"recovery officer claim begin", "/v1/barrier/recovery/officers/alice/claim/begin", true, true, ""},
+		{"quorum begin", "/v1/barrier/quorum/begin", true, true, ""},
+		{"quorum submit api mirror", "/api/v1/barrier/quorum/submit", true, true, ""},
+		{"officer list init mirror", "/api/v1/init/officers", false, false, ""},
 		{"bootstrap prefix", "/v1/bootstrap/trust", true, true, ""},
 		{"cluster secret", "/api/v1/cluster/secret", true, true, ""},
-		{"health", "/health", true, true, ""},
+		{"health stays sealed", "/health", false, false, ""},
 
 		// ScopePreOperational.
-		{"ceremony status", "/v1/ceremony/status", true, false, ""},
-		{"init status mirror", "/api/v1/init/status", true, false, ""},
-		{"claim-cert begin", "/v1/ceremony/claim-cert/begin", true, false, ""},
-		{"claim-cert begin mirror", "/api/v1/init/claim-cert/begin", true, false, ""},
-		{"claim-cert complete mirror", "/api/v1/init/claim-cert/complete", true, false, ""},
-		{"officer-share begin", "/v1/ceremony/officer-share/begin", true, false, ""},
-		{"officer-share complete mirror", "/api/v1/init/officer-share/complete", true, false, ""},
-		{"custodian claim-share begin", "/v1/ceremony/claim-share/begin", true, false, ""},
-		{"custodian claim-share complete", "/v1/ceremony/claim-share/complete", true, false, ""},
+		{"ceremony status", "/v1/ceremony/status", false, false, ""},
+		{"init status mirror", "/api/v1/init/status", false, false, ""},
+
+		// AuthenticatedOnly: never exempt, in either state.
+		{"cluster unseal authenticated only", "/v1/barrier/cluster-unseal", false, false, ""},
+		{"cluster unseal api mirror authenticated only", "/api/v1/barrier/cluster-unseal", false, false, ""},
+
+		// The claim routes are one-segment patterns, not an officers/ prefix:
+		// revoke (a rekey that removes a holder) stays outside the window.
+		{"officer revoke not admitted", "/v1/barrier/officers/revoke", false, false, ""},
+		{"claim pattern needs one segment", "/v1/barrier/officers/a/b/claim/begin", false, false, ""},
 
 		// Strict exclusions and off-allowlist paths, denied in every state.
 		{"ceremony initialize excluded", "/v1/ceremony/initialize", false, false, ""},
 		{"init initialize mirror excluded", "/api/v1/init/initialize", false, false, ""},
 		{"sign-csr excluded", "/v1/ceremony/sign-csr", false, false, ""},
-		{"enroll-external-officer excluded", "/v1/init/enroll-external-officer", false, false, ""},
 		{"kms denied", "/api/v1/kms/keys", false, false, ""},
 		{"credentials excluded", "/v1/credentials", false, false, ""},
 		{"exact-entry subpath not prefix", "/v1/barrier/unseal/extra", false, false, ""},
@@ -247,6 +245,10 @@ func TestAuthBypass_RESTPath(t *testing.T) {
 		{"barrier officer list withdrawn", "/v1/barrier/officers", false, false, http.MethodGet},
 		{"recovery officer register", "/v1/barrier/recovery/officers", true, false, http.MethodPost},
 		{"recovery officer list not admitted", "/v1/barrier/recovery/officers", false, false, http.MethodGet},
+		// The TS SDK registers officers through the /api/v1 mirrors.
+		{"officer register api mirror", "/api/v1/barrier/officers", true, false, http.MethodPost},
+		{"officer list api mirror not admitted", "/api/v1/barrier/officers", false, false, http.MethodGet},
+		{"recovery officer register api mirror", "/api/v1/barrier/recovery/officers", true, false, http.MethodPost},
 		{"rekey withdrawn", "/v1/barrier/rekey", false, false, ""},
 		{"recovery generate withdrawn", "/v1/barrier/recovery/generate", false, false, ""},
 		{"recovery status withdrawn", "/v1/barrier/recovery/status", false, false, http.MethodGet},
@@ -283,21 +285,12 @@ func TestAuthBypass_NativeQUIC(t *testing.T) {
 		op      bool
 	}{
 		// ScopeAlways.
-		{"health no sub-op", opHealth, nil, true, true},
+		{"health no sub-op", opHealth, nil, false, false},
 		{"barrier status", opBarrier, []byte{subBarrierStatus}, true, true},
 		{"barrier unseal", opBarrier, []byte{subBarrierUnseal}, true, true},
-		{"shamir unseal-share", opBarrier, []byte{subBarrierShamirUnsealShare}, true, true},
-		{"shamir unseal-shares", opBarrier, []byte{subBarrierShamirUnsealShares}, true, true},
-		{"recovery recover", opBarrier, []byte{subBarrierRecoveryRecover}, true, true},
-		{"root token", opBarrier, []byte{subBarrierRootToken}, true, true},
-		{"ceremony list-officers", opCeremony, []byte{subCeremonyListOfficers}, true, true},
 
 		// ScopePreOperational.
-		{"ceremony status", opCeremony, []byte{subCeremonyStatus}, true, false},
-		{"claim-cert begin", opCeremony, []byte{subCeremonyClaimCertBegin}, true, false},
-		{"claim-cert complete", opCeremony, []byte{subCeremonyClaimCertComplete}, true, false},
-		{"officer-share begin", opCeremony, []byte{subCeremonyBeginClaimShare}, true, false},
-		{"officer-share complete", opCeremony, []byte{subCeremonyCompleteClaimShare}, true, false},
+		{"ceremony status", opCeremony, []byte{subCeremonyStatus}, false, false},
 
 		// The trust-minting ceremony verbs are withheld by
 		// StrictCeremonyExclusions on EVERY transport and in EVERY state: an
@@ -305,7 +298,11 @@ func TestAuthBypass_NativeQUIC(t *testing.T) {
 		// trust root.
 		{"ceremony initialize excluded", opCeremony, []byte{subCeremonyInitialize}, false, false},
 		{"ceremony sign-csr excluded", opCeremony, []byte{subCeremonySignCSR}, false, false},
-		{"ceremony enroll-officer excluded", opCeremony, []byte{subCeremonyEnrollExternalOfficer}, false, false},
+		// The go-qrdb v0.47 ceremony cut withdrew the native share, root-token
+		// and claim sub-ops; they fail closed.
+		{"shamir unseal-share withdrawn", opBarrier, []byte{0x06}, false, false},
+		{"root token withdrawn", opBarrier, []byte{0x11}, false, false},
+		{"ceremony list-officers withdrawn", opCeremony, []byte{0x07}, false, false},
 
 		// 0x04 is barrier seal — deliberately excluded from the allowlist.
 		{"barrier seal denied", opBarrier, []byte{0x04}, false, false},
@@ -347,26 +344,21 @@ func TestAuthBypass_QRDBQUIC(t *testing.T) {
 		// ScopeAlways.
 		{"barrier.Unseal", "barrier.Unseal", true, true},
 		{"barrier.Status", "barrier.Status", true, true},
-		{"barrier.ShamirUnsealShare", "barrier.ShamirUnsealShare", true, true},
-		{"barrier.ShamirUnsealShares", "barrier.ShamirUnsealShares", true, true},
-		{"barrier.RecoveryRecover", "barrier.RecoveryRecover", true, true},
 		{"barrier.ShareClaimBegin", "barrier.ShareClaimBegin", true, true},
-		{"ceremony.SubmitUnsealShare", "ceremony.SubmitUnsealShare", true, true},
-		{"admin.Health", "admin.Health", true, true},
+		{"barrier.QuorumBegin", "barrier.QuorumBegin", true, true},
+		{"barrier.QuorumSubmit", "barrier.QuorumSubmit", true, true},
+		{"admin.Health", "admin.Health", false, false},
 
 		// ScopePreOperational.
-		{"ceremony.Status", "ceremony.Status", true, false},
-		{"ceremony.ClaimCertBegin", "ceremony.ClaimCertBegin", true, false},
-		{"ceremony.ClaimCertComplete", "ceremony.ClaimCertComplete", true, false},
-		{"ceremony.BeginClaimShare", "ceremony.BeginClaimShare", true, false},
-		{"ceremony.CompleteClaimShare", "ceremony.CompleteClaimShare", true, false},
-		{"ceremony.ClaimShareBegin", "ceremony.ClaimShareBegin", true, false},
-		{"ceremony.ClaimShareComplete", "ceremony.ClaimShareComplete", true, false},
+		{"ceremony.Status stays sealed", "ceremony.Status", false, false},
+		{"barrier.OfficerRegister", "barrier.OfficerRegister", true, false},
+
+		{"barrier.ClusterUnseal authenticated only", "barrier.ClusterUnseal", false, false},
+		{"barrier.ShamirUnsealShare withdrawn", "barrier.ShamirUnsealShare", false, false},
 
 		// StrictCeremonyExclusions applies to the bridge too.
 		{"ceremony.SignCSR excluded", "ceremony.SignCSR", false, false},
 		{"ceremony.Initialize excluded", "ceremony.Initialize", false, false},
-		{"ceremony.EnrollExternalOfficer excluded", "ceremony.EnrollExternalOfficer", false, false},
 
 		{"barrier.Seal excluded", "barrier.Seal", false, false},
 		{"credential.Submit excluded", "credential.Submit", false, false},
@@ -399,20 +391,17 @@ func TestAuthBypass_MCPTool(t *testing.T) {
 		// ScopeAlways.
 		{"barrier unseal", "qrdb_barrier_unseal", true, true},
 		{"barrier status", "qrdb_barrier_status", true, true},
-		{"shamir unseal-share", "qrdb_barrier_shamir_unseal_share", true, true},
-		{"shamir unseal-shares", "qrdb_barrier_shamir_unseal_shares", true, true},
-		{"recovery recover", "qrdb_barrier_recovery_recover", true, true},
-		{"submit unseal-share", "qrdb_ceremony_submit_unseal_share", true, true},
-		{"quicbaas officer list", "quicbaas_ceremony_list_officers", true, true},
+		{"quorum begin", "qrdb_barrier_quorum_begin", true, true},
+		{"quorum submit", "qrdb_barrier_quorum_submit", true, true},
+		{"share claim begin", "qrdb_barrier_share_claim_begin", true, true},
+		{"quicbaas officer list", "quicbaas_ceremony_list_officers", false, false},
 
 		// ScopePreOperational.
-		{"ceremony status", "qrdb_ceremony_status", true, false},
-		{"claim-cert begin", "qrdb_ceremony_claim_cert_begin", true, false},
-		{"claim-cert complete", "qrdb_ceremony_claim_cert_complete", true, false},
-		{"begin claim-share", "qrdb_ceremony_begin_claim_share", true, false},
-		{"complete claim-share", "qrdb_ceremony_complete_claim_share", true, false},
-		{"custodian claim-share begin", "qrdb_ceremony_claim_share_begin", true, false},
-		{"custodian claim-share complete", "qrdb_ceremony_claim_share_complete", true, false},
+		{"ceremony status", "qrdb_ceremony_status", false, false},
+		{"officer register", "qrdb_barrier_officer_register", true, false},
+
+		{"cluster unseal authenticated only", "qrdb_barrier_cluster_unseal", false, false},
+		{"shamir unseal-share withdrawn", "qrdb_barrier_shamir_unseal_share", false, false},
 
 		// StrictCeremonyExclusions applies to MCP too.
 		{"ceremony initialize excluded", "qrdb_ceremony_initialize", false, false},
@@ -521,11 +510,8 @@ func TestAuthBypass_PreOperationalExemptionExpires(t *testing.T) {
 	nativeOps := QUICAllowlistScoped(ScopePreOperational)
 	require.NotEmpty(t, nativeOps)
 	for op := range nativeOps {
-		payload := []byte{op.SubOp}
-		assert.Truef(t, pre.BypassesNativeQUIC(op.Opcode, payload),
-			"pre-operational must admit QUIC 0x%02X/0x%02X", op.Opcode, op.SubOp)
-		assert.Falsef(t, post.BypassesNativeQUIC(op.Opcode, payload),
-			"operational must DENY QUIC 0x%02X/0x%02X", op.Opcode, op.SubOp)
+		assert.Truef(t, pre.BypassesNativeQUIC(op.Opcode, []byte{op.SubOp}), "pre-operational must admit QUIC %v", op)
+		assert.Falsef(t, post.BypassesNativeQUIC(op.Opcode, []byte{op.SubOp}), "operational must DENY QUIC %v", op)
 	}
 
 	bridge := QRDBQUICAllowlistScoped(ScopePreOperational)
@@ -658,11 +644,10 @@ func TestAuthBypass_OperationalProbeFailsClosed(t *testing.T) {
 			assert.True(t, b.BypassesMCPTool("qrdb_barrier_unseal"))
 
 			// ScopePreOperational is withheld.
-			assert.False(t, b.BypassesGRPC("/qrdb.v1.QRDBService/CeremonyClaimCertBegin"))
-			assert.False(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"))
-			assert.False(t, b.BypassesNativeQUIC(opCeremony, []byte{subCeremonyClaimCertBegin}))
-			assert.False(t, b.BypassesQRDBQUIC("ceremony.ClaimCertBegin"))
-			assert.False(t, b.BypassesMCPTool("qrdb_ceremony_claim_cert_begin"))
+			assert.False(t, b.BypassesGRPC("/qrdb.v1.QRDBService/BarrierOfficerRegister"))
+			assert.False(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/officers"))
+			assert.False(t, b.BypassesQRDBQUIC("barrier.OfficerRegister"))
+			assert.False(t, b.BypassesMCPTool("qrdb_barrier_officer_register"))
 		})
 	}
 }
@@ -698,14 +683,14 @@ func TestAuthBypass_ResealCycle(t *testing.T) {
 func TestAuthBypass_CeremonyCompletionNarrowsLiveInstance(t *testing.T) {
 	b, _, operational, sink := newBypassFixture(true, statePreOperational)
 
-	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"))
+	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/officers"))
 	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"))
 	assert.Len(t, sink.events, 2)
 
 	operational.operationalState = true
 
-	assert.False(t, b.BypassesRESTPath(http.MethodPost, "/api/v1/init/claim-cert/begin"),
-		"ceremony claim must stop bypassing once operational")
+	assert.False(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/officers"),
+		"officer registration must stop bypassing once operational")
 	assert.True(t, b.BypassesRESTPath(http.MethodPost, "/v1/barrier/unseal"),
 		"unseal must keep bypassing after the ceremony completes")
 	assert.Len(t, sink.events, 3, "only the unseal admit is audited after completion")
@@ -727,7 +712,7 @@ func TestAuthBypass_NilSafety(t *testing.T) {
 	// A nil sink must not panic on a bypass, in either scope.
 	nilSink := NewAuthBypass(&togglableProbe{sealedState: true}, &togglableOperational{}, nil)
 	assert.True(t, nilSink.BypassesGRPC("/qrdb.v1.QRDBService/BarrierUnseal"))
-	assert.True(t, nilSink.BypassesRESTPath(http.MethodPost, "/api/v1/init/status"))
+	assert.True(t, nilSink.BypassesRESTPath(http.MethodPost, "/v1/barrier/officers"))
 }
 
 // TestNewLoggerAuditSink covers both the nil-logger contract and a real

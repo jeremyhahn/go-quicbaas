@@ -39,9 +39,12 @@ type fakeServerStream struct {
 
 func (f *fakeServerStream) Context() context.Context { return f.ctx }
 
-func tenantClientCert(t *testing.T, trustDomain, tenantID string) *x509.Certificate {
+// tenantClientCert mints a client certificate whose SPIFFE ID SAN is under
+// trustDomain (the tenant, in go-qrdb's model) and whose first Subject OU is
+// ou; an empty ou leaves the certificate with no OU.
+func tenantClientCert(t *testing.T, trustDomain, ou string) *x509.Certificate {
 	t.Helper()
-	spiffeURI, err := url.Parse("spiffe://" + trustDomain + "/tenant/" + tenantID + "/user/alice")
+	spiffeURI, err := url.Parse("spiffe://" + trustDomain + "/user/alice")
 	if err != nil {
 		t.Fatalf("parse spiffe uri: %v", err)
 	}
@@ -49,9 +52,13 @@ func tenantClientCert(t *testing.T, trustDomain, tenantID string) *x509.Certific
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
+	subject := pkix.Name{CommonName: "alice"}
+	if ou != "" {
+		subject.OrganizationalUnit = []string{ou}
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: "alice"},
+		Subject:      subject,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
 		URIs:         []*url.URL{spiffeURI},
@@ -69,7 +76,7 @@ func tenantClientCert(t *testing.T, trustDomain, tenantID string) *x509.Certific
 
 func TestUnaryTenantInterceptor_StampsQRDBTenant(t *testing.T) {
 	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
-	ctx := mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))
+	ctx := mtlsPeerContext(tenantClientCert(t, "tenant-a", "tenant-a"))
 	var observed string
 	handler := func(ctx context.Context, _ interface{}) (interface{}, error) {
 		if tenantID, ok := qrdbsdk.TenantFromContext(ctx); ok {
@@ -91,7 +98,7 @@ func TestUnaryTenantInterceptor_StampsQRDBTenant(t *testing.T) {
 }
 
 func TestTenantContextFromVerifiedPeer_BindsCertTenant(t *testing.T) {
-	ctx := mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))
+	ctx := mtlsPeerContext(tenantClientCert(t, "tenant-a", "tenant-a"))
 
 	scoped, err := TenantContextFromVerifiedPeer(ctx, tenantInterceptorTrustDomain)
 	if err != nil {
@@ -157,7 +164,7 @@ func TestUnaryTenantInterceptor_NoTenantCertFails(t *testing.T) {
 
 func TestUnaryTenantInterceptor_TrustDomainMismatchFails(t *testing.T) {
 	interceptor := UnaryTenantInterceptor(tenantInterceptorTrustDomain)
-	ctx := mtlsPeerContext(tenantClientCert(t, "other.example", "tenant-a"))
+	ctx := mtlsPeerContext(tenantClientCert(t, "other.example", ""))
 	handler := func(context.Context, interface{}) (interface{}, error) {
 		t.Fatal("handler must not be called when qrdb rejects the trust domain")
 		return nil, nil
@@ -174,7 +181,7 @@ func TestUnaryTenantInterceptor_TrustDomainMismatchFails(t *testing.T) {
 
 func TestStreamTenantInterceptor_StampsQRDBTenant(t *testing.T) {
 	interceptor := StreamTenantInterceptor(tenantInterceptorTrustDomain)
-	ss := &fakeServerStream{ctx: mtlsPeerContext(tenantClientCert(t, tenantInterceptorTrustDomain, "tenant-a"))}
+	ss := &fakeServerStream{ctx: mtlsPeerContext(tenantClientCert(t, "tenant-a", "tenant-a"))}
 	var observed string
 	handler := func(_ interface{}, stream grpc.ServerStream) error {
 		if tenantID, ok := qrdbsdk.TenantFromContext(stream.Context()); ok {

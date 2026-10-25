@@ -27,6 +27,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // stubInviteActivation records the scope each verb receives.
@@ -153,6 +154,24 @@ func TestIAMServer_InviteErrors(t *testing.T) {
 				context.Background(), &iampb.ActivatePIVRequest{TenantId: "t1", Token: "tok", CertPem: "PEM"})
 			assert.Equal(t, tc.want, status.Code(err))
 		})
+	}
+}
+
+// TestIAMServer_ActivateFIDO2_TenantRefusedIsFailedPrecondition: a non-system
+// tenant's passkey activation is refused until go-quicbaas #1816, and both
+// verbs answer FailedPrecondition with the refusal's guidance, as login does.
+func TestIAMServer_ActivateFIDO2_TenantRefusedIsFailedPrecondition(t *testing.T) {
+	srv := newInviteIAMServer(t, &stubInviteActivation{err: service.RefuseTenantLogin("acme")})
+	ctx := context.Background()
+
+	_, beginErr := srv.ActivateFIDO2Begin(ctx, &iampb.ActivateInviteRequest{TenantId: "acme", Token: "tok"})
+	_, finishErr := srv.ActivateFIDO2Finish(ctx, &iampb.ActivateFIDO2FinishRequest{
+		TenantId: "acme", Token: "tok", CredentialJson: `{"id":"x"}`,
+	})
+
+	for name, err := range map[string]error{"begin": beginErr, "finish": finishErr} {
+		assert.Equal(t, codes.FailedPrecondition, status.Code(err), name)
+		assert.Equal(t, (&sdkerrors.TenantLoginRefusedError{}).Error(), status.Convert(err).Message(), name)
 	}
 }
 

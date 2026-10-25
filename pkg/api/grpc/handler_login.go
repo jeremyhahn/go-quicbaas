@@ -30,6 +30,7 @@ import (
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -104,7 +105,21 @@ func mapLoginError(err error) error {
 	if errors.As(err, &nilReq) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
+	if refused := tenantLoginRefusedStatus(err); refused != nil {
+		return refused
+	}
 	return status.Error(codes.Internal, err.Error())
+}
+
+// tenantLoginRefusedStatus is the FailedPrecondition status for the
+// non-system tenant refusal, which login and passkey invitation activation
+// return until #1816, and nil for any other error.
+func tenantLoginRefusedStatus(err error) error {
+	var tenantRefused *sdkerrors.TenantLoginRefusedError
+	if !errors.As(err, &tenantRefused) {
+		return nil
+	}
+	return status.Error(codes.FailedPrecondition, tenantRefused.Error())
 }
 
 // BeginLogin handles the gRPC BeginLogin RPC.

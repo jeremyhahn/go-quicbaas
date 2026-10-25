@@ -661,7 +661,7 @@ func TestProtoToKeyAttributes(t *testing.T) {
 				},
 			}
 
-			attrs, err := protoToKeyAttributes("test-key-id", req)
+			attrs, err := protoToKeyAttributes("test-key-id", req.KeySpec)
 
 			if tt.expectError {
 				require.Error(t, err)

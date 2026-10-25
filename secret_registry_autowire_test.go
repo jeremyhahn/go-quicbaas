@@ -13,17 +13,28 @@ import (
 // issue their first-boot admin certificate under.
 const testTrustDomain = "quicbaas.example.test"
 
-func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
-	dir := t.TempDir()
+// embeddedConfig is an in-process server configuration, exactly how platformd
+// runs: embedded mode with every network listener off, so the test binds no
+// port and cannot collide with another server on the host.
+func embeddedConfig(t *testing.T) *config.Config {
+	t.Helper()
 	cfg := config.DefaultConfig()
-
 	cfg.Storage.Backend = config.StorageBackendFile
-	cfg.Storage.DataDir = dir
-	// Disable network listeners — we only exercise the embedded wiring.
-	// Embedded mode: in-process, no network listeners — exactly how platformd runs.
+	cfg.Storage.DataDir = t.TempDir()
 	cfg.Server.Embedded = true
+	cfg.Server.REST.Enabled = false
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.MCP.Enabled = false
+	if cfg.NetworkServing() {
+		t.Fatal("embedded test configuration still serves a network listener")
+	}
 	// First-boot issues the admin certificate and fails closed without a trust domain.
 	cfg.IAM.SPIFFETrustDomain = testTrustDomain
+	return cfg
+}
+
+func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
+	cfg := embeddedConfig(t)
 
 	srv, err := quicbaas.NewServer(cfg)
 	if err != nil {
@@ -46,7 +57,8 @@ func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
 		t.Errorf("service.SecretRegistry() is nil")
 	}
 
-	c, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	c, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc),
+		quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(srv)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -60,13 +72,7 @@ func TestEmbeddedSecretRegistryAutoWire(t *testing.T) {
 // path, so the secret registry must be built independently of CA bootstrap —
 // otherwise kms:// URIs fail closed and platformd FATALs on startup.
 func TestEmbeddedSecretRegistryAutoWireTLSDisabled(t *testing.T) {
-	dir := t.TempDir()
-	cfg := config.DefaultConfig()
-	cfg.Storage.Backend = config.StorageBackendFile
-	cfg.Storage.DataDir = dir
-	cfg.Server.Embedded = true
-	// First-boot issues the admin certificate and fails closed without a trust domain.
-	cfg.IAM.SPIFFETrustDomain = testTrustDomain
+	cfg := embeddedConfig(t)
 	cfg.Security.TLSEnabled = false
 
 	srv, err := quicbaas.NewServer(cfg)
@@ -88,7 +94,8 @@ func TestEmbeddedSecretRegistryAutoWireTLSDisabled(t *testing.T) {
 	if svc.SecretRegistry() == nil {
 		t.Errorf("service.SecretRegistry() is nil with TLS disabled")
 	}
-	c, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	c, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc),
+		quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(srv)))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,6 +71,7 @@ const (
 	loopE2EProject                    = "sdlc-loop-e2e-project"
 	loopE2EBackend                    = "e2e-agent"
 	loopE2EWorkerAgent                = "e2e-coder"
+	loopE2EWorkerModel                = "claude-opus-5"
 	loopE2EKeyName                    = "agent-sdlc-loop-e2e"
 	loopE2EKeyScope                   = "service"
 	loopE2EKeyOwner                   = "sdlc-e2e"
@@ -77,6 +80,7 @@ const (
 	e2eWebhookRef                     = "sdlc-e2e-webhook-secret"
 	e2eTokenRef                       = "sdlc-e2e-forge-token"
 	e2eSecretValue                    = "a-webhook-secret-the-forge-also-holds"
+	e2eForgeToken                     = "a-forge-api-token"
 )
 
 var registerLoopForgeOnce sync.Once
@@ -600,6 +604,28 @@ func (f *e2eForge) approveEveryOpenPullRequest() {
 	}
 }
 
+// branchHead answers the head of the pull request's branch as the repository
+// holds it now, or "" when there is no such pull request.
+func (f *e2eForge) branchHead(number int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pr, ok := f.prs[number]
+	if !ok {
+		return ""
+	}
+	return f.headOf(pr.HeadRef)
+}
+
+// refusedHead is the head "codex" requested changes on for pull request
+// number, read from the review record rather than the live branch: the
+// runner keeps pushing after the refusal, so the branch head may already be
+// a later round's commit.
+func (f *e2eForge) refusedHead(number int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refused[number]
+}
+
 // approve grants the independent approval and the green check on the pull
 // request's current head, as a reviewer and a pipeline would.
 func (f *e2eForge) approve(number int) {
@@ -724,6 +750,7 @@ func runGit(dir string, args ...string) error {
 func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	b.mu.Lock()
 	b.prompts = append(b.prompts, req.Prompt)
+	turn := len(b.prompts)
 	workDir := b.sessions[req.SessionID]
 	block := b.block
 	onPrompt := b.onPrompt
@@ -739,7 +766,12 @@ func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptR
 	if workDir == "" {
 		return nil, errors.New("e2e backend: the worker session has no checkout")
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte("done by the e2e worker\n"), 0o600); err != nil {
+	// Each turn writes its own content. A turn that rewrote the same bytes
+	// would leave the tree untouched, and the runner charges an untouched
+	// tree as a turn that produced no changes: a review round's worker,
+	// checking out the branch the previous round pushed, must change it.
+	content := "done by the e2e worker, turn " + strconv.Itoa(turn) + "\n"
+	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte(content), 0o600); err != nil {
 		return nil, err
 	}
 	if onPrompt != nil {
@@ -765,7 +797,9 @@ func (b *e2eAgentBackend) Capabilities() orchestration.BackendCapabilities {
 func (b *e2eAgentBackend) Type() string         { return "e2e" }
 func (b *e2eAgentBackend) ToolGuidance() string { return "" }
 func (b *e2eAgentBackend) ListModels(context.Context) ([]string, error) {
-	return []string{"e2e-model"}, nil
+	// The live catalog must offer the worker Agent's model, or defining the
+	// worker is refused.
+	return []string{loopE2EWorkerModel}, nil
 }
 
 // spawnCount is how many sessions the job asked for. For an sdlc job it is
@@ -831,6 +865,11 @@ type e2eContainer struct {
 	// checkoutRoot is what the container calls hostDir.
 	checkoutRoot string
 
+	// mounts rewrites the container's other paths to the host directories
+	// standing in for them: the workspace spec directory, and the credential
+	// tier, a tmpfs with no host source in a real container.
+	mounts *strings.Replacer
+
 	authSock string
 }
 
@@ -854,6 +893,18 @@ type e2eExecCall struct {
 	WorkDir     string
 	Cmd         []string
 	ExitCode    int
+
+	// Delivered is what the forge credential file held the moment the
+	// delivery step returned, read before any later step can revoke it.
+	// Empty for every other command.
+	Delivered string
+}
+
+// forgeCredentialStep reports whether the call delivered or removed the forge
+// credential on the container's credential tier (go-quicbaas#899): the only
+// commands the runner runs there that name the token file.
+func (c e2eExecCall) forgeCredentialStep() bool {
+	return slices.Contains(c.Cmd, orchestration.WorkspaceForgeCredentialFile)
 }
 
 func newE2EContainerRuntime() *e2eContainerRuntime {
@@ -868,12 +919,23 @@ func (r *e2eContainerRuntime) register(containerID string, req *orchestration.Sp
 	if err != nil {
 		return err
 	}
+	// The credential tier sits beside the checkout, under the factory
+	// workspace root TestMain removes.
+	credentialDir := req.WorkDir + ".credentials"
+	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
+		return err
+	}
 	container := &e2eContainer{hostDir: req.WorkDir, checkoutRoot: spec.CheckoutRoot}
+	mounts := []string{orchestration.WorkspaceCredentialDir, credentialDir}
 	for _, mount := range req.ExtraMounts {
-		if mount.Target == orchestration.WorkspaceSigningAgentSocket {
+		switch mount.Target {
+		case orchestration.WorkspaceSigningAgentSocket:
 			container.authSock = mount.Source
+		case orchestration.WorkspaceSpecDir:
+			mounts = append(mounts, mount.Target, mount.Source)
 		}
 	}
+	container.mounts = strings.NewReplacer(mounts...)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.containers[containerID] = container
@@ -895,11 +957,23 @@ func (r *e2eContainerRuntime) Exec(ctx context.Context, containerID string, spec
 	if translateErr != nil {
 		return nil, &orchestration.ContainerExecError{ContainerID: containerID, Cause: translateErr}
 	}
-	cmd := exec.CommandContext(ctx, spec.Cmd[0], spec.Cmd[1:]...)
+	// A command that names another container path, such as the forge-token
+	// delivery or the allowed-signers file, reaches the host directory that
+	// stands in for it.
+	args := make([]string, len(spec.Cmd))
+	for i, arg := range spec.Cmd {
+		args[i] = container.mounts.Replace(arg)
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "SSH_AUTH_SOCK="+container.authSock)
 	for key, value := range spec.Env {
-		cmd.Env = append(cmd.Env, key+"="+value)
+		cmd.Env = append(cmd.Env, key+"="+container.mounts.Replace(value))
+	}
+	// A real container feeds the exec's stdin to the process; the forge
+	// credential's delivery sends the token no other way.
+	if len(spec.Stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(spec.Stdin)
 	}
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
@@ -913,11 +987,19 @@ func (r *e2eContainerRuntime) Exec(ctx context.Context, containerID string, spec
 		}
 		result.ExitCode = exitErr.ExitCode()
 	}
-	r.mu.Lock()
-	r.execs = append(r.execs, e2eExecCall{
+	call := e2eExecCall{
 		ContainerID: containerID, WorkDir: spec.WorkDir,
 		Cmd: append([]string(nil), spec.Cmd...), ExitCode: result.ExitCode,
-	})
+	}
+	if call.forgeCredentialStep() && args[0] == "sh" {
+		delivered, readErr := os.ReadFile(container.mounts.Replace(orchestration.WorkspaceForgeCredentialFile))
+		if readErr != nil {
+			return nil, &orchestration.ContainerExecError{ContainerID: containerID, Cause: readErr}
+		}
+		call.Delivered = string(delivered)
+	}
+	r.mu.Lock()
+	r.execs = append(r.execs, call)
 	r.mu.Unlock()
 	return result, nil
 }
@@ -1208,7 +1290,7 @@ func defineFactoryWorker(t *testing.T, ctx context.Context, agents orchestration
 	_, err := directory.CreateAgent(ctx, loopE2ETenant, &orchestration.Agent{
 		ID: loopE2EWorkerAgent, Name: "Factory e2e coder",
 		Roles:   []orchestration.AgentRole{orchestration.AgentRoleCoding},
-		Backend: loopE2EBackend, Model: "claude-opus-5",
+		Backend: loopE2EBackend, Model: loopE2EWorkerModel,
 	})
 	require.NoError(t, err, "defining the worker Agent")
 	return ref
@@ -1221,7 +1303,7 @@ func registerFactoryProject(t *testing.T, srv *server.Server, backend *e2eAgentB
 	ensureFactoryTenant(t, srv)
 	secrets := srv.Service().Secrets()
 	require.NotNil(t, secrets)
-	for ref, value := range map[string]string{e2eWebhookRef: e2eSecretValue, e2eTokenRef: "a-forge-api-token"} {
+	for ref, value := range map[string]string{e2eWebhookRef: e2eSecretValue, e2eTokenRef: e2eForgeToken} {
 		_, err := secrets.StoreSecret(ctx, &service.StoreSecretRequest{SecretID: ref, Data: []byte(value)})
 		require.NoError(t, err)
 	}
@@ -1332,6 +1414,11 @@ func factoryCtx() context.Context {
 }
 
 // awaitJob waits for one job to reach a terminal state and returns it.
+// awaitJob waits for the factory's DELIVERY job — the sdlc runner's — to
+// reach want. A bound project also runs triage jobs (docs/sdlc/triage.md:
+// a third JobRunner, one job per project), and those complete within
+// milliseconds of startup: matching any job in want would return the triage
+// job and end the test while the delivery is still in flight.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
 	var found *orchestration.JobStatus
@@ -1341,13 +1428,13 @@ func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *or
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if job.Runner == sdlc.JobRunnerName && job.State == want {
 				found = job
 				return true
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, "no %s job reached %s", sdlc.JobRunnerName, want)
 	return found
 }
 
@@ -1412,16 +1499,38 @@ func taskOfJob(t *testing.T, srv *server.Server, job *orchestration.JobStatus) s
 func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.T) {
 	rig := startFactory(t, 72)
 	loopForge.setVerdictOnOpen("REQUEST_CHANGES")
-	rig.backend.onPrompt = func(string) {
-		if rig.backend.promptCount() >= 2 {
-			loopForge.approveEveryOpenPullRequest()
+
+	// The reviewer approves the round's work, so it approves only once the
+	// round has PUSHED: an approval of the head the findings were raised on
+	// is not an approval of the change that answers them.
+	var number int
+	var refusedHead string
+	require.Eventually(t, func() bool {
+		prs := loopForge.pullRequests()
+		if len(prs) != 1 {
+			return false
 		}
-	}
+		number, refusedHead = prs[0].Number, loopForge.refusedHead(prs[0].Number)
+		return refusedHead != ""
+	}, 90*time.Second, 50*time.Millisecond, "the first round never opened its pull request")
+	require.Eventually(t, func() bool {
+		head := loopForge.branchHead(number)
+		return head != "" && head != refusedHead
+	}, 90*time.Second, 50*time.Millisecond, "the review round never pushed a change answering the findings")
+	loopForge.approveEveryOpenPullRequest()
 
 	job := awaitJob(t, rig.srv, orchestration.JobStateCompleted)
 	require.Equal(t, sdlc.JobRunnerName, job.Runner)
-	require.Equal(t, 1, rig.backend.spawnCount(), "a review round must not spawn a second worker")
-	require.GreaterOrEqual(t, rig.backend.promptCount(), 2, "the findings never reached the worker")
+	// The worker's container is closed for the review wait and the round
+	// runs in a new one on the same branch (docs/sdlc/architecture.md,
+	// `reviewing` and `re-delegating`; go-quicbaas#938). Under the default
+	// session_rotation `resume` the SESSION is the same conversation: the
+	// round's first prompt carries the released one's transcript.
+	require.Equal(t, 2, rig.backend.spawnCount(), "each review round runs in one new worker container")
+	prompts := rig.backend.promptTexts()
+	require.GreaterOrEqual(t, len(prompts), 2, "the findings never reached the worker")
+	require.Contains(t, prompts[1], "This session continues the same conversation in a new container",
+		"the review round did not resume the released session's conversation")
 	require.Len(t, loopForge.pullRequests(), 1, "a review round opened a second pull request")
 	t.Logf("OBSERVED: sessions=%d prompts=%d iteration=%d", rig.backend.spawnCount(), rig.backend.promptCount(), job.Iteration)
 }
@@ -1634,12 +1743,23 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	containerDir := filepath.Join(orchestration.WorkspaceCheckoutRoot, loopE2EProject)
 	commands := rig.runtime.commandsRun()
 	require.NotEmpty(t, commands, "no command was run in the worker's container")
-	var sawClone, sawCommit, sawPush bool
+	var sawClone, sawCommit, sawPush, sawDelivery bool
 	for _, call := range rig.runtime.execs {
 		require.Contains(t, []string{orchestration.WorkspaceCheckoutRoot, containerDir}, call.WorkDir,
 			"a command named %q, which is neither the checkout root nor the container's checkout", call.WorkDir)
-		// git and the binding's verification are the two things the runner runs
-		// in a worker's container; both run there and nothing else does.
+		if call.forgeCredentialStep() {
+			// The delivery wrote the project's stored token to the
+			// credential tier, as read before the revocation removed it.
+			if call.Cmd[0] == "sh" {
+				sawDelivery = true
+				require.Equal(t, e2eForgeToken, call.Delivered,
+					"the forge credential file did not hold the delivered token")
+			}
+			continue
+		}
+		// Besides the forge credential's delivery and removal, git and the
+		// binding's verification are the two things the runner runs in a
+		// worker's container; both run there and nothing else does.
 		require.Contains(t, []string{"git", "sh"}, call.Cmd[0],
 			"the runner ran something unaccounted for in the container: %v", call.Cmd)
 		if strings.Contains(strings.Join(call.Cmd, " "), " clone ") {
@@ -1658,6 +1778,7 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	require.True(t, sawClone, "nothing cloned in the container: %v", commands)
 	require.True(t, sawCommit, "nothing committed in the container: %v", commands)
 	require.True(t, sawPush, "nothing pushed from the container: %v", commands)
+	require.True(t, sawDelivery, "the forge credential was never delivered: %v", commands)
 
 	// The commit that reached the remote carries a signature, and git accepts
 	// it against the tenant's signing key.
@@ -1727,7 +1848,7 @@ func TestSDLCRunner_TheContainerRunsTheVerificationCommands(t *testing.T) {
 
 	var verifications []e2eExecCall
 	for _, call := range rig.runtime.execs {
-		if call.Cmd[0] == "sh" {
+		if call.Cmd[0] == "sh" && !call.forgeCredentialStep() {
 			verifications = append(verifications, call)
 		}
 	}

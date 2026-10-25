@@ -54,8 +54,8 @@ func TestAuthBypass_VirginNodeCanBootstrap(t *testing.T) {
 		"a virgin node must be able to initialize its barrier unauthenticated")
 	assert.True(t, bypass.BypassesGRPC(grpcBarrierUnseal),
 		"a virgin node must be able to unseal unauthenticated")
-	assert.True(t, bypass.BypassesGRPC(grpcCeremonyStatus),
-		"the ceremony status probe is exempt while the ceremony is unfinished")
+	assert.False(t, bypass.BypassesGRPC(grpcCeremonyStatus),
+		"a sealed node answers no status question but barrier status (go-qrdb v0.50)")
 }
 
 // TestAuthBypass_InitializedSealedNodeKeepsOnlyTheUnsealFlow pins state 2: a
@@ -72,15 +72,11 @@ func TestAuthBypass_InitializedSealedNodeKeepsOnlyTheUnsealFlow(t *testing.T) {
 	assert.False(t, bypass.BypassesGRPC(grpcCeremonyStatus),
 		"the pre-operational ceremony exemption must expire with the ceremony")
 
-	// Initialize stays exempt by design: the daemon cannot distinguish a
-	// virgin barrier from an initialized one without reading the very barrier
-	// the caller is trying to reach, so the durable guard is the barrier
-	// itself - qrdb's StorageBarrier.Initialize refuses an already-initialized
-	// store with a compare-and-set, so this exemption cannot destroy a trust
-	// root. If that guard is ever relaxed, move VerbBarrierInitialize to
-	// PreOperationalOnly in Table rather than relying on the service layer.
-	assert.True(t, bypass.BypassesGRPC(grpcBarrierInitialize),
-		"Initialize is ScopeAlways; re-init is refused by the barrier's CAS")
+	// go-qrdb v0.50 flags the first-boot verbs PreOperationalOnly and refuses
+	// them once the barrier is initialized, so their exemption expires with
+	// the ceremony too.
+	assert.False(t, bypass.BypassesGRPC(grpcBarrierInitialize),
+		"barrier initialize is pre-operational only (go-qrdb v0.50)")
 }
 
 // TestAuthBypass_UnsealedNodeExemptsNothing pins state 3, the state the

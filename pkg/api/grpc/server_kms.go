@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
@@ -90,7 +91,7 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 
 	// Route through the service layer for tenant-aware key generation
 	if s.kmsSvc != nil {
-		attrs, err := protoToKeyAttributes(keyID, req)
+		attrs, err := protoToKeyAttributes(keyID, req.KeySpec)
 		if err != nil {
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
@@ -124,7 +125,7 @@ func (s *KMSServer) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest)
 	}
 
 	// Fallback: call KMS manager directly (no tenant isolation)
-	attrs, err := protoToKeyAttributes(keyID, req)
+	attrs, err := protoToKeyAttributes(keyID, req.KeySpec)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -175,6 +176,48 @@ func (s *KMSServer) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*p
 
 	// Use user-provided name as key ID
 	keyID := req.Name
+
+	// Route through the service layer, which namespaces the key under the
+	// caller's tenant.
+	if s.kmsSvc != nil {
+		attrs, err := protoToKeyAttributes(keyID, req.KeySpec)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+
+		svcReq := &service.ImportKeyRequest{
+			KeyMaterial:        req.KeyMaterial,
+			WrappingKeyID:      req.WrappingKeyId,
+			KeyAttributes:      attrs,
+			Name:               req.Name,
+			Description:        req.Description,
+			Usage:              convertProtoKeyUsageList(req.KeySpec.Usage),
+			DeletionProtection: req.KeySpec.DeletionProtection,
+			Tags:               req.Tags,
+		}
+
+		svcResp, err := s.kmsSvc.ImportKey(ctx, svcReq)
+		if err != nil {
+			return nil, convertKMSError(err)
+		}
+
+		var n responseNarrower
+		resp := &pb.ImportKeyResponse{
+			Key:       convertKeyHandle(&n, svcResp.Key),
+			Metadata:  convertKeyMetadata(&n, svcResp.Metadata),
+			Timestamp: svcResp.Timestamp.Unix(),
+		}
+		if err := n.err(); err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
+	// Fallback: the KMS manager has no tenant namespacing, so a tenant-scoped
+	// caller is refused rather than importing into the shared key namespace.
+	if tenantID, err := tenantctx.FromContext(ctx, "grpc.KMSServer.ImportKey"); err == nil && !tenantctx.IsSystem(tenantID) {
+		return nil, &UnscopedKeyImportError{TenantID: tenantID}
+	}
 
 	// Get algorithm string from proto
 	algorithm := protoKeyAlgorithmToString(req.KeySpec.Algorithm)
@@ -1578,14 +1621,14 @@ func protoExportFormatToString(format pb.ExportFormat) string {
 
 // protoToKeyAttributes builds KeyAttributes from a GenerateKeyRequest proto.
 // Returns an error if the algorithm is unspecified or invalid.
-func protoToKeyAttributes(keyID string, req *pb.GenerateKeyRequest) (*kctypes.KeyAttributes, error) {
+func protoToKeyAttributes(keyID string, spec *pb.KeySpec) (*kctypes.KeyAttributes, error) {
 	attrs := &kctypes.KeyAttributes{
 		CN:         keyID,
-		Exportable: req.KeySpec.Exportable,
+		Exportable: spec.Exportable,
 	}
 
 	// Map proto algorithm to go-xkms types
-	switch req.KeySpec.Algorithm {
+	switch spec.Algorithm {
 	case pb.KeyAlgorithm_KEY_ALG_AES_128_GCM:
 		attrs.SymmetricAlgorithm = kctypes.SymmetricAES128GCM
 		attrs.KeyType = kctypes.KeyTypeEncryption
@@ -1631,7 +1674,7 @@ func protoToKeyAttributes(keyID string, req *pb.GenerateKeyRequest) (*kctypes.Ke
 	case pb.KeyAlgorithm_KEY_ALG_UNSPECIFIED:
 		return nil, api.NewRequiredFieldError("key algorithm")
 	default:
-		return nil, api.NewInvalidFormatMessageError("key algorithm", "unsupported key algorithm: "+req.KeySpec.Algorithm.String())
+		return nil, api.NewInvalidFormatMessageError("key algorithm", "unsupported key algorithm: "+spec.Algorithm.String())
 	}
 
 	return attrs, nil

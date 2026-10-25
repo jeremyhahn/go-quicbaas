@@ -42,7 +42,8 @@ func TestWrite_ProducesAUsableClientIdentity(t *testing.T) {
 	require.NoError(t, err)
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	require.NoError(t, err)
-	assert.Equal(t, []string{"agents"}, leaf.Subject.OrganizationalUnit)
+	// go-xkms v0.57 stamps the tenant over the requested OU (CA m779 62(a)).
+	assert.Equal(t, []string{"tenant-test"}, leaf.Subject.OrganizationalUnit)
 	assert.Equal(t, []string{"tenant-test"}, leaf.Subject.Organization)
 	assert.Equal(t, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, leaf.ExtKeyUsage)
 

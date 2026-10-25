@@ -29,9 +29,8 @@
 // # Strict ceremony model
 //
 // quicbaas deliberately DIVERGES from qrdb here. go-qrdb keeps a permissive
-// "Vault model" in which the whole ceremony surface — including initialize,
-// sign-csr and enroll-external-officer — is reachable pre-authentication
-// while sealed. quicbaas adopts go-xkms's STRICT model instead (owner
+// "Vault model" in which the ceremony surface — including initialize and
+// sign-csr — is reachable pre-authentication while sealed. quicbaas adopts go-xkms's STRICT model instead (owner
 // decision), which narrows that surface on two independent axes:
 //
 //  1. StrictCeremonyExclusions removes the ceremony verbs that MINT or
@@ -50,6 +49,11 @@
 // from one derivation. There is no per-transport ceremony allowlist to
 // drift — the drift class that produced the pre-auth exposure this model
 // replaces.
+//
+// Names.AuthenticatedOnly mirrors qrdb's flag of the same name: the verb is
+// admitted by the deny gate while sealed but is never exempt from
+// authentication on any transport (cluster unseal is an authorized platform
+// act, not a credential-possession one).
 //
 // Deliberate exclusions (never allowlisted on any transport, matching qrdb):
 //
@@ -82,29 +86,18 @@ import (
 // the two tables can be diffed mechanically.
 type Verb string
 
-// Canonical sealed-window verbs (1:1 with go-qrdb/pkg/api/sealedwindow).
+// Canonical sealed-window verbs (1:1 with go-qrdb/pkg/api/sealedwindow's
+// Verbs). Health, node status, ceremony status and the officer list are not
+// verbs: a sealed node answers no status question but barrier status, and
+// lists no holder to an anonymous caller (go-qrdb v0.50).
 const (
-	VerbHealth Verb = "health"
-	VerbStatus Verb = "status"
-
 	VerbBarrierStatus     Verb = "barrier-status"
 	VerbBarrierInitialize Verb = "barrier-initialize"
 	VerbBarrierUnseal     Verb = "barrier-unseal"
 
-	VerbShamirInitialize   Verb = "shamir-initialize"
-	VerbShamirUnsealShare  Verb = "shamir-unseal-share"
-	VerbShamirUnsealShares Verb = "shamir-unseal-shares"
-
-	// Rekey and the recovery-key generate / delete / status verbs left the
-	// sealed window with go-qrdb v0.25: they are not justified as anonymous,
-	// and they already refused while sealed.
-	VerbRecoveryRecover Verb = "recovery-recover"
-
-	VerbRootToken Verb = "root-token"
+	VerbShamirInitialize Verb = "shamir-initialize"
 
 	VerbOfficerRegister    Verb = "officer-register"
-	VerbOfficerList        Verb = "officer-list"
-	VerbOfficerClaimStatus Verb = "officer-claim-status"
 	VerbShareClaimBegin    Verb = "share-claim-begin"
 	VerbShareClaimComplete Verb = "share-claim-complete"
 
@@ -112,17 +105,15 @@ const (
 	VerbRecoveryShareClaimBegin    Verb = "recovery-share-claim-begin"
 	VerbRecoveryShareClaimComplete Verb = "recovery-share-claim-complete"
 
-	VerbCeremonyInitialize           Verb = "ceremony-initialize"
-	VerbCeremonyStatus               Verb = "ceremony-status"
-	VerbCeremonyClaimCertBegin       Verb = "ceremony-claim-cert-begin"
-	VerbCeremonyClaimCertComplete    Verb = "ceremony-claim-cert-complete"
-	VerbCeremonyOfficerShareBegin    Verb = "ceremony-officer-share-begin"
-	VerbCeremonyOfficerShareComplete Verb = "ceremony-officer-share-complete"
-	VerbCeremonySignCSR              Verb = "ceremony-sign-csr"
-	VerbCeremonyClaimShareBegin      Verb = "ceremony-claim-share-begin"
-	VerbCeremonyClaimShareEnd        Verb = "ceremony-claim-share-complete"
-	VerbCeremonySubmitUnsealShare    Verb = "ceremony-submit-unseal-share"
-	VerbCeremonyEnrollExtOfficer     Verb = "ceremony-enroll-external-officer"
+	VerbQuorumBegin  Verb = "quorum-begin"
+	VerbQuorumSubmit Verb = "quorum-submit"
+
+	VerbCeremonyInitialize Verb = "ceremony-initialize"
+	VerbCeremonySignCSR    Verb = "ceremony-sign-csr"
+
+	// VerbBarrierClusterUnseal clears a cluster-wide seal of the node
+	// barrier. It is AuthenticatedOnly.
+	VerbBarrierClusterUnseal Verb = "barrier-cluster-unseal"
 )
 
 // QUICOp identifies one native quicbaas-QUIC operation: a wire opcode plus
@@ -163,8 +154,7 @@ type Names struct {
 	// exemption additionally requires the init ceremony to still be
 	// pre-operational (see OperationalProbe in authbypass.go).
 	//
-	// It is set for the self-authorizing / read-only ceremony routes:
-	// status reports only a state name, and the claim handshakes
+	// It is set for the self-authorizing ceremony routes: the claim handshakes
 	// authenticate the caller against material submitted at enrollment (a
 	// nonce signed by the key in the officer's CSR, or the mTLS peer
 	// thumbprint recorded for that officer) rather than against an account
@@ -179,11 +169,22 @@ type Names struct {
 	// state-independent would let an unauthenticated caller enroll an
 	// officer during any restart-while-sealed after the ceremony completed.
 	//
-	// The barrier verbs are deliberately NOT marked: a daemon restarted
+	// It is ALSO set for the first-boot verbs go-qrdb flags
+	// PreOperationalOnly (barrier initialize, Shamir initialize, ceremony
+	// initialize, ceremony sign-CSR): go-qrdb v0.50 refuses them once the
+	// barrier is initialized, so they never skip authentication after that.
+	//
+	// The other barrier verbs are deliberately NOT marked: a daemon restarted
 	// after a completed ceremony is operational AND sealed, and unseal must
 	// still be reachable without a token because a sealed IAM plane cannot
 	// validate one.
 	PreOperationalOnly bool
+	// AuthenticatedOnly marks a verb the deny gate admits while sealed but
+	// that is never exempt from authentication, in any ceremony state. It
+	// mirrors qrdb's AuthenticatedOnly: cluster unseal clears a cluster-wide
+	// seal, which is an authorized platform act, not a
+	// credential-possession one. Such a verb appears only in ScopeAll.
+	AuthenticatedOnly bool
 }
 
 // Native quicbaas-QUIC opcode / sub-op values. These mirror the protocol
@@ -195,65 +196,40 @@ const (
 	opBarrier  byte = 0xC0
 	opCeremony byte = 0xC1
 
-	subBarrierStatus             byte = 0x01
-	subBarrierInitialize         byte = 0x02
-	subBarrierUnseal             byte = 0x03
-	subBarrierShamirInitialize   byte = 0x05
-	subBarrierShamirUnsealShare  byte = 0x06
-	subBarrierShamirUnsealShares byte = 0x07
-	subBarrierRecoveryRecover    byte = 0x0E
-	subBarrierRootToken          byte = 0x11
+	subBarrierStatus           byte = 0x01
+	subBarrierInitialize       byte = 0x02
+	subBarrierUnseal           byte = 0x03
+	subBarrierShamirInitialize byte = 0x05
 
-	subCeremonyInitialize            byte = 0x01
-	subCeremonyStatus                byte = 0x02
-	subCeremonyClaimCertBegin        byte = 0x03
-	subCeremonyClaimCertComplete     byte = 0x04
-	subCeremonyBeginClaimShare       byte = 0x05
-	subCeremonySignCSR               byte = 0x06
-	subCeremonyListOfficers          byte = 0x07
-	subCeremonyEnrollExternalOfficer byte = 0x08
-	subCeremonyCompleteClaimShare    byte = 0x09
+	subCeremonyInitialize byte = 0x01
+	subCeremonyStatus     byte = 0x02
+	subCeremonySignCSR    byte = 0x06
 )
 
 // Verbs is the canonical verb list in stable derivation order (identical to
 // qrdb's order).
 var Verbs = []Verb{
-	VerbHealth,
-	VerbStatus,
 	VerbBarrierStatus,
 	VerbBarrierInitialize,
 	VerbBarrierUnseal,
 	VerbShamirInitialize,
-	VerbShamirUnsealShare,
-	VerbShamirUnsealShares,
-	VerbRecoveryRecover,
-	VerbRootToken,
 	VerbOfficerRegister,
-	VerbOfficerList,
-	VerbOfficerClaimStatus,
 	VerbShareClaimBegin,
 	VerbShareClaimComplete,
 	VerbRecoveryOfficerRegister,
 	VerbRecoveryShareClaimBegin,
 	VerbRecoveryShareClaimComplete,
+	VerbQuorumBegin,
+	VerbQuorumSubmit,
 	VerbCeremonyInitialize,
-	VerbCeremonyStatus,
-	VerbCeremonyClaimCertBegin,
-	VerbCeremonyClaimCertComplete,
-	VerbCeremonyOfficerShareBegin,
-	VerbCeremonyOfficerShareComplete,
 	VerbCeremonySignCSR,
-	VerbCeremonyClaimShareBegin,
-	VerbCeremonyClaimShareEnd,
-	VerbCeremonySubmitUnsealShare,
-	VerbCeremonyEnrollExtOfficer,
+	VerbBarrierClusterUnseal,
 }
 
 // StrictCeremonyExclusions names the canonical verbs quicbaas withholds from
 // its sealed window on EVERY transport, mapped to the reason. qrdb allowlists
-// ceremony initialize and sign-csr (it withdrew external officer enrollment
-// itself in v0.25); quicbaas withholds all three (owner decision — adopt go-xkms's strict
-// model).
+// ceremony initialize and sign-csr; quicbaas withholds both (owner decision —
+// adopt go-xkms's strict model).
 //
 // The verbs keep their full entries in Table so the quicbaas table still
 // diffs mechanically against qrdb's, and every derivation below skips them,
@@ -270,8 +246,6 @@ var StrictCeremonyExclusions = map[Verb]string{
 		"Runs in-process during `quicbaasd init`.",
 	VerbCeremonySignCSR: "issues a certificate from the ceremony CA. Requires the SO PIN and " +
 		"an already-enrolled operator, so it stays authenticated and authorized.",
-	VerbCeremonyEnrollExtOfficer: "writes an officer trust record and seals a Shamir share to an " +
-		"operator-supplied public key; enrolling an attacker-controlled key pre-auth subverts the quorum.",
 }
 
 // Excluded reports whether v is withheld from the quicbaas sealed window by
@@ -295,25 +269,13 @@ func Excluded(v Verb) bool {
 // later change mounts beneath it — which is exactly how initialize, sign-csr
 // and enroll-external-officer became reachable pre-authentication. Listing a
 // mirror beside its verb also keeps the two mounts of one handler in
-// lock-step, so /api/v1/init/status and /v1/ceremony/status can never be
+// lock-step, so /api/v1/barrier/unseal and /v1/barrier/unseal can never be
 // gated differently.
 //
-// Paths that qrdb defines but quicbaas does not currently mount (e.g. the
-// officer claim routes) are retained verbatim: they are inert against the
-// router (404) and keep the table diffable against qrdb's.
+// Paths that qrdb defines but quicbaas does not currently mount are
+// retained verbatim: they are inert against the router (404) and keep the
+// table diffable against qrdb's.
 var Table = map[Verb]Names{
-	VerbHealth: {
-		REST:     []string{"/health", "/v1/health", "/api/v1/health", "/api/v1/health/live", "/api/v1/health/ready"},
-		GRPC:     []string{"Health"},
-		QUIC:     []QUICOp{{Opcode: opHealth}},
-		QRDBQUIC: []string{"admin.Health"},
-	},
-	VerbStatus: {
-		REST:     []string{"/status"},
-		GRPC:     []string{"Status"},
-		QRDBQUIC: []string{"admin.Status"},
-	},
-
 	VerbBarrierStatus: {
 		REST:     []string{"/v1/barrier/status", "/api/v1/barrier/status"},
 		GRPC:     []string{"BarrierStatus"},
@@ -322,11 +284,12 @@ var Table = map[Verb]Names{
 		MCP:      []string{"qrdb_barrier_status"},
 	},
 	VerbBarrierInitialize: {
-		REST:     []string{"/v1/barrier/initialize", "/api/v1/barrier/initialize"},
-		GRPC:     []string{"BarrierInitialize"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierInitialize}},
-		QRDBQUIC: []string{"barrier.Initialize"},
-		MCP:      []string{"qrdb_barrier_initialize"},
+		REST:               []string{"/v1/barrier/initialize", "/api/v1/barrier/initialize"},
+		GRPC:               []string{"BarrierInitialize"},
+		QUIC:               []QUICOp{{Opcode: opBarrier, SubOp: subBarrierInitialize}},
+		QRDBQUIC:           []string{"barrier.Initialize"},
+		MCP:                []string{"qrdb_barrier_initialize"},
+		PreOperationalOnly: true,
 	},
 	VerbBarrierUnseal: {
 		REST:     []string{"/v1/barrier/unseal", "/api/v1/barrier/unseal"},
@@ -337,41 +300,13 @@ var Table = map[Verb]Names{
 	},
 
 	VerbShamirInitialize: {
-		REST:     []string{"/v1/barrier/shamir/initialize", "/api/v1/barrier/shamir/initialize"},
-		GRPC:     []string{"BarrierShamirInitialize"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierShamirInitialize}},
-		QRDBQUIC: []string{"barrier.ShamirInitialize"},
-		MCP:      []string{"qrdb_barrier_shamir_initialize"},
+		REST:               []string{"/v1/barrier/shamir/initialize", "/api/v1/barrier/shamir/initialize"},
+		GRPC:               []string{"BarrierShamirInitialize"},
+		QUIC:               []QUICOp{{Opcode: opBarrier, SubOp: subBarrierShamirInitialize}},
+		QRDBQUIC:           []string{"barrier.ShamirInitialize"},
+		MCP:                []string{"qrdb_barrier_shamir_initialize"},
+		PreOperationalOnly: true,
 	},
-	VerbShamirUnsealShare: {
-		REST:     []string{"/v1/barrier/shamir/unseal-share", "/api/v1/barrier/shamir/unseal-share"},
-		GRPC:     []string{"BarrierShamirUnsealShare"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierShamirUnsealShare}},
-		QRDBQUIC: []string{"barrier.ShamirUnsealShare"},
-		MCP:      []string{"qrdb_barrier_shamir_unseal_share"},
-	},
-	VerbShamirUnsealShares: {
-		REST:     []string{"/v1/barrier/shamir/unseal-shares", "/api/v1/barrier/shamir/unseal-shares"},
-		GRPC:     []string{"BarrierShamirUnsealShares"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierShamirUnsealShares}},
-		QRDBQUIC: []string{"barrier.ShamirUnsealShares"},
-		MCP:      []string{"qrdb_barrier_shamir_unseal_shares"},
-	},
-	VerbRecoveryRecover: {
-		REST:     []string{"/v1/barrier/recovery/recover", "/api/v1/barrier/recovery/recover"},
-		GRPC:     []string{"BarrierRecoveryRecover"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRecoveryRecover}},
-		QRDBQUIC: []string{"barrier.RecoveryRecover"},
-		MCP:      []string{"qrdb_barrier_recovery_recover"},
-	},
-	VerbRootToken: {
-		REST:     []string{"/v1/barrier/root-token", "/api/v1/barrier/root-token"},
-		GRPC:     []string{"BarrierRootToken"},
-		QUIC:     []QUICOp{{Opcode: opBarrier, SubOp: subBarrierRootToken}},
-		QRDBQUIC: []string{"barrier.RootToken"},
-		MCP:      []string{"qrdb_barrier_root_token"},
-	},
-
 	// GET and POST /v1/barrier/officers share one path (method-dispatched).
 	// officer-register is PreOperationalOnly: qrdb's RegisterOfficer service
 	// body CA-signs any caller-supplied CSR and assigns a Shamir share index
@@ -380,37 +315,24 @@ var Table = map[Verb]Names{
 	// officer during any restart-while-sealed. Officer enrollment belongs to
 	// the enrollment ceremony; the exemption lapses at operational.
 	VerbOfficerRegister: {
-		REST:               []string{"POST /v1/barrier/officers"},
+		REST:               []string{"POST /v1/barrier/officers", "POST /api/v1/barrier/officers"},
 		GRPC:               []string{"BarrierOfficerRegister"},
 		QRDBQUIC:           []string{"barrier.OfficerRegister"},
 		MCP:                []string{"qrdb_barrier_officer_register"},
 		PreOperationalOnly: true,
 	},
-	// The ceremony officer list is quicbaas's own (CeremonyListOfficers); go-qrdb
-	// v0.25 withdrew its barrier officer list from the sealed window, so only
-	// the ceremony names remain here.
-	VerbOfficerList: {
-		REST: []string{"/v1/ceremony/officers", "/api/v1/init/officers"},
-		GRPC: []string{"CeremonyListOfficers"},
-		QUIC: []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyListOfficers}},
-		MCP:  []string{"quicbaas_ceremony_list_officers"},
-	},
-	VerbOfficerClaimStatus: {
-		REST:     []string{"/v1/barrier/officers/claim-status"},
-		GRPC:     []string{"BarrierOfficerClaimStatus"},
-		QRDBQUIC: []string{"barrier.OfficerClaimStatus"},
-		MCP:      []string{"qrdb_barrier_officer_claim_status"},
-	},
-	// The path-param claim routes (/{username}/claim/begin|complete) are
-	// covered by the /v1/barrier/officers/ prefix, shared by both verbs.
+	// The claim routes carry the holder in a path segment. They are listed
+	// as one-segment patterns, never as an /v1/barrier/officers/ prefix: a
+	// prefix would also admit POST /v1/barrier/officers/revoke, a rekey that
+	// removes a holder, which is not a sealed-window operation (mirrors qrdb).
 	VerbShareClaimBegin: {
-		REST:     []string{"/v1/barrier/officers/"},
+		REST:     []string{"POST /v1/barrier/officers/{username}/claim/begin", "POST /api/v1/barrier/officers/{username}/claim/begin"},
 		GRPC:     []string{"BarrierShareClaimBegin"},
 		QRDBQUIC: []string{"barrier.ShareClaimBegin"},
 		MCP:      []string{"qrdb_barrier_share_claim_begin"},
 	},
 	VerbShareClaimComplete: {
-		REST:     []string{"/v1/barrier/officers/"},
+		REST:     []string{"POST /v1/barrier/officers/{username}/claim/complete", "POST /api/v1/barrier/officers/{username}/claim/complete"},
 		GRPC:     []string{"BarrierShareClaimComplete"},
 		QRDBQUIC: []string{"barrier.ShareClaimComplete"},
 		MCP:      []string{"qrdb_barrier_share_claim_complete"},
@@ -420,23 +342,40 @@ var Table = map[Verb]Names{
 	// rationale: it enrolls a recovery officer via the same
 	// CSR-sign-and-assign-share flow with no service-layer auth.
 	VerbRecoveryOfficerRegister: {
-		REST:               []string{"POST /v1/barrier/recovery/officers"},
+		REST:               []string{"POST /v1/barrier/recovery/officers", "POST /api/v1/barrier/recovery/officers"},
 		GRPC:               []string{"BarrierRecoveryOfficerRegister"},
 		QRDBQUIC:           []string{"barrier.RecoveryOfficerRegister"},
 		MCP:                []string{"qrdb_barrier_recovery_officer_register"},
 		PreOperationalOnly: true,
 	},
 	VerbRecoveryShareClaimBegin: {
-		REST:     []string{"/v1/barrier/recovery/officers/"},
+		REST:     []string{"POST /v1/barrier/recovery/officers/{username}/claim/begin", "POST /api/v1/barrier/recovery/officers/{username}/claim/begin"},
 		GRPC:     []string{"BarrierRecoveryShareClaimBegin"},
 		QRDBQUIC: []string{"barrier.RecoveryShareClaimBegin"},
 		MCP:      []string{"qrdb_barrier_recovery_share_claim_begin"},
 	},
 	VerbRecoveryShareClaimComplete: {
-		REST:     []string{"/v1/barrier/recovery/officers/"},
+		REST:     []string{"POST /v1/barrier/recovery/officers/{username}/claim/complete", "POST /api/v1/barrier/recovery/officers/{username}/claim/complete"},
 		GRPC:     []string{"BarrierRecoveryShareClaimComplete"},
 		QRDBQUIC: []string{"barrier.RecoveryShareClaimComplete"},
 		MCP:      []string{"qrdb_barrier_recovery_share_claim_complete"},
+	},
+
+	// The holder quorum (mirrors qrdb): a holder answers a factor challenge
+	// and submits its share. Unseal and recovery happen here, so both must
+	// be reachable while sealed; the factor proof, verified against the
+	// roster the wrapped root key is sealed under, is the credential.
+	VerbQuorumBegin: {
+		REST:     []string{"/v1/barrier/quorum/begin", "/api/v1/barrier/quorum/begin"},
+		GRPC:     []string{"BarrierQuorumBegin"},
+		QRDBQUIC: []string{"barrier.QuorumBegin"},
+		MCP:      []string{"qrdb_barrier_quorum_begin"},
+	},
+	VerbQuorumSubmit: {
+		REST:     []string{"/v1/barrier/quorum/submit", "/api/v1/barrier/quorum/submit"},
+		GRPC:     []string{"BarrierQuorumSubmit"},
+		QRDBQUIC: []string{"barrier.QuorumSubmit"},
+		MCP:      []string{"qrdb_barrier_quorum_submit"},
 	},
 
 	// EXCLUDED by StrictCeremonyExclusions. The names stay listed so the
@@ -444,93 +383,31 @@ var Table = map[Verb]Names{
 	// test can account for every mounted ceremony route; every derivation
 	// below skips the verb.
 	VerbCeremonyInitialize: {
-		REST:     []string{"/v1/ceremony/initialize", "/api/v1/init/initialize"},
-		GRPC:     []string{"CeremonyInitialize"},
-		QUIC:     []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyInitialize}},
-		QRDBQUIC: []string{"ceremony.Initialize"},
-		MCP:      []string{"qrdb_ceremony_initialize"},
-	},
-	VerbCeremonyStatus: {
-		REST:               []string{"/v1/ceremony/status", "/api/v1/init/status"},
-		GRPC:               []string{"CeremonyStatus"},
-		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyStatus}},
-		QRDBQUIC:           []string{"ceremony.Status"},
-		MCP:                []string{"qrdb_ceremony_status"},
-		PreOperationalOnly: true,
-	},
-	VerbCeremonyClaimCertBegin: {
-		REST:               []string{"/v1/ceremony/claim-cert/begin", "/api/v1/init/claim-cert/begin"},
-		GRPC:               []string{"CeremonyClaimCertBegin"},
-		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyClaimCertBegin}},
-		QRDBQUIC:           []string{"ceremony.ClaimCertBegin"},
-		MCP:                []string{"qrdb_ceremony_claim_cert_begin"},
-		PreOperationalOnly: true,
-	},
-	VerbCeremonyClaimCertComplete: {
-		REST:               []string{"/v1/ceremony/claim-cert/complete", "/api/v1/init/claim-cert/complete"},
-		GRPC:               []string{"CeremonyClaimCertComplete"},
-		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyClaimCertComplete}},
-		QRDBQUIC:           []string{"ceremony.ClaimCertComplete"},
-		MCP:                []string{"qrdb_ceremony_claim_cert_complete"},
-		PreOperationalOnly: true,
-	},
-	// The officer Shamir-share claim handshake (qrdb's officer-share verbs):
-	// begin issues the challenge nonce, complete verifies the signature and
-	// releases the share exactly once. Mirrors qrdb's officer-share wire
-	// names verbatim across every transport.
-	VerbCeremonyOfficerShareBegin: {
-		REST:               []string{"/v1/ceremony/officer-share/begin", "/api/v1/init/officer-share/begin"},
-		GRPC:               []string{"CeremonyBeginClaimShare"},
-		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyBeginClaimShare}},
-		QRDBQUIC:           []string{"ceremony.BeginClaimShare"},
-		MCP:                []string{"qrdb_ceremony_begin_claim_share"},
-		PreOperationalOnly: true,
-	},
-	VerbCeremonyOfficerShareComplete: {
-		REST:               []string{"/v1/ceremony/officer-share/complete", "/api/v1/init/officer-share/complete"},
-		GRPC:               []string{"CeremonyCompleteClaimShare"},
-		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyCompleteClaimShare}},
-		QRDBQUIC:           []string{"ceremony.CompleteClaimShare"},
-		MCP:                []string{"qrdb_ceremony_complete_claim_share"},
+		REST:               []string{"/v1/ceremony/initialize", "/api/v1/init/initialize"},
+		GRPC:               []string{"CeremonyInitialize"},
+		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyInitialize}},
+		QRDBQUIC:           []string{"ceremony.Initialize"},
+		MCP:                []string{"qrdb_ceremony_initialize"},
 		PreOperationalOnly: true,
 	},
 	// EXCLUDED by StrictCeremonyExclusions (see VerbCeremonyInitialize).
 	VerbCeremonySignCSR: {
-		REST:     []string{"/v1/ceremony/sign-csr", "/api/v1/init/sign-csr"},
-		GRPC:     []string{"CeremonySignCSR"},
-		QUIC:     []QUICOp{{Opcode: opCeremony, SubOp: subCeremonySignCSR}},
-		QRDBQUIC: []string{"ceremony.SignCSR"},
-		MCP:      []string{"qrdb_ceremony_sign_csr"},
-	},
-	VerbCeremonyClaimShareBegin: {
-		REST:               []string{"/v1/ceremony/claim-share/begin"},
-		GRPC:               []string{"CeremonyClaimShareBegin"},
-		QRDBQUIC:           []string{"ceremony.ClaimShareBegin"},
-		MCP:                []string{"qrdb_ceremony_claim_share_begin"},
+		REST:               []string{"/v1/ceremony/sign-csr", "/api/v1/init/sign-csr"},
+		GRPC:               []string{"CeremonySignCSR"},
+		QUIC:               []QUICOp{{Opcode: opCeremony, SubOp: subCeremonySignCSR}},
+		QRDBQUIC:           []string{"ceremony.SignCSR"},
+		MCP:                []string{"qrdb_ceremony_sign_csr"},
 		PreOperationalOnly: true,
 	},
-	VerbCeremonyClaimShareEnd: {
-		REST:               []string{"/v1/ceremony/claim-share/complete"},
-		GRPC:               []string{"CeremonyClaimShareComplete"},
-		QRDBQUIC:           []string{"ceremony.ClaimShareComplete"},
-		MCP:                []string{"qrdb_ceremony_claim_share_complete"},
-		PreOperationalOnly: true,
-	},
-	VerbCeremonySubmitUnsealShare: {
-		REST:     []string{"/v1/barrier/unseal-share"},
-		GRPC:     []string{"CeremonySubmitUnsealShare"},
-		QRDBQUIC: []string{"ceremony.SubmitUnsealShare"},
-		MCP:      []string{"qrdb_ceremony_submit_unseal_share"},
-	},
-	// EXCLUDED by StrictCeremonyExclusions (see VerbCeremonyInitialize).
-	// REST serves this verb at /v1/init/enroll-external-officer (mounted at
-	// the quicbaas router root) plus its /api/v1/init mirror; quicbaas also
-	// carries it on its native QUIC opcode surface and the qrdb-quic bridge.
-	VerbCeremonyEnrollExtOfficer: {
-		REST:     []string{"/v1/init/enroll-external-officer", "/api/v1/init/enroll-external-officer"},
-		GRPC:     []string{"CeremonyEnrollExternalOfficer"},
-		QUIC:     []QUICOp{{Opcode: opCeremony, SubOp: subCeremonyEnrollExternalOfficer}},
-		QRDBQUIC: []string{"ceremony.EnrollExternalOfficer"},
+
+	// AuthenticatedOnly (mirrors qrdb): the deny gate admits cluster unseal
+	// while sealed, but no scope exempts it from authentication.
+	VerbBarrierClusterUnseal: {
+		REST:              []string{"/v1/barrier/cluster-unseal", "/api/v1/barrier/cluster-unseal"},
+		GRPC:              []string{"BarrierClusterUnseal"},
+		QRDBQUIC:          []string{"barrier.ClusterUnseal"},
+		MCP:               []string{"qrdb_barrier_cluster_unseal"},
+		AuthenticatedOnly: true,
 	},
 }
 
@@ -596,9 +473,9 @@ func InScope(v Verb, s Scope) bool {
 	case ScopeAll:
 		return true
 	case ScopeAlways:
-		return !Table[v].PreOperationalOnly
+		return !Table[v].PreOperationalOnly && !Table[v].AuthenticatedOnly
 	case ScopePreOperational:
-		return Table[v].PreOperationalOnly
+		return Table[v].PreOperationalOnly && !Table[v].AuthenticatedOnly
 	}
 	return false
 }
@@ -619,7 +496,8 @@ func RESTAllowlist() []string {
 // method behind ONE path. The REST authentication bypass matches on path
 // alone, so a shared path takes the STRICTEST treatment of its contributing
 // verbs: if ANY contributor is PreOperationalOnly, the path's exemption is
-// pre-operational-gated for every method it serves. Splitting the path per
+// pre-operational-gated for every method it serves, and if ANY contributor is
+// AuthenticatedOnly, the path has no exemption at all. Splitting the path per
 // scope would leave the flagged verb reachable through the unflagged verb's
 // state-independent exemption — the exact fail-open
 // TestAuthBypass_ScopesDisjoint forbids. The wire-name-keyed transports
@@ -630,6 +508,7 @@ func RESTAllowlistScoped(s Scope) []string {
 	// together the PreOperationalOnly flags of its contributing verbs.
 	var order []string
 	preOp := make(map[string]bool)
+	authOnly := make(map[string]bool)
 	seen := make(map[string]struct{})
 	for _, v := range Verbs {
 		if Excluded(v) {
@@ -641,6 +520,7 @@ func RESTAllowlistScoped(s Scope) []string {
 				order = append(order, p)
 			}
 			preOp[p] = preOp[p] || Table[v].PreOperationalOnly
+			authOnly[p] = authOnly[p] || Table[v].AuthenticatedOnly
 		}
 	}
 
@@ -650,11 +530,11 @@ func RESTAllowlistScoped(s Scope) []string {
 		case ScopeAll:
 			out = append(out, p)
 		case ScopeAlways:
-			if !preOp[p] {
+			if !preOp[p] && !authOnly[p] {
 				out = append(out, p)
 			}
 		case ScopePreOperational:
-			if preOp[p] {
+			if preOp[p] && !authOnly[p] {
 				out = append(out, p)
 			}
 		}
@@ -686,14 +566,13 @@ func RESTAllowlistScoped(s Scope) []string {
 //   - quicbaas.fleet.runtime.v1.FleetRuntime ("Status"),
 //     quicbaas.orchestrator.v1.OrchestratorService, quicbaas.ollama.v1 and
 //     quicbaas.vector.v1 ("Health") — post-unseal data-plane services whose
-//     liveness verbs collide by tail only.
-//
-// quicbaas.v1.QuicBaaS contributes exactly its Health liveness RPC; its data
-// plane (Get/Put/...) shares no tail with the canonical table.
+//     liveness verbs collide by tail only;
+//   - quicbaas.v1.QuicBaaS — its Health liveness RPC answers no question on a
+//     sealed node (go-qrdb v0.50 excludes health from the sealed window), and
+//     its data plane (Get/Put/...) shares no tail with the canonical table.
 var grpcMirrorServices = []ggrpc.ServiceDesc{
 	pb.Barrier_ServiceDesc,
 	pb.Ceremony_ServiceDesc,
-	pb.QuicBaaS_ServiceDesc,
 }
 
 // GRPCAllowlist derives the gRPC sealed-window allowlist as bare method tails
@@ -754,9 +633,23 @@ func excludedGRPCTails() map[string]struct{} {
 // preOperationalGRPCTails returns the bare method tails whose exemption is
 // gated on a pre-operational ceremony.
 func preOperationalGRPCTails() map[string]struct{} {
+	return grpcTailsWhere(func(n Names) bool { return n.PreOperationalOnly })
+}
+
+// authenticatedOnlyGRPCTails returns the gRPC method tails of every
+// AuthenticatedOnly verb. GRPCFullMethodAllowlistScoped keeps the matching
+// qrdb.v1 methods out of both authentication-bypass scopes, because they are
+// consumed from qrdbsdk.GRPCSealedWindowAllowlist, which carries no flag.
+func authenticatedOnlyGRPCTails() map[string]struct{} {
+	return grpcTailsWhere(func(n Names) bool { return n.AuthenticatedOnly })
+}
+
+// grpcTailsWhere returns the gRPC method tails of every non-excluded verb
+// whose Names satisfy keep.
+func grpcTailsWhere(keep func(Names) bool) map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, v := range Verbs {
-		if Excluded(v) || !Table[v].PreOperationalOnly {
+		if Excluded(v) || !keep(Table[v]) {
 			continue
 		}
 		for _, m := range Table[v].GRPC {
@@ -808,6 +701,7 @@ func GRPCFullMethodAllowlistScoped(s Scope) []string {
 	tails := GRPCAllowlistScoped(s)
 	excluded := excludedGRPCTails()
 	preOp := preOperationalGRPCTails()
+	authOnly := authenticatedOnlyGRPCTails()
 
 	// qualifies reports whether a qrdb-supplied fully-qualified method
 	// belongs in this scope. Exclusion wins over every scope (fail closed).
@@ -817,13 +711,14 @@ func GRPCFullMethodAllowlistScoped(s Scope) []string {
 			return false
 		}
 		_, isPreOp := preOp[tail]
+		_, isAuthOnly := authOnly[tail]
 		switch s {
 		case ScopeAll:
 			return true
 		case ScopeAlways:
-			return !isPreOp
+			return !isPreOp && !isAuthOnly
 		case ScopePreOperational:
-			return isPreOp
+			return isPreOp && !isAuthOnly
 		}
 		return false
 	}

@@ -350,6 +350,22 @@ func TestUnaryAuthorizationInterceptor_UnmappedDenied(t *testing.T) {
 	assert.Equal(t, "", authorizer.lastPerm, "validator must not be consulted for an unmapped method")
 }
 
+// TestTrustServiceGRPCPermissions pins the trust RPCs to the registered trust
+// family, the grant REST and MCP use for the same verbs: the pool read is
+// trust:read, and AIA import and DANE publish are trust:write.
+func TestTrustServiceGRPCPermissions(t *testing.T) {
+	cases := map[string]string{
+		"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": "trust:read",
+		"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       "trust:write",
+		"/quicbaas.certificate.v1.TrustService/PublishDANE":         "trust:write",
+	}
+	for method, want := range cases {
+		resource, action, mapped := grpcResourceAndAction(method)
+		require.True(t, mapped, method)
+		assert.Equal(t, want, resource+":"+action, method)
+	}
+}
+
 // TestAuthorizeGRPCRequest_FederatedLoginIsPublic pins the gRPC twins of the
 // public REST routes /api/v1/auth/providers/{tenant_id}/{provider_name}/login
 // and /callback: an anonymous caller must be able to begin and finish a

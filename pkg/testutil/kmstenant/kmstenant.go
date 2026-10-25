@@ -57,10 +57,17 @@ const (
 // SigningKeyName and DEKPath as OwnerTenant.
 func NewService(t *testing.T) service.KMSService {
 	t.Helper()
+	return NewServiceOn(t, NewManager())
+}
+
+// NewServiceOn is NewService over mgr, so a test can read the key IDs the
+// service stores in the manager's namespace.
+func NewServiceOn(t *testing.T, mgr *Manager) service.KMSService {
+	t.Helper()
 	svc, err := service.NewServiceBuilder().
 		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
 		WithRaftNode(&unusedRaftNode{}).
-		WithKMSManager(NewManager()).
+		WithKMSManager(mgr).
 		Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

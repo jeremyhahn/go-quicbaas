@@ -23,8 +23,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -101,8 +103,17 @@ func TestRunInlineInit_DoesNotWriteDataDirAfterShutdown(t *testing.T) {
 	runInit(second)
 	assert.Equal(t, before, snapshotDir(t, first),
 		"a later server must not write into a data dir whose server has shut down")
-	assert.FileExists(t, filepath.Join(second, "keys", "keys", "software:signing:oidc-signing:ecdsa.key"),
+	assert.FileExists(t, hashedKeyPath(second, "keys/software:signing:oidc-signing:ecdsa.key"),
 		"the later server's OIDC signing key must live in its own data dir")
+}
+
+// hashedKeyPath is where the go-qrdb v0.47 file key store writes the object
+// named name under dataDir: the hex SHA-256 of the name, sharded by its first
+// two byte pairs beneath keys/.
+func hashedKeyPath(dataDir, name string) string {
+	sum := sha256.Sum256([]byte(name))
+	digest := hex.EncodeToString(sum[:])
+	return filepath.Join(dataDir, "keys", digest[:2], digest[2:4], digest)
 }
 
 // snapshotDir maps every path under root to its size and modification time.

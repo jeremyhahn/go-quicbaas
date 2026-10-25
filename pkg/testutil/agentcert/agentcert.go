@@ -58,8 +58,9 @@ const (
 // Write emits agent.crt, agent.key and server-ca.crt into dir and returns
 // their paths, ready for agent.Config's NodeCertFile, NodeKeyFile and
 // ServerCAFile. A fresh in-memory go-xkms CA issues the agent certificate
-// from a CSR, with the "agents" OU and exactly the ClientAuth EKU, the shape
-// the production fleet certificate issuer produces. The key is written 0600,
+// from a CSR, with the tenant stamped into the OU (CA m779 62(a)) and exactly
+// the ClientAuth EKU, the shape the production fleet certificate issuer
+// produces. The key is written 0600,
 // as agent.Config requires. Any failure fails the test.
 func Write(tb testing.TB, dir string) (certPath, keyPath, caPath string) {
 	tb.Helper()
@@ -90,6 +91,7 @@ func Write(tb testing.TB, dir string) (certPath, keyPath, caPath string) {
 	}
 	agentCert, err := ca.SignCSR(ctx, csrPEM, &xkmssdk.TrustedCASignOptions{
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		TenantID:    agentTenant,
 	})
 	if err != nil {
 		tb.Fatalf("agentcert: sign agent csr: %v", err)

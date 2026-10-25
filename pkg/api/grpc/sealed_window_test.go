@@ -134,49 +134,50 @@ func TestGRPCSealedWindowAuthBypass_Composition(t *testing.T) {
 			wantAuthz:   0,
 		},
 		{
-			name:        "sealed allowlisted status admitted",
+			// go-qrdb v0.50 marks barrier status ListenerOnly: the boot-time
+			// sealed-window listener serves it, the regular listener refuses it.
+			name:        "sealed barrier status refused on the regular listener",
 			sealed:      true,
 			method:      "/qrdb.v1.QRDBService/BarrierStatus",
 			ctx:         context.Background(),
-			wantHandler: true,
-			wantCode:    codes.OK,
-			wantAudit:   1,
-			wantAuthz:   0,
-		},
-		{
-			name:        "sealed pre-operational ceremony status admitted",
-			sealed:      true,
-			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
-			ctx:         context.Background(),
-			wantHandler: true,
-			wantCode:    codes.OK,
-			wantAudit:   1,
-			wantAuthz:   0,
-		},
-		// Scope axis, end to end: the ceremony status / claim RPCs are
-		// ScopePreOperational. On an already-initialized (operational) sealed
-		// daemon the sealed-window interceptor still SERVES them — they stay on
-		// its allowlist — but the exemption has expired, so the authorization
-		// interceptor demands a token and the unauthenticated call is refused.
-		{
-			name:        "sealed operational ceremony status Unauthenticated",
-			sealed:      true,
-			operational: true,
-			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
-			ctx:         context.Background(),
 			wantHandler: false,
-			wantCode:    codes.Unauthenticated,
+			wantCode:    codes.Unavailable,
 			wantAudit:   0,
 			wantAuthz:   0,
 		},
 		{
-			name:        "sealed operational claim-cert begin Unauthenticated",
+			name:        "sealed pre-operational ceremony status sealed error",
 			sealed:      true,
-			operational: true,
-			method:      "/qrdb.v1.QRDBService/CeremonyClaimCertBegin",
+			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
 			ctx:         context.Background(),
 			wantHandler: false,
-			wantCode:    codes.Unauthenticated,
+			wantCode:    codes.Unavailable,
+			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		// go-qrdb v0.50: a sealed node answers no status question but barrier
+		// status, and refuses a first-boot verb such as holder registration
+		// once the ceremony is operational. Both get the sealed refusal before
+		// authentication runs.
+		{
+			name:        "sealed operational ceremony status sealed error",
+			sealed:      true,
+			operational: true,
+			method:      "/qrdb.v1.QRDBService/CeremonyStatus",
+			ctx:         context.Background(),
+			wantHandler: false,
+			wantCode:    codes.Unavailable,
+			wantAudit:   0,
+			wantAuthz:   0,
+		},
+		{
+			name:        "sealed operational officer register sealed error",
+			sealed:      true,
+			operational: true,
+			method:      "/qrdb.v1.QRDBService/BarrierOfficerRegister",
+			ctx:         context.Background(),
+			wantHandler: false,
+			wantCode:    codes.Unavailable,
 			wantAudit:   0,
 			wantAuthz:   0,
 		},

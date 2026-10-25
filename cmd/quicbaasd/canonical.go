@@ -143,7 +143,7 @@ func (e *UnsupportedBarrierStrategyError) Error() string {
 // It is a hard requirement, not a warning, because the trust domain is what
 // makes the admin credential init issues actually usable: the xkms CA stamps
 // the tenant-scoped SPIFFE URI SAN
-// (spiffe://<trust-domain>/tenant/system/user/admin) onto the admin
+// (spiffe://system/user/admin) onto the admin
 // certificate ONLY when a trust domain is set, and REST login resolves — and
 // pins — the tenant from exactly that SAN. Without it the certificate carries
 // no SPIFFE SAN, login falls back to home-realm discovery, a freshly
@@ -168,7 +168,7 @@ type SPIFFETrustDomainRequiredError struct{}
 func (e *SPIFFETrustDomainRequiredError) Error() string {
 	return "init: iam.spiffe_trust_domain is required and is not set.\n" +
 		"  It is what lets the issued admin certificate authenticate: the CA stamps\n" +
-		"  spiffe://<trust-domain>/tenant/system/user/admin onto it and login resolves\n" +
+		"  spiffe://system/user/admin onto it and login resolves\n" +
 		"  the tenant from that SAN. Without it, login fails closed with\n" +
 		"  \"login tenant could not be resolved\".\n" +
 		"  Set it in your config file, for example:\n" +

@@ -172,19 +172,16 @@ type methodPermission struct {
 // sealed-window allowlist governs them separately (share claims are
 // operationally a sealed-window activity).
 //
-// The ceremony share-claim verbs (the officer CeremonyBeginClaimShare /
-// CeremonyCompleteClaimShare handshake and the custodian
-// CeremonyClaimShareBegin / CeremonyClaimShareComplete pair) are NOT in this set
-// even though qrdb's transport maps also gate them with IdentityGated: qrdb
-// registers dedicated ceremony:claim_share_begin / ceremony:claim_share_complete
-// permissions, and quicbaas already maps the identical verbs on its own
-// quicbaas.ceremony.v1.Ceremony surface to those permissions, so the qrdb.v1
-// mirror carries the same (strictly narrower than qrdb) scope requirement.
+// BarrierQuorumBegin / BarrierQuorumSubmit, the unified share-holder quorum
+// handshake, are gated the same way: qrdb.proto declares identity:gated and
+// the handler verifies the holder's factor.
 var qrdbIdentityGatedMethods = map[string]bool{
 	"/qrdb.v1.QRDBService/BarrierShareClaimBegin":            true,
 	"/qrdb.v1.QRDBService/BarrierShareClaimComplete":         true,
 	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimBegin":    true,
 	"/qrdb.v1.QRDBService/BarrierRecoveryShareClaimComplete": true,
+	"/qrdb.v1.QRDBService/BarrierQuorumBegin":                true,
+	"/qrdb.v1.QRDBService/BarrierQuorumSubmit":               true,
 }
 
 // grpcMethodPermissions maps each protected gRPC FullMethod to the qrdb-canonical
@@ -457,8 +454,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.kms.v1.SecretsManagement/EnsureSecret":         {"secrets", "write"},
 
 	// ---- quicbaas.certificate.v1.CertificateService ----
-	"/quicbaas.certificate.v1.CertificateService/IssueCertificate":  {"certs", "generate"},
-	"/quicbaas.certificate.v1.CertificateService/SignCSR":           {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/IssueCertificate":  {"certs", "issue"},
+	"/quicbaas.certificate.v1.CertificateService/SignCSR":           {"certs", "issue"},
 	"/quicbaas.certificate.v1.CertificateService/RevokeCertificate": {"certs", "revoke"},
 	"/quicbaas.certificate.v1.CertificateService/VerifyCertificate": {"certs", "read"},
 	"/quicbaas.certificate.v1.CertificateService/GetCACertificate":  {"certs", "read"},
@@ -474,16 +471,18 @@ var grpcMethodPermissions = map[string]methodPermission{
 	//
 	// Chain runs the CA's Authority Information Access walk, which fetches
 	// issuer certificates over the network and imports them into the CA
-	// certificate store. That is the same mutation TrustService/AutoImportAIA
-	// performs, so it carries the same write-strength verb; mapping it to
-	// certs:read would let a read-only principal drive the importer.
+	// certificate store. It carries certs:enroll, the permission go-xkms
+	// v0.55 assigns its own chain verb (POST /api/v1/certs/{id}/chain);
+	// mapping it to certs:read would let a read-only principal drive the
+	// importer.
 	//
 	// IssueDeviceIdentity mints TCG EK / AK / IEEE 802.1AR IDevID
 	// certificates. Those are END-ENTITY certificates, so they stay in the
-	// leaf-issuance family: certs:generate.
+	// leaf-issuance family: certs:issue, which go-qrdb v0.47 registers in
+	// place of certs:generate and go-xkms v0.55 requires for its TCG verbs.
 	"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
-	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "enroll"},
+	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "issue"},
 
 	// ---- quicbaas.attestation.v1.AttestationService ----
 	//
@@ -533,9 +532,11 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.attestation.v1.AttestationService/AppraiseQuote":         {"attestation", "verify"},
 
 	// ---- quicbaas.certificate.v1.TrustService ----
-	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},
-	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"certs", "generate"},
-	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"certs", "generate"},
+	// The trust family, as on REST and MCP: AIA import and DANE publish
+	// change what the node trusts or publishes, so they are trust:write.
+	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"trust", "read"},
+	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"trust", "write"},
+	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"trust", "write"},
 
 	// ---- quicbaas.fido2.v1.FIDO2Service (registration pair) ----
 	//
@@ -564,20 +565,15 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.piv.v1.PIVService/GeneratePIVCSR":       {"piv", "use"},
 
 	// ---- quicbaas.barrier.v1.Barrier (system barrier lifecycle) ----
-	"/quicbaas.barrier.v1.Barrier/BarrierStatus":             {"tenant_barrier", "status"},
-	"/quicbaas.barrier.v1.Barrier/BarrierInitialize":         {"tenant_barrier", "init"},
-	"/quicbaas.barrier.v1.Barrier/BarrierUnseal":             {"tenant_barrier", "unseal"},
-	"/quicbaas.barrier.v1.Barrier/BarrierSeal":               {"tenant_barrier", "seal"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRekey":              {"seal", "rekey"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRootToken":          {"seal", "bootstrap"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryStatus":     {"seal", "status"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryGenerate":   {"seal", "generate_recovery"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryRecover":    {"seal", "recover_with_keys"},
-	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryDelete":     {"seal", "generate_recovery"},
-	"/quicbaas.barrier.v1.Barrier/BarrierShamirInitialize":   {"seal", "initialize_shamir"},
-	"/quicbaas.barrier.v1.Barrier/BarrierShamirUnsealShare":  {"barrier", "unseal-share"},
-	"/quicbaas.barrier.v1.Barrier/BarrierShamirUnsealShares": {"barrier", "unseal-share"},
-	"/quicbaas.barrier.v1.Barrier/BarrierEnableEncryption":   {"seal", "enable_encryption"},
+	"/quicbaas.barrier.v1.Barrier/BarrierStatus":           {"tenant_barrier", "status"},
+	"/quicbaas.barrier.v1.Barrier/BarrierInitialize":       {"tenant_barrier", "init"},
+	"/quicbaas.barrier.v1.Barrier/BarrierUnseal":           {"tenant_barrier", "unseal"},
+	"/quicbaas.barrier.v1.Barrier/BarrierSeal":             {"tenant_barrier", "seal"},
+	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryStatus":   {"seal", "status"},
+	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryGenerate": {"seal", "generate_recovery"},
+	"/quicbaas.barrier.v1.Barrier/BarrierRecoveryDelete":   {"seal", "generate_recovery"},
+	"/quicbaas.barrier.v1.Barrier/BarrierShamirInitialize": {"seal", "initialize_shamir"},
+	"/quicbaas.barrier.v1.Barrier/BarrierEnableEncryption": {"seal", "enable_encryption"},
 
 	// ---- quicbaas.tenant.v1.TenantBarrier (per-tenant barrier lifecycle) ----
 	"/quicbaas.tenant.v1.TenantBarrier/Init":               {"tenant_barrier", "init"},
@@ -590,15 +586,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.tenant.v1.TenantBarrier/UpdateEntitlements": {"tenants", "set_entitlements"},
 
 	// ---- quicbaas.ceremony.v1.Ceremony ----
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize":            {"ceremony", "initialize"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyStatus":                {"ceremony", "status"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyEnrollExternalOfficer": {"ceremony", "enroll_custodian"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyListOfficers":          {"ceremony", "status"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyClaimCertBegin":        {"ceremony", "claim_cert"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyClaimCertComplete":     {"ceremony", "claim_cert"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyBeginClaimShare":       {"ceremony", "claim_share_begin"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonyCompleteClaimShare":    {"ceremony", "claim_share_complete"},
-	"/quicbaas.ceremony.v1.Ceremony/CeremonySignCSR":               {"ceremony", "sign_csr"},
+	"/quicbaas.ceremony.v1.Ceremony/CeremonyInitialize": {"ceremony", "initialize"},
+	"/quicbaas.ceremony.v1.Ceremony/CeremonyStatus":     {"ceremony", "status"},
+	"/quicbaas.ceremony.v1.Ceremony/CeremonySignCSR":    {"ceremony", "sign_csr"},
 
 	// ---- quicbaas.vector.v1.VectorDB ----
 	"/quicbaas.vector.v1.VectorDB/CreateNamespace":    {"vector", "namespace_create"},
@@ -999,51 +989,32 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/qrdb.v1.QRDBService/Status": {"admin", "status"},
 
 	// ---- qrdb.v1.QRDBService: system barrier lifecycle ----
-	"/qrdb.v1.QRDBService/BarrierInitialize":        {"seal", "bootstrap"},
-	"/qrdb.v1.QRDBService/BarrierUnseal":            {"seal", "unseal"},
-	"/qrdb.v1.QRDBService/BarrierSeal":              {"seal", "seal"},
-	"/qrdb.v1.QRDBService/BarrierStatus":            {"seal", "status"},
-	"/qrdb.v1.QRDBService/BarrierShamirInitialize":  {"seal", "initialize_shamir"},
-	"/qrdb.v1.QRDBService/BarrierShamirUnsealShare": {"barrier", "unseal-share"},
-	// UnsealShares (plural) submits a batch of shares toward the same quorum.
-	"/qrdb.v1.QRDBService/BarrierShamirUnsealShares": {"barrier", "unseal-share"},
-	"/qrdb.v1.QRDBService/BarrierRekey":              {"seal", "rekey"},
-	"/qrdb.v1.QRDBService/BarrierEnableEncryption":   {"seal", "enable_encryption"},
-	"/qrdb.v1.QRDBService/BarrierRootToken":          {"seal", "bootstrap"},
-	// Security Officer registration / listing. The four share-claim methods
-	// (BarrierShareClaimBegin/Complete, BarrierRecoveryShareClaimBegin/
-	// Complete) are IdentityGated in qrdb and deliberately NOT mapped here —
-	// see qrdbIdentityGatedMethods.
+	"/qrdb.v1.QRDBService/BarrierInitialize": {"seal", "bootstrap"},
+	"/qrdb.v1.QRDBService/BarrierUnseal":     {"seal", "unseal"},
+	"/qrdb.v1.QRDBService/BarrierSeal":       {"seal", "seal"},
+	"/qrdb.v1.QRDBService/BarrierStatus":     {"seal", "status"},
+	// ClusterUnseal drives the cluster-wide unseal and RekeyStart opens a
+	// share-holder rekey; both carry the permission qrdb.proto declares.
+	"/qrdb.v1.QRDBService/BarrierClusterUnseal":    {"seal", "unseal"},
+	"/qrdb.v1.QRDBService/BarrierRekeyStart":       {"seal", "rekey"},
+	"/qrdb.v1.QRDBService/BarrierShamirInitialize": {"seal", "initialize_shamir"},
+	"/qrdb.v1.QRDBService/BarrierEnableEncryption": {"seal", "enable_encryption"},
+	// Share-holder registration / listing / revocation. The share-claim and
+	// quorum methods are IdentityGated in qrdb and deliberately NOT mapped
+	// here — see qrdbIdentityGatedMethods.
 	"/qrdb.v1.QRDBService/BarrierOfficerRegister":         {"seal", "officer_register"},
+	"/qrdb.v1.QRDBService/BarrierOfficerRevoke":           {"seal", "officer_revoke"},
 	"/qrdb.v1.QRDBService/BarrierOfficerList":             {"seal", "officer_list"},
-	"/qrdb.v1.QRDBService/BarrierOfficerClaimStatus":      {"seal", "officer_list"},
-	"/qrdb.v1.QRDBService/BarrierShamirSealVote":          {"seal", "submit_seal_vote"},
 	"/qrdb.v1.QRDBService/BarrierRecoveryOfficerRegister": {"seal", "officer_register"},
 	// Recovery key lifecycle.
 	"/qrdb.v1.QRDBService/BarrierRecoveryGenerate": {"seal", "generate_recovery"},
-	"/qrdb.v1.QRDBService/BarrierRecoveryRecover":  {"seal", "recover_with_keys"},
 	"/qrdb.v1.QRDBService/BarrierRecoveryDelete":   {"seal", "generate_recovery"},
 	"/qrdb.v1.QRDBService/BarrierRecoveryStatus":   {"seal", "status"},
 
 	// ---- qrdb.v1.QRDBService: Shamir initialization ceremony ----
-	// The custodian claim-share verbs are IdentityGated in qrdb's own maps,
-	// but qrdb registers dedicated ceremony:claim_share_begin/_complete
-	// permissions and quicbaas already maps the identical verb on
-	// quicbaas.ceremony.v1.Ceremony to them, so the qrdb.v1 mirror carries
-	// the same (strictly narrower than qrdb) scope requirement: the token
-	// must carry the claim_share scope AND the handler still verifies the
-	// enrolled custodian's factor challenge.
-	"/qrdb.v1.QRDBService/CeremonyInitialize":            {"ceremony", "initialize"},
-	"/qrdb.v1.QRDBService/CeremonyStatus":                {"ceremony", "status"},
-	"/qrdb.v1.QRDBService/CeremonyClaimCertBegin":        {"ceremony", "claim_cert"},
-	"/qrdb.v1.QRDBService/CeremonyClaimCertComplete":     {"ceremony", "claim_cert"},
-	"/qrdb.v1.QRDBService/CeremonyBeginClaimShare":       {"ceremony", "claim_share_begin"},
-	"/qrdb.v1.QRDBService/CeremonyCompleteClaimShare":    {"ceremony", "claim_share_complete"},
-	"/qrdb.v1.QRDBService/CeremonyClaimShareBegin":       {"ceremony", "claim_share_begin"},
-	"/qrdb.v1.QRDBService/CeremonyClaimShareComplete":    {"ceremony", "claim_share_complete"},
-	"/qrdb.v1.QRDBService/CeremonySignCSR":               {"ceremony", "sign_csr"},
-	"/qrdb.v1.QRDBService/CeremonyEnrollExternalOfficer": {"ceremony", "enroll_custodian"},
-	"/qrdb.v1.QRDBService/CeremonySubmitUnsealShare":     {"barrier", "unseal-share"},
+	"/qrdb.v1.QRDBService/CeremonyInitialize": {"ceremony", "initialize"},
+	"/qrdb.v1.QRDBService/CeremonyStatus":     {"ceremony", "status"},
+	"/qrdb.v1.QRDBService/CeremonySignCSR":    {"ceremony", "sign_csr"},
 
 	// ---- qrdb.v1.QRDBService: versioned named-credential rotation ----
 	"/qrdb.v1.QRDBService/CredentialSubmit":          {"credentials", "submit"},
@@ -1077,10 +1048,13 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Registered as a separate proto service by qrdbsdk.RegisterGRPCService
 	// alongside QRDBService. 1:1 with qrdb's UserAuthFactorService entries
 	// and the MCP qrdb_user_authfactor_* tool mappings.
-	"/qrdb.v1.UserAuthFactorService/Add":     {"user_authfactors", "add"},
-	"/qrdb.v1.UserAuthFactorService/List":    {"user_authfactors", "list"},
-	"/qrdb.v1.UserAuthFactorService/Get":     {"user_authfactors", "get"},
-	"/qrdb.v1.UserAuthFactorService/Remove":  {"user_authfactors", "remove"},
+	"/qrdb.v1.UserAuthFactorService/Add":    {"user_authfactors", "add"},
+	"/qrdb.v1.UserAuthFactorService/List":   {"user_authfactors", "list"},
+	"/qrdb.v1.UserAuthFactorService/Get":    {"user_authfactors", "get"},
+	"/qrdb.v1.UserAuthFactorService/Remove": {"user_authfactors", "remove"},
+	// Delete hard-deletes a factor to roll back an add, so qrdb declares it
+	// with the add permission.
+	"/qrdb.v1.UserAuthFactorService/Delete":  {"user_authfactors", "add"},
 	"/qrdb.v1.UserAuthFactorService/Rotate":  {"user_authfactors", "rotate"},
 	"/qrdb.v1.UserAuthFactorService/Relabel": {"user_authfactors", "relabel"},
 	"/qrdb.v1.UserAuthFactorService/Login":   {"user_authfactors", "login"},
