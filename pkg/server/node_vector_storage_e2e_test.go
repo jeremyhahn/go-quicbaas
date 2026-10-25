@@ -289,5 +289,5 @@ func TestNodeVectorStorage_Compact_ClientClosed(t *testing.T) {
 	vs := newNodeVectorStorage(vec)
 	require.NoError(t, client.Close())
 
-	assert.Error(t, vs.Compact(context.Background(), "ns"))
+	assert.Error(t, vs.Compact(context.Background(), "ns", false))
 }
