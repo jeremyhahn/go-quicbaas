@@ -40,6 +40,7 @@ type boundQRDBTransport struct {
 var (
 	_ qrdbtransport.Transport            = (*boundQRDBTransport)(nil)
 	_ qrdbtransport.KVClient             = (*boundQRDBTransport)(nil)
+	_ qrdbtransport.GuardedKVClient      = (*boundQRDBTransport)(nil)
 	_ qrdbtransport.IndexClient          = (*boundQRDBTransport)(nil)
 	_ qrdbtransport.BarrierClient        = (*boundQRDBTransport)(nil)
 	_ qrdbtransport.TenantClient         = (*boundQRDBTransport)(nil)
@@ -106,6 +107,24 @@ func (b *boundQRDBTransport) Scan(ctx context.Context, prefix string, opts ...qr
 
 func (b *boundQRDBTransport) Exists(ctx context.Context, key string, opts ...qrdbtransport.ReadOption) (bool, error) {
 	return boundResult(b, ctx, func(ctx context.Context) (bool, error) { return b.next.Exists(ctx, key, opts...) })
+}
+
+// --- GuardedKV ---
+
+func (b *boundQRDBTransport) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	return boundResult(b, ctx, func(ctx context.Context) (bool, error) { return b.next.PutIfAbsent(ctx, key, value) })
+}
+
+func (b *boundQRDBTransport) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return boundResult(b, ctx, func(ctx context.Context) (bool, error) {
+		return b.next.CompareAndSwap(ctx, key, expected, next)
+	})
+}
+
+func (b *boundQRDBTransport) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	return boundResult(b, ctx, func(ctx context.Context) (bool, error) {
+		return b.next.CompareAndDelete(ctx, key, expected)
+	})
 }
 
 // --- Index ---

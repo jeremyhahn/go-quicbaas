@@ -66,6 +66,36 @@ func (k *tenantRecordingKV) GetWithConsistency(ctx context.Context, key string, 
 	return k.Get(ctx, key)
 }
 
+func (k *tenantRecordingKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	k.tenants = append(k.tenants, boundTenant(ctx))
+	return k.memKV.PutIfAbsent(ctx, key, value)
+}
+
+func (k *tenantRecordingKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	k.tenants = append(k.tenants, boundTenant(ctx))
+	return k.memKV.CompareAndSwap(ctx, key, expected, next)
+}
+
+func (k *tenantRecordingKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	k.tenants = append(k.tenants, boundTenant(ctx))
+	return k.memKV.CompareAndDelete(ctx, key, expected)
+}
+
+// atomicDataStore returns c's DataStore as the AtomicKVStore a DAO's
+// SaveIfAbsent and conditional writes assert it to be.
+func atomicDataStore(t *testing.T, c *client) qrdbsdk.AtomicKVStore {
+	t.Helper()
+	store, err := c.DataStore()
+	if err != nil {
+		t.Fatalf("DataStore: %v", err)
+	}
+	atomic, ok := store.(qrdbsdk.AtomicKVStore)
+	if !ok {
+		t.Fatalf("DataStore %T is not an AtomicKVStore", store)
+	}
+	return atomic
+}
+
 // tenantRecordingBarrier records the tenant every BarrierStatus reached the
 // servicer with.
 type tenantRecordingBarrier struct {
@@ -144,5 +174,52 @@ func TestEmbeddedQRDB_DelegationCarriesItsTenant(t *testing.T) {
 	}
 	if len(barrier.tenants) != 1 || barrier.tenants[0] != "acme" {
 		t.Fatalf("barrier saw tenants %q, want [acme]", barrier.tenants)
+	}
+}
+
+func TestEmbeddedQRDB_DelegationGuardedWritesCarryItsTenant(t *testing.T) {
+	kv := &tenantRecordingKV{memKV: newMemKV()}
+	c := newDelegatedQRDBClient(t, &tenantBinder{tenant: "acme"}, kv, &tenantRecordingBarrier{})
+	store := atomicDataStore(t, c)
+	ctx := context.Background()
+
+	if stored, err := store.PutIfAbsent(ctx, "k", []byte("v1")); err != nil || !stored {
+		t.Fatalf("PutIfAbsent = %v, %v; want true, nil", stored, err)
+	}
+	if swapped, err := store.CompareAndSwap(ctx, "k", []byte("v1"), []byte("v2")); err != nil || !swapped {
+		t.Fatalf("CompareAndSwap = %v, %v; want true, nil", swapped, err)
+	}
+	if deleted, err := store.CompareAndDelete(ctx, "k", []byte("v2")); err != nil || !deleted {
+		t.Fatalf("CompareAndDelete = %v, %v; want true, nil", deleted, err)
+	}
+
+	want := []string{"acme", "acme", "acme"}
+	if len(kv.tenants) != len(want) {
+		t.Fatalf("kv saw tenants %q, want %q", kv.tenants, want)
+	}
+	for i := range want {
+		if kv.tenants[i] != want[i] {
+			t.Fatalf("kv saw tenants %q, want %q", kv.tenants, want)
+		}
+	}
+}
+
+func TestEmbeddedQRDB_RefusedDelegationNeverDispatchesGuardedWrites(t *testing.T) {
+	kv := &tenantRecordingKV{memKV: newMemKV()}
+	c := newDelegatedQRDBClient(t, &tenantBinder{refuse: bindRefusedError{}}, kv, &tenantRecordingBarrier{})
+	store := atomicDataStore(t, c)
+	ctx := context.Background()
+
+	if _, err := store.PutIfAbsent(ctx, "k", []byte("v")); !stderrors.Is(err, bindRefusedError{}) {
+		t.Fatalf("PutIfAbsent err = %v, want the binder's refusal", err)
+	}
+	if _, err := store.CompareAndSwap(ctx, "k", []byte("v"), []byte("w")); !stderrors.Is(err, bindRefusedError{}) {
+		t.Fatalf("CompareAndSwap err = %v, want the binder's refusal", err)
+	}
+	if _, err := store.CompareAndDelete(ctx, "k", []byte("v")); !stderrors.Is(err, bindRefusedError{}) {
+		t.Fatalf("CompareAndDelete err = %v, want the binder's refusal", err)
+	}
+	if len(kv.tenants) != 0 {
+		t.Fatalf("a refused delegation reached the kv servicer: %v", kv.tenants)
 	}
 }
