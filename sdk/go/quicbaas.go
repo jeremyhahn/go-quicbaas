@@ -1780,18 +1780,6 @@ func NewClient(address string, opts ...Option) (Client, error) {
 		return nil, errors.NewEmbeddedIdentityRequired("NewClient")
 	}
 
-	// Embedded mode: when the caller did not inject a secret registry, adopt
-	// the one the embedded QuicBaaS service exposes. The secrets manager is a
-	// core, always-on service (the server builds its resolver registry in every
-	// mode); auto-wiring it here means Security().SecretResolver() is reachable
-	// through any embedded client without an explicit WithSecretRegistry, so
-	// kms:// / credential:// URIs resolve instead of failing closed.
-	if options.secretRegistry == nil && options.embeddedService != nil {
-		if svc, ok := options.embeddedService.(service.QuicBaaS); ok {
-			options.secretRegistry = svc.SecretRegistry()
-		}
-	}
-
 	// Auto-detect REST transport from HTTP URLs
 	if strings.HasPrefix(address, "http://") || strings.HasPrefix(address, "https://") {
 		if options.transportType == TransportGRPC {
@@ -1809,6 +1797,15 @@ func NewClient(address string, opts ...Option) (Client, error) {
 		transport: transport,
 		opts:      options,
 		address:   address,
+	}
+
+	// Embedded mode: when the caller did not inject a secret registry, the
+	// client gets its own, which resolves credential:// and kms:// URIs
+	// through this client's bound transport. Security().SecretResolver() is
+	// then reachable without an explicit WithSecretRegistry, and every
+	// resolution runs as the client's identity, never as the system.
+	if options.secretRegistry == nil && options.transportType == TransportEmbedded {
+		options.secretRegistry = newBoundSecretRegistry(c)
 	}
 
 	return c, nil
