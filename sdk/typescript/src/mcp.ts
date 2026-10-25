@@ -180,7 +180,13 @@ import {
   type TaskPageParams,
   type WorkflowPageParams,
 } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
+import {
+  QuicBaaSError,
+  DeployNotSupportedError,
+  McpError,
+  McpSecretNotTextError,
+  TransportNotSupportedError,
+} from './errors.js';
 import { requireTLSForSOPIN } from './so_pin.js';
 import { requireOneAdminSelector } from './ceremony.js';
 
@@ -846,8 +852,20 @@ class McpAuthClient implements AuthClient {
 // secretArg renders a barrier credential as the plaintext string an MCP tool
 // argument has to be, as the Go MCP transport's secretArg does: JSON carries
 // no bytes, and the server reads the argument as the credential itself.
-function secretArg(secret: Uint8Array): string {
-  return new TextDecoder().decode(secret);
+//
+// The conversion is lossless or refused: every valid UTF-8 byte is kept, a
+// leading BOM included (ignoreBOM), and bytes that are not valid UTF-8 throw
+// McpSecretNotTextError for field (fatal) instead of being replaced. A
+// credential altered here would initialize a barrier that the caller's real
+// bytes could never unseal.
+const secretDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+function secretArg(field: string, secret: Uint8Array): string {
+  try {
+    return secretDecoder.decode(secret);
+  } catch {
+    throw new McpSecretNotTextError(field);
+  }
 }
 
 // McpBarrierClient calls the qrdb_barrier_* MCP tools, with the tool names
@@ -860,11 +878,11 @@ export class McpBarrierClient implements BarrierClient {
   }
 
   async initialize(req: BarrierInitRequest): Promise<void> {
-    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_initialize', { secret: secretArg(req.secret) });
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_initialize', { secret: secretArg('secret', req.secret) });
   }
 
   async unseal(req: BarrierUnsealRequest): Promise<void> {
-    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_unseal', { secret: secretArg(req.secret) });
+    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_unseal', { secret: secretArg('secret', req.secret) });
   }
 
   async seal(req?: BarrierSealRequest): Promise<void> {
@@ -876,7 +894,7 @@ export class McpBarrierClient implements BarrierClient {
   // the qrdb share-claim flow), so shares is empty unless the server sends it.
   async initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> {
     const reply = await this.session.callTool<Partial<BarrierShamirInitResponse>>('qrdb_barrier_shamir_initialize', {
-      secret: secretArg(req.secret),
+      secret: secretArg('secret', req.secret),
       threshold: req.threshold,
       total_shares: req.total_shares,
     });
@@ -952,7 +970,7 @@ export class McpBarrierClient implements BarrierClient {
       target_strategy: req.strategy,
       mechanism: req.mechanism ?? '',
       availability: req.availability ?? '',
-      passphrase: req.passphrase === undefined ? '' : secretArg(req.passphrase),
+      passphrase: req.passphrase === undefined ? '' : secretArg('passphrase', req.passphrase),
       shamir_threshold: req.shamir_threshold ?? 0,
       shamir_total: req.shamir_total ?? 0,
     };
@@ -1004,7 +1022,7 @@ export class McpCeremonyClient implements CeremonyClient {
     if (req.admin_cert_pem) args.admin_cert_pem = req.admin_cert_pem;
     if (req.admin_cert_pool_pem) args.admin_cert_pool_pem = req.admin_cert_pool_pem;
     if (req.admin_generate) args.admin_generate = true;
-    if (req.secret && req.secret.length > 0) args.secret = secretArg(req.secret);
+    if (req.secret && req.secret.length > 0) args.secret = secretArg('secret', req.secret);
     return this.session.callTool<CeremonyInitializeResponse>('qrdb_ceremony_initialize', args);
   }
 

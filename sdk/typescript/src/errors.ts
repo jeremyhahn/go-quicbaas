@@ -138,6 +138,21 @@ export class McpError extends QuicBaaSError {
   }
 }
 
+// McpSecretNotTextError reports a credential whose bytes are not valid UTF-8,
+// as the Go MCP transport's SecretNotTextError does. An MCP tool argument is a
+// JSON string, which cannot carry such bytes: a decoder would replace them and
+// the server would receive a different credential, so the call is refused
+// before any request is sent. `field` names the tool argument it was for.
+export class McpSecretNotTextError extends QuicBaaSError {
+  readonly field: string;
+
+  constructor(field: string) {
+    super(`mcp: ${field} is not valid UTF-8 and cannot be carried losslessly as an MCP string argument`);
+    this.name = 'McpSecretNotTextError';
+    this.field = field;
+  }
+}
+
 // =============================================================================
 // SSH typed errors
 // =============================================================================
