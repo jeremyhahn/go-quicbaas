@@ -603,6 +603,14 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	// Connect is a no-op for the qrdb embedded transport; skip it. The
 	// network-transport Connect-with-health-check workaround does not
 	// apply here because the embedded transport never dials anything.
+	//
+	// An embedded identity binds the qrdb sub-client's calls through the
+	// same binder the quicbaas embedded transport binds through, so
+	// DataStore, TenantMgmt and the qrdb-backed Security() verbs never
+	// reach a servicer unbound.
+	if bind := c.opts.embeddedIdentity.bind; bind != nil {
+		return qrdbsdk.NewClient(&boundQRDBTransport{next: t, bind: bind})
+	}
 	return qrdbsdk.NewClient(t)
 }
 
