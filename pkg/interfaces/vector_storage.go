@@ -140,6 +140,20 @@ type VectorStorageStats struct {
 	MemoryUsageBytes uint64
 }
 
+// VectorCompactionProgress is the storage's view of one compaction.
+type VectorCompactionProgress struct {
+	// InProgress reports whether the compaction is still running.
+	InProgress bool
+	// BytesCompacted is the number of bytes reclaimed so far.
+	BytesCompacted int64
+	// TotalBytes is the namespace size the compaction started from.
+	TotalBytes int64
+	// CompletedAt is when the compaction finished, in Unix nanoseconds.
+	CompletedAt *int64
+	// Error is the storage's failure message; empty unless it failed.
+	Error string
+}
+
 // VectorScanPage is one page of a namespace scan.
 type VectorScanPage struct {
 	// Vectors are the page's vectors.
@@ -191,9 +205,15 @@ type VectorStorage interface {
 	// GetStats returns storage statistics for a namespace.
 	GetStats(ctx context.Context, namespace string) (*VectorStorageStats, error)
 
-	// Compact compacts a namespace. When async is set it returns once the
-	// compaction is accepted, and the compaction runs in the background.
-	Compact(ctx context.Context, namespace string, async bool) error
+	// Compact compacts a namespace and returns the storage's operation ID
+	// for it. When async is set it returns once the compaction is accepted,
+	// and the compaction runs in the background; CompactionProgress follows
+	// it by that ID.
+	Compact(ctx context.Context, namespace string, async bool) (string, error)
+
+	// CompactionProgress returns the progress of the compaction the storage
+	// knows by operationID.
+	CompactionProgress(ctx context.Context, namespace, operationID string) (*VectorCompactionProgress, error)
 
 	// Close releases storage resources.
 	Close() error

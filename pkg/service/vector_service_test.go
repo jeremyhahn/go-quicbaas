@@ -2266,6 +2266,76 @@ func TestCompactNamespace_Asynchronous(t *testing.T) {
 	assert.True(t, handedOff, "an async compaction runs in qrdb's background")
 }
 
+// An async compaction qrdb has accepted but not finished stays in
+// progress: acceptance is not completion.
+func TestCompactNamespace_AsyncInProgressUntilUpstreamFinishes(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	storage.compactFn = func(_ context.Context, _ string, _ bool) error { return nil }
+	ctx := tenantctx.WithSystem(context.Background())
+	resp, err := svc.CompactNamespace(ctx, &CompactNamespaceRequest{Namespace: "test-ns", Async: true})
+	require.NoError(t, err)
+
+	progress, err := svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{OperationID: resp.OperationID})
+	require.NoError(t, err)
+	assert.True(t, progress.InProgress)
+	assert.Nil(t, progress.CompletedAt)
+	assert.Less(t, progress.PercentComplete, 100.0)
+}
+
+// A failure qrdb reports after it accepted the compaction reaches the job
+// as a typed error.
+func TestCompactNamespace_AsyncUpstreamFailureReachesJob(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	storage.compactionProgressFn = func(_ context.Context, _, operationID string) (*interfaces.VectorCompactionProgress, error) {
+		require.Equal(t, vecMockUpstreamOperationID, operationID, "the job follows qrdb's operation ID")
+		return &interfaces.VectorCompactionProgress{Error: "segment rewrite failed"}, nil
+	}
+	ctx := tenantctx.WithSystem(context.Background())
+	resp, err := svc.CompactNamespace(ctx, &CompactNamespaceRequest{Namespace: "test-ns", Async: true})
+	require.NoError(t, err)
+
+	progress, err := svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{OperationID: resp.OperationID})
+	require.NoError(t, err)
+	assert.False(t, progress.InProgress)
+	assert.Contains(t, progress.Error, "segment rewrite failed")
+	assert.NotEqual(t, 100.0, progress.PercentComplete)
+
+	job := svc.compactionJobs[resp.OperationID]
+	var failed *UpstreamCompactionError
+	require.ErrorAs(t, job.Error, &failed)
+	assert.Equal(t, vecMockUpstreamOperationID, failed.OperationID)
+}
+
+// The bytes qrdb reclaimed reach the job when the compaction succeeds, and
+// a progress read qrdb cannot answer leaves the job in progress.
+func TestCompactNamespace_AsyncReclaimedBytesReachJob(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	finished := int64(1_700_000_000_000_000_000)
+	storage.compactionProgressFn = func(_ context.Context, _, _ string) (*interfaces.VectorCompactionProgress, error) {
+		return nil, errors.New("progress unavailable")
+	}
+	ctx := tenantctx.WithSystem(context.Background())
+	resp, err := svc.CompactNamespace(ctx, &CompactNamespaceRequest{Namespace: "test-ns", Async: true})
+	require.NoError(t, err)
+
+	progress, err := svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{OperationID: resp.OperationID})
+	require.NoError(t, err)
+	assert.True(t, progress.InProgress, "an unanswered progress read does not finish the job")
+
+	storage.compactionProgressFn = func(_ context.Context, _, _ string) (*interfaces.VectorCompactionProgress, error) {
+		return &interfaces.VectorCompactionProgress{BytesCompacted: 4096, TotalBytes: 8192, CompletedAt: &finished}, nil
+	}
+	progress, err = svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{Namespace: "test-ns"})
+	require.NoError(t, err)
+	assert.False(t, progress.InProgress)
+	assert.Empty(t, progress.Error)
+	assert.Equal(t, int64(4096), progress.BytesCompacted)
+	assert.Equal(t, int64(8192), progress.TotalBytes)
+	assert.Equal(t, 100.0, progress.PercentComplete)
+	require.NotNil(t, progress.CompletedAt)
+	assert.Equal(t, finished, *progress.CompletedAt)
+}
+
 // qrdb's compact verb checks the namespace in the caller's tenant, so a
 // namespace it does not hold is not found, synchronously or not, with no
 // separate metadata read.

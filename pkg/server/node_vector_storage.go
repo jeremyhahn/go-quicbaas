@@ -261,13 +261,36 @@ func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*in
 	}, nil
 }
 
-// Compact triggers compaction for a namespace via the node transport.
-func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string, async bool) error {
-	_, err := n.vec.CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
+// Compact triggers compaction for a namespace via the node transport and
+// returns qrdb's operation ID for it.
+func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string, async bool) (string, error) {
+	resp, err := n.vec.CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
 		Namespace: namespace,
 		Async:     async,
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return resp.OperationID, nil
+}
+
+// CompactionProgress returns qrdb's progress for the compaction it knows by
+// operationID.
+func (n *nodeVectorStorage) CompactionProgress(ctx context.Context, namespace, operationID string) (*interfaces.VectorCompactionProgress, error) {
+	resp, err := n.vec.GetCompactionProgress(ctx, &qrdbtransport.GetCompactionProgressRequest{
+		Namespace:   namespace,
+		OperationID: operationID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &interfaces.VectorCompactionProgress{
+		InProgress:     resp.InProgress,
+		BytesCompacted: resp.BytesCompacted,
+		TotalBytes:     resp.TotalBytes,
+		CompletedAt:    resp.CompletedAt,
+		Error:          resp.Error,
+	}, nil
 }
 
 // Close is a no-op: the node owns the underlying vector storage lifecycle.
