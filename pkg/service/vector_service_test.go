@@ -2094,7 +2094,7 @@ func TestPerformIndexRebuild_InsertErrorKeepsOldIndex(t *testing.T) {
 }
 
 func TestRebuildIndex_Synchronous(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, _ := newVecSvcLocalIndex(t, "test-ns", 3)
 	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
 		return nil, nil
 	}
@@ -2105,7 +2105,7 @@ func TestRebuildIndex_Synchronous(t *testing.T) {
 }
 
 func TestRebuildIndex_Asynchronous(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, _ := newVecSvcLocalIndex(t, "test-ns", 3)
 	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
 		return nil, nil
 	}
@@ -2115,7 +2115,7 @@ func TestRebuildIndex_Asynchronous(t *testing.T) {
 }
 
 func TestRebuildIndex_NamespaceNotFound(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, storage, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	storage.scanNamespaceFn = func(_ context.Context, namespace string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
 		return nil, &qrdbtransport.NamespaceNotFoundError{Namespace: namespace}
 	}
@@ -2126,7 +2126,7 @@ func TestRebuildIndex_NamespaceNotFound(t *testing.T) {
 }
 
 func TestGetRebuildProgress_ByJobID(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	job := &RebuildJobState{JobID: "j1", Namespace: "test-ns", InProgress: true,
 		VectorsProcessed: 50, TotalVectors: 100, StartedAt: time.Now()}
 	svc.jobMu.Lock()
@@ -2140,7 +2140,7 @@ func TestGetRebuildProgress_ByJobID(t *testing.T) {
 }
 
 func TestGetRebuildProgress_ByNamespace(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	job := &RebuildJobState{JobID: "jn", Namespace: "test-ns", InProgress: false, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.rebuildJobs["jn"] = job
@@ -2152,13 +2152,13 @@ func TestGetRebuildProgress_ByNamespace(t *testing.T) {
 }
 
 func TestGetRebuildProgress_NotFound(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	_, err := svc.GetRebuildProgress(tenantctx.WithSystem(context.Background()), &GetRebuildProgressRequest{JobID: "nope"})
 	require.Error(t, err)
 }
 
 func TestGetRebuildProgress_Completed(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	now := time.Now()
 	done := now.Add(1 * time.Second)
 	job := &RebuildJobState{JobID: "jd", Namespace: "test-ns", InProgress: false,
@@ -2174,7 +2174,7 @@ func TestGetRebuildProgress_Completed(t *testing.T) {
 }
 
 func TestGetRebuildProgress_Failed(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	now := time.Now()
 	done := now.Add(1 * time.Second)
 	job := &RebuildJobState{JobID: "jf", Namespace: "test-ns", InProgress: false,
@@ -2190,7 +2190,7 @@ func TestGetRebuildProgress_Failed(t *testing.T) {
 }
 
 func TestGetRebuildProgress_WithEstimate(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, _ := newVecSvcLocalIndex(t, "test-ns", 128)
 	started := time.Now().Add(-1 * time.Second)
 	job := &RebuildJobState{JobID: "je", Namespace: "test-ns", InProgress: true,
 		VectorsProcessed: 50, TotalVectors: 100, StartedAt: started}
@@ -2204,7 +2204,7 @@ func TestGetRebuildProgress_WithEstimate(t *testing.T) {
 }
 
 func TestGetIndexStats_WithIndex(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 128)
 	mockIndex.countVal = 100
 	mockIndex.statsVal = &interfaces.IndexStats{NodeCount: 100, MaxLayer: 4, AvgConnections: 12.0, Dimensions: 128}
 
@@ -2227,7 +2227,7 @@ func TestGetIndexStats_WithoutIndex(t *testing.T) {
 }
 
 func TestGetIndexStats_NilStats(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 128)
 	mockIndex.countVal = 5
 	mockIndex.statsVal = nil
 	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), &GetIndexStatsRequest{Namespace: "test-ns"})
@@ -2237,7 +2237,7 @@ func TestGetIndexStats_NilStats(t *testing.T) {
 }
 
 func TestGetIndexStats_MaxLayerZero(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 128)
 	mockIndex.countVal = 10
 	mockIndex.statsVal = &interfaces.IndexStats{NodeCount: 10, MaxLayer: 0, AvgConnections: 8.0, Dimensions: 128}
 	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), &GetIndexStatsRequest{Namespace: "test-ns"})
