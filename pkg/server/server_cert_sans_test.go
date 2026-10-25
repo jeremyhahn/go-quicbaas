@@ -29,6 +29,7 @@ import (
 var (
 	errSANTestCA             = errors.New("san test: ca failure")
 	errSANTestAlreadyRevoked = errors.New("san test: certificate already revoked")
+	errSANTestNotFound       = errors.New("san test: storage: not found")
 )
 
 // sanCAMock is a TrustedCA whose issuance and revocation mirror go-xkms: a
@@ -37,6 +38,9 @@ var (
 type sanCAMock struct {
 	xkmssdk.TrustedCA
 	certs        *sanCertStoreMock
+	keys         *sanKeyStoreMock
+	caCert       *x509.Certificate
+	caCertErr    error
 	issueErr     error
 	revokeErr    error
 	isRevokedErr error
@@ -85,8 +89,66 @@ func (m *sanCAMock) isRevoked(serial *big.Int) bool {
 
 func (m *sanCAMock) CertStore() xkmssdk.CertStore { return m.certs }
 
-func (m *sanCAMock) ServerTLSConfig(context.Context, *xkmssdk.KeyAttributes, bool) (*tls.Config, error) {
-	return &tls.Config{}, nil
+func (m *sanCAMock) KeyStore() xkmssdk.ServiceBackend { return m.keys }
+
+func (m *sanCAMock) CACertificate() (*x509.Certificate, error) {
+	return m.caCert, m.caCertErr
+}
+
+// ServerTLSConfig mirrors go-xkms: the served certificate comes from the
+// keystore by Common Name, never from the CertStore.
+func (m *sanCAMock) ServerTLSConfig(_ context.Context, attrs *xkmssdk.KeyAttributes, _ bool) (*tls.Config, error) {
+	chain, ok := m.keys.chains[attrs.CN]
+	if !ok {
+		return nil, errSANTestNotFound
+	}
+	served := tls.Certificate{Leaf: chain[0]}
+	for _, cert := range chain {
+		served.Certificate = append(served.Certificate, cert.Raw)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{served}}, nil
+}
+
+// sanKeyStoreMock is a keystore whose certificate storage is keyed by
+// Common Name, recording the order of writes.
+type sanKeyStoreMock struct {
+	xkmssdk.ServiceBackend
+	certs    map[string]*x509.Certificate
+	chains   map[string][]*x509.Certificate
+	writes   []string
+	chainErr error
+	certErr  error
+}
+
+func newSANKeyStoreMock() *sanKeyStoreMock {
+	return &sanKeyStoreMock{certs: map[string]*x509.Certificate{}, chains: map[string][]*x509.Certificate{}}
+}
+
+func (k *sanKeyStoreMock) SaveCertChain(_ context.Context, keyID string, chain []*x509.Certificate) error {
+	if k.chainErr != nil {
+		return k.chainErr
+	}
+	k.chains[keyID] = chain
+	k.writes = append(k.writes, "chain")
+	return nil
+}
+
+func (k *sanKeyStoreMock) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
+	if k.certErr != nil {
+		return k.certErr
+	}
+	k.certs[keyID] = cert
+	k.writes = append(k.writes, "cert")
+	return nil
+}
+
+// newSANCAMock returns a sanCAMock with empty stores and a CA certificate.
+func newSANCAMock(t *testing.T) *sanCAMock {
+	return &sanCAMock{
+		certs:  newSANCertStoreMock(t),
+		keys:   newSANKeyStoreMock(),
+		caCert: newSANTestLeaf(t, "Test Root CA", &xkmssdk.TrustedCASubjectAlternativeNames{}),
+	}
 }
 
 // sanCertStoreMock is a CertStore keyed by Common Name.
@@ -236,7 +298,7 @@ func TestMissingSANs_ReportsAbsentAndUnparseableEntries(t *testing.T) {
 }
 
 func TestIssueServerCert_FirstIssue(t *testing.T) {
-	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+	ca := newSANCAMock(t)
 	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
 
 	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
@@ -247,7 +309,7 @@ func TestIssueServerCert_FirstIssue(t *testing.T) {
 }
 
 func TestIssueServerCert_CoveringCertIsKept(t *testing.T) {
-	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+	ca := newSANCAMock(t)
 	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}, IPs: []string{"127.0.0.1"}}
 	existing := newSANTestLeaf(t, "localhost", sans)
 	ca.certs.certs["localhost"] = existing
@@ -261,8 +323,71 @@ func TestIssueServerCert_CoveringCertIsKept(t *testing.T) {
 	assert.Same(t, existing, ca.certs.certs["localhost"])
 }
 
+// A previous boot may have issued the covering certificate and then failed
+// to store it; the next boot writes the existing leaf into the keystore.
+func TestIssueServerCert_CoveringCertIsSyncedToEmptyKeyStore(t *testing.T) {
+	ca := newSANCAMock(t)
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+	existing := newSANTestLeaf(t, "localhost", sans)
+	ca.certs.certs["localhost"] = existing
+
+	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
+
+	require.NoError(t, err)
+	assert.Nil(t, issued)
+	assert.Zero(t, ca.issued)
+	assert.Same(t, existing, ca.keys.certs["localhost"])
+	require.Len(t, ca.keys.chains["localhost"], 2)
+	assert.Same(t, existing, ca.keys.chains["localhost"][0])
+	assert.Same(t, ca.caCert, ca.keys.chains["localhost"][1])
+}
+
+func TestIssueServerCert_CoveringCertKeyStoreWriteFails(t *testing.T) {
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+	tests := []struct {
+		name  string
+		setup func(ca *sanCAMock)
+	}{
+		{"CA certificate unreadable", func(ca *sanCAMock) { ca.caCertErr = errSANTestCA }},
+		{"keystore chain write fails", func(ca *sanCAMock) { ca.keys.chainErr = errSANTestCA }},
+		{"keystore leaf write fails", func(ca *sanCAMock) { ca.keys.certErr = errSANTestCA }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ca := newSANCAMock(t)
+			ca.certs.certs["localhost"] = newSANTestLeaf(t, "localhost", sans)
+			tt.setup(ca)
+
+			issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
+
+			require.ErrorIs(t, err, errSANTestCA)
+			var typed *dberrors.QBError
+			require.ErrorAs(t, err, &typed)
+			assert.Nil(t, issued)
+			assert.Zero(t, ca.issued)
+		})
+	}
+}
+
+func TestIssueServerCert_CoveringCertAlreadyInKeyStore(t *testing.T) {
+	ca := newSANCAMock(t)
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+	existing := newSANTestLeaf(t, "localhost", sans)
+	ca.certs.certs["localhost"] = existing
+	ca.keys.certs["localhost"] = existing
+	ca.keys.chains["localhost"] = []*x509.Certificate{existing, ca.caCert}
+
+	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
+
+	require.NoError(t, err)
+	assert.Nil(t, issued)
+	assert.Zero(t, ca.issued)
+	assert.Same(t, existing, ca.keys.certs["localhost"])
+	assert.Same(t, existing, ca.keys.chains["localhost"][0])
+}
+
 func TestIssueServerCert_MissingSANReissues(t *testing.T) {
-	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+	ca := newSANCAMock(t)
 	old := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}, IPs: []string{"127.0.0.1"}}
 	existing := newSANTestLeaf(t, "localhost", old)
 	ca.certs.certs["localhost"] = existing
@@ -289,10 +414,13 @@ func TestIssueServerCert_Errors(t *testing.T) {
 		{"revocation check fails", func(ca *sanCAMock) { ca.isRevokedErr = errSANTestCA }},
 		{"revoke fails", func(ca *sanCAMock) { ca.revokeErr = errSANTestCA }},
 		{"delete fails", func(ca *sanCAMock) { ca.certs.deleteErr = errSANTestCA }},
+		{"CA certificate unreadable", func(ca *sanCAMock) { ca.caCertErr = errSANTestCA }},
+		{"keystore chain write fails", func(ca *sanCAMock) { ca.keys.chainErr = errSANTestCA }},
+		{"keystore leaf write fails", func(ca *sanCAMock) { ca.keys.certErr = errSANTestCA }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+			ca := newSANCAMock(t)
 			ca.certs.certs["localhost"] = newSANTestLeaf(t, "localhost", old)
 			tt.setup(ca)
 
@@ -310,7 +438,7 @@ func TestIssueServerCert_Errors(t *testing.T) {
 // revoked certificate behind. The next boot must replace it rather than ask
 // the CA to revoke it a second time.
 func TestIssueServerCert_AlreadyRevokedCertIsReplaced(t *testing.T) {
-	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+	ca := newSANCAMock(t)
 	old := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
 	existing := newSANTestLeaf(t, "localhost", old)
 	ca.certs.certs["localhost"] = existing
@@ -329,7 +457,8 @@ func TestIssueServerCert_AlreadyRevokedCertIsReplaced(t *testing.T) {
 // A live stored certificate whose revocation fails stays stored, and boot
 // fails, after the CA has been asked whether that serial is already revoked.
 func TestIssueServerCert_RevokeFailureKeepsLiveCert(t *testing.T) {
-	ca := &sanCAMock{certs: newSANCertStoreMock(t), revokeErr: errSANTestCA}
+	ca := newSANCAMock(t)
+	ca.revokeErr = errSANTestCA
 	old := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
 	existing := newSANTestLeaf(t, "localhost", old)
 	ca.certs.certs["localhost"] = existing
@@ -345,10 +474,62 @@ func TestIssueServerCert_RevokeFailureKeepsLiveCert(t *testing.T) {
 	assert.Same(t, existing, ca.certs.certs["localhost"])
 }
 
+// go-xkms IssueCertificate stores the leaf only in the CertStore, while
+// ServerTLSConfig reads the keystore. A first issue must leave the leaf and
+// its chain where ServerTLSConfig looks, chain first.
+func TestIssueServerCert_FirstIssueIsServedByServerTLSConfig(t *testing.T) {
+	ca := newSANCAMock(t)
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+
+	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
+	require.NoError(t, err)
+
+	tlsConfig, err := ca.ServerTLSConfig(context.Background(), &xkmssdk.KeyAttributes{CN: "localhost"}, false)
+	require.NoError(t, err)
+	require.Len(t, tlsConfig.Certificates, 1)
+	assert.Same(t, issued.Certificate, tlsConfig.Certificates[0].Leaf)
+	assert.Equal(t, [][]byte{issued.Certificate.Raw, ca.caCert.Raw}, tlsConfig.Certificates[0].Certificate)
+	assert.Equal(t, []string{"chain", "cert"}, ca.keys.writes)
+}
+
+// A re-issue replaces the keystore copy too, so the served certificate
+// carries the newly configured SANs.
+func TestIssueServerCert_ReissueIsServedByServerTLSConfig(t *testing.T) {
+	ca := newSANCAMock(t)
+	old := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+	stale := newSANTestLeaf(t, "localhost", old)
+	ca.certs.certs["localhost"] = stale
+	ca.keys.chains["localhost"] = []*x509.Certificate{stale, ca.caCert}
+	wanted := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost", "api.example.test"}}
+
+	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", wanted))
+	require.NoError(t, err)
+
+	tlsConfig, err := ca.ServerTLSConfig(context.Background(), &xkmssdk.KeyAttributes{CN: "localhost"}, false)
+	require.NoError(t, err)
+	assert.Same(t, issued.Certificate, tlsConfig.Certificates[0].Leaf)
+	assert.Same(t, issued.Certificate, ca.keys.certs["localhost"])
+	assert.Contains(t, tlsConfig.Certificates[0].Leaf.DNSNames, "api.example.test")
+}
+
+// A CA that reports no certificate and no error cannot chain the leaf, and
+// nothing reaches the keystore.
+func TestIssueServerCert_NilCACertificateFails(t *testing.T) {
+	ca := newSANCAMock(t)
+	ca.caCert = nil
+	sans := &xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}}
+
+	issued, err := newSANTestServer(t).issueServerCert(context.Background(), ca, sanRequest("localhost", sans))
+
+	require.ErrorIs(t, err, ErrServerCertChainCAMissing)
+	assert.Nil(t, issued)
+	assert.Empty(t, ca.keys.writes)
+}
+
 func TestIssueTLSCertFromExternalCA_CarriesAdditionalSANs(t *testing.T) {
 	s := newSANTestServer(t)
 	s.config.Server.AdditionalSANIPs = []string{"192.0.2.10"}
-	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
+	ca := newSANCAMock(t)
 	ca.certs.certs["localhost"] = newSANTestLeaf(t, "localhost",
 		&xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}})
 	s.xkmsCA = ca

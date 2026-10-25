@@ -44,7 +44,6 @@ func (s *databaseService) CreateDatabase(ctx context.Context, req *CreateDatabas
 	}
 	cfg := qrdbsdk.DatabaseConfig{
 		Name:    req.Name,
-		Engine:  qrdbsdk.EngineType(req.Engine),
 		Backend: qrdbsdk.BackendType(req.Backend),
 	}
 	info, err := s.qrdb.CreateForTenant(ctx, cfg)
@@ -174,7 +173,6 @@ func convertDatabaseInfo(info *qrdbsdk.DatabaseInfo) *DatabaseInfo {
 	di := &DatabaseInfo{
 		TenantID: info.TenantID,
 		Name:     info.Name,
-		Engine:   string(info.Engine),
 		Backend:  string(info.Backend),
 		Status:   string(info.Status),
 		Protocol: DatabaseProtocolConfig{

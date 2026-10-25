@@ -88,7 +88,7 @@ func (s *Server) taskClaimArbiter() (orchestration.TaskClaimArbiter, error) {
 	if client == nil {
 		return nil, ErrNoClaimArbiter
 	}
-	return orchestration.NewTransactionClaimArbiter(client.Transaction(), client.KV())
+	return orchestration.NewTransactionClaimArbiter(s.serviceTransaction(client.Transaction()), s.serviceKV(client.KV()))
 }
 
 // startOrchestration initializes the agent orchestration service and attaches
@@ -403,7 +403,7 @@ func (s *Server) startOrchestration() error {
 					"error": kvErr.Error(),
 				}).Warn("Failed to obtain qrdb shard client for workflow persistor; workflows will be in-memory only")
 			} else {
-				persistor := newKVWorkflowPersistor(kvClient, 1)
+				persistor := s.workflowPersistor(kvClient)
 				wl.SetPersistor(persistor)
 				if n, rerr := wl.RehydrateAll(context.Background()); rerr != nil {
 					s.logger.WithFields(map[string]interface{}{
@@ -656,14 +656,14 @@ func (s *Server) startOrchestration() error {
 		// local turn is costed from its configured draw and marked estimated.
 		if s.timeSeriesStorage != nil {
 			series, seriesErr := newFleetTelemetrySeries(s.timeSeriesStorage,
-				s.config.Orchestration.Pricing.EffectiveTelemetryRetention())
+				s.config.Orchestration.Pricing.EffectiveTelemetryRetention(), s.ServiceContext)
 			if seriesErr != nil {
 				return seriesErr
 			}
 			// Raw telemetry is retained for a bounded window. The policy is
 			// set on every series already stored; a failure here is retried
 			// on each tenant's next report, so it does not stop the node.
-			if retentionErr := series.ApplyRetention(); retentionErr != nil {
+			if retentionErr := series.ApplyRetention(context.Background()); retentionErr != nil {
 				s.logger.Warn("Fleet device telemetry retention could not be applied at startup; it is retried on each tenant's next report: " + retentionErr.Error())
 			}
 			telemetry, telemetryErr := orchestration.NewFleetTelemetryStore(series)
@@ -1132,7 +1132,7 @@ func (s *Server) jobLeaseStore(ttl time.Duration) (orchestration.JobLeaseStore, 
 	if client == nil {
 		return nil, ErrNoJobLeaseStore
 	}
-	return orchestration.NewTransactionJobLeaseStore(client.Transaction(), client.KV(), ttl)
+	return orchestration.NewTransactionJobLeaseStore(s.serviceTransaction(client.Transaction()), s.serviceKV(client.KV()), ttl)
 }
 
 // jobSweeper runs one maintenance pass: the reaper over the fleet's leases

@@ -40,7 +40,7 @@ func (m *mockResolver) Resolve(ctx context.Context, raw string) (*SecretValue, e
 		return m.resolveFunc(ctx, raw)
 	}
 	// Default: return the value after the prefix as the resolved value.
-	return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS)
+	return NewSecretValue(ctx, raw, []byte(raw[7:]), StrategyLocalKMS)
 }
 
 // mockOtherResolver is a second test resolver bound to a different scheme,
@@ -56,7 +56,7 @@ func (m *mockOtherResolver) CanResolve(raw string) bool {
 }
 
 func (m *mockOtherResolver) Resolve(ctx context.Context, raw string) (*SecretValue, error) {
-	return NewSecretValue(raw, []byte("other-"+raw[8:]), StrategyRemoteKMS)
+	return NewSecretValue(ctx, raw, []byte("other-"+raw[8:]), StrategyRemoteKMS)
 }
 
 // failingResolver always fails to resolve.
@@ -1798,7 +1798,7 @@ func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
 				default:
 				}
 			}
-			return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS)
+			return NewSecretValue(ctx, raw, []byte(raw[7:]), StrategyLocalKMS)
 		},
 	}
 

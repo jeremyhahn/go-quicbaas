@@ -75,9 +75,9 @@ const (
 )
 
 // agentSessionPeerCert mints a client certificate shaped exactly like the one
-// AgentMCPPresetResolver issues per spawn: O=<tenant>, OU=agents,
-// CN=agent-<sessionID>, one-day validity, and the tenant-scoped SPIFFE SAN
-// go-qrdb derives the identity's tenant from.
+// AgentMCPPresetResolver issues per spawn: O=<tenant>, CN=agent-<sessionID>,
+// one-day validity, and the SPIFFE SAN spiffe://<tenant>/svc/<CN> paired with
+// OU=<tenant>, which go-xkms's CA stamps and go-qrdb derives the tenant from.
 func agentSessionPeerCert(t *testing.T, tenantID, commonName string) *x509.Certificate {
 	t.Helper()
 
@@ -85,8 +85,7 @@ func agentSessionPeerCert(t *testing.T, tenantID, commonName string) *x509.Certi
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		tenantID + "/svc/" + commonName)
+	spiffeID, err := url.Parse("spiffe://" + tenantID + "/svc/" + commonName)
 	if err != nil {
 		t.Fatalf("parse spiffe id: %v", err)
 	}
@@ -99,7 +98,7 @@ func agentSessionPeerCert(t *testing.T, tenantID, commonName string) *x509.Certi
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{"agents"},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Minute),
 		NotAfter:    time.Now().Add(24 * time.Hour),
@@ -178,6 +177,7 @@ func agentSessionMiddleware(users map[string]*user.User, extra ...permission.Per
 	}}
 	return middleware.New(rbac.New(roles),
 		middleware.WithAuthenticator(qrdbauth.NewMTLSAuthenticator()),
+		middleware.WithRoleResolver(roles),
 		middleware.WithUserService(&fakeUserServicer{users: users}),
 	)
 }
@@ -209,17 +209,24 @@ func agentSessionCallContext(
 // other permissioned tool in the real table.
 func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 	cert := agentSessionPeerCert(t, agentSessionTenant, agentSessionCN)
+	enrolled := enrolledAgentSessionUser(t, cert)
 	am := agentSessionMiddleware(map[string]*user.User{
-		agentSessionTenant + "/" + agentSessionCN: enrolledAgentSessionUser(t, cert),
+		agentSessionTenant + "/" + agentSessionCN: enrolled,
 	})
 	registry := agentSessionToolRegistry(t)
 	ctx, identity := agentSessionCallContext(t, am, cert)
 
 	// The principal every authorization decision and every audit record names is
-	// the SESSION's, resolved from the certificate subject, in the tenant the
-	// SPIFFE SAN binds.
-	if identity.Subject != agentSessionCN {
-		t.Fatalf("identity subject = %q, want the session CN %q", identity.Subject, agentSessionCN)
+	// the SESSION's record, resolved from the certificate subject, in the tenant
+	// the SPIFFE SAN binds. go-qrdb v0.50 binds a resolved identity by the
+	// record's immutable id (qrdbauth.Identity.Subject), keeping the CN only as
+	// display data in Username.
+	if want := qrdbauth.UserSubject(enrolled.ID); identity.Subject != want {
+		t.Fatalf("identity subject = %q, want the session record's id %q", identity.Subject, want)
+	}
+	if identity.UserID != enrolled.ID || identity.Username != agentSessionCN {
+		t.Fatalf("identity user = (%d, %q), want the session record (%d, %q)",
+			identity.UserID, identity.Username, enrolled.ID, agentSessionCN)
 	}
 	if identity.TenantID != agentSessionTenant {
 		t.Fatalf("identity tenant = %q, want %q", identity.TenantID, agentSessionTenant)
@@ -240,7 +247,7 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		if _, covered := registry.Lookup(tool); !covered {
 			t.Fatalf("%s is not in the tool registry; the floor names a tool nothing enforces", tool)
 		}
-		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err != nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool); err != nil {
 			t.Errorf("%s must be admitted for an enrolled session: %v", tool, err)
 		}
 	}
@@ -253,7 +260,7 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 		if allowed[tool] {
 			continue
 		}
-		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool); err == nil {
 			admitted++
 			t.Errorf("%s is OUTSIDE the session floor and must be refused", tool)
 		} else {
@@ -271,34 +278,19 @@ func TestAgentSession_EnrolledCertificateHoldsExactlyItsFloor(t *testing.T) {
 
 // TestAgentSession_UnenrolledCertificateIsRefused reproduces the live defect and
 // is the neutralization guard for the enrollment: with no record for the
-// certificate's subject the principal holds no roles, and the default-deny MCP
-// gate refuses everything — including the tools the floor names. Remove the
-// enrollment and this is what every spawned agent gets.
+// certificate's subject, go-qrdb v0.47 does not authenticate the certificate
+// at all, so the session reaches no tool — including the ones the floor
+// names. Remove the enrollment and this is what every spawned agent gets.
 func TestAgentSession_UnenrolledCertificateIsRefused(t *testing.T) {
 	cert := agentSessionPeerCert(t, agentSessionTenant, agentSessionCN)
 	am := agentSessionMiddleware(map[string]*user.User{})
-	registry := agentSessionToolRegistry(t)
-	ctx, identity := agentSessionCallContext(t, am, cert)
-
-	// It authenticates. That was never the problem.
-	if identity.Subject != agentSessionCN {
-		t.Fatalf("identity subject = %q, want %q", identity.Subject, agentSessionCN)
-	}
-	if len(identity.Roles) != 0 {
-		t.Fatalf("an unenrolled certificate must hold no roles, got %v", identity.Roles)
-	}
-
-	for _, tool := range []string{"quicbaas_orchestrator_inference", qrdbGetTool, qrdbPutTool, qrdbListTool} {
-		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
-			t.Errorf("%s was admitted for an unenrolled certificate", tool)
-		}
-	}
+	requireCertificateUnauthenticated(t, am, cert, "an unenrolled certificate")
 }
 
 // TestAgentSession_RevokedCertificateCannotAct proves the principal cannot act
 // after the session closes. Revocation deletes the record, so the very same
-// certificate — still valid, still trusted, still presented — resolves to no
-// roles and is refused everything.
+// certificate — still valid, still trusted, still presented — no longer
+// authenticates and is refused everything.
 func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 	cert := agentSessionPeerCert(t, agentSessionTenant, agentSessionCN)
 
@@ -323,7 +315,7 @@ func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 	registry := agentSessionToolRegistry(t)
 
 	ctx, _ := agentSessionCallContext(t, am, cert)
-	if err := am.AuthorizeMCP(ctx, registry, qrdbGetTool, nil); err != nil {
+	if err := am.AuthorizeMCP(ctx, registry, qrdbGetTool); err != nil {
 		t.Fatalf("precondition: an open session must be admitted on %s: %v", qrdbGetTool, err)
 	}
 
@@ -335,14 +327,26 @@ func TestAgentSession_RevokedCertificateCannotAct(t *testing.T) {
 	}
 	delete(users, agentSessionTenant+"/"+agentSessionCN)
 
-	closedCtx, closedIdentity := agentSessionCallContext(t, am, cert)
-	if len(closedIdentity.Roles) != 0 {
-		t.Fatalf("a closed session must hold no roles, got %v", closedIdentity.Roles)
+	requireCertificateUnauthenticated(t, am, cert, "a closed session")
+}
+
+// requireCertificateUnauthenticated asserts go-qrdb v0.47's mTLS
+// authenticator establishes no identity for peer: a certificate with no
+// enrolled principal behind it is not a caller, so no MCP tool can be reached
+// through it.
+func requireCertificateUnauthenticated(t *testing.T, am *middleware.AuthMiddleware, peer *x509.Certificate, what string) {
+	t.Helper()
+
+	ctx := qrdbauth.WithTLSState(t.Context(), &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{peer},
+		VerifiedChains:   [][]*x509.Certificate{{peer}},
+	})
+	_, identity, err := am.Authenticate(ctx)
+	if err == nil {
+		t.Fatalf("%s must not authenticate, got identity %+v", what, identity)
 	}
-	for _, tool := range []string{"quicbaas_orchestrator_inference", qrdbGetTool, qrdbPutTool, qrdbListTool} {
-		if err := am.AuthorizeMCP(closedCtx, registry, tool, nil); err == nil {
-			t.Errorf("%s was admitted after the session closed", tool)
-		}
+	if identity != nil {
+		t.Fatalf("%s must yield no identity alongside its error, got %+v", what, identity)
 	}
 }
 
@@ -372,7 +376,7 @@ func TestAgentSession_IsNotADaemon(t *testing.T) {
 
 	ctx, _ := agentSessionCallContext(t, am, cert)
 	for tool := range daemonOnly {
-		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err == nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool); err == nil {
 			t.Errorf("a session was admitted on the daemon-only verb behind %s", tool)
 		}
 	}

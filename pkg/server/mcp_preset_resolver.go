@@ -147,9 +147,8 @@ type AgentMCPPresetResolverConfig struct {
 	// SPIFFETrustDomain is the operator-configured trust domain
 	// (iam.spiffe_trust_domain). It is REQUIRED, because it is the only thing
 	// that puts a tenant-scoped SPIFFE SAN on the certificate, and without that
-	// SAN go-qrdb derives the identity's tenant from the first Subject OU --
-	// "agents" on every agent certificate -- so the session would authenticate
-	// into a phantom tenant no enrollment can reach. First boot already refuses
+	// SAN go-qrdb names no tenant for the certificate, so the session could
+	// never authenticate. First boot already refuses
 	// to issue the admin certificate without it (ErrNoSPIFFETrustDomain), so
 	// requiring it here invents no identifier and excludes no running
 	// deployment.
@@ -372,8 +371,9 @@ func writeAgentSessionMaterial(dir string, issued *service.IssuedFleetNodeCertif
 
 	// Write the private key at 0600, then destroy the mlocked buffer
 	// immediately so no plaintext key lingers in resident memory.
-	//secure:unborrowed injected-interface os.WriteFile requires a byte slice and returns before the key buffer is destroyed.
-	keyErr := os.WriteFile(material.keyPath, issued.PrivateKey.Bytes(), 0600)
+	keyErr := issued.PrivateKey.WithBytes(func(key []byte) error {
+		return os.WriteFile(material.keyPath, key, 0600)
+	})
 	issued.PrivateKey.Destroy()
 	if keyErr != nil {
 		return nil, &MCPPresetResolveError{Op: "write agent private key", Cause: keyErr}
@@ -388,19 +388,18 @@ func writeAgentSessionMaterial(dir string, issued *service.IssuedFleetNodeCertif
 // authenticatedTenant returns the tenant go-qrdb will authenticate peer into,
 // asserting it is the tenant the spawn named.
 //
-// qrdb derives it from the certificate's tenant-scoped SPIFFE SAN and falls back
-// to the first Subject OU when there is none (pkg/auth
-// MTLSAuthenticator.TenantFromCert). Every agent certificate carries OU=agents,
-// so that fallback names a tenant literally called "agents": it is reported, not
-// used. A malformed SAN fails closed, exactly as qrdb's authenticator does.
+// qrdb names the tenant by the trust domain of the certificate's SPIFFE SAN,
+// spiffe://<tenant>/<kind>/<name>, which the first Subject OU must match (sdk
+// TenantFromClientCert); a certificate with no SAN names no tenant. A malformed
+// SAN fails closed, exactly as qrdb's authenticator does.
 func (r *AgentMCPPresetResolver) authenticatedTenant(peer *x509.Certificate, spawnTenant string) (string, error) {
-	id, err := qrdbsdk.TenantFromCert(peer, "")
+	id, err := qrdbsdk.WorkloadFromCert(peer)
 	switch {
 	case err == nil:
-		if id.TenantID != spawnTenant {
-			return "", &AgentSessionCertTenantMismatchError{Certificate: id.TenantID, Spawn: spawnTenant}
+		if id.TrustDomain != spawnTenant {
+			return "", &AgentSessionCertTenantMismatchError{Certificate: id.TrustDomain, Spawn: spawnTenant}
 		}
-		return id.TenantID, nil
+		return id.TrustDomain, nil
 	case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 		return "", &AgentSessionCertNoSPIFFETenantError{CommonName: peer.Subject.CommonName}
 	default:
@@ -474,10 +473,9 @@ func (e *AgentSessionCertTenantMismatchError) Error() string {
 }
 
 // AgentSessionCertNoSPIFFETenantError reports an ephemeral certificate carrying
-// no tenant-scoped SPIFFE SAN. go-qrdb would authenticate it into a tenant named
-// by its OU — "agents" — so no enrollment in the spawning tenant could ever
-// authorize it, and the session is refused a credential rather than handed a
-// useless one.
+// no tenant-scoped SPIFFE SAN. go-qrdb names no tenant for such a certificate,
+// so it could never authenticate into the spawning tenant, and the session is
+// refused a credential rather than handed a useless one.
 type AgentSessionCertNoSPIFFETenantError struct {
 	// CommonName is the certificate subject, for the operator's log.
 	CommonName string

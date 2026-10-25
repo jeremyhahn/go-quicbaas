@@ -26,6 +26,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // tenantWebAuthnVerifier is the tenant-aware WebAuthn login FactorVerifier
@@ -96,6 +97,7 @@ func (v *tenantWebAuthnVerifier) tenantVerifier(ctx context.Context, tenantID st
 // metadata the client needs to drive navigator.credentials.get(). It fails
 // closed when the tenant is empty or the factory is unbound.
 func (v *tenantWebAuthnVerifier) BeginChallenge(ctx context.Context, tenantID string, factorType qrdbtransport.FactorType, hint string) ([]byte, map[string]string, time.Time, error) {
+	ctx = tenantctx.WithTenant(ctx, tenantID)
 	verifier, err := v.tenantVerifier(ctx, tenantID, "BeginChallenge")
 	if err != nil {
 		return nil, nil, time.Time{}, err
@@ -110,6 +112,7 @@ func (v *tenantWebAuthnVerifier) BeginChallenge(ctx context.Context, tenantID st
 // tenant is empty or the factory is unbound, and delegates the actual
 // verification crypto (including revoked-factor rejection) to the xkms verifier.
 func (v *tenantWebAuthnVerifier) VerifyTenant(ctx context.Context, tenantID string, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+	ctx = tenantctx.WithTenant(ctx, tenantID)
 	verifier, err := v.tenantVerifier(ctx, tenantID, "VerifyTenant")
 	if err != nil {
 		return err

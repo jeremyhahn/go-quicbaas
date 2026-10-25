@@ -43,7 +43,7 @@ func TestAgentSession_SigningHelperIsRefusedWithoutKeysSign(t *testing.T) {
 	ctx, _ := agentSessionCallContext(t, am, cert)
 
 	for _, tool := range []string{sshKeyExportTool, sshKeySignTool} {
-		err := am.AuthorizeMCP(ctx, registry, tool, nil)
+		err := am.AuthorizeMCP(ctx, registry, tool)
 		var denied *rbac.PermissionDeniedError
 		if !errors.As(err, &denied) {
 			t.Fatalf("%s: AuthorizeMCP = %v, want a *rbac.PermissionDeniedError", tool, err)
@@ -65,7 +65,7 @@ func TestAgentSession_SigningHelperIsAdmittedWithKeysSign(t *testing.T) {
 		if _, covered := registry.Lookup(tool); !covered {
 			t.Fatalf("%s is not in the tool registry", tool)
 		}
-		if err := am.AuthorizeMCP(ctx, registry, tool, nil); err != nil {
+		if err := am.AuthorizeMCP(ctx, registry, tool); err != nil {
 			t.Errorf("%s must be admitted for a session granted keys:get and keys:sign: %v", tool, err)
 		}
 	}

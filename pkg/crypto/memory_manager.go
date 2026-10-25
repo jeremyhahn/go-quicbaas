@@ -265,7 +265,11 @@ func CreateDefaultManagers(log interfaces.Logger) (interfaces.KMSManager, interf
 	if err != nil {
 		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version storage")
 	}
-	keyVersions, err := xkmssdk.NewKeyVersionStore(versionStorage)
+	versionDAOs, err := xkmssdk.NewBackendDAOFactory(versionStorage)
+	if err != nil {
+		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version DAO factory")
+	}
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionDAOs)
 	if err != nil {
 		return nil, nil, nil, errors.Wrapf(err, errors.ErrInternal, "crypto.CreateDefaultManagers", "failed to create key version store")
 	}

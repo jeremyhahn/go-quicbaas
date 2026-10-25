@@ -14,21 +14,24 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
-	"github.com/jeremyhahn/go-quicbaas/pkg/sshstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
-
-var legacyDeployKey = xkmsssh.GetKeyRequest{Scope: "user", Owner: "alice", Name: "fleet-deploy"}
 
 func newSSHStoreTestServer(t *testing.T, dataDir string, xkms config.XKMSConfig) *Server {
 	t.Helper()
@@ -36,20 +39,6 @@ func newSSHStoreTestServer(t *testing.T, dataDir string, xkms config.XKMSConfig)
 		config: &config.Config{Storage: config.StorageConfig{DataDir: dataDir}, XKMS: xkms},
 		logger: buildTestLogger(t),
 	}
-}
-
-// seedLegacySSHStore writes one key into a legacy plaintext store under
-// dataDir and returns its public key line.
-func seedLegacySSHStore(t *testing.T, dataDir string) string {
-	t.Helper()
-	client, err := xkmsssh.NewEmbeddedFile(xkmsssh.EmbeddedFileOptions{RootDir: sshstore.LegacyDir(dataDir)})
-	require.NoError(t, err)
-	key, err := client.Keys().Generate(context.Background(), xkmsssh.GenerateRequest{
-		Scope: legacyDeployKey.Scope, Owner: legacyDeployKey.Owner, Name: legacyDeployKey.Name, Algorithm: "ed25519",
-	})
-	require.NoError(t, err)
-	require.NoError(t, client.Close())
-	return key.PublicKey
 }
 
 func TestBuildSSHClient_RemoteXKMSD(t *testing.T) {
@@ -62,22 +51,113 @@ func TestBuildSSHClient_RemoteXKMSD(t *testing.T) {
 }
 
 // TestBuildSSHClient_UnsealedNodeFailsClosed proves a node with no barrier
-// gets no SSH store, and that a legacy plaintext store on such a node is left
-// exactly where it was: neither served nor migrated into unsealed storage.
+// and no remote xkmsd gets no SSH store at all.
 func TestBuildSSHClient_UnsealedNodeFailsClosed(t *testing.T) {
-	dataDir := t.TempDir()
-	seedLegacySSHStore(t, dataDir)
-	s := newSSHStoreTestServer(t, dataDir, config.XKMSConfig{})
+	s := newSSHStoreTestServer(t, t.TempDir(), config.XKMSConfig{})
 
 	client, err := s.buildSSHClient()
 	require.NoError(t, err)
 	assert.Nil(t, client, "an unsealed node must have no SSH key store")
+}
 
-	legacy, err := xkmsssh.NewEmbeddedFile(xkmsssh.EmbeddedFileOptions{RootDir: sshstore.LegacyDir(dataDir)})
+// newSSHStoreLogServer returns an unsealed test server whose logger writes
+// JSON lines into the returned buffer.
+func newSSHStoreLogServer(t *testing.T, dataDir string) (*Server, *bytes.Buffer) {
+	t.Helper()
+	var buf bytes.Buffer
+	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	log, err := qrdbsdk.NewLoggerWithHandler(handler, logger.LogConfig{Level: "warn"})
 	require.NoError(t, err)
-	_, err = legacy.Keys().Get(context.Background(), legacyDeployKey)
-	require.NoError(t, err, "the legacy store must not be touched on an unsealed node")
-	require.NoError(t, legacy.Close())
+	s := newSSHStoreTestServer(t, dataDir, config.XKMSConfig{})
+	s.logger = log
+	return s, &buf
+}
+
+// legacySSHStoreWarnings returns the decoded warning records whose message
+// is about the legacy plaintext SSH key directory.
+func legacySSHStoreWarnings(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var warnings []map[string]any
+	dec := json.NewDecoder(buf)
+	for {
+		var record map[string]any
+		err := dec.Decode(&record)
+		if errors.Is(err, io.EOF) {
+			return warnings
+		}
+		require.NoError(t, err)
+		msg, ok := record["msg"].(string)
+		require.True(t, ok, "log record without a message: %v", record)
+		if record["level"] == "WARN" && strings.Contains(msg, "legacy") {
+			warnings = append(warnings, record)
+		}
+	}
+}
+
+func TestBuildSSHClient_WarnsOnLegacyPlaintextDir(t *testing.T) {
+	dataDir := t.TempDir()
+	legacyDir := filepath.Join(dataDir, "xkms-ssh")
+	require.NoError(t, os.Mkdir(legacyDir, 0o700))
+	s, buf := newSSHStoreLogServer(t, dataDir)
+
+	_, err := s.buildSSHClient()
+	require.NoError(t, err)
+
+	warnings := legacySSHStoreWarnings(t, buf)
+	require.Len(t, warnings, 1, "exactly one legacy-directory warning")
+	assert.Equal(t, legacyDir, warnings[0]["legacy_dir"])
+	assert.Contains(t, warnings[0]["msg"], "plaintext private keys")
+	assert.Contains(t, warnings[0]["msg"], "docs/ssh/architecture.md")
+	assert.DirExists(t, legacyDir, "the check must delete nothing")
+}
+
+func TestBuildSSHClient_WarnsOnInterruptedWipeDir(t *testing.T) {
+	dataDir := t.TempDir()
+	wipingDir := filepath.Join(dataDir, "xkms-ssh.wiping")
+	require.NoError(t, os.Mkdir(wipingDir, 0o700))
+	s, buf := newSSHStoreLogServer(t, dataDir)
+
+	_, err := s.buildSSHClient()
+	require.NoError(t, err)
+
+	warnings := legacySSHStoreWarnings(t, buf)
+	require.Len(t, warnings, 1)
+	assert.Equal(t, wipingDir, warnings[0]["legacy_dir"])
+}
+
+func TestBuildSSHClient_NoLegacyDirNoWarning(t *testing.T) {
+	s, buf := newSSHStoreLogServer(t, t.TempDir())
+
+	_, err := s.buildSSHClient()
+	require.NoError(t, err)
+	assert.Empty(t, legacySSHStoreWarnings(t, buf))
+}
+
+func TestBuildSSHClient_LegacyPathIsAFile(t *testing.T) {
+	dataDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "xkms-ssh"), []byte("not a store"), 0o600))
+	s, buf := newSSHStoreLogServer(t, dataDir)
+
+	client, err := s.buildSSHClient()
+	require.NoError(t, err, "a file at the legacy path must not fail the boot")
+	assert.Nil(t, client)
+	assert.Empty(t, legacySSHStoreWarnings(t, buf), "a file is not a key directory")
+}
+
+func TestBuildSSHClient_LegacyPathUninspectable(t *testing.T) {
+	// The data dir is a file, so stat of the legacy path fails with ENOTDIR:
+	// an error other than not-exist, which is logged and the boot goes on.
+	dataDir := filepath.Join(t.TempDir(), "data")
+	require.NoError(t, os.WriteFile(dataDir, []byte("x"), 0o600))
+	s, buf := newSSHStoreLogServer(t, dataDir)
+
+	_, err := s.buildSSHClient()
+	require.NoError(t, err, "a stat error must not fail the boot")
+
+	warnings := legacySSHStoreWarnings(t, buf)
+	require.Len(t, warnings, 2, "one cannot-inspect warning per legacy path")
+	assert.Equal(t, filepath.Join(dataDir, "xkms-ssh"), warnings[0]["legacy_dir"])
+	assert.Contains(t, warnings[0]["msg"], "cannot inspect")
 }
 
 func TestSSHSealedBackend_NoBarrier(t *testing.T) {
@@ -87,58 +167,6 @@ func TestSSHSealedBackend_NoBarrier(t *testing.T) {
 	assert.Nil(t, backend)
 	var notSealed *SSHStoreNotSealedError
 	require.ErrorAs(t, err, &notSealed)
-}
-
-func TestMigrateLegacySSHStore_MovesIntoSealed(t *testing.T) {
-	ctx := context.Background()
-	dataDir := t.TempDir()
-	pub := seedLegacySSHStore(t, dataDir)
-	s := newSSHStoreTestServer(t, dataDir, config.XKMSConfig{})
-	sealed, err := xkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-
-	require.NoError(t, s.migrateLegacySSHStore(sealed, nil))
-
-	assert.NoDirExists(t, sshstore.LegacyDir(dataDir))
-	client, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: sealed})
-	require.NoError(t, err)
-	got, err := client.Keys().Get(ctx, legacyDeployKey)
-	require.NoError(t, err)
-	assert.Equal(t, pub, got.PublicKey)
-}
-
-func TestMigrateLegacySSHStore_NoLegacyStore(t *testing.T) {
-	tests := []struct {
-		name    string
-		dataDir string
-	}{
-		{name: "no data dir", dataDir: ""},
-		{name: "empty data dir", dataDir: t.TempDir()},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := newSSHStoreTestServer(t, tt.dataDir, config.XKMSConfig{})
-			sealed, err := xkmssdk.NewMemoryBackend()
-			require.NoError(t, err)
-			require.NoError(t, s.migrateLegacySSHStore(sealed, nil))
-		})
-	}
-}
-
-func TestMigrateLegacySSHStore_FailureStopsTheBoot(t *testing.T) {
-	dataDir := t.TempDir()
-	legacyDir := sshstore.LegacyDir(dataDir)
-	require.NoError(t, os.WriteFile(legacyDir, []byte("not a store"), 0o600))
-	s := newSSHStoreTestServer(t, dataDir, config.XKMSConfig{})
-	sealed, err := xkmssdk.NewMemoryBackend()
-	require.NoError(t, err)
-
-	err = s.migrateLegacySSHStore(sealed, nil)
-	var migrationErr *SSHStoreMigrationError
-	require.ErrorAs(t, err, &migrationErr)
-	assert.Equal(t, legacyDir, migrationErr.LegacyDir)
-	var unexpected *sshstore.UnexpectedEntryError
-	require.ErrorAs(t, err, &unexpected)
 }
 
 func TestResolveSSHKeyProvider_UnknownBackend(t *testing.T) {
@@ -157,7 +185,6 @@ func TestSSHStoreErrorMessages(t *testing.T) {
 	}{
 		{name: "not sealed", err: &SSHStoreNotSealedError{}, want: "not barrier-sealed"},
 		{name: "build", err: &SSHStoreBuildError{Op: "sealed storage", Err: cause}, want: "sealed storage: boom", cause: cause},
-		{name: "migration", err: &SSHStoreMigrationError{LegacyDir: "/d/xkms-ssh", Err: cause}, want: "/d/xkms-ssh: boom", cause: cause},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

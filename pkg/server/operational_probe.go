@@ -116,8 +116,10 @@ func (p *serverOperationalProbe) IsOperational() bool {
 	return true
 }
 
-// barrierInitialized reports whether the barrier already carries a persisted
-// initialization timestamp. A missing barrier servicer or a failed status read
+// barrierInitialized reports whether the barrier has been initialized. It
+// reads go-qrdb's Initialized flag, not InitializedAt: a sealed barrier
+// reports no timestamp, and reading one would let a sealed-after-init barrier
+// pass as uninitialized. A missing barrier servicer or a failed status read
 // reports true (initialized) so the caller falls through to operational
 // semantics rather than granting an exemption it cannot justify.
 func (p *serverOperationalProbe) barrierInitialized() bool {
@@ -128,7 +130,7 @@ func (p *serverOperationalProbe) barrierInitialized() bool {
 	if err != nil || status == nil {
 		return true
 	}
-	return !status.InitializedAt.IsZero()
+	return status.Initialized
 }
 
 // Compile-time check that the probe satisfies the sealed-window contract the

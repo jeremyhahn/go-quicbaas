@@ -26,14 +26,14 @@ import (
 )
 
 // retypedCredentials lists every barrier credential field go-quicbaas#962
-// retyped from `string` to `bytes`.
+// retyped from `string` to `bytes`. BarrierShamirInitializeRequest is absent:
+// it carries no secret, as go-qrdb v0.50 reserves that field on its message.
 var retypedCredentials = []struct {
 	msg   gproto.Message
 	field protoreflect.Name
 }{
 	{&BarrierInitializeRequest{}, "secret"},
 	{&BarrierUnsealRequest{}, "secret"},
-	{&BarrierShamirInitializeRequest{}, "secret"},
 	{&BarrierEnableEncryptionRequest{}, "passphrase"},
 	{&TenantBarrierInitRequest{}, "passphrase"},
 	{&TenantBarrierEnableEncryptionRequest{}, "passphrase"},

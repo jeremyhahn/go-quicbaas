@@ -17,6 +17,9 @@ import (
 	"context"
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 	"github.com/jeremyhahn/go-quicbaas/pkg/version"
@@ -89,6 +92,42 @@ func (s *Server) promptReconciler() promptReconciler {
 //
 // A tenant that fails — its barrier sealed, typically — does not stop the
 // others; the failures are returned joined, and the next boot retries them.
+// tenantLister is the narrow view of the tenant manager the boot reconcile
+// needs.
+type tenantLister interface {
+	ListTenants(ctx context.Context, opts iam.ListOptions) ([]*iam.Tenant, error)
+}
+
+// reconcileTargets enumerates the tenants to reconcile: the system tenant plus
+// every tenant the broker knows about. The caller wraps a listing failure in
+// its own error.
+//
+// The system tenant is named explicitly because the broker's tenant listing
+// does not carry it — the same composition pkg/server already performs for the
+// ABAC policy sweep (abac_sync.go allPolicies), and for the same reason:
+// pkg/iam must not depend on qrdb's cross-tenant system-tenant concept, so the
+// union is composed here. This is control-plane reconciliation of the control
+// plane's own records, not a data-plane path taking the system tenant as a
+// default.
+func reconcileTargets(ctx context.Context, tenants tenantLister) ([]string, error) {
+	ids := []string{qrdbsdk.SystemTenantID}
+	if tenants == nil {
+		return ids, nil
+	}
+
+	listed, err := tenants.ListTenants(ctx, iam.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range listed {
+		if t == nil || t.ID == "" || t.ID == qrdbsdk.SystemTenantID {
+			continue
+		}
+		ids = append(ids, t.ID)
+	}
+	return ids, nil
+}
+
 func (s *Server) reconcileTenantPrompts(ctx context.Context, seeder promptReconciler, tenants tenantLister) error {
 	if seeder == nil {
 		return nil

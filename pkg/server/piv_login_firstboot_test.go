@@ -85,7 +85,7 @@ func xkmsPIVLoginRouter(t *testing.T, srv *Server) http.Handler {
 			return svc
 		},
 		xkmssdk.WithServiceModuleQRDBClient(srv.GetQRDBNodeClient),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		xkmssdk.WithServiceModuleSession(srv.loginSessionModuleOptions()),
 		xkmssdk.WithServiceModulePIVLogin(srv.pivLoginModuleOptions()),
 	)
 	require.NoError(t, err)
@@ -95,6 +95,9 @@ func xkmsPIVLoginRouter(t *testing.T, srv *Server) http.Handler {
 	router := chi.NewRouter()
 	hosted.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(router,
 		func(method, pattern string, _ qrdbsdk.Permission, h http.HandlerFunc) {
+			router.MethodFunc(method, pattern, h)
+		},
+		func(method, pattern string, h http.HandlerFunc) {
 			router.MethodFunc(method, pattern, h)
 		},
 		func(method, pattern string, h http.HandlerFunc) {

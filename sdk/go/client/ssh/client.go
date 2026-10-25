@@ -133,9 +133,15 @@ func (k *keysClient) Import(ctx context.Context, req ImportRequest, provider sec
 		if perr != nil {
 			return nil, perr
 		}
-		//secure:unborrowed injected-interface REST import wire format requires base64 text and clears it after the request.
-		wire.PassphraseB64 = base64.StdEncoding.EncodeToString(buf.Bytes())
+		// The REST import wire format requires base64 text; it is cleared after the request.
+		encErr := buf.WithBytes(func(passphrase []byte) error {
+			wire.PassphraseB64 = base64.StdEncoding.EncodeToString(passphrase)
+			return nil
+		})
 		buf.Destroy()
+		if encErr != nil {
+			return nil, encErr
+		}
 	}
 	resp, err := k.t.Request(ctx, ServiceName, MethodImportKey, wire)
 	if wire.PassphraseB64 != "" {

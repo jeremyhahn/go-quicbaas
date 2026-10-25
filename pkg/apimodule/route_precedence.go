@@ -55,40 +55,21 @@ import (
 // system-barrier surface (go-qrdb's barrier, go-quicbaas#405) has no
 // co-hosted claimant left. TestRouteExcludingModule_XKMSBarrierCollisionIsReal
 // pins that, so the exclusion comes back if go-xkms ever registers them again.
-//
-// /api/v1/cluster/status is the composed node's cluster view. QuicBaaS's
-// handler (pkg/api/rest HandleClusterStatus) answers from the service
-// layer's ClusterStatus across every shard the node hosts — node ID, Raft
-// address, leader, members, per-shard state, health — in the flat shape the
-// quicbaas SDK clients and UI decode. go-xkms v0.30's same-path handler
-// reports a single shard wrapped as {"status":{...}}, a different wire shape
-// no quicbaas consumer reads. go-xkms's /api/v1/cluster/members has no
-// quicbaas counterpart and stays mounted.
+// The same holds for /api/v1/cluster/ and /api/v1/backups/: go-xkms v0.55
+// registers neither, so quicbaas's cluster view and backup surface have no
+// co-hosted claimant either.
 //
 // /api/v1/tenants/ is the tenant control plane, which is quicbaas's over the
 // embedded qrdb node (CLAUDE.md: "System admin provisions tenants minimally
-// (control plane)"), per-tenant barrier included. go-xkms registers nine
-// routes under it, every one enable-gated on tenant handlers that its host
-// server never builds (they need a barrier registry, and the barrier surfaces
-// are xkmsd-only), so on a composed node each one can only answer 501. Four
-// of them name the tenant wildcard {tenantID} where quicbaas's name it
-// {tenant_id}; the two spellings are different registrar keys, so neither
-// the registrar's duplicate check nor the overlap test below saw a collision,
-// and the router served xkms's 501 for GET /api/v1/tenants/{id}/barrier/status
-// on a node whose tenant barrier answers normally everywhere else.
-//
-// /api/v1/backups/ is the composed node's backup surface, quicbaas's
-// (pkg/api/rest handlers_backup.go over the service layer's BackupManager:
-// list, create, delete, restore, status, verify), which the quicbaas SDK and
-// UI decode. go-xkms v0.47 (go-xkms#728) registers its own node-backup
-// table on the same paths for xkmsd; on a composed node four of its routes
-// collide outright (GET/POST /api/v1/backups, DELETE /{id}, POST
-// /{id}/verify) and the rest (GET /{id}, POST /restore) would answer a
-// different wire shape beside quicbaas's. A live qrdb registrar panics on
-// the duplicates, so the whole subtree stays quicbaas's.
+// (control plane)"), per-tenant barrier included. go-xkms registers its own
+// tenant routes under it (read, quotas, entitlements, TPM, vTPM), every one
+// enable-gated on tenant handlers that its host server never builds, so on a
+// composed node each one can only answer 501. They name the tenant wildcard
+// {tenantID} where quicbaas's name it {tenant_id}; the two spellings are
+// different registrar keys, so neither the registrar's duplicate check nor an
+// exact-key overlap test sees the collision, and the router would serve
+// xkms's 501 beside quicbaas's working handler.
 var XKMSRouteExclusions = []string{
-	"/api/v1/backups/",
-	"/api/v1/cluster/status",
 	"/api/v1/tenants/",
 }
 
@@ -222,6 +203,12 @@ func (m *routeExcludingModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 				return
 			}
 			r.HandlePublic(method, pattern, h)
+		},
+		func(method, pattern string, h http.HandlerFunc) {
+			if m.excluded(pattern) {
+				return
+			}
+			r.HandleOptional(method, pattern, h)
 		},
 	)
 	m.ServiceModule.RegisterHTTP(filtered)

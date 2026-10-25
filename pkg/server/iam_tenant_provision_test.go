@@ -860,8 +860,8 @@ func newPIVChain(t *testing.T) (*x509.CertPool, []byte) {
 	return pool, leafPEM
 }
 
-// newPIVRootAndLeaf issues a self-signed root and a ClientAuth leaf under it,
-// returning the root and the leaf PEM.
+// newPIVRootAndLeaf issues a self-signed root and a system-tenant ClientAuth
+// leaf under it, returning the root and the leaf PEM.
 func newPIVRootAndLeaf(t *testing.T) (*x509.Certificate, []byte) {
 	t.Helper()
 	now := time.Now()
@@ -884,9 +884,11 @@ func newPIVRootAndLeaf(t *testing.T) (*x509.Certificate, []byte) {
 
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
+	leafSubject, leafURIs := systemUserPIVSubject(t, "tenant admin", "tenant-admin")
 	leafTmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "tenant admin"},
+		Subject:      leafSubject,
+		URIs:         leafURIs,
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

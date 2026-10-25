@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 )
@@ -52,13 +53,21 @@ const workflowKeySeparator = "/"
 // KV store via the qrdb SDK. All workflows for the cluster live on the
 // configured shard (default 1) under workflowKeyPrefix.
 type kvWorkflowPersistor struct {
-	client  *qrdbsdk.Client
+	kv      transport.KVClient
 	shardID uint64
 }
 
-// newKVWorkflowPersistor returns a persistor backed by the given qrdb client.
-func newKVWorkflowPersistor(client *qrdbsdk.Client, shardID uint64) *kvWorkflowPersistor {
-	return &kvWorkflowPersistor{client: client, shardID: shardID}
+// newKVWorkflowPersistor returns a persistor backed by the given qrdb KV
+// client, which the server binds to its service principal.
+func newKVWorkflowPersistor(kv transport.KVClient, shardID uint64) *kvWorkflowPersistor {
+	return &kvWorkflowPersistor{kv: kv, shardID: shardID}
+}
+
+// workflowPersistor returns the persistor over shard's KV, run as the service
+// principal: with the embedded node authorizing every call, an unbound
+// persistor could neither save a workflow nor rehydrate one at boot.
+func (s *Server) workflowPersistor(shard *qrdbsdk.Client) *kvWorkflowPersistor {
+	return newKVWorkflowPersistor(s.serviceKV(shard.KV()), 1)
 }
 
 // workflowSegment refuses an identifier that cannot be a key segment.
@@ -107,7 +116,7 @@ func (p *kvWorkflowPersistor) Save(ctx context.Context, def *orchestration.Workf
 	if err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: marshal %q", def.Name), Cause: err}
 	}
-	if err := p.client.KV().Put(ctx, key, data); err != nil {
+	if err := p.kv.Put(ctx, key, data); err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: put %q", def.Name), Cause: err}
 	}
 	return nil
@@ -121,7 +130,7 @@ func (p *kvWorkflowPersistor) Remove(ctx context.Context, tenantID, name string)
 	if err != nil {
 		return err
 	}
-	if err := p.client.KV().Delete(ctx, key); err != nil {
+	if err := p.kv.Delete(ctx, key); err != nil {
 		return &ServerCauseError{Message: fmt.Sprintf("kvWorkflowPersistor: delete %q", name), Cause: err}
 	}
 	return nil
@@ -148,7 +157,7 @@ func (p *kvWorkflowPersistor) LoadAll(ctx context.Context) ([]*orchestration.Wor
 // where it is filed would otherwise let one tenant's record surface under
 // another tenant's cache.
 func (p *kvWorkflowPersistor) scan(ctx context.Context, prefix string) ([]*orchestration.WorkflowDefinition, error) {
-	results, err := p.client.KV().Scan(ctx, prefix)
+	results, err := p.kv.Scan(ctx, prefix)
 	if err != nil {
 		return nil, &ServerCauseError{Message: "kvWorkflowPersistor: scan", Cause: err}
 	}

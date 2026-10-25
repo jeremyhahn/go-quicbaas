@@ -28,6 +28,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -45,7 +46,7 @@ type toolResultFn func(t *testing.T, tool string, args map[string]interface{}) m
 func newMultiToolMCPServer(t *testing.T, tools []string, fn toolResultFn) (*Transport, *[]string, func()) {
 	t.Helper()
 	srv, called := newMultiToolServer(t, tools, fn)
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {
@@ -107,39 +108,42 @@ var barrierToolNames = []string{
 	"qrdb_barrier_seal",
 	"qrdb_barrier_status",
 	"qrdb_barrier_shamir_initialize",
-	"qrdb_barrier_shamir_unseal_share",
-	"qrdb_barrier_shamir_unseal_shares",
-	"qrdb_barrier_rekey",
 	"qrdb_barrier_recovery_generate",
-	"qrdb_barrier_recovery_recover",
 	"qrdb_barrier_recovery_delete",
 	"qrdb_barrier_recovery_status",
-	"qrdb_barrier_root_token",
+	"qrdb_barrier_cluster_unseal",
+	"qrdb_barrier_quorum_begin",
+	"qrdb_barrier_quorum_submit",
+	"qrdb_barrier_rekey_start",
+	"qrdb_barrier_officer_revoke",
 }
 
 func TestBarrierMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, called, cleanup := newMultiToolMCPServer(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	tr, called := newMultiToolMCPServerTLS(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_barrier_status":
 			return map[string]interface{}{"sealed": false, "strategy": "shamir", "hardware_backed": true}
 		case "qrdb_barrier_shamir_initialize":
 			return map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3}
-		case "qrdb_barrier_shamir_unseal_share":
-			return map[string]interface{}{"required": 2, "submitted": 1, "complete": false}
-		case "qrdb_barrier_rekey":
-			return map[string]interface{}{"threshold": 2, "total_shares": 2, "share_count": 2}
 		case "qrdb_barrier_recovery_generate":
 			return map[string]interface{}{"threshold": 2, "total": 2, "share_count": 2}
 		case "qrdb_barrier_recovery_status":
 			return map[string]interface{}{"has_recovery_keys": true}
-		case "qrdb_barrier_root_token":
-			return map[string]interface{}{"token": "root-token", "created_at": "2026-05-29T00:00:00Z"}
+		case "qrdb_barrier_cluster_unseal":
+			return map[string]interface{}{"active": true, "sealed": false, "epoch": 3}
+		case "qrdb_barrier_quorum_begin":
+			return map[string]interface{}{"challenge_id": "ch-1", "domain": args["domain"], "op": args["op"], "username": args["username"]}
+		case "qrdb_barrier_quorum_submit":
+			return map[string]interface{}{"domain": args["domain"], "op": args["op"], "required": 2, "submitted": 1, "complete": false}
+		case "qrdb_barrier_rekey_start":
+			return map[string]interface{}{"domain": args["domain"], "op": "rekey", "required": 2, "new_threshold": args["threshold"]}
+		case "qrdb_barrier_officer_revoke":
+			return map[string]interface{}{"domain": args["domain"], "op": "rekey", "required": 2, "remove": []interface{}{args["username"]}}
 		default:
 			return map[string]interface{}{"ok": true}
 		}
 	})
-	defer cleanup()
 
 	if err := tr.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{Secret: []byte("pw")}); err != nil {
 		t.Fatalf("BarrierInitialize: %v", err)
@@ -160,7 +164,7 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 	}
 
 	shamir, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret: []byte("pw"), Threshold: 2, TotalShares: 3})
+		Threshold: 2, TotalShares: 3, SOPin: "so"})
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir: %v", err)
 	}
@@ -168,27 +172,7 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 		t.Errorf("shamir mismatch: %+v", shamir)
 	}
 
-	share, err := tr.BarrierUnsealWithShare(ctx, &qrdbtransport.BarrierUnsealShareRequest{Share: "s1"})
-	if err != nil {
-		t.Fatalf("BarrierUnsealWithShare: %v", err)
-	}
-	if share.Required != 2 || share.Submitted != 1 || share.Complete {
-		t.Errorf("share progress mismatch: %+v", share)
-	}
-
-	if err := tr.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}}); err != nil {
-		t.Fatalf("BarrierUnsealWithShares: %v", err)
-	}
-
-	rekey, err := tr.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{Threshold: 2, Total: 2})
-	if err != nil {
-		t.Fatalf("BarrierRekey: %v", err)
-	}
-	if rekey.ShareCount != 2 || rekey.Threshold != 2 || rekey.TotalShares != 2 {
-		t.Errorf("rekey mismatch: %+v", rekey)
-	}
-
-	recovery, err := tr.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, Total: 2})
+	recovery, err := tr.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, SOPin: "so"})
 	if err != nil {
 		t.Fatalf("BarrierGenerateRecoveryKeys: %v", err)
 	}
@@ -196,9 +180,6 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 		t.Errorf("recovery mismatch: %+v", recovery)
 	}
 
-	if err := tr.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{Keys: []string{"r1", "r2"}}); err != nil {
-		t.Fatalf("BarrierRecoverWithKeys: %v", err)
-	}
 	if err := tr.BarrierDeleteRecoveryKeys(ctx); err != nil {
 		t.Fatalf("BarrierDeleteRecoveryKeys: %v", err)
 	}
@@ -211,12 +192,45 @@ func TestBarrierMethodsEndToEnd(t *testing.T) {
 		t.Error("expected HasKeys true")
 	}
 
-	root, err := tr.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{Shares: []string{"s1", "s2"}})
+	cluster, err := tr.BarrierClusterUnseal(ctx)
 	if err != nil {
-		t.Fatalf("BarrierGenerateRootToken: %v", err)
+		t.Fatalf("BarrierClusterUnseal: %v", err)
 	}
-	if root.Token != "root-token" {
-		t.Errorf("root token = %q", root.Token)
+	if !cluster.Active || cluster.Sealed || cluster.Epoch != 3 {
+		t.Errorf("cluster seal mismatch: %+v", cluster)
+	}
+
+	challenge, err := tr.BarrierQuorumBegin(ctx, &qrdbtransport.QuorumBeginRequest{Domain: "unseal", Op: "unseal", Username: "alice"})
+	if err != nil {
+		t.Fatalf("BarrierQuorumBegin: %v", err)
+	}
+	if challenge.ChallengeID != "ch-1" || challenge.Domain != "unseal" || challenge.Username != "alice" {
+		t.Errorf("quorum challenge mismatch: %+v", challenge)
+	}
+
+	outcome, err := tr.BarrierQuorumSubmit(ctx, &qrdbtransport.QuorumSubmitRequest{
+		Domain: "unseal", Op: "unseal", Username: "alice", ChallengeID: "ch-1", Factor: "mtls"})
+	if err != nil {
+		t.Fatalf("BarrierQuorumSubmit: %v", err)
+	}
+	if outcome.Required != 2 || outcome.Submitted != 1 || outcome.Complete {
+		t.Errorf("quorum outcome mismatch: %+v", outcome)
+	}
+
+	round, err := tr.BarrierRekeyStart(ctx, &qrdbtransport.RekeyStartRequest{Domain: "unseal", Threshold: 3, SOPin: "so"})
+	if err != nil {
+		t.Fatalf("BarrierRekeyStart: %v", err)
+	}
+	if round.Op != "rekey" || round.NewThreshold != 3 {
+		t.Errorf("rekey round mismatch: %+v", round)
+	}
+
+	revoke, err := tr.BarrierOfficerRevoke(ctx, &qrdbtransport.OfficerRevokeRequest{Domain: "unseal", Username: "bob", SOPin: "so"})
+	if err != nil {
+		t.Fatalf("BarrierOfficerRevoke: %v", err)
+	}
+	if len(revoke.Remove) != 1 || revoke.Remove[0] != "bob" {
+		t.Errorf("revoke round mismatch: %+v", revoke)
 	}
 
 	if len(*called) == 0 {
@@ -245,23 +259,14 @@ func TestBarrierNilRequestErrors(t *testing.T) {
 	if _, err := tr.BarrierInitializeShamir(ctx, nil); err == nil {
 		t.Error("BarrierInitializeShamir(nil) must error")
 	}
-	if _, err := tr.BarrierUnsealWithShare(ctx, nil); err == nil {
-		t.Error("BarrierUnsealWithShare(nil) must error")
-	}
-	if err := tr.BarrierUnsealWithShares(ctx, nil); err == nil {
-		t.Error("BarrierUnsealWithShares(nil) must error")
-	}
-	if _, err := tr.BarrierRekey(ctx, nil); err == nil {
-		t.Error("BarrierRekey(nil) must error")
-	}
 	if _, err := tr.BarrierGenerateRecoveryKeys(ctx, nil); err == nil {
 		t.Error("BarrierGenerateRecoveryKeys(nil) must error")
 	}
-	if err := tr.BarrierRecoverWithKeys(ctx, nil); err == nil {
-		t.Error("BarrierRecoverWithKeys(nil) must error")
+	if _, err := tr.BarrierRekeyStart(ctx, nil); err == nil {
+		t.Error("BarrierRekeyStart(nil) must error")
 	}
-	if _, err := tr.BarrierGenerateRootToken(ctx, nil); err == nil {
-		t.Error("BarrierGenerateRootToken(nil) must error")
+	if _, err := tr.BarrierOfficerRevoke(ctx, nil); err == nil {
+		t.Error("BarrierOfficerRevoke(nil) must error")
 	}
 }
 
@@ -285,8 +290,8 @@ func TestBarrierClosedTransport(t *testing.T) {
 	if _, err := tr.BarrierStatus(ctx); err == nil {
 		t.Error("BarrierStatus on closed transport must error")
 	}
-	if _, err := tr.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{Threshold: 2, Total: 2}); err == nil {
-		t.Error("BarrierRekey on closed transport must error")
+	if _, err := tr.BarrierQuorumSubmit(ctx, &qrdbtransport.QuorumSubmitRequest{Domain: "unseal", Op: "unseal"}); err == nil {
+		t.Error("BarrierQuorumSubmit on closed transport must error")
 	}
 }
 
@@ -297,39 +302,23 @@ func TestBarrierClosedTransport(t *testing.T) {
 var ceremonyToolNames = []string{
 	"qrdb_ceremony_initialize",
 	"qrdb_ceremony_status",
-	"qrdb_ceremony_claim_cert_begin",
-	"qrdb_ceremony_claim_cert_complete",
-	"qrdb_ceremony_begin_claim_share",
-	"qrdb_ceremony_complete_claim_share",
 	"qrdb_ceremony_sign_csr",
-	"qrdb_ceremony_enroll_external_officer",
 }
 
 func TestCeremonyMethodsEndToEnd(t *testing.T) {
 	ctx := context.Background()
-	tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	tr, _ := newMultiToolMCPServerTLS(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		switch tool {
 		case "qrdb_ceremony_initialize":
 			return map[string]interface{}{"session_id": "sess-1"}
 		case "qrdb_ceremony_status":
 			return map[string]interface{}{"state": "in_progress"}
-		case "qrdb_ceremony_claim_cert_begin":
-			return map[string]interface{}{"nonce_hex": "deadbeef"}
-		case "qrdb_ceremony_claim_cert_complete":
-			return map[string]interface{}{"success": true}
-		case "qrdb_ceremony_begin_claim_share":
-			return map[string]interface{}{"nonce_hex": "deadbeef", "expires_at": "2026-08-06T12:00:00Z"}
-		case "qrdb_ceremony_complete_claim_share":
-			return map[string]interface{}{"share_index": 2, "share": "c2hhcmUtanNvbg=="}
 		case "qrdb_ceremony_sign_csr":
 			return map[string]interface{}{"certificate_pem": "CERT"}
-		case "qrdb_ceremony_enroll_external_officer":
-			return map[string]interface{}{"success": true}
 		default:
 			return map[string]interface{}{"ok": true}
 		}
 	})
-	defer cleanup()
 
 	if _, err := tr.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
 		SOPin:                  "so",
@@ -349,97 +338,9 @@ func TestCeremonyMethodsEndToEnd(t *testing.T) {
 		t.Fatalf("CeremonyStatus: %v", err)
 	}
 
-	if _, err := tr.CeremonyClaimCertBegin(ctx, &qrdbtransport.ClaimCertBeginRequest{Username: "alice"}); err != nil {
-		t.Fatalf("CeremonyClaimCertBegin: %v", err)
-	}
-
-	if _, err := tr.CeremonyClaimCertComplete(ctx, &qrdbtransport.ClaimCertCompleteRequest{
-		Username: "alice", NonceHex: "deadbeef", Signature: "sig"}); err != nil {
-		t.Fatalf("CeremonyClaimCertComplete: %v", err)
-	}
-
-	begin, err := tr.CeremonyBeginClaimShare(ctx, &qrdbtransport.BeginClaimShareRequest{Username: "alice"})
-	if err != nil {
-		t.Fatalf("CeremonyBeginClaimShare: %v", err)
-	}
-	if begin.NonceHex != "deadbeef" {
-		t.Errorf("nonce = %q", begin.NonceHex)
-	}
-
-	share, err := tr.CeremonyCompleteClaimShare(ctx, &qrdbtransport.CompleteClaimShareRequest{
-		Username: "alice", NonceHex: "deadbeef", Signature: []byte("sig")})
-	if err != nil {
-		t.Fatalf("CeremonyCompleteClaimShare: %v", err)
-	}
-	if share.ShareIndex != 2 {
-		t.Errorf("share index = %d", share.ShareIndex)
-	}
-	if share.ShareJSON != "share-json" {
-		t.Errorf("share json = %q", share.ShareJSON)
-	}
-
 	if _, err := tr.CeremonySignCSR(ctx, &qrdbtransport.SignCSRInitRequest{
 		Username: "alice", SOPin: "so", CSRPEM: "CSR", Role: "officer"}); err != nil {
 		t.Fatalf("CeremonySignCSR: %v", err)
-	}
-
-	if _, err := tr.CeremonyEnrollExternalOfficer(ctx, &qrdbtransport.EnrollExternalOfficerRequest{
-		Username:   "bob",
-		ShareIndex: 1,
-		AuthFactor: "piv",
-		CertPEM:    "CERT",
-		PubKeyPEM:  "PUB",
-		ShareBytes: []byte("share-bytes"),
-	}); err != nil {
-		t.Fatalf("CeremonyEnrollExternalOfficer: %v", err)
-	}
-}
-
-// TestCeremonyEnrollExternalOfficer_ShareBytesTravelBase64 proves a binary
-// Shamir share crosses MCP base64-encoded, so bytes that are not valid UTF-8
-// reach the server unchanged, and that an empty share sends no share_bytes.
-func TestCeremonyEnrollExternalOfficer_ShareBytesTravelBase64(t *testing.T) {
-	cases := []struct {
-		name     string
-		share    []byte
-		wantSent bool
-	}{
-		{name: "binary share", share: []byte{0x00, 0xff, 0x80, 0xfe}, wantSent: true},
-		{name: "empty share", share: nil, wantSent: false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			var (
-				got  interface{}
-				sent bool
-			)
-			tr, _, cleanup := newMultiToolMCPServer(t, ceremonyToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
-				if tool == "qrdb_ceremony_enroll_external_officer" {
-					got, sent = args["share_bytes"]
-				}
-				return map[string]interface{}{"sealed_share": "sealed"}
-			})
-			defer cleanup()
-
-			if _, err := tr.CeremonyEnrollExternalOfficer(context.Background(), &qrdbtransport.EnrollExternalOfficerRequest{
-				Username:   "bob",
-				AuthFactor: "piv",
-				CertPEM:    "CERT",
-				ShareBytes: c.share,
-			}); err != nil {
-				t.Fatalf("CeremonyEnrollExternalOfficer: %v", err)
-			}
-			if sent != c.wantSent {
-				t.Fatalf("share_bytes sent = %v, want %v", sent, c.wantSent)
-			}
-			if !c.wantSent {
-				return
-			}
-			want := base64.StdEncoding.EncodeToString(c.share)
-			if got != want {
-				t.Fatalf("share_bytes = %#v, want base64 %q", got, want)
-			}
-		})
 	}
 }
 
@@ -454,23 +355,8 @@ func TestCeremonyNilRequestErrors(t *testing.T) {
 	if _, err := tr.CeremonyInitialize(ctx, nil); err == nil {
 		t.Error("CeremonyInitialize(nil) must error")
 	}
-	if _, err := tr.CeremonyClaimCertBegin(ctx, nil); err == nil {
-		t.Error("CeremonyClaimCertBegin(nil) must error")
-	}
-	if _, err := tr.CeremonyClaimCertComplete(ctx, nil); err == nil {
-		t.Error("CeremonyClaimCertComplete(nil) must error")
-	}
-	if _, err := tr.CeremonyBeginClaimShare(ctx, nil); err == nil {
-		t.Error("CeremonyBeginClaimShare(nil) must error")
-	}
-	if _, err := tr.CeremonyCompleteClaimShare(ctx, nil); err == nil {
-		t.Error("CeremonyCompleteClaimShare(nil) must error")
-	}
 	if _, err := tr.CeremonySignCSR(ctx, nil); err == nil {
 		t.Error("CeremonySignCSR(nil) must error")
-	}
-	if _, err := tr.CeremonyEnrollExternalOfficer(ctx, nil); err == nil {
-		t.Error("CeremonyEnrollExternalOfficer(nil) must error")
 	}
 }
 
@@ -516,7 +402,7 @@ func TestBarrierCredentialsCrossAsPlaintext(t *testing.T) {
 	ctx := context.Background()
 	received := map[string]string{}
 
-	tr, _, cleanup := newMultiToolMCPServer(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
+	tr, _ := newMultiToolMCPServerTLS(t, barrierToolNames, func(t *testing.T, tool string, args map[string]interface{}) map[string]interface{} {
 		if v, ok := args["secret"]; ok {
 			s, isString := v.(string)
 			if !isString {
@@ -525,14 +411,8 @@ func TestBarrierCredentialsCrossAsPlaintext(t *testing.T) {
 			}
 			received[tool] = s
 		}
-		switch tool {
-		case "qrdb_barrier_shamir_initialize":
-			return map[string]interface{}{"threshold": 2, "total_shares": 3, "share_count": 3}
-		default:
-			return map[string]interface{}{"ok": true}
-		}
+		return map[string]interface{}{"ok": true}
 	})
-	defer cleanup()
 
 	const passphrase = "correct horse battery staple"
 
@@ -542,12 +422,8 @@ func TestBarrierCredentialsCrossAsPlaintext(t *testing.T) {
 	if err := tr.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{Secret: []byte(passphrase)}); err != nil {
 		t.Fatalf("BarrierUnseal: %v", err)
 	}
-	if _, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret: []byte(passphrase), Threshold: 2, TotalShares: 3}); err != nil {
-		t.Fatalf("BarrierInitializeShamir: %v", err)
-	}
 
-	for _, tool := range []string{"qrdb_barrier_initialize", "qrdb_barrier_unseal", "qrdb_barrier_shamir_initialize"} {
+	for _, tool := range []string{"qrdb_barrier_initialize", "qrdb_barrier_unseal"} {
 		got, ok := received[tool]
 		if !ok {
 			t.Errorf("%s: no secret argument reached the server", tool)
@@ -637,5 +513,82 @@ func TestBarrierSeal_SOPINRefusedOverPlaintext(t *testing.T) {
 	}
 	if len(*called) != 0 {
 		t.Fatalf("the PIN must not be sent over http://, server saw %v", *called)
+	}
+}
+
+// TestSOPINVerbsRefusedOverPlaintext covers every MCP verb that sends an SO
+// PIN: over http:// each refuses with *SOPINRequiresTLSError before any tool
+// call reaches the server, whether the PIN comes from the request or from
+// the context bound by WithSOPIN.
+func TestSOPINVerbsRefusedOverPlaintext(t *testing.T) {
+	const pin = "so-pin-1234"
+	tests := []struct {
+		name  string
+		bound bool
+		call  func(ctx context.Context, tr *Transport) error
+	}{
+		{"BarrierSeal", true, func(ctx context.Context, tr *Transport) error {
+			return tr.BarrierSeal(ctx)
+		}},
+		{"BarrierInitializeShamir", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3, SOPin: pin})
+			return err
+		}},
+		{"BarrierInitializeShamir bound", true, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
+			return err
+		}},
+		{"BarrierGenerateRecoveryKeys", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2, SOPin: pin})
+			return err
+		}},
+		{"BarrierRekeyStart", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierRekeyStart(ctx, &qrdbtransport.RekeyStartRequest{SOPin: pin})
+			return err
+		}},
+		{"BarrierRekeyStart bound", true, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierRekeyStart(ctx, &qrdbtransport.RekeyStartRequest{})
+			return err
+		}},
+		{"BarrierOfficerRevoke", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.BarrierOfficerRevoke(ctx, &qrdbtransport.OfficerRevokeRequest{SOPin: pin})
+			return err
+		}},
+		{"CeremonyInitialize", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{SOPin: pin, Threshold: 1})
+			return err
+		}},
+		{"CeremonySignCSR", false, func(ctx context.Context, tr *Transport) error {
+			_, err := tr.CeremonySignCSR(ctx, &qrdbtransport.SignCSRInitRequest{Username: "officer", SOPin: pin})
+			return err
+		}},
+	}
+	tools := append(append([]string{}, barrierToolNames...), ceremonyToolNames...)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, called, cleanup := newMultiToolMCPServer(t, tools, func(*testing.T, string, map[string]interface{}) map[string]interface{} {
+				return map[string]interface{}{"ok": true}
+			})
+			defer cleanup()
+
+			ctx := context.Background()
+			if tc.bound {
+				bound, release, err := qrdbsdk.WithSOPIN(ctx, []byte(pin))
+				if err != nil {
+					t.Fatalf("WithSOPIN: %v", err)
+				}
+				defer release()
+				ctx = bound
+			}
+
+			err := tc.call(ctx, tr)
+			var tlsErr *qrdbtransport.SOPINRequiresTLSError
+			if !stderrors.As(err, &tlsErr) {
+				t.Fatalf("expected SOPINRequiresTLSError, got %v", err)
+			}
+			if len(*called) != 0 {
+				t.Fatalf("the PIN must not be sent over http://, server saw %v", *called)
+			}
+		})
 	}
 }

@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/json"
 	stderrors "errors"
 
 	"google.golang.org/grpc"
@@ -23,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -149,6 +151,10 @@ func mapTenantBarrierError(err error) error {
 	if stderrors.Is(err, qrdbsdk.ErrTenantBarrierNotEnabled) {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	}
+	var unsupported *service.TenantBarrierInitStatementUnsupportedError
+	if stderrors.As(err, &unsupported) {
+		return status.Error(codes.Unimplemented, err.Error())
+	}
 	return ToGRPCError(err)
 }
 
@@ -176,16 +182,21 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 		return nil, err
 	}
 
+	officers, err := tenantBarrierOfficersFromPB(req.GetOfficers())
+	if err != nil {
+		return nil, err
+	}
 	passphrase := req.GetPassphrase()
 	defer secure.Wipe(passphrase)
-	result, err := s.tenantBarrierSvc.TenantBarrierInit(
-		ctx,
-		req.GetTenantId(),
-		passphrase,
-		int(req.GetThreshold()),
-		int(req.GetShares()),
-		req.GetStrategy(),
-	)
+	result, err := s.tenantBarrierSvc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+		TenantID:   req.GetTenantId(),
+		Passphrase: passphrase,
+		Threshold:  int(req.GetThreshold()),
+		Shares:     int(req.GetShares()),
+		Strategy:   req.GetStrategy(),
+		Officers:   officers,
+		Policy:     req.GetPolicy(),
+	})
 	if err != nil {
 		return nil, mapTenantBarrierError(err)
 	}
@@ -201,11 +212,76 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 		Strategy:    result.Strategy,
 		Threshold:   n.int32("threshold", result.Threshold),
 		TotalShares: n.int32("total_shares", result.TotalShares),
+		Holders:     tenantBarrierHoldersToPB(result.Holders),
 	}
 	if err := n.err(); err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// tenantBarrierOfficersFromPB decodes the inline Shamir roster into go-qrdb's
+// own officer type, so every field go-qrdb defines reaches it. A factor's
+// params_json must be a JSON object; anything else is InvalidArgument.
+func tenantBarrierOfficersFromPB(in []*pb.TenantBarrierOfficer) ([]qrdbtransport.OfficerRegisterRequest, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	out := make([]qrdbtransport.OfficerRegisterRequest, len(in))
+	for i, o := range in {
+		factors, err := holderFactorsFromPB(i, o.GetFactors())
+		if err != nil {
+			return nil, err
+		}
+		out[i] = qrdbtransport.OfficerRegisterRequest{
+			Username:      o.GetUsername(),
+			Role:          o.GetRole(),
+			CSRPEM:        o.GetCsrPem(),
+			EncryptionKEM: o.GetEncryptionKem(),
+			EncryptionKey: o.GetEncryptionKey(),
+			Factors:       factors,
+			Designated:    o.GetDesignated(),
+		}
+	}
+	return out, nil
+}
+
+// pbHolderFactor is the shape shared by the holder-factor messages of the
+// system ceremony and tenant barrier rosters.
+type pbHolderFactor interface {
+	GetName() string
+	GetParamsJson() []byte
+}
+
+// holderFactorsFromPB decodes officer's enrolment factors into go-qrdb's
+// HolderFactorEnrolment. A factor's params_json must be a JSON object;
+// anything else is InvalidArgument.
+func holderFactorsFromPB[F pbHolderFactor](officer int, in []F) ([]qrdbtransport.HolderFactorEnrolment, error) {
+	factors := make([]qrdbtransport.HolderFactorEnrolment, len(in))
+	for j, f := range in {
+		factors[j] = qrdbtransport.HolderFactorEnrolment{Name: f.GetName()}
+		if len(f.GetParamsJson()) == 0 {
+			continue
+		}
+		if err := json.Unmarshal(f.GetParamsJson(), &factors[j].Params); err != nil {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"officers[%d].factors[%d].params_json is not a JSON object: %v", officer, j, err)
+		}
+	}
+	return factors, nil
+}
+
+// tenantBarrierHoldersToPB encodes the certificates go-qrdb issued to the
+// inline roster's officers, in roster order.
+func tenantBarrierHoldersToPB(in []qrdbtransport.TenantBarrierHolderCert) []*pb.TenantBarrierHolderCert {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*pb.TenantBarrierHolderCert, len(in))
+	for i, h := range in {
+		out[i] = &pb.TenantBarrierHolderCert{Username: h.Username, Role: h.Role, CertPem: h.CertPEM}
+	}
+	return out
 }
 
 // Unseal unseals the per-tenant barrier with a single key (passphrase strategy).
@@ -226,42 +302,6 @@ func (s *TenantBarrierGRPCServer) Unseal(ctx context.Context, req *pb.TenantBarr
 		return nil, mapTenantBarrierError(err)
 	}
 	return &emptypb.Empty{}, nil
-}
-
-// UnsealShare submits a single Shamir share toward the per-tenant quorum.
-func (s *TenantBarrierGRPCServer) UnsealShare(ctx context.Context, req *pb.TenantBarrierUnsealShareRequest) (*pb.TenantBarrierUnsealProgress, error) {
-	if err := s.requireTenantBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if err := requireTenantID(req.GetTenantId()); err != nil {
-		return nil, err
-	}
-	if req.GetShare() == "" {
-		return nil, status.Error(codes.InvalidArgument, "share is required")
-	}
-
-	progress, err := s.tenantBarrierSvc.TenantBarrierUnsealShare(ctx, req.GetTenantId(), req.GetShare())
-	if err != nil {
-		return nil, mapTenantBarrierError(err)
-	}
-	if progress == nil {
-		return &pb.TenantBarrierUnsealProgress{TenantId: req.GetTenantId()}, nil
-	}
-	n := &responseNarrower{}
-	resp := &pb.TenantBarrierUnsealProgress{
-		TenantId:  progress.TenantID,
-		Required:  n.int32("required", progress.Required),
-		Submitted: n.int32("submitted", progress.Submitted),
-		Complete:  progress.Complete,
-		Sealed:    progress.Sealed,
-	}
-	if err := n.err(); err != nil {
-		return nil, err
-	}
-	return resp, nil
 }
 
 // Seal seals the per-tenant barrier.
@@ -353,16 +393,21 @@ func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.
 	}
 	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
-		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(ctx, passphrase)
 		if credErr != nil {
 			return nil, status.Error(codes.Internal, credErr.Error())
 		}
-		defer creds.Secret.Destroy()
 		opts.Credentials = creds
 	}
 
-	if err := s.barrierSvc.EnableEncryption(ctx, req.GetTenantId(), opts); err != nil {
-		return nil, mapTenantBarrierError(err)
+	enableErr := s.barrierSvc.EnableEncryption(ctx, req.GetTenantId(), opts)
+	if opts.Credentials.Secret != nil {
+		if err := opts.Credentials.Secret.Destroy(); err != nil && enableErr == nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+	if enableErr != nil {
+		return nil, mapTenantBarrierError(enableErr)
 	}
 	return &emptypb.Empty{}, nil
 }

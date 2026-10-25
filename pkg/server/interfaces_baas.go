@@ -41,15 +41,6 @@ type BasCeremonyService = qrdbsdk.ServiceCeremonyServicer
 // qrdbsdk.ServiceCredentialServicer.
 type BaasCredentialService = qrdbsdk.ServiceCredentialServicer
 
-// BaasCustodianGroupService is the custodian group management service
-// interface used by the BaaS composition layer. It is satisfied by
-// qrdbsdk.CustodianGroupServicer.
-type BaasCustodianGroupService = qrdbsdk.CustodianGroupServicer
-
-// BaasShareService is the Shamir share management service interface used by
-// the BaaS composition layer. It is satisfied by qrdbsdk.ShareServicer.
-type BaasShareService = qrdbsdk.ShareServicer
-
 // BaasLockService defines the distributed lock management interface used by
 // the BaaS composition layer. It mirrors the qrdb LockServicer interface to
 // provide blocking and non-blocking lock operations with fencing tokens.

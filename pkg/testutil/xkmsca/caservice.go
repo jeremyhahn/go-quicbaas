@@ -207,7 +207,8 @@ func (s *CAService) IssueCertificate(ctx context.Context, req *xkmstransport.Iss
 			CommonName:   req.CommonName,
 			Organization: req.Organization,
 		},
-		Valid: req.ValidityDays,
+		Valid:    req.ValidityDays,
+		TenantID: req.TenantID,
 	})
 	if err != nil {
 		return nil, err

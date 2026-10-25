@@ -106,17 +106,18 @@ func buildTPM2AutoSealStrategy(cfg *config.Config, logger *slog.Logger) (qrdbsdk
 		logger = slog.Default()
 	}
 	tpmCfg := cfg.Seal.TPM2
+	probe := &xkmssdk.TPM2ProbeConfig{
+		Device:        tpmCfg.Device,
+		KeyDir:        tpmCfg.KeyDir,
+		UseSimulator:  tpmCfg.UseSimulator,
+		SimulatorHost: tpmCfg.SimulatorHost,
+		SimulatorPort: tpmCfg.SimulatorPort,
+		SRKHandle:     tpmCfg.SRKHandle,
+	}
+	probe.PlatformPCRs = xkmssdk.TPMPCRSet(tpmCfg.PCRs)
+	probe.PlatformPCRBank = tpmCfg.PCRBank
 	res := xkmssdk.BuildBestSealStrategy(xkmssdk.SealAutodetectOptions{
-		TPM2: &xkmssdk.TPM2ProbeConfig{
-			Device:          tpmCfg.Device,
-			KeyDir:          tpmCfg.KeyDir,
-			UseSimulator:    tpmCfg.UseSimulator,
-			SimulatorHost:   tpmCfg.SimulatorHost,
-			SimulatorPort:   tpmCfg.SimulatorPort,
-			SRKHandle:       tpmCfg.SRKHandle,
-			PlatformPCR:     tpmCfg.PCR,
-			PlatformPCRBank: tpmCfg.PCRBank,
-		},
+		TPM2:         probe,
 		ProbeTimeout: sealAutoProbeTimeout,
 		Logger:       logger,
 	})

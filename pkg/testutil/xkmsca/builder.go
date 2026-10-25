@@ -83,7 +83,7 @@ type Config struct {
 // Build constructs the CA without initializing or loading it, so a caller can
 // exercise the "the CA is not up" condition against a real CA rather than a
 // stub that invents an error.
-func Build(cfg Config) (xkmssdk.TrustedCA, error) {
+func Build(ctx context.Context, cfg Config) (xkmssdk.TrustedCA, error) {
 	if cfg.CommonName == "" {
 		return nil, ErrNoCommonName
 	}
@@ -109,15 +109,17 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 		return nil, err
 	}
 
-	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: xkmssdk.NewStorageCertAdapter(certStorage),
-	})
+	certDAOs, err := xkmssdk.NewBackendDAOFactory(certStorage)
+	if err != nil {
+		return nil, err
+	}
+	certStore, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{DAOs: certDAOs})
 	if err != nil {
 		return nil, err
 	}
 
 	identity := caIdentity(cfg)
-	keyAttrs, err := identity.ToKeyAttributes()
+	keyAttrs, err := identity.ToKeyAttributes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +156,7 @@ func Build(cfg Config) (xkmssdk.TrustedCA, error) {
 // authority the verifier can name — which reads as a broken cluster rather
 // than as rotated trust.
 func Open(ctx context.Context, cfg Config) (xkmssdk.TrustedCA, error) {
-	ca, err := Build(cfg)
+	ca, err := Build(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

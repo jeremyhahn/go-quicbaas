@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -34,17 +35,20 @@ func TestClusterCAKeyProtection_SealsThePassphrase(t *testing.T) {
 	cfg.Raft.RaftEnrollment.CAKeyPassphrase = "cluster-ca-passphrase"
 	s := &Server{config: cfg}
 
-	protection, err := s.clusterCAKeyProtection()
+	protection, err := s.clusterCAKeyProtection(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, protection.Passphrase)
-	buf, err := protection.Passphrase.Open()
+	buf, err := protection.Passphrase.Open(context.Background())
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, "cluster-ca-passphrase", string(buf.Bytes()))
+	require.NoError(t, buf.WithBytes(func(passphrase []byte) error {
+		assert.Equal(t, "cluster-ca-passphrase", string(passphrase))
+		return nil
+	}))
 	assert.False(t, protection.AllowInsecure)
 
 	cfg.Raft.RaftEnrollment.CAKeyPassphrase = ""
-	protection, err = s.clusterCAKeyProtection()
+	protection, err = s.clusterCAKeyProtection(context.Background())
 	require.NoError(t, err)
 	assert.Nil(t, protection.Passphrase, "no passphrase configured: passphrase mode stays off")
 }
@@ -60,15 +64,15 @@ func TestClusterCAKeyProtection_ProtectionFailureIsFatal(t *testing.T) {
 
 	sentinel := errors.New("mlock refused: cannot allocate locked pages")
 	restore := newClusterCAPassphrase
-	newClusterCAPassphrase = func([]byte) (*secure.Secret, error) { return nil, sentinel }
+	newClusterCAPassphrase = func(context.Context, []byte) (*secure.Secret, error) { return nil, sentinel }
 	defer func() { newClusterCAPassphrase = restore }()
 
-	_, err := s.clusterCAKeyProtection()
+	_, err := s.clusterCAKeyProtection(context.Background())
 	var typed *ClusterCAPassphraseError
 	require.ErrorAs(t, err, &typed)
 	assert.ErrorIs(t, err, sentinel)
 
-	deps, err := s.clusterStrategyDeps(nil, nil)
+	deps, err := s.clusterStrategyDeps(context.Background(), nil, nil)
 	assert.Nil(t, deps)
 	assert.ErrorAs(t, err, &typed, "the strategy deps must not be built without the passphrase")
 }

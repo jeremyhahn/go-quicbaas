@@ -42,9 +42,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -58,6 +61,63 @@ import (
 func newRealSoftwareCA(t *testing.T) xkmssdk.TrustedCA {
 	t.Helper()
 	return xkmsca.New(t, "QuicBaaS Extensions Test Root CA")
+}
+
+// TestACMEIssuance_RealCAStampsCallerTenant drives ACME Issue and
+// FinalizeOrder through the production adapter onto a real go-xkms CA. The CA
+// refuses an issuance with no tenant, so a certificate whose first subject OU
+// is the caller's tenant proves the tenant reached SignOptions.TenantID.
+func TestACMEIssuance_RealCAStampsCallerTenant(t *testing.T) {
+	ca := newRealSoftwareCA(t)
+	tcg, ok := ca.(xkmsacme.CACertificateAuthority)
+	require.True(t, ok, "software CA must implement the ACME CA interface")
+	adapter, err := newCAServiceAdapter(ca)
+	require.NoError(t, err)
+	storage, err := xkmsacme.NewACMEStorageFactoryFromKVStore(qrdbsdk.NewMemoryKVStore())
+	require.NoError(t, err)
+	acme, err := service.NewACMEService(&service.ACMEServiceParams{
+		BaseRESTURI:    "https://baas.example.test",
+		CA:             tcg,
+		StorageFactory: storage,
+		IssueCA:        adapter,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, acme)
+
+	tenantCtx := tenantctx.WithTenant(context.Background(), "acme-corp")
+	issueCases := map[string]func(ctx context.Context, csrPEM []byte) ([]byte, error){
+		"Issue": func(ctx context.Context, csrPEM []byte) ([]byte, error) {
+			resp, err := acme.Issue(ctx, &service.ACMEIssueRequest{CSRPEM: csrPEM, ChallengeType: "http-01"})
+			if err != nil {
+				return nil, err
+			}
+			return resp.CertificatePEM, nil
+		},
+		"FinalizeOrder": func(ctx context.Context, csrPEM []byte) ([]byte, error) {
+			resp, err := acme.FinalizeOrder(ctx, &service.ACMEFinalizeOrderRequest{CSRPEM: csrPEM})
+			if err != nil {
+				return nil, err
+			}
+			return resp.CertificatePEM, nil
+		},
+	}
+	for name, issue := range issueCases {
+		t.Run(name+" stamps the tenant", func(t *testing.T) {
+			certPEM, err := issue(tenantCtx, makeCSRPEM(t, "leaf-"+name+".example.test"))
+			require.NoError(t, err)
+			block, _ := pem.Decode(certPEM)
+			require.NotNil(t, block)
+			cert, err := x509.ParseCertificate(block.Bytes)
+			require.NoError(t, err)
+			require.NotEmpty(t, cert.Subject.OrganizationalUnit)
+			assert.Equal(t, "acme-corp", cert.Subject.OrganizationalUnit[0])
+		})
+		t.Run(name+" without a tenant is refused", func(t *testing.T) {
+			_, err := issue(context.Background(), makeCSRPEM(t, "none-"+name+".example.test"))
+			var missing *tenantctx.MissingTenantError
+			assert.ErrorAs(t, err, &missing)
+		})
+	}
 }
 
 // newRealAdapter wraps a real software CA in the adapter under test.
@@ -325,6 +385,7 @@ func TestIssueDeviceIdentityCert_EK_RealCA(t *testing.T) {
 	issued, err := adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
 		Type:     service.DeviceIdentityTypeEK,
 		DeviceID: "device-ek-0001",
+		TenantID: "fixtures",
 		EKPub:    newPKIXPublicKeyPEM(t),
 	})
 	require.NoError(t, err)
@@ -364,6 +425,7 @@ func TestIssueDeviceIdentityCert_BundleError(t *testing.T) {
 	issued, err := adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
 		Type:     service.DeviceIdentityTypeEK,
 		DeviceID: "device-ek-bundle-error",
+		TenantID: "fixtures",
 		EKPub:    newPKIXPublicKeyPEM(t),
 	})
 	assert.Nil(t, issued, "no certificate may be returned when the CA bundle cannot be read")
@@ -376,6 +438,7 @@ func TestIssueDeviceIdentityCert_AK_RealCA(t *testing.T) {
 	issued, err := adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
 		Type:     service.DeviceIdentityTypeAK,
 		DeviceID: "device-ak-0001",
+		TenantID: "fixtures",
 		AKPub:    newPKIXPublicKeyPEM(t),
 	})
 	require.NoError(t, err)
@@ -480,6 +543,7 @@ func (c *nonTCGTrustedCA) unusedDriftGuardMarker() int { return 0 }
 // existing IssueCertificate path, used to obtain a real CA-signed leaf.
 func newLeafIssueRequest(commonName string) *xkmstransport.IssueCertificateRequest {
 	return &xkmstransport.IssueCertificateRequest{
+		TenantID:     "fixtures",
 		CommonName:   commonName,
 		Organization: "Automate The Things",
 		ValidityDays: 30,

@@ -24,12 +24,9 @@ import (
 // tenantContextFromClientCert applies qrdb's canonical certificate-to-tenant
 // rule to a verified peer certificate and binds the normalized tenant.
 func tenantContextFromClientCert(ctx context.Context, cert *x509.Certificate, trustDomain string) (context.Context, error) {
-	tenantID, _, err := qrdbsdk.TenantFromClientCert(cert, trustDomain)
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, trustDomain)
 	if err != nil {
 		return ctx, err
-	}
-	if tenantID == "" {
-		return ctx, qrdbsdk.ErrInvalidClientCertificate
 	}
 	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.NormalizeTenantID(tenantID)), nil
 }

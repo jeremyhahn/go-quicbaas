@@ -14,7 +14,7 @@ package quicbaas.prompt.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 // =============================================================================
 // PromptService — the eight verbs over a tenant's prompt sets

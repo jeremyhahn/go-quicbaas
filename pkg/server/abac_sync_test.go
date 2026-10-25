@@ -75,7 +75,7 @@ func newABACTestServer(t *testing.T, liveReload bool) (*Server, *qrdbnode.Node) 
 	cfg := &qrdbsdk.DaemonConfig{}
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	var opts []qrdbnode.NodeOption
 	if liveReload {

@@ -1,3 +1,5 @@
+//go:build !integration
+
 // Copyright (c) 2026 Jeremy Hahn
 // Copyright (c) 2026 Automate The Things, LLC
 //
@@ -19,6 +21,9 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // failingTenantManager is a tenant directory that cannot answer.
@@ -65,5 +70,34 @@ func TestIAMTenantLister_TenantExistsReportsAnUnansweringDirectory(t *testing.T)
 	exists, err := tenants.TenantExists(context.Background(), "acme")
 	if !errors.Is(err, errTenantDirectorySealed) || exists {
 		t.Fatalf("TenantExists = %v, %v; want the directory failure, never a false \"absent\"", exists, err)
+	}
+}
+
+// TestIAMTenantLister_TenantExistsFromInsideTheTenant pins the orchestration
+// registration path: the caller's ctx is bound to the tenant being checked,
+// but the tenant directory lives in the system scope where CreateTenant wrote
+// it. Reading through the caller's tenant store would find nothing and refuse
+// a tenant that exists (#1797).
+func TestIAMTenantLister_TenantExistsFromInsideTheTenant(t *testing.T) {
+	resolver := newFakeStoreResolver(kvstore.NewMemory())
+	resolver.barrierTenant("acme")
+	storage := iam.NewBackendStorage(newTenantRoutingKVStore(resolver))
+	manager := iam.NewDefaultTenantManager(storage)
+	if _, err := manager.CreateTenant(context.Background(), iam.CreateTenantOptions{ID: "acme", Name: "Acme"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	tenants := &iamTenantLister{tenants: manager}
+
+	contexts := map[string]context.Context{
+		"orchestration key": orchestration.ContextWithTenant(context.Background(), "acme"),
+		"qrdb key":          tenantctx.WithTenant(context.Background(), "acme"),
+	}
+	for name, ctx := range contexts {
+		t.Run(name, func(t *testing.T) {
+			exists, err := tenants.TenantExists(ctx, "acme")
+			if err != nil || !exists {
+				t.Fatalf("TenantExists = %v, %v; want true from inside the tenant", exists, err)
+			}
+		})
 	}
 }

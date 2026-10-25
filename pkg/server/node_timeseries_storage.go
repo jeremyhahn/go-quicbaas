@@ -46,12 +46,12 @@ func (n *nodeTimeSeriesStorage) WritePoint(ctx context.Context, point *interface
 }
 
 // WriteBatch writes multiple data points atomically via the node transport.
-func (n *nodeTimeSeriesStorage) WriteBatch(points []interfaces.DataPoint) error {
+func (n *nodeTimeSeriesStorage) WriteBatch(ctx context.Context, points []interfaces.DataPoint) error {
 	pts := make([]qrdbtransport.TSDataPoint, len(points))
 	for i := range points {
 		pts[i] = *toTSDataPoint(&points[i])
 	}
-	return n.client.TimeSeries().TSWriteBatch(context.Background(), pts)
+	return n.client.TimeSeries().TSWriteBatch(ctx, pts)
 }
 
 // QueryRich performs a rich time-range query via the node transport.
@@ -108,8 +108,8 @@ func (n *nodeTimeSeriesStorage) DeleteSeries(ctx context.Context, req *interface
 }
 
 // GetRetentionPolicy retrieves the retention policy for a metric via the node transport.
-func (n *nodeTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfaces.RetentionPolicy, error) {
-	resp, err := n.client.TimeSeries().TSGetRetention(context.Background(), &qrdbtransport.TSGetRetentionRequest{
+func (n *nodeTimeSeriesStorage) GetRetentionPolicy(ctx context.Context, metric string) (*interfaces.RetentionPolicy, error) {
+	resp, err := n.client.TimeSeries().TSGetRetention(ctx, &qrdbtransport.TSGetRetentionRequest{
 		Metric: metric,
 	})
 	if err != nil {
@@ -126,7 +126,7 @@ func (n *nodeTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfaces.R
 }
 
 // SetRetentionPolicy sets the retention policy for a metric via the node transport.
-func (n *nodeTimeSeriesStorage) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
+func (n *nodeTimeSeriesStorage) SetRetentionPolicy(ctx context.Context, metric string, policy *interfaces.RetentionPolicy) error {
 	var tsPolicy *qrdbtransport.TSRetentionPolicy
 	if policy != nil {
 		tsPolicy = &qrdbtransport.TSRetentionPolicy{
@@ -135,15 +135,15 @@ func (n *nodeTimeSeriesStorage) SetRetentionPolicy(metric string, policy *interf
 			Aggregation:  qrdbtransport.AggFunc(policy.Aggregation),
 		}
 	}
-	return n.client.TimeSeries().TSSetRetention(context.Background(), &qrdbtransport.TSSetRetentionRequest{
+	return n.client.TimeSeries().TSSetRetention(ctx, &qrdbtransport.TSSetRetentionRequest{
 		Metric: metric,
 		Policy: tsPolicy,
 	})
 }
 
 // ListMetrics returns metric names matching the optional prefix via the node transport.
-func (n *nodeTimeSeriesStorage) ListMetrics(prefix string, limit int) ([]string, error) {
-	resp, err := n.client.TimeSeries().TSListMetrics(context.Background(), &qrdbtransport.TSListMetricsRequest{
+func (n *nodeTimeSeriesStorage) ListMetrics(ctx context.Context, prefix string, limit int) ([]string, error) {
+	resp, err := n.client.TimeSeries().TSListMetrics(ctx, &qrdbtransport.TSListMetricsRequest{
 		Prefix: prefix,
 		Limit:  int32(limit),
 	})

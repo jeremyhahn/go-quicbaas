@@ -103,6 +103,7 @@ func TestModuleAuthFallback_EndToEnd(t *testing.T) {
 	authorizer := rbac.New(roles)
 	am := middleware.New(authorizer,
 		middleware.WithAuthenticator(neverAuthenticates{}),
+		middleware.WithRoleResolver(roles),
 		middleware.WithUserService(users),
 	)
 	routes := middleware.NewRESTRouteRegistry()

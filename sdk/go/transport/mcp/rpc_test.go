@@ -33,6 +33,7 @@ import (
 	mcpclienttransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -58,7 +59,7 @@ func newRPCTestTransportWithNotifications(t *testing.T) (*Transport, <-chan stri
 	srv.AddTool(mcpgo.NewTool("qrdb_health"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultText("ok"), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
@@ -190,12 +191,16 @@ func TestIsSessionTerminated(t *testing.T) {
 // TestNotifyRPC_ForwardsParams verifies a notification's params object
 // reaches the server intact.
 func TestNotifyRPC_ForwardsParams(t *testing.T) {
+	// mcp-go v1.3 consumes notifications/cancelled inside the server and
+	// never reaches a registered handler, so the fixture uses a method the
+	// server dispatches to its handlers.
+	const method = "notifications/quicbaas/test"
 	received := make(chan mcpgo.JSONRPCNotification, 1)
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddNotificationHandler("notifications/cancelled", func(_ context.Context, n mcpgo.JSONRPCNotification) {
+	srv.AddNotificationHandler(method, func(_ context.Context, n mcpgo.JSONRPCNotification) {
 		received <- n
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {
@@ -207,16 +212,19 @@ func TestNotifyRPC_ForwardsParams(t *testing.T) {
 	if _, err := tr.CallRPC(ctx, "initialize", rpcInitializeParams(t)); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	if err := tr.NotifyRPC(ctx, "notifications/cancelled", json.RawMessage(`{"requestId":7,"reason":"user"}`)); err != nil {
+	if err := tr.NotifyRPC(ctx, method, json.RawMessage(`{"requestId":7,"reason":"user"}`)); err != nil {
 		t.Fatalf("NotifyRPC: %v", err)
 	}
 	select {
 	case n := <-received:
-		if n.Params.AdditionalFields["reason"] != "user" {
-			t.Errorf("params = %+v, want reason=user", n.Params.AdditionalFields)
+		if n.Method != method {
+			t.Errorf("method = %q, want %q", n.Method, method)
+		}
+		if n.Params.AdditionalFields["reason"] != "user" || n.Params.AdditionalFields["requestId"] != float64(7) {
+			t.Errorf("params = %+v, want requestId=7 reason=user", n.Params.AdditionalFields)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("server never received notifications/cancelled")
+		t.Fatal("server never received the notification")
 	}
 }
 

@@ -42,7 +42,6 @@ import (
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	qbsealedwindow "github.com/jeremyhahn/go-quicbaas/pkg/api/sealedwindow"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
-	_ "github.com/jeremyhahn/go-quicbaas/pkg/barrier" // side-effect import: registers barrier package init
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cluster"
@@ -417,10 +416,11 @@ func (s *Server) initializeCA() error {
 	}
 
 	// Create certificate store
-	certAdapter := xkmssdk.NewStorageCertAdapter(certFileStorage)
-	cs, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{
-		CertStorage: certAdapter,
-	})
+	certDAOs, err := xkmssdk.NewBackendDAOFactory(certFileStorage)
+	if err != nil {
+		return api.NewOperationFailedError("create cert store dao factory", err)
+	}
+	cs, err := xkmssdk.NewCertStore(&xkmssdk.CertStoreConfig{DAOs: certDAOs})
 	if err != nil {
 		return api.NewOperationFailedError("create cert store", err)
 	}
@@ -515,7 +515,7 @@ func (s *Server) initializeCA() error {
 
 	// Create CA - derive KeyAttributes and CAConfig from the identity
 	issuingIdentity := caConfig.IssuingIdentity()
-	keyAttrs, err := issuingIdentity.ToKeyAttributes()
+	keyAttrs, err := issuingIdentity.ToKeyAttributes(context.Background())
 	if err != nil {
 		return api.NewOperationFailedError("derive CA key attributes", err)
 	}
@@ -566,7 +566,7 @@ func (s *Server) initializeCA() error {
 		if adoptErr := s.adoptStagedClusterCACerts(cs); adoptErr != nil {
 			return api.NewOperationFailedError("adopt staged cluster CA certificates", adoptErr)
 		}
-		clusterBackend, resolveErr := s.resolveClusterCARuntimeBackend()
+		clusterBackend, resolveErr := s.resolveClusterCARuntimeBackend(context.Background())
 		if resolveErr != nil {
 			return api.NewOperationFailedError("resolve cluster CA keystore", resolveErr)
 		}
@@ -694,6 +694,7 @@ func (s *Server) initializeCA() error {
 	// paths takes this path too, and is written back to those paths.
 
 	serverRequest := &xkmssdk.TrustedCACertificateRequest{
+		TenantID: serverCertTenantID,
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
@@ -716,7 +717,7 @@ func (s *Server) initializeCA() error {
 	// hardware backend — preventing the "key not found: tpm2:tls:..." boot crash.
 	keyConfig.KeyType = xkmssdk.KeyTypeStringTLS
 	keyConfig.StoreType = xkmssdk.StoreSoftware
-	serverKeyAttrs, err := xkmssdk.KeyAttributesFromConfig(keyConfig)
+	serverKeyAttrs, err := xkmssdk.KeyAttributesFromConfig(context.Background(), keyConfig)
 	if err != nil {
 		return api.NewOperationFailedError("parse server key config", err)
 	}
@@ -830,6 +831,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	}
 
 	serverRequest := &xkmssdk.TrustedCACertificateRequest{
+		TenantID: serverCertTenantID,
 		Subject: xkmssdk.TrustedCASubject{
 			CommonName:   certCN,
 			Organization: s.config.CA.RootOrganization,
@@ -870,7 +872,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 		}
 	}
 
-	serverKeyAttrs, err := xkmssdk.KeyAttributesFromConfig(keyConfig)
+	serverKeyAttrs, err := xkmssdk.KeyAttributesFromConfig(context.Background(), keyConfig)
 	if err != nil {
 		return api.NewOperationFailedError("parse server key config for external CA", err)
 	}
@@ -1939,7 +1941,7 @@ func (s *Server) startService() error {
 			// from the SAME instances during the bootstrap window (Phase 8
 			// transport-parity rule).
 			bootstrapServices, wireErr := buildBootstrapCeremonyServices(
-				slog.Default(), s.config.Storage.DataDir)
+				slog.Default(), s.config.Storage.DataDir, s.config.IAM.SPIFFETrustDomain)
 			if wireErr != nil {
 				return wireErr
 			}
@@ -1949,7 +1951,11 @@ func (s *Server) startService() error {
 			// node construction), this stack is built here, after initializeCA,
 			// so the CA is attached directly to its core. Without it every
 			// CA-dependent ceremony verb fails closed.
+			// ceremonyCA stays a nil interface when there is no CA, so the
+			// bootstrap transport is not handed a typed-nil adapter.
+			var ceremonyCA qrdbsdk.CeremonyCA
 			if ca := s.ceremonyCAAdapter(); ca != nil {
+				ceremonyCA = ca
 				// Ceremony CSR signing resolves named role profiles
 				// (security-officer, custodian, ...); register them before
 				// any ceremony verb can reach the CA.
@@ -1985,14 +1991,26 @@ func (s *Server) startService() error {
 				// barrier's officer verbs issues from the same CA as the
 				// bootstrap ceremony stack.
 				if dpCeremonyCore != nil {
-					if ca := s.ceremonyCAAdapter(); ca != nil {
-						dpCeremonyCore.SetCA(ca)
+					if ceremonyCA != nil {
+						dpCeremonyCore.SetCA(ceremonyCA)
 					}
+					// qrdb init seals each officer share under a PIN; the
+					// ceremony core verifies it against the node's backend.
+					if s.pinBackend != nil {
+						dpCeremonyCore.SetPINBackend(s.pinBackend)
+					}
+					// Under go-qrdb v0.47 the persistent barrier refuses a
+					// standalone barrier initialize: `qrdb init` -- the
+					// ceremony over this same barrier -- is the only way to
+					// bring it up, so the ceremony verbs must reach its own
+					// ceremony core, not the in-memory bootstrap barrier's.
+					bootstrapServices.Ceremony = qrdbsdk.NewServiceCeremonyService(dpCeremonyCore)
+					bootstrapServices.Core = dpCeremonyCore
 				}
 			}
 
 			bootstrapClient, clientErr := newBootstrapCeremonyClient(
-				s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bootstrapServices, s.pinBackend)
+				s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bootstrapServices, s.pinBackend, ceremonyCA)
 			if clientErr != nil {
 				return clientErr
 			}
@@ -2200,12 +2218,12 @@ func (s *Server) startService() error {
 		if client := s.GetQRDBNodeClient(); client != nil {
 			xkmsService.SetUserClients(client.Users(), client.Roles())
 			// UserAuthFactors returns nil when the transport predates the
-			// user-side surface, so the servicer stays unconfigured rather
+			// user-side surface, so the issuer stays unconfigured rather
 			// than holding a typed-nil client that would panic on first
-			// call (mirrors xkmsd's own nil-check at server.go:672-677).
+			// call. go-xkms no longer re-hosts qrdb's auth-factor service:
+			// qrdb serves it directly, so only the session issuer takes it.
 			if factors := client.UserAuthFactors(); factors != nil {
-				xkmsService.SetUserAuthFactorClient(factors)
-				// The same client lets a WebAuthn login REPLAY the attestation
+				// The client lets a WebAuthn login REPLAY the attestation
 				// its factor recorded at enrollment onto the session it issues
 				// (#394). Before this the evidence was written at enrollment and
 				// read nowhere, so only the registering session carried it.
@@ -2216,16 +2234,18 @@ func (s *Server) startService() error {
 					issuer.SetAuthFactorClient(factors)
 				}
 			}
-			s.logger.Info("embedded qrdb node's user/role/user-auth-factor clients wired into xkms service")
+			s.logger.Info("embedded qrdb node's user/role clients wired into xkms service")
 		}
 	}
 
-	// Inject SDK client provider into vector service for write operations.
+	// Inject the vector client provider into the vector service for write
+	// operations: each shard's client runs as the authenticated caller when a
+	// request carries one, and as the node's service principal otherwise.
 	// The vector service is created before the ShardedClient (startVector runs
 	// before startService), so we inject the provider after construction.
 	if s.vectorService != nil {
 		if setter, ok := s.vectorService.(service.VectorSDKProviderSetter); ok {
-			setter.SetSDKProvider(s.qrdbClient)
+			setter.SetSDKProvider(serviceVectorProvider{server: s})
 			s.logger.Info("SDK client provider injected into vector service")
 		}
 	}
@@ -2327,10 +2347,6 @@ func (s *Server) startGRPCServer() error {
 	streamInterceptors = append(streamInterceptors,
 		qrdbsdk.SealedWindowStreamInterceptor(sealedProbe, sealedAllow))
 
-	// Gate the canonical qrdb.v1 BarrierSeal on the SO PIN, as the
-	// BarrierService facade gates REST, MCP and quicbaas.v1 seal (#946).
-	unaryInterceptors = append(unaryInterceptors, s.qrdbSealSOPINInterceptor())
-
 	// Install the platform-token authorization interceptors after the sealed
 	// gate (so sealed-window denials never require a token) when
 	// RequireAuthz=true. Post-unseal gate construction is FAIL-CLOSED: under
@@ -2348,6 +2364,10 @@ func (s *Server) startGRPCServer() error {
 		streamInterceptors = append(streamInterceptors, streamAuthz)
 		s.logger.Info("gRPC platform-token validator authorization installed (RequireAuthz=true)")
 	}
+	// The qrdb.v1 ceremony servicer cannot reach the platform ceremony CA
+	// until go-qrdb #1129; refuse its CA-needing modes. Last in the chain, so
+	// only an authorized caller learns which modes this transport serves.
+	unaryInterceptors = append(unaryInterceptors, ceremonyCARefusalUnaryInterceptor())
 
 	grpcOpts = append(grpcOpts,
 		ggrpc.ChainUnaryInterceptor(unaryInterceptors...),
@@ -2827,7 +2847,11 @@ func (s *Server) keyVersionStore() (*xkmssdk.KeyVersionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := xkmssdk.NewKeyVersionStore(backend)
+	daos, err := xkmssdk.NewBackendDAOFactory(backend)
+	if err != nil {
+		return nil, err
+	}
+	store, err := xkmssdk.NewKeyVersionStore(daos)
 	if err != nil {
 		return nil, err
 	}

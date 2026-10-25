@@ -100,6 +100,8 @@ func TestMCPToolPermissions(t *testing.T) {
 	for _, spec := range mcpapi.ModuleTools() {
 		perm, declared := perms[spec.Tool]
 		switch {
+		case spec.Anonymous:
+			assert.False(t, declared, "anonymous tool %q must declare no permission", spec.Tool)
 		case spec.Public:
 			public++
 			require.True(t, declared, "public tool %q must be declared", spec.Tool)
@@ -117,6 +119,17 @@ func TestMCPToolPermissions(t *testing.T) {
 	if omitted == 0 {
 		t.Log("no unmapped tools — every tool is declared")
 	}
+}
+
+// TestPublicMCPTools proves the module declares exactly the login tools for
+// anonymous access, and no tool that reaches data or the health surface,
+// which stays behind authentication.
+func TestPublicMCPTools(t *testing.T) {
+	backend := newMCPBackend(t)
+	m := newMCPModule(t, func() *mcpapi.Server { return backend })
+
+	assert.ElementsMatch(t, []string{"quicbaas_login_begin", "quicbaas_login_finish"}, m.PublicMCPTools())
+	assert.NotContains(t, m.PublicMCPTools(), "quicbaas_health")
 }
 
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool

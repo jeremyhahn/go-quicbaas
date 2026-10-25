@@ -14,18 +14,12 @@
 package server
 
 import (
-	"path/filepath"
-
-	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
-
-// hostKeysDirName is the directory under the projects root holding the
-// xkms host-key pin store used by git-over-SSH provisioning clones.
-const hostKeysDirName = ".hostkeys"
 
 // wireProjectWorkspaces composes the managed-workspace provisioner —
 // WorkspaceManager (directory lifecycle) + GitProvisioner (clone with
@@ -44,20 +38,22 @@ func (s *Server) wireProjectWorkspaces(projectStore orchestration.ProjectStore, 
 		git.Secrets = s.quicBaaSService.Secrets()
 
 		// Compose git-over-SSH auth from xkms: the signer resolver keeps
-		// private key material inside the xkms store, and the host-key pin
-		// store persists first-contact pins under the projects root so later
-		// clones verify against them.
+		// private key material inside the xkms store, and first-contact
+		// host-key pins persist in the barrier-sealed SSH keyspace so later
+		// clones verify against them. A node with no barrier gets no pin
+		// store, and SSH clones fail closed.
 		if sshClient := s.quicBaaSService.SSHClient(); sshClient != nil {
-			hostKeyBackend, hkErr := xkmsssh.NewFileStorage(filepath.Join(projectsRoot, hostKeysDirName))
-			if hkErr != nil {
-				return hkErr
-			}
-			hostKeys, hkStoreErr := xkmsssh.NewHostKeyStore(hostKeyBackend)
-			if hkStoreErr != nil {
-				return hkStoreErr
-			}
 			git.SSHSigner = &service.XKMSSSHSignerResolver{Client: sshClient}
-			git.HostKeys = hostKeys
+			hostKeys, err := s.sshHostKeyStore()
+			var notSealed *SSHStoreNotSealedError
+			switch {
+			case errors.As(err, &notSealed):
+				s.logger.WithError(err).Warn("git-over-SSH host-key pin store unavailable: SSH clones fail closed")
+			case err != nil:
+				return err
+			default:
+				git.HostKeys = hostKeys
+			}
 		}
 	}
 

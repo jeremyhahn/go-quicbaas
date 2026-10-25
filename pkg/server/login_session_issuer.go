@@ -65,6 +65,13 @@ type oidcSessionIssuer struct {
 	// exists. Nil until wired, and a nil reader simply means no attestation is
 	// replayed — see attestationFor.
 	factors atomic.Pointer[authFactorReader]
+
+	// readBinder binds the context the factor read runs under
+	// (Server.issuanceReadContext). The login has no authenticated caller
+	// yet — the session is what it produces — and an auth-enabled node
+	// authenticates the read, so it runs as the service principal. Nil uses
+	// the caller's context.
+	readBinder func(ctx context.Context, tenantID string) (context.Context, error)
 }
 
 // authFactorReader is the narrow slice of qrdb's user-auth-factor client this
@@ -76,8 +83,8 @@ type authFactorReader struct {
 
 // newOIDCSessionIssuer creates an unbound issuer. Call SetProvider once the
 // OIDC provider is available.
-func newOIDCSessionIssuer() *oidcSessionIssuer {
-	return &oidcSessionIssuer{}
+func newOIDCSessionIssuer(readBinder func(ctx context.Context, tenantID string) (context.Context, error)) *oidcSessionIssuer {
+	return &oidcSessionIssuer{readBinder: readBinder}
 }
 
 // SetProvider attaches (or replaces) the OIDC provider backing this issuer.
@@ -119,6 +126,13 @@ func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsd
 	if factorID == "" {
 		return "", ""
 	}
+	if i.readBinder != nil {
+		bound, err := i.readBinder(ctx, identity.TenantID)
+		if err != nil {
+			return "", ""
+		}
+		ctx = bound
+	}
 	resp, err := reader.get(ctx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
 	if err != nil || resp == nil || resp.Factor.Metadata == nil {
 		return "", ""
@@ -135,12 +149,16 @@ func (i *oidcSessionIssuer) Issue(ctx context.Context, identity *qrdbsdk.Identit
 	if identity == nil {
 		return "", time.Time{}, &NilLoginIdentityError{}
 	}
+	if err := service.RefuseTenantLogin(identity.TenantID); err != nil {
+		return "", time.Time{}, err
+	}
 	provider := i.provider.Load()
 	if provider == nil {
 		return "", time.Time{}, &LoginCeremonyUnavailableError{}
 	}
 	session := iam.SessionIdentity{
 		Subject:     identity.Subject,
+		UserID:      identity.UserID,
 		TenantID:    identity.TenantID,
 		Roles:       identity.Roles,
 		MFAVerified: true,
@@ -205,7 +223,7 @@ func (i *oidcSessionIssuer) Revoke(ctx context.Context, bearer string) error {
 // the provider is bound later by bindLoginCeremonyProvider.
 func (s *Server) buildLoginSessionIssuer() {
 	if s.loginSessionIssuer == nil {
-		s.loginSessionIssuer = newOIDCSessionIssuer()
+		s.loginSessionIssuer = newOIDCSessionIssuer(s.issuanceReadContext)
 	}
 }
 

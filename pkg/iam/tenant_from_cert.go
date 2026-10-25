@@ -46,12 +46,14 @@ func (e *TenantUnresolvedError) Unwrap() error {
 // TenantFromPeerCert is the login tenant-derivation core. It resolves a
 // caller's tenant in the locked priority order:
 //
-//  1. The tenant-scoped SPIFFE URI SAN on the verified peer certificate, with
-//     the operator-configured trust domain PINNED. A foreign trust domain or a
-//     malformed SAN fails closed immediately (it does NOT fall through to HRD),
-//     so a presented-but-invalid cert can never be silently re-routed. The SO /
-//     bootstrap cert's tenant SAN resolves the system tenant so the control
-//     plane works pre-unseal.
+//  1. qrdb's certificate-to-tenant rule (qrdbsdk.TenantFromClientCert) on the
+//     verified peer certificate: the SPIFFE SAN's trust domain is the tenant
+//     (spiffe://<tenant>/<kind>/<name>) and the first Subject OU must name the
+//     same tenant, with the cluster trust domain PINNED. A foreign tenant, a
+//     mismatched OU or a malformed SAN fails closed immediately (it does NOT
+//     fall through to HRD), so a presented-but-invalid cert can never be
+//     silently re-routed. The SO / bootstrap cert names the system tenant so
+//     the control plane works pre-unseal.
 //  2. When the cert simply carries no tenant SPIFFE SAN (or there is no cert),
 //     home-realm discovery from the supplied non-secret routing hints
 //     (SNI/Host, email domain, explicit hint), read from the shared secret-free
@@ -68,10 +70,10 @@ func (e *TenantUnresolvedError) Unwrap() error {
 func TenantFromPeerCert(ctx context.Context, cert *x509.Certificate, trustDomain string, hrd HomeRealmResolver, hints RealmHints) (string, error) {
 	// 1. SPIFFE SAN (pinned trust domain).
 	if cert != nil {
-		id, err := qrdbsdk.TenantFromCert(cert, trustDomain)
+		tenantID, err := qrdbsdk.TenantFromClientCert(cert, trustDomain)
 		switch {
 		case err == nil:
-			return id.TenantID, nil
+			return tenantID, nil
 		case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
 			// No SPIFFE SAN on this cert: fall through to HRD (covers external
 			// PIV/CAC and browser/WebAuthn flows).

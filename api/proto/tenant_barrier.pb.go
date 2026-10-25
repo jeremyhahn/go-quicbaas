@@ -24,7 +24,7 @@
 package proto
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -52,7 +52,15 @@ type TenantBarrierInitRequest struct {
 	// shares is the total number of Shamir shares (Shamir strategy).
 	Shares int32 `protobuf:"varint,4,opt,name=shares,proto3" json:"shares,omitempty"`
 	// strategy selects the sealing strategy: "none", "passphrase", or "shamir".
-	Strategy      string `protobuf:"bytes,5,opt,name=strategy,proto3" json:"strategy,omitempty"`
+	Strategy string `protobuf:"bytes,5,opt,name=strategy,proto3" json:"strategy,omitempty"`
+	// officers is the inline Shamir share-holder roster go-qrdb validates and
+	// registers atomically with initialization (go-qrdb
+	// TenantBarrierInitRequest.Officers). Its length must equal shares; any
+	// other strategy refuses it.
+	Officers []*TenantBarrierOfficer `protobuf:"bytes,6,rep,name=officers,proto3" json:"officers,omitempty"`
+	// policy is the factor policy the officers enrol under: "designated"
+	// (default) or "any-enrolled". Ignored without officers.
+	Policy        string `protobuf:"bytes,7,opt,name=policy,proto3" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -122,6 +130,236 @@ func (x *TenantBarrierInitRequest) GetStrategy() string {
 	return ""
 }
 
+func (x *TenantBarrierInitRequest) GetOfficers() []*TenantBarrierOfficer {
+	if x != nil {
+		return x.Officers
+	}
+	return nil
+}
+
+func (x *TenantBarrierInitRequest) GetPolicy() string {
+	if x != nil {
+		return x.Policy
+	}
+	return ""
+}
+
+// TenantBarrierOfficer is one inline roster entry, field for field go-qrdb's
+// OfficerRegisterRequest. csr_pem supplies only the holder's public key; the
+// node's CA assigns the certificate identity.
+type TenantBarrierOfficer struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Role     string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	CsrPem   string                 `protobuf:"bytes,3,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
+	// encryption_kem and encryption_key enrol a separate HPKE recipient key the
+	// share envelope is sealed to; empty uses the certificate key.
+	EncryptionKem string                       `protobuf:"bytes,4,opt,name=encryption_kem,json=encryptionKem,proto3" json:"encryption_kem,omitempty"`
+	EncryptionKey []byte                       `protobuf:"bytes,5,opt,name=encryption_key,json=encryptionKey,proto3" json:"encryption_key,omitempty"`
+	Factors       []*TenantBarrierHolderFactor `protobuf:"bytes,6,rep,name=factors,proto3" json:"factors,omitempty"`
+	// designated names the factor fixed at enrolment under the designated
+	// policy; "mtls" when empty.
+	Designated    string `protobuf:"bytes,7,opt,name=designated,proto3" json:"designated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TenantBarrierOfficer) Reset() {
+	*x = TenantBarrierOfficer{}
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantBarrierOfficer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantBarrierOfficer) ProtoMessage() {}
+
+func (x *TenantBarrierOfficer) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantBarrierOfficer.ProtoReflect.Descriptor instead.
+func (*TenantBarrierOfficer) Descriptor() ([]byte, []int) {
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TenantBarrierOfficer) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *TenantBarrierOfficer) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *TenantBarrierOfficer) GetCsrPem() string {
+	if x != nil {
+		return x.CsrPem
+	}
+	return ""
+}
+
+func (x *TenantBarrierOfficer) GetEncryptionKem() string {
+	if x != nil {
+		return x.EncryptionKem
+	}
+	return ""
+}
+
+func (x *TenantBarrierOfficer) GetEncryptionKey() []byte {
+	if x != nil {
+		return x.EncryptionKey
+	}
+	return nil
+}
+
+func (x *TenantBarrierOfficer) GetFactors() []*TenantBarrierHolderFactor {
+	if x != nil {
+		return x.Factors
+	}
+	return nil
+}
+
+func (x *TenantBarrierOfficer) GetDesignated() string {
+	if x != nil {
+		return x.Designated
+	}
+	return ""
+}
+
+// TenantBarrierHolderFactor is one factor a holder enrols with (go-qrdb
+// HolderFactorEnrolment). params_json is the factor's parameters as a JSON
+// object, the encoding go-qrdb's own gRPC wire uses.
+type TenantBarrierHolderFactor struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	ParamsJson    []byte                 `protobuf:"bytes,2,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TenantBarrierHolderFactor) Reset() {
+	*x = TenantBarrierHolderFactor{}
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantBarrierHolderFactor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantBarrierHolderFactor) ProtoMessage() {}
+
+func (x *TenantBarrierHolderFactor) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantBarrierHolderFactor.ProtoReflect.Descriptor instead.
+func (*TenantBarrierHolderFactor) Descriptor() ([]byte, []int) {
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TenantBarrierHolderFactor) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TenantBarrierHolderFactor) GetParamsJson() []byte {
+	if x != nil {
+		return x.ParamsJson
+	}
+	return nil
+}
+
+// TenantBarrierHolderCert is the certificate go-qrdb issued to one officer
+// of an inline roster.
+type TenantBarrierHolderCert struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`
+	CertPem       string                 `protobuf:"bytes,3,opt,name=cert_pem,json=certPem,proto3" json:"cert_pem,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TenantBarrierHolderCert) Reset() {
+	*x = TenantBarrierHolderCert{}
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantBarrierHolderCert) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantBarrierHolderCert) ProtoMessage() {}
+
+func (x *TenantBarrierHolderCert) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantBarrierHolderCert.ProtoReflect.Descriptor instead.
+func (*TenantBarrierHolderCert) Descriptor() ([]byte, []int) {
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TenantBarrierHolderCert) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *TenantBarrierHolderCert) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *TenantBarrierHolderCert) GetCertPem() string {
+	if x != nil {
+		return x.CertPem
+	}
+	return ""
+}
+
 // TenantBarrierInitResponse carries the init outcome. For the Shamir strategy
 // the shares field contains the generated shares (returned exactly once).
 // For none/passphrase the shares field is empty.
@@ -136,14 +374,17 @@ type TenantBarrierInitResponse struct {
 	// threshold is the Shamir quorum threshold; zero for non-Shamir strategies.
 	Threshold int32 `protobuf:"varint,4,opt,name=threshold,proto3" json:"threshold,omitempty"`
 	// total_shares is the total Shamir share count; zero for non-Shamir strategies.
-	TotalShares   int32 `protobuf:"varint,5,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	TotalShares int32 `protobuf:"varint,5,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	// holders carries the certificate issued to each inline roster officer, in
+	// roster order; empty when no roster was supplied.
+	Holders       []*TenantBarrierHolderCert `protobuf:"bytes,6,rep,name=holders,proto3" json:"holders,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TenantBarrierInitResponse) Reset() {
 	*x = TenantBarrierInitResponse{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[1]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -155,7 +396,7 @@ func (x *TenantBarrierInitResponse) String() string {
 func (*TenantBarrierInitResponse) ProtoMessage() {}
 
 func (x *TenantBarrierInitResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[1]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -168,7 +409,7 @@ func (x *TenantBarrierInitResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierInitResponse.ProtoReflect.Descriptor instead.
 func (*TenantBarrierInitResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TenantBarrierInitResponse) GetTenantId() string {
@@ -206,6 +447,13 @@ func (x *TenantBarrierInitResponse) GetTotalShares() int32 {
 	return 0
 }
 
+func (x *TenantBarrierInitResponse) GetHolders() []*TenantBarrierHolderCert {
+	if x != nil {
+		return x.Holders
+	}
+	return nil
+}
+
 // TenantBarrierUnsealRequest carries single-key unseal material.
 type TenantBarrierUnsealRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -219,7 +467,7 @@ type TenantBarrierUnsealRequest struct {
 
 func (x *TenantBarrierUnsealRequest) Reset() {
 	*x = TenantBarrierUnsealRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[2]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -231,7 +479,7 @@ func (x *TenantBarrierUnsealRequest) String() string {
 func (*TenantBarrierUnsealRequest) ProtoMessage() {}
 
 func (x *TenantBarrierUnsealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[2]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -244,7 +492,7 @@ func (x *TenantBarrierUnsealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierUnsealRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierUnsealRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *TenantBarrierUnsealRequest) GetTenantId() string {
@@ -259,61 +507,6 @@ func (x *TenantBarrierUnsealRequest) GetKey() []byte {
 		return x.Key
 	}
 	return nil
-}
-
-// TenantBarrierUnsealShareRequest carries one Shamir share.
-type TenantBarrierUnsealShareRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// tenant_id identifies the target tenant.
-	TenantId string `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	// share is the Shamir share value.
-	Share         string `protobuf:"bytes,2,opt,name=share,proto3" json:"share,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *TenantBarrierUnsealShareRequest) Reset() {
-	*x = TenantBarrierUnsealShareRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *TenantBarrierUnsealShareRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*TenantBarrierUnsealShareRequest) ProtoMessage() {}
-
-func (x *TenantBarrierUnsealShareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use TenantBarrierUnsealShareRequest.ProtoReflect.Descriptor instead.
-func (*TenantBarrierUnsealShareRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *TenantBarrierUnsealShareRequest) GetTenantId() string {
-	if x != nil {
-		return x.TenantId
-	}
-	return ""
-}
-
-func (x *TenantBarrierUnsealShareRequest) GetShare() string {
-	if x != nil {
-		return x.Share
-	}
-	return ""
 }
 
 // TenantBarrierUnsealProgress reports quorum progress for a Shamir unseal.
@@ -336,7 +529,7 @@ type TenantBarrierUnsealProgress struct {
 
 func (x *TenantBarrierUnsealProgress) Reset() {
 	*x = TenantBarrierUnsealProgress{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[4]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -348,7 +541,7 @@ func (x *TenantBarrierUnsealProgress) String() string {
 func (*TenantBarrierUnsealProgress) ProtoMessage() {}
 
 func (x *TenantBarrierUnsealProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[4]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -361,7 +554,7 @@ func (x *TenantBarrierUnsealProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierUnsealProgress.ProtoReflect.Descriptor instead.
 func (*TenantBarrierUnsealProgress) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *TenantBarrierUnsealProgress) GetTenantId() string {
@@ -410,7 +603,7 @@ type TenantBarrierSealRequest struct {
 
 func (x *TenantBarrierSealRequest) Reset() {
 	*x = TenantBarrierSealRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[5]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -422,7 +615,7 @@ func (x *TenantBarrierSealRequest) String() string {
 func (*TenantBarrierSealRequest) ProtoMessage() {}
 
 func (x *TenantBarrierSealRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[5]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -435,7 +628,7 @@ func (x *TenantBarrierSealRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierSealRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierSealRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TenantBarrierSealRequest) GetTenantId() string {
@@ -456,7 +649,7 @@ type TenantBarrierStatusRequest struct {
 
 func (x *TenantBarrierStatusRequest) Reset() {
 	*x = TenantBarrierStatusRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[6]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -468,7 +661,7 @@ func (x *TenantBarrierStatusRequest) String() string {
 func (*TenantBarrierStatusRequest) ProtoMessage() {}
 
 func (x *TenantBarrierStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[6]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -481,7 +674,7 @@ func (x *TenantBarrierStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierStatusRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierStatusRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *TenantBarrierStatusRequest) GetTenantId() string {
@@ -514,7 +707,7 @@ type TenantBarrierStatusResponse struct {
 
 func (x *TenantBarrierStatusResponse) Reset() {
 	*x = TenantBarrierStatusResponse{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[7]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -526,7 +719,7 @@ func (x *TenantBarrierStatusResponse) String() string {
 func (*TenantBarrierStatusResponse) ProtoMessage() {}
 
 func (x *TenantBarrierStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[7]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -539,7 +732,7 @@ func (x *TenantBarrierStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantBarrierStatusResponse.ProtoReflect.Descriptor instead.
 func (*TenantBarrierStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TenantBarrierStatusResponse) GetTenantId() string {
@@ -620,7 +813,7 @@ type TenantBarrierEnableEncryptionRequest struct {
 
 func (x *TenantBarrierEnableEncryptionRequest) Reset() {
 	*x = TenantBarrierEnableEncryptionRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[8]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -632,7 +825,7 @@ func (x *TenantBarrierEnableEncryptionRequest) String() string {
 func (*TenantBarrierEnableEncryptionRequest) ProtoMessage() {}
 
 func (x *TenantBarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[8]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -645,7 +838,7 @@ func (x *TenantBarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use TenantBarrierEnableEncryptionRequest.ProtoReflect.Descriptor instead.
 func (*TenantBarrierEnableEncryptionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *TenantBarrierEnableEncryptionRequest) GetTenantId() string {
@@ -743,7 +936,7 @@ type UpdateTenantQuotasRequest struct {
 
 func (x *UpdateTenantQuotasRequest) Reset() {
 	*x = UpdateTenantQuotasRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[9]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -755,7 +948,7 @@ func (x *UpdateTenantQuotasRequest) String() string {
 func (*UpdateTenantQuotasRequest) ProtoMessage() {}
 
 func (x *UpdateTenantQuotasRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[9]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -768,7 +961,7 @@ func (x *UpdateTenantQuotasRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantQuotasRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTenantQuotasRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateTenantQuotasRequest) GetTenantId() string {
@@ -917,7 +1110,7 @@ type UpdateTenantEntitlementsRequest struct {
 
 func (x *UpdateTenantEntitlementsRequest) Reset() {
 	*x = UpdateTenantEntitlementsRequest{}
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[10]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -929,7 +1122,7 @@ func (x *UpdateTenantEntitlementsRequest) String() string {
 func (*UpdateTenantEntitlementsRequest) ProtoMessage() {}
 
 func (x *UpdateTenantEntitlementsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_tenant_barrier_proto_msgTypes[10]
+	mi := &file_api_proto_tenant_barrier_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -942,7 +1135,7 @@ func (x *UpdateTenantEntitlementsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateTenantEntitlementsRequest.ProtoReflect.Descriptor instead.
 func (*UpdateTenantEntitlementsRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_tenant_barrier_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *UpdateTenantEntitlementsRequest) GetTenantId() string {
@@ -998,7 +1191,7 @@ var File_api_proto_tenant_barrier_proto protoreflect.FileDescriptor
 
 const file_api_proto_tenant_barrier_proto_rawDesc = "" +
 	"\n" +
-	"\x1eapi/proto/tenant_barrier.proto\x12\x12quicbaas.tenant.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\xa9\x01\n" +
+	"\x1eapi/proto/tenant_barrier.proto\x12\x12quicbaas.tenant.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x18qrdb/v1/permission.proto\"\x87\x02\n" +
 	"\x18TenantBarrierInitRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1e\n" +
 	"\n" +
@@ -1006,19 +1199,37 @@ const file_api_proto_tenant_barrier_proto_rawDesc = "" +
 	"passphrase\x12\x1c\n" +
 	"\tthreshold\x18\x03 \x01(\x05R\tthreshold\x12\x16\n" +
 	"\x06shares\x18\x04 \x01(\x05R\x06shares\x12\x1a\n" +
-	"\bstrategy\x18\x05 \x01(\tR\bstrategy\"\xad\x01\n" +
+	"\bstrategy\x18\x05 \x01(\tR\bstrategy\x12D\n" +
+	"\bofficers\x18\x06 \x03(\v2(.quicbaas.tenant.v1.TenantBarrierOfficerR\bofficers\x12\x16\n" +
+	"\x06policy\x18\a \x01(\tR\x06policy\"\x96\x02\n" +
+	"\x14TenantBarrierOfficer\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\x12\x17\n" +
+	"\acsr_pem\x18\x03 \x01(\tR\x06csrPem\x12%\n" +
+	"\x0eencryption_kem\x18\x04 \x01(\tR\rencryptionKem\x12%\n" +
+	"\x0eencryption_key\x18\x05 \x01(\fR\rencryptionKey\x12G\n" +
+	"\afactors\x18\x06 \x03(\v2-.quicbaas.tenant.v1.TenantBarrierHolderFactorR\afactors\x12\x1e\n" +
+	"\n" +
+	"designated\x18\a \x01(\tR\n" +
+	"designated\"P\n" +
+	"\x19TenantBarrierHolderFactor\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
+	"\vparams_json\x18\x02 \x01(\fR\n" +
+	"paramsJson\"d\n" +
+	"\x17TenantBarrierHolderCert\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x12\n" +
+	"\x04role\x18\x02 \x01(\tR\x04role\x12\x19\n" +
+	"\bcert_pem\x18\x03 \x01(\tR\acertPem\"\xf4\x01\n" +
 	"\x19TenantBarrierInitResponse\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12\x16\n" +
 	"\x06shares\x18\x03 \x03(\tR\x06shares\x12\x1c\n" +
 	"\tthreshold\x18\x04 \x01(\x05R\tthreshold\x12!\n" +
-	"\ftotal_shares\x18\x05 \x01(\x05R\vtotalShares\"K\n" +
+	"\ftotal_shares\x18\x05 \x01(\x05R\vtotalShares\x12E\n" +
+	"\aholders\x18\x06 \x03(\v2+.quicbaas.tenant.v1.TenantBarrierHolderCertR\aholders\"K\n" +
 	"\x1aTenantBarrierUnsealRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x10\n" +
-	"\x03key\x18\x02 \x01(\fR\x03key\"T\n" +
-	"\x1fTenantBarrierUnsealShareRequest\x12\x1b\n" +
-	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
-	"\x05share\x18\x02 \x01(\tR\x05share\"\xa8\x01\n" +
+	"\x03key\x18\x02 \x01(\fR\x03key\"\xa8\x01\n" +
 	"\x1bTenantBarrierUnsealProgress\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1a\n" +
 	"\brequired\x18\x02 \x01(\x05R\brequired\x12\x1c\n" +
@@ -1074,11 +1285,10 @@ const file_api_proto_tenant_barrier_proto_rawDesc = "" +
 	"\x14allow_volume_storage\x18\x04 \x01(\bR\x12allowVolumeStorage\x12?\n" +
 	"\x1callow_system_managed_barrier\x18\x05 \x01(\bR\x19allowSystemManagedBarrier\x12.\n" +
 	"\x13allow_dedicated_wal\x18\x06 \x01(\bR\x11allowDedicatedWal\x122\n" +
-	"\x15allowed_barrier_modes\x18\a \x03(\tR\x13allowedBarrierModes2\xf6\a\n" +
+	"\x15allowed_barrier_modes\x18\a \x03(\tR\x13allowedBarrierModes2\xe5\x06\n" +
 	"\rTenantBarrier\x12|\n" +
 	"\x04Init\x12,.quicbaas.tenant.v1.TenantBarrierInitRequest\x1a-.quicbaas.tenant.v1.TenantBarrierInitResponse\"\x17\xc2\xf3\x18\x13tenant_barrier:init\x12k\n" +
-	"\x06Unseal\x12..quicbaas.tenant.v1.TenantBarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12\x8e\x01\n" +
-	"\vUnsealShare\x123.quicbaas.tenant.v1.TenantBarrierUnsealShareRequest\x1a/.quicbaas.tenant.v1.TenantBarrierUnsealProgress\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12e\n" +
+	"\x06Unseal\x12..quicbaas.tenant.v1.TenantBarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12e\n" +
 	"\x04Seal\x12,.quicbaas.tenant.v1.TenantBarrierSealRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:seal\x12\x84\x01\n" +
 	"\x06Status\x12..quicbaas.tenant.v1.TenantBarrierStatusRequest\x1a/.quicbaas.tenant.v1.TenantBarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\x8a\x01\n" +
 	"\x10EnableEncryption\x128.quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest\x1a\x16.google.protobuf.Empty\"$\xc2\xf3\x18 tenant_barrier:enable_encryption\x12m\n" +
@@ -1097,43 +1307,46 @@ func file_api_proto_tenant_barrier_proto_rawDescGZIP() []byte {
 	return file_api_proto_tenant_barrier_proto_rawDescData
 }
 
-var file_api_proto_tenant_barrier_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_api_proto_tenant_barrier_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_api_proto_tenant_barrier_proto_goTypes = []any{
 	(*TenantBarrierInitRequest)(nil),             // 0: quicbaas.tenant.v1.TenantBarrierInitRequest
-	(*TenantBarrierInitResponse)(nil),            // 1: quicbaas.tenant.v1.TenantBarrierInitResponse
-	(*TenantBarrierUnsealRequest)(nil),           // 2: quicbaas.tenant.v1.TenantBarrierUnsealRequest
-	(*TenantBarrierUnsealShareRequest)(nil),      // 3: quicbaas.tenant.v1.TenantBarrierUnsealShareRequest
-	(*TenantBarrierUnsealProgress)(nil),          // 4: quicbaas.tenant.v1.TenantBarrierUnsealProgress
-	(*TenantBarrierSealRequest)(nil),             // 5: quicbaas.tenant.v1.TenantBarrierSealRequest
-	(*TenantBarrierStatusRequest)(nil),           // 6: quicbaas.tenant.v1.TenantBarrierStatusRequest
-	(*TenantBarrierStatusResponse)(nil),          // 7: quicbaas.tenant.v1.TenantBarrierStatusResponse
-	(*TenantBarrierEnableEncryptionRequest)(nil), // 8: quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest
-	(*UpdateTenantQuotasRequest)(nil),            // 9: quicbaas.tenant.v1.UpdateTenantQuotasRequest
-	(*UpdateTenantEntitlementsRequest)(nil),      // 10: quicbaas.tenant.v1.UpdateTenantEntitlementsRequest
-	(*emptypb.Empty)(nil),                        // 11: google.protobuf.Empty
+	(*TenantBarrierOfficer)(nil),                 // 1: quicbaas.tenant.v1.TenantBarrierOfficer
+	(*TenantBarrierHolderFactor)(nil),            // 2: quicbaas.tenant.v1.TenantBarrierHolderFactor
+	(*TenantBarrierHolderCert)(nil),              // 3: quicbaas.tenant.v1.TenantBarrierHolderCert
+	(*TenantBarrierInitResponse)(nil),            // 4: quicbaas.tenant.v1.TenantBarrierInitResponse
+	(*TenantBarrierUnsealRequest)(nil),           // 5: quicbaas.tenant.v1.TenantBarrierUnsealRequest
+	(*TenantBarrierUnsealProgress)(nil),          // 6: quicbaas.tenant.v1.TenantBarrierUnsealProgress
+	(*TenantBarrierSealRequest)(nil),             // 7: quicbaas.tenant.v1.TenantBarrierSealRequest
+	(*TenantBarrierStatusRequest)(nil),           // 8: quicbaas.tenant.v1.TenantBarrierStatusRequest
+	(*TenantBarrierStatusResponse)(nil),          // 9: quicbaas.tenant.v1.TenantBarrierStatusResponse
+	(*TenantBarrierEnableEncryptionRequest)(nil), // 10: quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest
+	(*UpdateTenantQuotasRequest)(nil),            // 11: quicbaas.tenant.v1.UpdateTenantQuotasRequest
+	(*UpdateTenantEntitlementsRequest)(nil),      // 12: quicbaas.tenant.v1.UpdateTenantEntitlementsRequest
+	(*emptypb.Empty)(nil),                        // 13: google.protobuf.Empty
 }
 var file_api_proto_tenant_barrier_proto_depIdxs = []int32{
-	0,  // 0: quicbaas.tenant.v1.TenantBarrier.Init:input_type -> quicbaas.tenant.v1.TenantBarrierInitRequest
-	2,  // 1: quicbaas.tenant.v1.TenantBarrier.Unseal:input_type -> quicbaas.tenant.v1.TenantBarrierUnsealRequest
-	3,  // 2: quicbaas.tenant.v1.TenantBarrier.UnsealShare:input_type -> quicbaas.tenant.v1.TenantBarrierUnsealShareRequest
-	5,  // 3: quicbaas.tenant.v1.TenantBarrier.Seal:input_type -> quicbaas.tenant.v1.TenantBarrierSealRequest
-	6,  // 4: quicbaas.tenant.v1.TenantBarrier.Status:input_type -> quicbaas.tenant.v1.TenantBarrierStatusRequest
-	8,  // 5: quicbaas.tenant.v1.TenantBarrier.EnableEncryption:input_type -> quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest
-	9,  // 6: quicbaas.tenant.v1.TenantBarrier.UpdateQuotas:input_type -> quicbaas.tenant.v1.UpdateTenantQuotasRequest
-	10, // 7: quicbaas.tenant.v1.TenantBarrier.UpdateEntitlements:input_type -> quicbaas.tenant.v1.UpdateTenantEntitlementsRequest
-	1,  // 8: quicbaas.tenant.v1.TenantBarrier.Init:output_type -> quicbaas.tenant.v1.TenantBarrierInitResponse
-	11, // 9: quicbaas.tenant.v1.TenantBarrier.Unseal:output_type -> google.protobuf.Empty
-	4,  // 10: quicbaas.tenant.v1.TenantBarrier.UnsealShare:output_type -> quicbaas.tenant.v1.TenantBarrierUnsealProgress
-	11, // 11: quicbaas.tenant.v1.TenantBarrier.Seal:output_type -> google.protobuf.Empty
-	7,  // 12: quicbaas.tenant.v1.TenantBarrier.Status:output_type -> quicbaas.tenant.v1.TenantBarrierStatusResponse
-	11, // 13: quicbaas.tenant.v1.TenantBarrier.EnableEncryption:output_type -> google.protobuf.Empty
-	11, // 14: quicbaas.tenant.v1.TenantBarrier.UpdateQuotas:output_type -> google.protobuf.Empty
-	11, // 15: quicbaas.tenant.v1.TenantBarrier.UpdateEntitlements:output_type -> google.protobuf.Empty
-	8,  // [8:16] is the sub-list for method output_type
-	0,  // [0:8] is the sub-list for method input_type
-	0,  // [0:0] is the sub-list for extension type_name
-	0,  // [0:0] is the sub-list for extension extendee
-	0,  // [0:0] is the sub-list for field type_name
+	1,  // 0: quicbaas.tenant.v1.TenantBarrierInitRequest.officers:type_name -> quicbaas.tenant.v1.TenantBarrierOfficer
+	2,  // 1: quicbaas.tenant.v1.TenantBarrierOfficer.factors:type_name -> quicbaas.tenant.v1.TenantBarrierHolderFactor
+	3,  // 2: quicbaas.tenant.v1.TenantBarrierInitResponse.holders:type_name -> quicbaas.tenant.v1.TenantBarrierHolderCert
+	0,  // 3: quicbaas.tenant.v1.TenantBarrier.Init:input_type -> quicbaas.tenant.v1.TenantBarrierInitRequest
+	5,  // 4: quicbaas.tenant.v1.TenantBarrier.Unseal:input_type -> quicbaas.tenant.v1.TenantBarrierUnsealRequest
+	7,  // 5: quicbaas.tenant.v1.TenantBarrier.Seal:input_type -> quicbaas.tenant.v1.TenantBarrierSealRequest
+	8,  // 6: quicbaas.tenant.v1.TenantBarrier.Status:input_type -> quicbaas.tenant.v1.TenantBarrierStatusRequest
+	10, // 7: quicbaas.tenant.v1.TenantBarrier.EnableEncryption:input_type -> quicbaas.tenant.v1.TenantBarrierEnableEncryptionRequest
+	11, // 8: quicbaas.tenant.v1.TenantBarrier.UpdateQuotas:input_type -> quicbaas.tenant.v1.UpdateTenantQuotasRequest
+	12, // 9: quicbaas.tenant.v1.TenantBarrier.UpdateEntitlements:input_type -> quicbaas.tenant.v1.UpdateTenantEntitlementsRequest
+	4,  // 10: quicbaas.tenant.v1.TenantBarrier.Init:output_type -> quicbaas.tenant.v1.TenantBarrierInitResponse
+	13, // 11: quicbaas.tenant.v1.TenantBarrier.Unseal:output_type -> google.protobuf.Empty
+	13, // 12: quicbaas.tenant.v1.TenantBarrier.Seal:output_type -> google.protobuf.Empty
+	9,  // 13: quicbaas.tenant.v1.TenantBarrier.Status:output_type -> quicbaas.tenant.v1.TenantBarrierStatusResponse
+	13, // 14: quicbaas.tenant.v1.TenantBarrier.EnableEncryption:output_type -> google.protobuf.Empty
+	13, // 15: quicbaas.tenant.v1.TenantBarrier.UpdateQuotas:output_type -> google.protobuf.Empty
+	13, // 16: quicbaas.tenant.v1.TenantBarrier.UpdateEntitlements:output_type -> google.protobuf.Empty
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_tenant_barrier_proto_init() }
@@ -1147,7 +1360,7 @@ func file_api_proto_tenant_barrier_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_tenant_barrier_proto_rawDesc), len(file_api_proto_tenant_barrier_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

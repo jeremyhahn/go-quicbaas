@@ -70,7 +70,7 @@ func New(t *testing.T, commonName string) xkmssdk.TrustedCA {
 func NewUninitialized(t *testing.T, commonName string) xkmssdk.TrustedCA {
 	t.Helper()
 
-	ca, err := Build(Config{CommonName: commonName})
+	ca, err := Build(t.Context(), Config{CommonName: commonName})
 	if err != nil {
 		t.Fatalf("xkmsca: build CA %q: %v", commonName, err)
 	}

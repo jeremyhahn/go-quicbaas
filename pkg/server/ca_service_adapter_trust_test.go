@@ -104,9 +104,9 @@ func TestCAServiceAdapter_SignCSRPEM(t *testing.T) {
 		t.Fatalf("newCAServiceAdapter: %v", err)
 	}
 
-	t.Run("signs valid CSR", func(t *testing.T) {
+	t.Run("signs valid CSR for the tenant", func(t *testing.T) {
 		csrPEM := makeCSRPEM(t, "leaf.example.com")
-		certPEM, chainPEM, err := adapter.SignCSRPEM(context.Background(), csrPEM)
+		certPEM, chainPEM, err := adapter.SignCSRPEM(context.Background(), "acme-corp", csrPEM)
 		if err != nil {
 			t.Fatalf("SignCSRPEM: %v", err)
 		}
@@ -120,19 +120,34 @@ func TestCAServiceAdapter_SignCSRPEM(t *testing.T) {
 		if len(chainPEM) == 0 {
 			t.Fatal("expected non-empty chain PEM")
 		}
+		if ca.lastSignOpts == nil || ca.lastSignOpts.TenantID != "acme-corp" {
+			t.Fatalf("want sign options carrying tenant acme-corp, got %+v", ca.lastSignOpts)
+		}
 	})
 
 	t.Run("empty CSR returns invalid-PEM error", func(t *testing.T) {
-		_, _, err := adapter.SignCSRPEM(context.Background(), nil)
+		_, _, err := adapter.SignCSRPEM(context.Background(), "acme-corp", nil)
 		if !errors.Is(err, ErrCAServiceAdapterInvalidPEM) {
 			t.Fatalf("want ErrCAServiceAdapterInvalidPEM, got %v", err)
+		}
+	})
+
+	t.Run("no tenant refused before the CA", func(t *testing.T) {
+		untouched := newFakeTrustedCA(t)
+		ua, _ := newCAServiceAdapter(untouched)
+		_, _, err := ua.SignCSRPEM(context.Background(), "", makeCSRPEM(t, "x"))
+		if !errors.Is(err, ErrCAServiceAdapterTenantRequired) {
+			t.Fatalf("want ErrCAServiceAdapterTenantRequired, got %v", err)
+		}
+		if untouched.lastSignOpts != nil {
+			t.Fatal("CA must not be called without a tenant")
 		}
 	})
 
 	t.Run("nil CA returns nil-CA error", func(t *testing.T) {
 		empty, _ := newCAServiceAdapter(newFakeTrustedCA(t))
 		empty.ca = nil
-		_, _, err := empty.SignCSRPEM(context.Background(), makeCSRPEM(t, "x"))
+		_, _, err := empty.SignCSRPEM(context.Background(), "acme-corp", makeCSRPEM(t, "x"))
 		if !errors.Is(err, ErrCAServiceAdapterNilCA) {
 			t.Fatalf("want ErrCAServiceAdapterNilCA, got %v", err)
 		}
@@ -142,7 +157,7 @@ func TestCAServiceAdapter_SignCSRPEM(t *testing.T) {
 		failing := newFakeTrustedCA(t)
 		failing.signErr = errors.New("boom")
 		fa, _ := newCAServiceAdapter(failing)
-		_, _, err := fa.SignCSRPEM(context.Background(), makeCSRPEM(t, "x"))
+		_, _, err := fa.SignCSRPEM(context.Background(), "acme-corp", makeCSRPEM(t, "x"))
 		if err == nil {
 			t.Fatal("expected sign error to propagate")
 		}

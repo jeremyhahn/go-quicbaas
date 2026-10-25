@@ -472,6 +472,7 @@ func TestStartEmbeddedAgent_IssuesMTLSIdentityWhenCAPresent(t *testing.T) {
 	srv := withTempServer(t)
 	srv.fleetRegistry = orchestration.NewInMemoryFleetRegistry()
 	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.fleetCertRecords = newTestFleetCertRecords(t)
 	srv.config.Server.EmbeddedFleetNode.Enabled = true
 	srv.config.Server.EmbeddedFleetNode.Backends = []string{"ollama"}
 	srv.config.Server.EmbeddedFleetNode.DataDir = t.TempDir()

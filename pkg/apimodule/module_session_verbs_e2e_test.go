@@ -87,6 +87,9 @@ func registryFromModule(m *Module) *middleware.RESTRouteRegistry {
 		},
 		func(method, pattern string, _ http.HandlerFunc) {
 			routes.RegisterPublic(method, pattern)
+		},
+		func(method, pattern string, _ http.HandlerFunc) {
+			routes.RegisterPublic(method, pattern)
 		})
 	m.RegisterHTTP(reg)
 	return routes
@@ -129,6 +132,7 @@ func TestModuleSessionVerbs_MintedBearerAccepted(t *testing.T) {
 	routes := registryFromModule(m)
 	am := middleware.New(rbac.New(roles),
 		middleware.WithAuthenticator(noPeerCertificate{}),
+		middleware.WithRoleResolver(roles),
 		middleware.WithUserService(users),
 	)
 	handler := am.RESTMiddleware(routes, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -61,7 +61,10 @@ func (m *Module) RegisterMCP(srv *mcpserver.MCPServer) {
 
 // Compile-time check: the module declares its MCP tool permissions into the
 // unified server's single MCP authorization path.
-var _ qrdbsdk.ModuleMCPToolPermissioner = (*Module)(nil)
+var (
+	_ qrdbsdk.ModuleMCPToolPermissioner = (*Module)(nil)
+	_ qrdbsdk.ModuleMCPPublicToolLister = (*Module)(nil)
+)
 
 // MCPToolPermissions declares every module tool's permission for the
 // unified server's MCP tool registry: permission-mapped tools carry their
@@ -76,6 +79,9 @@ func (m *Module) MCPToolPermissions() map[string]qrdbsdk.Permission {
 	perms := make(map[string]qrdbsdk.Permission, len(specs))
 	for _, spec := range specs {
 		switch {
+		case spec.Anonymous:
+			// Served without credentials (PublicMCPTools); qrdb refuses
+			// such a tool when it declares any permission.
 		case spec.Public:
 			perms[spec.Tool] = qrdbsdk.PermissionIdentityGated
 		case spec.Resource != "" && spec.Action != "":
@@ -83,6 +89,20 @@ func (m *Module) MCPToolPermissions() map[string]qrdbsdk.Permission {
 		}
 	}
 	return perms
+}
+
+// PublicMCPTools names the module tools the unified MCP server serves to a
+// caller with no credentials: the login tools, which run before the caller
+// has an identity, exactly as gRPC and REST serve login unauthenticated.
+// qrdb reads it as its MCPPublicToolLister extension.
+func (m *Module) PublicMCPTools() []string {
+	var tools []string
+	for _, spec := range mcpapi.ModuleTools() {
+		if spec.Anonymous {
+			tools = append(tools, spec.Tool)
+		}
+	}
+	return tools
 }
 
 // mcpToolHandler adapts one registry tool to an mcp-go tool handler with

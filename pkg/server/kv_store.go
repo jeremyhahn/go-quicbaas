@@ -18,7 +18,6 @@ import (
 	"errors"
 	"sort"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -28,7 +27,8 @@ import (
 // GetKVStore returns a KVStore for the given shard backed by the qrdb SDK.
 // The SDK is the sole storage path for all server modes. All operations
 // are routed through the ShardedClient which handles embedded or network
-// transport selection internally.
+// transport selection internally, and run as the service principal when the
+// embedded node serves them.
 //
 // Panics if the qrdb SDK client has not been initialized. This is a
 // programming error: the SDK must be set up during server startup before
@@ -41,7 +41,7 @@ func (s *Server) GetKVStore(shardID uint64) interfaces.KVStore {
 	if err != nil {
 		panic(&ShardClientError{ShardID: shardID, Cause: err})
 	}
-	return newSDKKVStore(client, shardID)
+	return newSDKKVStore(s.serviceKV(client.KV()), shardID)
 }
 
 // sdkKVStore implements interfaces.KVStore by delegating through the qrdb SDK.
@@ -54,16 +54,16 @@ func (s *Server) GetKVStore(shardID uint64) interfaces.KVStore {
 // adapts qrdbsdk.NewMemoryStorage() into the same interfaces.KVStore contract.
 // Use kvstore.NewMemory() rather than adding a second implementation.
 type sdkKVStore struct {
-	client  *qrdbsdk.Client
+	kv      transport.KVClient
 	shardID uint64
 }
 
-func newSDKKVStore(client *qrdbsdk.Client, shardID uint64) interfaces.KVStore {
+func newSDKKVStore(kv transport.KVClient, shardID uint64) interfaces.KVStore {
 	base := sdkKVStore{
-		client:  client,
+		kv:      kv,
 		shardID: shardID,
 	}
-	if g, ok := client.KV().(transport.GuardedKVClient); ok {
+	if g, ok := kv.(transport.GuardedKVClient); ok {
 		return &guardedSDKKVStore{sdkKVStore: base, guarded: g}
 	}
 	return &base
@@ -71,7 +71,7 @@ func newSDKKVStore(client *qrdbsdk.Client, shardID uint64) interfaces.KVStore {
 
 // Put stores a key-value pair through the SDK client.
 func (s *sdkKVStore) Put(ctx context.Context, key string, value []byte) error {
-	return s.client.KV().Put(ctx, key, value)
+	return s.kv.Put(ctx, key, value)
 }
 
 // guardedSDKKVStore carries the guarded verbs as EXPLICIT FORWARDS
@@ -113,7 +113,7 @@ func (s *guardedSDKKVStore) CompareAndDelete(ctx context.Context, key string, ex
 // KeyNotFoundError when the key does not exist, which is translated to
 // the quicbaas QBError with ErrNotFound code.
 func (s *sdkKVStore) Get(ctx context.Context, key string) ([]byte, error) {
-	data, err := s.client.KV().Get(ctx, key)
+	data, err := s.kv.Get(ctx, key)
 	if err != nil {
 		var knf *transport.KeyNotFoundError
 		if errors.As(err, &knf) {
@@ -126,14 +126,14 @@ func (s *sdkKVStore) Get(ctx context.Context, key string) ([]byte, error) {
 
 // Delete removes a key through the SDK client.
 func (s *sdkKVStore) Delete(ctx context.Context, key string) error {
-	return s.client.KV().Delete(ctx, key)
+	return s.kv.Delete(ctx, key)
 }
 
 // Scan iterates over key-value pairs matching the given prefix through the
 // SDK client. The SDK returns pairs as a map, which is sorted by key for
 // deterministic iteration order before invoking the callback.
 func (s *sdkKVStore) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
-	pairs, err := s.client.KV().Scan(ctx, prefix)
+	pairs, err := s.kv.Scan(ctx, prefix)
 	if err != nil {
 		return err
 	}
@@ -158,12 +158,12 @@ func (s *sdkKVStore) Scan(ctx context.Context, prefix string, fn func(key string
 
 // List returns all keys matching the given prefix through the SDK client.
 func (s *sdkKVStore) List(ctx context.Context, prefix string) ([]string, error) {
-	return s.client.KV().List(ctx, prefix)
+	return s.kv.List(ctx, prefix)
 }
 
 // Exists checks whether a key exists through the SDK client.
 func (s *sdkKVStore) Exists(ctx context.Context, key string) (bool, error) {
-	return s.client.KV().Exists(ctx, key)
+	return s.kv.Exists(ctx, key)
 }
 
 var _ interfaces.KVStore = (*sdkKVStore)(nil)

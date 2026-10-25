@@ -30,6 +30,9 @@ func TestServer_QRDBAccessors_NilNode(t *testing.T) {
 	if s.GetQRDBUserAuthFactorServicer() != nil {
 		t.Error("GetQRDBUserAuthFactorServicer should be nil without a node")
 	}
+	if s.GetQRDBIndexServicer() != nil {
+		t.Error("GetQRDBIndexServicer should be nil without a node")
+	}
 }
 
 // GetDataPlaneBarrierService returns nil when ceremony services are absent.

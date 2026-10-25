@@ -25,11 +25,10 @@ import (
 	"errors"
 	"io"
 	"math/big"
-	"net/url"
 	"testing"
 	"time"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -118,6 +117,36 @@ func (f *fakeTrustedCA) IssueCertificate(
 	return f.IssueCertificateWithProfile(ctx, req, "")
 }
 
+// IssueCertificateForKey certifies the caller's public key, as the real CA
+// does: the requester keeps its key and none is returned.
+func (f *fakeTrustedCA) IssueCertificateForKey(
+	_ context.Context, req *xkmssdk.TrustedCACertificateRequest, publicKey crypto.PublicKey,
+) (*xkmssdk.TrustedCAIssuedCertificate, error) {
+	if f.issueErr != nil {
+		return nil, f.issueErr
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: req.Subject.CommonName},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, f.caCert, publicKey, f.caKey)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+	return &xkmssdk.TrustedCAIssuedCertificate{
+		Certificate:    cert,
+		CertificatePEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		ChainPEM:       f.bundlePEM,
+		SerialNumber:   template.SerialNumber,
+	}, nil
+}
+
 func (f *fakeTrustedCA) SignCSR(_ context.Context, csrPEM []byte, opts *xkmssdk.TrustedCASignOptions) (*x509.Certificate, error) {
 	f.lastSignOpts = opts
 	if f.signErr != nil {
@@ -142,18 +171,29 @@ func (f *fakeTrustedCA) SignCSR(_ context.Context, csrPEM []byte, opts *xkmssdk.
 	if opts != nil && opts.SPIFFETrustDomain != "" && opts.TenantID != "" {
 		kind := opts.SPIFFEKind
 		if kind == "" {
-			kind = qrdbspiffe.KindUser
+			kind = qrdbsdk.SpiffeKindUser
 		}
 		name := opts.SPIFFEName
 		if name == "" {
 			name = csr.Subject.CommonName
 		}
-		id := qrdbspiffe.ID{TrustDomain: opts.SPIFFETrustDomain, TenantID: opts.TenantID, Kind: kind, Name: name}
-		u, perr := url.Parse(id.String())
+		// The tenant is the trust domain, paired with the tenant as the
+		// first OU, exactly as go-xkms's issuer stamps it.
+		id := qrdbsdk.SpiffeID{TrustDomain: opts.TenantID, Kind: kind, Name: name}
+		u, perr := id.URI()
 		if perr != nil {
 			return nil, perr
 		}
 		template.URIs = append(template.URIs, u)
+		template.Subject.OrganizationalUnit = []string{opts.TenantID}
+	}
+	// Mirror the real CA for a holder certificate: the caller-fixed Subject
+	// and SPIFFE URIs replace the CSR's names, with the requested usages.
+	if opts != nil && opts.RawSubject != nil {
+		template.RawSubject = opts.RawSubject
+		template.URIs = opts.RawSubjectURIs
+		template.KeyUsage = opts.KeyUsage
+		template.ExtKeyUsage = opts.ExtKeyUsage
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, f.caCert, csr.PublicKey, f.caKey)
 	if err != nil {
@@ -483,7 +523,7 @@ func TestCAServiceAdapter_SignCSRPEM_BundleError(t *testing.T) {
 		t.Fatalf("newCAServiceAdapter: %v", err)
 	}
 
-	certPEM, chainPEM, err := adapter.SignCSRPEM(context.Background(), makeCSRPEM(t, "bundle-error"))
+	certPEM, chainPEM, err := adapter.SignCSRPEM(context.Background(), "acme-corp", makeCSRPEM(t, "bundle-error"))
 	if certPEM != nil || chainPEM != nil {
 		t.Fatal("no certificate may be returned when the CA bundle cannot be read")
 	}

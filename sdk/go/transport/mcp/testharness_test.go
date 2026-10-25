@@ -29,6 +29,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
@@ -83,7 +84,7 @@ func newFakeMCPServer(t *testing.T, exp mcpToolExpectation) (*Transport, func())
 		return mcpgo.NewToolResultText(text), nil
 	})
 
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {

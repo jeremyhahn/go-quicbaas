@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"log/slog"
@@ -286,7 +287,7 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig, keyDir string) (*xkmss
 		tpmConfig.PlatformPCRBank = xkmssdk.PCRBankSHA256
 	}
 	if tpmConfig.EK == nil {
-		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD))
+		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue(context.Background(), []byte(xkmssdk.TPM_DEFAULT_PASSWORD))
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +300,7 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig, keyDir string) (*xkmss
 		}
 	}
 	if tpmConfig.SSRK == nil {
-		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue([]byte(xkmssdk.TPM_DEFAULT_PASSWORD))
+		hierarchyAuth, err := xkmssdk.NewLiteralSecretValue(context.Background(), []byte(xkmssdk.TPM_DEFAULT_PASSWORD))
 		if err != nil {
 			return nil, err
 		}
@@ -331,9 +332,8 @@ func provisionTPM2Backend(cfg *xkmssdk.TPM2BackendConfig, keyDir string) (*xkmss
 	}
 
 	params := &xkmssdk.TPMParams{
-		Config:    tpmConfig,
-		BlobStore: storageFactory.BlobStore(),
-		Backend:   storageFactory.KeyBackend(),
+		Config:  tpmConfig,
+		Backend: storageFactory.KeyBackend(),
 	}
 
 	tpm, newErr := xkmssdk.NewTPM2(params)
@@ -374,15 +374,18 @@ func tpm2KeyDir(c config.TPM2SealConfig) string {
 // without key storage. go-xkms always binds the Platform SRK to the platform
 // PCR policy (go-xkms#681), so there is no per-deployment switch for it.
 func tpm2BackendFields(c config.TPM2SealConfig) *xkmssdk.TPM2BackendConfig {
-	return &xkmssdk.TPM2BackendConfig{
-		Device:          c.Device,
-		UseSimulator:    c.UseSimulator,
-		SimulatorHost:   c.SimulatorHost,
-		SimulatorPort:   c.SimulatorPort,
-		SRKHandle:       c.SRKHandle,
-		PlatformPCR:     c.PCR,
-		PlatformPCRBank: c.PCRBank,
+	cfg := &xkmssdk.TPM2BackendConfig{
+		Device:        c.Device,
+		UseSimulator:  c.UseSimulator,
+		SimulatorHost: c.SimulatorHost,
+		SimulatorPort: c.SimulatorPort,
+		SRKHandle:     c.SRKHandle,
 	}
+	// An unset seal.tpm2.pcrs leaves the set nil so go-xkms applies its
+	// default platform PCR set.
+	cfg.PlatformPCRs = xkmssdk.TPMPCRSet(c.PCRs)
+	cfg.PlatformPCRBank = c.PCRBank
+	return cfg
 }
 
 // newTPM2BackendConfig builds the go-xkms TPM2 backend config from seal.tpm2,
@@ -393,12 +396,12 @@ func tpm2BackendFields(c config.TPM2SealConfig) *xkmssdk.TPM2BackendConfig {
 // -- the datastore it protects. go-xkms's own seal autodetect resolves it the
 // same way.
 func newTPM2BackendConfig(c config.TPM2SealConfig) (*xkmssdk.TPM2BackendConfig, error) {
-	keyStorage, err := xkmssdk.NewFileStorageBackend(tpm2KeyDir(c))
+	keyStorage, err := xkmssdk.NewTPMStorageFactory(nil, tpm2KeyDir(c))
 	if err != nil {
 		return nil, err
 	}
 	backendCfg := tpm2BackendFields(c)
-	backendCfg.KeyStorage = keyStorage
+	backendCfg.Keys = keyStorage.KeyBackend()
 	return backendCfg, nil
 }
 

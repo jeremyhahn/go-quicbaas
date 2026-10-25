@@ -23,10 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 )
 
 // createTestSDKKVStore creates an sdkKVStore backed by a real qrdb
@@ -39,15 +39,7 @@ import (
 func createTestSDKKVStore(t *testing.T) interfaces.KVStore {
 	t.Helper()
 
-	ctx := context.Background()
-	cfg := &qrdbsdk.DaemonConfig{}
-	cfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil)
-	require.NoError(t, err, "standalone node construction must succeed for sdkKVStore unit tests")
-	t.Cleanup(func() { _ = node.Close() })
+	node := newPrincipalNode(t)
 
 	client := node.Client()
 
@@ -60,7 +52,7 @@ func createTestSDKKVStore(t *testing.T) interfaces.KVStore {
 	// These tests are about the KVStore contract, so the contract is what they
 	// hold. A test that needs a specific concrete type should assert it itself
 	// and say why.
-	return newSDKKVStore(client, 1)
+	return newSDKKVStore(qrdbservice.KV(node, client.KV()), 1)
 }
 
 // ---------------------------------------------------------------------------

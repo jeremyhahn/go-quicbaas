@@ -337,10 +337,23 @@ func TestStopQRDBNode_NilNodeIsNoop(t *testing.T) {
 // The caller must call node.Close(); the temp dir is cleaned up by t.
 func buildMemoryStandaloneNode(t *testing.T, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
 	t.Helper()
+	return buildMemoryStandaloneNodeFrom(t, memoryNodeConfig(t), nodeOpts...)
+}
 
+// memoryNodeConfig is the quicbaas config buildMemoryStandaloneNode boots:
+// memory storage in a per-test data dir, seal disabled.
+func memoryNodeConfig(t *testing.T) *config.Config {
+	t.Helper()
 	cfg := &config.Config{}
 	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Storage.DataDir = t.TempDir()
+	return cfg
+}
+
+// buildMemoryStandaloneNodeFrom boots a standalone node from cfg with every
+// protocol listener disabled; only the embedded transport is served.
+func buildMemoryStandaloneNodeFrom(t *testing.T, cfg *config.Config, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
+	t.Helper()
 
 	qcfg := mustBuildQRDBConfig(t, cfg, false)
 	// Disable all protocol listeners: we only need the embedded transport.

@@ -24,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -213,9 +214,13 @@ func (s *BarrierServer) BarrierShamirInitialize(ctx context.Context, req *pb.Bar
 	if req.GetThreshold() > req.GetTotalShares() {
 		return nil, status.Error(codes.InvalidArgument, "threshold cannot exceed total_shares")
 	}
-	secret := req.GetSecret()
-	defer secure.Wipe(secret)
-	info, err := s.barrierSvc.BarrierInitializeShamir(ctx, secret, int(req.GetThreshold()), int(req.GetTotalShares()))
+	info, err := s.barrierSvc.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
+		Threshold:   int(req.GetThreshold()),
+		TotalShares: int(req.GetTotalShares()),
+		Policy:      req.GetPolicy(),
+		SOPin:       req.GetSoPin(),
+		UserPin:     req.GetUserPin(),
+	})
 	if err != nil {
 		return nil, mapBarrierError(err)
 	}
@@ -224,76 +229,7 @@ func (s *BarrierServer) BarrierShamirInitialize(ctx context.Context, req *pb.Bar
 	return &pb.BarrierShamirInitializeResponse{
 		Threshold:   int32(info.Threshold),
 		TotalShares: int32(info.TotalShares),
-	}, nil
-}
-
-// BarrierShamirUnsealShare submits a single Shamir share toward the
-// unseal quorum.
-func (s *BarrierServer) BarrierShamirUnsealShare(ctx context.Context, req *pb.BarrierShamirUnsealShareRequest) (*pb.BarrierShamirUnsealShareResponse, error) {
-	if err := s.requireBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetShare() == "" {
-		return nil, status.Error(codes.InvalidArgument, "share is required")
-	}
-	progress, err := s.barrierSvc.BarrierUnsealWithShare(ctx, req.GetShare())
-	if err != nil {
-		return nil, mapBarrierError(err)
-	}
-	return &pb.BarrierShamirUnsealShareResponse{
-		Required:  int32(progress.Required),
-		Submitted: int32(progress.Submitted),
-		Complete:  progress.Complete,
-	}, nil
-}
-
-// BarrierShamirUnsealShares unseals the barrier with a complete set of
-// shares supplied in one call.
-func (s *BarrierServer) BarrierShamirUnsealShares(ctx context.Context, req *pb.BarrierShamirUnsealSharesRequest) (*emptypb.Empty, error) {
-	if err := s.requireBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if len(req.GetShares()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "shares is required")
-	}
-	if err := s.barrierSvc.BarrierUnsealWithShares(ctx, req.GetShares()); err != nil {
-		return nil, mapBarrierError(err)
-	}
-	return &emptypb.Empty{}, nil
-}
-
-// BarrierRekey regenerates Shamir shares for the existing root key.
-func (s *BarrierServer) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitializeResponse, error) {
-	if err := s.requireBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetThreshold() <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "threshold must be greater than 0")
-	}
-	if req.GetTotal() <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "total must be greater than 0")
-	}
-	if req.GetThreshold() > req.GetTotal() {
-		return nil, status.Error(codes.InvalidArgument, "threshold cannot exceed total")
-	}
-	info, err := s.barrierSvc.BarrierRekey(ctx, int(req.GetThreshold()), int(req.GetTotal()))
-	if err != nil {
-		return nil, mapBarrierError(err)
-	}
-	// New shares are sealed to enrolled Security Officers and never
-	// returned; only the threshold/total metadata is reported.
-	return &pb.BarrierShamirInitializeResponse{
-		Threshold:   int32(info.Threshold),
-		TotalShares: int32(info.TotalShares),
+		ShareCount:  int32(info.ShareCount),
 	}, nil
 }
 
@@ -308,39 +244,21 @@ func (s *BarrierServer) BarrierRecoveryGenerate(ctx context.Context, req *pb.Bar
 	if req.GetThreshold() <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "threshold must be greater than 0")
 	}
-	if req.GetTotal() <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "total must be greater than 0")
-	}
-	if req.GetThreshold() > req.GetTotal() {
-		return nil, status.Error(codes.InvalidArgument, "threshold cannot exceed total")
-	}
-	info, err := s.barrierSvc.BarrierGenerateRecoveryKeys(ctx, int(req.GetThreshold()), int(req.GetTotal()))
+	info, err := s.barrierSvc.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
+		Threshold: int(req.GetThreshold()),
+		Policy:    req.GetPolicy(),
+		SOPin:     req.GetSoPin(),
+	})
 	if err != nil {
 		return nil, mapBarrierError(err)
 	}
 	// Recovery shares are sealed to enrolled recovery officers and never
 	// returned; only the threshold/total metadata is reported.
 	return &pb.BarrierRecoveryKeysResponse{
-		Threshold: int32(info.Threshold),
-		Total:     int32(info.Total),
+		Threshold:  int32(info.Threshold),
+		Total:      int32(info.Total),
+		ShareCount: int32(info.ShareCount),
 	}, nil
-}
-
-// BarrierRecoveryRecover unseals the barrier using recovery shares.
-func (s *BarrierServer) BarrierRecoveryRecover(ctx context.Context, req *pb.BarrierRecoveryRecoverRequest) (*emptypb.Empty, error) {
-	if err := s.requireBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if len(req.GetKeys()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "keys is required")
-	}
-	if err := s.barrierSvc.BarrierRecoverWithKeys(ctx, req.GetKeys()); err != nil {
-		return nil, mapBarrierError(err)
-	}
-	return &emptypb.Empty{}, nil
 }
 
 // BarrierRecoveryDelete removes all persisted recovery key metadata.
@@ -364,28 +282,6 @@ func (s *BarrierServer) BarrierRecoveryStatus(ctx context.Context, _ *emptypb.Em
 		return nil, mapBarrierError(err)
 	}
 	return &pb.BarrierRecoveryStatusResponse{HasRecoveryKeys: has}, nil
-}
-
-// BarrierRootToken generates a fresh root token by proving knowledge of
-// the master key through Shamir shares.
-func (s *BarrierServer) BarrierRootToken(ctx context.Context, req *pb.BarrierRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
-	if err := s.requireBarrierService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if len(req.GetShares()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "shares is required")
-	}
-	info, err := s.barrierSvc.BarrierGenerateRootToken(ctx, req.GetShares())
-	if err != nil {
-		return nil, mapBarrierError(err)
-	}
-	return &pb.BarrierRootTokenResponse{
-		Token:     info.Token,
-		CreatedAt: formatTime(info.CreatedAt),
-	}, nil
 }
 
 // BarrierEnableEncryption migrates the system barrier from the none (unencrypted)
@@ -421,16 +317,21 @@ func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.Bar
 	}
 	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
-		creds, credErr := qrdbsdk.CredentialsFor(passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(ctx, passphrase)
 		if credErr != nil {
 			return nil, status.Error(codes.Internal, credErr.Error())
 		}
-		defer creds.Secret.Destroy()
 		opts.Credentials = creds
 	}
 
-	if err := s.barrierSvc.EnableEncryption(ctx, "", opts); err != nil {
-		return nil, mapBarrierError(err)
+	enableErr := s.barrierSvc.EnableEncryption(ctx, "", opts)
+	if opts.Credentials.Secret != nil {
+		if err := opts.Credentials.Secret.Destroy(); err != nil && enableErr == nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+	if enableErr != nil {
+		return nil, mapBarrierError(enableErr)
 	}
 	return &emptypb.Empty{}, nil
 }

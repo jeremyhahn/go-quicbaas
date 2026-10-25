@@ -247,9 +247,21 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 		// indicate a programmer mistake (nil dep) rather than a fatal
 		// runtime condition — the original 404 path remains as a
 		// safety net.
+		//
+		// Enrollment and heartbeat recovery both refuse a peer certificate
+		// the fleet issuer did not record (go-quicbaas#1821 stopgap). Without
+		// the store, enrollment fails closed and recovery stays disabled.
+		certRecords, recordsErr := s.FleetNodeCertRecords()
+		if recordsErr != nil {
+			s.logger.Warnf("fleet node cert records unavailable; enrollment refused and heartbeat recoverer disabled: %v", recordsErr)
+		} else {
+			restServer.SetFleetNodeCertRecords(certRecords)
+		}
 		recoverer, recErr := restapi.NewIAMHeartbeatRecoverer(restapi.IAMHeartbeatRecovererDeps{
-			Registrar: registrar,
-			Logger:    s.logger,
+			Registrar:   registrar,
+			Logger:      s.logger,
+			TrustDomain: s.config.IAM.SPIFFETrustDomain,
+			CertRecords: certRecords,
 		})
 		if recErr != nil {
 			s.logger.Warnf("agent heartbeat recoverer disabled: %v", recErr)

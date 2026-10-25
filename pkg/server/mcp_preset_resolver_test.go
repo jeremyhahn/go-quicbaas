@@ -96,10 +96,10 @@ func (f *fakeFleetNodeCertIssuer) IssueFleetNodeCertificate(_ context.Context, r
 		trustDomain = ""
 	}
 	if malformed {
-		// An empty tenant segment: a well-formed URI carrying an
-		// unusable identity, which the verifier must reject rather
+		// A trust domain SPIFFE refuses: a well-formed URI carrying
+		// an unusable identity, which the verifier must reject rather
 		// than read as "no SAN".
-		spiffeTenant = " "
+		spiffeTenant = "bad!tenant"
 	}
 
 	certPEM, keyPEM, parsed, err := mintTestAgentCert(req, trustDomain, spiffeTenant)
@@ -153,8 +153,10 @@ func (f *fakeFleetNodeCertIssuer) setError(err error) {
 
 // mintTestAgentCert produces a self-signed client certificate shaped exactly
 // like the one the agent cert issuer produces for a spawn: O=<tenant>,
-// OU=agents, CN=<requested>, and — when a trust domain is supplied — the
-// tenant-scoped SPIFFE URI SAN go-qrdb derives the identity's tenant from.
+// CN=<requested>, and — when a trust domain is supplied — the SPIFFE URI SAN
+// spiffe://<tenant>/svc/<cn> go-qrdb derives the identity's tenant from. The
+// go-xkms CA replaces the requested OU with the tenant, so the first OU names
+// the request's tenant too.
 func mintTestAgentCert(
 	req *service.FleetNodeCertificateRequest,
 	trustDomain, spiffeTenant string,
@@ -180,8 +182,11 @@ func mintTestAgentCert(
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		DNSNames:    append([]string{req.Hostname}, req.ExtraDNSNames...),
 	}
+	if req.TenantID != "" {
+		template.Subject.OrganizationalUnit = []string{req.TenantID}
+	}
 	if trustDomain != "" && spiffeTenant != "" {
-		uri, parseErr := url.Parse("spiffe://" + trustDomain + "/tenant/" + spiffeTenant +
+		uri, parseErr := url.Parse("spiffe://" + spiffeTenant +
 			"/" + qrdbsdk.SpiffeKindService + "/" + req.Subject.CommonName)
 		if parseErr != nil {
 			return nil, nil, nil, parseErr

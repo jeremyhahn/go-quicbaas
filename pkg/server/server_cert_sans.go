@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api"
@@ -17,6 +18,12 @@ import (
 // crlReasonSuperseded is the RFC 5280 CRLReason recorded when a server
 // certificate is replaced because its SANs no longer cover the configuration.
 const crlReasonSuperseded = 4
+
+// serverCertTenantID is the tenant the node's own TLS server certificate is
+// issued under. go-xkms requires every issuance to name a tenant; the serving
+// certificate identifies the node, not any tenant, so it belongs to the system
+// tenant, as go-xkms's own node CA adapter does.
+const serverCertTenantID = qrdbsdk.SystemTenantID
 
 // serverCertSANs returns the subject alternative names of the auto-issued
 // server TLS certificate: the loopback names, Server.Host, the machine
@@ -131,6 +138,9 @@ func missingSANs(cert *x509.Certificate, want *xkmssdk.TrustedCASubjectAlternati
 func (s *Server) issueServerCert(ctx context.Context, ca xkmssdk.TrustedCA, request *xkmssdk.TrustedCACertificateRequest) (*xkmssdk.TrustedCAIssuedCertificate, error) {
 	issued, err := ca.IssueCertificate(ctx, request)
 	if err == nil {
+		if err := storeServerCertInKeyStore(ctx, ca, request.Subject.CommonName, issued.Certificate); err != nil {
+			return nil, err
+		}
 		return issued, nil
 	}
 	if !errors.Is(err, xkmssdk.ErrCertificateAlreadyExists) {
@@ -144,6 +154,11 @@ func (s *Server) issueServerCert(ctx context.Context, ca xkmssdk.TrustedCA, requ
 	}
 	missing := missingSANs(existing, request.SANS)
 	if len(missing) == 0 {
+		// A previous boot may have issued the certificate and then failed
+		// to store it, so the keystore is synced with the existing leaf.
+		if err := storeServerCertInKeyStore(ctx, ca, cn, existing); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 
@@ -167,9 +182,37 @@ func (s *Server) issueServerCert(ctx context.Context, ca xkmssdk.TrustedCA, requ
 	if err != nil {
 		return nil, api.NewOperationFailedError("re-issue server TLS certificate", err)
 	}
+	if err := storeServerCertInKeyStore(ctx, ca, cn, issued.Certificate); err != nil {
+		return nil, err
+	}
 	s.logger.WithFields(map[string]interface{}{
 		"cn":         cn,
 		"added_sans": strings.Join(missing, ","),
 	}).Info("Server TLS certificate re-issued to carry the configured SANs")
 	return issued, nil
+}
+
+// storeServerCertInKeyStore saves the issued server leaf, and its chain to the
+// CA certificate, into the CA's keystore under cn. go-xkms IssueCertificate
+// records the leaf only in the CA's CertStore, while ServerTLSConfig assembles
+// the served certificate from the keystore, so without this copy the TLS
+// bootstrap finds no certificate. The chain is saved first: the keystore
+// prefers a stored chain over the standalone leaf, so a failed chain write
+// can never pair a stale chain with a new leaf.
+func storeServerCertInKeyStore(ctx context.Context, ca xkmssdk.TrustedCA, cn string, cert *x509.Certificate) error {
+	caCert, err := ca.CACertificate()
+	if err == nil && caCert == nil {
+		err = ErrServerCertChainCAMissing
+	}
+	if err != nil {
+		return api.NewOperationFailedError("load CA certificate for the server TLS chain", err)
+	}
+	keyStore := ca.KeyStore()
+	if err := keyStore.SaveCertChain(ctx, cn, []*x509.Certificate{cert, caCert}); err != nil {
+		return api.NewOperationFailedError("store server TLS certificate chain in keystore", err)
+	}
+	if err := keyStore.SaveCert(ctx, cn, cert); err != nil {
+		return api.NewOperationFailedError("store server TLS certificate in keystore", err)
+	}
+	return nil
 }

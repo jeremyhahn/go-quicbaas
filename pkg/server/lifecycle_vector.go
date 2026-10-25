@@ -16,9 +16,12 @@
 package server
 
 import (
+	"context"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // initVectorStorage is a no-op. The qrdb node always owns vector storage;
@@ -46,12 +49,25 @@ func (s *Server) startVector() error {
 
 	s.logger.Info("Initializing vector service...")
 
-	nodeClient := s.getQRDBNode().Client()
-	nodeStorage := newNodeVectorStorage(nodeClient)
+	// A request's vector calls run as its authenticated caller, in its
+	// tenant; calls with no caller run as the node's service principal. The
+	// service confines every namespace to the tenant either way.
+	nodeStorage := newNodeVectorStorage(s.serviceVector(s.getQRDBNode().Client().Vector()))
 	logAdapter := logger.NewAdapter(s.logger)
+	// The startup namespace load has no end user behind it: it runs as the
+	// node's service principal in the system tenant.
+	loadCtx, err := s.ServiceContext(tenantctx.WithSystem(context.Background()))
+	if err != nil {
+		return &qberrors.QBError{
+			Code: qberrors.ErrInternal,
+			Op:   "server.startVector",
+			Err:  &ServerCauseError{Message: "failed to bind the vector load to the service principal", Cause: err},
+		}
+	}
 	opts := []service.VectorServiceOption{
 		service.WithVectorShardID(s.config.Vector.ShardID),
 		service.WithVectorIndexFactory(NewVectorIndexFactory()),
+		service.WithVectorLoadContext(loadCtx),
 	}
 	vectorSvc, err := service.NewVectorService(nodeStorage, logAdapter, opts...)
 	if err != nil {

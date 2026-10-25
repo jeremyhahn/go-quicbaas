@@ -290,6 +290,11 @@ type Server struct {
 	// registrations immediately.
 	fleetRegistry orchestration.FleetRegistry
 
+	// fleetCertRecords, when set, is the fleet node certificate record
+	// store FleetNodeCertRecords returns in place of one built over the
+	// tenant-routed KV store (#1821 stopgap).
+	fleetCertRecords service.FleetNodeCertRecords
+
 	// orchTaskStore is the orchestration task store startOrchestration built
 	// and handed to the agent service.
 	orchTaskStore orchestration.TaskStore
@@ -536,6 +541,11 @@ type Server struct {
 	// stopSealedTransports before the full boot resumes.
 	sealedWindowClient *qrdbsdk.Client
 
+	// sealedListenerProbe is the ONE go-qrdb listener probe every sealed-phase
+	// transport gates on (qrdbsdk.NewSealedWindowListenerProbe), so they share
+	// one admission. Built by runSealedWindow; nil outside the sealed window.
+	sealedListenerProbe qrdbsdk.SealedWindowListenerProbe
+
 	// sealedWindowFacade is the minimal service.QuicBaaS facade the
 	// sealed-phase transport servers are composed over. Non-nil only while
 	// the sealed window is being served.
@@ -576,6 +586,11 @@ type Server struct {
 	// after the node (no in-flight emit races the close) and so the audit
 	// read-back path can Query it directly.
 	qrdbAuditSink qrdbsdk.NodeAuditLogger
+
+	// xkmsModule is go-xkms's ServiceModule composed onto the embedded node
+	// (qrdb_node.go unifiedModuleServerOptions). Retained so the features it
+	// composes from the node's storage (HostStores) can be inspected.
+	xkmsModule *xkmssdk.ServiceModule
 
 	// raftClusterAdvertiser is the running Noise NK bootstrap server started
 	// during Raft cluster-TLS auto-enrollment on the first node of a new
@@ -1982,6 +1997,24 @@ func (s *Server) GetQRDBTenantServicer() qrdbsdk.ServiceTenantServicer {
 		return nil
 	}
 	return svcs.Tenant
+}
+
+// GetQRDBIndexServicer returns the qrdb service.IndexServicer exposed by the
+// embedded engine node's service graph. Composers wire this into the SDK's
+// embedded qrdb transport (WithEmbeddedQRDB) so a qrdb DAO with secondary
+// indexes, such as the WebAuthn credential store, can create and query them
+// in process. Returns nil when the node is absent or its service graph is
+// not yet built (e.g. while sealed).
+func (s *Server) GetQRDBIndexServicer() qrdbsdk.IndexServicer {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	svcs := node.Services()
+	if svcs == nil {
+		return nil
+	}
+	return svcs.Index
 }
 
 // Service returns the QuicBaaS facade for direct database operations. The

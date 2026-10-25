@@ -341,12 +341,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		Logger:      slog.Default(),
 	})
 
-	// Seed every new tenant's built-in roles through the SAME adapter
-	// qrdbfirstboot.Initialize seeds the system tenant's roles through, so a
-	// tenant created at runtime carries the identical role set — same names,
-	// same deterministic IDs, same live permission projection. Without this a
-	// fresh tenant has zero roles and cannot hold a user at all (#269).
-	tenantManager.SetRoleSeeder(qrdbadapter.WrapRole(identityStore))
+	wireTenantRoleSeeder(tenantManager, identityStore)
 
 	// Copy the system prompt set into every new tenant after its roles, so a
 	// tenant's prompts are its own versioned records from the start
@@ -472,6 +467,10 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				// node client is constructed later in lifecycle, so the resolver
 				// is consulted per token-issue via GetQRDBNodeClient().RBAC().
 				PermissionResolver: &serverPermissionResolver{server: s},
+				// Issuance reads the user's role names before any bearer
+				// exists; the embedded node authorizes those reads as its
+				// service principal (roles:read, ruling A3).
+				IssuanceReadBinder: s.issuanceReadContext,
 			},
 		)
 		if err != nil {
@@ -586,6 +585,11 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				AAGUIDAllowlist:     aaguidAllowlist,
 				Admins:              iam.NewWebAuthnAdminResolver(userStorage, qrdbadapter.WrapRole(identityStore)),
 				AttestationRoots:    attestationRoots,
+			}
+			// The embedded node refuses a call with no identity, including
+			// the credential DAO's index registration (see serviceKV).
+			if node := s.getQRDBNode(); node != nil {
+				factoryParams.Service = node
 			}
 			factory, fErr := iam.NewWebAuthnServiceFactory(factoryParams)
 			if fErr != nil {
@@ -843,25 +847,14 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 	// the system tenant) rather than seeding a parallel broker admin. This is a
 	// no-op on the happy path; a missing role is logged so operators know a
 	// fresh first-boot is required before admin authorization resolves.
-	if err := reconcileAdminRole(context.Background(), identityStore); err != nil {
-		s.logger.WithError(err).Warn("Canonical admin role not reconciled; admin authorization may be unavailable until first-boot completes")
+	// The check has no caller behind it: it reads as the node's service
+	// principal, which holds roles:read for it (ruling A3).
+	reconcileCtx, err := s.ServiceContext(context.Background())
+	if err == nil {
+		err = reconcileAdminRole(reconcileCtx, identityStore)
 	}
-
-	// Converge every tenant's built-in roles onto THIS build's definitions.
-	// This is the last step of IAM initialization, and deliberately so: qrdb
-	// resolves the built-in definitions through the permission registry at call
-	// time, and both of this process's registration sites — pkg/permission's
-	// Register() from NewServer, and the module's registerRoleGrants() from
-	// apimodule.NewModule during embedded-node construction — have already run
-	// by the time startService reaches here. Running earlier would converge
-	// every tenant onto a definition missing the module's own verbs and report
-	// success (go-quicbaas#573).
-	//
-	// Non-fatal, like the admin-role reconciliation above: a tenant left on a
-	// stale grant is a degraded authorization surface an operator can repair
-	// with the reconcile verb, not a reason to refuse the boot.
-	if err := s.reconcileTenantBuiltInRoles(context.Background(), identityStore, tenantManager); err != nil {
-		s.logger.WithError(err).Warn("Built-in tenant roles not reconciled; tenants seeded before a permission change keep their stale grants until POST /api/v1/tenants/{tenant_id}/roles/reconcile is run")
+	if err != nil {
+		s.logger.WithError(err).Warn("Canonical admin role not reconciled; admin authorization may be unavailable until first-boot completes")
 	}
 
 	// Converge the prompt sets: the system set onto this build's defaults, and
@@ -923,6 +916,14 @@ var writeFirstBootBannerFn = func(w interface{ WriteString(string) (int, error) 
 // which administers nothing — orphaned, tenant-scoped, or on an account that
 // cannot authenticate — RE-ENTERS the (idempotent) sequence instead of skipping.
 func (s *Server) firstBootBootstrap(ctx context.Context, c *iamComponents) error {
+	// No principal exists before first-boot completes, so the IdentityStore's
+	// role reads below (CreateUser's role pre-validation, the admin grant) run
+	// as the service principal, which holds roles:read for them (ruling A3).
+	ctx, err := s.ServiceContext(ctx)
+	if err != nil {
+		return &FirstBootBootstrapError{Op: "bind service principal", Cause: err}
+	}
+
 	// Detect first boot: a usable system administrator means a prior bootstrap
 	// COMPLETED. An assignment on its own does not — see hasSystemAdministrator.
 	//
@@ -1179,6 +1180,41 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 	log.Warnf("first-boot: none of %d admin grants makes a usable system administrator; re-entering first-boot", len(assignments))
 }
 
+// firstBootRoleStore is the role surface qrdb's first-boot seeds the built-in
+// roles through and resolves them by name on a re-run.
+type firstBootRoleStore interface {
+	qrdbsdk.FirstBootRoleCreator
+	qrdbsdk.RoleNameResolver
+}
+
+// nodeRoleService returns the embedded qrdb node's role service, or nil when
+// no node is running or its services are not built yet.
+func (s *Server) nodeRoleService() firstBootRoleStore {
+	node := s.getQRDBNode()
+	if node == nil {
+		return nil
+	}
+	svcs := node.Services()
+	if svcs == nil || svcs.Role == nil {
+		return nil
+	}
+	return svcs.Role
+}
+
+// firstBootRoles picks the role surface for first-boot. With an embedded node
+// it is the node's own role service, which is what qrdbd hands its first-boot:
+// seeding the built-in roles is first-boot's authority and happens before any
+// principal exists, so it must not cross the node's authenticated client. The
+// quicbaas service principal therefore holds no roles grant (ruling A3).
+// Without an embedded node the IdentityStore adapter is used, and its role
+// calls carry the remote client's own credentials.
+func firstBootRoles(nodeRoles firstBootRoleStore, c *iamComponents) firstBootRoleStore {
+	if nodeRoles != nil {
+		return nodeRoles
+	}
+	return qrdbadapter.WrapRole(c.identityStore)
+}
+
 // firstBootDependencies assembles the seam set handed to qrdb's first-boot,
 // including the admin-mTLS seams the enrollment depends on. It returns the
 // dependency set and the user adapter (which doubles as the CertBinder and
@@ -1208,7 +1244,7 @@ func reportUnusableAdministrators(ctx context.Context, c *iamComponents, assignm
 // enrolls through the PIV path or a later ceremony.
 func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDependencies, *qrdbadapter.UserAdapter, error) {
 	users := qrdbadapter.WrapUser(c.identityStore)
-	roles := qrdbadapter.WrapRole(c.identityStore)
+	roles := firstBootRoles(s.nodeRoleService(), c)
 	deps := &qrdbsdk.FirstBootDependencies{
 		Tenants: qrdbadapter.WrapTenant(c.tenantManager),
 		Roles:   roles,
@@ -1249,7 +1285,7 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 	// FAIL CLOSED without a SPIFFE trust domain.
 	//
 	// The xkms CAAdapter stamps the tenant-scoped SPIFFE URI SAN
-	// (spiffe://<trust-domain>/tenant/system/user/admin) onto the admin
+	// (spiffe://system/user/admin) onto the admin
 	// certificate ONLY when a trust domain is configured, and REST's
 	// deriveLoginTenant resolves and PINS the login tenant from exactly that
 	// SAN. With no trust domain the certificate carries no SPIFFE SAN, login
@@ -1281,6 +1317,10 @@ func (s *Server) firstBootDependencies(c *iamComponents) (*qrdbsdk.FirstBootDepe
 			Cause: ErrNoSPIFFETrustDomain,
 		}
 	}
+
+	// qrdb reads a presented admin certificate under the same trust domain
+	// the node's mTLS authenticator pins.
+	deps.TrustDomain = s.config.IAM.SPIFFETrustDomain
 
 	if path := s.config.Auth.BootstrapAdminCSRPath; path != "" {
 		csrPEM, err := os.ReadFile(path)
@@ -1337,6 +1377,9 @@ func (s *Server) enrollFirstBootAdminCert(
 	}
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
+	}
+	if err := permitAdminCertLogin(ctx, c, tenantID, userID); err != nil {
+		return &FirstBootBootstrapError{Op: "permit admin certificate login", Cause: err}
 	}
 	s.logger.Infof("Bootstrap admin %d enrolled with mTLS certificate (SPKI thumbprint %s)",
 		userID, result.AdminCertThumbprint)
@@ -1539,10 +1582,7 @@ func bindAdminPIVCert(ctx context.Context, c *iamComponents, tenantID string, us
 		return &PIVBootstrapError{Op: "update bootstrap admin with PIV thumbprint", Path: path, Cause: err}
 	}
 
-	// The certificate is how this admin logs in, so the account's
-	// permitted-method policy must say so: the certificate login checks it for
-	// mtls, and CreateUser left the webauthn default (go-quicbaas#1727).
-	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {
+	if err := permitAdminCertLogin(ctx, c, tenantID, userID); err != nil {
 		return &PIVBootstrapError{Op: "permit bootstrap admin certificate login", Path: path, Cause: err}
 	}
 	return nil
@@ -1605,6 +1645,18 @@ func enrollAdminCertLoginFactor(
 		return &AdminCertFactorUnavailableError{Component: "certificate login factor enroller"}
 	}
 	return enrollCertLoginFactor(ctx, c.certLoginFactors, tenantID, userID, cert, source)
+}
+
+// permitAdminCertLogin adds mtls to a bootstrap admin's permitted login
+// methods. The certificate is how this admin logs in, and CreateUser left the
+// webauthn default, which the certificate login checks for mtls
+// (go-quicbaas#1727, #1797).
+func permitAdminCertLogin(ctx context.Context, c *iamComponents, tenantID string, userID uint64) error {
+	if c == nil || c.identityStore == nil {
+		return &AdminCertFactorUnavailableError{Component: "identity store"}
+	}
+	_, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID)
+	return err
 }
 
 // enrollCertLoginFactor enrolls cert as userID's mtls login factor through
@@ -2085,6 +2137,25 @@ func reconcileAdminRole(ctx context.Context, identityStore *iam.IdentityStore) e
 	// surface it verbatim so the caller does not mistake it for a
 	// reconciliation gap.
 	return err
+}
+
+// wireTenantRoleSeeder seeds every new tenant's built-in roles through the
+// SAME adapter qrdbfirstboot.Initialize seeds the system tenant's roles
+// through, so a tenant created at runtime carries the identical role set —
+// same names, same deterministic IDs, same live permission projection.
+// Without it a fresh tenant has zero roles and cannot hold a user at all
+// (#269).
+//
+// When the engine's TenantServicer is wired, go-qrdb seeds them itself: its
+// CreateTenant calls its RoleSeeder in the same operation, from the live
+// permission registry. A second seed here would go through the embedded
+// client, which authenticates only the node's service principal and holds no
+// roles:create (the tenant SO's own verb), so it is refused (#1727).
+func wireTenantRoleSeeder(tenantManager *iam.DefaultTenantManager, identityStore *iam.IdentityStore) {
+	if tenantManager.QRDBProvisioner() != nil {
+		return
+	}
+	tenantManager.SetRoleSeeder(qrdbadapter.WrapRole(identityStore))
 }
 
 // writeOrchestratorDaemonClient persists the central's daemon-dispatch

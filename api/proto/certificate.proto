@@ -11,7 +11,7 @@ package quicbaas.certificate.v1;
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
 import "google/protobuf/timestamp.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 // =============================================================================
 // Certificate Service
@@ -23,12 +23,12 @@ import "pkg/api/grpc/proto/qrdbv1/authz.proto";
 service CertificateService {
   // IssueCertificate generates a new X.509 certificate with the specified parameters.
   rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "certs:issue";
   }
 
   // SignCSR signs a Certificate Signing Request with the CA.
   rpc SignCSR(SignCSRRequest) returns (SignCSRResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "certs:issue";
   }
 
   // RevokeCertificate marks a certificate as revoked by serial number.
@@ -60,15 +60,16 @@ service CertificateService {
 
   // Chain resolves the issuer chain for a certificate by walking its
   // Authority Information Access extension. The chain is ordered issuer-first
-  // and root-last and excludes the leaf.
+  // and root-last and excludes the leaf. The permission is certs:enroll, the
+  // one go-xkms v0.55 assigns its own chain verb (POST /api/v1/certs/{id}/chain).
   rpc Chain(CertificateChainRequest) returns (CertificateChainResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "certs:enroll";
   }
 
   // IssueDeviceIdentity issues a TCG device identity certificate: an
   // Endorsement Key, an Attestation Key, or an IEEE 802.1AR IDevID.
   rpc IssueDeviceIdentity(IssueDeviceIdentityRequest) returns (IssueDeviceIdentityResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "certs:issue";
   }
 }
 
@@ -491,27 +492,29 @@ message IssueDeviceIdentityResponse {
 // Trust Service
 // =============================================================================
 
-// TrustService composes the cross-sign / AIA verbs of the underlying CA,
-// surfaced via Security().Trust(). DANE publication is intentionally NOT
-// part of this service (pending a separate DNS-provider hook design).
+// TrustService composes the cross-sign, AIA and DANE publication verbs of
+// the underlying CA, surfaced via Security().Trust(). Its permissions are
+// the trust family, the same on every transport.
 service TrustService {
   // CrossSignedRootPool returns the active CA's cross-sign-aware root set
   // (native root plus any cross-signed roots) as PEM-encoded certificates.
   rpc CrossSignedRootPool(CrossSignedRootPoolRequest) returns (CrossSignedRootPoolResponse) {
-      option (qrdb.v1.permission) = "certs:read";
+      option (qrdb.v1.permission) = "trust:read";
   }
 
   // AutoImportAIA walks the AIA extension of each supplied DER-encoded
   // certificate and imports the referenced issuing CA certificates.
+  //
+  // trust:write: importing issuers changes what the node trusts.
   rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 
   // PublishDANE derives the DANE TLSA records for the supplied certificate
   // and publishes them via the registered DANE publisher. Returns a
   // not-configured error when no publisher is registered on the server.
   rpc PublishDANE(PublishDANERequest) returns (PublishDANEResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "trust:write";
   }
 }
 

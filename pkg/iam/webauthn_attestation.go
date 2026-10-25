@@ -16,6 +16,8 @@ package iam
 import (
 	"context"
 	"encoding/hex"
+	"errors"
+	"slices"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -507,26 +509,36 @@ func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantI
 		return false, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
 	}
 
-	adminRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameAdmin)
-	if err != nil {
-		return true, nil
-	}
-	soRoleIDs, err := qrdbsdk.SystemRoleIDs(lookupCtx, r.roles, tenantID, qrdbsdk.RoleNameSO)
-	if err != nil {
-		return true, nil
-	}
-
-	administrativeRoleIDs := make(map[string]struct{}, len(adminRoleIDs)+len(soRoleIDs))
-	for _, roleID := range adminRoleIDs {
-		administrativeRoleIDs[roleID] = struct{}{}
-	}
-	for _, roleID := range soRoleIDs {
-		administrativeRoleIDs[roleID] = struct{}{}
-	}
-	for _, roleID := range user.Roles {
-		if _, ok := administrativeRoleIDs[roleID]; ok {
+	for _, roleName := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
+		held, err := holdsSystemRole(lookupCtx, r.roles, tenantID, user.Roles, roleName)
+		if err != nil {
+			return true, nil
+		}
+		if held {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// holdsSystemRole reports whether roleIDs grant the named system role of
+// tenantID: whether one of them is the identifier under which the role store
+// persists that role. A tenant with no role of that name grants nothing; any
+// other lookup error is returned, and the caller resolves it fail-safe.
+func holdsSystemRole(ctx context.Context, roles WebAuthnRoleResolver, tenantID string, roleIDs []string, roleName string) (bool, error) {
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	persisted, err := roles.GetRoleByName(ctx, tenantID, roleName)
+	if err != nil {
+		var notFound *qrdbsdk.RoleNotFoundError
+		if errors.As(err, &notFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if persisted == nil {
+		return false, &WebAuthnRoleResolverError{Reason: "canonical role resolver returned nil role for " + roleName}
+	}
+	return slices.Contains(roleIDs, persisted.ID), nil
 }

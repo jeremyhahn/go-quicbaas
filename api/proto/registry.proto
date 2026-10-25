@@ -19,7 +19,7 @@ package quicbaas.registry.v1;
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 // RegistryService is the lease-based service registry: service-instance
 // endpoints that stay listed while their lease is renewed and disappear when

@@ -14,7 +14,13 @@
 package server
 
 import (
+	"context"
+	"encoding/asn1"
+	"encoding/json"
 	"testing"
+
+	"github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
+	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
@@ -106,15 +112,24 @@ func TestBuildClusterPreSignHooks_Gated(t *testing.T) {
 	off := clusterACMEServer(func(c *config.Config) {
 		c.Server.Mode = config.ServerModeStandalone
 	})
-	if off.buildClusterPreSignHooks() != nil {
+	offRegistry, err := off.buildClusterPreSignHooks()
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks (off): %v", err)
+	}
+	if offRegistry != nil {
 		t.Error("expected nil pre-sign hooks when cluster ACME is off")
 	}
 	if off.clusterACMEIssuerCN() != "" {
 		t.Error("expected empty issuer CN when cluster ACME is off")
 	}
 
-	on := clusterACMEServer(nil)
-	registry := on.buildClusterPreSignHooks()
+	on := clusterACMEServer(func(c *config.Config) {
+		c.Raft.RaftAddress = "10.0.0.1:7000"
+	})
+	registry, err := on.buildClusterPreSignHooks()
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks (on): %v", err)
+	}
 	if registry == nil {
 		t.Fatal("expected a non-nil pre-sign hook registry when cluster ACME is on")
 	}
@@ -123,5 +138,149 @@ func TestBuildClusterPreSignHooks_Gated(t *testing.T) {
 	}
 	if on.clusterACMEIssuerCN() != "QuicBaaS Root CA Cluster CA" {
 		t.Errorf("clusterACMEIssuerCN() = %q", on.clusterACMEIssuerCN())
+	}
+}
+
+// clusterHookOrder builds an ACME order carrying one identifier. The xkms SDK
+// does not re-export the identifier type, so the order is decoded from its
+// RFC 8555 JSON form.
+func clusterHookOrder(t *testing.T, idType, value string) *xkmsacme.ACMEOrderEntity {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"identifiers": []map[string]string{{"type": idType, "value": value}},
+	})
+	if err != nil {
+		t.Fatalf("marshal order: %v", err)
+	}
+	order := &xkmsacme.ACMEOrderEntity{}
+	if err := json.Unmarshal(body, order); err != nil {
+		t.Fatalf("unmarshal order: %v", err)
+	}
+	return order
+}
+
+// sanURIs decodes the uniformResourceIdentifier GeneralNames (tag 6) of a
+// SubjectAltName extension value.
+func sanURIs(t *testing.T, value []byte) []string {
+	t.Helper()
+	var names asn1.RawValue
+	if _, err := asn1.Unmarshal(value, &names); err != nil {
+		t.Fatalf("unmarshal GeneralNames: %v", err)
+	}
+	var uris []string
+	for rest := names.Bytes; len(rest) > 0; {
+		var name asn1.RawValue
+		var err error
+		rest, err = asn1.Unmarshal(rest, &name)
+		if err != nil {
+			t.Fatalf("unmarshal GeneralName: %v", err)
+		}
+		if name.Class == asn1.ClassContextSpecific && name.Tag == 6 {
+			uris = append(uris, string(name.Bytes))
+		}
+	}
+	return uris
+}
+
+// TestBuildClusterPreSignHooks_StampsListedMember verifies the registered hook
+// stamps the SPIFFE node URI only for an enroll-01-validated TCG-CSR order
+// whose permanent-identifier is a listed cluster member.
+func TestBuildClusterPreSignHooks_StampsListedMember(t *testing.T) {
+	const member = "10.0.0.2:7000"
+	srv := clusterACMEServer(func(c *config.Config) {
+		c.Raft.RaftAddress = "10.0.0.1:7000"
+		c.Raft.JoinAddresses = []string{"1=10.0.0.1:7000", "2=" + member}
+		c.Raft.RaftEnrollment.TrustDomain = "test.cluster"
+	})
+	registry, err := srv.buildClusterPreSignHooks()
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks: %v", err)
+	}
+
+	exts, err := registry.Execute(&xkmsacme.ACMEOrderPreSignHookContext{
+		Context:             context.Background(),
+		Order:               clusterHookOrder(t, xkmsacme.ACMEAuthzTypePermanentIdentifier, member),
+		IsTCGCSR:            true,
+		ValidatedChallenges: []string{xkmsacme.ACMEChallengeTypeEnroll01},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(exts) != 1 {
+		t.Fatalf("got %d extensions, want 1", len(exts))
+	}
+	if exts[0].Critical {
+		t.Error("SubjectAltName extension must not be critical")
+	}
+	want := clusterenroll.NodeURI("test.cluster", member)
+	if got := sanURIs(t, exts[0].Value); len(got) != 1 || got[0] != want {
+		t.Errorf("SAN URIs = %v, want [%s]", got, want)
+	}
+}
+
+// TestBuildClusterPreSignHooks_RefusesUnqualifiedOrders verifies the hook
+// stamps nothing for an unlisted permanent-identifier, a non-enroll-01
+// validation, or a non-TCG CSR.
+func TestBuildClusterPreSignHooks_RefusesUnqualifiedOrders(t *testing.T) {
+	const member = "10.0.0.1:7000"
+	srv := clusterACMEServer(func(c *config.Config) {
+		c.Raft.RaftAddress = member
+	})
+	registry, err := srv.buildClusterPreSignHooks()
+	if err != nil {
+		t.Fatalf("buildClusterPreSignHooks: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		value      string
+		isTCGCSR   bool
+		challenges []string
+	}{
+		{"unlisted permanent-identifier", "10.0.0.9:7000", true, []string{xkmsacme.ACMEChallengeTypeEnroll01}},
+		{"dns-01 validation", member, true, []string{xkmsacme.ACMEChallengeTypeDNS01}},
+		{"enroll-01 plus another challenge", member, true, []string{xkmsacme.ACMEChallengeTypeEnroll01, xkmsacme.ACMEChallengeTypeDeviceAttest01}},
+		{"no validated challenge", member, true, nil},
+		{"not a TCG CSR", member, false, []string{xkmsacme.ACMEChallengeTypeEnroll01}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exts, err := registry.Execute(&xkmsacme.ACMEOrderPreSignHookContext{
+				Context:             context.Background(),
+				Order:               clusterHookOrder(t, xkmsacme.ACMEAuthzTypePermanentIdentifier, tt.value),
+				IsTCGCSR:            tt.isTCGCSR,
+				ValidatedChallenges: tt.challenges,
+			})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if len(exts) != 0 {
+				t.Errorf("got %d extensions, want none", len(exts))
+			}
+		})
+	}
+}
+
+// TestBuildClusterPreSignHooks_EmptyMembership pins the empty-membership
+// behaviour: buildClusterPreSignHooks refuses a cluster with no raft address,
+// and the upstream hook given no members stamps nothing.
+func TestBuildClusterPreSignHooks_EmptyMembership(t *testing.T) {
+	srv := clusterACMEServer(nil)
+	if _, err := srv.buildClusterPreSignHooks(); err == nil {
+		t.Fatal("expected an error for a cluster with no raft address")
+	}
+
+	hook := xkmsacme.NewACMEClusterNodeURISANHook(defaultRaftTrustDomain, map[uint64]string{})
+	exts, err := hook(&xkmsacme.ACMEOrderPreSignHookContext{
+		Context:             context.Background(),
+		Order:               clusterHookOrder(t, xkmsacme.ACMEAuthzTypePermanentIdentifier, "10.0.0.1:7000"),
+		IsTCGCSR:            true,
+		ValidatedChallenges: []string{xkmsacme.ACMEChallengeTypeEnroll01},
+	})
+	if err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+	if len(exts) != 0 {
+		t.Errorf("got %d extensions from empty membership, want none", len(exts))
 	}
 }

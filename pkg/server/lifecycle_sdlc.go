@@ -531,7 +531,7 @@ func (s *Server) startSDLC() error {
 	if err != nil {
 		return &SDLCInitError{Component: "route index arbiter", Cause: err}
 	}
-	routes, err := sdlc.NewWebhookRouteIndex(transactor, shard.KV())
+	routes, err := sdlc.NewWebhookRouteIndex(transactor, s.serviceKV(shard.KV()))
 	if err != nil {
 		return &SDLCInitError{Component: "webhook route index", Cause: err}
 	}
@@ -902,9 +902,9 @@ func (s *Server) stopSDLC() {
 // must reach the transaction plane, and failing to is fatal.
 func (s *Server) sdlcTransactor(shard *qrdbsdk.Client) (cas.Transactor, error) {
 	if !config.IsClusterLikeMode(s.getEffectiveMode()) {
-		return cas.NewLocalTransactor(shard.KV())
+		return cas.NewLocalTransactor(s.serviceKV(shard.KV()))
 	}
-	tx := shard.Transaction()
+	tx := s.serviceTransaction(shard.Transaction())
 	if err := verifyTransactionPlane(context.Background(), tx); err != nil {
 		return nil, err
 	}

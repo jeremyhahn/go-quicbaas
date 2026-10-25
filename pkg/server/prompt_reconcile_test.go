@@ -24,12 +24,31 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration/prompts"
 )
 
 // recordingPromptReconciler records the tenants reconciled, in order, and
 // fails the ones named in failOn.
+// newReconcileTestLogger returns a quiet logger for the boot-reconcile tests.
+func newReconcileTestLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	return log
+}
+
+// fixedTenantLister answers ListTenants with a fixed list or error.
+type fixedTenantLister struct {
+	tenants []*iam.Tenant
+	err     error
+}
+
+func (l *fixedTenantLister) ListTenants(context.Context, iam.ListOptions) ([]*iam.Tenant, error) {
+	return l.tenants, l.err
+}
+
 type recordingPromptReconciler struct {
 	seen   []string
 	failOn map[string]error

@@ -73,7 +73,9 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 		switch lead.Auth {
 		case restapi.RouteAuthPublic:
 			r.HandlePublic(method, pattern, h)
-		case restapi.RouteAuthSession:
+		case restapi.RouteAuthSession, restapi.RouteAuthRefused:
+			// A refused route still authenticates first; its bound
+			// handler then answers with the typed refusal.
 			r.Handle(method, pattern, identityGatedPermission, h)
 		default:
 			r.Handle(method, pattern,

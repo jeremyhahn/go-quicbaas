@@ -390,3 +390,20 @@ func (p *sealedAdminServicerProxy) GetTopology(ctx context.Context) (*qrdbsdk.To
 	}
 	return svc.GetTopology(ctx)
 }
+
+// NodeCompaction reads the node-wide compaction policy.
+func (p *sealedAdminServicerProxy) NodeCompaction(ctx context.Context) (*qrdbsdk.CompactionPolicy, error) {
+	svc, err := p.resolve()
+	if err != nil {
+		return nil, err
+	}
+	return svc.NodeCompaction(ctx)
+}
+
+func (p *sealedAdminServicerProxy) SetNodeCompaction(ctx context.Context, policy *qrdbsdk.CompactionPolicy) error {
+	svc, err := p.resolve()
+	if err != nil {
+		return err
+	}
+	return svc.SetNodeCompaction(ctx, policy)
+}

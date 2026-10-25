@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -31,14 +30,15 @@ import (
 // to the node's PebbleDB-backed vector engine without network round-trips.
 // The node owns the underlying storage lifecycle; Close is a no-op here.
 type nodeVectorStorage struct {
-	client *qrdbsdk.Client
+	vec qrdbtransport.VectorClient
 }
 
 // newNodeVectorStorage creates a nodeVectorStorage backed by the given
-// qrdb SDK client. The caller must ensure the client remains valid for
-// the lifetime of the returned storage.
-func newNodeVectorStorage(client *qrdbsdk.Client) interfaces.VectorStorage {
-	return &nodeVectorStorage{client: client}
+// qrdb vector client. The server passes a client bound to the node's
+// service principal (qrdbservice.Vector); the caller must ensure it remains
+// valid for the lifetime of the returned storage.
+func newNodeVectorStorage(vec qrdbtransport.VectorClient) interfaces.VectorStorage {
+	return &nodeVectorStorage{vec: vec}
 }
 
 // CreateNamespace creates a new vector namespace via the node transport.
@@ -47,7 +47,7 @@ func (n *nodeVectorStorage) CreateNamespace(ctx context.Context, info *interface
 	for k, v := range info.Metadata {
 		meta[k] = v
 	}
-	_, err := n.client.Vector().CreateNamespace(ctx, &qrdbtransport.CreateNamespaceRequest{
+	_, err := n.vec.CreateNamespace(ctx, &qrdbtransport.CreateNamespaceRequest{
 		Namespace:      info.Name,
 		Dimension:      info.Dimension,
 		DistanceMetric: info.DistanceMetric,
@@ -60,7 +60,7 @@ func (n *nodeVectorStorage) CreateNamespace(ctx context.Context, info *interface
 
 // DeleteNamespace removes a namespace and all its vectors via the node transport.
 func (n *nodeVectorStorage) DeleteNamespace(ctx context.Context, namespace string) error {
-	_, err := n.client.Vector().DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
+	_, err := n.vec.DeleteNamespace(ctx, &qrdbtransport.DeleteNamespaceRequest{
 		Namespace: namespace,
 	})
 	return err
@@ -68,7 +68,7 @@ func (n *nodeVectorStorage) DeleteNamespace(ctx context.Context, namespace strin
 
 // ListNamespaces returns all vector namespaces via the node transport.
 func (n *nodeVectorStorage) ListNamespaces(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-	resp, err := n.client.Vector().ListNamespaces(ctx, &qrdbtransport.ListNamespacesRequest{})
+	resp, err := n.vec.ListNamespaces(ctx, &qrdbtransport.ListNamespacesRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (n *nodeVectorStorage) ListNamespaces(ctx context.Context) ([]interfaces.Ve
 
 // GetNamespaceInfo retrieves metadata about a namespace via the node transport.
 func (n *nodeVectorStorage) GetNamespaceInfo(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error) {
-	resp, err := n.client.Vector().GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{
+	resp, err := n.vec.GetNamespaceInfo(ctx, &qrdbtransport.GetNamespaceInfoRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func (n *nodeVectorStorage) UpsertVector(ctx context.Context, namespace string, 
 	for k, v := range vec.Metadata {
 		meta[k] = v
 	}
-	_, err := n.client.Vector().UpsertVector(ctx, &qrdbtransport.UpsertVectorRequest{
+	_, err := n.vec.UpsertVector(ctx, &qrdbtransport.UpsertVectorRequest{
 		Namespace: namespace,
 		ID:        vec.ID,
 		Vector:    vec.Embedding,
@@ -122,7 +122,7 @@ func (n *nodeVectorStorage) UpsertVector(ctx context.Context, namespace string, 
 
 // GetVector retrieves a vector by namespace and ID via the node transport.
 func (n *nodeVectorStorage) GetVector(ctx context.Context, namespace string, id uint64) (*interfaces.VectorValue, error) {
-	resp, err := n.client.Vector().GetVector(ctx, &qrdbtransport.GetVectorRequest{
+	resp, err := n.vec.GetVector(ctx, &qrdbtransport.GetVectorRequest{
 		Namespace:       namespace,
 		ID:              id,
 		IncludeVector:   true,
@@ -147,7 +147,7 @@ func (n *nodeVectorStorage) GetVector(ctx context.Context, namespace string, id 
 
 // DeleteVector removes a single vector by namespace and ID via the node transport.
 func (n *nodeVectorStorage) DeleteVector(ctx context.Context, namespace string, id uint64) error {
-	_, err := n.client.Vector().DeleteVector(ctx, &qrdbtransport.DeleteVectorRequest{
+	_, err := n.vec.DeleteVector(ctx, &qrdbtransport.DeleteVectorRequest{
 		Namespace: namespace,
 		ID:        id,
 	})
@@ -171,7 +171,7 @@ func (n *nodeVectorStorage) BatchUpsertVectors(ctx context.Context, namespace st
 			UpdatedAt: v.UpdatedAt,
 		}
 	}
-	_, err := n.client.Vector().BatchUpsert(ctx, &qrdbtransport.BatchUpsertRequest{
+	_, err := n.vec.BatchUpsert(ctx, &qrdbtransport.BatchUpsertRequest{
 		Namespace: namespace,
 		Vectors:   tvecs,
 	})
@@ -180,7 +180,7 @@ func (n *nodeVectorStorage) BatchUpsertVectors(ctx context.Context, namespace st
 
 // BatchDeleteVectors deletes multiple vectors by IDs via the node transport.
 func (n *nodeVectorStorage) BatchDeleteVectors(ctx context.Context, namespace string, ids []uint64) error {
-	_, err := n.client.Vector().BatchDeleteVectors(ctx, &qrdbtransport.BatchDeleteVectorsRequest{
+	_, err := n.vec.BatchDeleteVectors(ctx, &qrdbtransport.BatchDeleteVectorsRequest{
 		Namespace: namespace,
 		IDs:       ids,
 	})
@@ -200,7 +200,7 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 		req.IncludeVectors = opts.IncludeVectors
 		req.IncludeMetadata = opts.IncludeMetadata
 	}
-	resp, err := n.client.Vector().ListVectors(ctx, req)
+	resp, err := n.vec.ListVectors(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func (n *nodeVectorStorage) ScanByMultipleFilters(ctx context.Context, namespace
 		req.Limit = opts.Limit
 		req.Offset = opts.Offset
 	}
-	resp, err := n.client.Vector().SearchByMetadata(ctx, req)
+	resp, err := n.vec.SearchByMetadata(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func (n *nodeVectorStorage) ScanByMultipleFilters(ctx context.Context, namespace
 
 // GetStats returns storage statistics for a namespace via the node transport.
 func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*interfaces.VectorStorageStats, error) {
-	resp, err := n.client.Vector().GetIndexStats(ctx, &qrdbtransport.GetIndexStatsRequest{
+	resp, err := n.vec.GetIndexStats(ctx, &qrdbtransport.GetIndexStatsRequest{
 		Namespace: namespace,
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*in
 
 // Compact triggers compaction for a namespace via the node transport.
 func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string) error {
-	_, err := n.client.Vector().CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
+	_, err := n.vec.CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
 		Namespace: namespace,
 		Async:     true,
 	})

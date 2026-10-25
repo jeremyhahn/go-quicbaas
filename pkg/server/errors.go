@@ -21,6 +21,10 @@ import (
 
 // Server package errors.
 var (
+	// ErrUnknownQuorumDomain indicates a barrier quorum verb named a key
+	// domain other than unseal or recovery.
+	ErrUnknownQuorumDomain = errors.New("unknown barrier quorum domain")
+
 	// ErrDataDirRequired indicates a data directory path is required but was not provided.
 	ErrDataDirRequired = errors.New("data directory is required")
 
@@ -84,9 +88,17 @@ var (
 	// started or when TLS is disabled (no CA adapter was wired at startup).
 	ErrUpdateCANotReady = errors.New("server: CA adapter not ready — server may not be started or TLS is disabled")
 
+	// ErrServerCertChainCAMissing indicates the CA returned no certificate
+	// to chain the issued server TLS certificate to.
+	ErrServerCertChainCAMissing = errors.New("server: CA certificate unavailable for the server TLS chain")
+
 	// ErrServerCertPath is returned when a configured server TLS cert or key
 	// path is unset or absent.
 	ErrServerCertPath = errors.New("server: configured TLS cert/key path refused")
+
+	// ErrNoEmbeddedNode is returned by DelegatedContext on a server with no
+	// embedded qrdb node: a delegation needs the node to verify it.
+	ErrNoEmbeddedNode = errors.New("server: no embedded qrdb node to verify the delegation")
 )
 
 // ServerCauseError wraps a server operation error with an underlying cause.
@@ -367,31 +379,6 @@ var ErrFirstBootBootstrap = errors.New("first-boot bootstrap failed")
 // first-boot was skipped or the role store was wiped, and a fresh first-boot is
 // required before admin authorization can resolve.
 var ErrAdminRoleMissing = errors.New("canonical admin role not found in system tenant")
-
-// ErrRoleReconcile is returned when boot-time built-in role reconciliation
-// fails. It is the sentinel RoleReconcileError unwraps to.
-var ErrRoleReconcile = errors.New("built-in role reconciliation failed")
-
-// RoleReconcileError names the tenant whose built-in role reconciliation
-// failed. An empty TenantID means the failure happened while enumerating the
-// tenants to reconcile, before any one of them was reached.
-type RoleReconcileError struct {
-	TenantID string
-	Cause    error
-}
-
-// Error implements the error interface.
-func (e *RoleReconcileError) Error() string {
-	if e.TenantID == "" {
-		return "built-in role reconciliation: enumerate tenants: " + e.Cause.Error()
-	}
-	return "built-in role reconciliation: tenant " + e.TenantID + ": " + e.Cause.Error()
-}
-
-// Unwrap returns the sentinel error for errors.Is support.
-func (e *RoleReconcileError) Unwrap() error {
-	return ErrRoleReconcile
-}
 
 // TenantProvisionUnavailableError reports that a seam tenant provisioning
 // composes is not wired on this server, so nothing was written.

@@ -158,8 +158,11 @@ func (m *DefaultMFAManager) BeginEnrollment(ctx context.Context, userID uint64, 
 
 	secret, err := otp.EncodeSecret(seed)
 	if err != nil {
-		seed.Destroy()
-		return nil, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to encode secret", err)
+		encodeErr := NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to encode secret", err)
+		if destroyErr := seed.Destroy(); destroyErr != nil {
+			return nil, errors.Join(encodeErr, NewIAMError(ErrMFAInvalid, "iam.mfa.enroll", "failed to destroy shared secret", destroyErr))
+		}
+		return nil, encodeErr
 	}
 
 	// NewAuthenticator takes ownership of the seed on every return path, so
@@ -871,12 +874,17 @@ func (m *DefaultMFAManager) checkTOTPCode(ctx context.Context, op, base32Secret,
 	}
 
 	// The code arrives as a string from the transport and cannot be wiped;
-	// the enclave keeps the comparison itself out of ordinary memory.
-	submitted, err := enclave.NewMemoryEnclaveFromString(code)
+	// the enclave keeps the comparison itself out of ordinary memory, and
+	// NewMemoryEnclave wipes the byte copy it is handed.
+	submitted, err := enclave.NewMemoryEnclave([]byte(code))
 	if err != nil {
 		return NewIAMError(ErrMFAInvalid, op, "failed to load code into protected memory", err)
 	}
-	defer submitted.Destroy()
+	defer func() {
+		if destroyErr := submitted.Destroy(); destroyErr != nil {
+			err = errors.Join(err, NewIAMError(ErrMFAInvalid, op, "failed to destroy submitted code", destroyErr))
+		}
+	}()
 
 	seed, err := protectedSharedSecret(op, base32Secret)
 	if err != nil {

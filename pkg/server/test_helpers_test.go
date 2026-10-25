@@ -23,7 +23,10 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -177,6 +180,15 @@ func withTempServer(t *testing.T) *Server {
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
 	return srv
+}
+
+// newTestFleetCertRecords returns a fleet node certificate record store over
+// an in-memory KV store, for tests whose server has no qrdb client.
+func newTestFleetCertRecords(t *testing.T) service.FleetNodeCertRecords {
+	t.Helper()
+	records, err := service.NewKVFleetNodeCertRecords(qrdbsdk.NewMemoryKVStore())
+	require.NoError(t, err)
+	return records
 }
 
 // dummyListener implements net.Listener for testing.

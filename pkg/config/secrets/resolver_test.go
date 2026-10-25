@@ -21,6 +21,21 @@ import (
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 )
 
+// plaintextOf returns v's plaintext so a test can assert on it. Copying the
+// secret into a string is acceptable only in a test.
+func plaintextOf(t *testing.T, v *SecretValue) string {
+	t.Helper()
+	var plaintext string
+	err := v.WithBytes(t.Context(), func(b []byte) error {
+		plaintext = string(b) //secure:unwiped test assertion only
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithBytes: %v", err)
+	}
+	return plaintext
+}
+
 // testResolver is a simple mock resolver for testing the registry
 type testResolver struct {
 	schemeName     string
@@ -133,8 +148,8 @@ func TestResolverRegistry_Resolve_LiteralValue(t *testing.T) {
 	if value.Strategy != StrategyLiteral {
 		t.Errorf("Expected StrategyLiteral, got %v", value.Strategy)
 	}
-	if value.String() != "plaintext-value" {
-		t.Errorf("Expected 'plaintext-value', got %s", value.String())
+	if plaintextOf(t, value) != "plaintext-value" {
+		t.Errorf("Expected 'plaintext-value', got %s", plaintextOf(t, value))
 	}
 	if value.Raw != "plaintext-value" {
 		t.Errorf("Expected raw 'plaintext-value', got %s", value.Raw)
@@ -151,7 +166,7 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 			return len(raw) > 7 && raw[:7] == "test://"
 		},
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("resolved-value"), StrategyLocalKMS)
+			return NewSecretValue(ctx, raw, []byte("resolved-value"), StrategyLocalKMS)
 		},
 	}
 	registry.Register(resolver)
@@ -160,8 +175,8 @@ func TestResolverRegistry_Resolve_MatchingResolver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.String() != "resolved-value" {
-		t.Errorf("Expected 'resolved-value', got %s", value.String())
+	if plaintextOf(t, value) != "resolved-value" {
+		t.Errorf("Expected 'resolved-value', got %s", plaintextOf(t, value))
 	}
 	if value.Strategy != StrategyLocalKMS {
 		t.Errorf("Expected StrategyLocalKMS, got %v", value.Strategy)
@@ -206,14 +221,14 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 		schemeName:     "first",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-first"), StrategyLiteral)
+			return NewSecretValue(ctx, raw, []byte("from-first"), StrategyLiteral)
 		},
 	}
 	resolver2 := &testResolver{
 		schemeName:     "second",
 		canResolveFunc: func(raw string) bool { return true },
 		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			return NewSecretValue(raw, []byte("from-second"), StrategyLiteral)
+			return NewSecretValue(ctx, raw, []byte("from-second"), StrategyLiteral)
 		},
 	}
 	registry.Register(resolver1)
@@ -223,8 +238,8 @@ func TestResolverRegistry_Resolve_FirstMatchWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
-	if value.String() != "from-first" {
-		t.Errorf("Expected 'from-first', got %s", value.String())
+	if plaintextOf(t, value) != "from-first" {
+		t.Errorf("Expected 'from-first', got %s", plaintextOf(t, value))
 	}
 }
 

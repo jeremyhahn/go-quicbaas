@@ -54,6 +54,7 @@ func TestCAServiceAdapter_IssueCertificate_VerifiesAgainstTheCAChain(t *testing.
 			}
 
 			resp, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+				TenantID:     "fixtures",
 				CommonName:   "leaf-" + algorithm + ".example.test",
 				Organization: "Automate The Things",
 				SANs:         []string{"DNS:leaf.example.test", "IP:127.0.0.1"},
@@ -107,6 +108,7 @@ func TestCAServiceAdapter_IssueCertificate_LargeRSA(t *testing.T) {
 			}
 
 			resp, err := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+				TenantID:     "fixtures",
 				CommonName:   "rsa-leaf.example.test",
 				ValidityDays: 30,
 				Algorithm:    algorithm,
@@ -193,6 +195,7 @@ func TestCAServiceAdapter_IssueCertificate_IsRepeatableForOneCommonName(t *testi
 	issue := func() *xkmstransport.IssueCertificateResponse {
 		t.Helper()
 		resp, issueErr := adapter.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+			TenantID:     "fixtures",
 			CommonName:   "stable-agent.example.test",
 			ValidityDays: 30,
 		})

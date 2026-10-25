@@ -27,9 +27,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // passkeyRPID and passkeyOrigin are the relying party the invited admin's
@@ -72,14 +74,26 @@ func (r nodeRoleClient) RoleClient(context.Context) (qrdbtransport.RoleClient, e
 // activation and the login ceremony over one in-process qrdb node, wired as
 // iam_init.go and initStandaloneQRDBNode wire them.
 type passkeyFixture struct {
-	srv  *Server
-	node *qrdbnode.Node
-	c    *iamComponents
-	p    *tenantProvisioner
-	key  *passkeyAuthenticator
+	srv   *Server
+	node  *qrdbnode.Node
+	c     *iamComponents
+	users iam.UserStorage
+	p     *tenantProvisioner
+	key   *passkeyAuthenticator
 }
 
 func newPasskeyFixture(t *testing.T) *passkeyFixture {
+	t.Helper()
+	return newPasskeyFixtureOn(t, func(t *testing.T, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
+		node := buildMemoryStandaloneNode(t, nodeOpts...)
+		t.Cleanup(func() { require.NoError(t, node.Close()) })
+		return node
+	})
+}
+
+// newPasskeyFixtureOn builds the passkey fixture over the node buildNode
+// returns, so a test can run the invitation ceremony on an auth-enabled node.
+func newPasskeyFixtureOn(t *testing.T, buildNode func(*testing.T, ...qrdbnode.NodeOption) *qrdbnode.Node) *passkeyFixture {
 	t.Helper()
 	srv := withTempServer(t)
 	srv.buildLoginSessionIssuer()
@@ -88,9 +102,12 @@ func newPasskeyFixture(t *testing.T) *passkeyFixture {
 	for _, v := range srv.loginFactorVerifiers {
 		nodeOpts = append(nodeOpts, qrdbnode.WithLoginFactorVerifier(v))
 	}
-	node := buildMemoryStandaloneNode(t, nodeOpts...)
-	t.Cleanup(func() { require.NoError(t, node.Close()) })
+	node := buildNode(t, nodeOpts...)
 	srv.qrdbNode = node
+	// As lifecycle.go wires it: a login replays its factor's attestation.
+	if factors := node.Client().UserAuthFactors(); factors != nil {
+		srv.loginSessionIssuer.(*oidcSessionIssuer).SetAuthFactorClient(factors)
+	}
 
 	storage := iam.NewMemoryStorage()
 	users := qrdbadapter.NewQRDBUserStorage(nodeUserServicer{svc: node.UserService()})
@@ -111,6 +128,7 @@ func newPasskeyFixture(t *testing.T) *passkeyFixture {
 			Timeout:       time.Minute,
 		},
 		QRDB:                node.Client(),
+		Service:             node,
 		AttestationRecorder: srv.qrdbAttestationRecorder,
 		Assurance:           iam.WebAuthnAssuranceHardware,
 		AAGUIDAllowlist:     iam.NewAAGUIDAllowlist([]string{hex.EncodeToString(passkeyAAGUID)}, iam.AAGUIDPolicyStrict),
@@ -125,7 +143,7 @@ func newPasskeyFixture(t *testing.T) *passkeyFixture {
 	c.oidcProvider = newPasskeyOIDCProvider(t, srv, c.identityStore)
 	srv.bindLoginCeremonyProvider(c)
 
-	return &passkeyFixture{srv: srv, node: node, c: c, p: srv.newTenantProvisioner(c), key: key}
+	return &passkeyFixture{srv: srv, node: node, c: c, users: users, p: srv.newTenantProvisioner(c), key: key}
 }
 
 // newPasskeyOIDCProvider builds the session authority as iam_init.go does:
@@ -153,6 +171,8 @@ func newPasskeyOIDCProvider(t *testing.T, srv *Server, identity *iam.IdentitySto
 			AppStorage:         backend,
 			TokenStorage:       backend,
 			PermissionResolver: &serverPermissionResolver{server: srv},
+			// As iam_init.go wires it: issuance has no caller yet.
+			IssuanceReadBinder: srv.issuanceReadContext,
 		},
 	)
 	require.NoError(t, err)
@@ -359,26 +379,27 @@ func TestTenantProvisioner_InvitedAdminActivatesWithPasskey(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.AdminPending)
 
+	// On this release a non-system tenant's passkey activation is refused
+	// before any ceremony opens: the passkey it would enroll cannot sign in
+	// until go-quicbaas #1816 re-pins go-qrdb to v0.54.0-alpha, and that
+	// change turns both calls back into an activation.
 	activation := f.activation()
-	options, err := activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
-	require.NoError(t, err, "the invited admin starts the passkey ceremony")
-	activated, err := activation.ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, f.key.register(options))
-	require.NoError(t, err, "the invited admin finishes the passkey ceremony")
-	assert.Equal(t, resp.AdminUserID, activated.UserID)
+	_, err = activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+	var refused *sdkerrors.TenantLoginRefusedError
+	require.ErrorAs(t, err, &refused, "the passkey ceremony is refused until #1816")
+	_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, map[string]interface{}{})
+	require.ErrorAs(t, err, &refused, "the passkey enrollment is refused until #1816")
+	f.requirePending(ctx, t, provisionTenantID, resp.AdminUserID, resp.InviteToken)
 
 	admin, err := f.c.identityStore.GetUser(ctx, provisionTenantID, resp.AdminUserID)
 	require.NoError(t, err)
-	assert.Equal(t, iam.LifecycleActive, admin.Lifecycle)
-	assert.Contains(t, admin.Roles, resp.AdminRoleID)
-
 	session, err := f.login(ctx, provisionTenantID, admin.Email)
-	require.NoError(t, err, "the activated admin signs in with the passkey")
-	claims, err := f.c.oidcProvider.ValidateAccessToken(ctx, session.Bearer)
-	require.NoError(t, err)
-	assert.Equal(t, provisionTenantID, claims.TenantID)
-	assert.Contains(t, claims.Roles, resp.AdminRoleID, "the session carries the tenant's real Admin role")
-	assert.Equal(t, resp.AdminUserID, claims.UserID)
+	require.Error(t, err, "the refused activation enrolled no passkey to sign in with")
+	assert.Nil(t, session)
 
+	// The Admin role the provisioner granted is still the tenant's real one.
+	assert.Contains(t, admin.Roles, resp.AdminRoleID)
+	claims := &iam.Claims{Subject: admin.LoginName(), TenantID: provisionTenantID, Roles: admin.Roles}
 	require.NoError(t, f.deleteUsers(ctx, provisionTenantID, claims.Subject, claims.TenantID, claims.Roles),
 		"the session may perform an Admin-only action in its tenant")
 	require.Error(t, f.deleteUsers(ctx, provisionTenantID, claims.Subject, claims.TenantID, nil),
@@ -389,104 +410,207 @@ func TestTenantProvisioner_InvitedAdminActivatesWithPasskey(t *testing.T) {
 	other.TenantID = "globex"
 	_, err = f.p.Provision(ctx, other)
 	require.NoError(t, err)
-	_, err = f.login(ctx, other.TenantID, admin.Email)
-	var notFound *qrdbtransport.FactorNotFoundError
-	require.ErrorAs(t, err, &notFound, "the passkey does not sign the admin in to another tenant")
 	require.Error(t, f.deleteUsers(ctx, other.TenantID, claims.Subject, claims.TenantID, claims.Roles),
 		"the session's Admin role grants nothing in another tenant")
 	require.Error(t, f.deleteUsers(ctx, other.TenantID, claims.Subject, other.TenantID, claims.Roles),
 		"nor does claiming the other tenant with this tenant's Admin role")
 }
 
-func TestTenantProvisioner_PasskeyInviteRefusesExpiredToken(t *testing.T) {
-	f := newPasskeyFixture(t)
+// TestTenantProvisioner_SystemInviteActivatesWithPasskey is the activation
+// the refusal above withholds, in the tenant where it runs on this release:
+// the invited user enrolls a passkey and turns active.
+func TestTenantProvisioner_SystemInviteActivatesWithPasskey(t *testing.T) {
+	f := newPasskeyFixtureOn(t, newPrincipalNode)
 	ctx := context.Background()
-	resp, err := f.p.Provision(ctx, inviteRequest())
-	require.NoError(t, err)
+	invite := f.inviteSystemUser(ctx, t)
 
-	// The same pending admin, invited by a token whose lifetime has run out.
-	expired, _, err := f.c.inviteStore.Create(ctx, provisionTenantID, resp.AdminUserID, -time.Minute)
+	activation := f.activation()
+	options, err := activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
+	require.NoError(t, err, "the invited user starts the passkey ceremony")
+	activated, err := activation.ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, invite.token, f.key.register(options))
+	require.NoError(t, err, "the invited user finishes the passkey ceremony")
+	assert.Equal(t, invite.userID, activated.UserID)
+
+	user, err := f.c.identityStore.GetUser(ctx, qrdbsdk.SystemTenantID, invite.userID)
+	require.NoError(t, err)
+	assert.Equal(t, iam.LifecycleActive, user.Lifecycle)
+	_, err = activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
+	require.ErrorIs(t, err, iam.ErrInviteUsed, "the activation spent the invite")
+
+	// The activated user signs in with the passkey on the auth-enabled node,
+	// and the session replays the attestation the enrollment recorded.
+	session, err := f.login(ctx, qrdbsdk.SystemTenantID, user.Email)
+	require.NoError(t, err, "the activated user signs in with the passkey")
+	claims, err := f.c.oidcProvider.ValidateAccessToken(ctx, session.Bearer)
+	require.NoError(t, err)
+	assert.Equal(t, string(iam.AttestLevelHardware), claims.AttestLevel, "the session replays the factor's attestation")
+	assert.Equal(t, hex.EncodeToString(passkeyAAGUID), claims.AttestAAGUID)
+}
+
+func TestTenantProvisioner_PasskeyInviteRefusesExpiredToken(t *testing.T) {
+	f := newPasskeyFixtureOn(t, newPrincipalNode)
+	ctx := context.Background()
+	invite := f.inviteSystemUser(ctx, t)
+
+	// The same pending user, invited by a token whose lifetime has run out.
+	expired, _, err := f.c.inviteStore.Create(ctx, qrdbsdk.SystemTenantID, invite.userID, -time.Minute)
 	require.NoError(t, err)
 
 	activation := f.activation()
-	_, err = activation.ActivateFIDO2Begin(ctx, provisionTenantID, expired)
+	_, err = activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, expired)
 	require.ErrorIs(t, err, iam.ErrInviteExpired, "an expired invite opens no ceremony")
 
 	// A ceremony opened by the live invite cannot be closed with the expired one.
-	options, err := activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+	options, err := activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
 	require.NoError(t, err)
-	_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, expired, f.key.register(options))
+	_, err = activation.ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, expired, f.key.register(options))
 	require.ErrorIs(t, err, iam.ErrInviteExpired, "an expired invite activates nothing")
-	f.requirePending(ctx, t, resp)
+	f.requirePending(ctx, t, qrdbsdk.SystemTenantID, invite.userID, invite.token)
 }
 
 func TestTenantProvisioner_PasskeyInviteRefusesReplayedToken(t *testing.T) {
-	f := newPasskeyFixture(t)
+	f := newPasskeyFixtureOn(t, newPrincipalNode)
 	ctx := context.Background()
-	resp, err := f.p.Provision(ctx, inviteRequest())
-	require.NoError(t, err)
+	invite := f.inviteSystemUser(ctx, t)
 
 	activation := f.activation()
-	options, err := activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+	options, err := activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
 	require.NoError(t, err)
-	_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, f.key.register(options))
+	_, err = activation.ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, invite.token, f.key.register(options))
 	require.NoError(t, err)
 
-	_, err = activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+	_, err = activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
 	require.ErrorIs(t, err, iam.ErrInviteUsed, "a redeemed invite opens no second ceremony")
-	_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, f.key.register(options))
+	_, err = activation.ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, invite.token, f.key.register(options))
 	require.ErrorIs(t, err, iam.ErrInviteUsed, "a redeemed invite cannot be replayed to enroll again")
 }
 
 func TestTenantProvisioner_PasskeyInviteUnfinishedLeavesAdminPending(t *testing.T) {
 	t.Run("ceremony begun and never finished", func(t *testing.T) {
-		f := newPasskeyFixture(t)
+		f := newPasskeyFixtureOn(t, newPrincipalNode)
 		ctx := context.Background()
-		resp, err := f.p.Provision(ctx, inviteRequest())
-		require.NoError(t, err)
+		invite := f.inviteSystemUser(ctx, t)
 
-		_, err = f.activation().ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+		_, err := f.activation().ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
 		require.NoError(t, err)
-		f.requirePending(ctx, t, resp)
+		f.requirePending(ctx, t, qrdbsdk.SystemTenantID, invite.userID, invite.token)
 	})
 
 	t.Run("finish without a ceremony", func(t *testing.T) {
-		f := newPasskeyFixture(t)
+		f := newPasskeyFixtureOn(t, newPrincipalNode)
 		ctx := context.Background()
-		resp, err := f.p.Provision(ctx, inviteRequest())
-		require.NoError(t, err)
+		invite := f.inviteSystemUser(ctx, t)
 
-		_, err = f.activation().ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, map[string]interface{}{})
+		_, err := f.activation().ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, invite.token, map[string]interface{}{})
 		var noSession *iam.WebAuthnFactoryConfigError
 		require.ErrorAs(t, err, &noSession, "no ceremony was opened for this invite")
-		f.requirePending(ctx, t, resp)
+		f.requirePending(ctx, t, qrdbsdk.SystemTenantID, invite.userID, invite.token)
 	})
 
 	t.Run("passkey refused by the hardware gate", func(t *testing.T) {
-		f := newPasskeyFixture(t)
+		f := newPasskeyFixtureOn(t, newPrincipalNode)
 		ctx := context.Background()
-		resp, err := f.p.Provision(ctx, inviteRequest())
-		require.NoError(t, err)
+		invite := f.inviteSystemUser(ctx, t)
 
 		// Attested by a vendor root the deployment does not trust, so it is
 		// not proven hardware and cannot become an administrative credential.
 		untrusted, _ := newPasskeyAuthenticator(t)
 		activation := f.activation()
-		options, err := activation.ActivateFIDO2Begin(ctx, provisionTenantID, resp.InviteToken)
+		options, err := activation.ActivateFIDO2Begin(ctx, qrdbsdk.SystemTenantID, invite.token)
 		require.NoError(t, err)
-		_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, resp.InviteToken, untrusted.register(options))
+		_, err = activation.ActivateFIDO2Finish(ctx, qrdbsdk.SystemTenantID, invite.token, untrusted.register(options))
 		require.Error(t, err)
-		f.requirePending(ctx, t, resp)
+		f.requirePending(ctx, t, qrdbsdk.SystemTenantID, invite.userID, invite.token)
 	})
+}
+
+// TestTenantProvisioner_AuthNodePasskeyInviteRefusedForTenant runs the
+// refusal on a node with a service principal, the node a deployment boots:
+// a non-system tenant's passkey activation is refused with the typed error
+// until go-quicbaas #1816, while its invite lookup and PIV activation, which
+// sign nobody in through the refused path, keep working.
+func TestTenantProvisioner_AuthNodePasskeyInviteRefusedForTenant(t *testing.T) {
+	f := newPasskeyFixtureOn(t, newPrincipalNode)
+	_, err := f.c.tenantManager.CreateTenant(context.Background(), iam.CreateTenantOptions{
+		ID:            provisionTenantID,
+		Name:          "Acme",
+		IsolationType: qrdbsdk.TenantIsolationPrefix,
+	})
+	require.NoError(t, err)
+	// Every call below names the tenant, as the transports' tenant routing does.
+	ctx := qrdbsdk.ContextWithTenant(context.Background(), provisionTenantID)
+	invite := f.inviteUser(ctx, t, provisionTenantID)
+
+	activation := f.activation()
+	var refused *sdkerrors.TenantLoginRefusedError
+	_, err = activation.ActivateFIDO2Begin(ctx, provisionTenantID, invite.token)
+	require.ErrorAs(t, err, &refused, "the passkey ceremony is refused until #1816")
+	_, err = activation.ActivateFIDO2Finish(ctx, provisionTenantID, invite.token, map[string]interface{}{})
+	require.ErrorAs(t, err, &refused, "the passkey enrollment is refused until #1816")
+	f.requirePending(ctx, t, provisionTenantID, invite.userID, invite.token)
+
+	meta, err := activation.GetInvite(ctx, provisionTenantID, invite.token)
+	require.NoError(t, err, "the tenant's invite lookup is not refused")
+	assert.Equal(t, invite.userID, meta.UserID)
+
+	leafPEM := f.enablePIVActivation(t)
+	_, err = activation.ActivatePIV(ctx, provisionTenantID, invite.token, leafPEM)
+	require.NoError(t, err, "the tenant's PIV activation is not refused")
+	user, err := f.c.identityStore.GetUser(ctx, provisionTenantID, invite.userID)
+	require.NoError(t, err)
+	assert.Equal(t, iam.LifecycleActive, user.Lifecycle)
+}
+
+// enablePIVActivation wires a PIV activator trusting a fresh root into the
+// fixture's components and returns a client certificate that root issued.
+func (f *passkeyFixture) enablePIVActivation(t *testing.T) []byte {
+	t.Helper()
+	roots, leafPEM := newPIVChain(t)
+	claims, err := iamtest.NewMemoryActivationClaims()
+	require.NoError(t, err)
+	activator, err := iam.NewPIVActivator(iam.PIVActivatorDependencies{
+		Roots:            roots,
+		UserStorage:      f.users,
+		InviteStore:      f.c.inviteStore,
+		LoginFactors:     f.c.certLoginFactors,
+		ActivationClaims: claims,
+	})
+	require.NoError(t, err)
+	f.c.pivActivator = activator
+	return leafPEM
+}
+
+// passkeyInvite is a pending user and the one-time invite that activates it.
+type passkeyInvite struct {
+	userID uint64
+	token  string
+}
+
+// inviteSystemUser creates a pending system-tenant user with its invite, the
+// tenant whose passkey activation runs on this release (go-quicbaas #1816).
+func (f *passkeyFixture) inviteSystemUser(ctx context.Context, t *testing.T) passkeyInvite {
+	t.Helper()
+	return f.inviteUser(ctx, t, qrdbsdk.SystemTenantID)
+}
+
+// inviteUser creates a pending user in tenantID with its invite.
+func (f *passkeyFixture) inviteUser(ctx context.Context, t *testing.T, tenantID string) passkeyInvite {
+	t.Helper()
+	user, token, _, err := f.c.identityStore.CreateInvitedUser(ctx, tenantID, iam.CreateUserOptions{
+		Email:    "invitee@example.com",
+		Username: "invitee",
+	}, f.c.inviteStore, time.Hour)
+	require.NoError(t, err)
+	return passkeyInvite{userID: user.ID, token: token}
 }
 
 // requirePending asserts the invited admin is still pending and its invite
 // is still redeemable: an activation that did not finish consumed nothing.
-func (f *passkeyFixture) requirePending(ctx context.Context, t *testing.T, resp *service.IAMProvisionTenantResponse) {
+func (f *passkeyFixture) requirePending(ctx context.Context, t *testing.T, tenantID string, userID uint64, token string) {
 	t.Helper()
-	admin, err := f.c.identityStore.GetUser(ctx, provisionTenantID, resp.AdminUserID)
+	user, err := f.c.identityStore.GetUser(ctx, tenantID, userID)
 	require.NoError(t, err)
-	assert.Equal(t, iam.LifecyclePending, admin.Lifecycle, "the admin stays pending")
-	_, err = f.c.inviteStore.Lookup(ctx, provisionTenantID, resp.InviteToken)
+	assert.Equal(t, iam.LifecyclePending, user.Lifecycle, "the user stays pending")
+	_, err = f.c.inviteStore.Lookup(ctx, tenantID, token)
 	require.NoError(t, err, "the invite stays redeemable")
 }

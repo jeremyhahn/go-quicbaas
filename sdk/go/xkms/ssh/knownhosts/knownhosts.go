@@ -5,7 +5,8 @@ import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 type Store = xkmssdk.SSHKnownHostsStore
 
-var NewBackendStore = xkmssdk.NewSSHKnownHostsBackendStore
+// NewStore constructs a Store over the DAOs a go-qrdb DAOFactory builds.
+var NewStore = xkmssdk.NewSSHKnownHostsStore
 
 // Pin is a single pinned host-key envelope.
 type Pin = xkmssdk.SSHKnownHostsPin

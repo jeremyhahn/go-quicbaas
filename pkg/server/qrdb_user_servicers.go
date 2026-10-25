@@ -192,6 +192,22 @@ func (p *qrdbUserServicerProxy) DisableUser(ctx context.Context, id uint64) erro
 	return svc.DisableUser(ctx, id)
 }
 
+func (p *qrdbUserServicerProxy) SuspendUser(ctx context.Context, id uint64) error {
+	svc, err := p.servicer()
+	if err != nil {
+		return err
+	}
+	return svc.SuspendUser(ctx, id)
+}
+
+func (p *qrdbUserServicerProxy) UnsuspendUser(ctx context.Context, id uint64) error {
+	svc, err := p.servicer()
+	if err != nil {
+		return err
+	}
+	return svc.UnsuspendUser(ctx, id)
+}
+
 // Compile-time interface check.
 var _ qrdbsdk.UserServicer = (*qrdbUserServicerProxy)(nil)
 
@@ -235,6 +251,28 @@ func (p *qrdbUserAuthFactorServicerProxy) Add(ctx context.Context, userID uint64
 		return err
 	}
 	return svc.Add(ctx, userID, factor)
+}
+
+// AddConditional forwards to the live node's guarded add, applying the same
+// asserted-attestation refusal as Add.
+func (p *qrdbUserAuthFactorServicerProxy) AddConditional(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor, cond qrdbsdk.FactorAddCondition) (uint64, error) {
+	svc, err := p.servicer()
+	if err != nil {
+		return 0, err
+	}
+	if err := p.refuseAssertedAttestation(factor); err != nil {
+		return 0, err
+	}
+	return svc.AddConditional(ctx, userID, factor, cond)
+}
+
+// FactorSetVersion forwards to the live node.
+func (p *qrdbUserAuthFactorServicerProxy) FactorSetVersion(ctx context.Context, userID uint64) (uint64, error) {
+	svc, err := p.servicer()
+	if err != nil {
+		return 0, err
+	}
+	return svc.FactorSetVersion(ctx, userID)
 }
 
 // refuseAssertedAttestation refuses a caller-asserted attestation before the
@@ -301,6 +339,15 @@ func (p *qrdbUserAuthFactorServicerProxy) Remove(ctx context.Context, factorID s
 		return err
 	}
 	return svc.Remove(ctx, factorID, force)
+}
+
+// Delete forwards to the live node.
+func (p *qrdbUserAuthFactorServicerProxy) Delete(ctx context.Context, factorID string, force bool) error {
+	svc, err := p.servicer()
+	if err != nil {
+		return err
+	}
+	return svc.Delete(ctx, factorID, force)
 }
 
 // Rotate delegates to the node auth-factor service.

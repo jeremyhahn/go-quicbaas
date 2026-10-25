@@ -13,7 +13,7 @@
 package proto
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -13460,7 +13460,7 @@ var File_api_proto_orchestrator_proto protoreflect.FileDescriptor
 
 const file_api_proto_orchestrator_proto_rawDesc = "" +
 	"\n" +
-	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\x1a\x15api/proto/spend.proto\x1a\x16api/proto/agents.proto\x1a\x14api/proto/sdlc.proto\"\xe3\x01\n" +
+	"\x1capi/proto/orchestrator.proto\x12\x18quicbaas.orchestrator.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18qrdb/v1/permission.proto\x1a\x15api/proto/spend.proto\x1a\x16api/proto/agents.proto\x1a\x14api/proto/sdlc.proto\"\xe3\x01\n" +
 	"\x0fMCPServerConfig\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12D\n" +

@@ -6,7 +6,7 @@ option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto/iam;iam";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 // IAM Service for identity and access management
 service IAMService {

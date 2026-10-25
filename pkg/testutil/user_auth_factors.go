@@ -51,6 +51,10 @@ type MemoryUserAuthFactors struct {
 	// nextID generates deterministic factor ids so assertions can be exact.
 	nextID int
 
+	// versions holds each user's factor-set version: it moves every time a
+	// factor joins or leaves the user's set, as go-qrdb's does.
+	versions map[uint64]uint64
+
 	// AddErr, when non-nil, is returned by Add instead of persisting. Tests
 	// use it to drive the enrollment-failure path.
 	AddErr error
@@ -65,8 +69,9 @@ var (
 // NewMemoryUserAuthFactors constructs an empty in-memory factor store.
 func NewMemoryUserAuthFactors() *MemoryUserAuthFactors {
 	return &MemoryUserAuthFactors{
-		factors: make(map[string]*qrdbsdk.AuthFactor),
-		index:   make(map[string]string),
+		factors:  make(map[string]*qrdbsdk.AuthFactor),
+		index:    make(map[string]string),
+		versions: make(map[uint64]uint64),
 	}
 }
 
@@ -88,7 +93,12 @@ func (m *MemoryUserAuthFactors) Add(_ context.Context, userID uint64, factor *qr
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.addLocked(userID, factor)
+}
 
+// addLocked persists factor for userID and moves the user's factor-set
+// version. The caller holds m.mu and has validated factor.
+func (m *MemoryUserAuthFactors) addLocked(userID uint64, factor *qrdbsdk.AuthFactor) error {
 	keys := m.indexKeysFor(factor)
 	for _, key := range keys {
 		if existingID, ok := m.index[key]; ok {
@@ -112,7 +122,72 @@ func (m *MemoryUserAuthFactors) Add(_ context.Context, userID uint64, factor *qr
 	for _, key := range keys {
 		m.index[key] = stored.ID
 	}
+	m.versions[userID]++
 	return nil
+}
+
+// AddConditional enrolls factor only when every condition set in cond holds
+// against the user's factor set, as go-qrdb's guarded add does, and returns
+// the factor-set version the add committed. A condition that does not hold
+// returns *qrdbsdk.FactorConditionFailedError and enrolls nothing.
+func (m *MemoryUserAuthFactors) AddConditional(_ context.Context, userID uint64, factor *qrdbsdk.AuthFactor, cond qrdbsdk.FactorAddCondition) (uint64, error) {
+	if err := cond.Validate(); err != nil {
+		return 0, err
+	}
+	if m.AddErr != nil {
+		return 0, m.AddErr
+	}
+	if factor == nil || len(factor.Credential) == 0 || userID == 0 {
+		return 0, qrdbsdk.ErrInvalidFactor
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	current := m.versions[userID]
+	if cond.ExpectedVersion != nil && *cond.ExpectedVersion != current {
+		return 0, &qrdbsdk.FactorConditionFailedError{
+			UserID:          userID,
+			Type:            factor.Type,
+			Condition:       qrdbsdk.FactorConditionExpectedVersion,
+			ExpectedVersion: *cond.ExpectedVersion,
+			CurrentVersion:  current,
+		}
+	}
+	if cond.NoActiveOfType {
+		if existingID := m.activeOfTypeLocked(userID, factor.Type); existingID != "" {
+			return 0, &qrdbsdk.FactorConditionFailedError{
+				UserID:           userID,
+				Type:             factor.Type,
+				Condition:        qrdbsdk.FactorConditionNoActiveOfType,
+				CurrentVersion:   current,
+				ExistingFactorID: existingID,
+			}
+		}
+	}
+	if err := m.addLocked(userID, factor); err != nil {
+		return 0, err
+	}
+	return m.versions[userID], nil
+}
+
+// FactorSetVersion returns the user's factor-set version: 0 until the first
+// membership change.
+func (m *MemoryUserAuthFactors) FactorSetVersion(_ context.Context, userID uint64) (uint64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.versions[userID], nil
+}
+
+// activeOfTypeLocked returns the ID of an active factor of type t that
+// userID holds, or "" when there is none. The caller holds m.mu.
+func (m *MemoryUserAuthFactors) activeOfTypeLocked(userID uint64, t qrdbsdk.AuthFactorType) string {
+	for id, f := range m.factors {
+		if f.UserID == userID && f.Type == t && f.RevokedAt == nil {
+			return id
+		}
+	}
+	return ""
 }
 
 // indexKeysFor returns every index key a factor occupies.
@@ -235,6 +310,30 @@ func (m *MemoryUserAuthFactors) Remove(_ context.Context, factorID string, _ boo
 	}
 	now := time.Now().UTC()
 	f.RevokedAt = &now
+	m.versions[f.UserID]++
+	return nil
+}
+
+// Delete hard-deletes an active factor and its index entries so the same
+// credential can be bound again. A revoked factor is refused with
+// *qrdbsdk.FactorRevokedError and a missing one with *FactorNotFoundError.
+// Like Remove, the double does not enforce the last-factor guard.
+func (m *MemoryUserAuthFactors) Delete(_ context.Context, factorID string, _ bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	f, ok := m.factors[factorID]
+	if !ok {
+		return &FactorNotFoundError{FactorID: factorID}
+	}
+	if f.RevokedAt != nil {
+		return &qrdbsdk.FactorRevokedError{FactorID: factorID}
+	}
+	for _, key := range m.indexKeysFor(f) {
+		delete(m.index, key)
+	}
+	delete(m.factors, factorID)
+	m.versions[f.UserID]++
 	return nil
 }
 

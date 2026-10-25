@@ -14,12 +14,14 @@
 package server
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 )
 
 // ShardedClientOption configures a ShardedClient.
@@ -91,8 +93,21 @@ type ShardedClient struct {
 	// nodeOwned marks that nodeClient is owned by the qrdb node, not this
 	// ShardedClient — Close must not call nodeClient.Close().
 	nodeOwned bool
+	// binder binds the node's system service principal to a context. It is
+	// set with nodeClient when the node owns the client, and nil otherwise.
+	binder qrdbservice.Binder
 
 	closed atomic.Bool
+}
+
+// ServiceContext binds ctx to the embedded node's system service principal,
+// so quicbaasd's own system-tenant work on nodeClient runs as that principal.
+// Without an embedded node ctx is returned as it is.
+func (sc *ShardedClient) ServiceContext(ctx context.Context) (context.Context, error) {
+	if sc.binder == nil {
+		return ctx, nil
+	}
+	return sc.binder.ServiceContext(ctx)
 }
 
 // NewShardedClient creates a new ShardedClient. The serviceHost parameter is

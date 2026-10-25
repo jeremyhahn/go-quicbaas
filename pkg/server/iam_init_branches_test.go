@@ -625,3 +625,49 @@ func writeTestCertPEM(t *testing.T) string {
 	require.NoError(t, os.WriteFile(path, pemFromDER(der), 0o600))
 	return path
 }
+
+// firstBootResultFor returns the FirstBootResult qrdb hands back when it
+// issued the admin a certificate.
+func firstBootResultFor(t *testing.T) *qrdbsdk.FirstBootResult {
+	t.Helper()
+	certPEM, err := os.ReadFile(writeTestCertPEM(t))
+	require.NoError(t, err)
+	return &qrdbsdk.FirstBootResult{AdminCertPEM: certPEM}
+}
+
+// The first-boot admin logs in with the certificate qrdb issued it, so the
+// enrollment must permit certificate login, as the PIV bootstrap path does
+// (go-quicbaas#1797). Without it qrdb refuses mtls ("permitted: webauthn").
+func TestEnrollFirstBootAdminCert_PermitsCertificateLogin(t *testing.T) {
+	srv := withTempServer(t)
+	c := buildTestIAMComponents(t)
+	adminID := createBootstrapAdmin(t, c)
+	ctx := context.Background()
+
+	require.NoError(t, srv.enrollFirstBootAdminCert(ctx, c, "default", adminID, firstBootResultFor(t)))
+
+	user, err := c.identityStore.GetUser(ctx, "default", adminID)
+	require.NoError(t, err)
+	assert.Contains(t, user.AuthMethods, iam.AuthMethodMTLS,
+		"the first-boot admin's certificate login must be permitted")
+}
+
+// A permit failure is the enrollment's failure: the typed error names the
+// step, and the admin is not reported enrolled.
+func TestEnrollFirstBootAdminCert_PermitFailureIsTyped(t *testing.T) {
+	srv := withTempServer(t)
+	c := buildTestIAMComponents(t)
+
+	// A non-zero id that names no user passes the factor enrollment and fails
+	// at the permit, the first step that reads the user record.
+	err := srv.enrollFirstBootAdminCert(context.Background(), c, "default", 999999999999999999, firstBootResultFor(t))
+	require.Error(t, err)
+	var bootErr *FirstBootBootstrapError
+	require.ErrorAs(t, err, &bootErr)
+	require.Equal(t, "permit admin certificate login", bootErr.Op)
+
+	c.identityStore = nil
+	err = permitAdminCertLogin(context.Background(), c, "default", 1)
+	var unavailable *AdminCertFactorUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+}

@@ -85,27 +85,28 @@ func TestBarrierEnableEncryption_EncodesQRDBToolArguments(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tr, cleanup := newFakeMCPServer(t, mcpToolExpectation{
-				wantTool: tc.wantTool,
-				assertArgs: func(t *testing.T, args map[string]interface{}) {
-					for key, want := range tc.wantArgs {
-						if got := args[key]; got != want {
-							t.Errorf("arg %q = %#v, want %#v", key, got, want)
-						}
+			// TLS, because the passphrase case carries a secret the
+			// transport refuses to send over http://.
+			tr, called := newMultiToolMCPServerTLS(t, []string{tc.wantTool}, func(t *testing.T, _ string, args map[string]interface{}) map[string]interface{} {
+				for key, want := range tc.wantArgs {
+					if got := args[key]; got != want {
+						t.Errorf("arg %q = %#v, want %#v", key, got, want)
 					}
-					for _, key := range tc.noArgs {
-						if got, sent := args[key]; sent {
-							t.Errorf("arg %q = %#v sent, but %s does not read it", key, got, tc.wantTool)
-						}
+				}
+				for _, key := range tc.noArgs {
+					if got, sent := args[key]; sent {
+						t.Errorf("arg %q = %#v sent, but %s does not read it", key, got, tc.wantTool)
 					}
-				},
-				result: tc.result,
+				}
+				return tc.result
 			})
-			defer cleanup()
 
 			resp, err := tr.BarrierEnableEncryption(context.Background(), tc.req)
 			if err != nil {
 				t.Fatalf("BarrierEnableEncryption: %v", err)
+			}
+			if len(*called) != 1 || (*called)[0] != tc.wantTool {
+				t.Errorf("server saw %v, want one call to %s", *called, tc.wantTool)
 			}
 			if *resp != tc.want {
 				t.Errorf("response = %+v, want %+v", *resp, tc.want)
@@ -124,8 +125,9 @@ func TestBarrierEnableEncryption_ServerRefusalIsTyped(t *testing.T) {
 	defer cleanup()
 
 	_, err := tr.BarrierEnableEncryption(context.Background(), &qrdbtransport.BarrierEnableEncryptionRequest{
-		Strategy:   "passphrase",
-		Passphrase: []byte("pw"),
+		Strategy:        "shamir",
+		ShamirThreshold: 2,
+		ShamirTotal:     3,
 	})
 	if !errors.IsUnimplemented(err) {
 		t.Fatalf("err = %v, want an Unimplemented error", err)

@@ -30,7 +30,7 @@
 package proto
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -581,7 +581,7 @@ var File_api_proto_fido2_proto protoreflect.FileDescriptor
 
 const file_api_proto_fido2_proto_rawDesc = "" +
 	"\n" +
-	"\x15api/proto/fido2.proto\x12\x11quicbaas.fido2.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"{\n" +
+	"\x15api/proto/fido2.proto\x12\x11quicbaas.fido2.v1\x1a\x18qrdb/v1/permission.proto\"{\n" +
 	"\x1dFIDO2BeginRegistrationRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12!\n" +

@@ -16,6 +16,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -153,5 +154,46 @@ func TestNewShardedClient_NilTransportCfg_DefaultsToEmbedded(t *testing.T) {
 	}
 	if !sc.IsEmbedded() {
 		t.Error("nil transport config should default to embedded")
+	}
+}
+
+// recordingBinder binds a context by tagging it, or fails with err.
+type recordingBinder struct{ err error }
+
+type boundKey struct{}
+
+func (b recordingBinder) ServiceContext(ctx context.Context) (context.Context, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return context.WithValue(ctx, boundKey{}, true), nil
+}
+
+func TestShardedClient_ServiceContext_BindsTheNodePrincipal(t *testing.T) {
+	sc := &ShardedClient{binder: recordingBinder{}}
+	ctx, err := sc.ServiceContext(context.Background())
+	if err != nil {
+		t.Fatalf("ServiceContext: %v", err)
+	}
+	if ctx.Value(boundKey{}) != true {
+		t.Fatal("the context was not bound by the node's binder")
+	}
+
+	bindErr := errors.New("bind refused")
+	sc = &ShardedClient{binder: recordingBinder{err: bindErr}}
+	if _, err := sc.ServiceContext(context.Background()); !errors.Is(err, bindErr) {
+		t.Fatalf("ServiceContext error = %v, want the bind error", err)
+	}
+}
+
+func TestShardedClient_ServiceContext_WithoutANodeKeepsTheContext(t *testing.T) {
+	sc := NewShardedClient(nil)
+	parent := context.WithValue(context.Background(), boundKey{}, "caller")
+	ctx, err := sc.ServiceContext(parent)
+	if err != nil {
+		t.Fatalf("ServiceContext: %v", err)
+	}
+	if ctx != parent {
+		t.Fatal("a client with no embedded node must return the caller's context")
 	}
 }

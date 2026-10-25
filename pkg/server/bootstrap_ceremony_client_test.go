@@ -33,11 +33,11 @@ func buildBootstrapClientFixture(t *testing.T) *Server {
 		qrdbClient: newNodeBackedShardedClient(node),
 	}
 
-	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir())
+	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir(), testTrustDomain)
 	require.NoError(t, err)
 
 	client, err := newBootstrapCeremonyClient(
-		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil)
+		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, client)
 	t.Cleanup(func() { _ = client.Close() })
@@ -56,7 +56,7 @@ func TestNewBootstrapCeremonyClient_NilServices(t *testing.T) {
 		"missing barrier": {Ceremony: (&CeremonyServices{}).Ceremony},
 	} {
 		t.Run(name, func(t *testing.T) {
-			client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil)
+			client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil, nil)
 			require.Nil(t, client)
 			var wireErr *CeremonyWiringError
 			require.Truef(t, errors.As(err, &wireErr),
@@ -69,10 +69,10 @@ func TestNewBootstrapCeremonyClient_NilServices(t *testing.T) {
 // newBootstrapCeremonyClient must surface the qrdb embedded transport's
 // typed error when the KV/Admin servicers are absent.
 func TestNewBootstrapCeremonyClient_NilKVAdmin(t *testing.T) {
-	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir())
+	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir(), testTrustDomain)
 	require.NoError(t, err)
 
-	client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil)
+	client, err := newBootstrapCeremonyClient(nil, nil, bundle, nil, nil)
 	require.Nil(t, client)
 	var wireErr *CeremonyWiringError
 	require.Truef(t, errors.As(err, &wireErr),
@@ -120,7 +120,7 @@ func TestBootstrapWiring_PersistentBarrierStrategy(t *testing.T) {
 	require.NotNil(t, rawBarrier)
 	t.Cleanup(func() { _ = dpCloser.Close() })
 
-	bundle, err := buildBootstrapCeremonyServices(slog.Default(), cfg.Storage.DataDir)
+	bundle, err := buildBootstrapCeremonyServices(slog.Default(), cfg.Storage.DataDir, testTrustDomain)
 	require.NoError(t, err)
 	bundle.Barrier = dpSvc
 
@@ -129,7 +129,7 @@ func TestBootstrapWiring_PersistentBarrierStrategy(t *testing.T) {
 	s := &Server{logger: buildTestLogger(t), qrdbNode: node}
 
 	client, err := newBootstrapCeremonyClient(
-		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil)
+		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 

@@ -111,9 +111,10 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.vector.v1.VectorAdmin":   "qrdb proxy plane",
 	// go-xkms's own ServiceModule serves the canonical xkms.v1 surface on the
 	// node (pkg/apimodule TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface).
-	"quicbaas.kms.v1.KeyManagement":              "xkms canonical surface",
-	"quicbaas.kms.v1.DEKManagement":              "xkms canonical surface",
-	"quicbaas.kms.v1.Crypto":                     "xkms canonical surface",
+	// quicbaas.kms.v1 KeyManagement, DEKManagement and Crypto are absent on
+	// purpose: the node mounts them as the #1813 stopgap until go-xkms#1681
+	// (KeyManagement, Crypto) and go-qrdb's DEKClient (DEKManagement) take
+	// over, so the test requires them mounted like every other service.
 	"quicbaas.certificate.v1.CertificateService": "xkms canonical surface",
 	"quicbaas.certificate.v1.TrustService":       "xkms canonical surface",
 	"quicbaas.attestation.v1.AttestationService": "xkms canonical surface",

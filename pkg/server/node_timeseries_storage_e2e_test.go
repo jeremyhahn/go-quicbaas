@@ -77,7 +77,7 @@ func TestNodeTimeSeriesStorage_E2E(t *testing.T) {
 	}))
 
 	// WriteBatch stores multiple data points atomically.
-	require.NoError(t, ts.WriteBatch([]interfaces.DataPoint{
+	require.NoError(t, ts.WriteBatch(ctx, []interfaces.DataPoint{
 		{Metric: "cpu.usage", Value: 0.60, Timestamp: base.Add(1 * time.Minute), Tags: map[string]string{"host": "n1"}},
 		{Metric: "cpu.usage", Value: 0.70, Timestamp: base.Add(2 * time.Minute), Tags: map[string]string{"host": "n1"}},
 		{Metric: "mem.used", Value: 1024, Timestamp: base.Add(1 * time.Minute), Tags: map[string]string{"host": "n1"}},
@@ -110,24 +110,24 @@ func TestNodeTimeSeriesStorage_E2E(t *testing.T) {
 	require.NotNil(t, aggRes)
 
 	// ListMetrics returns the written metric names.
-	metrics, err := ts.ListMetrics("", 100)
+	metrics, err := ts.ListMetrics(ctx, "", 100)
 	require.NoError(t, err)
 	assert.Contains(t, metrics, "cpu.usage")
 
 	// ListMetrics with a prefix filter.
-	prefixed, err := ts.ListMetrics("cpu", 100)
+	prefixed, err := ts.ListMetrics(ctx, "cpu", 100)
 	require.NoError(t, err)
 	for _, m := range prefixed {
 		assert.Contains(t, m, "cpu")
 	}
 
 	// SetRetentionPolicy followed by GetRetentionPolicy round-trips.
-	require.NoError(t, ts.SetRetentionPolicy("cpu.usage", &interfaces.RetentionPolicy{
+	require.NoError(t, ts.SetRetentionPolicy(ctx, "cpu.usage", &interfaces.RetentionPolicy{
 		Duration:    24 * time.Hour,
 		Resolution:  time.Minute,
 		Aggregation: interfaces.AggAvg,
 	}))
-	policy, err := ts.GetRetentionPolicy("cpu.usage")
+	policy, err := ts.GetRetentionPolicy(ctx, "cpu.usage")
 	require.NoError(t, err)
 	if policy != nil {
 		assert.Equal(t, 24*time.Hour, policy.Duration)
@@ -154,7 +154,7 @@ func TestNodeTimeSeriesStorage_GetRetention_Missing(t *testing.T) {
 	// qrdb returns a zero-valued policy (not an error) for a metric that has
 	// never had a policy set; the meaningful assertion is the absence of an
 	// error and the successful response conversion.
-	policy, err := ts.GetRetentionPolicy("never.written")
+	policy, err := ts.GetRetentionPolicy(context.Background(), "never.written")
 	require.NoError(t, err)
 	if policy != nil {
 		assert.Equal(t, time.Duration(0), policy.Duration)
@@ -184,7 +184,7 @@ func TestNodeTimeSeriesStorage_ListMetrics_ClientClosed(t *testing.T) {
 	ts := newNodeTimeSeriesStorage(client)
 	require.NoError(t, client.Close())
 
-	got, err := ts.ListMetrics("", 10)
+	got, err := ts.ListMetrics(context.Background(), "", 10)
 	require.Error(t, err)
 	require.Nil(t, got)
 }
@@ -196,7 +196,7 @@ func TestNodeTimeSeriesStorage_GetRetentionPolicy_ClientClosed(t *testing.T) {
 	ts := newNodeTimeSeriesStorage(client)
 	require.NoError(t, client.Close())
 
-	got, err := ts.GetRetentionPolicy("cpu.usage")
+	got, err := ts.GetRetentionPolicy(context.Background(), "cpu.usage")
 	require.Error(t, err)
 	require.Nil(t, got)
 }

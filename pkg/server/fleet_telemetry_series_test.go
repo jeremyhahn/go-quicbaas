@@ -41,11 +41,11 @@ type recordingTSStorage struct {
 	retentionErr error
 }
 
-func (r *recordingTSStorage) ListMetrics(_ string, _ int) ([]string, error) {
+func (r *recordingTSStorage) ListMetrics(_ context.Context, _ string, _ int) ([]string, error) {
 	return r.stored, r.listErr
 }
 
-func (r *recordingTSStorage) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
+func (r *recordingTSStorage) SetRetentionPolicy(_ context.Context, metric string, policy *interfaces.RetentionPolicy) error {
 	if r.retentionErr != nil {
 		return r.retentionErr
 	}
@@ -56,7 +56,7 @@ func (r *recordingTSStorage) SetRetentionPolicy(metric string, policy *interface
 	return nil
 }
 
-func (r *recordingTSStorage) WriteBatch(points []interfaces.DataPoint) error {
+func (r *recordingTSStorage) WriteBatch(_ context.Context, points []interfaces.DataPoint) error {
 	r.batch = points
 	return r.writeErr
 }
@@ -69,14 +69,41 @@ func (r *recordingTSStorage) QueryRich(_ context.Context, req *interfaces.QueryR
 	return &interfaces.QueryResult{Metric: req.Metric, Points: r.answer}, nil
 }
 
+// asItself is a service-identity binder for storage that authorizes nothing.
+func asItself(ctx context.Context) (context.Context, error) { return ctx, nil }
+
 func TestFleetTelemetrySeries_RequiresStorage(t *testing.T) {
-	_, err := newFleetTelemetrySeries(nil, time.Hour)
+	_, err := newFleetTelemetrySeries(nil, time.Hour, asItself)
 	assert.ErrorIs(t, err, errFleetTelemetryNoStorage)
+}
+
+func TestFleetTelemetrySeries_RequiresAServiceIdentity(t *testing.T) {
+	_, err := newFleetTelemetrySeries(&recordingTSStorage{}, time.Hour, nil)
+	assert.ErrorIs(t, err, errFleetTelemetryNoServiceIdentity)
+}
+
+// A series whose service identity cannot be bound files nothing and reads
+// nothing: it never falls back to the caller's identity.
+func TestFleetTelemetrySeries_AnUnboundServiceIdentityStopsEveryCall(t *testing.T) {
+	unbound := errors.New("no service principal")
+	storage := &recordingTSStorage{}
+	series, err := newFleetTelemetrySeries(storage, time.Hour, func(context.Context) (context.Context, error) {
+		return nil, unbound
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	assert.ErrorIs(t, series.WritePoints(ctx, "acme", []orchestration.TelemetryPoint{{Metric: orchestration.MetricDevicePowerWatts, Value: 1, At: time.Now()}}), unbound)
+	assert.ErrorIs(t, series.ApplyRetention(ctx), unbound)
+	_, err = series.QueryPoints(ctx, "acme", orchestration.MetricDevicePowerWatts, nil, time.Now().Add(-time.Hour), time.Now())
+	assert.ErrorIs(t, err, unbound)
+	assert.Empty(t, storage.batch)
+	assert.Nil(t, storage.query)
 }
 
 func TestFleetTelemetrySeries_RequiresAPositiveRetention(t *testing.T) {
 	for _, retention := range []time.Duration{0, -time.Hour} {
-		_, err := newFleetTelemetrySeries(&recordingTSStorage{}, retention)
+		_, err := newFleetTelemetrySeries(&recordingTSStorage{}, retention, asItself)
 		var invalid *FleetTelemetryRetentionInvalidError
 		assert.ErrorAs(t, err, &invalid, "retention %s", retention)
 	}
@@ -84,7 +111,7 @@ func TestFleetTelemetrySeries_RequiresAPositiveRetention(t *testing.T) {
 
 func TestFleetTelemetrySeries_FirstWriteRetainsTheTenantsSeriesOnce(t *testing.T) {
 	storage := &recordingTSStorage{}
-	series, err := newFleetTelemetrySeries(storage, 14*24*time.Hour)
+	series, err := newFleetTelemetrySeries(storage, 14*24*time.Hour, asItself)
 	require.NoError(t, err)
 	point := []orchestration.TelemetryPoint{{Metric: orchestration.MetricDevicePowerWatts, Value: 1, At: time.Now()}}
 
@@ -105,7 +132,7 @@ func TestFleetTelemetrySeries_FirstWriteRetainsTheTenantsSeriesOnce(t *testing.T
 
 func TestFleetTelemetrySeries_ARefusedRetentionIsReportedAndRetried(t *testing.T) {
 	storage := &recordingTSStorage{retentionErr: errors.New("sealed")}
-	series, err := newFleetTelemetrySeries(storage, time.Hour)
+	series, err := newFleetTelemetrySeries(storage, time.Hour, asItself)
 	require.NoError(t, err)
 	point := []orchestration.TelemetryPoint{{Metric: orchestration.MetricDeviceUtilization, Value: 0.5, At: time.Now()}}
 
@@ -129,10 +156,10 @@ func TestFleetTelemetrySeries_ApplyRetentionCoversEveryStoredDeviceSeries(t *tes
 		"app/" + orchestration.MetricDevicePowerWatts,
 		"ts-tenant/" + orchestration.MetricDevicePowerWatts,
 	}}
-	series, err := newFleetTelemetrySeries(storage, 7*24*time.Hour)
+	series, err := newFleetTelemetrySeries(storage, 7*24*time.Hour, asItself)
 	require.NoError(t, err)
 
-	require.NoError(t, series.ApplyRetention())
+	require.NoError(t, series.ApplyRetention(context.Background()))
 	assert.Len(t, storage.policies, 3)
 	for _, metric := range storage.stored[:3] {
 		require.Contains(t, storage.policies, metric)
@@ -142,21 +169,21 @@ func TestFleetTelemetrySeries_ApplyRetentionCoversEveryStoredDeviceSeries(t *tes
 
 func TestFleetTelemetrySeries_ApplyRetentionReportsFailures(t *testing.T) {
 	storage := &recordingTSStorage{listErr: errors.New("closed")}
-	series, err := newFleetTelemetrySeries(storage, time.Hour)
+	series, err := newFleetTelemetrySeries(storage, time.Hour, asItself)
 	require.NoError(t, err)
-	assert.ErrorIs(t, series.ApplyRetention(), storage.listErr)
+	assert.ErrorIs(t, series.ApplyRetention(context.Background()), storage.listErr)
 
 	storage.listErr = nil
 	storage.stored = []string{orchestration.MetricDevicePowerWatts}
 	storage.retentionErr = errors.New("read-only")
 	var refused *FleetTelemetryRetentionError
-	require.ErrorAs(t, series.ApplyRetention(), &refused)
+	require.ErrorAs(t, series.ApplyRetention(context.Background()), &refused)
 	assert.Equal(t, orchestration.MetricDevicePowerWatts, refused.Metric)
 }
 
 func TestFleetTelemetrySeries_WritesUnderTheTenantsScopedMetric(t *testing.T) {
 	storage := &recordingTSStorage{}
-	series, err := newFleetTelemetrySeries(storage, time.Hour)
+	series, err := newFleetTelemetrySeries(storage, time.Hour, asItself)
 	require.NoError(t, err)
 	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 
@@ -177,7 +204,7 @@ func TestFleetTelemetrySeries_QueriesTheScopedMetricWithItsTags(t *testing.T) {
 		{Metric: "ts-tenant/acme/fleet.device.power_watts", Value: 250, Timestamp: at, Tags: map[string]string{"device": "GPU-1"}},
 		nil,
 	}}
-	series, err := newFleetTelemetrySeries(storage, time.Hour)
+	series, err := newFleetTelemetrySeries(storage, time.Hour, asItself)
 	require.NoError(t, err)
 
 	match := map[string]string{"host": "h:1", "kind": "gpu"}

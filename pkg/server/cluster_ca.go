@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 
-	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 	clustercasdk "github.com/jeremyhahn/go-xkms/sdk/go/clusterca"
@@ -82,14 +81,14 @@ func (s *Server) clusterCACacheDir() string {
 // into a sealed enclave here, at the composition root, because go-xkms holds
 // it only as a *secure.Secret so the plaintext is never a long-lived Go string
 // on its side. An empty passphrase leaves passphrase mode disabled.
-func (s *Server) clusterCAKeyProtection() (clustercasdk.KeyProtection, error) {
+func (s *Server) clusterCAKeyProtection(ctx context.Context) (clustercasdk.KeyProtection, error) {
 	enr := s.config.Raft.RaftEnrollment
 	protection := clustercasdk.KeyProtection{
 		Mode:          clustercasdk.KeyProtectionMode(enr.CAKeyProtection),
 		AllowInsecure: clustercasdk.KeyProtectionMode(enr.CAKeyProtection) == clustercasdk.KeyProtectNone,
 	}
 	if enr.CAKeyPassphrase != "" {
-		passphrase, err := newClusterCAPassphrase([]byte(enr.CAKeyPassphrase))
+		passphrase, err := newClusterCAPassphrase(ctx, []byte(enr.CAKeyPassphrase))
 		if err != nil {
 			return clustercasdk.KeyProtection{}, &ClusterCAPassphraseError{Cause: err}
 		}
@@ -107,8 +106,8 @@ var newClusterCAPassphrase = secure.NewSecret
 // clusterStrategyDeps assembles the dependencies a cluster CA key strategy
 // needs. Pre-node calls pass nil replicated storage (bootstrap); post-node calls
 // (initializeCA) pass the qrdb-routed replicated stores.
-func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert xkmssdk.StorageBackend) (*clustercasdk.StrategyDeps, error) {
-	protection, err := s.clusterCAKeyProtection()
+func (s *Server) clusterStrategyDeps(ctx context.Context, replicatedKey, replicatedCert xkmssdk.StorageBackend) (*clustercasdk.StrategyDeps, error) {
+	protection, err := s.clusterCAKeyProtection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -139,12 +138,12 @@ func (s *Server) clusterStrategyDeps(replicatedKey, replicatedCert xkmssdk.Stora
 // barrier-encrypted) datastore. For the barrier strategy the first node's
 // bootstrap key is promoted into the replicated store and every node loads it,
 // so any node can issue.
-func (s *Server) resolveClusterCARuntimeBackend() (xkmssdk.ServiceBackend, error) {
+func (s *Server) resolveClusterCARuntimeBackend(ctx context.Context) (xkmssdk.ServiceBackend, error) {
 	shardClient, err := s.qrdbClient.ForShard(clusterCAShardID)
 	if err != nil {
 		return nil, err
 	}
-	kvBackend := xkmssdk.NewQRDBStorageBackend(shardClient.KV())
+	kvBackend := xkmssdk.NewQRDBStorageBackend(s.serviceKV(shardClient.KV()))
 	replicatedKey, err := xkmssdk.NewStoragePrefixBackend(kvBackend, "cluster-ca-keys/")
 	if err != nil {
 		return nil, err
@@ -153,7 +152,7 @@ func (s *Server) resolveClusterCARuntimeBackend() (xkmssdk.ServiceBackend, error
 	if err != nil {
 		return nil, err
 	}
-	deps, err := s.clusterStrategyDeps(replicatedKey, replicatedCert)
+	deps, err := s.clusterStrategyDeps(ctx, replicatedKey, replicatedCert)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +168,7 @@ func (s *Server) clusterCARevocationStore() (xkmssdk.StorageBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(shardClient.KV()), "cluster-ca-revocations/")
+	return xkmssdk.NewStoragePrefixBackend(xkmssdk.NewQRDBStorageBackend(s.serviceKV(shardClient.KV())), "cluster-ca-revocations/")
 }
 
 // ClusterSecretDeliveryService builds the post-enrollment secret-delivery
@@ -210,25 +209,28 @@ func (s *Server) clusterACMEIssuerCN() string {
 }
 
 // buildClusterPreSignHooks returns the pre-sign hook registry for the ACME
-// server. When cluster ACME enrollment is enabled it registers the SPIFFE
-// node-identity URI-SAN hook so enrolling nodes' transport certificates carry
-// spiffe://<trust-domain>/node/<raft-address>, derived from the TCG permanent
-// identifier the joiner presents (clusterenroll.NodeURI is the single source of
-// truth for the format). Returns nil when cluster ACME enrollment is off,
-// leaving ordinary ACME issuance untouched.
-func (s *Server) buildClusterPreSignHooks() *xkmsacme.ACMEOrderPreSignHookRegistry {
+// server. When cluster ACME enrollment is enabled it registers go-xkms's
+// cluster-node URI-SAN hook, which stamps
+// spiffe://<trust-domain>/node/<raft-address> into an enrolling node's
+// transport certificate only when the order's permanent identifier is one of
+// the configured cluster members and enroll-01 alone validated it. Returns a
+// nil registry when cluster ACME enrollment is off, leaving ordinary ACME
+// issuance untouched.
+func (s *Server) buildClusterPreSignHooks() (*xkmsacme.ACMEOrderPreSignHookRegistry, error) {
 	if !s.clusterACMEEnabled() {
-		return nil
+		return nil, nil
 	}
 	trustDomain := s.config.Raft.RaftEnrollment.TrustDomain
 	if trustDomain == "" {
 		trustDomain = defaultRaftTrustDomain
 	}
+	members, err := buildClusterMembers(s.config)
+	if err != nil {
+		return nil, err
+	}
 	registry := xkmsacme.NewACMEOrderPreSignHookRegistry()
-	registry.Register(xkmsacme.NewACMEPermanentIdentifierURISANHook(func(permanentID string) string {
-		return clusterenroll.NodeURI(trustDomain, permanentID)
-	}))
-	return registry
+	registry.Register(xkmsacme.NewACMEClusterNodeURISANHook(trustDomain, members))
+	return registry, nil
 }
 
 // buildClusterCAMultiIdentityConfig builds the CA hierarchy the cluster ACME

@@ -17,6 +17,9 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"testing"
 
@@ -67,7 +70,7 @@ func TestLateBoundCeremonyCA_FailsClosedBeforeBinding(t *testing.T) {
 	_, err := ca.SignCSR(ctx, []byte("csr"), &qrdbsdk.SignCSROptions{})
 	requireCeremonyCAUnavailable(t, err, "SignCSR")
 
-	_, err = ca.CACertificate()
+	_, err = ca.CACertificate(context.Background())
 	requireCeremonyCAUnavailable(t, err, "CACertificate")
 
 	_, err = ca.CABundle()
@@ -94,17 +97,23 @@ func TestLateBoundCeremonyCA_ResolvesAfterBinding(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, bundle, "the bound CA must publish its bundle")
 
-	caCert, err := srv.ceremonyCA.CACertificate()
+	caCert, err := srv.ceremonyCA.CACertificate(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, caCert)
 
+	// The requester keeps its key: the CA certifies the public half.
+	nodeKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
 	issued, err := srv.ceremonyCA.IssueCertificate(context.Background(), &qrdbsdk.IssueCertRequest{
 		CommonName:   "node.example.test",
 		ValidityDays: 30,
+		PublicKey:    &nodeKey.PublicKey,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, issued)
 	assert.NotEmpty(t, issued.CertPEM)
+	require.NotNil(t, issued.Certificate)
+	assert.True(t, nodeKey.PublicKey.Equal(issued.Certificate.PublicKey), "the CA must certify the requester's key")
 }
 
 // TestLateBoundCeremonyCA_BindWithoutCAStaysClosed covers the CA-less

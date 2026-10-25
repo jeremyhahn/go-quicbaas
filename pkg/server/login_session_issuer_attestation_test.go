@@ -57,8 +57,10 @@ func (c *enrolledFactorClient) GetAuthFactor(
 // no seam to replace that hydrator, which is why the issuer reads the record.
 func webauthnLoginIdentity(factorID string) *qrdbauth.Identity {
 	return &qrdbauth.Identity{
-		Subject:  "user-42",
-		TenantID: "acme",
+		Subject: "user-42",
+		// The system tenant: every other tenant's login is refused before
+		// issuance until go-quicbaas #1816 re-pins go-qrdb.
+		TenantID: qrdbauth.SystemTenantID,
 		Metadata: map[string]string{
 			authMethodMetadataKey: "fido2",
 			factorIDMetadataKey:   factorID,
@@ -76,7 +78,7 @@ func webauthnLoginIdentity(factorID string) *qrdbauth.Identity {
 // read nowhere in the repository.
 func TestOIDCSessionIssuer_WebAuthnLoginReplaysEnrolledAttestation(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
-	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
 
 	factors := &enrolledFactorClient{
 		wantFactorID: "factor-1",
@@ -86,7 +88,7 @@ func TestOIDCSessionIssuer_WebAuthnLoginReplaysEnrolledAttestation(t *testing.T)
 		},
 	}
 
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 	issuer.SetAuthFactorClient(factors)
 
@@ -139,9 +141,9 @@ func TestOIDCSessionIssuer_ReplaysWhateverWasEnrolled(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider, users := newTestOIDCProviderWithUsers(t)
-			seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+			seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
 
-			issuer := newOIDCSessionIssuer()
+			issuer := newOIDCSessionIssuer(nil)
 			issuer.SetProvider(provider)
 			issuer.SetAuthFactorClient(&enrolledFactorClient{
 				wantFactorID: "factor-1", metadata: tc.enrolled,
@@ -189,7 +191,7 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 			name:    "identity carries no factor id",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
 			id: &qrdbauth.Identity{
-				Subject: "user-42", TenantID: "acme",
+				Subject: "user-42", TenantID: qrdbauth.SystemTenantID,
 				Metadata: map[string]string{authMethodMetadataKey: "fido2"},
 			},
 			wire: true,
@@ -197,15 +199,15 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 		{
 			name:    "identity carries no metadata at all",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
-			id:      &qrdbauth.Identity{Subject: "user-42", TenantID: "acme"},
+			id:      &qrdbauth.Identity{Subject: "user-42", TenantID: qrdbauth.SystemTenantID},
 			wire:    true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider, users := newTestOIDCProviderWithUsers(t)
-			seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+			seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
 
-			issuer := newOIDCSessionIssuer()
+			issuer := newOIDCSessionIssuer(nil)
 			issuer.SetProvider(provider)
 			if tc.wire {
 				issuer.SetAuthFactorClient(tc.factors)
@@ -232,9 +234,9 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 // detaches cleanly rather than panicking on the next login.
 func TestOIDCSessionIssuer_SetAuthFactorClientNilDetaches(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
-	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
 
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 	issuer.SetAuthFactorClient(&enrolledFactorClient{
 		wantFactorID: "factor-1",
@@ -253,5 +255,90 @@ func TestOIDCSessionIssuer_SetAuthFactorClientNilDetaches(t *testing.T) {
 	}
 	if claims.AttestLevel != "" {
 		t.Fatalf("attest_level = %q, want empty after the client was detached", claims.AttestLevel)
+	}
+}
+
+// boundReadKey marks a context the issuer's read binder returned.
+type boundReadKey struct{}
+
+// boundFactorClient answers GetAuthFactor only on a context the read binder
+// bound, as an auth-enabled node answers only an authenticated read.
+type boundFactorClient struct {
+	qrdbtransport.UserAuthFactorClient
+	metadata map[string]string
+}
+
+func (c *boundFactorClient) GetAuthFactor(ctx context.Context, _ *qrdbtransport.AuthFactorGetRequest) (*qrdbtransport.AuthFactorGetResponse, error) {
+	if ctx.Value(boundReadKey{}) == nil {
+		return nil, qrdbauth.ErrUnauthenticated
+	}
+	resp := &qrdbtransport.AuthFactorGetResponse{}
+	resp.Factor.Metadata = c.metadata
+	return resp, nil
+}
+
+// The factor read runs under the context the read binder returns for the
+// login's tenant: the FinishLogin context carries no identity.
+func TestOIDCSessionIssuer_FactorReadRunsUnderTheReadBinder(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
+
+	var boundTenant string
+	issuer := newOIDCSessionIssuer(func(ctx context.Context, tenantID string) (context.Context, error) {
+		boundTenant = tenantID
+		return context.WithValue(ctx, boundReadKey{}, true), nil
+	})
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&boundFactorClient{
+		metadata: map[string]string{iam.AuthFactorMetadataAttestLevel: string(iam.AttestLevelHardware)},
+	})
+
+	ctx := context.Background()
+	token, _, err := issuer.Issue(ctx, webauthnLoginIdentity("factor-1"))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.AttestLevel != string(iam.AttestLevelHardware) {
+		t.Fatalf("attest_level = %q, want %q read under the bound context", claims.AttestLevel, iam.AttestLevelHardware)
+	}
+	if boundTenant != qrdbauth.SystemTenantID {
+		t.Fatalf("the read was bound for tenant %q, want the login's", boundTenant)
+	}
+}
+
+// A read binder that fails leaves the session without attestation: the
+// issuer understates and never falls back to the unauthenticated read.
+func TestOIDCSessionIssuer_AFailedReadBindUnderstates(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, qrdbauth.SystemTenantID, "user-42", []string{"admin"})
+
+	issuer := newOIDCSessionIssuer(func(context.Context, string) (context.Context, error) {
+		return nil, errors.New("no service principal")
+	})
+	issuer.SetProvider(provider)
+	factors := &enrolledFactorClient{
+		wantFactorID: "factor-1",
+		metadata:     map[string]string{iam.AuthFactorMetadataAttestLevel: string(iam.AttestLevelHardware)},
+	}
+	issuer.SetAuthFactorClient(factors)
+
+	ctx := context.Background()
+	token, _, err := issuer.Issue(ctx, webauthnLoginIdentity("factor-1"))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.AttestLevel != "" {
+		t.Fatalf("attest_level = %q, want empty when the read cannot be bound", claims.AttestLevel)
+	}
+	if factors.gets != 0 {
+		t.Fatalf("the factor was read %d times on an unbound context, want 0", factors.gets)
 	}
 }

@@ -125,33 +125,6 @@ func TestServer_BuildBarrierCeremonyServices_Local_NoPINBackendLeavesSealUngated
 	require.ErrorAs(t, err, &missing, "without a PIN backend seal reaches the (nil) transport")
 }
 
-func TestServer_QRDBSealSOPINInterceptor_GatesCanonicalSeal(t *testing.T) {
-	srv := withTempServer(t)
-	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
-	require.NoError(t, err)
-	require.NoError(t, backend.SetSOPIN("", "so-pin-1234"))
-	srv.pinBackend = backend
-
-	reached := false
-	handler := func(context.Context, any) (any, error) { reached = true; return nil, nil }
-	info := &ggrpc.UnaryServerInfo{FullMethod: "/qrdb.v1.QRDBService/BarrierSeal"}
-	_, err = srv.qrdbSealSOPINInterceptor()(context.Background(), nil, info, handler)
-	require.Error(t, err, "qrdb.v1 seal without the SO PIN must be refused")
-	require.False(t, reached, "a refused seal must not reach the barrier")
-}
-
-func TestServer_QRDBSealSOPINInterceptor_NoPINBackendLeavesSealUngated(t *testing.T) {
-	srv := withTempServer(t)
-	require.Nil(t, srv.pinBackend)
-
-	reached := false
-	handler := func(context.Context, any) (any, error) { reached = true; return nil, nil }
-	info := &ggrpc.UnaryServerInfo{FullMethod: "/qrdb.v1.QRDBService/BarrierSeal"}
-	_, err := srv.qrdbSealSOPINInterceptor()(context.Background(), nil, info, handler)
-	require.NoError(t, err)
-	require.True(t, reached, "without a PIN backend seal reaches the barrier")
-}
-
 func TestServer_BuildBarrierCeremonyServices_Local_NonNilClient(t *testing.T) {
 	srv := withTempServer(t)
 	srv.qrdbClient = NewShardedClient(nil)
@@ -242,7 +215,7 @@ func TestServer_QRDBBarrierServicer_Local_NonNilWithPlatformClient(t *testing.T)
 func TestServer_BuildQRDBRegisterOptions_Local_IncludesCredentialAndCeremony(t *testing.T) {
 	srv := withTempServer(t)
 
-	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir())
+	bundle, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir(), testTrustDomain)
 	require.NoError(t, err)
 	require.NotNil(t, bundle.Credential)
 	require.NotNil(t, bundle.Ceremony)

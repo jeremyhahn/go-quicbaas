@@ -37,6 +37,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -83,7 +84,7 @@ func buildTestBarrierRegistry(t *testing.T) *qrdbsdk.BarrierRegistry {
 	ctx := context.Background()
 	log := slog.Default()
 
-	sysStrategy, err := qrdbsdk.NewSoftwareStrategy([]byte("test-sys-pass"))
+	sysStrategy, err := qrdbsdk.NewSoftwareStrategy(context.Background(), []byte("test-sys-pass"))
 	require.NoError(t, err)
 
 	sysBarrier, err := qrdbsdk.NewStorageBarrier(
@@ -93,7 +94,7 @@ func buildTestBarrierRegistry(t *testing.T) *qrdbsdk.BarrierRegistry {
 		sysStrategy,
 	)
 	require.NoError(t, err)
-	sysCreds, err := qrdbsdk.CredentialsFor([]byte("test-sys-pass"))
+	sysCreds, err := qrdbsdk.CredentialsFor(context.Background(), []byte("test-sys-pass"))
 	require.NoError(t, err)
 	defer sysCreds.Secret.Destroy()
 	require.NoError(t, sysBarrier.Initialize(ctx, sysCreds))
@@ -110,14 +111,31 @@ type srTrackingRetriever struct {
 	err    error
 }
 
-func (r *srTrackingRetriever) CredentialRetrieve(_ context.Context, _ string) ([]byte, error) {
+func (r *srTrackingRetriever) CredentialRetrieveBuffer(_ context.Context, _ string) (*qrdbsecure.Buffer, error) {
 	r.called = true
-	return r.value, r.err
+	if r.err != nil {
+		return nil, r.err
+	}
+	return qrdbsecure.NewBufferFromBytes(r.value)
 }
 
 // =============================================================================
 // Routing via NewTenantScopedCredentialRetrieve
 // =============================================================================
+
+// bufferString copies a retrieved credential out of its secure buffer and
+// destroys the buffer.
+func bufferString(t *testing.T, buf *qrdbsecure.Buffer) string {
+	t.Helper()
+	require.NotNil(t, buf)
+	defer buf.Destroy()
+	var out string
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		out = string(b)
+		return nil
+	}))
+	return out
+}
 
 // TestTenantCredentialRouting_NoTenant_UsesSystemService verifies that when
 // the request context carries no tenant ID the retrieve func delegates to the
@@ -132,7 +150,7 @@ func TestTenantCredentialRouting_NoTenant_UsesSystemService(t *testing.T) {
 
 	val, err := retrieve(context.Background(), "my-cred")
 	require.NoError(t, err)
-	assert.Equal(t, "system-value", string(val), "no-tenant context must return system-scoped value")
+	assert.Equal(t, "system-value", bufferString(t, val), "no-tenant context must return system-scoped value")
 	assert.True(t, sysSvc.called, "system retriever must be called when no tenant context is present")
 }
 
@@ -166,7 +184,7 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 	reg := buildTestBarrierRegistry(t)
 
 	// Register tenant-a with its own in-memory barrier.
-	tenantAStrategy, err := qrdbsdk.NewSoftwareStrategy([]byte("tenant-a-pass"))
+	tenantAStrategy, err := qrdbsdk.NewSoftwareStrategy(context.Background(), []byte("tenant-a-pass"))
 	require.NoError(t, err)
 	tb, err := reg.RegisterTenant(ctx, "tenant-a",
 		qrdbsdk.NewMemoryBackend(),
@@ -174,7 +192,7 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 		tenantAStrategy,
 	)
 	require.NoError(t, err)
-	tenantCreds, err := qrdbsdk.CredentialsFor([]byte("tenant-a-pass"))
+	tenantCreds, err := qrdbsdk.CredentialsFor(context.Background(), []byte("tenant-a-pass"))
 	require.NoError(t, err)
 	defer tenantCreds.Secret.Destroy()
 	require.NoError(t, tb.Barrier().Initialize(ctx, tenantCreds))
@@ -192,7 +210,7 @@ func TestTenantCredentialRouting_TenantIsolation(t *testing.T) {
 	ctxA := tenantctx.WithTenant(ctx, "tenant-a")
 	val, err := retrieve(ctxA, "db-password")
 	require.NoError(t, err)
-	assert.Equal(t, "tenant-a-secret", string(val),
+	assert.Equal(t, "tenant-a-secret", bufferString(t, val),
 		"tenant-a context must return the credential from tenant-a's barrier")
 	assert.False(t, sysSvc.called,
 		"system retriever must NOT be called when tenant context is present")
@@ -230,8 +248,8 @@ func TestBuildSecretRegistry_SystemScopedResolverRegistered(t *testing.T) {
 	// Inject a credential resolver that claims credential:// URIs —
 	// simulating what buildSecretRegistry does when svcs.Credential is present.
 	reg := qrdbsecret.NewResolverRegistry()
-	reg.Register(qrdbsecret.NewCredentialResolver(func(_ context.Context, _ string) ([]byte, error) {
-		return []byte("injected-value"), nil
+	reg.Register(qrdbsecret.NewCredentialResolver(func(_ context.Context, _ string) (*qrdbsecure.Buffer, error) {
+		return qrdbsecure.NewBufferFromBytes([]byte("injected-value"))
 	}))
 	srv.secretRegistry = reg
 
@@ -242,5 +260,5 @@ func TestBuildSecretRegistry_SystemScopedResolverRegistered(t *testing.T) {
 	// Resolve must return the injected value.
 	sv, err := srv.secretRegistry.Resolve(context.Background(), "credential://my-cred")
 	require.NoError(t, err)
-	assert.Equal(t, "injected-value", sv.String())
+	assert.Equal(t, "injected-value", resolvedString(t, sv))
 }

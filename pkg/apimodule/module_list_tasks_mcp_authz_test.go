@@ -38,7 +38,7 @@ func TestListTasksTool_IsRefusedWithoutTaskList(t *testing.T) {
 	registry := agentSessionToolRegistry(t)
 	ctx, _ := agentSessionCallContext(t, am, cert)
 
-	err := am.AuthorizeMCP(ctx, registry, listTasksTool, nil)
+	err := am.AuthorizeMCP(ctx, registry, listTasksTool)
 	var denied *rbac.PermissionDeniedError
 	if !errors.As(err, &denied) {
 		t.Fatalf("AuthorizeMCP = %v, want a *rbac.PermissionDeniedError", err)
@@ -58,7 +58,7 @@ func TestListTasksTool_IsAdmittedWithTaskList(t *testing.T) {
 	if _, covered := registry.Lookup(listTasksTool); !covered {
 		t.Fatalf("%s is not in the tool registry", listTasksTool)
 	}
-	if err := am.AuthorizeMCP(ctx, registry, listTasksTool, nil); err != nil {
+	if err := am.AuthorizeMCP(ctx, registry, listTasksTool); err != nil {
 		t.Errorf("%s must be admitted for a caller granted orchestrator:task_list: %v", listTasksTool, err)
 	}
 }

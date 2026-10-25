@@ -46,7 +46,8 @@ import (
 
 // stubKMSManager is a minimal interfaces.KMSManager implementation used only
 // to prove KeyManagement's nil-gate reacts to KMSManager() being configured
-// (TestModule_DEKManagement_NilGatedOnKMSServiceEvenWithManager). Every method
+// (TestModule_KMSStopgapServices_BoundWhenConfigured and
+// TestModule_KMSStopgapServices_AbsentAnswerUnavailable). Every method
 // beyond GetSupportedAlgorithms is a trivial zero-value stub: no test in this
 // package exercises them.
 type stubKMSManager struct{}
@@ -155,9 +156,10 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// and SecretsManagement (the one genuinely quicbaas-native xkms-wire service —
-// KeyManagement/DEKManagement/Crypto/CertificateService/TrustService/
-// AttestationService/PIVService moved to go-xkms's own ServiceModule, Phase 3
+// SecretsManagement (the one genuinely quicbaas-native xkms-wire service),
+// and the #1813 stopgap KeyManagement/DEKManagement/Crypto (see
+// TestModule_KMSStopgapServices_BoundWhenConfigured — CertificateService/
+// TrustService/AttestationService/PIVService moved to go-xkms's own ServiceModule, Phase 3
 // of the login-plane plan; see module.go's package doc and
 // TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
 // set identical to its generated service descriptor — the same wire surface
@@ -189,6 +191,9 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
+		&pb.KeyManagement_ServiceDesc,
+		&pb.DEKManagement_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
@@ -197,7 +202,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services plus the three #1813 stopgap services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -249,9 +254,9 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves KeyManagement,
-// DEKManagement, Crypto, CertificateService, TrustService, AttestationService,
-// and PIVService stay OFF the quicbaas module's surface (Phase 3 of the
+// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves
+// CertificateService, TrustService, AttestationService, and PIVService stay
+// OFF the quicbaas module's surface (Phase 3 of the
 // login-plane plan, corrective to the prior design documented in
 // module.go's package doc): they were quicbaas.v1 wrappers over the SAME
 // composed go-xkms library go-xkms's OWN ServiceModule ("xkms") now serves
@@ -260,7 +265,9 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 // surface, exactly the failure mode go-qrdb's route/service-collision guard
 // exists to catch. SecretsManagement is deliberately absent from this
 // exclusion list: it is genuinely quicbaas-native (see
-// TestModule_RegisterGRPC_RegistersFullGRPCSurface).
+// TestModule_RegisterGRPC_RegistersFullGRPCSurface). KeyManagement,
+// DEKManagement and Crypto are absent too: they are served as the #1813
+// stopgap until go-xkms#1681 lands.
 func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
 	require.NoError(t, err)
@@ -270,9 +277,6 @@ func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
 	info := server.GetServiceInfo()
 
 	excluded := []string{
-		pb.KeyManagement_ServiceDesc.ServiceName,
-		pb.DEKManagement_ServiceDesc.ServiceName,
-		pb.Crypto_ServiceDesc.ServiceName,
 		pb.CertificateService_ServiceDesc.ServiceName,
 		pb.TrustService_ServiceDesc.ServiceName,
 		pb.AttestationService_ServiceDesc.ServiceName,
@@ -652,6 +656,87 @@ func requireUnavailable(t *testing.T, err error, service string) {
 	require.True(t, ok)
 	assert.Equal(t, codes.Unavailable, st.Code(),
 		"%s must answer Unavailable when disabled, got %v", service, st.Code())
+}
+
+// requireCode asserts err carries the given gRPC status code.
+func requireCode(t *testing.T, err error, want codes.Code, service string) {
+	t.Helper()
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, want, st.Code(), "%s: unexpected status code %v", service, st.Code())
+}
+
+// TestModule_KMSStopgapServices_BoundWhenConfigured proves the #1813
+// stopgap: with the facade's KMS, KMSManager and Crypto configured, the node
+// module binds KeyManagement, DEKManagement and Crypto and each reaches its
+// real handler (the handler's own InvalidArgument for an empty request, not
+// the module's Unavailable nil-gate).
+func TestModule_KMSStopgapServices_BoundWhenConfigured(t *testing.T) {
+	composed := &mocks.MockQuicBaaS{
+		MockKMSService:        &mocks.MockKMSService{},
+		MockCryptoService:     &mocks.MockCryptoService{},
+		KMSManagerServiceFunc: func() interfaces.KMSManager { return stubKMSManager{} },
+	}
+	m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t))
+	require.NoError(t, err)
+
+	servers, err := m.bind()
+	require.NoError(t, err)
+	assert.NotNil(t, servers.keyManagement, "KeyManagement must be bound when KMS and KMSManager are configured")
+	assert.NotNil(t, servers.dekManagement, "DEKManagement must be bound when KMS is configured")
+	assert.NotNil(t, servers.crypto, "Crypto must be bound when Crypto is configured")
+
+	server := grpc.NewServer()
+	m.RegisterGRPC(server)
+	info := server.GetServiceInfo()
+	for _, name := range []string{
+		pb.KeyManagement_ServiceDesc.ServiceName,
+		pb.DEKManagement_ServiceDesc.ServiceName,
+		pb.Crypto_ServiceDesc.ServiceName,
+	} {
+		_, ok := info[name]
+		assert.True(t, ok, "service %s must be registered on the node module (#1813)", name)
+	}
+
+	conn := startBufconnModule(t, m)
+	ctx := context.Background()
+
+	_, err = pb.NewKeyManagementClient(conn).GetKeyRotationPolicy(ctx, &pb.GetKeyRotationPolicyRequest{})
+	requireCode(t, err, codes.InvalidArgument, "KeyManagement")
+	_, err = pb.NewDEKManagementClient(conn).CreateDEK(ctx, &pb.CreateDEKRequest{})
+	requireCode(t, err, codes.InvalidArgument, "DEKManagement")
+	_, err = pb.NewCryptoClient(conn).Encrypt(ctx, &pb.CryptoEncryptRequest{})
+	requireCode(t, err, codes.InvalidArgument, "Crypto")
+}
+
+// TestModule_KMSStopgapServices_AbsentAnswerUnavailable proves the stopgap
+// services are nil-gated: with no KMS, KMSManager or Crypto on the facade,
+// bind succeeds, leaves the three servers unbound, and each RPC answers
+// Unavailable. A KMSManager without the KMS service is not enough for
+// KeyManagement either: its handlers need the service layer.
+func TestModule_KMSStopgapServices_AbsentAnswerUnavailable(t *testing.T) {
+	composed := &mocks.MockQuicBaaS{
+		KMSManagerServiceFunc: func() interfaces.KMSManager { return stubKMSManager{} },
+	}
+	m, err := NewModule(func() service.QuicBaaS { return composed }, testLogger(t))
+	require.NoError(t, err)
+
+	servers, err := m.bind()
+	require.NoError(t, err)
+	assert.Nil(t, servers.keyManagement)
+	assert.Nil(t, servers.dekManagement)
+	assert.Nil(t, servers.crypto)
+
+	conn := startBufconnModule(t, m)
+	ctx := context.Background()
+
+	_, err = pb.NewKeyManagementClient(conn).GetKeyRotationPolicy(ctx, &pb.GetKeyRotationPolicyRequest{KeyId: "k"})
+	requireUnavailable(t, err, "KeyManagement")
+	_, err = pb.NewDEKManagementClient(conn).CreateDEK(ctx, &pb.CreateDEKRequest{Path: "p"})
+	requireUnavailable(t, err, "DEKManagement")
+	_, err = pb.NewCryptoClient(conn).Encrypt(ctx, &pb.CryptoEncryptRequest{KeyId: "k"})
+	requireUnavailable(t, err, "Crypto")
 }
 
 // TestModule_Secrets_LateBinding proves SecretsManagement follows the same

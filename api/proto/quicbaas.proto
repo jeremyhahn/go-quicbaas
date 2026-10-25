@@ -9,7 +9,7 @@ syntax = "proto3";
 package quicbaas.v1;
 
 import "api/proto/cluster.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 

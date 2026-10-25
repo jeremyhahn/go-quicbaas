@@ -261,8 +261,7 @@ func TestResolveBarrierStrategy_MalformedMarkerSurfacesError(t *testing.T) {
 // of the fix: a data dir whose init marker says "none" (and a config whose
 // Seal.Strategy is the "passphrase" default with no explicit override) builds a
 // NoneStrategy barrier. The NoneStrategy passthrough accepts an EMPTY secret on
-// BarrierInitialize — exactly the call `barrier init --barrier-strategy none`
-// makes — and unseals. The passphrase DeferredSoftwareStrategy would reject the
+// qrdb init and unseals. The passphrase DeferredSoftwareStrategy would reject the
 // empty secret, so a successful empty-secret init proves the none strategy is
 // the one actually wired.
 func TestBuildDataPlaneBarrierService_MarkerNoneRoundTrip(t *testing.T) {
@@ -271,18 +270,20 @@ func TestBuildDataPlaneBarrierService_MarkerNoneRoundTrip(t *testing.T) {
 	// Config default is "passphrase"; no explicit override.
 	require.Equal(t, "passphrase", cfg.Seal.Strategy)
 	cfg.Seal.StrategyExplicit = false
+	cfg.IAM.SPIFFETrustDomain = testTrustDomain
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, _, ceremonyCore, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, closer)
 	defer func() { require.NoError(t, closer.Close()) }()
 
 	ctx := t.Context()
+	client := dataPlaneCeremonyClient(t, svc, ceremonyCore)
 
-	// Empty-secret initialize succeeds ONLY for the none passthrough strategy.
-	require.NoError(t, svc.BarrierInitialize(ctx, nil),
+	// Empty-secret qrdb init succeeds ONLY for the none passthrough strategy.
+	require.NoError(t, runQRDBInit(t, client, nil),
 		"none strategy must accept an empty secret; software would reject it")
 
 	info, statusErr := svc.BarrierStatus(ctx)
@@ -301,16 +302,16 @@ func TestBuildDataPlaneBarrierService_ExplicitOverrideBeatsMarker(t *testing.T) 
 	cfg.Seal.StrategyExplicit = true
 	writeTestInitMarker(t, cfg.Storage.DataDir, "none", 0, 0)
 
-	svc, _, _, closer, err := buildDataPlaneBarrierService(cfg, nil)
+	svc, _, ceremonyCore, closer, err := buildDataPlaneBarrierService(cfg, nil)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
 	require.NotNil(t, closer)
 	defer func() { require.NoError(t, closer.Close()) }()
 
-	ctx := t.Context()
+	client := dataPlaneCeremonyClient(t, svc, ceremonyCore)
 
 	// Passphrase strategy rejects an empty secret — proves it, not none, is wired.
-	require.Error(t, svc.BarrierInitialize(ctx, nil),
+	require.Error(t, runQRDBInit(t, client, nil),
 		"passphrase strategy must reject an empty secret")
 }
 

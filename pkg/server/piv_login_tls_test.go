@@ -140,12 +140,12 @@ func postPIVLoginOverTLS(t *testing.T, srv *Server, router http.Handler, root *x
 func tenantBoundRouter(t *testing.T, inner http.Handler) http.Handler {
 	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := qrdbsdk.TenantFromCert(r.TLS.PeerCertificates[0], testTrustDomain)
+		tenantID, err := qrdbsdk.TenantFromClientCert(r.TLS.PeerCertificates[0], testTrustDomain)
 		if !assert.NoError(t, err, "the admin certificate names its tenant") {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		inner.ServeHTTP(w, r.WithContext(qrdbsdk.ContextWithTenant(r.Context(), id.TenantID)))
+		inner.ServeHTTP(w, r.WithContext(qrdbsdk.ContextWithTenant(r.Context(), tenantID)))
 	})
 }
 

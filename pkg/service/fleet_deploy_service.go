@@ -205,6 +205,10 @@ type fleetDeployService struct {
 	// (Spec.Local): this host, reached with no ssh. Production wires
 	// deploy.NewLocalTarget; tests substitute a recording target.
 	localTarget func(host string) (deploy.Target, error)
+
+	// spiffeTrustDomain is forwarded on each node certificate request
+	// (FleetDeployServiceDeps.SPIFFETrustDomain).
+	spiffeTrustDomain string
 }
 
 // FleetDeployServiceDeps wires injectable dependencies for the
@@ -246,6 +250,12 @@ type FleetDeployServiceDeps struct {
 	// MCP endpoint with the long-lived mTLS identity this deploy uploads. When
 	// empty the daemon command line is unchanged (no behavior change).
 	MCPEndpoint string
+
+	// SPIFFETrustDomain is the control plane's configured SPIFFE trust domain
+	// (iam.spiffe_trust_domain), forwarded on every node certificate request
+	// so the issued certificate carries the agent SPIFFE SAN fleet enrolment
+	// requires. An issuer that signs in-process refuses a request without it.
+	SPIFFETrustDomain string
 }
 
 // NewFleetDeployService wires the default SSH/SFTP/systemd primitives
@@ -270,6 +280,8 @@ func NewFleetDeployService(deps FleetDeployServiceDeps) FleetDeployService {
 		resolveHome: defaultResolveRemoteHome,
 		mcpEndpoint: deps.MCPEndpoint,
 		localTarget: newLocalTarget,
+
+		spiffeTrustDomain: deps.SPIFFETrustDomain,
 	}
 }
 
@@ -494,8 +506,9 @@ func sshAuthConflict(spec *deploy.Spec) error {
 // every exit path. Deploy() does this via defer.
 func (s *fleetDeployService) issueNodeCert(ctx context.Context, spec *deploy.Spec) (*IssuedFleetNodeCertificate, error) {
 	req := &FleetNodeCertificateRequest{
-		TenantID: spec.Tenant,
-		Hostname: hostnameForCert(spec.Host),
+		TenantID:          spec.Tenant,
+		Hostname:          hostnameForCert(spec.Host),
+		SPIFFETrustDomain: s.spiffeTrustDomain,
 	}
 	return s.certIssuer.IssueFleetNodeCertificate(ctx, req)
 }
@@ -519,9 +532,9 @@ func (s *fleetDeployService) uploadNodeIdentity(
 		return &FleetNodeIdentityUploadError{File: deploy.NodeCertFilename, Cause: err}
 	}
 
-	//secure:unborrowed injected-interface WriteRemoteFile requires a byte slice and does not retain the key past upload.
-	keyBytes := issued.PrivateKey.Bytes()
-	if err := s.files.WriteRemoteFile(ctx, sess, path.Join(dataDir, deploy.NodeKeyFilename), keyBytes, 0o600); err != nil {
+	if err := issued.PrivateKey.WithBytes(func(keyBytes []byte) error {
+		return s.files.WriteRemoteFile(ctx, sess, path.Join(dataDir, deploy.NodeKeyFilename), keyBytes, 0o600)
+	}); err != nil {
 		return &FleetNodeIdentityUploadError{File: deploy.NodeKeyFilename, Cause: err}
 	}
 

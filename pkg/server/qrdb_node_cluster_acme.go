@@ -73,7 +73,7 @@ func (s *Server) provisionRaftClusterACME(ctx context.Context, members map[uint6
 	// The pre-node Backends seam the provisioner uses to pre-stage the CA and
 	// issue this node's transport leaf comes from the strategy's bootstrap
 	// backends (node-local for barrier/tpm-kek, the shared HSM for hsm).
-	deps, err := s.clusterStrategyDeps(nil, nil)
+	deps, err := s.clusterStrategyDeps(ctx, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

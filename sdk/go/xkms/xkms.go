@@ -35,46 +35,28 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// ObjectStorage re-exports — the canonical object/blob storage interface and
-// supporting types travel through the alias chain:
+// ObjectStorage re-exports — the canonical object storage interface travels
+// through the alias chain:
 //
-//	go-objstore/pkg/common.Storage
+//	go-qrdb/sdk/go.Storage
 //	  → go-xkms/sdk/go.ObjectStorage
 //	    → go-quicbaas/sdk/go/xkms.ObjectStorage   (here)
 //
 // go-trusted-platform (and any other quicbaas consumer) imports only this
-// package; it never needs go-objstore or go-xkms in its own go.mod for
+// package; it never needs go-qrdb or go-xkms in its own go.mod for
 // object-storage work.
 type (
-	// ObjectStorage is the canonical object/blob storage interface.
+	// ObjectStorage is the canonical object storage interface.
 	ObjectStorage = xkmssdk.ObjectStorage
-
-	// ObjectMetadata holds object-level metadata re-exported through the alias chain.
-	ObjectMetadata = xkmssdk.ObjectMetadata
-
-	// ObjectListOptions configures paginated object listing.
-	ObjectListOptions = xkmssdk.ObjectListOptions
-
-	// ObjectInfo holds key and metadata for a single listed object.
-	ObjectInfo = xkmssdk.ObjectInfo
-
-	// ObjectListResult is the paginated result returned by ObjectStorage.ListWithOptions.
-	ObjectListResult = xkmssdk.ObjectListResult
-
-	// ObjectArchiver is the destination interface used by ObjectStorage.Archive.
-	ObjectArchiver = xkmssdk.ObjectArchiver
-
-	// ObjectLifecyclePolicy configures retention and expiry rules on a storage backend.
-	ObjectLifecyclePolicy = xkmssdk.ObjectLifecyclePolicy
 )
 
 // Object-storage constructors re-exported from go-xkms (which in turn
-// re-exports them from go-objstore). Use these instead of calling
-// go-objstore or go-xkms constructors directly.
+// re-exports them from the go-qrdb SDK). Use these instead of calling
+// go-qrdb or go-xkms constructors directly.
 var (
-	// NewObjectStorageLocal constructs a filesystem-backed ObjectStorage
-	// implementation rooted at the given directory.
-	NewObjectStorageLocal = xkmssdk.NewObjectStorageLocal
+	// NewObjectStorage opens an ObjectStorage on the configured go-objstore
+	// provider (for example "local", "s3", "gcs") with its provider settings.
+	NewObjectStorage = xkmssdk.NewObjectStorage
 
 	// NewObjectStorageMemory constructs an in-memory ObjectStorage
 	// implementation suitable for testing and embedded use.
@@ -235,7 +217,6 @@ var (
 	KeyAttributesFromConfig           = xkmssdk.KeyAttributesFromConfig
 	MinimalInstallOptions             = xkmssdk.MinimalInstallOptions
 	NewCertStore                      = xkmssdk.NewCertStore
-	NewFileBackend                    = xkmssdk.NewFileBackend
 	NewFileStorageBackend             = xkmssdk.NewFileStorageBackend
 	NewJWTSigningMethodSigner         = xkmssdk.NewJWTSigningMethodSigner
 	NewPassword                       = xkmssdk.NewPassword
@@ -282,211 +263,166 @@ var (
 // ---------------------------------------------------------
 
 type (
-	AddCustodianMemberRequest          = xkmssdk.AddCustodianMemberRequest
-	AddCustodianMemberResponse         = xkmssdk.AddCustodianMemberResponse
-	AttestKeyRequest                   = xkmssdk.AttestKeyRequest
-	AttestKeyResponse                  = xkmssdk.AttestKeyResponse
-	BackendConfig                      = xkmssdk.BackendConfig
-	BackendInfo                        = xkmssdk.BackendInfo
-	BarrierEnableEncryptionRequest     = xkmssdk.BarrierEnableEncryptionRequest
-	BarrierEnableEncryptionResponse    = xkmssdk.BarrierEnableEncryptionResponse
-	BarrierGenerateRecoveryKeysRequest = xkmssdk.BarrierGenerateRecoveryKeysRequest
-	BarrierGenerateRootTokenRequest    = xkmssdk.BarrierGenerateRootTokenRequest
-	BarrierHasRecoveryKeysResponse     = xkmssdk.BarrierHasRecoveryKeysResponse
-	BarrierInitializeRequest           = xkmssdk.BarrierInitializeRequest
-	BarrierInitializeShamirRequest     = xkmssdk.BarrierInitializeShamirRequest
-	BarrierInitializeShamirResponse    = xkmssdk.BarrierInitializeShamirResponse
-	BarrierRecoverWithKeysRequest      = xkmssdk.BarrierRecoverWithKeysRequest
-	BarrierRecoveryKeysResponse        = xkmssdk.BarrierRecoveryKeysResponse
-	BarrierRekeyRequest                = xkmssdk.BarrierRekeyRequest
-	BarrierRekeyResponse               = xkmssdk.BarrierRekeyResponse
-	BarrierRootTokenResponse           = xkmssdk.BarrierRootTokenResponse
-	BarrierStatusResponse              = xkmssdk.BarrierStatusResponse
-	BarrierUnsealRequest               = xkmssdk.BarrierUnsealRequest
-	BarrierUnsealShareRequest          = xkmssdk.BarrierUnsealShareRequest
-	BarrierUnsealShareResponse         = xkmssdk.BarrierUnsealShareResponse
-	BarrierUnsealSharesRequest         = xkmssdk.BarrierUnsealSharesRequest
-	BeginAuthenticationRequest         = xkmssdk.BeginAuthenticationRequest
-	BeginAuthenticationResponse        = xkmssdk.BeginAuthenticationResponse
-	BeginRegistrationRequest           = xkmssdk.BeginRegistrationRequest
-	BeginRegistrationResponse          = xkmssdk.BeginRegistrationResponse
-	ChangeSOPINRequest                 = xkmssdk.ChangeSOPINRequest
-	ChangeUserPINRequest               = xkmssdk.ChangeUserPINRequest
-	ClaimCertBeginRequest              = xkmssdk.ClaimCertBeginRequest
-	ClaimCertBeginResponse             = xkmssdk.ClaimCertBeginResponse
-	ClaimCertCompleteRequest           = xkmssdk.ClaimCertCompleteRequest
-	ClaimCertCompleteResponse          = xkmssdk.ClaimCertCompleteResponse
-	ClaimShareBeginRequest             = xkmssdk.ClaimShareBeginRequest
-	ClaimShareBeginResponse            = xkmssdk.ClaimShareBeginResponse
-	ClaimShareCompleteRequest          = xkmssdk.ClaimShareCompleteRequest
-	ClaimShareCompleteResponse         = xkmssdk.ClaimShareCompleteResponse
-	Client                             = xkmssdk.Client
-	CopyKeyRequest                     = xkmssdk.CopyKeyRequest
-	CopyKeyResponse                    = xkmssdk.CopyKeyResponse
-	CreateCustodianGroupRequest        = xkmssdk.CreateCustodianGroupRequest
-	CreateCustodianGroupResponse       = xkmssdk.CreateCustodianGroupResponse
-	CreateTenantRequest                = xkmssdk.CreateTenantRequest
-	CreateTenantResponse               = xkmssdk.CreateTenantResponse
-	CreateUserRequest                  = xkmssdk.CreateUserRequest
-	CredentialStrategyResponse         = xkmssdk.CredentialStrategyResponse
-	CredentialSubmitRequest            = xkmssdk.CredentialSubmitRequest
-	CredentialSubmitResponse           = xkmssdk.CredentialSubmitResponse
-	DecryptRequest                     = xkmssdk.DecryptRequest
-	DecryptResponse                    = xkmssdk.DecryptResponse
-	DeleteKeyResponse                  = xkmssdk.DeleteKeyResponse
-	DeletePIVCertificateRequest        = xkmssdk.DeletePIVCertificateRequest
-	DeriveKeyECDHRequest               = xkmssdk.DeriveKeyECDHRequest
-	DeriveKeyECDHResponse              = xkmssdk.DeriveKeyECDHResponse
-	DeriveKeyRequest                   = xkmssdk.DeriveKeyRequest
-	DeriveKeyResponse                  = xkmssdk.DeriveKeyResponse
-	DistributeSharesRequest            = xkmssdk.DistributeSharesRequest
-	DistributeSharesResponse           = xkmssdk.DistributeSharesResponse
-	EncryptAsymRequest                 = xkmssdk.EncryptAsymRequest
-	EncryptAsymResponse                = xkmssdk.EncryptAsymResponse
-	EncryptRequest                     = xkmssdk.EncryptRequest
-	EncryptResponse                    = xkmssdk.EncryptResponse
-	EnrollDeviceRequest                = xkmssdk.EnrollDeviceRequest
-	EnrollDeviceResponse               = xkmssdk.EnrollDeviceResponse
-	ExportKeyMaterialRequest           = xkmssdk.ExportKeyMaterialRequest
-	ExportKeyMaterialResponse          = xkmssdk.ExportKeyMaterialResponse
-	ExportKeyRequest                   = xkmssdk.ExportKeyRequest
-	ExportKeyResponse                  = xkmssdk.ExportKeyResponse
-	FinishAuthenticationRequest        = xkmssdk.FinishAuthenticationRequest
-	FinishAuthenticationResponse       = xkmssdk.FinishAuthenticationResponse
-	FinishRegistrationRequest          = xkmssdk.FinishRegistrationRequest
-	FinishRegistrationResponse         = xkmssdk.FinishRegistrationResponse
-	GenerateCRLRequest                 = xkmssdk.GenerateCRLRequest
-	GenerateCRLResponse                = xkmssdk.GenerateCRLResponse
-	GenerateKeyRequest                 = xkmssdk.GenerateKeyRequest
-	GenerateKeyResponse                = xkmssdk.GenerateKeyResponse
-	GeneratePIVCSRRequest              = xkmssdk.GeneratePIVCSRRequest
-	GeneratePIVCSRResponse             = xkmssdk.GeneratePIVCSRResponse
-	GeneratePIVKeyRequest              = xkmssdk.GeneratePIVKeyRequest
-	GeneratePIVKeyResponse             = xkmssdk.GeneratePIVKeyResponse
-	GetCABundleRequest                 = xkmssdk.GetCABundleRequest
-	GetCABundleResponse                = xkmssdk.GetCABundleResponse
-	GetCACertificateRequest            = xkmssdk.GetCACertificateRequest
-	GetCACertificateResponse           = xkmssdk.GetCACertificateResponse
-	GetCertificateChainResponse        = xkmssdk.GetCertificateChainResponse
-	GetCertificateResponse             = xkmssdk.GetCertificateResponse
-	GetCustodianGroupResponse          = xkmssdk.GetCustodianGroupResponse
-	GetImportParametersRequest         = xkmssdk.GetImportParametersRequest
-	GetImportParametersResponse        = xkmssdk.GetImportParametersResponse
-	GetPIVCertificateRequest           = xkmssdk.GetPIVCertificateRequest
-	GetPIVCertificateResponse          = xkmssdk.GetPIVCertificateResponse
-	GetTenantResponse                  = xkmssdk.GetTenantResponse
-	GetTLSCertificateResponse          = xkmssdk.GetTLSCertificateResponse
-	GetUserResponse                    = xkmssdk.GetUserResponse
-	HealthResponse                     = xkmssdk.HealthResponse
-	ImportKeyRequest                   = xkmssdk.ImportKeyRequest
-	ImportKeyResponse                  = xkmssdk.ImportKeyResponse
-	InitStatusResponse                 = xkmssdk.InitStatusResponse
-	IsRevokedRequest                   = xkmssdk.IsRevokedRequest
-	IsRevokedResponse                  = xkmssdk.IsRevokedResponse
-	IssueAKCertificateRequest          = xkmssdk.IssueAKCertificateRequest
-	IssueAKCertificateResponse         = xkmssdk.IssueAKCertificateResponse
-	IssueCertificateRequest            = xkmssdk.IssueCertificateRequest
-	IssueCertificateResponse           = xkmssdk.IssueCertificateResponse
-	IssueEKCertificateRequest          = xkmssdk.IssueEKCertificateRequest
-	IssueEKCertificateResponse         = xkmssdk.IssueEKCertificateResponse
-	ListBackendsResponse               = xkmssdk.ListBackendsResponse
-	ListCertificatesResponse           = xkmssdk.ListCertificatesResponse
-	ListCustodianGroupsResponse        = xkmssdk.ListCustodianGroupsResponse
-	ListKeysResponse                   = xkmssdk.ListKeysResponse
-	ListOption                         = xkmssdk.ListOption
-	ListPIVSlotsRequest                = xkmssdk.ListPIVSlotsRequest
-	ListPIVSlotsResponse               = xkmssdk.ListPIVSlotsResponse
-	ListSharesResponse                 = xkmssdk.ListSharesResponse
-	ListTenantsResponse                = xkmssdk.ListTenantsResponse
-	ListUserCredentialsResponse        = xkmssdk.ListUserCredentialsResponse
-	ListUsersResponse                  = xkmssdk.ListUsersResponse
-	LockoutStatusResponse              = xkmssdk.LockoutStatusResponse
-	PasswordAddRequest                 = xkmssdk.PasswordAddRequest
-	PasswordAddResponse                = xkmssdk.PasswordAddResponse
-	PasswordDeleteRequest              = xkmssdk.PasswordDeleteRequest
-	PasswordGenerateRequest            = xkmssdk.PasswordGenerateRequest
-	PasswordGenerateResponse           = xkmssdk.PasswordGenerateResponse
-	PasswordGetRequest                 = xkmssdk.PasswordGetRequest
-	PasswordGetResponse                = xkmssdk.PasswordGetResponse
-	PasswordListRequest                = xkmssdk.PasswordListRequest
-	PasswordListResponse               = xkmssdk.PasswordListResponse
-	PasswordStoreSetAccessModeRequest  = xkmssdk.PasswordStoreSetAccessModeRequest
-	PasswordStoreStatusResponse        = xkmssdk.PasswordStoreStatusResponse
-	PasswordStoreUnlockRequest         = xkmssdk.PasswordStoreUnlockRequest
-	PasswordUpdateRequest              = xkmssdk.PasswordUpdateRequest
-	TPMPolicy                          = xkmssdk.TPMPolicy
-	TPMPolicyBranch                    = xkmssdk.TPMPolicyBranch
-	TPMPolicyCondition                 = xkmssdk.TPMPolicyCondition
-	TPMPolicyCreateRequest             = xkmssdk.TPMPolicyCreateRequest
-	TPMPolicyDescriptionRequest        = xkmssdk.TPMPolicyDescriptionRequest
-	TPMPolicyBranchVerification        = xkmssdk.TPMPolicyBranchVerification
-	TPMPolicyBranchSpecError           = xkmssdk.TPMPolicyBranchSpecError
-	TPMPolicyRequest                   = xkmssdk.TPMPolicyRequest
-	TPMPolicyListRequest               = xkmssdk.TPMPolicyListRequest
-	TPMPolicyListResponse              = xkmssdk.TPMPolicyListResponse
-	TPMPolicyDeleteRequest             = xkmssdk.TPMPolicyDeleteRequest
-	TPMPolicyVerifyResponse            = xkmssdk.TPMPolicyVerifyResponse
-	TPMPolicyObjectsResponse           = xkmssdk.TPMPolicyObjectsResponse
-	TPMPolicyAutoUnsealRequest         = xkmssdk.TPMPolicyAutoUnsealRequest
-	TPMObjectPolicyRequest             = xkmssdk.TPMObjectPolicyRequest
-	TPMObjectPolicyResponse            = xkmssdk.TPMObjectPolicyResponse
-	TPMAuthorityRotateRequest          = xkmssdk.TPMAuthorityRotateRequest
-	TPMAuthorityRotateResponse         = xkmssdk.TPMAuthorityRotateResponse
-	TenantTPMModeResponse              = xkmssdk.TenantTPMModeResponse
-	SetTenantTPMModeRequest            = xkmssdk.SetTenantTPMModeRequest
-	TenantVTPMStatusResponse           = xkmssdk.TenantVTPMStatusResponse
-	Protocol                           = xkmssdk.Protocol
-	RemoveCustodianMemberRequest       = xkmssdk.RemoveCustodianMemberRequest
-	ResetLockoutRequest                = xkmssdk.ResetLockoutRequest
-	RevokeCertificateRequest           = xkmssdk.RevokeCertificateRequest
-	RevokeCertificateResponse          = xkmssdk.RevokeCertificateResponse
-	RotateKeyRequest                   = xkmssdk.RotateKeyRequest
-	RotateKeyResponse                  = xkmssdk.RotateKeyResponse
-	SaveCertificateChainRequest        = xkmssdk.SaveCertificateChainRequest
-	SaveCertificateRequest             = xkmssdk.SaveCertificateRequest
-	SealRequest                        = xkmssdk.SealRequest
-	SealResponse                       = xkmssdk.SealResponse
-	SealStoreDeleteRequest             = xkmssdk.SealStoreDeleteRequest
-	SealStoreGetRequest                = xkmssdk.SealStoreGetRequest
-	SealStoreGetResponse               = xkmssdk.SealStoreGetResponse
-	SealStoreListResponse              = xkmssdk.SealStoreListResponse
-	SealStorePutRequest                = xkmssdk.SealStorePutRequest
-	SealStoreResealRequest             = xkmssdk.SealStoreResealRequest
-	SealStoreStatusResponse            = xkmssdk.SealStoreStatusResponse
-	SetSOPINRequest                    = xkmssdk.SetSOPINRequest
-	SetUserPINRequest                  = xkmssdk.SetUserPINRequest
-	ShareCollectionStatus              = xkmssdk.ShareCollectionStatus
-	SignCSRInitRequest                 = xkmssdk.SignCSRInitRequest
-	SignCSRInitResponse                = xkmssdk.SignCSRInitResponse
-	SignCSRRequest                     = xkmssdk.SignCSRRequest
-	SignCSRResponse                    = xkmssdk.SignCSRResponse
-	SignRequest                        = xkmssdk.SignRequest
-	SignResponse                       = xkmssdk.SignResponse
-	SignTCGCSRRequest                  = xkmssdk.SignTCGCSRRequest
-	SignTCGCSRResponse                 = xkmssdk.SignTCGCSRResponse
-	StorePIVCertificateRequest         = xkmssdk.StorePIVCertificateRequest
-	SubmitShareRequest                 = xkmssdk.SubmitShareRequest
-	SubmitShareResponse                = xkmssdk.SubmitShareResponse
-	TenantBarrierInitRequest           = xkmssdk.TenantBarrierInitRequest
-	TenantBarrierStatusResponse        = xkmssdk.TenantBarrierStatusResponse
-	TenantBarrierUnsealRequest         = xkmssdk.TenantBarrierUnsealRequest
-	UnwrapKeyByIDRequest               = xkmssdk.UnwrapKeyByIDRequest
-	UnwrapKeyByIDResponse              = xkmssdk.UnwrapKeyByIDResponse
-	UnwrapKeyRequest                   = xkmssdk.UnwrapKeyRequest
-	UnwrapKeyResponse                  = xkmssdk.UnwrapKeyResponse
-	UpdateTenantEntitlementsRequest    = xkmssdk.UpdateTenantEntitlementsRequest
-	UpdateTenantEntitlementsResponse   = xkmssdk.UpdateTenantEntitlementsResponse
-	UpdateTenantQuotasRequest          = xkmssdk.UpdateTenantQuotasRequest
-	UpdateTenantQuotasResponse         = xkmssdk.UpdateTenantQuotasResponse
-	VerifyRequest                      = xkmssdk.VerifyRequest
-	VerifyResponse                     = xkmssdk.VerifyResponse
-	VerifySOPINRequest                 = xkmssdk.VerifySOPINRequest
-	VerifyUserPINRequest               = xkmssdk.VerifyUserPINRequest
-	WrapKeyByIDRequest                 = xkmssdk.WrapKeyByIDRequest
-	WrapKeyByIDResponse                = xkmssdk.WrapKeyByIDResponse
-	WrapKeyRequest                     = xkmssdk.WrapKeyRequest
-	WrapKeyResponse                    = xkmssdk.WrapKeyResponse
-	XKMSServicer                       = xkmssdk.XKMSServicer
+	AttestKeyRequest                  = xkmssdk.AttestKeyRequest
+	AttestKeyResponse                 = xkmssdk.AttestKeyResponse
+	BackendConfig                     = xkmssdk.BackendConfig
+	BackendInfo                       = xkmssdk.BackendInfo
+	BeginAuthenticationRequest        = xkmssdk.BeginAuthenticationRequest
+	BeginAuthenticationResponse       = xkmssdk.BeginAuthenticationResponse
+	BeginRegistrationRequest          = xkmssdk.BeginRegistrationRequest
+	BeginRegistrationResponse         = xkmssdk.BeginRegistrationResponse
+	ChangeSOPINRequest                = xkmssdk.ChangeSOPINRequest
+	ChangeUserPINRequest              = xkmssdk.ChangeUserPINRequest
+	Client                            = xkmssdk.Client
+	CopyKeyRequest                    = xkmssdk.CopyKeyRequest
+	CopyKeyResponse                   = xkmssdk.CopyKeyResponse
+	CreateTenantRequest               = xkmssdk.CreateTenantRequest
+	CreateTenantResponse              = xkmssdk.CreateTenantResponse
+	CreateUserRequest                 = xkmssdk.CreateUserRequest
+	CredentialStrategyResponse        = xkmssdk.CredentialStrategyResponse
+	CredentialSubmitRequest           = xkmssdk.CredentialSubmitRequest
+	CredentialSubmitResponse          = xkmssdk.CredentialSubmitResponse
+	DecryptRequest                    = xkmssdk.DecryptRequest
+	DecryptResponse                   = xkmssdk.DecryptResponse
+	DeleteKeyResponse                 = xkmssdk.DeleteKeyResponse
+	DeletePIVCertificateRequest       = xkmssdk.DeletePIVCertificateRequest
+	DeriveKeyECDHRequest              = xkmssdk.DeriveKeyECDHRequest
+	DeriveKeyECDHResponse             = xkmssdk.DeriveKeyECDHResponse
+	DeriveKeyRequest                  = xkmssdk.DeriveKeyRequest
+	DeriveKeyResponse                 = xkmssdk.DeriveKeyResponse
+	EncryptAsymRequest                = xkmssdk.EncryptAsymRequest
+	EncryptAsymResponse               = xkmssdk.EncryptAsymResponse
+	EncryptRequest                    = xkmssdk.EncryptRequest
+	EncryptResponse                   = xkmssdk.EncryptResponse
+	EnrollDeviceRequest               = xkmssdk.EnrollDeviceRequest
+	EnrollDeviceResponse              = xkmssdk.EnrollDeviceResponse
+	ExportKeyMaterialRequest          = xkmssdk.ExportKeyMaterialRequest
+	ExportKeyMaterialResponse         = xkmssdk.ExportKeyMaterialResponse
+	ExportKeyRequest                  = xkmssdk.ExportKeyRequest
+	ExportKeyResponse                 = xkmssdk.ExportKeyResponse
+	FinishAuthenticationRequest       = xkmssdk.FinishAuthenticationRequest
+	FinishAuthenticationResponse      = xkmssdk.FinishAuthenticationResponse
+	FinishRegistrationRequest         = xkmssdk.FinishRegistrationRequest
+	FinishRegistrationResponse        = xkmssdk.FinishRegistrationResponse
+	GenerateCRLRequest                = xkmssdk.GenerateCRLRequest
+	GenerateCRLResponse               = xkmssdk.GenerateCRLResponse
+	GenerateKeyRequest                = xkmssdk.GenerateKeyRequest
+	GenerateKeyResponse               = xkmssdk.GenerateKeyResponse
+	GeneratePIVCSRRequest             = xkmssdk.GeneratePIVCSRRequest
+	GeneratePIVCSRResponse            = xkmssdk.GeneratePIVCSRResponse
+	GeneratePIVKeyRequest             = xkmssdk.GeneratePIVKeyRequest
+	GeneratePIVKeyResponse            = xkmssdk.GeneratePIVKeyResponse
+	GetCABundleRequest                = xkmssdk.GetCABundleRequest
+	GetCABundleResponse               = xkmssdk.GetCABundleResponse
+	GetCACertificateRequest           = xkmssdk.GetCACertificateRequest
+	GetCACertificateResponse          = xkmssdk.GetCACertificateResponse
+	GetCertificateChainResponse       = xkmssdk.GetCertificateChainResponse
+	GetCertificateResponse            = xkmssdk.GetCertificateResponse
+	GetImportParametersRequest        = xkmssdk.GetImportParametersRequest
+	GetImportParametersResponse       = xkmssdk.GetImportParametersResponse
+	GetPIVCertificateRequest          = xkmssdk.GetPIVCertificateRequest
+	GetPIVCertificateResponse         = xkmssdk.GetPIVCertificateResponse
+	GetTenantResponse                 = xkmssdk.GetTenantResponse
+	GetTLSCertificateResponse         = xkmssdk.GetTLSCertificateResponse
+	GetUserResponse                   = xkmssdk.GetUserResponse
+	HealthResponse                    = xkmssdk.HealthResponse
+	ImportKeyRequest                  = xkmssdk.ImportKeyRequest
+	ImportKeyResponse                 = xkmssdk.ImportKeyResponse
+	IsRevokedRequest                  = xkmssdk.IsRevokedRequest
+	IsRevokedResponse                 = xkmssdk.IsRevokedResponse
+	IssueAKCertificateRequest         = xkmssdk.IssueAKCertificateRequest
+	IssueAKCertificateResponse        = xkmssdk.IssueAKCertificateResponse
+	IssueCertificateRequest           = xkmssdk.IssueCertificateRequest
+	IssueCertificateResponse          = xkmssdk.IssueCertificateResponse
+	IssueEKCertificateRequest         = xkmssdk.IssueEKCertificateRequest
+	IssueEKCertificateResponse        = xkmssdk.IssueEKCertificateResponse
+	ListBackendsResponse              = xkmssdk.ListBackendsResponse
+	ListCertificatesResponse          = xkmssdk.ListCertificatesResponse
+	ListKeysResponse                  = xkmssdk.ListKeysResponse
+	ListOption                        = xkmssdk.ListOption
+	ListPIVSlotsRequest               = xkmssdk.ListPIVSlotsRequest
+	ListPIVSlotsResponse              = xkmssdk.ListPIVSlotsResponse
+	ListTenantsResponse               = xkmssdk.ListTenantsResponse
+	ListUserCredentialsResponse       = xkmssdk.ListUserCredentialsResponse
+	ListUsersResponse                 = xkmssdk.ListUsersResponse
+	LockoutStatusResponse             = xkmssdk.LockoutStatusResponse
+	PasswordAddRequest                = xkmssdk.PasswordAddRequest
+	PasswordAddResponse               = xkmssdk.PasswordAddResponse
+	PasswordDeleteRequest             = xkmssdk.PasswordDeleteRequest
+	PasswordGenerateRequest           = xkmssdk.PasswordGenerateRequest
+	PasswordGenerateResponse          = xkmssdk.PasswordGenerateResponse
+	PasswordGetRequest                = xkmssdk.PasswordGetRequest
+	PasswordGetResponse               = xkmssdk.PasswordGetResponse
+	PasswordListRequest               = xkmssdk.PasswordListRequest
+	PasswordListResponse              = xkmssdk.PasswordListResponse
+	PasswordStoreSetAccessModeRequest = xkmssdk.PasswordStoreSetAccessModeRequest
+	PasswordStoreStatusResponse       = xkmssdk.PasswordStoreStatusResponse
+	PasswordStoreUnlockRequest        = xkmssdk.PasswordStoreUnlockRequest
+	PasswordUpdateRequest             = xkmssdk.PasswordUpdateRequest
+	TPMPolicy                         = xkmssdk.TPMPolicy
+	TPMPolicyBranch                   = xkmssdk.TPMPolicyBranch
+	TPMPolicyCondition                = xkmssdk.TPMPolicyCondition
+	TPMPolicyCreateRequest            = xkmssdk.TPMPolicyCreateRequest
+	TPMPolicyDescriptionRequest       = xkmssdk.TPMPolicyDescriptionRequest
+	TPMPolicyBranchVerification       = xkmssdk.TPMPolicyBranchVerification
+	TPMPolicyBranchSpecError          = xkmssdk.TPMPolicyBranchSpecError
+	TPMPolicyRequest                  = xkmssdk.TPMPolicyRequest
+	TPMPolicyListRequest              = xkmssdk.TPMPolicyListRequest
+	TPMPolicyListResponse             = xkmssdk.TPMPolicyListResponse
+	TPMPolicyDeleteRequest            = xkmssdk.TPMPolicyDeleteRequest
+	TPMPolicyVerifyResponse           = xkmssdk.TPMPolicyVerifyResponse
+	TPMPolicyObjectsResponse          = xkmssdk.TPMPolicyObjectsResponse
+	TPMPolicyAutoUnsealRequest        = xkmssdk.TPMPolicyAutoUnsealRequest
+	TPMObjectPolicyRequest            = xkmssdk.TPMObjectPolicyRequest
+	TPMObjectPolicyResponse           = xkmssdk.TPMObjectPolicyResponse
+	TPMAuthorityRotateRequest         = xkmssdk.TPMAuthorityRotateRequest
+	TPMAuthorityRotateResponse        = xkmssdk.TPMAuthorityRotateResponse
+	TenantTPMModeResponse             = xkmssdk.TenantTPMModeResponse
+	SetTenantTPMModeRequest           = xkmssdk.SetTenantTPMModeRequest
+	TenantVTPMStatusResponse          = xkmssdk.TenantVTPMStatusResponse
+	Protocol                          = xkmssdk.Protocol
+	ResetLockoutRequest               = xkmssdk.ResetLockoutRequest
+	RevokeCertificateRequest          = xkmssdk.RevokeCertificateRequest
+	RevokeCertificateResponse         = xkmssdk.RevokeCertificateResponse
+	RotateKeyRequest                  = xkmssdk.RotateKeyRequest
+	RotateKeyResponse                 = xkmssdk.RotateKeyResponse
+	SaveCertificateChainRequest       = xkmssdk.SaveCertificateChainRequest
+	SaveCertificateRequest            = xkmssdk.SaveCertificateRequest
+	SealRequest                       = xkmssdk.SealRequest
+	SealResponse                      = xkmssdk.SealResponse
+	SealStoreDeleteRequest            = xkmssdk.SealStoreDeleteRequest
+	SealStoreGetRequest               = xkmssdk.SealStoreGetRequest
+	SealStoreGetResponse              = xkmssdk.SealStoreGetResponse
+	SealStoreListResponse             = xkmssdk.SealStoreListResponse
+	SealStorePutRequest               = xkmssdk.SealStorePutRequest
+	SealStoreResealRequest            = xkmssdk.SealStoreResealRequest
+	SealStoreStatusResponse           = xkmssdk.SealStoreStatusResponse
+	SetSOPINRequest                   = xkmssdk.SetSOPINRequest
+	SetUserPINRequest                 = xkmssdk.SetUserPINRequest
+	SignCSRRequest                    = xkmssdk.SignCSRRequest
+	SignCSRResponse                   = xkmssdk.SignCSRResponse
+	SignRequest                       = xkmssdk.SignRequest
+	SignResponse                      = xkmssdk.SignResponse
+	SignTCGCSRRequest                 = xkmssdk.SignTCGCSRRequest
+	SignTCGCSRResponse                = xkmssdk.SignTCGCSRResponse
+	StorePIVCertificateRequest        = xkmssdk.StorePIVCertificateRequest
+	UnwrapKeyByIDRequest              = xkmssdk.UnwrapKeyByIDRequest
+	UnwrapKeyByIDResponse             = xkmssdk.UnwrapKeyByIDResponse
+	UnwrapKeyRequest                  = xkmssdk.UnwrapKeyRequest
+	UnwrapKeyResponse                 = xkmssdk.UnwrapKeyResponse
+	UpdateTenantEntitlementsRequest   = xkmssdk.UpdateTenantEntitlementsRequest
+	UpdateTenantEntitlementsResponse  = xkmssdk.UpdateTenantEntitlementsResponse
+	UpdateTenantQuotasRequest         = xkmssdk.UpdateTenantQuotasRequest
+	UpdateTenantQuotasResponse        = xkmssdk.UpdateTenantQuotasResponse
+	VerifyRequest                     = xkmssdk.VerifyRequest
+	VerifyResponse                    = xkmssdk.VerifyResponse
+	VerifySOPINRequest                = xkmssdk.VerifySOPINRequest
+	VerifyUserPINRequest              = xkmssdk.VerifyUserPINRequest
+	WrapKeyByIDRequest                = xkmssdk.WrapKeyByIDRequest
+	WrapKeyByIDResponse               = xkmssdk.WrapKeyByIDResponse
+	WrapKeyRequest                    = xkmssdk.WrapKeyRequest
+	WrapKeyResponse                   = xkmssdk.WrapKeyResponse
+	XKMSServicer                      = xkmssdk.XKMSServicer
 )
 
 const (

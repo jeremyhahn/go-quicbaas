@@ -45,9 +45,13 @@ import (
 // issues under (test/integration/certfixture/topology.json).
 const fixtureTrustDomain = "quicbaas.integration"
 
-// fixtureAdminSPIFFE is the tenant SAN the fixture's admin client certificate
-// carries: tenant "system", user admin@integration.test.
-const fixtureAdminSPIFFE = "spiffe://" + fixtureTrustDomain + "/tenant/system/user/admin@integration.test"
+// fixtureAdminSPIFFE is the SAN the fixture's admin client certificate
+// carries: tenant "system" (the trust domain), user admin.
+const fixtureAdminSPIFFE = "spiffe://system/user/admin"
+
+// fixtureAdminTenant is the first Subject OU the admin certificate pairs with
+// that SAN; go-qrdb names a tenant only when the two agree.
+const fixtureAdminTenant = "system"
 
 // testCA signs the server and client certificates of one mTLS test.
 type testCA struct {
@@ -95,13 +99,13 @@ func (ca *testCA) issue(t *testing.T, tmpl *x509.Certificate) tls.Certificate {
 }
 
 // clientCert issues a client certificate shaped like the fixture's admin
-// certificate, naming spiffeURI as its tenant SAN.
-func (ca *testCA) clientCert(t *testing.T, spiffeURI string) tls.Certificate {
+// certificate, naming spiffeURI as its SPIFFE SAN and ou as its first OU.
+func (ca *testCA) clientCert(t *testing.T, spiffeURI, ou string) tls.Certificate {
 	t.Helper()
 	uri, err := url.Parse(spiffeURI)
 	require.NoError(t, err)
 	return ca.issue(t, &x509.Certificate{
-		Subject:        pkix.Name{CommonName: "admin@integration.test"},
+		Subject:        pkix.Name{CommonName: "admin@integration.test", OrganizationalUnit: []string{ou}},
 		EmailAddresses: []string{"admin@integration.test"},
 		URIs:           []*url.URL{uri},
 		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -170,7 +174,7 @@ func schedulerModule(t *testing.T) (m *Module, systemJob, tenantBJob uint64) {
 func TestModule_UnifiedGRPC_FixtureAdminCertBindsItsTenant(t *testing.T) {
 	m, systemJob, tenantBJob := schedulerModule(t)
 	ca := newTestCA(t)
-	admin := ca.clientCert(t, fixtureAdminSPIFFE)
+	admin := ca.clientCert(t, fixtureAdminSPIFFE, fixtureAdminTenant)
 	client := pb.NewSchedulerServiceClient(startMTLSModule(t, m, ca, &admin))
 	ctx := context.Background()
 
@@ -195,12 +199,12 @@ func TestModule_UnifiedGRPC_CertlessCallIsRefused(t *testing.T) {
 	assert.Contains(t, status.Convert(err).Message(), "no tenant is bound to the request")
 }
 
-// A verified certificate whose tenant SAN names another trust domain is
-// refused by qrdb's rule; the call never reaches the service.
+// A verified certificate whose SPIFFE SAN names a trust domain other than the
+// tenant its OU names is refused by qrdb's rule; the call never reaches the service.
 func TestModule_UnifiedGRPC_ForeignTrustDomainCertIsRefused(t *testing.T) {
 	m, systemJob, _ := schedulerModule(t)
 	ca := newTestCA(t)
-	foreign := ca.clientCert(t, "spiffe://other.example/tenant/system/user/admin@integration.test")
+	foreign := ca.clientCert(t, "spiffe://other.example/user/admin", fixtureAdminTenant)
 	client := pb.NewSchedulerServiceClient(startMTLSModule(t, m, ca, &foreign))
 
 	_, err := client.GetJob(context.Background(), &pb.GetJobRequest{JobId: systemJob})
@@ -213,7 +217,7 @@ func TestModule_UnifiedGRPC_ForeignTrustDomainCertIsRefused(t *testing.T) {
 func TestModule_UnifiedGRPC_AuthenticatedTenantIsNotReplacedByCert(t *testing.T) {
 	m, systemJob, tenantBJob := schedulerModule(t)
 	ca := newTestCA(t)
-	admin := ca.clientCert(t, fixtureAdminSPIFFE)
+	admin := ca.clientCert(t, fixtureAdminSPIFFE, fixtureAdminTenant)
 	client := pb.NewSchedulerServiceClient(startMTLSModule(t, m, ca, &admin, qrdbAuthenticated("tenant-b")))
 	ctx := context.Background()
 
@@ -234,7 +238,7 @@ func TestModule_UnifiedGRPC_UnpinnedModuleBindsNoCertTenant(t *testing.T) {
 	}, testLogger(t))
 	require.NoError(t, err)
 	ca := newTestCA(t)
-	admin := ca.clientCert(t, fixtureAdminSPIFFE)
+	admin := ca.clientCert(t, fixtureAdminSPIFFE, fixtureAdminTenant)
 	client := pb.NewSchedulerServiceClient(startMTLSModule(t, m, ca, &admin))
 
 	_, err = client.GetJob(context.Background(), &pb.GetJobRequest{JobId: systemJob})

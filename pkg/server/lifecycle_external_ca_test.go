@@ -26,17 +26,24 @@ import (
 )
 
 // externalCAMock is a controllable TrustedCA for issueTLSCertFromExternalCA.
-// Only IssueCertificate and ServerTLSConfig are exercised; every other method
-// is the embedded nil interface and must not be called.
+// Only IssueCertificate, the keystore copy of the issued leaf (CACertificate,
+// KeyStore) and ServerTLSConfig are exercised; every other method is the
+// embedded nil interface and must not be called.
 type externalCAMock struct {
 	xkmsca.TrustedCA
 	issueErr  error
 	serverCfg *tls.Config
 	serverErr error
 	certs     xkmssdk.CertStore
+	keys      *sanKeyStoreMock
+	caCert    *x509.Certificate
 }
 
 func (m *externalCAMock) CertStore() xkmssdk.CertStore { return m.certs }
+
+func (m *externalCAMock) KeyStore() xkmssdk.ServiceBackend { return m.keys }
+
+func (m *externalCAMock) CACertificate() (*x509.Certificate, error) { return m.caCert, nil }
 
 func (m *externalCAMock) IssueCertificate(_ context.Context, _ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueErr != nil {
@@ -101,13 +108,21 @@ func TestIssueTLSCertFromExternalCA_Issues(t *testing.T) {
 	s.config.Server.Host = "127.0.0.1"
 	s.config.CA.RootOrganization = "Test Org"
 	s.config.CA.DefaultValidityDays = 365
-	s.xkmsCA = &externalCAMock{serverCfg: &tls.Config{}}
+	keys := newSANKeyStoreMock()
+	s.xkmsCA = &externalCAMock{
+		serverCfg: &tls.Config{},
+		keys:      keys,
+		caCert:    newSANTestLeaf(t, "Test Root CA", &xkmssdk.TrustedCASubjectAlternativeNames{}),
+	}
 
 	if err := s.issueTLSCertFromExternalCA(); err != nil {
 		t.Fatalf("issueTLSCertFromExternalCA: %v", err)
 	}
 	if s.tlsConfig == nil {
 		t.Fatal("tlsConfig not set")
+	}
+	if len(keys.chains) != 1 {
+		t.Fatalf("issued leaf not copied into the CA keystore: %v", keys.writes)
 	}
 	if s.tlsConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatalf("expected TLS 1.3 minimum")
@@ -139,11 +154,15 @@ func TestIssueTLSCertFromExternalCA_AlreadyExistsRSA(t *testing.T) {
 	}
 	s.config.CA.RootKeyAlgorithm = "RSA"
 	certs := newSANCertStoreMock(t)
-	certs.certs["localhost"] = newSANTestLeaf(t, "localhost", s.serverCertSANs())
+	existing := newSANTestLeaf(t, "localhost", s.serverCertSANs())
+	certs.certs["localhost"] = existing
+	keys := newSANKeyStoreMock()
 	s.xkmsCA = &externalCAMock{
 		issueErr:  xkmssdk.ErrCertificateAlreadyExists,
 		serverCfg: &tls.Config{},
 		certs:     certs,
+		keys:      keys,
+		caCert:    newSANTestLeaf(t, "Test Root CA", &xkmssdk.TrustedCASubjectAlternativeNames{}),
 	}
 
 	if err := s.issueTLSCertFromExternalCA(); err != nil {
@@ -151,6 +170,9 @@ func TestIssueTLSCertFromExternalCA_AlreadyExistsRSA(t *testing.T) {
 	}
 	if s.tlsConfig == nil {
 		t.Fatal("tlsConfig not set")
+	}
+	if keys.certs["localhost"] != existing {
+		t.Fatal("existing server certificate was not synced into the keystore")
 	}
 }
 

@@ -68,7 +68,7 @@ func TestSealedWindowProbe_DataPlaneBarrierStates(t *testing.T) {
 
 	// Initialize (deferred software strategy unseals on init).
 	ctx := context.Background()
-	initCreds, err := qrdbsdk.CredentialsFor([]byte("test-passphrase"))
+	initCreds, err := qrdbsdk.CredentialsFor(context.Background(), []byte("test-passphrase"))
 	require.NoError(t, err)
 	defer initCreds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, initCreds))
@@ -79,7 +79,7 @@ func TestSealedWindowProbe_DataPlaneBarrierStates(t *testing.T) {
 	assert.True(t, probe.IsSealed(), "initialized+sealed must gate")
 
 	// Unseal: pass-through again.
-	unsealCreds, err := qrdbsdk.CredentialsFor([]byte("test-passphrase"))
+	unsealCreds, err := qrdbsdk.CredentialsFor(context.Background(), []byte("test-passphrase"))
 	require.NoError(t, err)
 	defer unsealCreds.Secret.Destroy()
 	require.NoError(t, barrier.Unseal(ctx, unsealCreds))
@@ -156,12 +156,6 @@ func TestSealedServicerProxies_FailClosedWhileSealed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, health)
 	assert.Equal(t, "sealed", health.Status)
-}
-
-// TestConstantSealedProbe asserts the sealed-phase listeners' probe pins
-// sealed for the listener's whole lifetime.
-func TestConstantSealedProbe(t *testing.T) {
-	assert.True(t, constantSealedProbe{}.IsSealed())
 }
 
 // TestSealedWindowBootError_Unwrap asserts error wrapping semantics.

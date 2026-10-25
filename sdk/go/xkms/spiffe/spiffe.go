@@ -13,7 +13,7 @@
 
 // Package spiffe re-exports go-xkms's sdk/go/spiffe: the SPIFFE ID builder and
 // validator (any trust domain and path, per the SPIFFE-ID specification) and
-// the tenant-scoped identity shape spiffe://<td>/tenant/<t>/<kind>/<name> the
+// the tenant-scoped identity shape spiffe://<t>/<kind>/<name> the
 // stack's CA and mTLS login share.
 //
 // Every name here is an alias, never a wrapper. Consumers import this package
@@ -36,7 +36,8 @@ type (
 
 // Tenant-scoped identities.
 type (
-	// ID is the tenant-scoped identity spiffe://<td>/tenant/<t>/<kind>/<name>.
+	// ID is a tenant's principal spiffe://<tenant>/<kind>/<name>: the tenant
+	// is the SPIFFE trust domain.
 	ID = xkmsspiffe.ID
 )
 
@@ -57,7 +58,8 @@ var (
 	// ValidatePathPrefix validates a path prefix used to scope issuance.
 	ValidatePathPrefix = xkmsspiffe.ValidatePathPrefix
 
-	// BuildURI builds the tenant-scoped SPIFFE URI.
+	// BuildURI builds a tenant principal's SPIFFE URI under a cluster trust
+	// domain the tenant must not equal.
 	BuildURI = xkmsspiffe.BuildURI
 
 	// ParseID extracts a tenant-scoped identity from a URI.
@@ -81,7 +83,6 @@ var (
 	ErrTrustDomainEmpty      = xkmsspiffe.ErrTrustDomainEmpty
 	ErrTrustDomainCharacters = xkmsspiffe.ErrTrustDomainCharacters
 	ErrTrustDomainTooLong    = xkmsspiffe.ErrTrustDomainTooLong
-	ErrTrustDomainMismatch   = xkmsspiffe.ErrTrustDomainMismatch
 	ErrSchemeInvalid         = xkmsspiffe.ErrSchemeInvalid
 	ErrSegmentEmpty          = xkmsspiffe.ErrSegmentEmpty
 	ErrSegmentDotted         = xkmsspiffe.ErrSegmentDotted
@@ -93,4 +94,7 @@ var (
 	ErrKindInvalid           = xkmsspiffe.ErrKindInvalid
 	ErrNameEmpty             = xkmsspiffe.ErrNameEmpty
 	ErrNoTenantSPIFFEID      = xkmsspiffe.ErrNoTenantSPIFFEID
+
+	ErrTenantIsClusterTrustDomain = xkmsspiffe.ErrTenantIsClusterTrustDomain
+	ErrAmbiguousTenant            = xkmsspiffe.ErrAmbiguousTenant
 )

@@ -28,8 +28,8 @@ const storedPolicyJSON = `{
         "effect": "allow",
         "actions": ["read"],
         "resources": ["docs/*"],
-        "when": [{"expression": "subject.attributes.dept == 'eng'"}],
-        "unless": [{"expression": "subject.attributes.level == 'guest'"}]
+        "when": [{"expression": "subject.attributes.dept == \"eng\""}],
+        "unless": [{"expression": "subject.attributes.level == \"guest\""}]
       }
     ]
   }
@@ -70,8 +70,8 @@ func TestStoredPolicy_LoadsAndEvaluates(t *testing.T) {
 				Effect:    iam.EffectAllow,
 				Actions:   []string{"read"},
 				Resources: []string{"docs/*"},
-				When:      []iam.Condition{{Expression: "subject.attributes.dept == 'eng'"}},
-				Unless:    []iam.Condition{{Expression: "subject.attributes.level == 'guest'"}},
+				When:      []iam.Condition{{Expression: `subject.attributes.dept == "eng"`}},
+				Unless:    []iam.Condition{{Expression: `subject.attributes.level == "guest"`}},
 			}},
 		},
 	}

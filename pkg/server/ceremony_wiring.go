@@ -78,9 +78,12 @@ type CeremonyServices struct {
 // Once the operator completes the ceremony and unseals the data plane, this
 // bootstrap barrier remains in memory and is discarded on next restart.
 //
+// trustDomain is the SPIFFE trust domain the node's mTLS authenticator pins;
+// qrdb refuses every ceremony issuance until one is installed.
+//
 // Returns a CeremonyServices bundle on success, or a CeremonyWiringError on
 // any construction failure.
-func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*CeremonyServices, error) {
+func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir, trustDomain string) (*CeremonyServices, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -122,10 +125,11 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 	ceremonyCfg := &qrdbsdk.CeremonyConfig{
 		DataDir: dataDir,
 	}
-	ceremonyCore, err := qrdbsdk.NewCeremonyService(ceremonyCfg, barrier, credCore, logger)
+	ceremonyCore, err := qrdbsdk.NewCeremonyService(ceremonyCfg, barrier, logger)
 	if err != nil {
 		return nil, &CeremonyWiringError{Stage: "ceremony-core", Cause: err}
 	}
+	ceremonyCore.SetTrustDomain(trustDomain)
 
 	// 4. Wrap each in the SDK service-layer types that the BaaS embedded
 	//    transport consumes via baasTransport.barrierSvc / .ceremonySvc /
@@ -158,7 +162,10 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir string) (*Cerem
 // qrdbembedded.WithPINBackend is what makes the transport-level barrier
 // verbs honor the SOPin / UserPin fields of BarrierInitializeRequest (and
 // verify the SO PIN on rekey / recovery-generate) instead of silently
-// dropping them. A nil pinBackend preserves the PIN-less dev behavior. All
+// dropping them. A nil pinBackend preserves the PIN-less dev behavior. ca is
+// the CeremonyCA the transport hands `qrdb init` (CeremonyInitialize takes
+// its CA from the transport, not from the core's SetCA); nil leaves the
+// ceremony on the BYO-TLS path. All
 // construction failures are returned as CeremonyWiringError with a stage
 // identifying the failing step.
 func newBootstrapCeremonyClient(
@@ -166,6 +173,7 @@ func newBootstrapCeremonyClient(
 	admin qrdbsdk.AdminServicer,
 	cs *CeremonyServices,
 	pinBackend qrdbsdk.PINBackend,
+	ca qrdbsdk.CeremonyCA,
 ) (*qrdbsdk.Client, error) {
 	if cs == nil || cs.Barrier == nil || cs.Ceremony == nil || cs.Credential == nil {
 		return nil, &CeremonyWiringError{Stage: "bootstrap-client services"}
@@ -178,6 +186,9 @@ func newBootstrapCeremonyClient(
 	}
 	if pinBackend != nil {
 		opts = append(opts, qrdbembedded.WithPINBackend(pinBackend))
+	}
+	if ca != nil {
+		opts = append(opts, qrdbembedded.WithCeremonyCA(ca))
 	}
 	tp, err := qrdbembedded.New(kv, admin, opts...)
 	if err != nil {

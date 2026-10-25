@@ -75,14 +75,15 @@ func (s *Server) runBootstrapSystem(ctx context.Context, deps *qrdbsdk.FirstBoot
 		SeparationOfDuties: deps.SeparationOfDuties,
 		AdminCSRPEM:        deps.AdminCSRPEM,
 	}, qrdbsdk.BootstrapDependencies{
-		Tenants:  deps.Tenants,
-		Users:    deps.Users,
-		Roles:    deps.Roles,
-		CA:       deps.CA,
-		Signer:   deps.Signer,
-		Binder:   deps.Binder,
-		Barriers: registry,
-		Logger:   deps.Logger,
+		Tenants:     deps.Tenants,
+		Users:       deps.Users,
+		Roles:       deps.Roles,
+		CA:          deps.CA,
+		Signer:      deps.Signer,
+		Binder:      deps.Binder,
+		Barriers:    registry,
+		Logger:      deps.Logger,
+		TrustDomain: deps.TrustDomain,
 	})
 	if err != nil {
 		return nil, &FirstBootBootstrapError{Op: "bootstrap.BootstrapSystem", Cause: err}

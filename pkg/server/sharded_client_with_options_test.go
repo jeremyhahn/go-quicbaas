@@ -42,7 +42,7 @@ func newTestNodeBackedClient(t *testing.T) *ShardedClient {
 	// when the KV data plane runs in memory.
 	qcfg.Raft.DataDir = t.TempDir()
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
 	require.NoError(t, err, "standalone node must start for ForShard tests")

@@ -31,6 +31,7 @@ import (
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -138,7 +139,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 		qrdbBackend = "memory"
 	}
 	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: qrdbBackend},
+		{Name: "default", Backend: qrdbBackend},
 	}
 
 	// ------------------------------------------------------------------ //
@@ -193,7 +194,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	if dataDir != "" && len(qcfg.Storage.VolumePools) == 0 {
 		poolPath := filepath.Join(dataDir, defaultVolumePoolDirName)
 		qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{
-			{Name: "default", Paths: []string{poolPath}, Strategy: "round_robin"},
+			{Name: "default", Path: poolPath},
 		}
 	}
 
@@ -685,10 +686,16 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		// (pkg/api/rest NewHostServer) around the resolved XKMSService when
 		// these options are supplied instead.
 		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
+		// The node client carries no identity, so the module's storage --
+		// opening its feature databases and every later DAO call -- runs as
+		// the node's service principal (qrdbservice). Without it a node with
+		// require_authz refuses that storage as unauthenticated and the
+		// module composes its DAO-backed features off (go-quicbaas#1727).
+		xkmssdk.WithServiceModuleServiceContext(s.ServiceContext),
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		xkmssdk.WithServiceModuleSession(s.loginSessionModuleOptions()),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
 		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
 		// so it has to be told that the operator accepted unattested login.
@@ -700,15 +707,14 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "new xkms module", Cause: err}
 	}
+	s.xkmsModule = xkmsModule
 
 	// Route precedence: the composer decides who owns a path when both
 	// modules carry it (see apimodule.XKMSRouteExclusions). QuicBaaS owns
-	// GET /api/v1/cluster/status, which go-xkms registers too: the quicbaas
-	// handler reports every shard the composed node hosts, in the shape
-	// quicbaas's SDK clients and UI decode; and the /api/v1/tenants/ control
-	// plane. go-xkms no longer registers /api/v1/barrier/* in a host
-	// composition, so quicbaas's barrier surface (go-quicbaas#405) needs no
-	// exclusion.
+	// the /api/v1/tenants/ control plane, which go-xkms registers too. go-xkms
+	// v0.55 registers no /api/v1/barrier/*, /api/v1/cluster/ or
+	// /api/v1/backups/ routes in a host composition, so quicbaas's barrier
+	// (go-quicbaas#405), cluster and backup surfaces need no exclusion.
 	hostedXKMSModule, err := apimodule.NewRouteExcludingModule(xkmsModule, apimodule.XKMSRouteExclusions)
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
@@ -896,8 +902,16 @@ func (s *Server) initStandaloneQRDBNode() error {
 		// Record the node's composed authorizer (returned unchanged) for the
 		// REST barrier scope authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
-		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
+		qrdbnode.WithAuthenticators(qrdbsdk.ChainAfterMTLS, newPlatformBearerAuthenticator(s)),
 	}
+
+	// go-quicbaas's own embedded calls (arbitration stores, CAS, schedulers)
+	// run as the least-grant service principal (pkg/qrdbservice).
+	principal, err := qrdbservice.NodeOption()
+	if err != nil {
+		return err
+	}
+	nodeOpts = append(nodeOpts, principal)
 
 	// Inject the late-bound OIDC session issuer so a successful unified login
 	// through the node's in-process ceremony mints an OIDC bearer. The issuer
@@ -1102,8 +1116,16 @@ func (s *Server) initClusteredQRDBNode() error {
 		// Record the node's composed authorizer (returned unchanged) for the
 		// REST barrier scope authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
-		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
+		qrdbnode.WithAuthenticators(qrdbsdk.ChainAfterMTLS, newPlatformBearerAuthenticator(s)),
 	}
+
+	// go-quicbaas's own embedded calls (arbitration stores, CAS, schedulers)
+	// run as the least-grant service principal (pkg/qrdbservice).
+	principal, err := qrdbservice.NodeOption()
+	if err != nil {
+		return err
+	}
+	nodeOpts = append(nodeOpts, principal)
 
 	// Inject the late-bound OIDC session issuer (see initStandaloneQRDBNode).
 	s.buildLoginSessionIssuer()
@@ -1287,6 +1309,7 @@ func newNodeBackedShardedClient(node *qrdbnode.Node) *ShardedClient {
 		factory:    newTransportFactory(embeddedCfg, nil, nil),
 		nodeClient: node.Client(),
 		nodeOwned:  true,
+		binder:     node,
 	}
 }
 
@@ -1344,9 +1367,9 @@ func (s *Server) schedulerClustering() *service.SchedulerClustering {
 	}
 
 	clustering.Leader = service.NewQRDBLeaderChecker(
-		client, qbshards.PlatformShardID, s.config.Raft.NodeID)
-	clustering.Claims = client.Transaction()
-	clustering.Marks = client.KV()
+		s.serviceCluster(client.Cluster()), qbshards.PlatformShardID, s.config.Raft.NodeID)
+	clustering.Claims = s.serviceTransaction(client.Transaction())
+	clustering.Marks = s.serviceKV(client.KV())
 	return clustering
 }
 
@@ -1377,6 +1400,19 @@ func (s *Server) pivLoginModuleOptions() *xkmssdk.ServiceModulePIVLoginOptions {
 		Enabled:         s.pivLoginModuleEnabled(),
 		TrustedIssuers:  s.config.IAM.PIVLogin.TrustedIssuers,
 		AllowUnattested: s.config.IAM.PIVLogin.AllowUnattested,
+		// The PIV login reads the certificate's tenant under this pin,
+		// the same SPIFFE trust domain the embedded qrdb node enforces.
+		TrustDomain: s.config.IAM.SPIFFETrustDomain,
+	}
+}
+
+// loginSessionModuleOptions builds the session options of the composed xkms
+// module. Only the login rate comes from quicbaas config
+// (iam.login_rate_per_min); zero keeps go-xkms's default, as does every other
+// field.
+func (s *Server) loginSessionModuleOptions() *xkmssdk.ServiceModuleSessionOptions {
+	return &xkmssdk.ServiceModuleSessionOptions{
+		LoginRatePerMin: s.config.IAM.LoginRatePerMin,
 	}
 }
 

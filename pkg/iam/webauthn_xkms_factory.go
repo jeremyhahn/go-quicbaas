@@ -33,6 +33,7 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 )
 
 // WebAuthnFactoryConfig holds the relying-party configuration used by the
@@ -77,6 +78,14 @@ type WebAuthnFactoryParams struct {
 	// factory does not take ownership of the client lifecycle.
 	// Required.
 	QRDB *qrdbsdk.Client
+
+	// Service binds go-quicbaas's service principal (pkg/qrdbservice) to the
+	// credential store's KV and index calls when QRDB is the embedded node's
+	// client, whose transport refuses a call with no identity. go-qrdb
+	// registers the credential DAO's indexes with a context of its own, so
+	// only a bound store lets ServiceFor build. Nil when QRDB is a remote
+	// client, which carries the server's own mTLS identity.
+	Service qrdbservice.Binder
 
 	// AttestationRecorder resolves the node's trusted-server attestation
 	// recorder for the fido2 write-through. Required: without it a completed
@@ -490,15 +499,28 @@ func (f *WebAuthnServiceFactory) tenantStores(tenantID string) (xkmswebauthn.Use
 	if f == nil || f.params.QRDB == nil {
 		return nil, nil, &WebAuthnFactoryConfigError{Field: "QRDB"}
 	}
+	store, err := f.credentialKVStore()
+	if err != nil {
+		return nil, nil, err
+	}
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    f.params.QRDB.Users(),
-		KV:       f.params.QRDB.KV(),
-		TenantID: tenantID,
+		Users:      webAuthnAccountUsers(f.params.QRDB.Users(), f.params.Service, tenantID),
+		DAOFactory: xkmssdk.NewStoreDAOFactory(store),
+		TenantID:   tenantID,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return users, creds, nil
+}
+
+// credentialKVStore is the store behind the credential DAO: bound to the
+// service principal when Service is set, the client's own store otherwise.
+func (f *WebAuthnServiceFactory) credentialKVStore() (qrdbsdk.KVStore, error) {
+	if f.params.Service == nil {
+		return f.params.QRDB.KVStore(), nil
+	}
+	return qrdbservice.KVStore(f.params.Service, f.params.QRDB)
 }
 
 // newFactorWriteThrough is THE construction path for the qrdb fido2

@@ -33,20 +33,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Barrier_BarrierInitialize_FullMethodName         = "/quicbaas.barrier.v1.Barrier/BarrierInitialize"
-	Barrier_BarrierUnseal_FullMethodName             = "/quicbaas.barrier.v1.Barrier/BarrierUnseal"
-	Barrier_BarrierSeal_FullMethodName               = "/quicbaas.barrier.v1.Barrier/BarrierSeal"
-	Barrier_BarrierStatus_FullMethodName             = "/quicbaas.barrier.v1.Barrier/BarrierStatus"
-	Barrier_BarrierShamirInitialize_FullMethodName   = "/quicbaas.barrier.v1.Barrier/BarrierShamirInitialize"
-	Barrier_BarrierShamirUnsealShare_FullMethodName  = "/quicbaas.barrier.v1.Barrier/BarrierShamirUnsealShare"
-	Barrier_BarrierShamirUnsealShares_FullMethodName = "/quicbaas.barrier.v1.Barrier/BarrierShamirUnsealShares"
-	Barrier_BarrierRekey_FullMethodName              = "/quicbaas.barrier.v1.Barrier/BarrierRekey"
-	Barrier_BarrierRecoveryGenerate_FullMethodName   = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryGenerate"
-	Barrier_BarrierRecoveryRecover_FullMethodName    = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryRecover"
-	Barrier_BarrierRecoveryDelete_FullMethodName     = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryDelete"
-	Barrier_BarrierRecoveryStatus_FullMethodName     = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryStatus"
-	Barrier_BarrierRootToken_FullMethodName          = "/quicbaas.barrier.v1.Barrier/BarrierRootToken"
-	Barrier_BarrierEnableEncryption_FullMethodName   = "/quicbaas.barrier.v1.Barrier/BarrierEnableEncryption"
+	Barrier_BarrierInitialize_FullMethodName       = "/quicbaas.barrier.v1.Barrier/BarrierInitialize"
+	Barrier_BarrierUnseal_FullMethodName           = "/quicbaas.barrier.v1.Barrier/BarrierUnseal"
+	Barrier_BarrierSeal_FullMethodName             = "/quicbaas.barrier.v1.Barrier/BarrierSeal"
+	Barrier_BarrierStatus_FullMethodName           = "/quicbaas.barrier.v1.Barrier/BarrierStatus"
+	Barrier_BarrierShamirInitialize_FullMethodName = "/quicbaas.barrier.v1.Barrier/BarrierShamirInitialize"
+	Barrier_BarrierRecoveryGenerate_FullMethodName = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryGenerate"
+	Barrier_BarrierRecoveryDelete_FullMethodName   = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryDelete"
+	Barrier_BarrierRecoveryStatus_FullMethodName   = "/quicbaas.barrier.v1.Barrier/BarrierRecoveryStatus"
+	Barrier_BarrierEnableEncryption_FullMethodName = "/quicbaas.barrier.v1.Barrier/BarrierEnableEncryption"
 )
 
 // BarrierClient is the client API for Barrier service.
@@ -73,28 +68,13 @@ type BarrierClient interface {
 	// BarrierShamirInitialize initializes the barrier with Shamir secret
 	// sharing, splitting the root key into threshold-of-total shares.
 	BarrierShamirInitialize(ctx context.Context, in *BarrierShamirInitializeRequest, opts ...grpc.CallOption) (*BarrierShamirInitializeResponse, error)
-	// BarrierShamirUnsealShare submits a single Shamir share toward the
-	// unseal quorum and reports current progress.
-	BarrierShamirUnsealShare(ctx context.Context, in *BarrierShamirUnsealShareRequest, opts ...grpc.CallOption) (*BarrierShamirUnsealShareResponse, error)
-	// BarrierShamirUnsealShares unseals the barrier using a complete set of
-	// Shamir shares supplied in a single call.
-	BarrierShamirUnsealShares(ctx context.Context, in *BarrierShamirUnsealSharesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	// BarrierRekey generates new Shamir shares for the existing root key
-	// with the supplied threshold and total parameters.
-	BarrierRekey(ctx context.Context, in *BarrierRekeyRequest, opts ...grpc.CallOption) (*BarrierShamirInitializeResponse, error)
 	// BarrierRecoveryGenerate generates a fresh set of recovery shares for
 	// disaster recovery.
 	BarrierRecoveryGenerate(ctx context.Context, in *BarrierRecoveryGenerateRequest, opts ...grpc.CallOption) (*BarrierRecoveryKeysResponse, error)
-	// BarrierRecoveryRecover unseals the barrier using previously generated
-	// recovery shares.
-	BarrierRecoveryRecover(ctx context.Context, in *BarrierRecoveryRecoverRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// BarrierRecoveryDelete removes all persisted recovery key metadata.
 	BarrierRecoveryDelete(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// BarrierRecoveryStatus reports whether recovery key metadata exists.
 	BarrierRecoveryStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*BarrierRecoveryStatusResponse, error)
-	// BarrierRootToken generates a fresh root token by proving knowledge of
-	// the master key through Shamir shares.
-	BarrierRootToken(ctx context.Context, in *BarrierRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error)
 	// BarrierEnableEncryption migrates the system barrier from the none
 	// (unencrypted) strategy to a keyed strategy in place. This RPC is
 	// implemented only when the embedded qrdb node is available; the
@@ -160,50 +140,10 @@ func (c *barrierClient) BarrierShamirInitialize(ctx context.Context, in *Barrier
 	return out, nil
 }
 
-func (c *barrierClient) BarrierShamirUnsealShare(ctx context.Context, in *BarrierShamirUnsealShareRequest, opts ...grpc.CallOption) (*BarrierShamirUnsealShareResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierShamirUnsealShareResponse)
-	err := c.cc.Invoke(ctx, Barrier_BarrierShamirUnsealShare_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *barrierClient) BarrierShamirUnsealShares(ctx context.Context, in *BarrierShamirUnsealSharesRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, Barrier_BarrierShamirUnsealShares_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *barrierClient) BarrierRekey(ctx context.Context, in *BarrierRekeyRequest, opts ...grpc.CallOption) (*BarrierShamirInitializeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierShamirInitializeResponse)
-	err := c.cc.Invoke(ctx, Barrier_BarrierRekey_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *barrierClient) BarrierRecoveryGenerate(ctx context.Context, in *BarrierRecoveryGenerateRequest, opts ...grpc.CallOption) (*BarrierRecoveryKeysResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BarrierRecoveryKeysResponse)
 	err := c.cc.Invoke(ctx, Barrier_BarrierRecoveryGenerate_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *barrierClient) BarrierRecoveryRecover(ctx context.Context, in *BarrierRecoveryRecoverRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, Barrier_BarrierRecoveryRecover_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,16 +164,6 @@ func (c *barrierClient) BarrierRecoveryStatus(ctx context.Context, in *emptypb.E
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BarrierRecoveryStatusResponse)
 	err := c.cc.Invoke(ctx, Barrier_BarrierRecoveryStatus_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *barrierClient) BarrierRootToken(ctx context.Context, in *BarrierRootTokenRequest, opts ...grpc.CallOption) (*BarrierRootTokenResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BarrierRootTokenResponse)
-	err := c.cc.Invoke(ctx, Barrier_BarrierRootToken_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -274,28 +204,13 @@ type BarrierServer interface {
 	// BarrierShamirInitialize initializes the barrier with Shamir secret
 	// sharing, splitting the root key into threshold-of-total shares.
 	BarrierShamirInitialize(context.Context, *BarrierShamirInitializeRequest) (*BarrierShamirInitializeResponse, error)
-	// BarrierShamirUnsealShare submits a single Shamir share toward the
-	// unseal quorum and reports current progress.
-	BarrierShamirUnsealShare(context.Context, *BarrierShamirUnsealShareRequest) (*BarrierShamirUnsealShareResponse, error)
-	// BarrierShamirUnsealShares unseals the barrier using a complete set of
-	// Shamir shares supplied in a single call.
-	BarrierShamirUnsealShares(context.Context, *BarrierShamirUnsealSharesRequest) (*emptypb.Empty, error)
-	// BarrierRekey generates new Shamir shares for the existing root key
-	// with the supplied threshold and total parameters.
-	BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierShamirInitializeResponse, error)
 	// BarrierRecoveryGenerate generates a fresh set of recovery shares for
 	// disaster recovery.
 	BarrierRecoveryGenerate(context.Context, *BarrierRecoveryGenerateRequest) (*BarrierRecoveryKeysResponse, error)
-	// BarrierRecoveryRecover unseals the barrier using previously generated
-	// recovery shares.
-	BarrierRecoveryRecover(context.Context, *BarrierRecoveryRecoverRequest) (*emptypb.Empty, error)
 	// BarrierRecoveryDelete removes all persisted recovery key metadata.
 	BarrierRecoveryDelete(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	// BarrierRecoveryStatus reports whether recovery key metadata exists.
 	BarrierRecoveryStatus(context.Context, *emptypb.Empty) (*BarrierRecoveryStatusResponse, error)
-	// BarrierRootToken generates a fresh root token by proving knowledge of
-	// the master key through Shamir shares.
-	BarrierRootToken(context.Context, *BarrierRootTokenRequest) (*BarrierRootTokenResponse, error)
 	// BarrierEnableEncryption migrates the system barrier from the none
 	// (unencrypted) strategy to a keyed strategy in place. This RPC is
 	// implemented only when the embedded qrdb node is available; the
@@ -325,29 +240,14 @@ func (UnimplementedBarrierServer) BarrierStatus(context.Context, *emptypb.Empty)
 func (UnimplementedBarrierServer) BarrierShamirInitialize(context.Context, *BarrierShamirInitializeRequest) (*BarrierShamirInitializeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierShamirInitialize not implemented")
 }
-func (UnimplementedBarrierServer) BarrierShamirUnsealShare(context.Context, *BarrierShamirUnsealShareRequest) (*BarrierShamirUnsealShareResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method BarrierShamirUnsealShare not implemented")
-}
-func (UnimplementedBarrierServer) BarrierShamirUnsealShares(context.Context, *BarrierShamirUnsealSharesRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method BarrierShamirUnsealShares not implemented")
-}
-func (UnimplementedBarrierServer) BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierShamirInitializeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method BarrierRekey not implemented")
-}
 func (UnimplementedBarrierServer) BarrierRecoveryGenerate(context.Context, *BarrierRecoveryGenerateRequest) (*BarrierRecoveryKeysResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierRecoveryGenerate not implemented")
-}
-func (UnimplementedBarrierServer) BarrierRecoveryRecover(context.Context, *BarrierRecoveryRecoverRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method BarrierRecoveryRecover not implemented")
 }
 func (UnimplementedBarrierServer) BarrierRecoveryDelete(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierRecoveryDelete not implemented")
 }
 func (UnimplementedBarrierServer) BarrierRecoveryStatus(context.Context, *emptypb.Empty) (*BarrierRecoveryStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierRecoveryStatus not implemented")
-}
-func (UnimplementedBarrierServer) BarrierRootToken(context.Context, *BarrierRootTokenRequest) (*BarrierRootTokenResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method BarrierRootToken not implemented")
 }
 func (UnimplementedBarrierServer) BarrierEnableEncryption(context.Context, *BarrierEnableEncryptionRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method BarrierEnableEncryption not implemented")
@@ -462,60 +362,6 @@ func _Barrier_BarrierShamirInitialize_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Barrier_BarrierShamirUnsealShare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierShamirUnsealShareRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BarrierServer).BarrierShamirUnsealShare(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Barrier_BarrierShamirUnsealShare_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierShamirUnsealShare(ctx, req.(*BarrierShamirUnsealShareRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Barrier_BarrierShamirUnsealShares_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierShamirUnsealSharesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BarrierServer).BarrierShamirUnsealShares(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Barrier_BarrierShamirUnsealShares_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierShamirUnsealShares(ctx, req.(*BarrierShamirUnsealSharesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Barrier_BarrierRekey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierRekeyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BarrierServer).BarrierRekey(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Barrier_BarrierRekey_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierRekey(ctx, req.(*BarrierRekeyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Barrier_BarrierRecoveryGenerate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BarrierRecoveryGenerateRequest)
 	if err := dec(in); err != nil {
@@ -530,24 +376,6 @@ func _Barrier_BarrierRecoveryGenerate_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BarrierServer).BarrierRecoveryGenerate(ctx, req.(*BarrierRecoveryGenerateRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Barrier_BarrierRecoveryRecover_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierRecoveryRecoverRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BarrierServer).BarrierRecoveryRecover(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Barrier_BarrierRecoveryRecover_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierRecoveryRecover(ctx, req.(*BarrierRecoveryRecoverRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -584,24 +412,6 @@ func _Barrier_BarrierRecoveryStatus_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BarrierServer).BarrierRecoveryStatus(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Barrier_BarrierRootToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BarrierRootTokenRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BarrierServer).BarrierRootToken(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Barrier_BarrierRootToken_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BarrierServer).BarrierRootToken(ctx, req.(*BarrierRootTokenRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -652,24 +462,8 @@ var Barrier_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Barrier_BarrierShamirInitialize_Handler,
 		},
 		{
-			MethodName: "BarrierShamirUnsealShare",
-			Handler:    _Barrier_BarrierShamirUnsealShare_Handler,
-		},
-		{
-			MethodName: "BarrierShamirUnsealShares",
-			Handler:    _Barrier_BarrierShamirUnsealShares_Handler,
-		},
-		{
-			MethodName: "BarrierRekey",
-			Handler:    _Barrier_BarrierRekey_Handler,
-		},
-		{
 			MethodName: "BarrierRecoveryGenerate",
 			Handler:    _Barrier_BarrierRecoveryGenerate_Handler,
-		},
-		{
-			MethodName: "BarrierRecoveryRecover",
-			Handler:    _Barrier_BarrierRecoveryRecover_Handler,
 		},
 		{
 			MethodName: "BarrierRecoveryDelete",
@@ -678,10 +472,6 @@ var Barrier_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BarrierRecoveryStatus",
 			Handler:    _Barrier_BarrierRecoveryStatus_Handler,
-		},
-		{
-			MethodName: "BarrierRootToken",
-			Handler:    _Barrier_BarrierRootToken_Handler,
 		},
 		{
 			MethodName: "BarrierEnableEncryption",

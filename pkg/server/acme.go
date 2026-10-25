@@ -18,6 +18,7 @@ import (
 
 	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -65,9 +66,20 @@ func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServ
 	if err != nil {
 		return nil, &ACMEStorageError{Cause: err}
 	}
-	storageFactory, err := xkmsacme.NewACMEStorageFactoryFromKVStore(shardClient.KVStore())
+	// ACME persistence runs under quicbaas's scoped service identity, so it
+	// is authorized on a node that enforces authorization.
+	kv, err := qrdbservice.KVStore(s, shardClient)
 	if err != nil {
 		return nil, &ACMEStorageError{Cause: err}
+	}
+	storageFactory, err := xkmsacme.NewACMEStorageFactoryFromKVStore(kv)
+	if err != nil {
+		return nil, &ACMEStorageError{Cause: err}
+	}
+
+	preSignHooks, err := s.buildClusterPreSignHooks()
+	if err != nil {
+		return nil, err
 	}
 
 	acmeSvc, err := service.NewACMEService(&service.ACMEServiceParams{
@@ -76,7 +88,7 @@ func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServ
 		StorageFactory:    storageFactory,
 		IssueCA:           caAdapter,
 		CertResolver:      caAdapter,
-		OrderPreSignHooks: s.buildClusterPreSignHooks(),
+		OrderPreSignHooks: preSignHooks,
 
 		AllowPrivateChallengeTargets: s.config.Server.ACME.AllowPrivateChallengeTargets,
 		ClusterCACN:                  s.clusterACMEIssuerCN(),

@@ -27,7 +27,7 @@ import (
 // honest "the CA is not running" condition, and it is what NewUninitialized
 // hands a failure test.
 func TestBuild_ReturnsACAThatIsNotYetUp(t *testing.T) {
-	ca, err := Build(Config{CommonName: "build-not-up"})
+	ca, err := Build(context.Background(), Config{CommonName: "build-not-up"})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestBuild_ReturnsACAThatIsNotYetUp(t *testing.T) {
 // own material — a failure that would otherwise surface much later as a missing
 // certificate.
 func TestBuild_RejectsAnEmptyCommonName(t *testing.T) {
-	ca, err := Build(Config{})
+	ca, err := Build(context.Background(), Config{})
 	if !errors.Is(err, ErrNoCommonName) {
 		t.Fatalf("Build error = %v, want ErrNoCommonName", err)
 	}
@@ -159,7 +159,7 @@ func TestBuild_ReportsAnUnusableDir(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", blocker, err)
 	}
-	if _, err := Build(Config{CommonName: "unusable-dir", Dir: blocker}); err == nil {
+	if _, err := Build(context.Background(), Config{CommonName: "unusable-dir", Dir: blocker}); err == nil {
 		t.Fatal("Build over a file path succeeded; want a storage error")
 	}
 }

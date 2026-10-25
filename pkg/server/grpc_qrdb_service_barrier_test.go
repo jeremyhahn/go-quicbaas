@@ -9,6 +9,9 @@ package server
 
 import (
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 )
 
 // qrdbBarrierServicer returns nil when no qrdb client is wired, so the qrdb
@@ -20,20 +23,19 @@ func TestQRDBBarrierServicer_NilClient(t *testing.T) {
 	}
 }
 
-// With a node-backed sharded client, qrdbBarrierServicer resolves the platform
-// shard's barrier client and returns a live servicer.
-func TestQRDBBarrierServicer_NodeBacked(t *testing.T) {
-	node := buildMemoryStandaloneNode(t)
-	t.Cleanup(func() { _ = node.Close() })
+// With an embedded node, qrdbBarrierServicer passes through the node's own
+// barrier servicer — the instance its SDK client and gRPC server use — rather
+// than a quicbaas-side adapter.
+func TestQRDBBarrierServicer_PassesThroughTheNodeServicer(t *testing.T) {
+	node := buildSealedMemoryNode(t)
+	s := &Server{logger: buildTestLogger(t), qrdbNode: node}
 
-	s := &Server{
-		logger:     buildTestLogger(t),
-		qrdbClient: newNodeBackedShardedClient(node),
+	want := node.Services().Barrier
+	if want == nil {
+		t.Fatal("the standalone node exposes no barrier servicer")
 	}
-
-	servicer := s.qrdbBarrierServicer()
-	if servicer == nil {
-		t.Fatal("qrdbBarrierServicer should be non-nil for a node-backed client")
+	if got := s.qrdbBarrierServicer(); got != want {
+		t.Fatalf("qrdbBarrierServicer = %T, want the node's own servicer", got)
 	}
 }
 
@@ -60,24 +62,33 @@ func TestServer_QRDBAccessors_NodeBacked(t *testing.T) {
 	_ = s.GetQRDBUserAuthFactorServicer()
 }
 
-// When the sharded client is closed, ForShard(PlatformShardID) fails, so
-// qrdbBarrierServicer must log the unavailability and return nil (rather than
-// panicking or returning a dead servicer).
-func TestQRDBBarrierServicer_ForShardError(t *testing.T) {
-	node := buildMemoryStandaloneNode(t)
-	t.Cleanup(func() { _ = node.Close() })
-
-	sc := newNodeBackedShardedClient(node)
-	// Closing the sharded client makes every ForShard call fail with
-	// ShardedClientClosedError, exercising the platform-shard-unavailable branch.
-	_ = sc.Close()
+// With seal disabled, the bootstrap ceremony client wraps s.ceremonyServices,
+// so qrdbBarrierServicer serves that same barrier instance and not the node's.
+func TestQRDBBarrierServicer_BootstrapServesTheCeremonyBarrier(t *testing.T) {
+	bootstrap := buildSealedMemoryNode(t).Services().Barrier
+	if bootstrap == nil {
+		t.Fatal("the sealed node exposes no barrier servicer")
+	}
 
 	s := &Server{
-		logger:     buildTestLogger(t),
-		qrdbClient: sc,
+		logger:                  buildTestLogger(t),
+		ceremonyServices:        &CeremonyServices{Barrier: bootstrap},
+		bootstrapCeremonyClient: &qrdbsdk.Client{},
 	}
+	if got := s.qrdbBarrierServicer(); got != bootstrap {
+		t.Fatalf("qrdbBarrierServicer = %T, want the bootstrap ceremony barrier", got)
+	}
+}
 
-	if s.qrdbBarrierServicer() != nil {
-		t.Fatal("qrdbBarrierServicer must be nil when the platform shard is unavailable")
-	}
+// buildSealedMemoryNode boots a seal-enabled memory node. With no passphrase
+// it stays in the sealed window, where the node exposes its seal-layer
+// services — the barrier servicer among them.
+func buildSealedMemoryNode(t *testing.T) *qrdbnode.Node {
+	t.Helper()
+	cfg := memoryNodeConfig(t)
+	cfg.Seal.Enabled = true
+	cfg.Seal.Strategy = "passphrase"
+	node := buildMemoryStandaloneNodeFrom(t, cfg)
+	t.Cleanup(func() { _ = node.Close() })
+	return node
 }

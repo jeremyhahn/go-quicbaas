@@ -83,33 +83,37 @@ func (f *PasswordField) UnmarshalJSON(data []byte) error {
 	if len(encoded) == 0 {
 		return nil
 	}
-	maxLen := base64.StdEncoding.DecodedLen(len(encoded))
-	if maxLen <= 0 {
-		return &MalformedPasswordError{Reason: "password empty after decode"}
+	// Padded base64 comes in whole 4-byte quanta. Refuse anything else
+	// before sizing, or the decoder writes past the buffer sized below.
+	if len(encoded)%4 != 0 {
+		return &MalformedPasswordError{Reason: "base64 length is not a multiple of 4"}
 	}
-	raw, err := secure.NewBuffer(maxLen)
+	// Size the buffer to the exact decoded length so base64 decodes straight
+	// into it under one borrow: padded base64 decodes to DecodedLen bytes
+	// less one per trailing '=' (at most two).
+	size := base64.StdEncoding.DecodedLen(len(encoded))
+	for i := len(encoded) - 1; i >= len(encoded)-2 && i >= 0 && encoded[i] == '='; i-- {
+		size--
+	}
+	buf, err := secure.NewBuffer(size)
 	if err != nil {
 		return err
 	}
-	//secure:unborrowed allocates-protected base64.Decode writes directly into the newly allocated protected buffer.
-	n, err := base64.StdEncoding.Decode(raw.Bytes(), encoded)
-	if err != nil {
-		raw.Destroy()
-		return &MalformedPasswordError{Reason: "base64 decode failed", Err: err}
-	}
-	if n == maxLen {
-		f.buf = raw
+	err = buf.WithBytes(func(dst []byte) error {
+		n, decodeErr := base64.StdEncoding.Decode(dst, encoded)
+		if decodeErr != nil {
+			return &MalformedPasswordError{Reason: "base64 decode failed", Err: decodeErr}
+		}
+		if n != size {
+			return &MalformedPasswordError{Reason: "base64 decoded length mismatch"}
+		}
 		return nil
-	}
-	trimmed, err := secure.NewBuffer(n)
+	})
 	if err != nil {
-		raw.Destroy()
+		buf.Destroy()
 		return err
 	}
-	//secure:unborrowed allocates-protected copy moves bytes between protected buffers before the source is destroyed.
-	copy(trimmed.Bytes(), raw.Bytes()[:n])
-	raw.Destroy()
-	f.buf = trimmed
+	f.buf = buf
 	return nil
 }
 

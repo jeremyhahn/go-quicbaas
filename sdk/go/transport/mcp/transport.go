@@ -731,14 +731,20 @@ func (t *Transport) ensureAuthenticated(ctx context.Context) error {
 func (t *Transport) authenticate(ctx context.Context) error {
 	password := ""
 	if t.password != nil {
-		opened, err := t.password.Open()
+		opened, err := t.password.Open(ctx)
 		if err != nil {
 			return errors.Wrap(err, errors.CodeUnauthorized, "mcp.authenticate",
 				"failed to open protected password")
 		}
 		defer opened.Destroy()
-		//secure:unwiped injected-interface MCP login arguments are JSON strings at the wire boundary.
-		password = string(opened.Bytes()) //secure:unborrowed injected-interface the protected password is opened only for the login call.
+		if err := opened.WithBytes(func(b []byte) error {
+			//secure:unwiped injected-interface MCP login arguments are JSON strings at the wire boundary.
+			password = string(b)
+			return nil
+		}); err != nil {
+			return errors.Wrap(err, errors.CodeUnauthorized, "mcp.authenticate",
+				"failed to read protected password")
+		}
 	}
 	result, err := t.callTool(ctx, "quicbaas_login", map[string]interface{}{
 		"username": t.username,

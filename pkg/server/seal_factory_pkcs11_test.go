@@ -389,7 +389,7 @@ func TestPKCS11BackendConfig_SealsPIN(t *testing.T) {
 	}
 	t.Cleanup(got.PIN.Clear)
 
-	pin, err := xkmssdk.SecretValueBytes(got.PIN)
+	pin, err := xkmssdk.SecretValueBytes(t.Context(), got.PIN)
 	if err != nil {
 		t.Fatalf("SecretValueBytes(PIN): %v", err)
 	}
@@ -419,7 +419,7 @@ func TestPKCS11BackendConfig_EmptyPIN(t *testing.T) {
 		t.Fatalf("pkcs11BackendConfig: %v", err)
 	}
 
-	pin, err := xkmssdk.SecretValueBytes(got.PIN)
+	pin, err := xkmssdk.SecretValueBytes(t.Context(), got.PIN)
 	if err != nil {
 		t.Fatalf("SecretValueBytes(empty PIN): %v", err)
 	}
@@ -446,7 +446,7 @@ func TestReleasePKCS11Backend_DestroysPIN(t *testing.T) {
 	}
 
 	var sawBytes bool
-	if err := backendCfg.PIN.WithBytes(func(b []byte) error {
+	if err := backendCfg.PIN.WithBytes(t.Context(), func(b []byte) error {
 		sawBytes = len(b) > 0
 		return nil
 	}); err != nil {

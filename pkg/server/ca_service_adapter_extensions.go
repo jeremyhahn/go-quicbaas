@@ -327,6 +327,7 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		},
 		Valid:       req.ValidityDays,
 		PermanentID: req.DeviceID,
+		TenantID:    req.TenantID,
 	}
 
 	cert, err := handler(ctx, tcg, req, certReq)

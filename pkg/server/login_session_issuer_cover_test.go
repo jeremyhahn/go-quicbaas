@@ -12,6 +12,7 @@ import (
 	"time"
 
 	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -133,6 +134,10 @@ func newTestOIDCProviderWithResolver(t *testing.T, resolver iam.PermissionResolv
 // seedSessionUser writes the IAM user record a ceremony subject resolves to.
 // The ceremony's subject is the tenant-scoped qrdb username, which the broker
 // mirrors as User.Name.
+//
+// The issuer tests in this package seed and sign in the system tenant: on this
+// release service.RefuseTenantLogin refuses every other tenant before issuance
+// (go-quicbaas #1816 re-pins go-qrdb and lifts it).
 func seedSessionUser(t *testing.T, users *iam.MemoryStorage, tenantID, username string, roles []string) {
 	t.Helper()
 	// No ID: the identity is the Snowflake the store assigns. A hand-written
@@ -157,8 +162,8 @@ func seedSessionUser(t *testing.T, users *iam.MemoryStorage, tenantID, username 
 // back into an identity carrying the subject, tenant, roles, and factor type.
 func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
-	seedSessionUser(t, users, "acme", "user-42", []string{"admin", "reader"})
-	issuer := newOIDCSessionIssuer()
+	seedSessionUser(t, users, qrdbsdk.SystemTenantID, "user-42", []string{"admin", "reader"})
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 	ctx := context.Background()
 
@@ -166,7 +171,7 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	// identity: qrdb's factor-resolved principal carries none.
 	identity := &qrdbauth.Identity{
 		Subject:  "user-42",
-		TenantID: "acme",
+		TenantID: qrdbsdk.SystemTenantID,
 		Metadata: map[string]string{authMethodMetadataKey: "piv"},
 	}
 
@@ -185,7 +190,7 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if resolved.Subject != "user-42" || resolved.TenantID != "acme" {
+	if resolved.Subject != "user-42" || resolved.TenantID != qrdbsdk.SystemTenantID {
 		t.Fatalf("resolved identity wrong: %+v", resolved)
 	}
 	if len(resolved.Roles) != 2 {
@@ -196,7 +201,7 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 	}
 	// The session sub is the username the ceremony authenticated; the account
 	// travels as the verified uid claim.
-	seeded, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	seeded, err := users.GetUserByUsername(ctx, qrdbsdk.SystemTenantID, "user-42")
 	if err != nil {
 		t.Fatalf("GetUserByUsername: %v", err)
 	}
@@ -213,19 +218,19 @@ func TestOIDCSessionIssuer_IssueResolveRoundTrip(t *testing.T) {
 func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
 	ctx := context.Background()
-	seedSessionUser(t, users, "acme", "admin", []string{"admin"})
-	admin, err := users.GetUserByUsername(ctx, "acme", "admin")
+	seedSessionUser(t, users, qrdbsdk.SystemTenantID, "admin", []string{"admin"})
+	admin, err := users.GetUserByUsername(ctx, qrdbsdk.SystemTenantID, "admin")
 	if err != nil {
 		t.Fatalf("GetUserByUsername(admin): %v", err)
 	}
 	// A second account whose username is the first account's id in decimal.
 	adminID := strconv.FormatUint(admin.ID, 10)
-	seedSessionUser(t, users, "acme", adminID, []string{"reader"})
-	numeric, err := users.GetUserByUsername(ctx, "acme", adminID)
+	seedSessionUser(t, users, qrdbsdk.SystemTenantID, adminID, []string{"reader"})
+	numeric, err := users.GetUserByUsername(ctx, qrdbsdk.SystemTenantID, adminID)
 	if err != nil {
 		t.Fatalf("GetUserByUsername(%s): %v", adminID, err)
 	}
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 
 	cases := map[string]struct {
@@ -238,7 +243,7 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			token, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: tc.sub, TenantID: "acme"})
+			token, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: tc.sub, TenantID: qrdbsdk.SystemTenantID})
 			if err != nil {
 				t.Fatalf("Issue: %v", err)
 			}
@@ -259,7 +264,7 @@ func TestOIDCSessionIssuer_ResolveNamesAccountByVerifiedUserID(t *testing.T) {
 func TestOIDCSessionIssuer_IssueWithoutMetadata(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
 	seedSessionUser(t, users, "system", "u", []string{"admin"})
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 
 	token, _, err := issuer.Issue(context.Background(), &qrdbauth.Identity{Subject: "u", TenantID: "system"})
@@ -277,8 +282,8 @@ func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
 	// Seeded so the failure below is the DPoP proof and not an unresolvable
 	// principal — the join runs first.
-	seedSessionUser(t, users, "t", "u", []string{"admin"})
-	issuer := newOIDCSessionIssuer()
+	seedSessionUser(t, users, qrdbsdk.SystemTenantID, "u", []string{"admin"})
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 
 	// An invalid DPoP proof must fail closed (the bindSessionDPoP error path).
@@ -287,7 +292,7 @@ func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
 		Method: "POST",
 		URI:    "https://issuer.test/login",
 	})
-	if _, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u", TenantID: "t"}); err == nil {
+	if _, _, err := issuer.Issue(ctx, &qrdbauth.Identity{Subject: "u", TenantID: qrdbsdk.SystemTenantID}); err == nil {
 		t.Fatal("Issue with invalid DPoP proof should fail closed")
 	}
 }
@@ -296,7 +301,7 @@ func TestOIDCSessionIssuer_IssueWithDPoPFromContext(t *testing.T) {
 func TestOIDCSessionIssuer_Revoke(t *testing.T) {
 	provider, users := newTestOIDCProviderWithUsers(t)
 	seedSessionUser(t, users, "system", "u", []string{"admin"})
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 	ctx := context.Background()
 
@@ -312,7 +317,7 @@ func TestOIDCSessionIssuer_Revoke(t *testing.T) {
 // Resolve surfaces the provider's validation error for a malformed bearer.
 func TestOIDCSessionIssuer_ResolveInvalidToken(t *testing.T) {
 	provider := newTestOIDCProvider(t)
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 	issuer.SetProvider(provider)
 
 	if _, err := issuer.Resolve(context.Background(), "garbage.token.value"); err == nil {

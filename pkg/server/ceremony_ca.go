@@ -103,12 +103,12 @@ func (l *lateBoundCeremonyCA) SignCSR(ctx context.Context, csrPEM []byte, opts *
 }
 
 // CACertificate returns the attached CA's own certificate.
-func (l *lateBoundCeremonyCA) CACertificate() (*x509.Certificate, error) {
+func (l *lateBoundCeremonyCA) CACertificate(ctx context.Context) (*x509.Certificate, error) {
 	ca := l.resolve()
 	if ca == nil {
 		return nil, &CeremonyCAUnavailableError{Op: "CACertificate"}
 	}
-	return ca.CACertificate()
+	return ca.CACertificate(ctx)
 }
 
 // CABundle returns the attached CA's PEM-encoded chain.

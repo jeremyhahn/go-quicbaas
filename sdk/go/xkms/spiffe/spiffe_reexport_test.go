@@ -32,12 +32,15 @@ var (
 )
 
 // TestBuildURIParseID_RoundTrip proves the tenant-scoped builder and parser
-// agree, which is what lets a CA stamp an SVID and a relying party read the
-// tenant back out of it.
+// agree on spiffe://<tenant>/<kind>/<name>, which is what lets a CA stamp an
+// SVID and a relying party read the tenant back out of it.
 func TestBuildURIParseID_RoundTrip(t *testing.T) {
 	u, err := spiffe.BuildURI("example.org", "acme", spiffe.KindService, "payments")
 	if err != nil {
 		t.Fatalf("BuildURI: %v", err)
+	}
+	if got, want := u.String(), "spiffe://acme/svc/payments"; got != want {
+		t.Fatalf("BuildURI = %s, want %s", got, want)
 	}
 	id, ok, err := spiffe.ParseID(u)
 	if err != nil || !ok {

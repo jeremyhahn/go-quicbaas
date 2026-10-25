@@ -15,9 +15,12 @@ package service
 
 import (
 	"context"
-	"time"
+	"fmt"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -34,14 +37,10 @@ import (
 // =============================================================================
 
 // CeremonyOfficer describes a single officer participating in the
-// initialization ceremony.
-type CeremonyOfficer struct {
-	// Username is the unique identifier for the officer.
-	Username string
-
-	// CSRPEM is the PEM-encoded CSR submitted by the officer.
-	CSRPEM string
-}
+// initialization ceremony. It is qrdb's officer request itself, so every
+// field (role, share-envelope encryption key, factors, designated factor)
+// reaches qrdb without narrowing.
+type CeremonyOfficer = transport.CeremonyOfficerRequest
 
 // CeremonyInitRequest holds the parameters for initialising the ceremony
 // at the service-layer boundary. Mirrors transport.CeremonyInitializeRequest.
@@ -58,6 +57,10 @@ type CeremonyInitRequest struct {
 	// Threshold is the M-of-N threshold (zero for single-admin mode).
 	Threshold int
 
+	// Policy is the Shamir custody policy for Threshold >= 2
+	// ("designated" when empty).
+	Policy string
+
 	// Officers are the officers participating in the ceremony.
 	Officers []CeremonyOfficer
 
@@ -66,10 +69,99 @@ type CeremonyInitRequest struct {
 
 	// SANs is the optional list of Subject Alternative Names.
 	SANs []string
+
+	// AdminCSRPEM, AdminCertPEM and AdminGenerate select the bootstrap
+	// admin's credential path (go-qrdb#548): CSR-sign, bring-your-own
+	// certificate, or generate (dev/test only). Exactly one must be set.
+	AdminCSRPEM  string
+	AdminCertPEM string
+
+	// AdminCertPoolPEM is the CA pool that verifies AdminCertPEM.
+	AdminCertPoolPEM string
+
+	AdminGenerate bool
+
+	// Secret is the system barrier passphrase. Required when the barrier's
+	// strategy needs one (e.g. "passphrase"); nil for "none". The caller
+	// owns the Secret and destroys it once CeremonyInitialize returns.
+	Secret *secure.Secret
+}
+
+// adminSelectorCount reports how many bootstrap admin credential paths the
+// request selects.
+func (r *CeremonyInitRequest) adminSelectorCount() int {
+	n := 0
+	if r.AdminCSRPEM != "" {
+		n++
+	}
+	if r.AdminCertPEM != "" {
+		n++
+	}
+	if r.AdminGenerate {
+		n++
+	}
+	return n
+}
+
+// CeremonyAdminSelectorMissingError signals a ceremony init request that
+// selects no bootstrap admin credential path. go-qrdb has no
+// credential-less default, so the request is refused before it is sent.
+type CeremonyAdminSelectorMissingError struct{}
+
+// Error returns the error message.
+func (e *CeremonyAdminSelectorMissingError) Error() string {
+	return "ceremony init requires exactly one of admin CSR, admin certificate or admin generate; none was set"
+}
+
+// CeremonyAdminSelectorConflictError signals a ceremony init request that
+// selects more than one bootstrap admin credential path.
+type CeremonyAdminSelectorConflictError struct {
+	// Count is the number of paths the request selected.
+	Count int
+}
+
+// Error returns the error message.
+func (e *CeremonyAdminSelectorConflictError) Error() string {
+	return fmt.Sprintf("ceremony init requires exactly one of admin CSR, admin certificate or admin generate; %d were set", e.Count)
+}
+
+// CeremonySecretError signals that the barrier passphrase could not be moved
+// into sealed memory before the ceremony call.
+type CeremonySecretError struct {
+	// Err is the go-qrdb secure error that refused the passphrase.
+	Err error
+}
+
+// Error returns the error message.
+func (e *CeremonySecretError) Error() string {
+	return "ceremony barrier secret could not be sealed: " + e.Err.Error()
+}
+
+// Unwrap returns the underlying secure error.
+func (e *CeremonySecretError) Unwrap() error {
+	return e.Err
+}
+
+// NewCeremonySecret seals b into a *secure.Secret for CeremonyInitRequest
+// and wipes b, whatever the outcome. An empty b yields a nil Secret (no
+// passphrase, strategy "none"). The caller destroys a non-nil Secret once
+// CeremonyInitialize returns.
+func NewCeremonySecret(ctx context.Context, b []byte) (*secure.Secret, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	defer secure.Wipe(b)
+	secret, err := secure.NewSecret(ctx, b)
+	if err != nil {
+		return nil, errors.Wrap(&CeremonySecretError{Err: err}, errors.ErrInternal, "service.NewCeremonySecret")
+	}
+	return secret, nil
 }
 
 // CeremonyInitInfo contains the output of a successful ceremony
-// initialisation.
+// initialisation. AdminKeyPEM is set only when AdminCredentialSource is
+// "generated": qrdb returns it exactly once and keeps no copy, so every
+// transport must deliver it to the caller.
 type CeremonyInitInfo struct {
 	// SPKIPin is the base64-encoded SHA-256 hash of the CA certificate's SPKI.
 	SPKIPin string
@@ -85,38 +177,20 @@ type CeremonyInitInfo struct {
 
 	// ShareCount is the number of Shamir shares generated.
 	ShareCount int
-}
 
-// CeremonyChallenge contains the challenge nonce issued during the
-// certificate claim handshake.
-type CeremonyChallenge struct {
-	// NonceHex is the hex-encoded random challenge.
-	NonceHex string
+	// Holders carries the CA-issued certificate of each initial holder.
+	Holders []transport.CeremonyHolderCert
 
-	// ExpiresAt is the deadline by which the officer must respond.
-	ExpiresAt time.Time
-}
+	// AdminCertPEM is the bootstrap administrator's signed certificate.
+	AdminCertPEM []byte
 
-// CeremonyClaimCertResult contains the output of a successful certificate
-// claim operation.
-type CeremonyClaimCertResult struct {
-	// CertPEM is the PEM-encoded officer certificate.
-	CertPEM []byte
+	// AdminKeyPEM is the generated administrator's private key; present
+	// only on the generate path.
+	AdminKeyPEM []byte
 
-	// CACertPEM is the PEM-encoded CA certificate for trust chain
-	// verification.
-	CACertPEM []byte
-}
-
-// CeremonyClaimShareResult contains the output of a completed Shamir share
-// claim handshake.
-type CeremonyClaimShareResult struct {
-	// ShareIndex is the 1-based Shamir share index assigned to the officer.
-	ShareIndex int
-
-	// ShareJSON is the marshalled shamir.Share envelope released to the
-	// officer. It is released exactly once per ceremony.
-	ShareJSON string
+	// AdminCredentialSource names the admin credential path qrdb took;
+	// "generated" when AdminKeyPEM is set.
+	AdminCredentialSource string
 }
 
 // CeremonySignCSRResult contains the output of CSR signing.
@@ -134,38 +208,6 @@ type CeremonyStatusInfo struct {
 	// SPKIPin is the base64-encoded SPKI hash. Empty when CA is not yet
 	// initialised.
 	SPKIPin string
-}
-
-// CeremonyEnrollExternalOfficerRequest is the service-layer request for
-// enrolling an officer whose key material lives outside the daemon.
-type CeremonyEnrollExternalOfficerRequest struct {
-	// Username is the unique identifier for the officer.
-	Username string
-
-	// CertPEM is the PEM-encoded X.509 certificate. Mutually exclusive with
-	// PubKeyPEM.
-	CertPEM string
-
-	// PubKeyPEM is the PEM-encoded SPKI public key. Mutually exclusive with
-	// CertPEM.
-	PubKeyPEM string
-
-	// ShareIndex is the 1-based Shamir share index assigned to this officer.
-	ShareIndex int
-
-	// AuthFactor is the auth factor identifier ("mtls", "webauthn", "piv").
-	AuthFactor string
-
-	// ShareBytes is the optional plaintext share to seal to the officer's
-	// public key. Empty when only the trust record is being persisted.
-	ShareBytes []byte
-}
-
-// CeremonyEnrollExternalOfficerResponse is the service-layer response.
-type CeremonyEnrollExternalOfficerResponse struct {
-	// SealedShare is the base64-encoded sealed share envelope. Empty when
-	// no ShareBytes were supplied.
-	SealedShare string
 }
 
 // CeremonyServiceMissingError signals that the ceremony facade was
@@ -186,30 +228,8 @@ type CeremonyServicer interface {
 	// CeremonyStatus returns the current ceremony state.
 	CeremonyStatus(ctx context.Context) (*CeremonyStatusInfo, error)
 
-	// CeremonyBeginClaimCert starts a certificate claim challenge.
-	CeremonyBeginClaimCert(ctx context.Context, username string) (*CeremonyChallenge, error)
-
-	// CeremonyCompleteClaimCert completes a certificate claim with a
-	// signed nonce.
-	CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*CeremonyClaimCertResult, error)
-
-	// CeremonyBeginClaimShare starts the Shamir share claim handshake for
-	// an officer who has already claimed their certificate. The caller's
-	// certificate thumbprint is derived by the qrdb node from the transport
-	// connection; it never travels through this facade.
-	CeremonyBeginClaimShare(ctx context.Context, username string) (*CeremonyChallenge, error)
-
-	// CeremonyCompleteClaimShare completes the Shamir share claim handshake
-	// by submitting the signed challenge nonce. The share is released
-	// exactly once.
-	CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*CeremonyClaimShareResult, error)
-
 	// CeremonySignCSR signs a CSR during the ceremony.
 	CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*CeremonySignCSRResult, error)
-
-	// CeremonyEnrollExternalOfficer enrols an officer whose key material
-	// lives outside the daemon.
-	CeremonyEnrollExternalOfficer(ctx context.Context, req *CeremonyEnrollExternalOfficerRequest) (*CeremonyEnrollExternalOfficerResponse, error)
 }
 
 // CeremonyService implements CeremonyServicer by delegating to a
@@ -240,22 +260,27 @@ func (s *CeremonyService) CeremonyInitialize(ctx context.Context, req *CeremonyI
 	if req == nil {
 		req = &CeremonyInitRequest{}
 	}
-	officers := make([]transport.CeremonyOfficerRequest, 0, len(req.Officers))
-	for _, o := range req.Officers {
-		officers = append(officers, transport.CeremonyOfficerRequest{
-			Username: o.Username,
-			CSRPEM:   o.CSRPEM,
-		})
+	switch n := req.adminSelectorCount(); {
+	case n == 0:
+		return nil, errors.Wrap(&CeremonyAdminSelectorMissingError{}, errors.ErrInvalidInput, "service.CeremonyInitialize")
+	case n > 1:
+		return nil, errors.Wrap(&CeremonyAdminSelectorConflictError{Count: n}, errors.ErrInvalidInput, "service.CeremonyInitialize")
 	}
-	resp, err := s.client.CeremonyInitialize(ctx, &transport.CeremonyInitializeRequest{
+	wire := &transport.CeremonyInitializeRequest{
 		SOPin:                  req.SOPin,
 		UserPin:                req.UserPin,
 		CredentialSealStrategy: req.CredentialSealStrategy,
 		Threshold:              req.Threshold,
-		Officers:               officers,
+		Policy:                 req.Policy,
+		Officers:               req.Officers,
 		Hostname:               req.Hostname,
 		SANs:                   req.SANs,
-	})
+		AdminCSRPEM:            req.AdminCSRPEM,
+		AdminCertPEM:           req.AdminCertPEM,
+		AdminCertPoolPEM:       req.AdminCertPoolPEM,
+		AdminGenerate:          req.AdminGenerate,
+	}
+	resp, err := s.initialize(ctx, wire, req.Secret)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +290,33 @@ func (s *CeremonyService) CeremonyInitialize(ctx context.Context, req *CeremonyI
 		TLSCertPEM: []byte(resp.TLSCertPEM),
 		State:      resp.State,
 		ShareCount: resp.ShareCount,
+
+		Holders:               resp.Holders,
+		AdminCertPEM:          []byte(resp.AdminCertPEM),
+		AdminKeyPEM:           resp.AdminKeyPEM,
+		AdminCredentialSource: resp.AdminCredentialSource,
 	}, nil
+}
+
+// initialize sends wire to qrdb. A non-nil secret is opened only for the
+// duration of the call, so the passphrase plaintext never outlives it; a nil
+// secret sends no passphrase (strategy "none").
+func (s *CeremonyService) initialize(ctx context.Context, wire *transport.CeremonyInitializeRequest, secret *secure.Secret) (*transport.CeremonyInitializeResponse, error) {
+	if secret == nil {
+		return s.client.CeremonyInitialize(ctx, wire)
+	}
+	var resp *transport.CeremonyInitializeResponse
+	err := secret.WithBytes(ctx, func(b []byte) error {
+		wire.Secret = b
+		defer func() { wire.Secret = nil }()
+		var callErr error
+		resp, callErr = s.client.CeremonyInitialize(ctx, wire)
+		return callErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // CeremonyStatus returns the current ceremony state.
@@ -280,85 +331,6 @@ func (s *CeremonyService) CeremonyStatus(ctx context.Context) (*CeremonyStatusIn
 	return &CeremonyStatusInfo{
 		State:   resp.State,
 		SPKIPin: resp.SPKIPin,
-	}, nil
-}
-
-// CeremonyBeginClaimCert starts a certificate claim challenge.
-func (s *CeremonyService) CeremonyBeginClaimCert(ctx context.Context, username string) (*CeremonyChallenge, error) {
-	if s.client == nil {
-		return nil, &CeremonyServiceMissingError{}
-	}
-	resp, err := s.client.CeremonyClaimCertBegin(ctx, &transport.ClaimCertBeginRequest{Username: username})
-	if err != nil {
-		return nil, err
-	}
-	ch := &CeremonyChallenge{NonceHex: resp.NonceHex}
-	if resp.ExpiresAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339, resp.ExpiresAt); parseErr == nil {
-			ch.ExpiresAt = t
-		}
-	}
-	return ch, nil
-}
-
-// CeremonyCompleteClaimCert completes a certificate claim handshake.
-func (s *CeremonyService) CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*CeremonyClaimCertResult, error) {
-	if s.client == nil {
-		return nil, &CeremonyServiceMissingError{}
-	}
-	resp, err := s.client.CeremonyClaimCertComplete(ctx, &transport.ClaimCertCompleteRequest{
-		Username:  username,
-		NonceHex:  nonceHex,
-		Signature: signatureBase64,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &CeremonyClaimCertResult{
-		CertPEM:   []byte(resp.CertPEM),
-		CACertPEM: []byte(resp.CACertPEM),
-	}, nil
-}
-
-// CeremonyBeginClaimShare starts the Shamir share claim handshake for an
-// officer. The qrdb node derives the caller's certificate thumbprint from
-// the transport connection and issues a challenge nonce the officer must
-// sign with the private key matching their enrolled certificate.
-func (s *CeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*CeremonyChallenge, error) {
-	if s.client == nil {
-		return nil, &CeremonyServiceMissingError{}
-	}
-	resp, err := s.client.CeremonyBeginClaimShare(ctx, &transport.BeginClaimShareRequest{Username: username})
-	if err != nil {
-		return nil, err
-	}
-	ch := &CeremonyChallenge{NonceHex: resp.NonceHex}
-	if resp.ExpiresAt != "" {
-		if t, parseErr := time.Parse(time.RFC3339, resp.ExpiresAt); parseErr == nil {
-			ch.ExpiresAt = t
-		}
-	}
-	return ch, nil
-}
-
-// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
-// submitting the signed challenge nonce. The qrdb node re-verifies the
-// caller's certificate thumbprint and releases the share exactly once.
-func (s *CeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*CeremonyClaimShareResult, error) {
-	if s.client == nil {
-		return nil, &CeremonyServiceMissingError{}
-	}
-	resp, err := s.client.CeremonyCompleteClaimShare(ctx, &transport.CompleteClaimShareRequest{
-		Username:  username,
-		NonceHex:  nonceHex,
-		Signature: signature,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &CeremonyClaimShareResult{
-		ShareIndex: resp.ShareIndex,
-		ShareJSON:  resp.ShareJSON,
 	}, nil
 }
 
@@ -377,26 +349,4 @@ func (s *CeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, 
 		return nil, err
 	}
 	return &CeremonySignCSRResult{CertPEM: []byte(resp.CertPEM)}, nil
-}
-
-// CeremonyEnrollExternalOfficer enrols an externally-keyed officer.
-func (s *CeremonyService) CeremonyEnrollExternalOfficer(ctx context.Context, req *CeremonyEnrollExternalOfficerRequest) (*CeremonyEnrollExternalOfficerResponse, error) {
-	if s.client == nil {
-		return nil, &CeremonyServiceMissingError{}
-	}
-	if req == nil {
-		req = &CeremonyEnrollExternalOfficerRequest{}
-	}
-	resp, err := s.client.CeremonyEnrollExternalOfficer(ctx, &transport.EnrollExternalOfficerRequest{
-		Username:   req.Username,
-		CertPEM:    req.CertPEM,
-		PubKeyPEM:  req.PubKeyPEM,
-		ShareIndex: req.ShareIndex,
-		AuthFactor: req.AuthFactor,
-		ShareBytes: req.ShareBytes,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &CeremonyEnrollExternalOfficerResponse{SealedShare: resp.SealedShare}, nil
 }

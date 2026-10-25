@@ -17,9 +17,6 @@ import (
 	ggrpc "google.golang.org/grpc"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
-	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
-	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
 // =============================================================================
@@ -76,6 +73,13 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 		opts = append(opts, qrdbsdk.WithRegisterBarrierService(bs))
 	}
 
+	// The SO PIN gate on the barrier administrative RPCs (BarrierSeal,
+	// BarrierRekey, recovery keys, ...) verifies against this backend; without
+	// it qrdb fails every one of them closed.
+	if s.pinBackend != nil {
+		opts = append(opts, qrdbsdk.WithRegisterPINBackend(s.pinBackend))
+	}
+
 	// User + UserAuthFactor services back the qrdb SDK's
 	// Security().Auth().Factors() surface: resolveSubjectUserID reads the
 	// user store and factor enrollment writes the UserAuthFactor store the
@@ -89,14 +93,6 @@ func (s *Server) buildQRDBRegisterOptions() []qrdbsdk.GRPCRegisterOption {
 	)
 
 	return opts
-}
-
-// qrdbSealSOPINInterceptor guards the qrdb.v1 BarrierSeal registered by
-// registerQRDBService with the SO PIN backend the BarrierService facade
-// verifies against. The qrdb SDK's register options take no PIN backend,
-// so the guard sits on the gRPC server chain, which the Unix socket shares.
-func (s *Server) qrdbSealSOPINInterceptor() ggrpc.UnaryServerInterceptor {
-	return grpcapi.UnaryBarrierSealSOPINInterceptor(s.pinBackend)
 }
 
 // qrdbCredentialServicer returns the credential management service used by
@@ -122,51 +118,30 @@ func (s *Server) qrdbCeremonyServicer() qrdbsdk.ServiceCeremonyServicer {
 	return s.ceremonyServices.Ceremony
 }
 
-// qrdbBarrierServicer returns the barrier management service used by the qrdb
-// gRPC (and Unix-over-gRPC) handlers. It is backed by the qrdb SDK barrier
-// client bound to the platform shard — the SAME data-plane barrier the MCP,
-// QUIC, and REST barrier servers operate through buildBarrierCeremonyServices.
-// Routing every transport through the one platform-shard barrier keeps barrier
-// state consistent: `barrier` CLI verbs over gRPC/Unix hit the exact same
-// barrier instance as MCP/QUIC/REST, with no split-brain state.
+// qrdbBarrierServicer returns the barrier management service the qrdb gRPC
+// (and Unix-over-gRPC) handlers serve. It is always one of go-qrdb's own
+// BarrierServicer instances, passed through unchanged, so every transport
+// operates the same barrier with no split-brain state:
 //
-// The previous implementation sourced the barrier from the quicbaas seal
-// manager's SystemBarrier(), which is a no-op compatibility shim returning
-// nil. That left WithRegisterBarrierService unapplied, so the qrdb gRPC
-// barrier handler reported "barrier service is not configured" (Unimplemented)
-// for the gRPC and Unix transports.
+//   - sealed window, and seal disabled: the servicer in s.ceremonyServices,
+//     the exact instance the sealed-window and bootstrap ceremony clients wrap;
+//   - otherwise: the embedded node's own barrier servicer (Node.Services),
+//     the instance its in-process SDK client and its own gRPC server use.
 //
-// Returns nil only when the platform-shard barrier client is genuinely
-// unavailable (qrdbClient not yet wired, or shard resolution fails), in which
-// case the qrdb barrier RPCs respond with codes.Unimplemented — preserving the
-// clean fallback for misconfigured deployments.
+// Returns nil when neither exists yet, in which case the qrdb barrier RPCs
+// respond with codes.Unimplemented.
 func (s *Server) qrdbBarrierServicer() qrdbsdk.BarrierServicer {
-	// Sealed-window boot phase: the node is sealed and its own SDK client
-	// does not exist yet. s.ceremonyServices carries the node's OWN
-	// seal-layer servicer instances (BaasBarrierService = qrdbsdk.
-	// BarrierServicer), so the qrdb.v1 barrier surface serves the same
-	// barrier every other transport does during the window — directly,
-	// with no client round-trip.
-	if s.sealedWindowClient != nil && s.ceremonyServices != nil && s.ceremonyServices.Barrier != nil {
+	if (s.sealedWindowClient != nil || s.bootstrapCeremonyClient != nil) &&
+		s.ceremonyServices != nil && s.ceremonyServices.Barrier != nil {
 		return s.ceremonyServices.Barrier
 	}
-	// Seal-disabled state: the node's SDK client carries no barrier
-	// servicer, so the qrdb.v1 barrier surface operates on the bootstrap
-	// ceremony client — the same instances every other transport serves.
-	if s.bootstrapCeremonyClient != nil {
-		return newQRDBBarrierClientServicer(s.bootstrapCeremonyClient.Barrier())
-	}
-	if s.qrdbClient == nil {
+	node := s.getQRDBNode()
+	if node == nil {
 		return nil
 	}
-	platformClient, err := s.qrdbClient.ForShard(qbshards.PlatformShardID)
-	if err != nil || platformClient == nil {
-		if err != nil {
-			s.logger.Warnf("qrdb gRPC barrier servicer not wired (platform shard unavailable): %v", err)
-		}
+	services := node.Services()
+	if services == nil || services.Barrier == nil {
 		return nil
 	}
-	// Barrier() type-asserts the transport, so it either panics or returns a
-	// non-nil interface; there is no nil case left to guard here.
-	return newQRDBBarrierClientServicer(platformClient.Barrier())
+	return services.Barrier
 }

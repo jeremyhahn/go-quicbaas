@@ -40,6 +40,7 @@ type captured struct {
 	method, pattern string
 	perm            qrdbsdk.Permission
 	public          bool
+	optional        bool
 	handler         http.HandlerFunc
 }
 
@@ -53,6 +54,9 @@ func newCaptureRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]captured) {
 		},
 		func(method, pattern string, h http.HandlerFunc) {
 			recs = append(recs, captured{method: method, pattern: pattern, public: true, handler: h})
+		},
+		func(method, pattern string, h http.HandlerFunc) {
+			recs = append(recs, captured{method: method, pattern: pattern, optional: true, handler: h})
 		})
 	return r, &recs
 }
@@ -134,7 +138,7 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 		switch spec.Auth {
 		case restapi.RouteAuthPublic:
 			assert.True(t, rec.public, "%s must register public", key)
-		case restapi.RouteAuthSession:
+		case restapi.RouteAuthSession, restapi.RouteAuthRefused:
 			assert.Equal(t, qrdbsdk.PermissionIdentityGated, rec.perm,
 				"%s must register identity-gated", key)
 		default:

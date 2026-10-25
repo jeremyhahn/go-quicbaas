@@ -72,9 +72,9 @@ const (
 )
 
 // agentPeerCert mints an agent client certificate shaped exactly like the one
-// the deploy service issues: Organization = tenant, OU = agents, and a
-// tenant-scoped SPIFFE SAN naming the daemon as a user of that tenant. The
-// SPIFFE SAN is what go-qrdb derives the identity's tenant from.
+// the deploy service issues: Organization = tenant, and the SPIFFE SAN
+// spiffe://<tenant>/user/<CN> paired with OU = tenant, as go-xkms's CA stamps
+// them. go-qrdb derives the identity's tenant from that agreeing pair.
 func agentPeerCert(t *testing.T, tenantID, commonName string) *x509.Certificate {
 	t.Helper()
 
@@ -82,8 +82,7 @@ func agentPeerCert(t *testing.T, tenantID, commonName string) *x509.Certificate 
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		tenantID + "/user/" + commonName)
+	spiffeID, err := url.Parse("spiffe://" + tenantID + "/user/" + commonName)
 	if err != nil {
 		t.Fatalf("parse spiffe id: %v", err)
 	}
@@ -92,7 +91,7 @@ func agentPeerCert(t *testing.T, tenantID, commonName string) *x509.Certificate 
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{"agents"},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(24 * time.Hour),
@@ -181,6 +180,7 @@ func certPrincipalHandler(t *testing.T, users map[string]*user.User) http.Handle
 
 	am := middleware.New(rbac.New(roles),
 		middleware.WithAuthenticator(qrdbauth.NewMTLSAuthenticator()),
+		middleware.WithRoleResolver(roles),
 		middleware.WithUserService(&fakeUserServicer{users: users}),
 	)
 	routes := middleware.NewRESTRouteRegistry()
@@ -226,8 +226,9 @@ func TestCertPrincipal_EnrolledCertificateIsAuthorized(t *testing.T) {
 }
 
 // TestCertPrincipal_UnenrolledCertificateIsRefused reproduces the live defect:
-// with no record for the certificate's subject the principal holds no roles,
-// and go-qrdb refuses every control-plane call. It is the neutralization guard
+// with no record for the certificate's subject, go-qrdb v0.47's mTLS
+// authenticator establishes no identity at all, and with no other credential
+// the request is refused as unauthenticated. It is the neutralization guard
 // for the enrollment — remove it and this is what the fleet gets.
 func TestCertPrincipal_UnenrolledCertificateIsRefused(t *testing.T) {
 	cert := agentPeerCert(t, certPrincipalTenant, certPrincipalCN)
@@ -235,22 +236,26 @@ func TestCertPrincipal_UnenrolledCertificateIsRefused(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, heartbeatRequest(cert, ""))
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403 for a certificate principal holding no grant (body: %s)",
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for a certificate with no enrolled principal (body: %s)",
 			w.Code, w.Body.String())
 	}
 }
 
 // TestCertPrincipal_ABearerNeverEscalatesACertificatePrincipal is the negative
-// test the case never had. A request carrying BOTH a peer certificate and a
-// bearer for a DIFFERENT application — one holding the full agent runtime
-// grant — is still refused: the certificate decides who the caller is, and the
-// module's bearer fallback is not consulted at all when qrdb's own chain
-// authenticates. No scope from a token another principal was issued can reach
-// this decision.
+// test the case never had. A request carrying BOTH an enrolled peer
+// certificate whose principal holds no grant and a bearer for a DIFFERENT
+// application — one holding the full agent runtime grant — is still refused:
+// the certificate decides who the caller is, and the module's bearer fallback
+// is not consulted at all when qrdb's own chain authenticates. No scope from a
+// token another principal was issued can reach this decision.
 func TestCertPrincipal_ABearerNeverEscalatesACertificatePrincipal(t *testing.T) {
 	cert := agentPeerCert(t, certPrincipalTenant, certPrincipalCN)
-	handler := certPrincipalHandler(t, map[string]*user.User{})
+	ungranted := enrolledAgentUser(t, cert)
+	ungranted.RoleIDs = nil
+	handler := certPrincipalHandler(t, map[string]*user.User{
+		certPrincipalTenant + "/" + certPrincipalCN: ungranted,
+	})
 
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, heartbeatRequest(cert, "other-app-token"))

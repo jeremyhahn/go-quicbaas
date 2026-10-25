@@ -329,7 +329,7 @@ func TestKVWorkflowPersistor_LoadAllRoundTrip(t *testing.T) {
 	client := srv.qrdbNode.Client()
 	require.NotNil(t, client)
 
-	p := newKVWorkflowPersistor(client, 1)
+	p := srv.workflowPersistor(client)
 	ctx := context.Background()
 
 	require.NoError(t, p.Save(ctx, &orchestration.WorkflowDefinition{TenantID: "acme", Name: "wf-load-A"}))

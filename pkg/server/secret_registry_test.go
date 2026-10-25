@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,7 +162,7 @@ func TestBuildSecretRegistry_NilNode_LiteralFallthrough(t *testing.T) {
 	// A plain string that is not a known URI resolves as literal.
 	sv, err := reg.Resolve(context.Background(), "plain-value")
 	require.NoError(t, err)
-	assert.Equal(t, "plain-value", sv.String())
+	assert.Equal(t, "plain-value", resolvedString(t, sv))
 	assert.Equal(t, qrdbsecret.StrategyLiteral, sv.Strategy)
 }
 
@@ -183,7 +184,7 @@ func TestBuildSecretRegistry_PlaceholderValuesResolveVerbatim(t *testing.T) {
 
 		sv, err := reg.Resolve(context.Background(), raw)
 		require.NoError(t, err)
-		assert.Equal(t, raw, sv.String(),
+		assert.Equal(t, raw, resolvedString(t, sv),
 			"%q must resolve verbatim through the literal fallback", raw)
 		assert.Equal(t, qrdbsecret.StrategyLiteral, sv.Strategy)
 	}
@@ -300,7 +301,7 @@ func TestInitializeCA_RootKeyPassword_ResolutionFailure_Propagates(t *testing.T)
 	// Register a credential resolver that claims and fails the URI so it is
 	// NOT treated as a literal and resolution returns a hard error.
 	reg := qrdbsecret.NewResolverRegistry()
-	reg.Register(qrdbsecret.NewCredentialResolver(func(_ context.Context, _ string) ([]byte, error) {
+	reg.Register(qrdbsecret.NewCredentialResolver(func(_ context.Context, _ string) (*qrdbsecure.Buffer, error) {
 		return nil, &srTestError{msg: "credential not found"}
 	}))
 	srv.secretRegistry = reg
@@ -372,3 +373,15 @@ type srFixedSecretsQuicBaaS struct {
 }
 
 func (n *srFixedSecretsQuicBaaS) Secrets() service.SecretsService { return n.svc }
+
+// resolvedString returns the secret a resolved value holds, read inside the
+// value's own borrow so the test never keeps a copy past the comparison.
+func resolvedString(t *testing.T, sv *qrdbsecret.SecretValue) string {
+	t.Helper()
+	var out string
+	require.NoError(t, sv.WithBytes(context.Background(), func(b []byte) error {
+		out = string(b)
+		return nil
+	}))
+	return out
+}

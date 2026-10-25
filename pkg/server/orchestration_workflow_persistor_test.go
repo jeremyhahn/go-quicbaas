@@ -31,9 +31,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 )
 
 func TestKVWorkflowPersistor_KeyFor(t *testing.T) {
@@ -133,19 +133,11 @@ func TestNewKVWorkflowPersistor_StoresArgs(t *testing.T) {
 // in-process transport; the qrdb node is required for embedded operations.
 func newPersistorNode(t *testing.T) (*kvWorkflowPersistor, *qrdbsdk.Client) {
 	t.Helper()
-	ctx := context.Background()
-	qcfg := &qrdbsdk.DaemonConfig{}
-	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = node.Close() })
+	node := newPrincipalNode(t)
 
 	client := node.Client()
 	require.NotNil(t, client)
-	return newKVWorkflowPersistor(client, 1), client
+	return newKVWorkflowPersistor(qrdbservice.KV(node, client.KV()), 1), client
 }
 
 func workflowNames(defs []*orchestration.WorkflowDefinition) []string {
@@ -199,19 +191,12 @@ func TestKVWorkflowPersistor_RoundTrip(t *testing.T) {
 	// Phase E: the bare ShardedClient no longer provides a working in-process
 	// transport; the qrdb node is required for all embedded mode operations.
 	ctx := context.Background()
-	qcfg := &qrdbsdk.DaemonConfig{}
-	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = node.Close() })
+	node := newPrincipalNode(t)
 
 	client := node.Client()
 	require.NotNil(t, client)
 
-	p := newKVWorkflowPersistor(client, 1)
+	p := newKVWorkflowPersistor(qrdbservice.KV(node, client.KV()), 1)
 
 	t.Run("Save then LoadAll returns the definition", func(t *testing.T) {
 		def := &orchestration.WorkflowDefinition{TenantID: "acme", Name: "wf-A", Description: "alpha workflow"}
@@ -247,27 +232,20 @@ func TestKVWorkflowPersistor_RoundTrip(t *testing.T) {
 func TestKVWorkflowPersistor_LoadAll_SkipsMalformedEntries(t *testing.T) {
 	// Phase E: use a real qrdb standalone node.
 	ctx := context.Background()
-	qcfg := &qrdbsdk.DaemonConfig{}
-	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, nodeErr := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
-	require.NoError(t, nodeErr)
-	t.Cleanup(func() { _ = node.Close() })
+	node := newPrincipalNode(t)
 	client := node.Client()
-	p := newKVWorkflowPersistor(client, 1)
+	p := newKVWorkflowPersistor(qrdbservice.KV(node, client.KV()), 1)
 
 	// Write a malformed entry directly under the workflow prefix to
 	// exercise the json.Unmarshal failure branch in LoadAll. The
 	// persistor must silently skip it rather than aborting the entire
 	// boot.
-	require.NoError(t, client.KV().Put(ctx, workflowKeyPrefix+"acme/broken", []byte("not-json")))
+	require.NoError(t, p.kv.Put(ctx, workflowKeyPrefix+"acme/broken", []byte("not-json")))
 	// A body whose name disagrees with its key is not the record its key
 	// claims; it is skipped rather than surfaced under the wrong name.
-	require.NoError(t, client.KV().Put(ctx, workflowKeyPrefix+"acme/misfiled", []byte(`{"name":"other"}`)))
+	require.NoError(t, p.kv.Put(ctx, workflowKeyPrefix+"acme/misfiled", []byte(`{"name":"other"}`)))
 	// A key with no tenant segment cannot be filed.
-	require.NoError(t, client.KV().Put(ctx, workflowKeyPrefix+"untenanted", []byte(`{"name":"untenanted"}`)))
+	require.NoError(t, p.kv.Put(ctx, workflowKeyPrefix+"untenanted", []byte(`{"name":"untenanted"}`)))
 
 	// Save a valid one alongside.
 	require.NoError(t, p.Save(ctx, &orchestration.WorkflowDefinition{TenantID: "acme", Name: "good"}))
@@ -283,19 +261,12 @@ func TestKVWorkflowPersistor_LoadAll_SkipsMalformedEntries(t *testing.T) {
 // drives the KV-error branches of Save/Remove/LoadAll without a fake client.
 func newClosedPersistorClient(t *testing.T) *kvWorkflowPersistor {
 	t.Helper()
-	ctx := context.Background()
-	qcfg := &qrdbsdk.DaemonConfig{}
-	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
-	require.NoError(t, err)
+	node := newPrincipalNode(t)
 	client := node.Client()
 	require.NotNil(t, client)
 	// Close the node so all subsequent KV operations on its client fail.
 	require.NoError(t, node.Close())
-	return newKVWorkflowPersistor(client, 1)
+	return newKVWorkflowPersistor(qrdbservice.KV(node, client.KV()), 1)
 }
 
 // TestKVWorkflowPersistor_Save_PutError covers the Put-error branch of Save:
@@ -337,19 +308,12 @@ func TestKVWorkflowPersistor_LoadAll_ScanError(t *testing.T) {
 // is skipped (it is not a usable workflow) rather than returned.
 func TestKVWorkflowPersistor_LoadAll_SkipsEmptyName(t *testing.T) {
 	ctx := context.Background()
-	qcfg := &qrdbsdk.DaemonConfig{}
-	qcfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
-	qcfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
-	}
-	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = node.Close() })
+	node := newPrincipalNode(t)
 	client := node.Client()
-	p := newKVWorkflowPersistor(client, 1)
+	p := newKVWorkflowPersistor(qrdbservice.KV(node, client.KV()), 1)
 
 	// Store a valid JSON workflow with an empty Name directly under the prefix.
-	require.NoError(t, client.KV().Put(ctx, workflowKeyPrefix+"acme/nameless", []byte(`{"Name":""}`)))
+	require.NoError(t, p.kv.Put(ctx, workflowKeyPrefix+"acme/nameless", []byte(`{"Name":""}`)))
 	// Plus a valid one.
 	require.NoError(t, p.Save(ctx, &orchestration.WorkflowDefinition{TenantID: "acme", Name: "named"}))
 

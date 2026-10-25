@@ -235,31 +235,52 @@ func TestSealedBoot_EmbeddedRefusalHasNoSideEffects(t *testing.T) {
 	assert.Nil(t, srv.sealedWindowFacade)
 }
 
-// driveBarrierInitialize drives the sealed daemon's barrier unsealed through
-// its sealed-window REST listener, as an operator's first-boot initialize
-// does: BarrierInitialize seeds the root key and unseals in one step.
-func driveBarrierInitialize(t *testing.T, srv *Server) {
+// sealedBootPassphrase is the passphrase every sealed-boot test's barrier is
+// initialized and later unsealed under.
+const sealedBootPassphrase = "sealed-window-e2e-passphrase"
+
+// InitSealedBootDataDir runs first boot on cfg's data dir the way
+// `quicbaasd init` does, so the next daemon boot finds an initialized but
+// sealed barrier. Under go-qrdb v0.47 the system barrier is brought up only
+// by `qrdb init`, in-process: ceremony initialize is withheld from the sealed
+// window (sealedwindow.StrictCeremonyExclusions) and a standalone barrier
+// initialize on the system barrier is refused. An embedded server started
+// with the passphrase initializes and unseals the node barrier during Start,
+// exactly as runInitEmbeddedServer does. Exported for the external SDK-compat
+// test package.
+func InitSealedBootDataDir(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	initCfg := *cfg
+	initCfg.Server.Embedded = true
+	srv, err := NewServer(&initCfg, WithSealPassphrase([]byte(sealedBootPassphrase)))
+	require.NoError(t, err, "construct the first-boot server")
+	require.NoError(t, srv.Start(), "first boot must initialize the barrier")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	require.NoError(t, srv.Shutdown(ctx), "first-boot server shutdown")
+}
+
+// driveBarrierUnseal unseals the sealed daemon's barrier through its
+// sealed-window REST listener, as an operator's restart does.
+func driveBarrierUnseal(t *testing.T, srv *Server) {
 	t.Helper()
 	addr := srv.RESTAddr()
 	require.NotNil(t, addr, "sealed-window REST listener must be up")
 	// The body is marshalled from go-qrdb's own request type, not hand-written
 	// JSON, because that type IS the wire format (docs/barrier/api.md, "a
-	// credential is bytes, and the shapes are aliases"). A literal here would
-	// have gone on passing while the handler and the SDK disagreed about
-	// whether `secret` is base64 — which is exactly how go-quicbaas#964 reached
-	// a burn-in node.
-	body, err := json.Marshal(&qrdbtransport.BarrierInitializeRequest{
-		Secret: []byte("sealed-window-e2e-passphrase"),
+	// credential is bytes, and the shapes are aliases").
+	body, err := json.Marshal(&qrdbtransport.BarrierUnsealRequest{
+		Secret: []byte(sealedBootPassphrase),
 	})
-	require.NoError(t, err, "marshal the barrier initialize request")
+	require.NoError(t, err, "marshal the barrier unseal request")
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/barrier/initialize", addr.String()),
+		fmt.Sprintf("http://%s/api/v1/barrier/unseal", addr.String()),
 		"application/json",
 		bytes.NewReader(body),
 	)
-	require.NoError(t, err, "barrier initialize against the sealed-window REST listener")
+	require.NoError(t, err, "barrier unseal against the sealed-window REST listener")
 	defer func() { _ = resp.Body.Close() }()
-	require.Equal(t, http.StatusNoContent, resp.StatusCode, "barrier initialize must succeed")
+	require.Less(t, resp.StatusCode, 300, "barrier unseal must succeed, got %d", resp.StatusCode)
 }
 
 // TestSealedBoot_PinnedPortUnsealCompletesFullBoot is the deterministic #139
@@ -288,6 +309,7 @@ func driveBarrierInitialize(t *testing.T, srv *Server) {
 func TestSealedBoot_PinnedPortUnsealCompletesFullBoot(t *testing.T) {
 	cfg := NewSealedBootTestConfig(t)
 	cfg.Server.REST.Port = getFreePort(t)
+	InitSealedBootDataDir(t, cfg)
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -306,7 +328,7 @@ func TestSealedBoot_PinnedPortUnsealCompletesFullBoot(t *testing.T) {
 	})
 	require.True(t, srv.qrdbNode.IsSealed(), "node must boot sealed without auto-unseal material")
 
-	driveBarrierInitialize(t, srv)
+	driveBarrierUnseal(t, srv)
 
 	// A Start that returns while we wait is the collision this test exists
 	// to catch.
@@ -340,6 +362,7 @@ func TestSealedBoot_PinnedPortUnsealCompletesFullBoot(t *testing.T) {
 // reorder fixed into a racy one.
 func TestSealedBoot_TeardownFailureAbortsBoot(t *testing.T) {
 	cfg := NewSealedBootTestConfig(t)
+	InitSealedBootDataDir(t, cfg)
 
 	srv, err := NewServer(cfg)
 	require.NoError(t, err)
@@ -364,7 +387,7 @@ func TestSealedBoot_TeardownFailureAbortsBoot(t *testing.T) {
 	})
 	require.True(t, srv.qrdbNode.IsSealed(), "node must boot sealed without auto-unseal material")
 
-	driveBarrierInitialize(t, srv)
+	driveBarrierUnseal(t, srv)
 
 	// Fail fast on the fail-open outcome: a node SDK client appearing means
 	// the full boot ran on top of the unproven teardown.

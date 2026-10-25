@@ -20,6 +20,8 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
 // recordingUserServicer records which delegate methods were invoked so the
@@ -63,6 +65,16 @@ func (r *recordingUserAuthFactorServicer) Add(_ context.Context, userID uint64, 
 	return nil
 }
 
+func (r *recordingUserAuthFactorServicer) AddConditional(_ context.Context, userID uint64, factor *qrdbsdk.AuthFactor, cond qrdbsdk.FactorAddCondition) (uint64, error) {
+	r.calls = append(r.calls, "AddConditional")
+	return 1, nil
+}
+
+func (r *recordingUserAuthFactorServicer) FactorSetVersion(_ context.Context, userID uint64) (uint64, error) {
+	r.calls = append(r.calls, "FactorSetVersion")
+	return 1, nil
+}
+
 func (r *recordingUserAuthFactorServicer) List(_ context.Context, userID uint64) ([]*qrdbsdk.AuthFactor, error) {
 	r.calls = append(r.calls, "List")
 	return []*qrdbsdk.AuthFactor{r.factor}, nil
@@ -80,6 +92,11 @@ func (r *recordingUserAuthFactorServicer) LookupByCredentialKey(_ context.Contex
 
 func (r *recordingUserAuthFactorServicer) Remove(_ context.Context, factorID string, force bool) error {
 	r.calls = append(r.calls, "Remove")
+	return nil
+}
+
+func (r *recordingUserAuthFactorServicer) Delete(_ context.Context, factorID string, force bool) error {
+	r.calls = append(r.calls, "Delete")
 	return nil
 }
 
@@ -228,6 +245,71 @@ func TestQRDBUserAuthFactorServicerProxy_UnavailableFailsClosed(t *testing.T) {
 	}
 	if err := p.MarkUsed(ctx, "f1", time.Now()); !errors.As(err, &unavailable) {
 		t.Fatalf("MarkUsed: expected unavailability error, got %v", err)
+	}
+	cond := qrdbsdk.FactorAddCondition{NoActiveOfType: true}
+	if _, err := p.AddConditional(ctx, 1, &qrdbsdk.AuthFactor{}, cond); !errors.As(err, &unavailable) {
+		t.Fatalf("AddConditional: expected unavailability error, got %v", err)
+	}
+	if _, err := p.FactorSetVersion(ctx, 1); !errors.As(err, &unavailable) {
+		t.Fatalf("FactorSetVersion: expected unavailability error, got %v", err)
+	}
+	if err := p.Delete(ctx, "f1", false); !errors.As(err, &unavailable) {
+		t.Fatalf("Delete: expected unavailability error, got %v", err)
+	}
+}
+
+// TestQRDBUserAuthFactorServicerProxy_ConditionalVerbsDelegate proves the
+// conditional add, the factor-set version read and the hard delete reach the
+// live servicer once it is available, returning its results unchanged.
+func TestQRDBUserAuthFactorServicerProxy_ConditionalVerbsDelegate(t *testing.T) {
+	ctx := context.Background()
+	live := &recordingUserAuthFactorServicer{}
+	p := &qrdbUserAuthFactorServicerProxy{resolve: func() qrdbsdk.UserAuthFactorServicer { return live }}
+
+	cond := qrdbsdk.FactorAddCondition{NoActiveOfType: true}
+	version, err := p.AddConditional(ctx, 42, &qrdbsdk.AuthFactor{Type: qrdbsdk.AuthFactorMTLS}, cond)
+	if err != nil {
+		t.Fatalf("AddConditional failed: %v", err)
+	}
+	if version != 1 {
+		t.Fatalf("AddConditional: expected version 1, got %d", version)
+	}
+	if version, err = p.FactorSetVersion(ctx, 42); err != nil || version != 1 {
+		t.Fatalf("FactorSetVersion: expected (1, nil), got (%d, %v)", version, err)
+	}
+	if err := p.Delete(ctx, "f1", true); err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	want := []string{"AddConditional", "FactorSetVersion", "Delete"}
+	if len(live.calls) != len(want) {
+		t.Fatalf("expected %v delegations, got %v", want, live.calls)
+	}
+	for i := range want {
+		if live.calls[i] != want[i] {
+			t.Fatalf("expected %v delegations, got %v", want, live.calls)
+		}
+	}
+}
+
+// TestQRDBUserAuthFactorServicerProxy_AddConditionalRefusesAssertedAttestation
+// proves the conditional add enforces the same attestation contract as Add: a
+// caller-asserted attestation level is refused before the node is asked.
+func TestQRDBUserAuthFactorServicerProxy_AddConditionalRefusesAssertedAttestation(t *testing.T) {
+	live := &recordingUserAuthFactorServicer{}
+	p := &qrdbUserAuthFactorServicerProxy{resolve: func() qrdbsdk.UserAuthFactorServicer { return live }}
+
+	factor := &qrdbsdk.AuthFactor{
+		Type:     qrdbsdk.AuthFactorFIDO2,
+		Metadata: map[string]string{iam.AuthFactorMetadataAttestLevel: "hardware"},
+	}
+	cond := qrdbsdk.FactorAddCondition{NoActiveOfType: true}
+	_, err := p.AddConditional(context.Background(), 42, factor, cond)
+	var typed *iam.AuthFactorAttestationMetadataError
+	if !errors.As(err, &typed) {
+		t.Fatalf("want *iam.AuthFactorAttestationMetadataError, got %v", err)
+	}
+	if len(live.calls) != 0 {
+		t.Fatalf("a refused AddConditional still reached qrdb: %v", live.calls)
 	}
 }
 

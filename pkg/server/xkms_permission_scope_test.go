@@ -153,6 +153,15 @@ func (r *scopeResolvingRBAC) ListPermissions(ctx context.Context, identity *qrdb
 	return out, nil
 }
 
+func (r *scopeResolvingRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	caller := qrdbsdk.IdentityFromContext(ctx)
+	if caller == nil {
+		return nil, qrdbsdk.ErrUnauthenticated
+	}
+	identity := &qrdbtransport.Identity{Subject: caller.Subject, TenantID: caller.TenantID, Roles: caller.Roles}
+	return r.ListPermissions(ctx, identity)
+}
+
 // fixedPermissionResolver hands the token service one RBAC client, mirroring
 // the late-bound serverPermissionResolver without the server lifecycle.
 type fixedPermissionResolver struct {

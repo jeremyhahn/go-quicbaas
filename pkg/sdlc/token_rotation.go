@@ -447,13 +447,15 @@ func (r *TokenRotator) Rotate(ctx context.Context, spec TokenRotationSpec) (*Rot
 	// real-manager first-rotation test is the proof: it reads the secret
 	// back AFTER the enclave died, which only works if the store took its
 	// own copy. TokenSecretStore.Store carries the copy-on-store contract.
-	if err := r.store.Store(ctx, spec.SecretPath,
-		//secure:unborrowed injected-interface TokenSecretStore.Store owns the copy-on-store boundary for the token secret.
-		map[string][]byte{tokenSecretKey: minted.Secret.Bytes()},
-		map[string]string{
-			metadataRotationSlot: strconv.FormatUint(slot, 10),
-			metadataTokenName:    minted.Name,
-		}); err != nil {
+	err = minted.Secret.WithBytes(func(secret []byte) error {
+		return r.store.Store(ctx, spec.SecretPath,
+			map[string][]byte{tokenSecretKey: secret},
+			map[string]string{
+				metadataRotationSlot: strconv.FormatUint(slot, 10),
+				metadataTokenName:    minted.Name,
+			})
+	})
+	if err != nil {
 		// AN ERROR RETURN DOES NOT PROVE THE WRITE DID NOT COMMIT: a timeout
 		// can fire after the backend applied it, and this path once cleared
 		// the staging marker AND revoked the replacement on the strength of
@@ -480,8 +482,12 @@ func (r *TokenRotator) Rotate(ctx context.Context, spec TokenRotationSpec) (*Rot
 	// The borrowed view points INTO the enclave: no heap copy exists at
 	// this boundary, and the deferred Destroy registered at the mint covers
 	// every exit — panicking adapters included (reviews 977/982/984).
-	//secure:unborrowed injected-interface VerifyToken accepts only a byte slice and does not retain it past the call.
-	identity, verifyErr := r.lifecycle.VerifyToken(ctx, minted.Secret.Bytes())
+	var identity *TokenIdentity
+	verifyErr := minted.Secret.WithBytes(func(secret []byte) error {
+		var err error
+		identity, err = r.lifecycle.VerifyToken(ctx, secret)
+		return err
+	})
 	if verifyErr == nil && identity == nil {
 		// (nil, nil) is an adapter answering nothing while claiming success.
 		// Dereferencing it crashed the rotation worker AFTER the replacement

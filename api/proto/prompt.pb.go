@@ -17,7 +17,7 @@
 package proto
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -1254,7 +1254,7 @@ var File_api_proto_prompt_proto protoreflect.FileDescriptor
 
 const file_api_proto_prompt_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/proto/prompt.proto\x12\x12quicbaas.prompt.v1\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"\x87\x01\n" +
+	"\x16api/proto/prompt.proto\x12\x12quicbaas.prompt.v1\x1a\x18qrdb/v1/permission.proto\"\x87\x01\n" +
 	"\rPromptAddress\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05scope\x18\x02 \x01(\tR\x05scope\x12\x1d\n" +

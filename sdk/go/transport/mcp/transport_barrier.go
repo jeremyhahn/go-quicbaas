@@ -50,8 +50,15 @@ func (t *Transport) BarrierInitialize(ctx context.Context, req *qrdbtransport.Ba
 	if req == nil {
 		return errors.NewInvalidInput("mcp.BarrierInitialize", "request is required")
 	}
+	if err := t.requireTLSForSecret(len(req.Secret) > 0); err != nil {
+		return err
+	}
+	secret, err := secretArg("secret", req.Secret)
+	if err != nil {
+		return err
+	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_initialize", map[string]interface{}{
-		"secret": secretArg(req.Secret),
+		"secret": secret,
 	}); err != nil {
 		return err
 	}
@@ -64,8 +71,15 @@ func (t *Transport) BarrierUnseal(ctx context.Context, req *qrdbtransport.Barrie
 	if req == nil {
 		return errors.NewInvalidInput("mcp.BarrierUnseal", "request is required")
 	}
+	if err := t.requireTLSForSecret(len(req.Secret) > 0); err != nil {
+		return err
+	}
+	secret, err := secretArg("secret", req.Secret)
+	if err != nil {
+		return err
+	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_unseal", map[string]interface{}{
-		"secret": secretArg(req.Secret),
+		"secret": secret,
 	}); err != nil {
 		return err
 	}
@@ -84,15 +98,33 @@ func (t *Transport) BarrierSeal(ctx context.Context) error {
 	var args map[string]interface{}
 	if ok {
 		defer secure.Wipe(pin)
-		if !strings.HasPrefix(t.endpoint, "https://") {
-			return &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
+		if err := t.requireTLSForSecret(len(pin) > 0); err != nil {
+			return err
 		}
-		args = map[string]interface{}{"so_pin": string(pin)}
+		soPIN, err := secretArg("so_pin", pin)
+		if err != nil {
+			return err
+		}
+		args = map[string]interface{}{"so_pin": soPIN}
 	}
 	if _, err := t.callBarrier(ctx, "qrdb_barrier_seal", args); err != nil {
 		return err
 	}
 	return nil
+}
+
+// requireTLSForSecret refuses to send a secret to an endpoint that is not
+// https://, so no barrier credential ever crosses a plaintext connection.
+// Every MCP verb that carries one (an so_pin argument, an unseal or
+// initialize secret, a passphrase or a decrypted key share) calls it with
+// hasSecret true before the request is built; a call that carries none
+// passes false and may use http://. The refusal is the typed
+// *qrdbtransport.SOPINRequiresTLSError and never contains the secret.
+func (t *Transport) requireTLSForSecret(hasSecret bool) error {
+	if !hasSecret || strings.HasPrefix(t.endpoint, "https://") {
+		return nil
+	}
+	return &qrdbtransport.SOPINRequiresTLSError{Transport: "mcp"}
 }
 
 // BarrierStatus returns the current barrier state by calling the
@@ -115,11 +147,23 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierInitializeShamir", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_initialize", map[string]interface{}{
-		"secret":       secretArg(req.Secret),
+	// The SO PIN comes from the request or, when it carries none, from the
+	// PIN bound by qrdbtransport.WithSOPIN, as on qrdb's own transports.
+	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierInitializeShamir", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.requireTLSForSecret(soPIN != "" || req.UserPin != ""); err != nil {
+		return nil, err
+	}
+	args := map[string]interface{}{
 		"threshold":    req.Threshold,
 		"total_shares": req.TotalShares,
-	})
+	}
+	putOptional(args, "policy", req.Policy)
+	putOptional(args, "so_pin", soPIN)
+	putOptional(args, "user_pin", req.UserPin)
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_initialize", args)
 	if err != nil {
 		return nil, err
 	}
@@ -130,71 +174,23 @@ func (t *Transport) BarrierInitializeShamir(ctx context.Context, req *qrdbtransp
 	return &resp, nil
 }
 
-// BarrierUnsealWithShare submits a single Shamir share toward the unseal
-// quorum by calling the qrdb_barrier_shamir_unseal_share MCP tool.
-func (t *Transport) BarrierUnsealWithShare(ctx context.Context, req *qrdbtransport.BarrierUnsealShareRequest) (*qrdbtransport.BarrierUnsealShareResponse, error) {
-	if req == nil {
-		return nil, errors.NewInvalidInput("mcp.BarrierUnsealWithShare", "request is required")
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_unseal_share", map[string]interface{}{
-		"share": req.Share,
-	})
-	if err != nil {
-		return nil, err
-	}
-	var resp qrdbtransport.BarrierUnsealShareResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.BarrierUnsealWithShare", "failed to decode response")
-	}
-	return &resp, nil
-}
-
-// BarrierUnsealWithShares unseals the barrier in a single call with a complete
-// set of Shamir shares by calling the qrdb_barrier_shamir_unseal_shares
-// MCP tool. The shares are sent as a JSON array argument so the server's
-// strongly-typed parser does not have to split a comma-separated string.
-func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("mcp.BarrierUnsealWithShares", "request is required")
-	}
-	if _, err := t.callBarrier(ctx, "qrdb_barrier_shamir_unseal_shares", map[string]interface{}{
-		"shares": stringsToInterfaces(req.Shares),
-	}); err != nil {
-		return err
-	}
-	return nil
-}
-
-// BarrierRekey generates new Shamir shares for the existing root key by
-// calling the qrdb_barrier_rekey MCP tool.
-func (t *Transport) BarrierRekey(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error) {
-	if req == nil {
-		return nil, errors.NewInvalidInput("mcp.BarrierRekey", "request is required")
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_rekey", map[string]interface{}{
-		"threshold": req.Threshold,
-		"total":     req.Total,
-	})
-	if err != nil {
-		return nil, err
-	}
-	var resp qrdbtransport.BarrierRekeyResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.BarrierRekey", "failed to decode response")
-	}
-	return &resp, nil
-}
-
 // BarrierGenerateRecoveryKeys generates recovery shares for disaster recovery
 // by calling the qrdb_barrier_recovery_generate MCP tool.
 func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierGenerateRecoveryKeys", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_generate", map[string]interface{}{
-		"threshold": req.Threshold,
-		"total":     req.Total,
-	})
+	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierGenerateRecoveryKeys", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.requireTLSForSecret(soPIN != ""); err != nil {
+		return nil, err
+	}
+	args := map[string]interface{}{"threshold": req.Threshold}
+	putOptional(args, "policy", req.Policy)
+	putOptional(args, "so_pin", soPIN)
+	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_generate", args)
 	if err != nil {
 		return nil, err
 	}
@@ -203,20 +199,6 @@ func (t *Transport) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtr
 		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.BarrierGenerateRecoveryKeys", "failed to decode response")
 	}
 	return &resp, nil
-}
-
-// BarrierRecoverWithKeys unseals the barrier using recovery shares by calling
-// the qrdb_barrier_recovery_recover MCP tool.
-func (t *Transport) BarrierRecoverWithKeys(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error {
-	if req == nil {
-		return errors.NewInvalidInput("mcp.BarrierRecoverWithKeys", "request is required")
-	}
-	if _, err := t.callBarrier(ctx, "qrdb_barrier_recovery_recover", map[string]interface{}{
-		"keys": stringsToInterfaces(req.Keys),
-	}); err != nil {
-		return err
-	}
-	return nil
 }
 
 // BarrierDeleteRecoveryKeys removes recovery-key metadata by calling the
@@ -244,25 +226,6 @@ func (t *Transport) BarrierHasRecoveryKeys(ctx context.Context) (*qrdbtransport.
 	return &qrdbtransport.BarrierHasRecoveryKeysResponse{HasKeys: wire.HasRecoveryKeys}, nil
 }
 
-// BarrierGenerateRootToken mints a new root token using Shamir shares by
-// calling the qrdb_barrier_root_token MCP tool.
-func (t *Transport) BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error) {
-	if req == nil {
-		return nil, errors.NewInvalidInput("mcp.BarrierGenerateRootToken", "request is required")
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_root_token", map[string]interface{}{
-		"shares": stringsToInterfaces(req.Shares),
-	})
-	if err != nil {
-		return nil, err
-	}
-	var resp qrdbtransport.BarrierRootTokenResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.BarrierGenerateRootToken", "failed to decode response")
-	}
-	return &resp, nil
-}
-
 // OfficerRegister registers a Security Officer for the system barrier by
 // calling the qrdb_barrier_officer_register MCP tool. The signed certificate
 // in the response must be delivered to the officer out of band.
@@ -270,23 +233,9 @@ func (t *Transport) OfficerRegister(ctx context.Context, req *qrdbtransport.Offi
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.OfficerRegister", "request is required")
 	}
-	args := map[string]interface{}{
-		"username": req.Username,
-		"csr_pem":  string(req.CSRPEM),
-	}
-	if req.AuthenticatorType != "" {
-		args["authenticator_type"] = req.AuthenticatorType
-	}
-	if req.AuthenticatorRef != "" {
-		args["authenticator_ref"] = req.AuthenticatorRef
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_officer_register", args)
-	if err != nil {
-		return nil, err
-	}
 	var resp qrdbtransport.OfficerRegisterResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.OfficerRegister", "failed to decode response")
+	if err := t.callBarrierInto(ctx, "OfficerRegister", "qrdb_barrier_officer_register", req, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -307,37 +256,15 @@ func (t *Transport) OfficerList(ctx context.Context) ([]*qrdbtransport.OfficerSt
 	return wire.Officers, nil
 }
 
-// OfficerClaimStatus returns per-officer claim status (no share data) by
-// calling the qrdb_barrier_officer_claim_status MCP tool.
-func (t *Transport) OfficerClaimStatus(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error) {
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_officer_claim_status", nil)
-	if err != nil {
-		return nil, err
-	}
-	var wire struct {
-		Officers []*qrdbtransport.OfficerStatus `json:"officers"`
-	}
-	if err := remarshalBarrier(raw, &wire); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.OfficerClaimStatus", "failed to decode response")
-	}
-	return wire.Officers, nil
-}
-
 // ShareClaimBegin issues a challenge nonce to the named Security Officer by
 // calling the qrdb_barrier_share_claim_begin MCP tool.
 func (t *Transport) ShareClaimBegin(ctx context.Context, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.ShareClaimBegin", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_share_claim_begin", map[string]interface{}{
-		"username": req.Username,
-	})
-	if err != nil {
-		return nil, err
-	}
 	var resp qrdbtransport.ShareClaimBeginResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShareClaimBegin", "failed to decode response")
+	if err := t.callBarrierInto(ctx, "ShareClaimBegin", "qrdb_barrier_share_claim_begin", req, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -349,36 +276,9 @@ func (t *Transport) ShareClaimComplete(ctx context.Context, req *qrdbtransport.S
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.ShareClaimComplete", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_share_claim_complete", map[string]interface{}{
-		"username":  req.Username,
-		"nonce_hex": req.NonceHex,
-		"signature": req.Signature,
-	})
-	if err != nil {
-		return nil, err
-	}
 	var resp qrdbtransport.ShareClaimCompleteResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShareClaimComplete", "failed to decode response")
-	}
-	return &resp, nil
-}
-
-// ShamirSealVote submits a Shamir share as a seal vote for a Shamir-protected
-// system barrier by calling the qrdb_barrier_shamir_seal_vote MCP tool.
-func (t *Transport) ShamirSealVote(ctx context.Context, req *qrdbtransport.ShamirSealVoteRequest) (*qrdbtransport.ShamirSealVoteResponse, error) {
-	if req == nil {
-		return nil, errors.NewInvalidInput("mcp.ShamirSealVote", "request is required")
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_shamir_seal_vote", map[string]interface{}{
-		"share": req.Share,
-	})
-	if err != nil {
+	if err := t.callBarrierInto(ctx, "ShareClaimComplete", "qrdb_barrier_share_claim_complete", req, &resp); err != nil {
 		return nil, err
-	}
-	var resp qrdbtransport.ShamirSealVoteResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.ShamirSealVote", "failed to decode response")
 	}
 	return &resp, nil
 }
@@ -389,23 +289,9 @@ func (t *Transport) RecoveryOfficerRegister(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.RecoveryOfficerRegister", "request is required")
 	}
-	args := map[string]interface{}{
-		"username": req.Username,
-		"csr_pem":  string(req.CSRPEM),
-	}
-	if req.AuthenticatorType != "" {
-		args["authenticator_type"] = req.AuthenticatorType
-	}
-	if req.AuthenticatorRef != "" {
-		args["authenticator_ref"] = req.AuthenticatorRef
-	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_officer_register", args)
-	if err != nil {
-		return nil, err
-	}
 	var resp qrdbtransport.OfficerRegisterResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryOfficerRegister", "failed to decode response")
+	if err := t.callBarrierInto(ctx, "RecoveryOfficerRegister", "qrdb_barrier_recovery_officer_register", req, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -416,15 +302,9 @@ func (t *Transport) RecoveryShareClaimBegin(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.RecoveryShareClaimBegin", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_share_claim_begin", map[string]interface{}{
-		"username": req.Username,
-	})
-	if err != nil {
-		return nil, err
-	}
 	var resp qrdbtransport.ShareClaimBeginResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryShareClaimBegin", "failed to decode response")
+	if err := t.callBarrierInto(ctx, "RecoveryShareClaimBegin", "qrdb_barrier_recovery_share_claim_begin", req, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -436,17 +316,88 @@ func (t *Transport) RecoveryShareClaimComplete(ctx context.Context, req *qrdbtra
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.RecoveryShareClaimComplete", "request is required")
 	}
-	raw, err := t.callBarrier(ctx, "qrdb_barrier_recovery_share_claim_complete", map[string]interface{}{
-		"username":  req.Username,
-		"nonce_hex": req.NonceHex,
-		"signature": req.Signature,
-	})
+	var resp qrdbtransport.ShareClaimCompleteResponse
+	if err := t.callBarrierInto(ctx, "RecoveryShareClaimComplete", "qrdb_barrier_recovery_share_claim_complete", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// BarrierClusterUnseal reports the cluster-wide unseal state by calling the
+// qrdb_barrier_cluster_unseal MCP tool.
+func (t *Transport) BarrierClusterUnseal(ctx context.Context) (*qrdbtransport.ClusterSeal, error) {
+	var resp qrdbtransport.ClusterSeal
+	if err := t.callBarrierInto(ctx, "BarrierClusterUnseal", "qrdb_barrier_cluster_unseal", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// BarrierQuorumBegin opens a quorum round by calling the
+// qrdb_barrier_quorum_begin MCP tool.
+func (t *Transport) BarrierQuorumBegin(ctx context.Context, req *qrdbtransport.QuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error) {
+	var resp qrdbtransport.QuorumChallenge
+	if err := t.callBarrierInto(ctx, "BarrierQuorumBegin", "qrdb_barrier_quorum_begin", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// BarrierQuorumSubmit submits a holder's share toward a quorum round by
+// calling the qrdb_barrier_quorum_submit MCP tool.
+func (t *Transport) BarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.QuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+	if req != nil {
+		if err := t.requireTLSForSecret(len(req.Share) > 0); err != nil {
+			return nil, err
+		}
+	}
+	var resp qrdbtransport.QuorumOutcome
+	if err := t.callBarrierInto(ctx, "BarrierQuorumSubmit", "qrdb_barrier_quorum_submit", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// BarrierRekeyStart opens a rekey round by calling the
+// qrdb_barrier_rekey_start MCP tool.
+func (t *Transport) BarrierRekeyStart(ctx context.Context, req *qrdbtransport.RekeyStartRequest) (*qrdbtransport.QuorumRound, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.BarrierRekeyStart", "request is required")
+	}
+	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierRekeyStart", req.SOPin)
 	if err != nil {
 		return nil, err
 	}
-	var resp qrdbtransport.ShareClaimCompleteResponse
-	if err := remarshalBarrier(raw, &resp); err != nil {
-		return nil, errors.Wrap(err, errors.CodeInternal, "mcp.RecoveryShareClaimComplete", "failed to decode response")
+	if err := t.requireTLSForSecret(soPIN != ""); err != nil {
+		return nil, err
+	}
+	resolved := *req
+	resolved.SOPin = soPIN
+	var resp qrdbtransport.QuorumRound
+	if err := t.callBarrierInto(ctx, "BarrierRekeyStart", "qrdb_barrier_rekey_start", &resolved, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// BarrierOfficerRevoke revokes a holder through a quorum-gated rekey by
+// calling the qrdb_barrier_officer_revoke MCP tool.
+func (t *Transport) BarrierOfficerRevoke(ctx context.Context, req *qrdbtransport.OfficerRevokeRequest) (*qrdbtransport.QuorumRound, error) {
+	if req == nil {
+		return nil, errors.NewInvalidInput("mcp.BarrierOfficerRevoke", "request is required")
+	}
+	soPIN, err := qrdbtransport.ResolveSOPIN(ctx, "BarrierOfficerRevoke", req.SOPin)
+	if err != nil {
+		return nil, err
+	}
+	if err := t.requireTLSForSecret(soPIN != ""); err != nil {
+		return nil, err
+	}
+	resolved := *req
+	resolved.SOPin = soPIN
+	var resp qrdbtransport.QuorumRound
+	if err := t.callBarrierInto(ctx, "BarrierOfficerRevoke", "qrdb_barrier_officer_revoke", &resolved, &resp); err != nil {
+		return nil, err
 	}
 	return &resp, nil
 }
@@ -459,12 +410,19 @@ func (t *Transport) BarrierEnableEncryption(ctx context.Context, req *qrdbtransp
 	if req == nil {
 		return nil, errors.NewInvalidInput("mcp.BarrierEnableEncryption", "request is required")
 	}
+	if err := t.requireTLSForSecret(len(req.Passphrase) > 0); err != nil {
+		return nil, err
+	}
+	passphrase, err := secretArg("passphrase", req.Passphrase)
+	if err != nil {
+		return nil, err
+	}
 	tool := "qrdb_barrier_enable_encryption"
 	args := map[string]interface{}{
 		"target_strategy":  req.Strategy,
 		"mechanism":        req.Mechanism,
 		"availability":     req.Availability,
-		"passphrase":       secretArg(req.Passphrase),
+		"passphrase":       passphrase,
 		"shamir_threshold": req.ShamirThreshold,
 		"shamir_total":     req.ShamirTotal,
 	}
@@ -509,6 +467,33 @@ func (t *Transport) callBarrier(ctx context.Context, name string, args map[strin
 		}
 	}
 	return t.callTool(ctx, name, args)
+}
+
+// callBarrierInto maps req onto the tool's arguments through its JSON
+// shape, calls tool and decodes the result into dest.
+func (t *Transport) callBarrierInto(ctx context.Context, method, tool string, req, dest interface{}) error {
+	var args map[string]interface{}
+	if req != nil {
+		if err := remarshalBarrier(req, &args); err != nil {
+			return errors.Wrap(err, errors.CodeInvalidInput, "mcp."+method, "failed to encode request")
+		}
+	}
+	raw, err := t.callBarrier(ctx, tool, args)
+	if err != nil {
+		return err
+	}
+	if err := remarshalBarrier(raw, dest); err != nil {
+		return errors.Wrap(err, errors.CodeInternal, "mcp."+method, "failed to decode response")
+	}
+	return nil
+}
+
+// putOptional sets args[key] only when value is non-empty, so absent
+// optional fields stay off the wire.
+func putOptional(args map[string]interface{}, key, value string) {
+	if value != "" {
+		args[key] = value
+	}
 }
 
 // remarshalBarrier copies the JSON shape from src (already-decoded interface{}

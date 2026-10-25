@@ -389,7 +389,9 @@ func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
 
-	// The certificate must carry a SPIFFE URI SAN in the configured trust domain.
+	// The certificate must carry the system tenant's SPIFFE ID. Under go-qrdb
+	// v0.51 the tenant IS the SAN's trust domain, so the configured cluster
+	// trust domain does not appear in it.
 	require.NotEmpty(t, cert.URIs,
 		"the init-issued admin certificate must carry a SPIFFE URI SAN; without one no tenant can be resolved at login")
 	var spiffeURI string
@@ -400,10 +402,8 @@ func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) 
 		}
 	}
 	require.NotEmpty(t, spiffeURI, "expected a spiffe:// URI SAN, got %v", cert.URIs)
-	assert.Contains(t, spiffeURI, trustDomain,
-		"the SAN must be scoped to the configured trust domain")
-	assert.Contains(t, spiffeURI, qrdbsdk.SystemTenantID,
-		"the admin lives in the system tenant, so the SAN must name it")
+	assert.Equal(t, "spiffe://"+qrdbsdk.SystemTenantID+"/user/admin", spiffeURI,
+		"the admin lives in the system tenant, so the SAN must name it as its trust domain")
 
 	// The contract that actually matters: resolution with NO home-realm
 	// resolver — a freshly initialized node — must yield the system tenant.
@@ -413,10 +413,10 @@ func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) 
 	assert.Equal(t, qrdbsdk.SystemTenantID, tenantID)
 }
 
-// TestFirstBootBootstrap_AdminCertSANPinsTrustDomain covers the negative half of
-// the pin: a certificate issued under one trust domain must NOT resolve against
-// a different configured trust domain.
-func TestFirstBootBootstrap_AdminCertSANPinsTrustDomain(t *testing.T) {
+// TestFirstBootBootstrap_AdminCertRefusedByAClusterNamedForItsTenant covers
+// the negative half: go-qrdb refuses a tenant certificate on a cluster whose
+// own trust domain is that tenant's name, so no tenant can pose as the cluster.
+func TestFirstBootBootstrap_AdminCertRefusedByAClusterNamedForItsTenant(t *testing.T) {
 	srv := withTempServer(t)
 	srv.xkmsCA = newFakeTrustedCA(t)
 	srv.config.IAM.SPIFFETrustDomain = "issued.example.test"
@@ -437,8 +437,8 @@ func TestFirstBootBootstrap_AdminCertSANPinsTrustDomain(t *testing.T) {
 	cert, err := x509.ParseCertificate(block.Bytes)
 	require.NoError(t, err)
 
-	_, err = iam.TenantFromPeerCert(ctx, cert, "someone.else.test", nil, iam.RealmHints{})
-	require.Error(t, err, "a foreign trust domain must fail closed, never resolve")
+	_, err = iam.TenantFromPeerCert(ctx, cert, qrdbsdk.SystemTenantID, nil, iam.RealmHints{})
+	require.Error(t, err, "a cluster named for the tenant must fail closed, never resolve")
 }
 
 // ---------------------------------------------------------------------------

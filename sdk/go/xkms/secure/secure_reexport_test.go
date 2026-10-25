@@ -31,20 +31,26 @@ import (
 func TestSecretRoundTrip(t *testing.T) {
 	const plaintext = "bank-api-token"
 
-	sec, err := secure.NewSecret([]byte(plaintext))
+	sec, err := secure.NewSecret(t.Context(), []byte(plaintext))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(t.Context())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("Open() = %q, want %q", opened.Bytes(), plaintext)
+	err = opened.WithBytes(func(got []byte) error {
+		if !bytes.Equal(got, []byte(plaintext)) {
+			t.Errorf("Open() = %q, want %q", got, plaintext)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithBytes: %v", err)
 	}
 }
 
@@ -55,7 +61,7 @@ func TestSecretRoundTrip(t *testing.T) {
 func TestNewSecretWipesItsSource(t *testing.T) {
 	src := []byte("wipe-me")
 
-	sec, err := secure.NewSecret(src)
+	sec, err := secure.NewSecret(t.Context(), src)
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
@@ -76,20 +82,26 @@ func TestSecretFromBufferRoundTrip(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := secure.NewSecretFromBuffer(buf)
+	sec, err := secure.NewSecretFromBuffer(t.Context(), buf)
 	if err != nil {
 		t.Fatalf("NewSecretFromBuffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(t.Context())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("Open() = %q, want %q", opened.Bytes(), plaintext)
+	err = opened.WithBytes(func(got []byte) error {
+		if !bytes.Equal(got, []byte(plaintext)) {
+			t.Errorf("Open() = %q, want %q", got, plaintext)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithBytes: %v", err)
 	}
 }
 
@@ -122,6 +134,44 @@ func TestWipeClearsCallerOwnedBytes(t *testing.T) {
 	}
 }
 
+func TestCopyOutReturnsCallerOwnedCopy(t *testing.T) {
+	buf, err := secure.NewBufferFromBytes([]byte("copy-me"))
+	if err != nil {
+		t.Fatalf("NewBufferFromBytes: %v", err)
+	}
+	got, err := secure.CopyOut(buf)
+	buf.Destroy()
+	if err != nil {
+		t.Fatalf("CopyOut: %v", err)
+	}
+	defer secure.Wipe(got)
+
+	// The copy must survive the buffer it came from.
+	if !bytes.Equal(got, []byte("copy-me")) {
+		t.Errorf("CopyOut = %q, want %q", got, "copy-me")
+	}
+}
+
+// emptyBorrower lends an empty view, the state a concurrently destroyed source
+// presents.
+type emptyBorrower struct{}
+
+func (emptyBorrower) WithBytes(fn func([]byte) error) error { return fn(nil) }
+
+func TestCopyOutRefusesEmptyAndNilSources(t *testing.T) {
+	if _, err := secure.CopyOut(emptyBorrower{}); err == nil {
+		t.Error("CopyOut(empty) returned no error")
+	} else if empty := (*secure.EmptyBorrowError)(nil); !errors.As(err, &empty) {
+		t.Errorf("errors.As(*secure.EmptyBorrowError) = false, err is %T", err)
+	}
+
+	if _, err := secure.CopyOut(nil); err == nil {
+		t.Error("CopyOut(nil) returned no error")
+	} else if nilBuf := (*secure.NilBufferError)(nil); !errors.As(err, &nilBuf) {
+		t.Errorf("errors.As(*secure.NilBufferError) = false, err is %T", err)
+	}
+}
+
 // TestAliasedValuesCrossTheModuleBoundary is the property that makes these
 // aliases worth having rather than wrappers: a value built through the
 // quicbaas SDK must be accepted by the upstream xkms API unchanged. A wrapper
@@ -134,20 +184,26 @@ func TestAliasedValuesCrossTheModuleBoundary(t *testing.T) {
 		t.Fatalf("NewBufferFromBytes: %v", err)
 	}
 
-	sec, err := xkmssecure.NewSecretFromBuffer(buf)
+	sec, err := xkmssecure.NewSecretFromBuffer(t.Context(), buf)
 	if err != nil {
 		t.Fatalf("xkms NewSecretFromBuffer rejected a quicbaas SDK Buffer: %v", err)
 	}
 	t.Cleanup(sec.Destroy)
 
-	opened, err := sec.Open()
+	opened, err := sec.Open(t.Context())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer opened.Destroy()
 
-	if !bytes.Equal(opened.Bytes(), []byte(plaintext)) {
-		t.Errorf("round trip = %q, want %q", opened.Bytes(), plaintext)
+	err = opened.WithBytes(func(got []byte) error {
+		if !bytes.Equal(got, []byte(plaintext)) {
+			t.Errorf("round trip = %q, want %q", got, plaintext)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithBytes: %v", err)
 	}
 }
 
@@ -174,22 +230,22 @@ func TestWipeAll(t *testing.T) {
 }
 
 func wipeAllChild(t *testing.T) {
-	sec, err := secure.NewSecret([]byte("shutdown-wiped"))
+	sec, err := secure.NewSecret(t.Context(), []byte("shutdown-wiped"))
 	if err != nil {
 		t.Fatalf("NewSecret: %v", err)
 	}
-	remaining, err := secure.WipeAll()
+	remaining, err := secure.WipeAll(t.Context())
 	if err != nil {
 		t.Fatalf("WipeAll: %v", err)
 	}
 	if remaining != 0 {
 		t.Fatalf("WipeAll left %d enclaves held", remaining)
 	}
-	if opened, err := sec.Open(); err == nil {
+	if opened, err := sec.Open(t.Context()); err == nil {
 		opened.Destroy()
 		t.Fatal("a Secret opened after WipeAll destroyed the process sealer")
 	}
-	if remaining, err := secure.WipeAll(); err != nil || remaining != 0 {
+	if remaining, err := secure.WipeAll(t.Context()); err != nil || remaining != 0 {
 		t.Fatalf("a second WipeAll = %d, %v; want an idempotent 0, nil", remaining, err)
 	}
 }

@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -54,17 +55,13 @@ type TenantBarrierServicer interface {
 	// TenantBarrierInit initializes the per-tenant barrier with the selected
 	// strategy. For the Shamir strategy the response carries the generated
 	// M-of-N shares (returned exactly once, never persisted); for none/passphrase
-	// the share fields are empty.
-	TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	// the share fields are empty. The request is go-qrdb's own type, so an
+	// inline Shamir Officers roster and its Policy reach go-qrdb unchanged.
+	TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error)
 
 	// TenantBarrierUnseal unseals the per-tenant barrier with a single key
 	// (passphrase strategy). Empty key material is rejected by qrdb.
 	TenantBarrierUnseal(ctx context.Context, tenantID string, key []byte) error
-
-	// TenantBarrierUnsealShare submits a single Shamir share toward the
-	// per-tenant barrier's quorum threshold, automatically unsealing once enough
-	// distinct shares have been submitted.
-	TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error)
 
 	// TenantBarrierSeal seals the per-tenant barrier.
 	TenantBarrierSeal(ctx context.Context, tenantID string) error
@@ -72,6 +69,33 @@ type TenantBarrierServicer interface {
 	// TenantBarrierStatus reports the per-tenant barrier's sealed/initialized
 	// state and active strategy metadata (including Shamir threshold/total).
 	TenantBarrierStatus(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
+
+	// TenantBarrierOfficerRegister enrols a share holder for the tenant barrier.
+	TenantBarrierOfficerRegister(ctx context.Context, req *qrdbtransport.TenantOfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
+
+	// TenantBarrierOfficerList lists the tenant barrier's holders.
+	TenantBarrierOfficerList(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
+
+	// TenantBarrierShareClaimBegin issues a claim nonce to a tenant holder.
+	TenantBarrierShareClaimBegin(ctx context.Context, req *qrdbtransport.TenantShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error)
+
+	// TenantBarrierShareClaimComplete delivers a tenant holder's sealed share
+	// envelope exactly once.
+	TenantBarrierShareClaimComplete(ctx context.Context, req *qrdbtransport.TenantShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error)
+
+	// TenantBarrierQuorumBegin issues a tenant holder's quorum challenge.
+	TenantBarrierQuorumBegin(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error)
+
+	// TenantBarrierQuorumSubmit submits a tenant holder's share toward the
+	// open round; the round's last submission runs the operation.
+	TenantBarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error)
+
+	// TenantBarrierRekeyStart opens a rekey round on the tenant barrier.
+	TenantBarrierRekeyStart(ctx context.Context, req *qrdbtransport.TenantRekeyStartRequest) (*qrdbtransport.QuorumRound, error)
+
+	// TenantBarrierOfficerRevoke revokes a tenant holder through a
+	// quorum-gated rekey.
+	TenantBarrierOfficerRevoke(ctx context.Context, req *qrdbtransport.TenantOfficerRevokeRequest) (*qrdbtransport.QuorumRound, error)
 }
 
 // tenantBarrierService implements TenantBarrierServicer by delegating to a qrdb
@@ -172,28 +196,55 @@ func enforceTenantReadBinding(ctx context.Context, op, targetTenantID string) er
 
 // TenantBarrierInit delegates to qrdb, building the canonical init request.
 // It validates Shamir parameters before delegating when strategy == "shamir".
-func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
-	if err := enforceTenantBinding(ctx, "tenant_barrier.init", tenantID); err != nil {
+func (s *tenantBarrierService) TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
+	if req == nil {
+		return nil, NewError(errors.ErrInvalidInput, "tenant_barrier.init", "request is required")
+	}
+	if err := enforceTenantBinding(ctx, "tenant_barrier.init", req.TenantID); err != nil {
 		return nil, err
 	}
-	if strategy == "shamir" {
-		if threshold < 1 {
+	if req.Strategy == "shamir" {
+		if req.Threshold < 1 {
 			return nil, NewError(errors.ErrInvalidInput, "tenant_barrier.init", "shamir threshold must be >= 1")
 		}
-		if shares < 1 {
+		if req.Shares < 1 {
 			return nil, NewError(errors.ErrInvalidInput, "tenant_barrier.init", "shamir shares must be >= 1")
 		}
-		if threshold > shares {
+		if req.Threshold > req.Shares {
 			return nil, NewError(errors.ErrInvalidInput, "tenant_barrier.init", "shamir threshold must be <= shares")
 		}
 	}
-	return s.qrdb.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
-		TenantID:   tenantID,
-		Passphrase: passphrase,
-		Threshold:  threshold,
-		Shares:     shares,
-		Strategy:   strategy,
-	})
+	if err := s.requireInitStatement(ctx, req); err != nil {
+		return nil, err
+	}
+	// The request goes to go-qrdb whole: the inline Officers roster and its
+	// factor Policy are validated and registered by go-qrdb's holder engine
+	// atomically with initialization, so quicbaas neither drops nor checks
+	// them here.
+	return s.qrdb.TenantBarrierInit(ctx, req)
+}
+
+// raftIsolation is go-qrdb's raft isolation type as its transport package
+// spells a tenant's isolation, which declares no constant for it.
+const raftIsolation = qrdbtransport.TenantIsolationType(qrdbsdk.TenantIsolationRaft)
+
+// requireInitStatement refuses an init that carries no Signer for a
+// raft-isolated tenant. go-qrdb signs the owner's init statement with
+// req.Signer, and without one it has no statement; every replica of a
+// raft-isolated tenant initializes its own key from that statement, so init
+// is never called without it. Other isolation types need no statement.
+func (s *tenantBarrierService) requireInitStatement(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) error {
+	if req.Signer != nil {
+		return nil
+	}
+	resp, err := s.qrdb.GetTenant(ctx, req.TenantID)
+	if err != nil {
+		return err
+	}
+	if resp != nil && resp.Tenant.IsolationType == raftIsolation {
+		return &TenantBarrierInitStatementUnsupportedError{TenantID: req.TenantID}
+	}
+	return nil
 }
 
 // TenantBarrierUnseal delegates a single-key unseal to qrdb.
@@ -209,25 +260,6 @@ func (s *tenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID
 	}
 	s.unsealed.notify(ctx, tenantID)
 	return nil
-}
-
-// TenantBarrierUnsealShare delegates a single Shamir share to qrdb and returns
-// the quorum progress.
-func (s *tenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-	if err := enforceTenantBinding(ctx, "tenant_barrier.unseal_share", tenantID); err != nil {
-		return nil, err
-	}
-	progress, err := s.qrdb.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
-		TenantID: tenantID,
-		Share:    share,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if progress != nil && progress.Complete {
-		s.unsealed.notify(ctx, tenantID)
-	}
-	return progress, nil
 }
 
 // TenantBarrierSeal delegates a seal to qrdb.
@@ -247,4 +279,77 @@ func (s *tenantBarrierService) TenantBarrierStatus(ctx context.Context, tenantID
 		return nil, err
 	}
 	return s.qrdb.TenantBarrierStatus(ctx, &qrdbtransport.TenantBarrierStatusRequest{TenantID: tenantID})
+}
+
+// TenantBarrierOfficerRegister delegates a holder enrolment to qrdb.
+func (s *tenantBarrierService) TenantBarrierOfficerRegister(ctx context.Context, req *qrdbtransport.TenantOfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.officer_register", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierOfficerRegister(ctx, req)
+}
+
+// TenantBarrierOfficerList delegates a holder listing to qrdb. Like status it
+// is read-only, so system-tenant callers are admitted.
+func (s *tenantBarrierService) TenantBarrierOfficerList(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error) {
+	if err := enforceTenantReadBinding(ctx, "tenant_barrier.officer_list", tenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierOfficerList(ctx, tenantID)
+}
+
+// TenantBarrierShareClaimBegin delegates a share-claim handshake start to qrdb.
+func (s *tenantBarrierService) TenantBarrierShareClaimBegin(ctx context.Context, req *qrdbtransport.TenantShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.share_claim_begin", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierShareClaimBegin(ctx, req)
+}
+
+// TenantBarrierShareClaimComplete delegates a share-claim completion to qrdb.
+func (s *tenantBarrierService) TenantBarrierShareClaimComplete(ctx context.Context, req *qrdbtransport.TenantShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.share_claim_complete", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierShareClaimComplete(ctx, req)
+}
+
+// TenantBarrierQuorumBegin delegates a quorum challenge request to qrdb.
+func (s *tenantBarrierService) TenantBarrierQuorumBegin(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.quorum_begin", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierQuorumBegin(ctx, req)
+}
+
+// TenantBarrierQuorumSubmit delegates a quorum submission to qrdb. A
+// submission that completes an unseal round tells the unseal hooks.
+func (s *tenantBarrierService) TenantBarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.quorum_submit", req.TenantID); err != nil {
+		return nil, err
+	}
+	outcome, err := s.qrdb.TenantBarrierQuorumSubmit(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if outcome != nil && outcome.Complete && outcome.Op == qrdbtransport.OpUnseal {
+		s.unsealed.notify(ctx, req.TenantID)
+	}
+	return outcome, nil
+}
+
+// TenantBarrierRekeyStart delegates a rekey round start to qrdb.
+func (s *tenantBarrierService) TenantBarrierRekeyStart(ctx context.Context, req *qrdbtransport.TenantRekeyStartRequest) (*qrdbtransport.QuorumRound, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.rekey_start", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierRekeyStart(ctx, req)
+}
+
+// TenantBarrierOfficerRevoke delegates a holder revocation to qrdb.
+func (s *tenantBarrierService) TenantBarrierOfficerRevoke(ctx context.Context, req *qrdbtransport.TenantOfficerRevokeRequest) (*qrdbtransport.QuorumRound, error) {
+	if err := enforceTenantBinding(ctx, "tenant_barrier.officer_revoke", req.TenantID); err != nil {
+		return nil, err
+	}
+	return s.qrdb.TenantBarrierOfficerRevoke(ctx, req)
 }

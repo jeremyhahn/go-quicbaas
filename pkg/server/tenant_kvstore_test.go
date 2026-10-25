@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	qrdbkvstore "github.com/jeremyhahn/go-qrdb/pkg/kvstore"
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -65,9 +64,9 @@ func (f *fakeStoreResolver) sealTenant(tenantID string) {
 
 func (f *fakeStoreResolver) Resolve(_ context.Context, tenantID string) (interfaces.KVStore, error) {
 	if f.sealed[tenantID] {
-		return nil, qrdbtenant.ErrTenantSealed
+		return nil, qrdbsdk.ErrTenantStoreSealed
 	}
-	if qrdbtenant.IsSystemTenant(tenantID) {
+	if qrdbsdk.IsSystemTenant(tenantID) {
 		return f.shared, nil
 	}
 	if st, ok := f.stores[tenantID]; ok {
@@ -89,7 +88,7 @@ func (nilGetStore) Get(context.Context, string) ([]byte, error) { return nil, ni
 func TestTenantRoutingKVStore_NilGetTranslatedToNotFound(t *testing.T) {
 	resolver := newFakeStoreResolver(nilGetStore{})
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbsdk.SystemTenantID)
 
 	_, err := kv.Get(ctx, "__iam:any")
 	if !dberrors.IsNotFound(err) {
@@ -175,24 +174,24 @@ func TestTenantRoutingKVStore_SealedTenantFailsClosed(t *testing.T) {
 	ctx := tenantctx.WithTenant(context.Background(), "acme")
 
 	// Put must fail closed.
-	if err := kv.Put(ctx, "__iam:tenant:acme:user:u1", []byte("x")); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if err := kv.Put(ctx, "__iam:tenant:acme:user:u1", []byte("x")); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Put(sealed) err = %v, want ErrTenantSealed", err)
 	}
 	// Get must fail closed.
-	if _, err := kv.Get(ctx, "__iam:tenant:acme:user:u1"); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if _, err := kv.Get(ctx, "__iam:tenant:acme:user:u1"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Get(sealed) err = %v, want ErrTenantSealed", err)
 	}
 	// Delete / List / Exists / Scan likewise.
-	if err := kv.Delete(ctx, "k"); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if err := kv.Delete(ctx, "k"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Delete(sealed) err = %v, want ErrTenantSealed", err)
 	}
-	if _, err := kv.List(ctx, "p"); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if _, err := kv.List(ctx, "p"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("List(sealed) err = %v, want ErrTenantSealed", err)
 	}
-	if _, err := kv.Exists(ctx, "k"); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if _, err := kv.Exists(ctx, "k"); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Exists(sealed) err = %v, want ErrTenantSealed", err)
 	}
-	if err := kv.Scan(ctx, "p", func(string, []byte) error { return nil }); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if err := kv.Scan(ctx, "p", func(string, []byte) error { return nil }); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Scan(sealed) err = %v, want ErrTenantSealed", err)
 	}
 
@@ -210,7 +209,7 @@ func TestTenantRoutingKVStore_MissingKeyNotFound(t *testing.T) {
 	shared := kvstore.NewMemory()
 	resolver := newFakeStoreResolver(shared)
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbsdk.SystemTenantID)
 
 	_, err := kv.Get(ctx, "__iam:missing")
 	if err == nil {
@@ -226,7 +225,7 @@ func TestTenantRoutingKVStore_SuccessPaths(t *testing.T) {
 	shared := kvstore.NewMemory()
 	resolver := newFakeStoreResolver(shared)
 	kv := newTenantRoutingKVStore(resolver)
-	ctx := tenantctx.WithTenant(context.Background(), qrdbtenant.SystemTenantID)
+	ctx := tenantctx.WithTenant(context.Background(), qrdbsdk.SystemTenantID)
 
 	if err := kv.Put(ctx, "__iam:k1", []byte("v1")); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -436,10 +435,10 @@ func TestResolverAdapter_ResolveSuccess(t *testing.T) {
 // resolverAdapter.Resolve surfaces the underlying resolver error (e.g. a sealed
 // barrier tenant) unchanged and returns a nil store.
 func TestResolverAdapter_ResolveError(t *testing.T) {
-	a := &resolverAdapter{inner: fakeQRDBResolver{err: qrdbtenant.ErrTenantSealed}}
+	a := &resolverAdapter{inner: fakeQRDBResolver{err: qrdbsdk.ErrTenantStoreSealed}}
 
 	store, err := a.Resolve(context.Background(), "sealed")
-	if !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Resolve err = %v, want ErrTenantSealed", err)
 	}
 	if store != nil {
@@ -503,7 +502,7 @@ func TestTenantRoutingKVStore_OrchestrationContextFailsClosedWhenSealed(t *testi
 	ctx := orchestration.ContextWithTenant(context.Background(), "acme")
 	const key = "orch/task/acme/t1"
 
-	if err := kv.Put(ctx, key, []byte("task-data")); !errors.Is(err, qrdbtenant.ErrTenantSealed) {
+	if err := kv.Put(ctx, key, []byte("task-data")); !errors.Is(err, qrdbsdk.ErrTenantStoreSealed) {
 		t.Fatalf("Put against a sealed barrier err = %v, want ErrTenantSealed", err)
 	}
 	if _, err := shared.Get(context.Background(), key); !dberrors.IsNotFound(err) {

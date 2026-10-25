@@ -117,17 +117,6 @@ func (e *SealedWindowShutdownError) Error() string {
 	return "sealed window: shutdown requested before the barrier was unsealed"
 }
 
-// constantSealedProbe always reports sealed. The sealed-PHASE listeners are
-// gated with this probe (rather than the live server probe) because they are
-// composed over the minimal sealed facade: the instant the barrier unseals
-// there is a window before the full service graph exists, and the sealed
-// listeners must keep everything off-allowlist unreachable until they are
-// torn down and replaced by the fully-wired transports.
-type constantSealedProbe struct{}
-
-// IsSealed implements the sealed-window probe contract.
-func (constantSealedProbe) IsSealed() bool { return true }
-
 // newSealedWindowClient composes the in-process qrdb SDK client for the
 // sealed-window phase: the node's OWN Barrier / Ceremony / Credential
 // servicers over the canonical qrdb embedded transport, with lazy KV / Admin
@@ -151,6 +140,12 @@ func newSealedWindowClient(s *Server, cs *CeremonyServices) (*qrdbsdk.Client, er
 	// the SAME backend the node verifies post-unseal.
 	if s.pinBackend != nil {
 		opts = append(opts, qrdbembedded.WithPINBackend(s.pinBackend))
+	}
+	// CeremonyInitialize takes its CA from the transport, not from the
+	// ceremony core: hand it the same late-bound platform CA the node was
+	// composed with, so `qrdb init` during the sealed window can issue.
+	if s.ceremonyCA != nil {
+		opts = append(opts, qrdbembedded.WithCeremonyCA(s.ceremonyCA))
 	}
 	tp, err := qrdbembedded.New(
 		newSealedKVServicerProxy(s),
@@ -230,6 +225,10 @@ func (s *Server) runSealedWindow() error {
 		Credential: svcs.Credential,
 		Ceremony:   svcs.Ceremony,
 	}
+	// One listener probe for every sealed-phase transport, read live: the
+	// listener gates refuse every request once the barrier unseals, before
+	// the full service graph exists.
+	s.sealedListenerProbe = qrdbsdk.NewSealedWindowListenerProbe(s.SealedWindowProbe(), svcs.Ceremony)
 
 	client, err := newSealedWindowClient(s, s.ceremonyServices)
 	if err != nil {
@@ -337,7 +336,7 @@ func (s *Server) startSealedGRPCServer() error {
 	creds := grpcapi.ServerTLSCredentialsFromConfig(s.tlsConfig)
 
 	allow := sealedwindow.GRPCFullMethodAllowlist()
-	probe := constantSealedProbe{}
+	probe := s.sealedListenerProbe
 
 	grpcOpts := []ggrpc.ServerOption{
 		ggrpc.Creds(creds),
@@ -355,13 +354,15 @@ func (s *Server) startSealedGRPCServer() error {
 			grpcapi.UnaryTimeoutInterceptor(30*time.Second),
 			grpcapi.UnaryLoggingInterceptor(s.logger),
 			grpcapi.UnaryRecoveryInterceptor(s.logger),
-			qrdbsdk.SealedWindowUnaryInterceptor(probe, allow),
-			s.qrdbSealSOPINInterceptor(),
+			qrdbsdk.SealedWindowListenerUnaryInterceptor(probe, allow),
+			// The qrdb.v1 ceremony servicer cannot reach the platform
+			// ceremony CA until go-qrdb #1129; refuse its CA-needing modes.
+			ceremonyCARefusalUnaryInterceptor(),
 		),
 		ggrpc.ChainStreamInterceptor(
 			grpcapi.StreamLoggingInterceptor(s.logger),
 			grpcapi.StreamRecoveryInterceptor(s.logger),
-			qrdbsdk.SealedWindowStreamInterceptor(probe, allow),
+			qrdbsdk.SealedWindowListenerStreamInterceptor(probe, allow),
 		),
 	}
 

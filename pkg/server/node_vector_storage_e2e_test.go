@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build !integration && raft && local && quic && rest && mcp && vector && timeseries && rag
+//go:build !integration && raft && local && quic && rest && mcp && vector && qrdb_vector && timeseries && rag
 
 package server
 
@@ -33,7 +33,7 @@ import (
 // its SDK client. The node owns the vector engine in-process, so every adapter
 // call routes directly to the engine without network round-trips. The node is
 // closed on test cleanup.
-func newEmbeddedVectorClient(t *testing.T) *qrdbsdk.Client {
+func newEmbeddedVectorClient(t *testing.T) (qrdbtransport.VectorClient, *qrdbsdk.Client) {
 	t.Helper()
 	saveAndRestoreSeams(t)
 
@@ -50,7 +50,17 @@ func newEmbeddedVectorClient(t *testing.T) *qrdbsdk.Client {
 
 	client := srv.qrdbNode.Client()
 	require.NotNil(t, client, "embedded node must expose a non-nil SDK client")
-	return client
+	// The vector client the server hands the vector service: bound to the
+	// node's service principal, as startVector binds it.
+	return srv.serviceVector(client.Vector()), client
+}
+
+// newEmbeddedVectorStorage returns a node-backed vector storage wired the
+// way startVector wires it.
+func newEmbeddedVectorStorage(t *testing.T) interfaces.VectorStorage {
+	t.Helper()
+	vec, _ := newEmbeddedVectorClient(t)
+	return newNodeVectorStorage(vec)
 }
 
 // TestNodeVectorStorage_E2E exercises the full nodeVectorStorage adapter path
@@ -59,8 +69,7 @@ func newEmbeddedVectorClient(t *testing.T) *qrdbsdk.Client {
 // routes through the SDK transport and the engine, validating both the request
 // conversion and the response conversion code in node_vector_storage.go.
 func TestNodeVectorStorage_E2E(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vs := newEmbeddedVectorStorage(t)
 	ctx := context.Background()
 
 	const ns = "docs"
@@ -164,8 +173,7 @@ func TestNodeVectorStorage_E2E(t *testing.T) {
 // TestNodeVectorStorage_GetVector_NotFound verifies the error path when reading
 // a vector that does not exist surfaces a non-nil error and nil value.
 func TestNodeVectorStorage_GetVector_NotFound(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vs := newEmbeddedVectorStorage(t)
 	ctx := context.Background()
 
 	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
@@ -183,8 +191,7 @@ func TestNodeVectorStorage_GetVector_NotFound(t *testing.T) {
 // TestNodeVectorStorage_GetNamespaceInfo_Missing verifies the error path when a
 // namespace does not exist.
 func TestNodeVectorStorage_GetNamespaceInfo_Missing(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vs := newEmbeddedVectorStorage(t)
 
 	info, err := vs.GetNamespaceInfo(context.Background(), "does-not-exist")
 	assert.Error(t, err)
@@ -218,7 +225,7 @@ func TestServer_Shutdown_VectorStorageBranch(t *testing.T) {
 	// Inject a node-backed vector storage so the Shutdown vector-storage branch
 	// (which is otherwise skipped because the qrdb node owns vector storage)
 	// executes its Close path.
-	srv.vectorStorage = newNodeVectorStorage(srv.qrdbNode.Client())
+	srv.vectorStorage = newNodeVectorStorage(srv.serviceVector(srv.qrdbNode.Client().Vector()))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -229,8 +236,7 @@ func TestServer_Shutdown_VectorStorageBranch(t *testing.T) {
 // requesting stats for a namespace that does not exist surfaces the transport
 // not-found error.
 func TestNodeVectorStorage_GetStats_Missing(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vs := newEmbeddedVectorStorage(t)
 
 	stats, err := vs.GetStats(context.Background(), "does-not-exist")
 	assert.Error(t, err)
@@ -241,8 +247,7 @@ func TestNodeVectorStorage_GetStats_Missing(t *testing.T) {
 // branch: scanning a namespace that does not exist surfaces the transport
 // not-found error rather than an empty result.
 func TestNodeVectorStorage_ScanNamespace_Missing(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vs := newEmbeddedVectorStorage(t)
 
 	got, err := vs.ScanNamespace(context.Background(), "does-not-exist", nil)
 	assert.Error(t, err)
@@ -253,8 +258,8 @@ func TestNodeVectorStorage_ScanNamespace_Missing(t *testing.T) {
 // error branch: a closed transport makes the underlying Vector().ListNamespaces
 // call fail, and the adapter surfaces the error (nil result).
 func TestNodeVectorStorage_ListNamespaces_ClientClosed(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vec, client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(vec)
 	require.NoError(t, client.Close())
 
 	got, err := vs.ListNamespaces(context.Background())
@@ -265,8 +270,8 @@ func TestNodeVectorStorage_ListNamespaces_ClientClosed(t *testing.T) {
 // TestNodeVectorStorage_ScanByMultipleFilters_ClientClosed covers the
 // ScanByMultipleFilters error branch via a closed transport.
 func TestNodeVectorStorage_ScanByMultipleFilters_ClientClosed(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vec, client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(vec)
 	require.NoError(t, client.Close())
 
 	got, err := vs.ScanByMultipleFilters(context.Background(), "ns", nil, nil)
@@ -280,8 +285,8 @@ func TestNodeVectorStorage_ScanByMultipleFilters_ClientClosed(t *testing.T) {
 // surfaces the error synchronously without spawning background compaction work
 // against a torn-down engine.
 func TestNodeVectorStorage_Compact_ClientClosed(t *testing.T) {
-	client := newEmbeddedVectorClient(t)
-	vs := newNodeVectorStorage(client)
+	vec, client := newEmbeddedVectorClient(t)
+	vs := newNodeVectorStorage(vec)
 	require.NoError(t, client.Close())
 
 	assert.Error(t, vs.Compact(context.Background(), "ns"))

@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ import (
 	sdknode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/netport"
 )
 
@@ -106,7 +108,15 @@ func Shared(t *testing.T) *Node {
 			return
 		}
 		sharedDir = dir
-		shared.node, shared.err = boot(dir)
+		// The node runs go-quicbaas's production service principal and
+		// grants (pkg/qrdbservice), so a test that passes here passes under
+		// the grant set the daemon actually holds.
+		principal, err := qrdbservice.NodeOption()
+		if err != nil {
+			shared.err = err
+			return
+		}
+		shared.node, shared.err = boot(dir, nil, principal)
 	})
 	if shared.err != nil {
 		t.Fatalf("booting the qrdb test node: %v", shared.err)
@@ -114,19 +124,146 @@ func Shared(t *testing.T) *Node {
 	return shared.node
 }
 
-// CloseShared shuts the shared node down if one was booted. It is safe
-// to call when none was, so TestMain can call it unconditionally.
+// CloseShared shuts down the node Shared, TenantHost or TenantBarrierHost
+// booted, if any, and
+// removes its data directory. It is safe to call when none was booted, so
+// TestMain can call it unconditionally.
 func CloseShared() {
-	if shared.node != nil && shared.node.Node != nil {
-		_ = shared.node.Node.Close()
-	}
-	if sharedDir != "" {
-		_ = os.RemoveAll(sharedDir)
+	for _, f := range []struct {
+		node *Node
+		dir  string
+	}{{shared.node, sharedDir}, {tenantHost.node, tenantHostDir}, {tenantBarrierHost.node, tenantBarrierHostDir}} {
+		if f.node != nil && f.node.Node != nil {
+			_ = f.node.Node.Close()
+		}
+		if f.dir != "" {
+			_ = os.RemoveAll(f.dir)
+		}
 	}
 }
 
+// TenantHostPrincipal is the service principal a TenantHost node runs as. It
+// exists only in tests: it holds go-quicbaas's production grant set
+// (qrdbservice.Grants) plus tenants:create and volume-pool:create, which the
+// production principal does not hold, so a test can onboard the tenants it
+// needs. The production
+// principal and its grants are left untouched.
+const TenantHostPrincipal = "quicbaas-test-tenant-host"
+
+// tenantHost is the package's tenant-hosting node, booted once by TenantHost.
+var tenantHost fixture
+
+// tenantHostDir is tenantHost's data directory, removed by CloseShared.
+var tenantHostDir string
+
+// TenantHost returns the package's qrdb test node configured to host
+// tenants, booting it on first use. It differs from Shared in two ways: the
+// barrier is enabled with go-qrdb's "none" seal strategy, because tenant
+// onboarding is wired only on a node with a seal, and the node runs as
+// TenantHostPrincipal. Its ServiceContext may therefore call
+// Tenants().CreateTenant; everything inside a tenant is then done by the
+// tenant's own certificate identities. A package uses Shared or TenantHost,
+// not both, so it still boots one node.
+func TenantHost(t *testing.T) *Node {
+	t.Helper()
+
+	tenantHost.once.Do(func() {
+		tenantHost.node, tenantHostDir, tenantHost.err = bootTenantHost("quicbaas-qrdbnode-tenants-", nil)
+	})
+	if tenantHost.err != nil {
+		t.Fatalf("booting the tenant-hosting qrdb test node: %v", tenantHost.err)
+	}
+	return tenantHost.node
+}
+
+// tenantBarrierHost is the package's barrier-hosting node, booted once by
+// TenantBarrierHost.
+var tenantBarrierHost fixture
+
+// tenantBarrierHostDir is tenantBarrierHost's data directory, removed by
+// CloseShared.
+var tenantBarrierHostDir string
+
+// TenantBarrierHost returns a TenantHost node that can also initialize a
+// tenant's own barrier, booting it on first use. A tenant barrier keeps its
+// root key in a volume pool, so the node maps a "default" pool to a
+// directory under its data dir and creates it in the replicated catalog,
+// as go-qrdb's own tenant onboarding conformance cell does. A package uses
+// one of Shared, TenantHost and TenantBarrierHost, so it still boots one
+// node.
+func TenantBarrierHost(t *testing.T) *Node {
+	t.Helper()
+
+	tenantBarrierHost.once.Do(func() {
+		var poolErr error
+		tenantBarrierHost.node, tenantBarrierHostDir, tenantBarrierHost.err = bootTenantHost(
+			"quicbaas-qrdbnode-barriers-", func(dir string, cfg *qrdbsdk.DaemonConfig) {
+				// The dir provider opens the mount at boot, so it must exist.
+				poolDir := filepath.Join(dir, "pool")
+				poolErr = os.Mkdir(poolDir, 0o700)
+				cfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{Name: "default", Path: poolDir}}
+			})
+		if tenantBarrierHost.err == nil {
+			tenantBarrierHost.err = poolErr
+		}
+		if tenantBarrierHost.err != nil {
+			return
+		}
+		tenantBarrierHost.err = createDefaultPool(tenantBarrierHost.node)
+	})
+	if tenantBarrierHost.err != nil {
+		t.Fatalf("booting the barrier-hosting qrdb test node: %v", tenantBarrierHost.err)
+	}
+	return tenantBarrierHost.node
+}
+
+// registerTenantHostGrants grants TenantHostPrincipal go-quicbaas's
+// production grant set plus the grants that onboarding test tenants takes,
+// once per process.
+var registerTenantHostGrants = sync.OnceValue(func() error {
+	perms, err := qrdbservice.Grants()
+	if err != nil {
+		return err
+	}
+	qrdbsdk.RegisterPermissionRoleGrant(TenantHostPrincipal,
+		append(perms, qrdbsdk.PermissionTenantsCreate, qrdbsdk.PermissionVolumePoolCreate)...)
+	return nil
+})
+
+// bootTenantHost boots a seal-enabled node running as TenantHostPrincipal
+// in a new temp dir named by pattern, and returns the node and its dir.
+func bootTenantHost(pattern string, configure func(dir string, cfg *qrdbsdk.DaemonConfig)) (*Node, string, error) {
+	if err := registerTenantHostGrants(); err != nil {
+		return nil, "", err
+	}
+	// os.MkdirTemp rather than t.TempDir, for the reason Shared gives.
+	dir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return nil, "", err
+	}
+	node, err := boot(dir, func(cfg *qrdbsdk.DaemonConfig) {
+		cfg.Seal.Enabled = true
+		cfg.Seal.Strategy = "none"
+		if configure != nil {
+			configure(dir, cfg)
+		}
+	}, sdknode.WithServicePrincipal(TenantHostPrincipal))
+	return node, dir, err
+}
+
+// createDefaultPool creates the "default" volume pool the node maps in the
+// replicated catalog, as the node's service principal.
+func createDefaultPool(n *Node) error {
+	ctx, err := n.Node.ServiceContext(context.Background())
+	if err != nil {
+		return err
+	}
+	_, err = n.Node.Client().VolumePools().CreatePool(ctx, &transport.CreateVolumePoolRequest{Name: "default"})
+	return err
+}
+
 // boot starts a one-member cluster in dir.
-func boot(dir string) (*Node, error) {
+func boot(dir string, configure func(*qrdbsdk.DaemonConfig), principal sdknode.NodeOption) (*Node, error) {
 	addr, err := reservedAddr()
 	if err != nil {
 		return nil, err
@@ -135,7 +272,7 @@ func boot(dir string) (*Node, error) {
 	cfg := &qrdbsdk.DaemonConfig{}
 	cfg.Raft.DataDir = dir
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
-		{Name: "default", Engine: "mvcc", Backend: "memory"},
+		{Name: "default", Backend: "memory"},
 	}
 	// Every listener off: only the embedded transport is needed.
 	cfg.Protocols.REST = false
@@ -147,6 +284,9 @@ func boot(dir string) (*Node, error) {
 	cfg.Raft.ReplicaID = 1
 	cfg.Raft.ShardID = 1
 	cfg.Raft.RaftAddress = addr
+	if configure != nil {
+		configure(cfg)
+	}
 
 	// WithNoSyncWrites: the node's data directory is deleted when the
 	// package ends, so fsync buys these tests nothing, while on a runner
@@ -155,18 +295,19 @@ func boot(dir string) (*Node, error) {
 	// fsync the order Raft commits proposals in — the only thing an
 	// arbitration test asserts — is unchanged.
 	node, err := sdknode.NewClusteredNode(context.Background(), cfg, map[uint64]string{1: addr}, nil,
-		sdknode.WithNoSyncWrites())
+		sdknode.WithNoSyncWrites(), principal)
 	if err != nil {
 		return nil, err
 	}
-	if err := awaitLeadership(node); err != nil {
+	txn := qrdbservice.Transaction(node, node.Client().Transaction())
+	if err := awaitLeadership(txn); err != nil {
 		_ = node.Close()
 		return nil, err
 	}
 	return &Node{
 		Node:        node,
-		Transaction: node.Client().Transaction(),
-		KV:          node.Client().KV(),
+		Transaction: txn,
+		KV:          qrdbservice.KV(node, node.Client().KV()),
 	}, nil
 }
 
@@ -200,7 +341,7 @@ func reservedAddr() (string, error) {
 // "not leader for shard 1". Readiness is polled with a ticker rather than slept
 // on: the convention forbids time.Sleep, and a ticker with a deadline bounds
 // the failure instead of hanging the suite.
-func awaitLeadership(node *sdknode.Node) error {
+func awaitLeadership(txn transport.TransactionClient) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -210,7 +351,7 @@ func awaitLeadership(node *sdknode.Node) error {
 	probe := []byte("__sys:testutil/leadership_probe")
 	var lastErr error
 	for {
-		_, lastErr = node.Client().Transaction().ExecuteTransaction(ctx, &transport.TransactionRequest{
+		_, lastErr = txn.ExecuteTransaction(ctx, &transport.TransactionRequest{
 			Compares: []transport.Compare{{
 				Key:            probe,
 				Target:         transport.CompareCreateRevision,

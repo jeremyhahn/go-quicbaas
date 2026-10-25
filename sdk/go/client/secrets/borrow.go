@@ -102,7 +102,7 @@ func (c *client) GetWithBytes(ctx context.Context, path, field string, fn func([
 		defer wipe(value)
 	}
 
-	protected, err := secret.NewSecretValue(path, value, "")
+	protected, err := secret.NewSecretValue(ctx, path, value, secret.StrategyLiteral)
 	if err != nil {
 		// A value that cannot be sealed is never lent out in the clear.
 		return errors.Wrap(err, errors.CodeInternal, getWithBytesOp, "seal the secret value")
@@ -117,7 +117,7 @@ func (c *client) GetWithBytes(ctx context.Context, path, field string, fn func([
 	}
 	wipe(payload)
 
-	return protected.WithBytes(func(b []byte) error {
+	return protected.WithBytes(ctx, func(b []byte) error {
 		// NewSecretValue reports a refused seal only by holding nothing,
 		// which WithBytes would lend as an empty slice. Never hand the
 		// caller that in place of the secret.

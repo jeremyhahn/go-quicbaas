@@ -19,7 +19,7 @@ import (
 	"encoding/pem"
 	"testing"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -57,21 +57,25 @@ func TestCAServiceAdapter_SignCSR_StampsTenantSPIFFE(t *testing.T) {
 	if ca.lastSignOpts.TenantID != "acme-corp" {
 		t.Fatalf("TenantID = %q, want acme-corp", ca.lastSignOpts.TenantID)
 	}
-	if ca.lastSignOpts.SPIFFEKind != qrdbspiffe.KindUser {
-		t.Fatalf("SPIFFEKind = %q, want %q", ca.lastSignOpts.SPIFFEKind, qrdbspiffe.KindUser)
+	if ca.lastSignOpts.SPIFFEKind != qrdbsdk.SpiffeKindUser {
+		t.Fatalf("SPIFFEKind = %q, want %q", ca.lastSignOpts.SPIFFEKind, qrdbsdk.SpiffeKindUser)
 	}
 
 	// End-to-end: the issued leaf carries the SPIFFE URI SAN, and
-	// TenantFromCert resolves the tenant exactly as login does.
+	// TenantFromClientCert resolves the tenant exactly as login does.
 	leaf := parseLeaf(t, resp.CertificatePEM)
-	id, terr := qrdbspiffe.TenantFromCert(leaf, "example.com")
+	tenantID, terr := qrdbsdk.TenantFromClientCert(leaf, "example.com")
 	if terr != nil {
-		t.Fatalf("TenantFromCert: %v", terr)
+		t.Fatalf("TenantFromClientCert: %v", terr)
 	}
-	if id.TenantID != "acme-corp" {
-		t.Fatalf("derived tenant = %q, want acme-corp", id.TenantID)
+	if tenantID != "acme-corp" {
+		t.Fatalf("derived tenant = %q, want acme-corp", tenantID)
 	}
-	if id.Kind != qrdbspiffe.KindUser {
+	id, werr := qrdbsdk.WorkloadFromCert(leaf)
+	if werr != nil {
+		t.Fatalf("WorkloadFromCert: %v", werr)
+	}
+	if id.Kind != qrdbsdk.SpiffeKindUser {
 		t.Fatalf("derived kind = %q, want user", id.Kind)
 	}
 }
@@ -91,16 +95,16 @@ func TestCAServiceAdapter_SignCSR_ServerProfileIsSvc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
-	if ca.lastSignOpts.SPIFFEKind != qrdbspiffe.KindService {
-		t.Fatalf("SPIFFEKind = %q, want %q", ca.lastSignOpts.SPIFFEKind, qrdbspiffe.KindService)
+	if ca.lastSignOpts.SPIFFEKind != qrdbsdk.SpiffeKindService {
+		t.Fatalf("SPIFFEKind = %q, want %q", ca.lastSignOpts.SPIFFEKind, qrdbsdk.SpiffeKindService)
 	}
 
 	leaf := parseLeaf(t, resp.CertificatePEM)
-	id, terr := qrdbspiffe.TenantFromCert(leaf, "example.com")
-	if terr != nil {
-		t.Fatalf("TenantFromCert: %v", terr)
+	id, werr := qrdbsdk.WorkloadFromCert(leaf)
+	if werr != nil {
+		t.Fatalf("WorkloadFromCert: %v", werr)
 	}
-	if id.Kind != qrdbspiffe.KindService {
+	if id.Kind != qrdbsdk.SpiffeKindService {
 		t.Fatalf("derived kind = %q, want svc", id.Kind)
 	}
 }

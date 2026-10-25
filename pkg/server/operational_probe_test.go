@@ -18,7 +18,6 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,9 +46,9 @@ func (s *stubCeremonyStateReader) CeremonyStatus(context.Context) (*qrdbsdk.Cere
 
 // stubBarrierStatusReader returns a fixed barrier status or error.
 type stubBarrierStatusReader struct {
-	initializedAt time.Time
-	nilStatus     bool
-	err           error
+	initialized bool
+	nilStatus   bool
+	err         error
 }
 
 func (s *stubBarrierStatusReader) BarrierStatus(context.Context) (*qrdbsdk.BarrierStatusInfo, error) {
@@ -59,13 +58,14 @@ func (s *stubBarrierStatusReader) BarrierStatus(context.Context) (*qrdbsdk.Barri
 	if s.nilStatus {
 		return nil, nil
 	}
-	return &qrdbsdk.BarrierStatusInfo{InitializedAt: s.initializedAt}, nil
+	return &qrdbsdk.BarrierStatusInfo{Sealed: s.initialized, Initialized: s.initialized}, nil
 }
 
-// initializedBarrier is a barrier that already carries a persisted
-// initialization timestamp (the daemon-restart case).
+// initializedBarrier is a barrier initialized on an earlier boot and sealed
+// since (the daemon-restart case). go-qrdb reports it Initialized but, being
+// sealed, with no InitializedAt timestamp.
 func initializedBarrier() *stubBarrierStatusReader {
-	return &stubBarrierStatusReader{initializedAt: time.Unix(1700000000, 0).UTC()}
+	return &stubBarrierStatusReader{initialized: true}
 }
 
 // virginBarrier is a barrier that has never been initialized (first boot).
@@ -255,7 +255,7 @@ func TestServerOperationalProbe(t *testing.T) {
 // ceremony service. No host state is touched and nothing blocks.
 func newRealCeremonyServices(t *testing.T) *CeremonyServices {
 	t.Helper()
-	services, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir())
+	services, err := buildBootstrapCeremonyServices(slog.Default(), t.TempDir(), testTrustDomain)
 	require.NoError(t, err)
 	require.NotNil(t, services)
 	return services

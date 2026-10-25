@@ -20,7 +20,7 @@
 package proto
 
 import (
-	_ "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
+	_ "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	emptypb "google.golang.org/protobuf/types/known/emptypb"
@@ -244,13 +244,17 @@ func (x *BarrierStatusResponse) GetInitializedAt() string {
 	return ""
 }
 
-// BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
+// BarrierShamirInitializeRequest initialises the barrier with Shamir secret
+// sharing (qrdb BarrierInitializeShamirRequest). policy is "designated"
+// (default) or "any-enrolled"; so_pin and user_pin, when set, are provisioned
+// into the node's PIN backend.
 type BarrierShamirInitializeRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// secret is the raw master-key material, carried as bytes end to end.
-	Secret        []byte `protobuf:"bytes,1,opt,name=secret,proto3" json:"secret,omitempty"`
-	Threshold     int32  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	TotalShares   int32  `protobuf:"varint,3,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Threshold     int32                  `protobuf:"varint,1,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	TotalShares   int32                  `protobuf:"varint,2,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	Policy        string                 `protobuf:"bytes,3,opt,name=policy,proto3" json:"policy,omitempty"`
+	SoPin         string                 `protobuf:"bytes,4,opt,name=so_pin,json=soPin,proto3" json:"so_pin,omitempty"`
+	UserPin       string                 `protobuf:"bytes,5,opt,name=user_pin,json=userPin,proto3" json:"user_pin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -285,13 +289,6 @@ func (*BarrierShamirInitializeRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_barrier_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *BarrierShamirInitializeRequest) GetSecret() []byte {
-	if x != nil {
-		return x.Secret
-	}
-	return nil
-}
-
 func (x *BarrierShamirInitializeRequest) GetThreshold() int32 {
 	if x != nil {
 		return x.Threshold
@@ -306,12 +303,34 @@ func (x *BarrierShamirInitializeRequest) GetTotalShares() int32 {
 	return 0
 }
 
-// BarrierShamirInitializeResponse returns the generated key shares.
+func (x *BarrierShamirInitializeRequest) GetPolicy() string {
+	if x != nil {
+		return x.Policy
+	}
+	return ""
+}
+
+func (x *BarrierShamirInitializeRequest) GetSoPin() string {
+	if x != nil {
+		return x.SoPin
+	}
+	return ""
+}
+
+func (x *BarrierShamirInitializeRequest) GetUserPin() string {
+	if x != nil {
+		return x.UserPin
+	}
+	return ""
+}
+
+// BarrierShamirInitializeResponse is the share-free result; officers claim
+// their shares through the share-claim flow.
 type BarrierShamirInitializeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shares        []string               `protobuf:"bytes,1,rep,name=shares,proto3" json:"shares,omitempty"`
-	Threshold     int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	TotalShares   int32                  `protobuf:"varint,3,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	Threshold     int32                  `protobuf:"varint,1,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	TotalShares   int32                  `protobuf:"varint,2,opt,name=total_shares,json=totalShares,proto3" json:"total_shares,omitempty"`
+	ShareCount    int32                  `protobuf:"varint,3,opt,name=share_count,json=shareCount,proto3" json:"share_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -346,13 +365,6 @@ func (*BarrierShamirInitializeResponse) Descriptor() ([]byte, []int) {
 	return file_api_proto_barrier_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *BarrierShamirInitializeResponse) GetShares() []string {
-	if x != nil {
-		return x.Shares
-	}
-	return nil
-}
-
 func (x *BarrierShamirInitializeResponse) GetThreshold() int32 {
 	if x != nil {
 		return x.Threshold
@@ -367,222 +379,27 @@ func (x *BarrierShamirInitializeResponse) GetTotalShares() int32 {
 	return 0
 }
 
-// BarrierShamirUnsealShareRequest submits a single Shamir share.
-type BarrierShamirUnsealShareRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Share         string                 `protobuf:"bytes,1,opt,name=share,proto3" json:"share,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierShamirUnsealShareRequest) Reset() {
-	*x = BarrierShamirUnsealShareRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierShamirUnsealShareRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierShamirUnsealShareRequest) ProtoMessage() {}
-
-func (x *BarrierShamirUnsealShareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[6]
+func (x *BarrierShamirInitializeResponse) GetShareCount() int32 {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierShamirUnsealShareRequest.ProtoReflect.Descriptor instead.
-func (*BarrierShamirUnsealShareRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *BarrierShamirUnsealShareRequest) GetShare() string {
-	if x != nil {
-		return x.Share
-	}
-	return ""
-}
-
-// BarrierShamirUnsealShareResponse reports unseal progress.
-type BarrierShamirUnsealShareResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Required      int32                  `protobuf:"varint,1,opt,name=required,proto3" json:"required,omitempty"`
-	Submitted     int32                  `protobuf:"varint,2,opt,name=submitted,proto3" json:"submitted,omitempty"`
-	Complete      bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierShamirUnsealShareResponse) Reset() {
-	*x = BarrierShamirUnsealShareResponse{}
-	mi := &file_api_proto_barrier_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierShamirUnsealShareResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierShamirUnsealShareResponse) ProtoMessage() {}
-
-func (x *BarrierShamirUnsealShareResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierShamirUnsealShareResponse.ProtoReflect.Descriptor instead.
-func (*BarrierShamirUnsealShareResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *BarrierShamirUnsealShareResponse) GetRequired() int32 {
-	if x != nil {
-		return x.Required
+		return x.ShareCount
 	}
 	return 0
 }
 
-func (x *BarrierShamirUnsealShareResponse) GetSubmitted() int32 {
-	if x != nil {
-		return x.Submitted
-	}
-	return 0
-}
-
-func (x *BarrierShamirUnsealShareResponse) GetComplete() bool {
-	if x != nil {
-		return x.Complete
-	}
-	return false
-}
-
-// BarrierShamirUnsealSharesRequest submits multiple Shamir shares.
-type BarrierShamirUnsealSharesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shares        []string               `protobuf:"bytes,1,rep,name=shares,proto3" json:"shares,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierShamirUnsealSharesRequest) Reset() {
-	*x = BarrierShamirUnsealSharesRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierShamirUnsealSharesRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierShamirUnsealSharesRequest) ProtoMessage() {}
-
-func (x *BarrierShamirUnsealSharesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierShamirUnsealSharesRequest.ProtoReflect.Descriptor instead.
-func (*BarrierShamirUnsealSharesRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *BarrierShamirUnsealSharesRequest) GetShares() []string {
-	if x != nil {
-		return x.Shares
-	}
-	return nil
-}
-
-// BarrierRekeyRequest generates new Shamir shares.
-type BarrierRekeyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Threshold     int32                  `protobuf:"varint,1,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierRekeyRequest) Reset() {
-	*x = BarrierRekeyRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierRekeyRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierRekeyRequest) ProtoMessage() {}
-
-func (x *BarrierRekeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierRekeyRequest.ProtoReflect.Descriptor instead.
-func (*BarrierRekeyRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *BarrierRekeyRequest) GetThreshold() int32 {
-	if x != nil {
-		return x.Threshold
-	}
-	return 0
-}
-
-func (x *BarrierRekeyRequest) GetTotal() int32 {
-	if x != nil {
-		return x.Total
-	}
-	return 0
-}
-
-// BarrierRecoveryGenerateRequest generates recovery keys.
+// BarrierRecoveryGenerateRequest generates the recovery key, split
+// threshold-of-N to the enrolled recovery officers.
 type BarrierRecoveryGenerateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Threshold     int32                  `protobuf:"varint,1,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	Policy        string                 `protobuf:"bytes,2,opt,name=policy,proto3" json:"policy,omitempty"`
+	SoPin         string                 `protobuf:"bytes,3,opt,name=so_pin,json=soPin,proto3" json:"so_pin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BarrierRecoveryGenerateRequest) Reset() {
 	*x = BarrierRecoveryGenerateRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[10]
+	mi := &file_api_proto_barrier_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -594,7 +411,7 @@ func (x *BarrierRecoveryGenerateRequest) String() string {
 func (*BarrierRecoveryGenerateRequest) ProtoMessage() {}
 
 func (x *BarrierRecoveryGenerateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[10]
+	mi := &file_api_proto_barrier_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -607,7 +424,7 @@ func (x *BarrierRecoveryGenerateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRecoveryGenerateRequest.ProtoReflect.Descriptor instead.
 func (*BarrierRecoveryGenerateRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_barrier_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *BarrierRecoveryGenerateRequest) GetThreshold() int32 {
@@ -617,26 +434,34 @@ func (x *BarrierRecoveryGenerateRequest) GetThreshold() int32 {
 	return 0
 }
 
-func (x *BarrierRecoveryGenerateRequest) GetTotal() int32 {
+func (x *BarrierRecoveryGenerateRequest) GetPolicy() string {
 	if x != nil {
-		return x.Total
+		return x.Policy
 	}
-	return 0
+	return ""
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
+func (x *BarrierRecoveryGenerateRequest) GetSoPin() string {
+	if x != nil {
+		return x.SoPin
+	}
+	return ""
+}
+
+// BarrierRecoveryKeysResponse is the share-free result of recovery key
+// generation.
 type BarrierRecoveryKeysResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	Threshold     int32                  `protobuf:"varint,2,opt,name=threshold,proto3" json:"threshold,omitempty"`
-	Total         int32                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	Threshold     int32                  `protobuf:"varint,1,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	ShareCount    int32                  `protobuf:"varint,3,opt,name=share_count,json=shareCount,proto3" json:"share_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BarrierRecoveryKeysResponse) Reset() {
 	*x = BarrierRecoveryKeysResponse{}
-	mi := &file_api_proto_barrier_proto_msgTypes[11]
+	mi := &file_api_proto_barrier_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +473,7 @@ func (x *BarrierRecoveryKeysResponse) String() string {
 func (*BarrierRecoveryKeysResponse) ProtoMessage() {}
 
 func (x *BarrierRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[11]
+	mi := &file_api_proto_barrier_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,14 +486,7 @@ func (x *BarrierRecoveryKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRecoveryKeysResponse.ProtoReflect.Descriptor instead.
 func (*BarrierRecoveryKeysResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *BarrierRecoveryKeysResponse) GetKeys() []string {
-	if x != nil {
-		return x.Keys
-	}
-	return nil
+	return file_api_proto_barrier_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *BarrierRecoveryKeysResponse) GetThreshold() int32 {
@@ -685,49 +503,11 @@ func (x *BarrierRecoveryKeysResponse) GetTotal() int32 {
 	return 0
 }
 
-// BarrierRecoveryRecoverRequest unseals the barrier using recovery keys.
-type BarrierRecoveryRecoverRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keys          []string               `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierRecoveryRecoverRequest) Reset() {
-	*x = BarrierRecoveryRecoverRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierRecoveryRecoverRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierRecoveryRecoverRequest) ProtoMessage() {}
-
-func (x *BarrierRecoveryRecoverRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[12]
+func (x *BarrierRecoveryKeysResponse) GetShareCount() int32 {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.ShareCount
 	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierRecoveryRecoverRequest.ProtoReflect.Descriptor instead.
-func (*BarrierRecoveryRecoverRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *BarrierRecoveryRecoverRequest) GetKeys() []string {
-	if x != nil {
-		return x.Keys
-	}
-	return nil
+	return 0
 }
 
 // BarrierRecoveryStatusResponse indicates whether recovery keys exist.
@@ -740,7 +520,7 @@ type BarrierRecoveryStatusResponse struct {
 
 func (x *BarrierRecoveryStatusResponse) Reset() {
 	*x = BarrierRecoveryStatusResponse{}
-	mi := &file_api_proto_barrier_proto_msgTypes[13]
+	mi := &file_api_proto_barrier_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -752,7 +532,7 @@ func (x *BarrierRecoveryStatusResponse) String() string {
 func (*BarrierRecoveryStatusResponse) ProtoMessage() {}
 
 func (x *BarrierRecoveryStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[13]
+	mi := &file_api_proto_barrier_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -765,7 +545,7 @@ func (x *BarrierRecoveryStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierRecoveryStatusResponse.ProtoReflect.Descriptor instead.
 func (*BarrierRecoveryStatusResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_barrier_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *BarrierRecoveryStatusResponse) GetHasRecoveryKeys() bool {
@@ -773,105 +553,6 @@ func (x *BarrierRecoveryStatusResponse) GetHasRecoveryKeys() bool {
 		return x.HasRecoveryKeys
 	}
 	return false
-}
-
-// BarrierRootTokenRequest generates a root token using Shamir shares.
-type BarrierRootTokenRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Shares        []string               `protobuf:"bytes,1,rep,name=shares,proto3" json:"shares,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierRootTokenRequest) Reset() {
-	*x = BarrierRootTokenRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierRootTokenRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierRootTokenRequest) ProtoMessage() {}
-
-func (x *BarrierRootTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierRootTokenRequest.ProtoReflect.Descriptor instead.
-func (*BarrierRootTokenRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *BarrierRootTokenRequest) GetShares() []string {
-	if x != nil {
-		return x.Shares
-	}
-	return nil
-}
-
-// BarrierRootTokenResponse returns a newly generated root token.
-type BarrierRootTokenResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Token string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
-	// created_at is RFC3339 (UTC) or empty when not supplied by the server.
-	CreatedAt     string `protobuf:"bytes,2,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *BarrierRootTokenResponse) Reset() {
-	*x = BarrierRootTokenResponse{}
-	mi := &file_api_proto_barrier_proto_msgTypes[15]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *BarrierRootTokenResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*BarrierRootTokenResponse) ProtoMessage() {}
-
-func (x *BarrierRootTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[15]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use BarrierRootTokenResponse.ProtoReflect.Descriptor instead.
-func (*BarrierRootTokenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{15}
-}
-
-func (x *BarrierRootTokenResponse) GetToken() string {
-	if x != nil {
-		return x.Token
-	}
-	return ""
-}
-
-func (x *BarrierRootTokenResponse) GetCreatedAt() string {
-	if x != nil {
-		return x.CreatedAt
-	}
-	return ""
 }
 
 // BarrierEnableEncryptionRequest requests at-rest encryption migration for the
@@ -901,7 +582,7 @@ type BarrierEnableEncryptionRequest struct {
 
 func (x *BarrierEnableEncryptionRequest) Reset() {
 	*x = BarrierEnableEncryptionRequest{}
-	mi := &file_api_proto_barrier_proto_msgTypes[16]
+	mi := &file_api_proto_barrier_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -913,7 +594,7 @@ func (x *BarrierEnableEncryptionRequest) String() string {
 func (*BarrierEnableEncryptionRequest) ProtoMessage() {}
 
 func (x *BarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_barrier_proto_msgTypes[16]
+	mi := &file_api_proto_barrier_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -926,7 +607,7 @@ func (x *BarrierEnableEncryptionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BarrierEnableEncryptionRequest.ProtoReflect.Descriptor instead.
 func (*BarrierEnableEncryptionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_barrier_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_barrier_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *BarrierEnableEncryptionRequest) GetTargetStrategy() string {
@@ -975,7 +656,7 @@ var File_api_proto_barrier_proto protoreflect.FileDescriptor
 
 const file_api_proto_barrier_proto_rawDesc = "" +
 	"\n" +
-	"\x17api/proto/barrier.proto\x12\x13quicbaas.barrier.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a%pkg/api/grpc/proto/qrdbv1/authz.proto\"2\n" +
+	"\x17api/proto/barrier.proto\x12\x13quicbaas.barrier.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x18qrdb/v1/permission.proto\"2\n" +
 	"\x18BarrierInitializeRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\fR\x06secret\".\n" +
 	"\x14BarrierUnsealRequest\x12\x16\n" +
@@ -986,43 +667,29 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"\x06sealed\x18\x01 \x01(\bR\x06sealed\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12'\n" +
 	"\x0fhardware_backed\x18\x03 \x01(\bR\x0ehardwareBacked\x12%\n" +
-	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\"y\n" +
-	"\x1eBarrierShamirInitializeRequest\x12\x16\n" +
-	"\x06secret\x18\x01 \x01(\fR\x06secret\x12\x1c\n" +
-	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12!\n" +
-	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\"z\n" +
-	"\x1fBarrierShamirInitializeResponse\x12\x16\n" +
-	"\x06shares\x18\x01 \x03(\tR\x06shares\x12\x1c\n" +
-	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12!\n" +
-	"\ftotal_shares\x18\x03 \x01(\x05R\vtotalShares\"7\n" +
-	"\x1fBarrierShamirUnsealShareRequest\x12\x14\n" +
-	"\x05share\x18\x01 \x01(\tR\x05share\"x\n" +
-	" BarrierShamirUnsealShareResponse\x12\x1a\n" +
-	"\brequired\x18\x01 \x01(\x05R\brequired\x12\x1c\n" +
-	"\tsubmitted\x18\x02 \x01(\x05R\tsubmitted\x12\x1a\n" +
-	"\bcomplete\x18\x03 \x01(\bR\bcomplete\":\n" +
-	" BarrierShamirUnsealSharesRequest\x12\x16\n" +
-	"\x06shares\x18\x01 \x03(\tR\x06shares\"I\n" +
-	"\x13BarrierRekeyRequest\x12\x1c\n" +
-	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"T\n" +
+	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\"\xab\x01\n" +
+	"\x1eBarrierShamirInitializeRequest\x12\x1c\n" +
+	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12!\n" +
+	"\ftotal_shares\x18\x02 \x01(\x05R\vtotalShares\x12\x16\n" +
+	"\x06policy\x18\x03 \x01(\tR\x06policy\x12\x15\n" +
+	"\x06so_pin\x18\x04 \x01(\tR\x05soPin\x12\x19\n" +
+	"\buser_pin\x18\x05 \x01(\tR\auserPin\"\x83\x01\n" +
+	"\x1fBarrierShamirInitializeResponse\x12\x1c\n" +
+	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12!\n" +
+	"\ftotal_shares\x18\x02 \x01(\x05R\vtotalShares\x12\x1f\n" +
+	"\vshare_count\x18\x03 \x01(\x05R\n" +
+	"shareCount\"m\n" +
 	"\x1eBarrierRecoveryGenerateRequest\x12\x1c\n" +
+	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12\x16\n" +
+	"\x06policy\x18\x02 \x01(\tR\x06policy\x12\x15\n" +
+	"\x06so_pin\x18\x03 \x01(\tR\x05soPin\"r\n" +
+	"\x1bBarrierRecoveryKeysResponse\x12\x1c\n" +
 	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"e\n" +
-	"\x1bBarrierRecoveryKeysResponse\x12\x12\n" +
-	"\x04keys\x18\x01 \x03(\tR\x04keys\x12\x1c\n" +
-	"\tthreshold\x18\x02 \x01(\x05R\tthreshold\x12\x14\n" +
-	"\x05total\x18\x03 \x01(\x05R\x05total\"3\n" +
-	"\x1dBarrierRecoveryRecoverRequest\x12\x12\n" +
-	"\x04keys\x18\x01 \x03(\tR\x04keys\"K\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1f\n" +
+	"\vshare_count\x18\x03 \x01(\x05R\n" +
+	"shareCount\"K\n" +
 	"\x1dBarrierRecoveryStatusResponse\x12*\n" +
-	"\x11has_recovery_keys\x18\x01 \x01(\bR\x0fhasRecoveryKeys\"1\n" +
-	"\x17BarrierRootTokenRequest\x12\x16\n" +
-	"\x06shares\x18\x01 \x03(\tR\x06shares\"O\n" +
-	"\x18BarrierRootTokenResponse\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token\x12\x1d\n" +
-	"\n" +
-	"created_at\x18\x02 \x01(\tR\tcreatedAt\"\xf9\x01\n" +
+	"\x11has_recovery_keys\x18\x01 \x01(\bR\x0fhasRecoveryKeys\"\xf9\x01\n" +
 	"\x1eBarrierEnableEncryptionRequest\x12'\n" +
 	"\x0ftarget_strategy\x18\x01 \x01(\tR\x0etargetStrategy\x12\x1c\n" +
 	"\tmechanism\x18\x02 \x01(\tR\tmechanism\x12\"\n" +
@@ -1031,22 +698,16 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"passphrase\x18\x04 \x01(\fR\n" +
 	"passphrase\x12)\n" +
 	"\x10shamir_threshold\x18\x05 \x01(\x05R\x0fshamirThreshold\x12!\n" +
-	"\fshamir_total\x18\x06 \x01(\x05R\vshamirTotal2\x9c\x0e\n" +
+	"\fshamir_total\x18\x06 \x01(\x05R\vshamirTotal2\xe8\b\n" +
 	"\aBarrier\x12s\n" +
 	"\x11BarrierInitialize\x12-.quicbaas.barrier.v1.BarrierInitializeRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:init\x12m\n" +
 	"\rBarrierUnseal\x12).quicbaas.barrier.v1.BarrierUnsealRequest\x1a\x16.google.protobuf.Empty\"\x19\xc2\xf3\x18\x15tenant_barrier:unseal\x12g\n" +
 	"\vBarrierSeal\x12'.quicbaas.barrier.v1.BarrierSealRequest\x1a\x16.google.protobuf.Empty\"\x17\xc2\xf3\x18\x13tenant_barrier:seal\x12n\n" +
 	"\rBarrierStatus\x12\x16.google.protobuf.Empty\x1a*.quicbaas.barrier.v1.BarrierStatusResponse\"\x19\xc2\xf3\x18\x15tenant_barrier:status\x12\xa0\x01\n" +
-	"\x17BarrierShamirInitialize\x123.quicbaas.barrier.v1.BarrierShamirInitializeRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\"\x1a\xc2\xf3\x18\x16seal:initialize_shamir\x12\xa1\x01\n" +
-	"\x18BarrierShamirUnsealShare\x124.quicbaas.barrier.v1.BarrierShamirUnsealShareRequest\x1a5.quicbaas.barrier.v1.BarrierShamirUnsealShareResponse\"\x18\xc2\xf3\x18\x14barrier:unseal-share\x12\x84\x01\n" +
-	"\x19BarrierShamirUnsealShares\x125.quicbaas.barrier.v1.BarrierShamirUnsealSharesRequest\x1a\x16.google.protobuf.Empty\"\x18\xc2\xf3\x18\x14barrier:unseal-share\x12~\n" +
-	"\fBarrierRekey\x12(.quicbaas.barrier.v1.BarrierRekeyRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\"\x0e\xc2\xf3\x18\n" +
-	"seal:rekey\x12\x9c\x01\n" +
-	"\x17BarrierRecoveryGenerate\x123.quicbaas.barrier.v1.BarrierRecoveryGenerateRequest\x1a0.quicbaas.barrier.v1.BarrierRecoveryKeysResponse\"\x1a\xc2\xf3\x18\x16seal:generate_recovery\x12\x80\x01\n" +
-	"\x16BarrierRecoveryRecover\x122.quicbaas.barrier.v1.BarrierRecoveryRecoverRequest\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:recover_with_keys\x12c\n" +
+	"\x17BarrierShamirInitialize\x123.quicbaas.barrier.v1.BarrierShamirInitializeRequest\x1a4.quicbaas.barrier.v1.BarrierShamirInitializeResponse\"\x1a\xc2\xf3\x18\x16seal:initialize_shamir\x12\x9c\x01\n" +
+	"\x17BarrierRecoveryGenerate\x123.quicbaas.barrier.v1.BarrierRecoveryGenerateRequest\x1a0.quicbaas.barrier.v1.BarrierRecoveryKeysResponse\"\x1a\xc2\xf3\x18\x16seal:generate_recovery\x12c\n" +
 	"\x15BarrierRecoveryDelete\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:generate_recovery\x12t\n" +
-	"\x15BarrierRecoveryStatus\x12\x16.google.protobuf.Empty\x1a2.quicbaas.barrier.v1.BarrierRecoveryStatusResponse\"\x0f\xc2\xf3\x18\vseal:status\x12\x83\x01\n" +
-	"\x10BarrierRootToken\x12,.quicbaas.barrier.v1.BarrierRootTokenRequest\x1a-.quicbaas.barrier.v1.BarrierRootTokenResponse\"\x12\xc2\xf3\x18\x0eseal:bootstrap\x12\x82\x01\n" +
+	"\x15BarrierRecoveryStatus\x12\x16.google.protobuf.Empty\x1a2.quicbaas.barrier.v1.BarrierRecoveryStatusResponse\"\x0f\xc2\xf3\x18\vseal:status\x12\x82\x01\n" +
 	"\x17BarrierEnableEncryption\x123.quicbaas.barrier.v1.BarrierEnableEncryptionRequest\x1a\x16.google.protobuf.Empty\"\x1a\xc2\xf3\x18\x16seal:enable_encryptionB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (
@@ -1061,58 +722,41 @@ func file_api_proto_barrier_proto_rawDescGZIP() []byte {
 	return file_api_proto_barrier_proto_rawDescData
 }
 
-var file_api_proto_barrier_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_api_proto_barrier_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_api_proto_barrier_proto_goTypes = []any{
-	(*BarrierInitializeRequest)(nil),         // 0: quicbaas.barrier.v1.BarrierInitializeRequest
-	(*BarrierUnsealRequest)(nil),             // 1: quicbaas.barrier.v1.BarrierUnsealRequest
-	(*BarrierSealRequest)(nil),               // 2: quicbaas.barrier.v1.BarrierSealRequest
-	(*BarrierStatusResponse)(nil),            // 3: quicbaas.barrier.v1.BarrierStatusResponse
-	(*BarrierShamirInitializeRequest)(nil),   // 4: quicbaas.barrier.v1.BarrierShamirInitializeRequest
-	(*BarrierShamirInitializeResponse)(nil),  // 5: quicbaas.barrier.v1.BarrierShamirInitializeResponse
-	(*BarrierShamirUnsealShareRequest)(nil),  // 6: quicbaas.barrier.v1.BarrierShamirUnsealShareRequest
-	(*BarrierShamirUnsealShareResponse)(nil), // 7: quicbaas.barrier.v1.BarrierShamirUnsealShareResponse
-	(*BarrierShamirUnsealSharesRequest)(nil), // 8: quicbaas.barrier.v1.BarrierShamirUnsealSharesRequest
-	(*BarrierRekeyRequest)(nil),              // 9: quicbaas.barrier.v1.BarrierRekeyRequest
-	(*BarrierRecoveryGenerateRequest)(nil),   // 10: quicbaas.barrier.v1.BarrierRecoveryGenerateRequest
-	(*BarrierRecoveryKeysResponse)(nil),      // 11: quicbaas.barrier.v1.BarrierRecoveryKeysResponse
-	(*BarrierRecoveryRecoverRequest)(nil),    // 12: quicbaas.barrier.v1.BarrierRecoveryRecoverRequest
-	(*BarrierRecoveryStatusResponse)(nil),    // 13: quicbaas.barrier.v1.BarrierRecoveryStatusResponse
-	(*BarrierRootTokenRequest)(nil),          // 14: quicbaas.barrier.v1.BarrierRootTokenRequest
-	(*BarrierRootTokenResponse)(nil),         // 15: quicbaas.barrier.v1.BarrierRootTokenResponse
-	(*BarrierEnableEncryptionRequest)(nil),   // 16: quicbaas.barrier.v1.BarrierEnableEncryptionRequest
-	(*emptypb.Empty)(nil),                    // 17: google.protobuf.Empty
+	(*BarrierInitializeRequest)(nil),        // 0: quicbaas.barrier.v1.BarrierInitializeRequest
+	(*BarrierUnsealRequest)(nil),            // 1: quicbaas.barrier.v1.BarrierUnsealRequest
+	(*BarrierSealRequest)(nil),              // 2: quicbaas.barrier.v1.BarrierSealRequest
+	(*BarrierStatusResponse)(nil),           // 3: quicbaas.barrier.v1.BarrierStatusResponse
+	(*BarrierShamirInitializeRequest)(nil),  // 4: quicbaas.barrier.v1.BarrierShamirInitializeRequest
+	(*BarrierShamirInitializeResponse)(nil), // 5: quicbaas.barrier.v1.BarrierShamirInitializeResponse
+	(*BarrierRecoveryGenerateRequest)(nil),  // 6: quicbaas.barrier.v1.BarrierRecoveryGenerateRequest
+	(*BarrierRecoveryKeysResponse)(nil),     // 7: quicbaas.barrier.v1.BarrierRecoveryKeysResponse
+	(*BarrierRecoveryStatusResponse)(nil),   // 8: quicbaas.barrier.v1.BarrierRecoveryStatusResponse
+	(*BarrierEnableEncryptionRequest)(nil),  // 9: quicbaas.barrier.v1.BarrierEnableEncryptionRequest
+	(*emptypb.Empty)(nil),                   // 10: google.protobuf.Empty
 }
 var file_api_proto_barrier_proto_depIdxs = []int32{
 	0,  // 0: quicbaas.barrier.v1.Barrier.BarrierInitialize:input_type -> quicbaas.barrier.v1.BarrierInitializeRequest
 	1,  // 1: quicbaas.barrier.v1.Barrier.BarrierUnseal:input_type -> quicbaas.barrier.v1.BarrierUnsealRequest
 	2,  // 2: quicbaas.barrier.v1.Barrier.BarrierSeal:input_type -> quicbaas.barrier.v1.BarrierSealRequest
-	17, // 3: quicbaas.barrier.v1.Barrier.BarrierStatus:input_type -> google.protobuf.Empty
+	10, // 3: quicbaas.barrier.v1.Barrier.BarrierStatus:input_type -> google.protobuf.Empty
 	4,  // 4: quicbaas.barrier.v1.Barrier.BarrierShamirInitialize:input_type -> quicbaas.barrier.v1.BarrierShamirInitializeRequest
-	6,  // 5: quicbaas.barrier.v1.Barrier.BarrierShamirUnsealShare:input_type -> quicbaas.barrier.v1.BarrierShamirUnsealShareRequest
-	8,  // 6: quicbaas.barrier.v1.Barrier.BarrierShamirUnsealShares:input_type -> quicbaas.barrier.v1.BarrierShamirUnsealSharesRequest
-	9,  // 7: quicbaas.barrier.v1.Barrier.BarrierRekey:input_type -> quicbaas.barrier.v1.BarrierRekeyRequest
-	10, // 8: quicbaas.barrier.v1.Barrier.BarrierRecoveryGenerate:input_type -> quicbaas.barrier.v1.BarrierRecoveryGenerateRequest
-	12, // 9: quicbaas.barrier.v1.Barrier.BarrierRecoveryRecover:input_type -> quicbaas.barrier.v1.BarrierRecoveryRecoverRequest
-	17, // 10: quicbaas.barrier.v1.Barrier.BarrierRecoveryDelete:input_type -> google.protobuf.Empty
-	17, // 11: quicbaas.barrier.v1.Barrier.BarrierRecoveryStatus:input_type -> google.protobuf.Empty
-	14, // 12: quicbaas.barrier.v1.Barrier.BarrierRootToken:input_type -> quicbaas.barrier.v1.BarrierRootTokenRequest
-	16, // 13: quicbaas.barrier.v1.Barrier.BarrierEnableEncryption:input_type -> quicbaas.barrier.v1.BarrierEnableEncryptionRequest
-	17, // 14: quicbaas.barrier.v1.Barrier.BarrierInitialize:output_type -> google.protobuf.Empty
-	17, // 15: quicbaas.barrier.v1.Barrier.BarrierUnseal:output_type -> google.protobuf.Empty
-	17, // 16: quicbaas.barrier.v1.Barrier.BarrierSeal:output_type -> google.protobuf.Empty
-	3,  // 17: quicbaas.barrier.v1.Barrier.BarrierStatus:output_type -> quicbaas.barrier.v1.BarrierStatusResponse
-	5,  // 18: quicbaas.barrier.v1.Barrier.BarrierShamirInitialize:output_type -> quicbaas.barrier.v1.BarrierShamirInitializeResponse
-	7,  // 19: quicbaas.barrier.v1.Barrier.BarrierShamirUnsealShare:output_type -> quicbaas.barrier.v1.BarrierShamirUnsealShareResponse
-	17, // 20: quicbaas.barrier.v1.Barrier.BarrierShamirUnsealShares:output_type -> google.protobuf.Empty
-	5,  // 21: quicbaas.barrier.v1.Barrier.BarrierRekey:output_type -> quicbaas.barrier.v1.BarrierShamirInitializeResponse
-	11, // 22: quicbaas.barrier.v1.Barrier.BarrierRecoveryGenerate:output_type -> quicbaas.barrier.v1.BarrierRecoveryKeysResponse
-	17, // 23: quicbaas.barrier.v1.Barrier.BarrierRecoveryRecover:output_type -> google.protobuf.Empty
-	17, // 24: quicbaas.barrier.v1.Barrier.BarrierRecoveryDelete:output_type -> google.protobuf.Empty
-	13, // 25: quicbaas.barrier.v1.Barrier.BarrierRecoveryStatus:output_type -> quicbaas.barrier.v1.BarrierRecoveryStatusResponse
-	15, // 26: quicbaas.barrier.v1.Barrier.BarrierRootToken:output_type -> quicbaas.barrier.v1.BarrierRootTokenResponse
-	17, // 27: quicbaas.barrier.v1.Barrier.BarrierEnableEncryption:output_type -> google.protobuf.Empty
-	14, // [14:28] is the sub-list for method output_type
-	0,  // [0:14] is the sub-list for method input_type
+	6,  // 5: quicbaas.barrier.v1.Barrier.BarrierRecoveryGenerate:input_type -> quicbaas.barrier.v1.BarrierRecoveryGenerateRequest
+	10, // 6: quicbaas.barrier.v1.Barrier.BarrierRecoveryDelete:input_type -> google.protobuf.Empty
+	10, // 7: quicbaas.barrier.v1.Barrier.BarrierRecoveryStatus:input_type -> google.protobuf.Empty
+	9,  // 8: quicbaas.barrier.v1.Barrier.BarrierEnableEncryption:input_type -> quicbaas.barrier.v1.BarrierEnableEncryptionRequest
+	10, // 9: quicbaas.barrier.v1.Barrier.BarrierInitialize:output_type -> google.protobuf.Empty
+	10, // 10: quicbaas.barrier.v1.Barrier.BarrierUnseal:output_type -> google.protobuf.Empty
+	10, // 11: quicbaas.barrier.v1.Barrier.BarrierSeal:output_type -> google.protobuf.Empty
+	3,  // 12: quicbaas.barrier.v1.Barrier.BarrierStatus:output_type -> quicbaas.barrier.v1.BarrierStatusResponse
+	5,  // 13: quicbaas.barrier.v1.Barrier.BarrierShamirInitialize:output_type -> quicbaas.barrier.v1.BarrierShamirInitializeResponse
+	7,  // 14: quicbaas.barrier.v1.Barrier.BarrierRecoveryGenerate:output_type -> quicbaas.barrier.v1.BarrierRecoveryKeysResponse
+	10, // 15: quicbaas.barrier.v1.Barrier.BarrierRecoveryDelete:output_type -> google.protobuf.Empty
+	8,  // 16: quicbaas.barrier.v1.Barrier.BarrierRecoveryStatus:output_type -> quicbaas.barrier.v1.BarrierRecoveryStatusResponse
+	10, // 17: quicbaas.barrier.v1.Barrier.BarrierEnableEncryption:output_type -> google.protobuf.Empty
+	9,  // [9:18] is the sub-list for method output_type
+	0,  // [0:9] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name
@@ -1129,7 +773,7 @@ func file_api_proto_barrier_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_barrier_proto_rawDesc), len(file_api_proto_barrier_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   17,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

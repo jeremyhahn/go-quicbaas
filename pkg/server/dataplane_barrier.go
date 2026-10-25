@@ -333,31 +333,23 @@ func buildDataPlaneBarrierService(
 	)
 
 	// Wire the ceremony service over the SAME persistent barrier, mirroring
-	// qrdbd's buildSealServices: a barrier-sealed credential service feeds a
-	// ceremony core whose DataDir is the seal sub-store, and
-	// NewBarrierServiceWithCeremony installs the ceremony core as the
-	// barrier's CeremonyDistributor and RecoveryDistributor. Without this the
-	// officer / share / recovery verbs on the data-plane barrier fail with the
-	// typed "ceremony service not configured" error.
-	credCore, err := qrdbsdk.NewVersionedCredentialService(
-		&qrdbsdk.CredentialConfig{Strategy: qrdbsdk.CredentialStrategyBarrier},
-		barrier,
-		logger,
-	)
-	if err != nil {
-		closeDataPlaneBarrierPartial(strategies, pebble)
-		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct credential service", Cause: err}
-	}
+	// qrdbd's buildSealServices: a ceremony core whose DataDir is the seal
+	// sub-store, installed by NewBarrierServiceWithCeremony as the barrier's
+	// CeremonyDistributor and RecoveryDistributor. Without this the officer /
+	// share / recovery verbs on the data-plane barrier fail with the typed
+	// "ceremony service not configured" error.
 	ceremonyCore, err := qrdbsdk.NewCeremonyService(
 		&qrdbsdk.CeremonyConfig{DataDir: sealDir},
 		barrier,
-		credCore,
 		logger,
 	)
 	if err != nil {
 		closeDataPlaneBarrierPartial(strategies, pebble)
 		return nil, nil, nil, nil, &DataPlaneBarrierError{Stage: "construct ceremony service", Cause: err}
 	}
+	// qrdb refuses every ceremony issuance until the trust domain the
+	// node's mTLS authenticator pins is installed.
+	ceremonyCore.SetTrustDomain(cfg.IAM.SPIFFETrustDomain)
 
 	// Wrap the qrdb BarrierService so `barrier status` reports the configured
 	// strategy even while the barrier is sealed/uninitialised (qrdb only reports

@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -212,12 +213,19 @@ func deriveSecretHash(secret string) (string, error) {
 	}
 	defer key.Destroy()
 
-	return formatSecretHash(&secretDigest{
-		iterations: pbkdf2Iterations,
-		salt:       salt,
-		//secure:unborrowed injected-interface formatSecretHash consumes the derived key immediately before key.Destroy runs.
-		key: key.Bytes(),
-	}), nil
+	var hash string
+	err = key.WithBytes(func(derived []byte) error {
+		hash = formatSecretHash(&secretDigest{
+			iterations: pbkdf2Iterations,
+			salt:       salt,
+			key:        derived,
+		})
+		return nil
+	})
+	if err != nil {
+		return "", &SecretHashError{Err: err}
+	}
+	return hash, nil
 }
 
 // HashClientSecret returns the stored form of a client secret the caller
@@ -251,29 +259,35 @@ func deriveSecretHash(secret string) (string, error) {
 // The digest is salted, so two calls with the same secret return different
 // values and neither may be compared for equality; verification goes through
 // the storage layer's ValidateClientSecret.
-func HashClientSecret(secret *secure.Secret) (string, error) {
+func HashClientSecret(ctx context.Context, secret *secure.Secret) (string, error) {
 	if secret == nil {
 		return "", ErrSecretEmpty
 	}
 
-	buf, err := secret.Open()
+	buf, err := secret.Open(ctx)
 	if err != nil {
 		return "", &SecretHashError{Err: err}
 	}
 	defer buf.Destroy()
 
-	//secure:unborrowed injected-interface deriveSecretHash currently accepts the PBKDF2 secret as a string.
-	plaintext := buf.Bytes()
-	// Refused at the provisioning boundary rather than at authentication.
-	// deriveSecretHash("") is a perfectly well-formed digest, so without this
-	// an application could be provisioned with an empty secret and would then
-	// authenticate anyone presenting nothing (Codex review of #118).
-	if len(plaintext) == 0 {
-		return "", ErrSecretEmpty
+	var hash string
+	err = buf.WithBytes(func(plaintext []byte) error {
+		// Refused at the provisioning boundary rather than at authentication.
+		// deriveSecretHash("") is a perfectly well-formed digest, so without this
+		// an application could be provisioned with an empty secret and would then
+		// authenticate anyone presenting nothing (Codex review of #118).
+		if len(plaintext) == 0 {
+			return ErrSecretEmpty
+		}
+		var deriveErr error
+		//secure:unwiped injected-interface deriveSecretHash currently accepts the PBKDF2 secret as a string.
+		hash, deriveErr = deriveSecretHash(string(plaintext))
+		return deriveErr
+	})
+	if err != nil {
+		return "", err
 	}
-
-	//secure:unwiped injected-interface deriveSecretHash currently accepts the PBKDF2 secret as a string.
-	return deriveSecretHash(string(plaintext))
+	return hash, nil
 }
 
 // deriveKey runs the KDF and hands the result back in protected memory.
@@ -387,6 +401,10 @@ func compareSecretHash(stored, secret string) bool {
 	// its copy is wiped here too rather than left for the collector.
 	defer secure.Wipe(digest.key)
 
-	//secure:unborrowed injected-interface ConstantTimeCompare reads the protected candidate without retaining it.
-	return subtle.ConstantTimeCompare(candidate.Bytes(), digest.key) == 1
+	match := false
+	err = candidate.WithBytes(func(derived []byte) error {
+		match = subtle.ConstantTimeCompare(derived, digest.key) == 1
+		return nil
+	})
+	return err == nil && match
 }

@@ -411,8 +411,8 @@ type moduleRoutes struct {
 // registered, split by whether the registration declared a permission.
 //
 // The capture registrar mirrors the wiring go-qrdb's REST server uses
-// (NewModuleHTTPRegistrar with its route/public helpers) over a throwaway chi
-// router. Handle and HandlePublic land in declared; anything the module puts
+// (NewModuleHTTPRegistrar with its route/public/optional helpers) over a throwaway chi
+// router. Handle, HandlePublic and HandleOptional land in declared; anything the module puts
 // straight onto the embedded router lands on the router itself and is
 // recovered by walking it afterwards, which is the only way to see a
 // registration that deliberately skipped the permission-recording path.
@@ -449,6 +449,9 @@ func captureModuleRoutes(m qrdbsdk.ServiceModule, routesAlreadyMounted bool) (ou
 	}
 	reg := qrdbsdk.NewModuleHTTPRegistrar(probe,
 		func(method, pattern string, _ qrdbsdk.Permission, _ http.HandlerFunc) {
+			record(method, pattern)
+		},
+		func(method, pattern string, _ http.HandlerFunc) {
 			record(method, pattern)
 		},
 		func(method, pattern string, _ http.HandlerFunc) {

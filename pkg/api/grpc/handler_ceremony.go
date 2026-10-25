@@ -22,6 +22,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -110,12 +112,17 @@ func (s *CeremonyServer) CeremonyInitialize(ctx context.Context, req *pb.Ceremon
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	officers := make([]service.CeremonyOfficer, 0, len(req.GetOfficers()))
-	for _, o := range req.GetOfficers() {
-		officers = append(officers, service.CeremonyOfficer{
-			Username: o.GetUsername(),
-			CSRPEM:   o.GetCsrPem(),
-		})
+	officers, err := ceremonyOfficersFromPB(req.GetOfficers())
+	if err != nil {
+		return nil, err
+	}
+
+	secret, err := service.NewCeremonySecret(ctx, req.GetSecret())
+	if err != nil {
+		return nil, mapCeremonyError(err)
+	}
+	if secret != nil {
+		defer secret.Destroy()
 	}
 
 	info, err := s.ceremonySvc.CeremonyInitialize(ctx, &service.CeremonyInitRequest{
@@ -123,9 +130,15 @@ func (s *CeremonyServer) CeremonyInitialize(ctx context.Context, req *pb.Ceremon
 		UserPin:                req.GetUserPin(),
 		CredentialSealStrategy: req.GetCredentialSealStrategy(),
 		Threshold:              int(req.GetThreshold()),
+		Policy:                 req.GetPolicy(),
 		Officers:               officers,
 		Hostname:               req.GetHostname(),
 		SANs:                   req.GetSans(),
+		AdminCSRPEM:            req.GetAdminCsrPem(),
+		AdminCertPEM:           req.GetAdminCertPem(),
+		AdminCertPoolPEM:       req.GetAdminCertPoolPem(),
+		AdminGenerate:          req.GetAdminGenerate(),
+		Secret:                 secret,
 	})
 	if err != nil {
 		return nil, mapCeremonyError(err)
@@ -137,7 +150,47 @@ func (s *CeremonyServer) CeremonyInitialize(ctx context.Context, req *pb.Ceremon
 		TlsCertPem: string(info.TLSCertPEM),
 		State:      info.State,
 		ShareCount: int32(info.ShareCount),
+
+		Holders:               ceremonyHoldersToPB(info.Holders),
+		AdminCertPem:          string(info.AdminCertPEM),
+		AdminKeyPem:           info.AdminKeyPEM,
+		AdminCredentialSource: info.AdminCredentialSource,
 	}, nil
+}
+
+// ceremonyOfficersFromPB decodes the ceremony roster into go-qrdb's own
+// officer type, so every field go-qrdb defines reaches it.
+func ceremonyOfficersFromPB(in []*pb.CeremonyOfficer) ([]service.CeremonyOfficer, error) {
+	officers := make([]service.CeremonyOfficer, 0, len(in))
+	for i, o := range in {
+		factors, err := holderFactorsFromPB(i, o.GetFactors())
+		if err != nil {
+			return nil, err
+		}
+		officers = append(officers, service.CeremonyOfficer{
+			Username:      o.GetUsername(),
+			Role:          o.GetRole(),
+			CSRPEM:        o.GetCsrPem(),
+			EncryptionKEM: o.GetEncryptionKem(),
+			EncryptionKey: o.GetEncryptionKey(),
+			Factors:       factors,
+			Designated:    o.GetDesignated(),
+		})
+	}
+	return officers, nil
+}
+
+// ceremonyHoldersToPB encodes the certificates go-qrdb issued to the initial
+// holders.
+func ceremonyHoldersToPB(in []qrdbtransport.CeremonyHolderCert) []*pb.CeremonyHolderCert {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]*pb.CeremonyHolderCert, len(in))
+	for i, h := range in {
+		out[i] = &pb.CeremonyHolderCert{Username: h.Username, Role: h.Role, CertPem: h.CertPEM}
+	}
+	return out
 }
 
 // CeremonyStatus returns the current ceremony state.
@@ -152,113 +205,6 @@ func (s *CeremonyServer) CeremonyStatus(ctx context.Context, _ *emptypb.Empty) (
 	return &pb.CeremonyStatusResponse{
 		State:   info.State,
 		SpkiPin: info.SPKIPin,
-	}, nil
-}
-
-// CeremonyClaimCertBegin starts a certificate claim challenge for the
-// supplied officer.
-func (s *CeremonyServer) CeremonyClaimCertBegin(ctx context.Context, req *pb.CeremonyClaimCertBeginRequest) (*pb.CeremonyClaimCertBeginResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	challenge, err := s.ceremonySvc.CeremonyBeginClaimCert(ctx, req.GetUsername())
-	if err != nil {
-		return nil, mapCeremonyError(err)
-	}
-	return &pb.CeremonyClaimCertBeginResponse{
-		NonceHex:  challenge.NonceHex,
-		ExpiresAt: formatTime(challenge.ExpiresAt),
-	}, nil
-}
-
-// CeremonyClaimCertComplete completes a certificate claim by submitting
-// the signed nonce. The signature is base64-encoded in transit to mirror
-// the REST contract and the service facade signature.
-func (s *CeremonyServer) CeremonyClaimCertComplete(ctx context.Context, req *pb.CeremonyClaimCertCompleteRequest) (*pb.CeremonyClaimCertCompleteResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	if req.GetNonceHex() == "" {
-		return nil, status.Error(codes.InvalidArgument, "nonce_hex is required")
-	}
-	if req.GetSignature() == "" {
-		return nil, status.Error(codes.InvalidArgument, "signature is required")
-	}
-	result, err := s.ceremonySvc.CeremonyCompleteClaimCert(ctx, req.GetUsername(), req.GetNonceHex(), req.GetSignature())
-	if err != nil {
-		return nil, mapCeremonyError(err)
-	}
-	return &pb.CeremonyClaimCertCompleteResponse{
-		CertPem:   string(result.CertPEM),
-		CaCertPem: string(result.CACertPEM),
-	}, nil
-}
-
-// CeremonyBeginClaimShare starts the Shamir share claim handshake for the
-// supplied officer, returning the challenge nonce to sign. The caller's
-// certificate thumbprint is derived by the qrdb node from the transport
-// connection, never from the request.
-func (s *CeremonyServer) CeremonyBeginClaimShare(ctx context.Context, req *pb.CeremonyBeginClaimShareRequest) (*pb.CeremonyBeginClaimShareResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	challenge, err := s.ceremonySvc.CeremonyBeginClaimShare(ctx, req.GetUsername())
-	if err != nil {
-		return nil, mapCeremonyError(err)
-	}
-	return &pb.CeremonyBeginClaimShareResponse{
-		NonceHex:  challenge.NonceHex,
-		ExpiresAt: formatTime(challenge.ExpiresAt),
-	}, nil
-}
-
-// CeremonyCompleteClaimShare completes the Shamir share claim handshake by
-// submitting the signed challenge nonce. The share is released exactly once.
-func (s *CeremonyServer) CeremonyCompleteClaimShare(ctx context.Context, req *pb.CeremonyCompleteClaimShareRequest) (*pb.CeremonyCompleteClaimShareResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	if req.GetNonceHex() == "" {
-		return nil, status.Error(codes.InvalidArgument, "nonce_hex is required")
-	}
-	if len(req.GetSignature()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "signature is required")
-	}
-	result, err := s.ceremonySvc.CeremonyCompleteClaimShare(ctx, req.GetUsername(), req.GetNonceHex(), req.GetSignature())
-	if err != nil {
-		return nil, mapCeremonyError(err)
-	}
-	shareIndex, err := responseInt32("share_index", result.ShareIndex)
-	if err != nil {
-		return nil, err
-	}
-	return &pb.CeremonyCompleteClaimShareResponse{
-		ShareIndex: shareIndex,
-		Share:      result.ShareJSON,
 	}, nil
 }
 
@@ -282,56 +228,4 @@ func (s *CeremonyServer) CeremonySignCSR(ctx context.Context, req *pb.CeremonySi
 		return nil, mapCeremonyError(err)
 	}
 	return &pb.CeremonySignCSRResponse{CertPem: string(result.CertPEM)}, nil
-}
-
-// CeremonyListOfficers returns the persisted officer roster.
-//
-// The CeremonyServicer facade does not (yet) expose a typed ListOfficers
-// method — the persistent ceremony-registry surface is still in flight.
-// To keep the front-end placeholder logic identical with REST, we return
-// an empty roster when the facade is wired but the registry has not been
-// surfaced. When the facade itself is unwired, the canonical
-// codes.Unavailable status is returned via requireCeremonyService.
-func (s *CeremonyServer) CeremonyListOfficers(ctx context.Context, _ *emptypb.Empty) (*pb.CeremonyListOfficersResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	return &pb.CeremonyListOfficersResponse{Officers: nil}, nil
-}
-
-// CeremonyEnrollExternalOfficer enrols an officer whose key material
-// lives outside the daemon. Exactly one of cert_pem or pubkey_pem must
-// be supplied, matching the REST contract.
-func (s *CeremonyServer) CeremonyEnrollExternalOfficer(ctx context.Context, req *pb.CeremonyEnrollExternalOfficerRequest) (*pb.CeremonyEnrollExternalOfficerResponse, error) {
-	if err := s.requireCeremonyService(); err != nil {
-		return nil, err
-	}
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request is required")
-	}
-	if req.GetUsername() == "" {
-		return nil, status.Error(codes.InvalidArgument, "username is required")
-	}
-	if req.GetCertPem() == "" && req.GetPubkeyPem() == "" {
-		return nil, status.Error(codes.InvalidArgument, "exactly one of cert_pem or pubkey_pem is required")
-	}
-	if req.GetCertPem() != "" && req.GetPubkeyPem() != "" {
-		return nil, status.Error(codes.InvalidArgument, "cert_pem and pubkey_pem are mutually exclusive")
-	}
-	if req.GetAuthFactor() == "" {
-		return nil, status.Error(codes.InvalidArgument, "auth_factor is required")
-	}
-
-	resp, err := s.ceremonySvc.CeremonyEnrollExternalOfficer(ctx, &service.CeremonyEnrollExternalOfficerRequest{
-		Username:   req.GetUsername(),
-		CertPEM:    req.GetCertPem(),
-		PubKeyPEM:  req.GetPubkeyPem(),
-		ShareIndex: int(req.GetShareIndex()),
-		AuthFactor: req.GetAuthFactor(),
-		ShareBytes: req.GetShareBytes(),
-	})
-	if err != nil {
-		return nil, mapCeremonyError(err)
-	}
-	return &pb.CeremonyEnrollExternalOfficerResponse{SealedShare: resp.SealedShare}, nil
 }

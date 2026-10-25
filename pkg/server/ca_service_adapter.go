@@ -66,6 +66,11 @@ var (
 	// while building an issuance response. Issuance fails rather than
 	// returning a certificate with an empty chain.
 	ErrCAServiceAdapterBundle = errors.New("server: ca service adapter cannot read the CA bundle")
+
+	// ErrCAServiceAdapterTenantRequired is returned when a CSR reaches the
+	// adapter without an issuance tenant. go-xkms stamps the tenant into
+	// every certificate it issues, so the adapter refuses before calling it.
+	ErrCAServiceAdapterTenantRequired = errors.New("server: ca service adapter requires an issuance tenant")
 )
 
 // CAServiceAdapterBundleError carries the cause of a failed CA bundle read.
@@ -109,7 +114,7 @@ type caServiceAdapter struct {
 	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
 	// non-empty alongside a request TenantID, the adapter instructs the
 	// embedded CA to stamp a tenant-scoped SPIFFE URI SAN
-	// (spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name>) onto the
+	// (spiffe://<tenantID>/<kind>/<name>) onto the
 	// issued leaf so mTLS/PIV login can derive the tenant from the verified
 	// peer certificate. Empty disables SPIFFE SAN synthesis (single-domain
 	// / pre-broker deployments).
@@ -258,22 +263,18 @@ func (a *caServiceAdapter) IssueCertificate(
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a single signing
 // operation, folding in the operator-configured SPIFFE trust domain, the
 // request tenant, and the SPIFFE workload kind derived from the certificate
-// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
-// SAN (single-domain / pre-broker mode). Returns nil when there is nothing to
-// configure so the CA applies its own profile defaults unchanged.
+// profile. The tenant is always forwarded: the CA stamps it as the subject's
+// first OU on every certificate and refuses a request that names none. When
+// the trust domain or tenant is empty the CA omits the SPIFFE SAN
+// (single-domain / pre-broker mode).
 func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
-	trustDomain := a.getSPIFFETrustDomain()
-	spiffeRequested := trustDomain != "" && tenantID != ""
-	if profile == "" && validityDays <= 0 && !spiffeRequested {
-		return nil
-	}
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
+		TenantID:     tenantID,
 	}
-	if spiffeRequested {
+	if trustDomain := a.getSPIFFETrustDomain(); trustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = trustDomain
-		opts.TenantID = tenantID
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	}
 	return opts
@@ -319,15 +320,21 @@ func (a *caServiceAdapter) SignCSR(
 //
 // The default sign profile is applied (no SPIFFE synthesis): ACME issuance is
 // driven by the requester's CSR identifiers, not a tenant-scoped login leaf.
-func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
+// tenantID is the authorized issuance tenant the ACME servicer resolved from
+// the caller's authenticated context; the CA stamps it into the certificate,
+// and an empty one is refused with ErrCAServiceAdapterTenantRequired.
+func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, tenantID string, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
 	if len(csrPEM) == 0 {
 		return nil, nil, ErrCAServiceAdapterInvalidPEM
+	}
+	if tenantID == "" {
+		return nil, nil, ErrCAServiceAdapterTenantRequired
 	}
 	ca := a.getCA()
 	if ca == nil {
 		return nil, nil, ErrCAServiceAdapterNilCA
 	}
-	cert, err := ca.SignCSR(ctx, csrPEM, nil)
+	cert, err := ca.SignCSR(ctx, csrPEM, &xkmssdk.TrustedCASignOptions{TenantID: tenantID})
 	if err != nil {
 		return nil, nil, err
 	}

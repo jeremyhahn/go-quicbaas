@@ -20,7 +20,7 @@ syntax = "proto3";
 package quicbaas.tenant.v1;
 
 import "google/protobuf/empty.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -44,13 +44,6 @@ service TenantBarrier {
   // Unseal unseals the per-tenant barrier with a single key (passphrase
   // strategy). Empty key material is rejected by qrdb.
   rpc Unseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "tenant_barrier:unseal";
-  }
-
-  // UnsealShare submits a single Shamir share toward the per-tenant barrier's
-  // quorum threshold. Unseals automatically once enough distinct shares have
-  // been submitted.
-  rpc UnsealShare(TenantBarrierUnsealShareRequest) returns (TenantBarrierUnsealProgress) {
       option (qrdb.v1.permission) = "tenant_barrier:unseal";
   }
 
@@ -106,6 +99,47 @@ message TenantBarrierInitRequest {
   int32 shares = 4;
   // strategy selects the sealing strategy: "none", "passphrase", or "shamir".
   string strategy = 5;
+  // officers is the inline Shamir share-holder roster go-qrdb validates and
+  // registers atomically with initialization (go-qrdb
+  // TenantBarrierInitRequest.Officers). Its length must equal shares; any
+  // other strategy refuses it.
+  repeated TenantBarrierOfficer officers = 6;
+  // policy is the factor policy the officers enrol under: "designated"
+  // (default) or "any-enrolled". Ignored without officers.
+  string policy = 7;
+}
+
+// TenantBarrierOfficer is one inline roster entry, field for field go-qrdb's
+// OfficerRegisterRequest. csr_pem supplies only the holder's public key; the
+// node's CA assigns the certificate identity.
+message TenantBarrierOfficer {
+  string username = 1;
+  string role = 2;
+  string csr_pem = 3;
+  // encryption_kem and encryption_key enrol a separate HPKE recipient key the
+  // share envelope is sealed to; empty uses the certificate key.
+  string encryption_kem = 4;
+  bytes encryption_key = 5;
+  repeated TenantBarrierHolderFactor factors = 6;
+  // designated names the factor fixed at enrolment under the designated
+  // policy; "mtls" when empty.
+  string designated = 7;
+}
+
+// TenantBarrierHolderFactor is one factor a holder enrols with (go-qrdb
+// HolderFactorEnrolment). params_json is the factor's parameters as a JSON
+// object, the encoding go-qrdb's own gRPC wire uses.
+message TenantBarrierHolderFactor {
+  string name = 1;
+  bytes params_json = 2;
+}
+
+// TenantBarrierHolderCert is the certificate go-qrdb issued to one officer
+// of an inline roster.
+message TenantBarrierHolderCert {
+  string username = 1;
+  string role = 2;
+  string cert_pem = 3;
 }
 
 // TenantBarrierInitResponse carries the init outcome. For the Shamir strategy
@@ -122,6 +156,9 @@ message TenantBarrierInitResponse {
   int32 threshold = 4;
   // total_shares is the total Shamir share count; zero for non-Shamir strategies.
   int32 total_shares = 5;
+  // holders carries the certificate issued to each inline roster officer, in
+  // roster order; empty when no roster was supplied.
+  repeated TenantBarrierHolderCert holders = 6;
 }
 
 // TenantBarrierUnsealRequest carries single-key unseal material.
@@ -130,14 +167,6 @@ message TenantBarrierUnsealRequest {
   string tenant_id = 1;
   // key is the raw unseal key (passphrase bytes).
   bytes key = 2;
-}
-
-// TenantBarrierUnsealShareRequest carries one Shamir share.
-message TenantBarrierUnsealShareRequest {
-  // tenant_id identifies the target tenant.
-  string tenant_id = 1;
-  // share is the Shamir share value.
-  string share = 2;
 }
 
 // TenantBarrierUnsealProgress reports quorum progress for a Shamir unseal.

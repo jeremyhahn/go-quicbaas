@@ -54,9 +54,10 @@ import (
 //	gRPC + unix   pkg/api/grpc handler_barrier.go    (unix serves the same
 //	                                                  gRPC wire over a UDS)
 //	MCP           pkg/api/mcp  tools_barrier.go
-//	QUIC + embedded + the qrdb.v1 gRPC/unix surface
-//	              pkg/server grpc_qrdb_barrier_adapter.go, which reaches the
-//	              same platform-shard BarrierClient
+//
+// QUIC, embedded and the qrdb.v1 gRPC/unix surface serve the embedded node's
+// own go-qrdb BarrierServicer unchanged (pkg/server grpc_qrdb_service.go
+// qrdbBarrierServicer), so they render go-qrdb's answer, not quicbaas's.
 // =============================================================================
 
 // parityStatusResponse is the barrier state the stub client reports. The
@@ -139,30 +140,17 @@ func barrierStatusOverMCP(t *testing.T, svc service.BarrierServicer) map[string]
 	return body
 }
 
-// barrierStatusOverQRDBServicer drives the qrdb.v1 BarrierServicer adapter —
-// the surface the QUIC, embedded, and qrdb-wire gRPC/unix transports reach.
-// The adapter yields a time.Time; it is rendered with the same format the
-// other transports use so the comparison is like for like.
-func barrierStatusOverQRDBServicer(t *testing.T, client qrdbtransport.BarrierClient) map[string]any {
-	t.Helper()
-
-	info, err := newQRDBBarrierClientServicer(client).BarrierStatus(context.Background())
-	if err != nil {
-		t.Fatalf("qrdb BarrierServicer adapter BarrierStatus: %v", err)
-	}
-	return map[string]any{
-		"sealed":          info.Sealed,
-		"strategy":        info.Strategy,
-		"hardware_backed": info.HardwareBacked,
-		"initialized_at":  info.InitializedAt.UTC().Format(qrdbBarrierParityTimeFormat),
-	}
+// stubBarrierClient answers BarrierStatus with a fixed response. The other
+// BarrierClient verbs are not reached by these tests; the embedded nil
+// interface makes any accidental call fail loudly.
+type stubBarrierClient struct {
+	qrdbtransport.BarrierClient
+	statusResp *qrdbtransport.BarrierStatusResponse
 }
 
-// qrdbBarrierParityTimeFormat mirrors pkg/api/{rest,grpc,mcp}'s
-// barrierTimeFormat. Those constants are unexported in their own packages, so
-// the parity comparison restates the format here — and any divergence from it
-// shows up as a mismatched field below.
-const qrdbBarrierParityTimeFormat = "2006-01-02T15:04:05.999999999Z07:00"
+func (s *stubBarrierClient) BarrierStatus(context.Context) (*qrdbtransport.BarrierStatusResponse, error) {
+	return s.statusResp, nil
+}
 
 // TestBarrierStatus_IsIdenticalOnEveryTransport is the go-quicbaas#405
 // acceptance: an unsealed, configured barrier reports the same state,
@@ -172,10 +160,9 @@ func TestBarrierStatus_IsIdenticalOnEveryTransport(t *testing.T) {
 	svc := service.NewBarrierService(client)
 
 	answers := map[string]map[string]any{
-		"rest":          barrierStatusOverREST(t, svc),
-		"grpc+unix":     barrierStatusOverGRPC(t, svc),
-		"mcp":           barrierStatusOverMCP(t, svc),
-		"quic+embedded": barrierStatusOverQRDBServicer(t, client),
+		"rest":      barrierStatusOverREST(t, svc),
+		"grpc+unix": barrierStatusOverGRPC(t, svc),
+		"mcp":       barrierStatusOverMCP(t, svc),
 	}
 
 	// The fields go-quicbaas#405 names, with the value the stub reported.
@@ -213,10 +200,9 @@ func TestBarrierStatus_SealedIsIdenticalOnEveryTransport(t *testing.T) {
 	svc := service.NewBarrierService(client)
 
 	answers := map[string]map[string]any{
-		"rest":          barrierStatusOverREST(t, svc),
-		"grpc+unix":     barrierStatusOverGRPC(t, svc),
-		"mcp":           barrierStatusOverMCP(t, svc),
-		"quic+embedded": barrierStatusOverQRDBServicer(t, client),
+		"rest":      barrierStatusOverREST(t, svc),
+		"grpc+unix": barrierStatusOverGRPC(t, svc),
+		"mcp":       barrierStatusOverMCP(t, svc),
 	}
 
 	want := map[string]any{

@@ -16,7 +16,7 @@ syntax = "proto3";
 package quicbaas.barrier.v1;
 
 import "google/protobuf/empty.proto";
-import "pkg/api/grpc/proto/qrdbv1/authz.proto";
+import "qrdb/v1/permission.proto";
 
 option go_package = "github.com/jeremyhahn/go-quicbaas/api/proto;proto";
 
@@ -59,34 +59,10 @@ service Barrier {
       option (qrdb.v1.permission) = "seal:initialize_shamir";
   }
 
-  // BarrierShamirUnsealShare submits a single Shamir share toward the
-  // unseal quorum and reports current progress.
-  rpc BarrierShamirUnsealShare(BarrierShamirUnsealShareRequest) returns (BarrierShamirUnsealShareResponse) {
-      option (qrdb.v1.permission) = "barrier:unseal-share";
-  }
-
-  // BarrierShamirUnsealShares unseals the barrier using a complete set of
-  // Shamir shares supplied in a single call.
-  rpc BarrierShamirUnsealShares(BarrierShamirUnsealSharesRequest) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "barrier:unseal-share";
-  }
-
-  // BarrierRekey generates new Shamir shares for the existing root key
-  // with the supplied threshold and total parameters.
-  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitializeResponse) {
-      option (qrdb.v1.permission) = "seal:rekey";
-  }
-
   // BarrierRecoveryGenerate generates a fresh set of recovery shares for
   // disaster recovery.
   rpc BarrierRecoveryGenerate(BarrierRecoveryGenerateRequest) returns (BarrierRecoveryKeysResponse) {
       option (qrdb.v1.permission) = "seal:generate_recovery";
-  }
-
-  // BarrierRecoveryRecover unseals the barrier using previously generated
-  // recovery shares.
-  rpc BarrierRecoveryRecover(BarrierRecoveryRecoverRequest) returns (google.protobuf.Empty) {
-      option (qrdb.v1.permission) = "seal:recover_with_keys";
   }
 
   // BarrierRecoveryDelete removes all persisted recovery key metadata.
@@ -97,12 +73,6 @@ service Barrier {
   // BarrierRecoveryStatus reports whether recovery key metadata exists.
   rpc BarrierRecoveryStatus(google.protobuf.Empty) returns (BarrierRecoveryStatusResponse) {
       option (qrdb.v1.permission) = "seal:status";
-  }
-
-  // BarrierRootToken generates a fresh root token by proving knowledge of
-  // the master key through Shamir shares.
-  rpc BarrierRootToken(BarrierRootTokenRequest) returns (BarrierRootTokenResponse) {
-      option (qrdb.v1.permission) = "seal:bootstrap";
   }
 
   // BarrierEnableEncryption migrates the system barrier from the none
@@ -145,77 +115,45 @@ message BarrierStatusResponse {
   string initialized_at = 4;
 }
 
-// BarrierShamirInitializeRequest initialises the barrier with Shamir secret sharing.
+// BarrierShamirInitializeRequest initialises the barrier with Shamir secret
+// sharing (qrdb BarrierInitializeShamirRequest). policy is "designated"
+// (default) or "any-enrolled"; so_pin and user_pin, when set, are provisioned
+// into the node's PIN backend.
 message BarrierShamirInitializeRequest {
-  // secret is the raw master-key material, carried as bytes end to end.
-  bytes secret = 1;
-  int32 threshold = 2;
-  int32 total_shares = 3;
-}
-
-// BarrierShamirInitializeResponse returns the generated key shares.
-message BarrierShamirInitializeResponse {
-  repeated string shares = 1;
-  int32 threshold = 2;
-  int32 total_shares = 3;
-}
-
-// BarrierShamirUnsealShareRequest submits a single Shamir share.
-message BarrierShamirUnsealShareRequest {
-  string share = 1;
-}
-
-// BarrierShamirUnsealShareResponse reports unseal progress.
-message BarrierShamirUnsealShareResponse {
-  int32 required = 1;
-  int32 submitted = 2;
-  bool complete = 3;
-}
-
-// BarrierShamirUnsealSharesRequest submits multiple Shamir shares.
-message BarrierShamirUnsealSharesRequest {
-  repeated string shares = 1;
-}
-
-// BarrierRekeyRequest generates new Shamir shares.
-message BarrierRekeyRequest {
   int32 threshold = 1;
-  int32 total = 2;
+  int32 total_shares = 2;
+  string policy = 3;
+  string so_pin = 4;
+  string user_pin = 5;
 }
 
-// BarrierRecoveryGenerateRequest generates recovery keys.
+// BarrierShamirInitializeResponse is the share-free result; officers claim
+// their shares through the share-claim flow.
+message BarrierShamirInitializeResponse {
+  int32 threshold = 1;
+  int32 total_shares = 2;
+  int32 share_count = 3;
+}
+
+// BarrierRecoveryGenerateRequest generates the recovery key, split
+// threshold-of-N to the enrolled recovery officers.
 message BarrierRecoveryGenerateRequest {
   int32 threshold = 1;
-  int32 total = 2;
+  string policy = 2;
+  string so_pin = 3;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
+// BarrierRecoveryKeysResponse is the share-free result of recovery key
+// generation.
 message BarrierRecoveryKeysResponse {
-  repeated string keys = 1;
-  int32 threshold = 2;
-  int32 total = 3;
-}
-
-// BarrierRecoveryRecoverRequest unseals the barrier using recovery keys.
-message BarrierRecoveryRecoverRequest {
-  repeated string keys = 1;
+  int32 threshold = 1;
+  int32 total = 2;
+  int32 share_count = 3;
 }
 
 // BarrierRecoveryStatusResponse indicates whether recovery keys exist.
 message BarrierRecoveryStatusResponse {
   bool has_recovery_keys = 1;
-}
-
-// BarrierRootTokenRequest generates a root token using Shamir shares.
-message BarrierRootTokenRequest {
-  repeated string shares = 1;
-}
-
-// BarrierRootTokenResponse returns a newly generated root token.
-message BarrierRootTokenResponse {
-  string token = 1;
-  // created_at is RFC3339 (UTC) or empty when not supplied by the server.
-  string created_at = 2;
 }
 
 // BarrierEnableEncryptionRequest requests at-rest encryption migration for the

@@ -494,7 +494,7 @@ func (s *attestationService) Verify(ctx context.Context, req *VerifyAttestationR
 	// revalidated inside it; that is cheap relative to a transport hop and
 	// keeps QuicBaaS from reimplementing either check.
 	if opts.CheckFreshness || opts.VerifyPCRs {
-		if err := s.verifier.Verify(stmt, opts); err != nil {
+		if _, err := s.verifier.Verify(stmt, opts); err != nil {
 			resp.Reason = err.Error()
 			return resp, nil
 		}

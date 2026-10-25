@@ -34,7 +34,7 @@ import (
 //
 // spiffeTrustDomain is the operator-configured SPIFFE trust domain. When it is
 // non-empty AND a request carries a TenantID, the adapter has the CA stamp a
-// tenant-scoped SPIFFE URI SAN (spiffe://<trust-domain>/tenant/<id>/<kind>/<cn>)
+// tenant-scoped SPIFFE URI SAN (spiffe://<id>/<kind>/<cn>)
 // onto the leaf, which is what lets mTLS/PIV login derive the tenant from the
 // verified peer certificate. Empty disables SPIFFE synthesis.
 //

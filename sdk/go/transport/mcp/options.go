@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
@@ -102,7 +103,7 @@ func WithCredentials(username, password string) Option {
 		if password == "" {
 			return
 		}
-		protected, err := secure.NewSecret([]byte(password))
+		protected, err := secure.NewSecret(context.Background(), []byte(password))
 		if err != nil {
 			t.optionErr = errors.Wrap(err, errors.CodeInternal, "mcp.WithCredentials",
 				"failed to protect password")

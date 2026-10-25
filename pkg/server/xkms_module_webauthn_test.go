@@ -21,7 +21,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -70,23 +70,23 @@ func TestXKMSModuleWebAuthnDecorator_RefusesUntilBound(t *testing.T) {
 		t.Fatalf("xkmsModuleWebAuthnCredentialStoreDecorator: %v", err)
 	}
 
-	inner := xkmswebauthn.NewMemoryCredentialStore()
+	inner := &countingCredentialStore{}
 	decorated := decorate(inner)
 	if decorated == nil {
 		t.Fatal("decorator returned nil for a valid store")
 	}
-	if decorated == xkmswebauthn.CredentialStore(inner) {
+	if decorated == xkmssdk.WebAuthnCredentialStore(inner) {
 		t.Fatal("decorator returned the store unwrapped; registrations would enroll no login factor")
 	}
 
-	cred := &xkmswebauthn.Credential{ID: []byte{1, 2, 3}, UserID: make([]byte, 8)}
+	cred := &xkmssdk.WebAuthnCredential{ID: []byte{1, 2, 3}, UserID: make([]byte, 8)}
 	saveErr := decorated.Save(context.Background(), cred)
 	var unbound *iam.WebAuthnFactorStoreUnboundError
 	if !errors.As(saveErr, &unbound) {
 		t.Fatalf("Save error = %v, want *iam.WebAuthnFactorStoreUnboundError", saveErr)
 	}
-	if _, getErr := inner.GetByCredentialID(context.Background(), cred.ID); !errors.Is(getErr, xkmswebauthn.ErrCredentialNotFound) {
-		t.Fatalf("credential was persisted despite the refusal (lookup err = %v)", getErr)
+	if inner.saves != 0 {
+		t.Fatalf("credential was persisted despite the refusal (%d saves reached the store)", inner.saves)
 	}
 }
 
@@ -133,3 +133,29 @@ func TestBindXKMSModuleWebAuthnFactory_LeavesUnboundWithoutAManager(t *testing.T
 		})
 	}
 }
+
+// countingCredentialStore is the inner go-xkms credential store the decorator
+// wraps. It records how many saves reach it, so a test can prove a refused
+// registration never persisted.
+type countingCredentialStore struct{ saves int }
+
+func (c *countingCredentialStore) Save(context.Context, *xkmssdk.WebAuthnCredential) error {
+	c.saves++
+	return nil
+}
+
+func (c *countingCredentialStore) GetByUserID(context.Context, []byte) ([]*xkmssdk.WebAuthnCredential, error) {
+	return nil, nil
+}
+
+func (c *countingCredentialStore) GetByCredentialID(context.Context, []byte) (*xkmssdk.WebAuthnCredential, error) {
+	return nil, nil
+}
+
+func (c *countingCredentialStore) Update(context.Context, *xkmssdk.WebAuthnCredential) error {
+	return nil
+}
+
+func (c *countingCredentialStore) Delete(context.Context, []byte) error { return nil }
+
+func (c *countingCredentialStore) DeleteByUserID(context.Context, []byte) error { return nil }

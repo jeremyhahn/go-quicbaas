@@ -189,7 +189,7 @@ func (s *Server) startEmbeddedFleetNode() error {
 	// a hardware-bound identity (acceptable for non-TLS dev deployments).
 	var issuedCertPEM []byte
 	if s.xkmsCA != nil {
-		issuer, issueErr := service.NewXKMSFleetNodeCertIssuer(s.xkmsCA)
+		issuer, issueErr := s.newFleetNodeCertIssuer()
 		if issueErr == nil {
 			req := &service.FleetNodeCertificateRequest{
 				TenantID: embeddedFleetNodeTenantID,
@@ -198,8 +198,9 @@ func (s *Server) startEmbeddedFleetNode() error {
 					CommonName:         "agent-" + nodeID,
 					OrganizationalUnit: service.DefaultFleetNodeCertOU,
 				},
-				ExtraDNSNames: []string{"localhost"},
-				ValidityDays:  service.DefaultFleetNodeCertValidityDays,
+				ExtraDNSNames:     []string{"localhost"},
+				ValidityDays:      service.DefaultFleetNodeCertValidityDays,
+				SPIFFETrustDomain: s.config.IAM.SPIFFETrustDomain,
 			}
 			issued, certErr := issuer.IssueFleetNodeCertificate(context.Background(), req)
 			if certErr != nil {
@@ -544,6 +545,31 @@ func embeddedFleetNodeID(hostname string) string {
 	return fmt.Sprintf("embedded-%s", hostname)
 }
 
+// newFleetNodeCertIssuer wraps the platform CA in the fleet node cert issuer,
+// recording every certificate it issues in the store fleet enrollment and
+// heartbeat recovery check (stopgap until go-quicbaas#1821).
+func (s *Server) newFleetNodeCertIssuer() (*service.XKMSFleetNodeCertIssuer, error) {
+	records, err := s.FleetNodeCertRecords()
+	if err != nil {
+		return nil, err
+	}
+	return service.NewXKMSFleetNodeCertIssuer(s.xkmsCA, records)
+}
+
+// FleetNodeCertRecords builds the issued-cert record store over the same
+// tenant-routed durable store the fleet registry binds to, so a record lives
+// in the issuing tenant's namespace.
+func (s *Server) FleetNodeCertRecords() (service.FleetNodeCertRecords, error) {
+	if s.fleetCertRecords != nil {
+		return s.fleetCertRecords, nil
+	}
+	records, err := service.NewKVFleetNodeCertRecords(s.tenantRoutedKVStore())
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 // buildEmbeddedFleetNodeMCPResolver constructs the QuicBaaS MCP preset resolver for
 // the embedded fleet node, or returns nil when MCP resolution is not available (MCP
 // disabled in config, the CA is down so no cert can be issued, or no SPIFFE
@@ -575,7 +601,7 @@ func (s *Server) buildEmbeddedFleetNodeMCPResolver(hostname string, log interfac
 	}
 	endpoint := fmt.Sprintf("https://%s:%d/mcp", host, s.config.Server.MCP.Port)
 
-	issuer, err := service.NewXKMSFleetNodeCertIssuer(s.xkmsCA)
+	issuer, err := s.newFleetNodeCertIssuer()
 	if err != nil {
 		log.Warnf("Embedded agent: MCP preset resolver disabled (cert issuer init failed): %v", err)
 		return nil

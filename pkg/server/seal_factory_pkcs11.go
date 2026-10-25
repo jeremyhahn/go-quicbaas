@@ -165,7 +165,7 @@ func pkcs11BackendConfig(p11 config.PKCS11SealConfig, keyStorage xkmssdk.Storage
 // which the backend treats as "no PIN configured".
 func sealPKCS11PIN(pin string) (*xkmssdk.SecretValue, error) {
 	b := []byte(pin)
-	sv, err := xkmssdk.NewLiteralSecretValue(b)
+	sv, err := xkmssdk.NewLiteralSecretValue(context.Background(), b)
 	clear(b)
 	return sv, err
 }

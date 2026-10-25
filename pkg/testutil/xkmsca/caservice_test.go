@@ -119,7 +119,8 @@ func TestCAServiceSignsTheSuppliedCSR(t *testing.T) {
 func TestCAServiceRefusesAMalformedCSR(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Malformed CA")
 	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{
-		CSRPEM: []byte("not a csr"),
+		TenantID: "fixtures",
+		CSRPEM:   []byte("not a csr"),
 	}); err == nil {
 		t.Fatal("SignCSR accepted a malformed CSR")
 	}
@@ -133,7 +134,7 @@ func TestCAServiceSignCSRErr(t *testing.T) {
 	svc.SetSignCSRErr(sentinel)
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
-	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM}); !errors.Is(err, sentinel) {
+	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM}); !errors.Is(err, sentinel) {
 		t.Fatalf("error = %v, want the configured sentinel", err)
 	}
 }
@@ -152,7 +153,7 @@ func TestCAServiceIsSafeAcrossGoroutines(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})
+			_, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM})
 			if err != nil && !errors.Is(err, sentinel) {
 				t.Errorf("SignCSR error = %v, want nil or the configured sentinel", err)
 			}
@@ -187,6 +188,7 @@ func TestCAServiceIssueCertificateWithholdsThePrivateKey(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Issue CA")
 
 	resp, err := svc.IssueCertificate(context.Background(), &xkmssdk.IssueCertificateRequest{
+		TenantID:     "fixtures",
 		CommonName:   "issued.example.test",
 		Organization: "Automate The Things",
 		ValidityDays: 7,
@@ -209,6 +211,7 @@ func TestCAServiceIssueCertificateWithholdsThePrivateKey(t *testing.T) {
 func TestCAServiceIssueCertificateRefusesAnEmptySubject(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Issue Refusal CA")
 	if _, err := svc.IssueCertificate(context.Background(), &xkmssdk.IssueCertificateRequest{
+		TenantID:     "fixtures",
 		ValidityDays: 7,
 	}); err == nil {
 		t.Fatal("IssueCertificate accepted an empty common name")
@@ -268,7 +271,7 @@ func TestCAServiceBundleFaults(t *testing.T) {
 		svc := NewCAService(t, "QuicBaaS CAService SuppressChain CA")
 		svc.SetSuppressChain(true)
 		csrPEM, _ := newCSR(t, "leaf.example.test")
-		resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})
+		resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM})
 		if err != nil {
 			t.Fatalf("SignCSR: %v", err)
 		}
@@ -288,7 +291,7 @@ func TestCAServiceCorruptCertificatePEM(t *testing.T) {
 	svc.SetCorruptCertificatePEM(true)
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
-	resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM})
+	resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM})
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
@@ -307,7 +310,7 @@ func TestCAServiceRevocation(t *testing.T) {
 	svc := NewCAService(t, "QuicBaaS CAService Revoke CA")
 	csrPEM, _ := newCSR(t, "revoked.example.test")
 
-	resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM, Profile: "client"})
+	resp, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM, Profile: "client"})
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
@@ -380,7 +383,7 @@ func TestCAServiceVerifyAsClientCertRejectsAForeignLeaf(t *testing.T) {
 	theirs := NewCAService(t, "QuicBaaS CAService Verify Theirs CA")
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
-	resp, err := theirs.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM, Profile: "client"})
+	resp, err := theirs.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM, Profile: "client"})
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
@@ -396,10 +399,11 @@ func TestCAServiceOverAnUninitializedCA(t *testing.T) {
 	svc := NewCAServiceOver(t, NewUninitialized(t, "QuicBaaS CAService Down CA"))
 	csrPEM, _ := newCSR(t, "leaf.example.test")
 
-	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{CSRPEM: csrPEM}); err == nil {
+	if _, err := svc.SignCSR(context.Background(), &xkmssdk.SignCSRRequest{TenantID: "fixtures", CSRPEM: csrPEM}); err == nil {
 		t.Error("SignCSR succeeded against a CA that is not initialized")
 	}
 	if _, err := svc.IssueCertificate(context.Background(), &xkmssdk.IssueCertificateRequest{
+		TenantID:   "fixtures",
 		CommonName: "leaf.example.test", ValidityDays: 1,
 	}); err == nil {
 		t.Error("IssueCertificate succeeded against a CA that is not initialized")
@@ -448,7 +452,7 @@ func TestWithoutCABundle(t *testing.T) {
 		t.Fatalf("CACertificate: %v", err)
 	}
 	csrPEM, _ := newCSR(t, "leaf.example.test")
-	if _, err := faulted.SignCSR(context.Background(), csrPEM, &xkmssdk.TrustedCASignOptions{Profile: "client"}); err != nil {
+	if _, err := faulted.SignCSR(context.Background(), csrPEM, &xkmssdk.TrustedCASignOptions{TenantID: "fixtures", Profile: "client"}); err != nil {
 		t.Fatalf("SignCSR through the faulted CA: %v", err)
 	}
 }

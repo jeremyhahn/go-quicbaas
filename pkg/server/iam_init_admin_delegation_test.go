@@ -129,9 +129,9 @@ func TestFirstBootBootstrap_DelegatedAdminKeyMatchesItsCertificate(t *testing.T)
 	// The certificate must still authenticate into the system tenant, which is
 	// what makes it usable for `quicbaas auth login --method mtls`.
 	require.NotEmpty(t, cert.URIs, "the admin certificate must carry a SPIFFE URI SAN")
-	identity, err := qrdbsdk.TenantFromCert(cert, "")
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, "")
 	require.NoError(t, err, "go-qrdb must be able to derive a tenant from the admin certificate")
-	require.Equal(t, qrdbsdk.SystemTenantID, identity.TenantID)
+	require.Equal(t, qrdbsdk.SystemTenantID, tenantID)
 }
 
 // The key material must exist nowhere but the 0600 bundle file: the operator

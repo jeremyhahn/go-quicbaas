@@ -80,10 +80,10 @@ func (s *Server) startSealedRESTServer() error {
 	// discovery must work in every daemon state.
 	restServer.SetBootstrapService(service.NewBootstrapService(nil))
 
-	// Constant-sealed gate: this listener only ever serves the sealed
-	// window; it is torn down when the barrier unseals and the full boot
-	// replaces it.
-	restServer.SetSealedWindowGate(constantSealedProbe{}, s.OperationalProbe(),
+	// go-qrdb's boot-time listener gate: it serves the ListenerOnly barrier
+	// status and refuses every request once the barrier unseals, until the
+	// full boot replaces this listener.
+	restServer.SetSealedWindowListenerGate(s.sealedListenerProbe, s.OperationalProbe(),
 		sealedwindow.RESTAllowlist())
 
 	if err := restServer.Start(address); err != nil {

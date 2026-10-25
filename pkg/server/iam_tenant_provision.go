@@ -314,6 +314,9 @@ func (p *tenantProvisioner) dependencies(mode service.IAMTenantAdminEnrollment, 
 		return deps, provisionSeamUnavailable("certificate login factor enroller")
 	}
 	deps.Signer = signer
+	// qrdb names the admin's SPIFFE ID under it and reads a bring-your-own
+	// admin certificate exactly as login will.
+	deps.TrustDomain = p.trustDomain
 	return deps, nil
 }
 

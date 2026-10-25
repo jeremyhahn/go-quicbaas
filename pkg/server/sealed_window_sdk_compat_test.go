@@ -83,6 +83,12 @@ const sdkSealedEnvelope = `{"error":"barrier sealed","code":"SEALED"}`
 // The deadline bound is the test BINARY's, not this test's, so an
 // unsatisfiable predicate burns every second the rest of the package had
 // left. Failing on startErr is what keeps that cost off the runner.
+// sealedWindowBarrierStatusPath is qrdb's wire barrier-status route. go-qrdb
+// v0.50 makes it ListenerOnly: only a boot-time sealed-window listener serves
+// it while sealed, and quicbaas's sealed REST listener is one (it installs
+// go-qrdb's listener gate).
+const sealedWindowBarrierStatusPath = "/v1/barrier/status"
+
 func sdkWaitFor(t *testing.T, startErr <-chan error, what string, fn func() bool) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -133,6 +139,7 @@ func sdkWaitFor(t *testing.T, startErr <-chan error, what string, fn func() bool
 // serving requires TLS", not a gap in this test.
 func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	cfg := server.NewSealedBootTestConfig(t)
+	server.InitSealedBootDataDir(t, cfg)
 
 	srv, err := server.NewServer(cfg)
 	require.NoError(t, err)
@@ -156,7 +163,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 			return false
 		}
 		baseURL = "http://" + addr.String()
-		resp, getErr := http.Get(baseURL + "/v1/barrier/status")
+		resp, getErr := http.Get(baseURL + sealedWindowBarrierStatusPath)
 		if getErr != nil {
 			return false
 		}
@@ -166,7 +173,7 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	require.Nil(t, srv.GetQRDBNodeClient(), "sealed node has no SDK client yet")
 
 	// Phase 2: sealed-window admit/deny over the real listener.
-	resp, err := http.Get(baseURL + "/v1/barrier/status")
+	resp, err := http.Get(baseURL + sealedWindowBarrierStatusPath)
 	require.NoError(t, err)
 	statusBody, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -200,13 +207,12 @@ func TestSealedBoot_SDKDrivesBarrierAgainstSealedDaemon(t *testing.T) {
 	require.NoError(t, err, "SDK BarrierStatus must work against a sealed daemon")
 	assert.True(t, st.Sealed)
 
-	// First boot: the barrier is uninitialized; BarrierInitialize seeds the
-	// root key and unseals in one step. (BarrierUnseal is the restart-path
-	// verb over the same allowlisted wire route; on an uninitialized
-	// barrier only initialize is valid.)
-	require.NoError(t, barrier.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
+	// The barrier was initialized by first boot (InitSealedBootDataDir):
+	// under go-qrdb v0.47 `qrdb init` is the only system bootstrap, so the
+	// restart-path verb BarrierUnseal is what brings the barrier up.
+	require.NoError(t, barrier.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
 		Secret: []byte("sealed-window-e2e-passphrase"),
-	}), "SDK BarrierInitialize must drive the sealed daemon's barrier")
+	}), "SDK BarrierUnseal must drive the sealed daemon's barrier")
 
 	// Phase 4: the daemon notices the unseal and completes the node boot —
 	// verified at the node level (GetQRDBNodeClient), since the post-unseal

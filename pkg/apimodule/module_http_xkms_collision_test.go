@@ -143,6 +143,9 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 			func(method, pattern string, _ http.HandlerFunc) {
 				record(mod, method, pattern)
 			},
+			func(method, pattern string, _ http.HandlerFunc) {
+				record(mod, method, pattern)
+			},
 		)
 		register(reg)
 	}
@@ -193,9 +196,8 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 		{"GET", "/api/v1/barrier/status"},
 		{"POST", "/api/v1/barrier/unseal"},
 		{"POST", "/api/v1/barrier/seal"},
-		{"POST", "/api/v1/barrier/rekey"},
+		{"POST", "/api/v1/barrier/rekey/start"},
 		{"POST", "/api/v1/barrier/recovery/generate"},
-		{"POST", "/api/v1/barrier/root-token"},
 	} {
 		key := want.method + " " + want.pattern
 		got, ok := registered[key]
@@ -204,19 +206,18 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 			"%s must be owned by the quicbaas module (go-qrdb barrier), not %q", key, got.module)
 	}
 
-	// go-xkms v0.30 registers GET /api/v1/cluster/status too. The composed
-	// node's cluster view is quicbaas's: its handler reports every hosted
-	// shard in the shape the quicbaas SDK and UI decode, so the composer
-	// hands it to quicbaas explicitly. /api/v1/cluster/members has no
-	// quicbaas counterpart and must stay with xkms — the exclusion is exact,
-	// not a subtree.
+	// The composed node's cluster view is quicbaas's: its handler reports
+	// every hosted shard in the shape the quicbaas SDK and UI decode. go-xkms
+	// v0.55 registers no cluster routes, so nothing else may claim one.
 	clusterStatus, ok := registered["GET /api/v1/cluster/status"]
 	require.True(t, ok, "the composed unified surface must serve GET /api/v1/cluster/status")
 	require.Equal(t, "quicbaas", clusterStatus.module,
 		"GET /api/v1/cluster/status must be owned by the quicbaas module, not %q", clusterStatus.module)
-	clusterMembers, ok := registered["GET /api/v1/cluster/members"]
-	require.True(t, ok, "the xkms cluster members route must stay mounted")
-	require.Equal(t, "xkms", clusterMembers.module)
+	for key, o := range registered {
+		if strings.HasPrefix(strings.SplitN(key, " ", 2)[1], "/api/v1/cluster/") {
+			require.Equal(t, "quicbaas", o.module, "%s must be owned by the quicbaas module", key)
+		}
+	}
 
 	// The tenant control plane, per-tenant barrier included, is quicbaas's.
 	// xkms's copies are always 501 on a host and must not be mounted.
@@ -224,10 +225,9 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 	require.True(t, ok, "the composed unified surface must serve the tenant barrier status")
 	require.Equal(t, "quicbaas", tenantBarrier.module)
 
-	// The backup surface is quicbaas's (go-xkms v0.47 registers its own
-	// node-backup table on the same paths for xkmsd). Every backup route the
-	// composed node serves must be quicbaas's, including the two xkms-only
-	// shapes that would otherwise sit beside it with a different wire shape.
+	// The backup surface is quicbaas's. Every backup route the composed
+	// node serves must be quicbaas's, so a go-xkms release that registers
+	// its node-backup table again cannot sit beside it unnoticed.
 	for key, o := range registered {
 		if strings.HasPrefix(strings.SplitN(key, " ", 2)[1], "/api/v1/backups") {
 			require.Equal(t, "quicbaas", o.module, "%s must be owned by the quicbaas module", key)
@@ -266,15 +266,14 @@ func TestModule_RegisterHTTP_ComposesWithXKMSModuleWithoutRouteCollision(t *test
 
 // TestRouteExcludingModule_XKMSBarrierCollisionIsReal is the non-vacuousness
 // proof for the wrapper above: registered WITHOUT the composer's route
-// precedence, the go-xkms module claims GET /api/v1/cluster/status and the
-// /api/v1/tenants/ and /api/v1/backups/ subtrees, which the quicbaas module
-// also serves, and
-// co-hosting both unwrapped resolves those paths to xkms's handlers.
+// precedence, the go-xkms module claims the /api/v1/tenants/ subtree, which
+// the quicbaas module also serves, and co-hosting both unwrapped resolves
+// those paths to xkms's handlers.
 //
 // It also pins that go-xkms no longer claims the canonical /api/v1/barrier/*
-// surface (the server-side half of go-quicbaas#405): that exclusion was
-// dropped because nothing co-hosted registers it, and this fails if go-xkms
-// starts registering it again.
+// surface (the server-side half of go-quicbaas#405), any /api/v1/cluster/
+// route or the /api/v1/backups/ subtree: those exclusions were dropped because nothing co-hosted registers
+// them, and this fails if go-xkms starts registering them again.
 func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 	xkmsModule, err := xkmssdk.NewServiceModule(
 		func() *xkmslib.XKMSService { return nil },
@@ -288,16 +287,14 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 		pattern := strings.SplitN(key, " ", 2)[1]
 		require.False(t, strings.HasPrefix(pattern, "/api/v1/barrier/"),
 			"the unwrapped xkms module claims %s; the /api/v1/barrier/ exclusion must come back", key)
+		require.False(t, strings.HasPrefix(pattern, "/api/v1/cluster/"),
+			"the unwrapped xkms module claims %s; a /api/v1/cluster/ exclusion must come back", key)
+		require.False(t, pattern == "/api/v1/backups" || strings.HasPrefix(pattern, "/api/v1/backups/"),
+			"the unwrapped xkms module claims %s; the /api/v1/backups/ exclusion must come back", key)
 	}
-	require.Contains(t, raw, "GET /api/v1/cluster/status",
-		"sanity: the unwrapped xkms module must still claim the cluster status route; "+
-			"if go-xkms has since dropped it, its exclusion is redundant and should go")
-	require.Contains(t, raw, "GET /api/v1/tenants/{tenantID}/barrier/status",
-		"sanity: the unwrapped xkms module must still claim the tenant barrier status route; "+
+	require.Contains(t, raw, "GET /api/v1/tenants/{tenantID}",
+		"sanity: the unwrapped xkms module must still claim the tenant read route; "+
 			"if go-xkms has since dropped its tenant routes, the tenant exclusion is redundant and should go")
-	require.Contains(t, raw, "POST /api/v1/backups",
-		"sanity: the unwrapped xkms module must still claim the backup routes; "+
-			"if go-xkms has since dropped them, the backup exclusion is redundant and should go")
 
 	hosted, err := NewRouteExcludingModule(xkmsModule, XKMSRouteExclusions)
 	require.NoError(t, err)
@@ -305,8 +302,7 @@ func TestRouteExcludingModule_XKMSBarrierCollisionIsReal(t *testing.T) {
 
 	for key := range raw {
 		pattern := strings.SplitN(key, " ", 2)[1]
-		if pattern == "/api/v1/cluster/status" || strings.HasPrefix(pattern, "/api/v1/tenants/") ||
-			pattern == "/api/v1/backups" || strings.HasPrefix(pattern, "/api/v1/backups/") {
+		if strings.HasPrefix(pattern, "/api/v1/tenants/") {
 			require.NotContains(t, filtered, key,
 				"the route-precedence wrapper must drop the xkms module's %s registration", key)
 			continue
@@ -428,6 +424,9 @@ func collectModuleRoutes(t *testing.T, register func(*qrdbsdk.ModuleHTTPRegistra
 	claimed := map[string]struct{}{}
 	reg := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, _ qrdbsdk.Permission, _ http.HandlerFunc) {
+			claimed[method+" "+pattern] = struct{}{}
+		},
+		func(method, pattern string, _ http.HandlerFunc) {
 			claimed[method+" "+pattern] = struct{}{}
 		},
 		func(method, pattern string, _ http.HandlerFunc) {

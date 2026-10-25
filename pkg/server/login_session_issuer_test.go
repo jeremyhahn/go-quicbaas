@@ -25,7 +25,7 @@ import (
 // The nil-identity guard runs before the provider is touched, so an unbound
 // issuer is safe here.
 func TestOIDCSessionIssuer_NilIdentity(t *testing.T) {
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 
 	_, _, err := issuer.Issue(t.Context(), nil)
 	if err == nil {
@@ -41,7 +41,7 @@ func TestOIDCSessionIssuer_NilIdentity(t *testing.T) {
 // than minting an unsigned/anonymous bearer) when invoked before its OIDC
 // provider has been bound.
 func TestOIDCSessionIssuer_UnboundProvider(t *testing.T) {
-	issuer := newOIDCSessionIssuer()
+	issuer := newOIDCSessionIssuer(nil)
 
 	_, _, err := issuer.Issue(t.Context(), &qrdbauth.Identity{Subject: "u", TenantID: "system"})
 	if err == nil {

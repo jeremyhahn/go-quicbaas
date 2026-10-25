@@ -22,8 +22,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"math/big"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,20 +40,40 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// writeBootstrapPIVCert issues a self-signed leaf cert, writes it to a temp PEM
-// file, and returns the path plus the cert's SHA-256 thumbprint (the identifier
-// bindAdminPIVCert binds to the admin and that an mTLS/PIV handshake resolves on
-// the break-glass path).
+// systemUserPIVSubject returns the Subject and SPIFFE ID SAN a system-tenant
+// PIV certificate must carry for go-xkms PIV login: the first OU and the SAN's
+// trust domain both name the system tenant (qrdbsdk.TenantFromClientCert).
+func systemUserPIVSubject(t *testing.T, commonName, spiffeName string) (pkix.Name, []*url.URL) {
+	t.Helper()
+	id, err := qrdbsdk.SpiffeID{TrustDomain: qrdbsdk.SystemTenantID, Kind: qrdbsdk.SpiffeKindUser, Name: spiffeName}.URI()
+	require.NoError(t, err)
+	return pkix.Name{CommonName: commonName, OrganizationalUnit: []string{qrdbsdk.SystemTenantID}}, []*url.URL{id}
+}
+
+// writeBootstrapPIVCert issues a self-signed system-tenant leaf cert, writes it
+// to a temp PEM file, and returns the path plus the cert's SHA-256 thumbprint
+// (the identifier bindAdminPIVCert binds to the admin and that an mTLS/PIV
+// handshake resolves on the break-glass path).
 func writeBootstrapPIVCert(t *testing.T) (path, thumbprint string) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	now := time.Now()
-	certPEM := mustIssueSelfSignedCert(t, key, "break-glass-admin", now.Add(-time.Hour), now.Add(24*time.Hour))
+	subject, uris := systemUserPIVSubject(t, "break-glass-admin", "break-glass-admin")
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(now.UnixNano()),
+		Subject:               subject,
+		URIs:                  uris,
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 
-	block, _ := pem.Decode(certPEM)
-	require.NotNil(t, block, "cert PEM must decode")
-	cert, err := x509.ParseCertificate(block.Bytes)
+	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	digest := sha256.Sum256(cert.Raw)
 	thumbprint = hex.EncodeToString(digest[:])

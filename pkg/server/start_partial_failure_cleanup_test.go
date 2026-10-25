@@ -297,7 +297,6 @@ func TestServer_Shutdown_TenantDatabaseManager_IsReleased(t *testing.T) {
 	mgr := qrdbsdk.NewManager(slog.Default(), t.TempDir())
 	_, err := mgr.Create(qrdbsdk.DatabaseConfig{
 		Name:    "tenant-db",
-		Engine:  qrdbsdk.EngineKV,
 		Backend: qrdbsdk.BackendMemory,
 	})
 	require.NoError(t, err, "creating the tenant database under test must succeed")

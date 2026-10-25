@@ -195,7 +195,11 @@ func TestNewModule_RegistersRoleGrants_NewBrokerDataPlaneServices(t *testing.T) 
 // test`, no -race needed), because the permissions genuinely are not
 // contributed by this module's own registration pass any more.
 //
-// What's worth guarding now is the opposite invariant: that these seven
+// KeyManagement, DEKManagement and Crypto have since been registered again
+// as the #1813 stopgap (until go-xkms#1681), so only the four certificate,
+// trust, attestation and PIV services are guarded below.
+//
+// What's worth guarding now is the opposite invariant: that these
 // services' permissions do NOT reappear in quicbaas's own contribution, so
 // a future edit to grpcRegistrations can't silently reintroduce the
 // duplicate proto surface Phase 3 removed.

@@ -86,7 +86,7 @@ func TestServerSealedProbe_InitializedSealedDataPlaneBarrierReportsSealed(t *tes
 	defer func() { assert.NoError(t, closer.Close()) }()
 
 	ctx := t.Context()
-	creds, err := qrdbsdk.CredentialsFor([]byte("sealed-probe-unit-test-passphrase"))
+	creds, err := qrdbsdk.CredentialsFor(ctx, []byte("sealed-probe-unit-test-passphrase"))
 	require.NoError(t, err, "protect the probe passphrase")
 	defer creds.Secret.Destroy()
 	require.NoError(t, barrier.Initialize(ctx, creds), "initialize the data-plane barrier")
@@ -105,8 +105,8 @@ func TestServerSealedProbe_InitializedSealedDataPlaneBarrierReportsSealed(t *tes
 	status, statusErr := svc.BarrierStatus(ctx)
 	require.NoError(t, statusErr)
 	require.True(t, status.Sealed)
-	require.False(t, status.InitializedAt.IsZero(),
-		"a sealed-after-init barrier must retain its initialization timestamp")
+	require.True(t, status.Initialized,
+		"a sealed-after-init barrier must still report itself initialized")
 
 	assert.True(t, probe.IsSealed(),
 		"an initialized barrier that is sealed must arm the sealed window")

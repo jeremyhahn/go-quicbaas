@@ -63,6 +63,7 @@ func spendReportHandler(t *testing.T) http.Handler {
 
 	am := middleware.New(rbac.New(&fakeRoleServicer{}),
 		middleware.WithAuthenticator(neverAuthenticates{}),
+		middleware.WithRoleResolver(&fakeRoleServicer{}),
 		middleware.WithUserService(&fakeUserServicer{users: map[string]*user.User{}}),
 	)
 	routes := middleware.NewRESTRouteRegistry()

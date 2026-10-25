@@ -40,6 +40,7 @@ func TestNewCAService_IssuesThroughTheProductPath(t *testing.T) {
 	}
 
 	resp, err := svc.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+		TenantID:     "fixtures",
 		CommonName:   "node.example",
 		Organization: "Fixtures",
 		SANs:         []string{"DNS:node.example", "IP:127.0.0.1"},
@@ -85,7 +86,7 @@ func TestNewCAService_StampsTheTenantSPIFFESAN(t *testing.T) {
 
 	resp, err := svc.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
 		Profile:      "client",
-		CommonName:   "admin@fixtures.test",
+		CommonName:   "admin",
 		ValidityDays: 30,
 		TenantID:     "system",
 	})
@@ -101,7 +102,7 @@ func TestNewCAService_StampsTheTenantSPIFFESAN(t *testing.T) {
 		t.Fatalf("parse issued certificate: %v", err)
 	}
 
-	want := "spiffe://fixtures.test/tenant/system/user/admin@fixtures.test"
+	want := "spiffe://system/user/admin"
 	var got []string
 	for _, u := range cert.URIs {
 		got = append(got, u.String())
@@ -135,6 +136,7 @@ func TestNewCAService_OverACAThatIsNotUpRefusesIssuance(t *testing.T) {
 		t.Fatalf("NewCAService: %v", err)
 	}
 	if _, err := svc.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+		TenantID:   "fixtures",
 		CommonName: "node.example",
 	}); err == nil {
 		t.Fatal("a CA that is not up issued a certificate")
