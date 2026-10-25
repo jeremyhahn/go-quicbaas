@@ -12,7 +12,7 @@ import type { DEKClient, CreateDEKRequest, CreateDEKResponse, GetDEKResponse, Li
 import type { DynamicSecretsClient, DynamicSecretRole, CreateRoleRequest as DynamicSecretCreateRoleRequest, ListRolesResponse as ListDynamicSecretRolesResponse, DeleteRoleResponse as DeleteDynamicSecretRoleResponse, GenerateCredentialRequest, GenerateCredentialResponse, RenewLeaseRequest, RenewLeaseResponse, RevokeLeaseResponse as RevokeDynamicSecretLeaseResponse, ListLeasesResponse } from './dynamicsecrets.js';
 import type { AccountsClient, Account, CreateAccountRequest, CreateAccountResponse, GetAccountResponse, ListAccountsRequest, ListAccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, RevokeAccountRequest, RevokeAccountResponse, SetDefaultAccountResponse, GetAccountUsageResponse } from './accounts.js';
 import type { AgentsClient } from './agents.js';
-import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, BarrierRekeyRequest, BarrierRekeyResponse, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierRecoverWithKeysRequest, BarrierHasRecoveryKeysResponse, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierRootTokenResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierUnsealShareResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
+import type { ClientConfig, BarrierStatusResponse, BarrierInitRequest, BarrierUnsealRequest, BarrierSealRequest, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierDomain, BarrierOfficer, BarrierOfficerRegisterRequest, BarrierOfficerRegisterResponse, BarrierShareClaimBeginResponse, BarrierShareClaimCompleteRequest, BarrierShareClaimCompleteResponse, BarrierQuorumBeginRequest, BarrierQuorumChallenge, BarrierQuorumSubmitRequest, BarrierQuorumOutcome, BarrierRekeyStartRequest, BarrierQuorumRound, TenantBarrierQuorumBeginRequest, TenantBarrierQuorumSubmitRequest, BarrierGenerateRecoveryKeysRequest, BarrierRecoveryKeysResponse, BarrierHasRecoveryKeysResponse, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, TenantBarrierInitRequest, TenantBarrierInitResponse, TenantBarrierStatusResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonyStatusResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, BootstrapBundleRequest, BootstrapBundleResponse, ClusterStatusResponse, SessionInfo, SSHScope, SSHKey, SSHPublicKey, SignRequest, SignResponse, CreateSSHKeyRequest, ImportSSHKeyRequest, ListSSHKeysQuery, ListSSHKeysResponse, AddSSHPinRequest, ListSSHPinsResponse, VerifySSHPinRequest, EmitAuthorizedRequest, EmitAuthorizedResponse, VerifyAuthorizedRequest, VerifyAuthorizedResponse } from './types.js';
 import { type AccountPageParams, type PageResult, type ProjectPageParams } from './page.js';
 import { APIError, ConnectionError, NotConnectedError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError } from './errors.js';
 export declare function resolveToken(token: string | (() => Promise<string>) | undefined): Promise<string>;
@@ -139,14 +139,17 @@ export declare class RestBarrierClient implements BarrierClient {
     unseal(req: BarrierUnsealRequest): Promise<void>;
     seal(req?: BarrierSealRequest): Promise<void>;
     initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
-    unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
-    unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void>;
-    rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
+    private holders;
+    officers(): Promise<BarrierOfficer[]>;
+    registerOfficer(req: BarrierOfficerRegisterRequest, domain?: BarrierDomain): Promise<BarrierOfficerRegisterResponse>;
+    shareClaimBegin(username: string, domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse>;
+    shareClaimComplete(req: BarrierShareClaimCompleteRequest, domain?: BarrierDomain): Promise<BarrierShareClaimCompleteResponse>;
+    quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
+    quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome>;
+    rekeyStart(req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound>;
     generateRecoveryKeys(req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
-    recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void>;
     deleteRecoveryKeys(): Promise<void>;
     recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse>;
-    generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
     enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse>;
 }
 export declare class RestTenantBarrierClient implements TenantBarrierClient {
@@ -155,7 +158,8 @@ export declare class RestTenantBarrierClient implements TenantBarrierClient {
     private base;
     tenantBarrierInit(tenantId: string, req: TenantBarrierInitRequest): Promise<TenantBarrierInitResponse | undefined>;
     tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void>;
-    tenantBarrierUnsealShare(tenantId: string, share: string): Promise<TenantBarrierUnsealShareResponse>;
+    tenantBarrierQuorumBegin(tenantId: string, req: TenantBarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
+    tenantBarrierQuorumSubmit(tenantId: string, req: TenantBarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome>;
     tenantBarrierSeal(tenantId: string): Promise<void>;
     tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;
 }
@@ -164,12 +168,7 @@ export declare class RestCeremonyClient implements CeremonyClient {
     constructor(baseUrl: string, config?: ClientConfig);
     initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
     status(): Promise<CeremonyStatusResponse>;
-    claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
-    claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
-    claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
-    claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
     signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
-    enrollExternalOfficer(req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
 }
 export declare class RestClusterClient implements ClusterClient {
     private readonly http;

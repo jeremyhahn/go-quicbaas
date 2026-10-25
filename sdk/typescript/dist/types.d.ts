@@ -1600,36 +1600,188 @@ export interface BarrierShamirInitResponse {
     /** Total shares generated. */
     total_shares: number;
 }
-export interface BarrierUnsealShareRequest {
-    /** Single Shamir share. */
+/** BarrierDomain names a barrier's key-holder set: its unseal officers or its recovery officers. */
+export type BarrierDomain = 'unseal' | 'recovery';
+/**
+ * BarrierQuorumOp names the operation a quorum round authorises. unseal, seal
+ * and root-token run in the unseal domain, recover in the recovery domain and
+ * rekey in either.
+ */
+export type BarrierQuorumOp = 'unseal' | 'seal' | 'rekey' | 'recover' | 'root-token';
+export interface BarrierHolderFactor {
+    /** Factor name, e.g. "mtls". */
+    name: string;
+    /** Factor-specific enrolment parameters. */
+    params?: Record<string, unknown>;
+}
+export interface BarrierOfficerRegisterRequest {
+    /** Officer username. */
+    username: string;
+    /** Role bound to the issued certificate. The server defaults it. */
+    role?: string;
+    /** PEM-encoded CSR the officer's certificate is issued from. */
+    csr_pem: string;
+    /** KEM that seals the officer's share envelope. */
+    encryption_kem?: string;
+    /** Base64-encoded public key for encryption_kem. */
+    encryption_key?: string;
+    /** Factors the officer answers quorum challenges with. */
+    factors?: BarrierHolderFactor[];
+    /** Designated holder the officer stands in for. */
+    designated?: string;
+}
+export interface BarrierOfficerRegisterResponse {
+    /** PEM-encoded officer certificate. */
+    cert_pem: string;
+    /** Role bound to the certificate. */
+    role: string;
+    /** Designated holder the officer stands in for. */
+    designated?: string;
+    /** KEM that seals the officer's share envelope. */
+    encryption_kem?: string;
+    /** Names of the enrolled factors. */
+    factors?: string[];
+}
+export interface BarrierOfficer {
+    /** Officer username. */
+    username: string;
+    /** Role bound to the officer's certificate. */
+    role: string;
+    /** SPKI SHA-256 thumbprint of the officer's certificate. */
+    cert_thumbprint?: string;
+    /** One-based index of the officer's share. */
+    share_index: number;
+    /** Designated holder the officer stands in for. */
+    designated?: string;
+    /** Names of the enrolled factors. */
+    factors?: string[];
+    /** KEM that seals the officer's share envelope. */
+    encryption_kem?: string;
+    /** RFC3339 enrolment time. */
+    enrolled_at: string;
+    /** RFC3339 time the officer claimed its share. */
+    claimed_at?: string;
+    /** True while the officer's share awaits its claim. */
+    share_pending: boolean;
+}
+export interface BarrierShareClaimBeginResponse {
+    /** Hex-encoded nonce to sign. */
+    nonce_hex: string;
+    /** RFC3339 expiration of the nonce. */
+    expires_at: string;
+}
+export interface BarrierShareClaimCompleteRequest {
+    /** Officer username. */
+    username: string;
+    /** Hex-encoded nonce from shareClaimBegin. */
+    nonce_hex: string;
+    /** Base64-encoded signature over the nonce. */
+    signature: string;
+}
+export interface BarrierShareClaimCompleteResponse {
+    /** One-based index of the share. */
+    share_index: number;
+    /** Base64-encoded share envelope sealed to the officer. */
+    envelope: string;
+}
+export interface BarrierQuorumBeginRequest {
+    /** Holder set the round runs in. */
+    domain: BarrierDomain;
+    /** Operation the round authorises. */
+    op: BarrierQuorumOp;
+    /** Holder answering the challenge. */
+    username: string;
+    /** Factor to answer with. The server picks the holder's default. */
+    factor?: string;
+}
+export interface BarrierQuorumChallenge {
+    /** Challenge identifier echoed on submit. */
+    challenge_id: string;
+    /** Holder set the round runs in. */
+    domain: string;
+    /** Operation the round authorises. */
+    op: string;
+    /** Holder the challenge is for. */
+    username: string;
+    /** Factor the challenge must be answered with. */
+    factor: string;
+    /** Base64-encoded nonce to sign. */
+    nonce: string;
+    /** Factor-specific challenge data. */
+    method_data?: Record<string, string>;
+    /** RFC3339 expiration of the challenge. */
+    expires_at: string;
+}
+export interface BarrierQuorumSubmitRequest {
+    /** Holder set the round runs in. */
+    domain: BarrierDomain;
+    /** Operation the round authorises. */
+    op: BarrierQuorumOp;
+    /** Holder answering the challenge. */
+    username: string;
+    /** Challenge identifier from quorumBegin. */
+    challenge_id: string;
+    /** Factor the response was made with. */
+    factor: string;
+    /** Base64-encoded signed challenge response. */
+    response: string;
+    /** Factor-specific response data. */
+    response_metadata?: Record<string, string>;
+    /** Base64-encoded share the holder contributes. */
     share: string;
 }
-export interface BarrierUnsealShareResponse {
-    /** Number of shares required to unseal. */
+export interface BarrierQuorumOutcome {
+    /** Holder set the round runs in. */
+    domain: string;
+    /** Operation the round authorises. */
+    op: string;
+    /** Shares the round needs. */
     required: number;
-    /** Number of shares submitted so far. */
+    /** Shares submitted so far. */
     submitted: number;
-    /** True when the quorum threshold has been met. */
+    /** True once the operation has run. */
     complete: boolean;
+    /** Root token minted by a completed root-token round. */
+    root_token?: string;
+    /** RFC3339 time the root token was minted. */
+    root_token_created_at?: string;
+    /** New threshold set by a completed rekey round. */
+    threshold?: number;
+    /** New share total set by a completed rekey round. */
+    total_shares?: number;
+    /** Shares minted by a completed rekey round. */
+    share_count?: number;
 }
-export interface BarrierUnsealSharesRequest {
-    /** Complete set of Shamir shares. */
-    shares: string[];
-}
-export interface BarrierRekeyRequest {
-    /** New threshold value. */
+export interface BarrierRekeyStartRequest {
+    /** Holder set to rekey. */
+    domain: BarrierDomain;
+    /** Threshold of the new split. */
     threshold: number;
-    /** New total share count. */
-    total: number;
+    /** Quorum policy of the new split. */
+    policy?: string;
+    /** Security Officer PIN, when the server requires one. */
+    so_pin?: string;
 }
-export interface BarrierRekeyResponse {
-    /** New Shamir shares. */
-    shares: string[];
-    /** New threshold value. */
-    threshold: number;
-    /** New total share count. */
-    total_shares: number;
+export interface BarrierQuorumRound {
+    /** Holder set the round runs in. */
+    domain: string;
+    /** Operation the round authorises. */
+    op: string;
+    /** Shares the round needs. */
+    required: number;
+    /** Shares submitted so far. */
+    submitted: number;
+    /** RFC3339 expiration of the round. */
+    expires_at: string;
+    /** Threshold of the new split, for a rekey round. */
+    new_threshold?: number;
+    /** Quorum policy of the new split, for a rekey round. */
+    policy?: string;
+    /** Holders a rekey round removes. */
+    remove?: string[];
 }
+export type TenantBarrierQuorumBeginRequest = Omit<BarrierQuorumBeginRequest, 'domain'>;
+export type TenantBarrierQuorumSubmitRequest = Omit<BarrierQuorumSubmitRequest, 'domain'>;
 /** TenantBarrierStrategy identifies how a tenant's barrier is sealed. */
 export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export interface TenantBarrierInitRequest {
@@ -1653,18 +1805,6 @@ export interface TenantBarrierInitResponse {
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
-}
-export interface TenantBarrierUnsealShareResponse {
-    /** Tenant whose barrier received the share. */
-    tenant_id: string;
-    /** Number of shares required to unseal. */
-    required: number;
-    /** Number of shares submitted so far. */
-    submitted: number;
-    /** True when the quorum threshold has been met. */
-    complete: boolean;
-    /** True while the tenant barrier remains sealed. */
-    sealed: boolean;
 }
 export interface TenantBarrierStatusResponse {
     /** Tenant the status describes. */
@@ -1696,23 +1836,9 @@ export interface BarrierRecoveryKeysResponse {
     /** Total recovery keys generated. */
     total: number;
 }
-export interface BarrierRecoverWithKeysRequest {
-    /** Recovery keys used to unseal. */
-    keys: string[];
-}
 export interface BarrierHasRecoveryKeysResponse {
     /** True when recovery keys have been generated. */
     has_keys: boolean;
-}
-export interface BarrierGenerateRootTokenRequest {
-    /** Shamir shares proving knowledge of the master key. */
-    shares: string[];
-}
-export interface BarrierRootTokenResponse {
-    /** Hex-encoded root token. */
-    token: string;
-    /** RFC3339 timestamp when the token was generated. */
-    created_at: string;
 }
 /**
  * BarrierEnableEncryptionRequest migrates a previously unencrypted barrier to a
@@ -1785,54 +1911,6 @@ export interface CeremonyStatusResponse {
     /** Optional base64-encoded SPKI pin once the CA is initialized. */
     spki_pin?: string;
 }
-export interface CeremonyClaimCertBeginRequest {
-    /** Officer username. */
-    username: string;
-}
-export interface CeremonyClaimCertBeginResponse {
-    /** Hex-encoded random nonce the officer must sign. */
-    nonce_hex: string;
-    /** RFC3339 expiration timestamp for the nonce. */
-    expires_at: string;
-}
-export interface CeremonyClaimCertCompleteRequest {
-    /** Officer username. */
-    username: string;
-    /** Hex-encoded nonce from CeremonyClaimCertBegin. */
-    nonce_hex: string;
-    /** Base64-encoded signature over the nonce. */
-    signature: string;
-}
-export interface CeremonyClaimCertCompleteResponse {
-    /** PEM-encoded officer certificate. */
-    cert_pem: string;
-    /** PEM-encoded CA certificate for trust chain verification. */
-    ca_cert_pem: string;
-}
-export interface CeremonyClaimShareBeginRequest {
-    /** Officer username. */
-    username: string;
-}
-export interface CeremonyClaimShareBeginResponse {
-    /** Hex-encoded random nonce the officer must sign. */
-    nonce_hex: string;
-    /** RFC3339 expiration timestamp for the nonce. */
-    expires_at: string;
-}
-export interface CeremonyClaimShareCompleteRequest {
-    /** Officer username. */
-    username: string;
-    /** Hex-encoded nonce from claimShareBegin. */
-    nonce_hex: string;
-    /** Base64-encoded signature over the nonce. */
-    signature: string;
-}
-export interface CeremonyClaimShareCompleteResponse {
-    /** Index of the officer's share in the M-of-N split. */
-    share_index: number;
-    /** The officer's Shamir share, JSON-encoded. */
-    share_json: string;
-}
 export interface CeremonySignCSRRequest {
     /** Subject username for the issued certificate. */
     username: string;
@@ -1846,24 +1924,6 @@ export interface CeremonySignCSRRequest {
 export interface CeremonySignCSRResponse {
     /** PEM-encoded certificate signed from the CSR. */
     cert_pem: string;
-}
-export interface CeremonyEnrollExternalOfficerRequest {
-    /** Officer username. */
-    username: string;
-    /** PEM-encoded X.509 certificate. Mutually exclusive with pubkey_pem. */
-    cert_pem?: string;
-    /** PEM-encoded SPKI public key. Mutually exclusive with cert_pem. */
-    pubkey_pem?: string;
-    /** One-based Shamir share index assigned to this officer. */
-    share_index: number;
-    /** Auth factor identifier: "mtls", "webauthn", or "piv". */
-    auth_factor: string;
-    /** Optional plaintext share to seal to the officer's public key. */
-    share_bytes?: string;
-}
-export interface CeremonyEnrollExternalOfficerResponse {
-    /** Base64-encoded sealed share envelope. Empty when no share was sealed. */
-    sealed_share?: string;
 }
 export type BootstrapMethod = 'auto' | 'dane' | 'noise' | 'spki';
 export interface BootstrapBundleRequest {
@@ -1937,20 +1997,10 @@ export type SealBarrierUnsealRequest = BarrierUnsealRequest;
 export type SealShamirInitRequest = BarrierShamirInitRequest;
 /** @deprecated Use BarrierShamirInitResponse. */
 export type SealShamirInitResponse = BarrierShamirInitResponse;
-/** @deprecated Use BarrierUnsealShareRequest. */
-export type SealUnsealShareRequest = BarrierUnsealShareRequest;
-/** @deprecated Use BarrierUnsealShareResponse. */
-export type SealUnsealShareResponse = BarrierUnsealShareResponse;
-/** @deprecated Use BarrierRekeyRequest. */
-export type SealRekeyRequest = BarrierRekeyRequest;
-/** @deprecated Use BarrierRekeyResponse. */
-export type SealRekeyResponse = BarrierRekeyResponse;
 /** @deprecated Use BarrierGenerateRecoveryKeysRequest. */
 export type SealGenerateRecoveryKeysRequest = BarrierGenerateRecoveryKeysRequest;
 /** @deprecated Use BarrierRecoveryKeysResponse. */
 export type SealRecoveryKeysResponse = BarrierRecoveryKeysResponse;
-/** @deprecated Use BarrierRootTokenResponse. */
-export type SealRootTokenResponse = BarrierRootTokenResponse;
 export interface InferenceRequest {
     backend: string;
     model?: string;
