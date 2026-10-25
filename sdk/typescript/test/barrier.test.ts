@@ -330,36 +330,6 @@ describe('RestBarrierClient Shamir strategy', () => {
     });
   });
 
-  it('submits one share toward the unseal quorum', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        required: 3,
-        submitted: 1,
-        complete: false,
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const progress = await client.barrier.unsealWithShare({ share: 'share-A' });
-
-    expect(progress.complete).toBe(false);
-    expect(progress.submitted).toBe(1);
-    expect(progress.required).toBe(3);
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/unseal-share');
-  });
-
-  it('submits multiple shares in a single request', async () => {
-    fetchMock.mockResolvedValue(noContentResponse());
-
-    const client = new RestClient('http://localhost');
-    await client.barrier.unsealWithShares({ shares: ['a', 'b', 'c'] });
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/shamir/unseal-shares');
-    expect(JSON.parse(init.body as string)).toEqual({ shares: ['a', 'b', 'c'] });
-  });
 });
 
 // =============================================================================
@@ -367,25 +337,6 @@ describe('RestBarrierClient Shamir strategy', () => {
 // =============================================================================
 
 describe('RestBarrierClient operator flows', () => {
-  it('rekeys the barrier', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        shares: ['new-1', 'new-2'],
-        threshold: 1,
-        total_shares: 2,
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const result = await client.barrier.rekey({ threshold: 1, total: 2 });
-
-    expect(result.threshold).toBe(1);
-    expect(result.total_shares).toBe(2);
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/rekey');
-  });
-
   it('generates recovery keys', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
@@ -403,16 +354,6 @@ describe('RestBarrierClient operator flows', () => {
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/recovery/generate');
-  });
-
-  it('recovers the barrier with recovery keys', async () => {
-    fetchMock.mockResolvedValue(noContentResponse());
-
-    const client = new RestClient('http://localhost');
-    await client.barrier.recoverWithKeys({ keys: ['k1', 'k2'] });
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/recovery/recover');
   });
 
   it('deletes recovery keys', async () => {
@@ -438,23 +379,6 @@ describe('RestBarrierClient operator flows', () => {
     expect(url).toBe('http://localhost/api/v1/barrier/recovery/status');
   });
 
-  it('generates a root token from Shamir shares', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        token: 'root-deadbeef',
-        created_at: '2026-04-30T12:00:00Z',
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const token = await client.barrier.generateRootToken({ shares: ['s1', 's2'] });
-
-    expect(token.token).toBe('root-deadbeef');
-    expect(token.created_at).toBe('2026-04-30T12:00:00Z');
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/root-token');
-  });
 });
 
 // =============================================================================

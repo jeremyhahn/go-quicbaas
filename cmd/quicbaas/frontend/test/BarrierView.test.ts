@@ -232,15 +232,10 @@ describe('BarrierView strategy-aware rendering', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: /Unseal/i }));
 
-    // The structural BarrierUnsealForm submits via client.unseal which the
-    // BarrierView adapter routes to the SDK's unsealWithShare → POST
-    // /api/v1/barrier/shamir/unseal-share. We accept either: the regression
-    // we care about is that /api/v1/seal is NEVER hit.
+    // The passphrase goes to the direct unseal route, base64 encoded.
     await waitFor(() => {
-      const ok =
-        spy.calls.some((c) => c.url.endsWith('/api/v1/barrier/unseal')) ||
-        spy.calls.some((c) => c.url.endsWith('/api/v1/barrier/shamir/unseal-share'));
-      expect(ok).toBe(true);
+      const hit = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/unseal'));
+      expect(hit).toMatchObject({ method: 'POST', body: { secret: btoa('secret-pw') } });
     });
     expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
   });
@@ -264,6 +259,87 @@ describe('BarrierView strategy-aware rendering', () => {
     expect(screen.getByTestId('shamir-share-input')).toBeInTheDocument();
     expect(screen.getByTestId('shamir-progress-bar')).toBeInTheDocument();
     expect(screen.getByTestId('shamir-progress-text')).toHaveTextContent('1 / 3');
+  });
+
+  it('shamir unseal answers a quorum challenge per holder', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'shamir', sealed: true, threshold: 2 }),
+      '/api/v1/barrier/quorum/begin': () => ({
+        challenge_id: 'ch-1',
+        domain: 'unseal',
+        op: 'unseal',
+        username: 'officer-1',
+        factor: 'mtls',
+        nonce: 'bm9uY2U=',
+        expires_at: '2026-10-25T00:05:00Z',
+      }),
+      '/api/v1/barrier/quorum/submit': () => ({ domain: 'unseal', op: 'unseal', required: 2, submitted: 1, complete: false }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await screen.findByTestId('shamir-share-input');
+
+    await fireEvent.input(screen.getByLabelText(/Officer username/i), { target: { value: 'officer-1' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Request challenge/i }));
+
+    expect(await screen.findByTestId('shamir-challenge')).toHaveTextContent('ch-1');
+    expect(screen.getByTestId('shamir-challenge')).toHaveTextContent('bm9uY2U=');
+    expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/quorum/begin'))).toMatchObject({
+      method: 'POST',
+      body: { domain: 'unseal', op: 'unseal', username: 'officer-1' },
+    });
+
+    await fireEvent.input(screen.getByLabelText(/^Share$/i), { target: { value: 'c2hhcmU=' } });
+    await fireEvent.input(screen.getByLabelText(/Signed response/i), { target: { value: 'c2ln' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Submit share/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('shamir-progress-text')).toHaveTextContent('1 / 2');
+    });
+    expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/quorum/submit'))).toMatchObject({
+      method: 'POST',
+      body: {
+        domain: 'unseal',
+        op: 'unseal',
+        username: 'officer-1',
+        challenge_id: 'ch-1',
+        factor: 'mtls',
+        response: 'c2ln',
+        share: 'c2hhcmU=',
+      },
+    });
+    expect(spy.calls.some((c) => c.url.includes('/unseal-share'))).toBe(false);
+  });
+
+  it('shamir unseal shows the server refusal and keeps the progress', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'shamir', sealed: true, threshold: 2 }),
+    });
+    const answer = spy.mock.getMockImplementation()!;
+    spy.mock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/v1/barrier/quorum/begin')) {
+        return Promise.resolve({
+          ok: false,
+          status: 403,
+          statusText: 'Forbidden',
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          text: () => Promise.resolve(JSON.stringify({ error: 'not an officer' })),
+          json: () => Promise.resolve({ error: 'not an officer' }),
+        });
+      }
+      return answer(url, init);
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await screen.findByTestId('shamir-share-input');
+    await fireEvent.input(screen.getByLabelText(/Officer username/i), { target: { value: 'mallory' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Request challenge/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not an officer/);
+    expect(screen.queryByTestId('shamir-challenge')).toBeNull();
+    expect(screen.getByTestId('shamir-progress-text')).toHaveTextContent('0 / 2');
   });
 
   it('tpm2 strategy shows auto-init / auto-unseal banner and hardware_backed badge', async () => {

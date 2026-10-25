@@ -39,7 +39,6 @@
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Lock } from 'lucide-svelte';
   import {
-    encodeBarrierCredential,
     encodeInitParams,
   } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
@@ -113,9 +112,9 @@
   }
 
   // structuralClient adapts the tenant-scoped SDK calls into the structural
-  // BarrierClient shape ShamirShareInput expects (unseal({share}) →
-  // {sealed, shares_provided, threshold}). It is rebuilt whenever the selected
-  // tenant changes so every call is bound to the active tenant.
+  // BarrierClient shape ShamirShareInput expects (quorumBegin / quorumSubmit
+  // of the tenant's unseal quorum). It is rebuilt whenever the selected tenant
+  // changes so every call is bound to the active tenant.
   function makeStructuralClient(tenantId: string): StructuralBarrierClient {
     return {
       async status(): Promise<BarrierStatus> {
@@ -132,12 +131,19 @@
         return { shares: resp?.shares ?? [] };
       },
       async unseal(req) {
-        const resp = await tb.tenantBarrierUnsealShare(tenantId, req.share);
+        await tb.tenantBarrierUnseal(tenantId, new TextEncoder().encode(req.passphrase));
+        const next = await tb.tenantBarrierStatus(tenantId);
         return {
-          sealed: resp.sealed,
-          shares_provided: resp.submitted,
-          threshold: resp.required,
+          sealed: next.sealed,
+          shares_provided: 0,
+          threshold: next.shamir_threshold,
         };
+      },
+      async quorumBegin(req) {
+        return tb.tenantBarrierQuorumBegin(tenantId, { op: 'unseal', ...req });
+      },
+      async quorumSubmit(req) {
+        return tb.tenantBarrierQuorumSubmit(tenantId, { op: 'unseal', ...req });
       },
     };
   }
@@ -266,11 +272,6 @@
     await loadStatus();
   }
 
-  async function handlePassphraseUnseal(passphrase: string): Promise<void> {
-    if (selectedTenantID === '') return;
-    await tb.tenantBarrierUnseal(selectedTenantID, encodeBarrierCredential(passphrase));
-  }
-
   async function handleSeal(): Promise<void> {
     if (selectedTenantID === '') return;
     sealing = true;
@@ -389,22 +390,10 @@
             </div>
 
           {:else if barrierStatus.strategy === 'software'}
-            {#if status.sealed}
+            {#if status.sealed && structural !== null}
               <div data-testid="tenant-barrier-passphrase-unseal">
                 <BarrierUnsealForm
-                  client={{
-                    status: async () => barrierStatus!,
-                    init: async () => ({ shares: [] }),
-                    unseal: async (req) => {
-                      await handlePassphraseUnseal(req.share);
-                      const next = await tb.tenantBarrierStatus(selectedTenantID);
-                      return {
-                        sealed: next.sealed,
-                        shares_provided: 0,
-                        threshold: next.shamir_threshold,
-                      };
-                    },
-                  }}
+                  client={structural}
                   label="Unseal passphrase"
                   placeholder="Enter the tenant passphrase..."
                   onunseal={(resp) => {

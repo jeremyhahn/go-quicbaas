@@ -34,34 +34,29 @@ import type {
   AgentBackendInfo,
   JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
-  BarrierGenerateRootTokenRequest,
   BarrierEnableEncryptionRequest,
   BarrierEnableEncryptionResponse,
   BarrierHasRecoveryKeysResponse,
   BarrierInitRequest,
-  BarrierRecoverWithKeysRequest,
   BarrierRecoveryKeysResponse,
-  BarrierRekeyRequest,
-  BarrierRekeyResponse,
-  BarrierRootTokenResponse,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
+  BarrierDomain,
+  BarrierOfficer,
+  BarrierOfficerRegisterRequest,
+  BarrierOfficerRegisterResponse,
+  BarrierShareClaimBeginResponse,
+  BarrierShareClaimCompleteRequest,
+  BarrierShareClaimCompleteResponse,
+  BarrierQuorumBeginRequest,
+  BarrierQuorumChallenge,
+  BarrierQuorumSubmitRequest,
+  BarrierQuorumOutcome,
+  BarrierRekeyStartRequest,
+  BarrierQuorumRound,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
-  BarrierUnsealShareRequest,
-  BarrierUnsealShareResponse,
-  BarrierUnsealSharesRequest,
-  CeremonyClaimCertBeginRequest,
-  CeremonyClaimCertBeginResponse,
-  CeremonyClaimCertCompleteRequest,
-  CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareBeginRequest,
-  CeremonyClaimShareBeginResponse,
-  CeremonyClaimShareCompleteRequest,
-  CeremonyClaimShareCompleteResponse,
-  CeremonyEnrollExternalOfficerRequest,
-  CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonySignCSRRequest,
@@ -887,21 +882,40 @@ export class McpBarrierClient implements BarrierClient {
     return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
   }
 
-  async unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> {
-    return this.session.callTool<BarrierUnsealShareResponse>('qrdb_barrier_shamir_unseal_share', { share: req.share });
+  async officers(): Promise<BarrierOfficer[]> {
+    const reply = await this.session.callTool<{ officers?: BarrierOfficer[] }>('qrdb_barrier_officer_list', {});
+    return reply.officers ?? [];
   }
 
-  async unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void> {
-    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_shamir_unseal_shares', { shares: req.shares });
+  async registerOfficer(
+    req: BarrierOfficerRegisterRequest,
+    domain: BarrierDomain = 'unseal',
+  ): Promise<BarrierOfficerRegisterResponse> {
+    return this.session.callTool<BarrierOfficerRegisterResponse>(holderTools[domain].register, { ...req });
   }
 
-  // Like initializeShamir, the rekey tool reports the new quorum but no shares.
-  async rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> {
-    const reply = await this.session.callTool<Partial<BarrierRekeyResponse>>('qrdb_barrier_rekey', {
-      threshold: req.threshold,
-      total: req.total,
-    });
-    return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+  async shareClaimBegin(username: string, domain: BarrierDomain = 'unseal'): Promise<BarrierShareClaimBeginResponse> {
+    return this.session.callTool<BarrierShareClaimBeginResponse>(holderTools[domain].claimBegin, { username });
+  }
+
+  async shareClaimComplete(
+    req: BarrierShareClaimCompleteRequest,
+    domain: BarrierDomain = 'unseal',
+  ): Promise<BarrierShareClaimCompleteResponse> {
+    return this.session.callTool<BarrierShareClaimCompleteResponse>(holderTools[domain].claimComplete, { ...req });
+  }
+
+  async quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge> {
+    return this.session.callTool<BarrierQuorumChallenge>('qrdb_barrier_quorum_begin', { ...req });
+  }
+
+  async quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome> {
+    return this.session.callTool<BarrierQuorumOutcome>('qrdb_barrier_quorum_submit', { ...req });
+  }
+
+  async rekeyStart(req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound> {
+    requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
+    return this.session.callTool<BarrierQuorumRound>('qrdb_barrier_rekey_start', { ...req });
   }
 
   // The recovery tool reports the quorum but never the recovery keys.
@@ -913,10 +927,6 @@ export class McpBarrierClient implements BarrierClient {
     return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
   }
 
-  async recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void> {
-    await this.session.callTool<Record<string, unknown>>('qrdb_barrier_recovery_recover', { keys: req.keys });
-  }
-
   async deleteRecoveryKeys(): Promise<void> {
     await this.session.callTool<Record<string, unknown>>('qrdb_barrier_recovery_delete', {});
   }
@@ -925,11 +935,6 @@ export class McpBarrierClient implements BarrierClient {
   async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> {
     const reply = await this.session.callTool<{ has_recovery_keys?: boolean }>('qrdb_barrier_recovery_status', {});
     return { has_keys: reply.has_recovery_keys === true };
-  }
-
-  async generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> {
-    const reply = await this.session.callTool<Partial<BarrierRootTokenResponse>>('qrdb_barrier_root_token', { shares: req.shares });
-    return { token: reply.token ?? '', created_at: reply.created_at ?? '' };
   }
 
   // A tenant request goes to the tenant tool: the system tool ignores
@@ -956,24 +961,24 @@ export class McpBarrierClient implements BarrierClient {
   }
 }
 
-// decodeBase64Text decodes a base64 tool field into UTF-8 text, refusing
-// malformed base64 as an McpError naming the tool.
-function decodeBase64Text(tool: string, b64: string): string {
-  let binary: string;
-  try {
-    binary = atob(b64);
-  } catch {
-    throw new McpError(tool, 'share is not valid base64');
-  }
-  return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
-}
+// holderTools names the key-holder tools of each barrier domain
+// (pkg/api/mcp/tools_barrier_holders.go). The tools decode their arguments as
+// the wire request, so a request passes through unchanged.
+const holderTools: Record<BarrierDomain, { register: string; claimBegin: string; claimComplete: string }> = {
+  unseal: {
+    register: 'qrdb_barrier_officer_register',
+    claimBegin: 'qrdb_barrier_share_claim_begin',
+    claimComplete: 'qrdb_barrier_share_claim_complete',
+  },
+  recovery: {
+    register: 'qrdb_barrier_recovery_officer_register',
+    claimBegin: 'qrdb_barrier_recovery_share_claim_begin',
+    claimComplete: 'qrdb_barrier_recovery_share_claim_complete',
+  },
+};
 
 // McpCeremonyClient calls the qrdb_ceremony_* MCP tools, with the tool names
-// and argument keys of the Go SDK's MCP transport. claimShareBegin and
-// claimShareComplete call the qrdb_ceremony_begin_claim_share /
-// qrdb_ceremony_complete_claim_share pair (pkg/api/mcp/tools_ceremony.go): the
-// officer signs the begin nonce, and the server binds both calls to the
-// session's mTLS certificate thumbprint, which never travels in the arguments.
+// and argument keys of the Go SDK's MCP transport.
 export class McpCeremonyClient implements CeremonyClient {
   constructor(private readonly session: McpSession) {}
 
@@ -993,42 +998,6 @@ export class McpCeremonyClient implements CeremonyClient {
     return this.session.callTool<CeremonyStatusResponse>('qrdb_ceremony_status', {});
   }
 
-  async claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> {
-    const reply = await this.session.callTool<Partial<CeremonyClaimCertBeginResponse>>(
-      'qrdb_ceremony_claim_cert_begin',
-      { username: req.username },
-    );
-    return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
-  }
-
-  async claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> {
-    return this.session.callTool<CeremonyClaimCertCompleteResponse>('qrdb_ceremony_claim_cert_complete', {
-      username: req.username,
-      nonce_hex: req.nonce_hex,
-      signature: req.signature,
-    });
-  }
-
-  async claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> {
-    const reply = await this.session.callTool<Partial<CeremonyClaimShareBeginResponse>>(
-      'qrdb_ceremony_begin_claim_share',
-      { username: req.username },
-    );
-    return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
-  }
-
-  // claimShareComplete sends the base64 signature as the tool's signature
-  // argument and decodes the tool's base64 share back into share_json.
-  async claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> {
-    const tool = 'qrdb_ceremony_complete_claim_share';
-    const reply = await this.session.callTool<{ share_index?: number; share?: string }>(tool, {
-      username: req.username,
-      nonce_hex: req.nonce_hex,
-      signature: req.signature,
-    });
-    return { share_index: reply.share_index ?? 0, share_json: decodeBase64Text(tool, reply.share ?? '') };
-  }
-
   async signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> {
     requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
     return this.session.callTool<CeremonySignCSRResponse>('qrdb_ceremony_sign_csr', {
@@ -1039,19 +1008,6 @@ export class McpCeremonyClient implements CeremonyClient {
     });
   }
 
-  async enrollExternalOfficer(
-    req: CeremonyEnrollExternalOfficerRequest,
-  ): Promise<CeremonyEnrollExternalOfficerResponse> {
-    const args: Record<string, unknown> = {
-      username: req.username,
-      share_index: req.share_index,
-      auth_factor: req.auth_factor,
-    };
-    if (req.cert_pem) args.cert_pem = req.cert_pem;
-    if (req.pubkey_pem) args.pubkey_pem = req.pubkey_pem;
-    if (req.share_bytes) args.share_bytes = req.share_bytes;
-    return this.session.callTool<CeremonyEnrollExternalOfficerResponse>('qrdb_ceremony_enroll_external_officer', args);
-  }
 }
 
 // McpAccountsClient carries the accounts family over the quicbaas_agent_account_*

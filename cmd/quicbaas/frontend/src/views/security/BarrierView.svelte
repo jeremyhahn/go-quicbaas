@@ -56,10 +56,10 @@
   // SDK -> structural BarrierClient adapter
   //
   // The svelte-security components consume a structurally-typed BarrierClient
-  // (init({threshold, total_shares}), unseal({share}), status() →
-  // BarrierStatus). The SDK BarrierClient surface is richer (initializeShamir,
-  // unsealWithShare, etc.) so we adapt the SDK calls into the shape the
-  // components expect. Crucially, all URL routing flows through the SDK so
+  // (init({threshold, total_shares}), unseal({passphrase}), quorumBegin,
+  // quorumSubmit, status() → BarrierStatus). The SDK BarrierClient surface is
+  // richer (initializeShamir, the quorum domains and ops, etc.) so we adapt the
+  // SDK calls into the shape the components expect. Crucially, all URL routing flows through the SDK so
   // future server-side path changes propagate automatically.
   // ---------------------------------------------------------------------------
 
@@ -149,12 +149,20 @@
         return { shares: resp.shares };
       },
       async unseal(req) {
-        const resp = await sdk.unsealWithShare({ share: req.share });
+        await sdk.unseal({ secret: new TextEncoder().encode(req.passphrase) });
+        const after = await adaptStatus(await sdk.status());
         return {
-          sealed: !resp.complete,
-          shares_provided: resp.submitted,
-          threshold: resp.required,
+          sealed: after.sealed,
+          shares_provided: after.shares_provided,
+          threshold: after.threshold,
         };
+      },
+      // A Shamir barrier unseals through a quorum round in the unseal domain.
+      async quorumBegin(req) {
+        return sdk.quorumBegin({ domain: 'unseal', op: 'unseal', ...req });
+      },
+      async quorumSubmit(req) {
+        return sdk.quorumSubmit({ domain: 'unseal', op: 'unseal', ...req });
       },
     };
 

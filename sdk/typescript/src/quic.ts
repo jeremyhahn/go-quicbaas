@@ -40,34 +40,29 @@ import type {
   AgentBackendInfo,
   JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
-  BarrierGenerateRootTokenRequest,
   BarrierEnableEncryptionRequest,
   BarrierEnableEncryptionResponse,
   BarrierHasRecoveryKeysResponse,
   BarrierInitRequest,
-  BarrierRecoverWithKeysRequest,
   BarrierRecoveryKeysResponse,
-  BarrierRekeyRequest,
-  BarrierRekeyResponse,
-  BarrierRootTokenResponse,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
+  BarrierDomain,
+  BarrierOfficer,
+  BarrierOfficerRegisterRequest,
+  BarrierOfficerRegisterResponse,
+  BarrierShareClaimBeginResponse,
+  BarrierShareClaimCompleteRequest,
+  BarrierShareClaimCompleteResponse,
+  BarrierQuorumBeginRequest,
+  BarrierQuorumChallenge,
+  BarrierQuorumSubmitRequest,
+  BarrierQuorumOutcome,
+  BarrierRekeyStartRequest,
+  BarrierQuorumRound,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
-  BarrierUnsealShareRequest,
-  BarrierUnsealShareResponse,
-  BarrierUnsealSharesRequest,
-  CeremonyClaimCertBeginRequest,
-  CeremonyClaimCertBeginResponse,
-  CeremonyClaimCertCompleteRequest,
-  CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareBeginRequest,
-  CeremonyClaimShareBeginResponse,
-  CeremonyClaimShareCompleteRequest,
-  CeremonyClaimShareCompleteResponse,
-  CeremonyEnrollExternalOfficerRequest,
-  CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonySignCSRRequest,
@@ -319,14 +314,16 @@ export class QuicBarrierClient implements BarrierClient {
   async unseal(_req: BarrierUnsealRequest): Promise<void> { return frameOnly('barrier', 'unseal'); }
   async seal(_req?: BarrierSealRequest): Promise<void> { return frameOnly('barrier', 'seal'); }
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return frameOnly('barrier', 'initializeShamir'); }
-  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return frameOnly('barrier', 'unsealWithShare'); }
-  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return frameOnly('barrier', 'unsealWithShares'); }
-  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return frameOnly('barrier', 'rekey'); }
+  async officers(): Promise<BarrierOfficer[]> { return frameOnly('barrier', 'officers'); }
+  async registerOfficer(_req: BarrierOfficerRegisterRequest, _domain?: BarrierDomain): Promise<BarrierOfficerRegisterResponse> { return frameOnly('barrier', 'registerOfficer'); }
+  async shareClaimBegin(_username: string, _domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse> { return frameOnly('barrier', 'shareClaimBegin'); }
+  async shareClaimComplete(_req: BarrierShareClaimCompleteRequest, _domain?: BarrierDomain): Promise<BarrierShareClaimCompleteResponse> { return frameOnly('barrier', 'shareClaimComplete'); }
+  async quorumBegin(_req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge> { return frameOnly('barrier', 'quorumBegin'); }
+  async quorumSubmit(_req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome> { return frameOnly('barrier', 'quorumSubmit'); }
+  async rekeyStart(_req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound> { return frameOnly('barrier', 'rekeyStart'); }
   async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return frameOnly('barrier', 'generateRecoveryKeys'); }
-  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return frameOnly('barrier', 'recoverWithKeys'); }
   async deleteRecoveryKeys(): Promise<void> { return frameOnly('barrier', 'deleteRecoveryKeys'); }
   async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return frameOnly('barrier', 'recoveryStatus'); }
-  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return frameOnly('barrier', 'generateRootToken'); }
   async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return frameOnly('barrier', 'enableEncryption'); }
 }
 
@@ -335,12 +332,7 @@ export class QuicBarrierClient implements BarrierClient {
 export class QuicCeremonyClient implements CeremonyClient {
   async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return frameOnly('ceremony', 'initialize'); }
   async status(): Promise<CeremonyStatusResponse> { return frameOnly('ceremony', 'status'); }
-  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return frameOnly('ceremony', 'claimCertBegin'); }
-  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return frameOnly('ceremony', 'claimCertComplete'); }
-  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return frameOnly('ceremony', 'claimShareBegin'); }
-  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return frameOnly('ceremony', 'claimShareComplete'); }
   async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return frameOnly('ceremony', 'signCSR'); }
-  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return frameOnly('ceremony', 'enrollExternalOfficer'); }
 }
 
 // QuicClient is the entry point for the QUIC transport. It sends nothing: every

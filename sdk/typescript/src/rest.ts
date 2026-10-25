@@ -315,38 +315,34 @@ import type {
   BarrierSealRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierUnsealShareRequest,
-  BarrierUnsealShareResponse,
-  BarrierUnsealSharesRequest,
-  BarrierRekeyRequest,
-  BarrierRekeyResponse,
+  BarrierDomain,
+  BarrierOfficer,
+  BarrierOfficerRegisterRequest,
+  BarrierOfficerRegisterResponse,
+  BarrierShareClaimBeginResponse,
+  BarrierShareClaimCompleteRequest,
+  BarrierShareClaimCompleteResponse,
+  BarrierQuorumBeginRequest,
+  BarrierQuorumChallenge,
+  BarrierQuorumSubmitRequest,
+  BarrierQuorumOutcome,
+  BarrierRekeyStartRequest,
+  BarrierQuorumRound,
+  TenantBarrierQuorumBeginRequest,
+  TenantBarrierQuorumSubmitRequest,
   BarrierGenerateRecoveryKeysRequest,
   BarrierRecoveryKeysResponse,
-  BarrierRecoverWithKeysRequest,
   BarrierHasRecoveryKeysResponse,
-  BarrierGenerateRootTokenRequest,
   BarrierEnableEncryptionRequest,
   BarrierEnableEncryptionResponse,
-  BarrierRootTokenResponse,
   TenantBarrierInitRequest,
   TenantBarrierInitResponse,
-  TenantBarrierUnsealShareResponse,
   TenantBarrierStatusResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonyStatusResponse,
-  CeremonyClaimCertBeginRequest,
-  CeremonyClaimCertBeginResponse,
-  CeremonyClaimCertCompleteRequest,
-  CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareBeginRequest,
-  CeremonyClaimShareBeginResponse,
-  CeremonyClaimShareCompleteRequest,
-  CeremonyClaimShareCompleteResponse,
   CeremonySignCSRRequest,
   CeremonySignCSRResponse,
-  CeremonyEnrollExternalOfficerRequest,
-  CeremonyEnrollExternalOfficerResponse,
   BootstrapMethod,
   BootstrapBundleRequest,
   BootstrapBundleResponse,
@@ -4523,26 +4519,60 @@ export class RestBarrierClient implements BarrierClient {
     });
   }
 
-  async unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> {
-    return this.http.fetchJSON<BarrierUnsealShareResponse>(
-      '/api/v1/barrier/shamir/unseal-share',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
+  // holders is the route of a domain's key holders.
+  private holders(domain: BarrierDomain = 'unseal'): string {
+    return domain === 'recovery' ? '/api/v1/barrier/recovery/officers' : '/api/v1/barrier/officers';
   }
 
-  async unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void> {
-    await this.http.fetchVoid('/api/v1/barrier/shamir/unseal-shares', {
+  async officers(): Promise<BarrierOfficer[]> {
+    const reply = await this.http.fetchJSON<{ officers?: BarrierOfficer[] }>('/api/v1/barrier/officers');
+    return reply.officers ?? [];
+  }
+
+  async registerOfficer(
+    req: BarrierOfficerRegisterRequest,
+    domain?: BarrierDomain,
+  ): Promise<BarrierOfficerRegisterResponse> {
+    return this.http.fetchJSON<BarrierOfficerRegisterResponse>(this.holders(domain), {
       method: 'POST',
       body: JSON.stringify(req),
     });
   }
 
+  async shareClaimBegin(username: string, domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse> {
+    return this.http.fetchJSON<BarrierShareClaimBeginResponse>(
+      `${this.holders(domain)}/${encodeURIComponent(username)}/claim/begin`,
+      { method: 'POST', body: JSON.stringify({ username }) },
+    );
+  }
 
-  async rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> {
-    return this.http.fetchJSON<BarrierRekeyResponse>('/api/v1/barrier/rekey', {
+  async shareClaimComplete(
+    req: BarrierShareClaimCompleteRequest,
+    domain?: BarrierDomain,
+  ): Promise<BarrierShareClaimCompleteResponse> {
+    return this.http.fetchJSON<BarrierShareClaimCompleteResponse>(
+      `${this.holders(domain)}/${encodeURIComponent(req.username)}/claim/complete`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
+  async quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge> {
+    return this.http.fetchJSON<BarrierQuorumChallenge>('/api/v1/barrier/quorum/begin', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome> {
+    return this.http.fetchJSON<BarrierQuorumOutcome>('/api/v1/barrier/quorum/submit', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async rekeyStart(req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound> {
+    requireTLSForSOPIN('rest', this.baseUrl, req.so_pin);
+    return this.http.fetchJSON<BarrierQuorumRound>('/api/v1/barrier/rekey/start', {
       method: 'POST',
       body: JSON.stringify(req),
     });
@@ -4557,13 +4587,6 @@ export class RestBarrierClient implements BarrierClient {
     });
   }
 
-  async recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void> {
-    await this.http.fetchVoid('/api/v1/barrier/recovery/recover', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    });
-  }
-
   async deleteRecoveryKeys(): Promise<void> {
     await this.http.fetchVoid('/api/v1/barrier/recovery', { method: 'DELETE' });
   }
@@ -4572,13 +4595,6 @@ export class RestBarrierClient implements BarrierClient {
     return this.http.fetchJSON<BarrierHasRecoveryKeysResponse>(
       '/api/v1/barrier/recovery/status',
     );
-  }
-
-  async generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> {
-    return this.http.fetchJSON<BarrierRootTokenResponse>('/api/v1/barrier/root-token', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    });
   }
 
   // enableEncryption posts to the go-qrdb wire mount, whose body is the
@@ -4641,17 +4657,24 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
     });
   }
 
-  async tenantBarrierUnsealShare(
+  async tenantBarrierQuorumBegin(
     tenantId: string,
-    share: string,
-  ): Promise<TenantBarrierUnsealShareResponse> {
-    return this.http.fetchJSON<TenantBarrierUnsealShareResponse>(
-      `${this.base(tenantId)}/unseal-share`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ share }),
-      },
-    );
+    req: TenantBarrierQuorumBeginRequest,
+  ): Promise<BarrierQuorumChallenge> {
+    return this.http.fetchJSON<BarrierQuorumChallenge>(`${this.base(tenantId)}/quorum/begin`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
+  }
+
+  async tenantBarrierQuorumSubmit(
+    tenantId: string,
+    req: TenantBarrierQuorumSubmitRequest,
+  ): Promise<BarrierQuorumOutcome> {
+    return this.http.fetchJSON<BarrierQuorumOutcome>(`${this.base(tenantId)}/quorum/submit`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    });
   }
 
   async tenantBarrierSeal(tenantId: string): Promise<void> {
@@ -4687,54 +4710,6 @@ export class RestCeremonyClient implements CeremonyClient {
     return this.http.fetchJSON<CeremonyStatusResponse>('/api/v1/init/status');
   }
 
-  async claimCertBegin(
-    req: CeremonyClaimCertBeginRequest,
-  ): Promise<CeremonyClaimCertBeginResponse> {
-    return this.http.fetchJSON<CeremonyClaimCertBeginResponse>(
-      '/api/v1/init/claim-cert/begin',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
-  }
-
-  async claimCertComplete(
-    req: CeremonyClaimCertCompleteRequest,
-  ): Promise<CeremonyClaimCertCompleteResponse> {
-    return this.http.fetchJSON<CeremonyClaimCertCompleteResponse>(
-      '/api/v1/init/claim-cert/complete',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
-  }
-
-  async claimShareBegin(
-    req: CeremonyClaimShareBeginRequest,
-  ): Promise<CeremonyClaimShareBeginResponse> {
-    return this.http.fetchJSON<CeremonyClaimShareBeginResponse>(
-      '/api/v1/init/officer-share/begin',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
-  }
-
-  async claimShareComplete(
-    req: CeremonyClaimShareCompleteRequest,
-  ): Promise<CeremonyClaimShareCompleteResponse> {
-    return this.http.fetchJSON<CeremonyClaimShareCompleteResponse>(
-      '/api/v1/init/officer-share/complete',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
-  }
-
   async signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> {
     return this.http.fetchJSON<CeremonySignCSRResponse>('/api/v1/init/sign-csr', {
       method: 'POST',
@@ -4742,17 +4717,6 @@ export class RestCeremonyClient implements CeremonyClient {
     });
   }
 
-  async enrollExternalOfficer(
-    req: CeremonyEnrollExternalOfficerRequest,
-  ): Promise<CeremonyEnrollExternalOfficerResponse> {
-    return this.http.fetchJSON<CeremonyEnrollExternalOfficerResponse>(
-      '/api/v1/init/enroll-external-officer',
-      {
-        method: 'POST',
-        body: JSON.stringify(req),
-      },
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -146,38 +146,34 @@ import type {
   BarrierSealRequest,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierUnsealShareRequest,
-  BarrierUnsealShareResponse,
-  BarrierUnsealSharesRequest,
-  BarrierRekeyRequest,
-  BarrierRekeyResponse,
+  BarrierDomain,
+  BarrierOfficer,
+  BarrierOfficerRegisterRequest,
+  BarrierOfficerRegisterResponse,
+  BarrierShareClaimBeginResponse,
+  BarrierShareClaimCompleteRequest,
+  BarrierShareClaimCompleteResponse,
+  BarrierQuorumBeginRequest,
+  BarrierQuorumChallenge,
+  BarrierQuorumSubmitRequest,
+  BarrierQuorumOutcome,
+  BarrierRekeyStartRequest,
+  BarrierQuorumRound,
+  TenantBarrierQuorumBeginRequest,
+  TenantBarrierQuorumSubmitRequest,
   BarrierGenerateRecoveryKeysRequest,
   BarrierRecoveryKeysResponse,
-  BarrierRecoverWithKeysRequest,
   BarrierHasRecoveryKeysResponse,
-  BarrierGenerateRootTokenRequest,
   BarrierEnableEncryptionRequest,
   BarrierEnableEncryptionResponse,
-  BarrierRootTokenResponse,
   TenantBarrierInitRequest,
   TenantBarrierInitResponse,
-  TenantBarrierUnsealShareResponse,
   TenantBarrierStatusResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonyStatusResponse,
-  CeremonyClaimCertBeginRequest,
-  CeremonyClaimCertBeginResponse,
-  CeremonyClaimCertCompleteRequest,
-  CeremonyClaimCertCompleteResponse,
-  CeremonyClaimShareBeginRequest,
-  CeremonyClaimShareBeginResponse,
-  CeremonyClaimShareCompleteRequest,
-  CeremonyClaimShareCompleteResponse,
   CeremonySignCSRRequest,
   CeremonySignCSRResponse,
-  CeremonyEnrollExternalOfficerRequest,
-  CeremonyEnrollExternalOfficerResponse,
   BootstrapMethod,
   BootstrapBundleRequest,
   BootstrapBundleResponse,
@@ -1036,26 +1032,47 @@ export interface BarrierClient {
   // Maps to POST /api/v1/barrier/shamir/initialize.
   initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
 
-  // unsealWithShare submits a single Shamir share toward the unseal threshold.
-  // Maps to POST /api/v1/barrier/shamir/unseal-share.
-  unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
+  // officers lists the barrier's registered key holders.
+  // Maps to GET /api/v1/barrier/officers.
+  officers(): Promise<BarrierOfficer[]>;
 
-  // unsealWithShares submits multiple Shamir shares in a single call.
-  // Maps to POST /api/v1/barrier/shamir/unseal-shares.
-  unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void>;
+  // registerOfficer registers a key holder from its CSR and returns the
+  // holder's certificate. domain 'recovery' registers a recovery officer.
+  // Maps to POST /api/v1/barrier/officers or /api/v1/barrier/recovery/officers.
+  registerOfficer(
+    req: BarrierOfficerRegisterRequest,
+    domain?: BarrierDomain,
+  ): Promise<BarrierOfficerRegisterResponse>;
 
+  // shareClaimBegin returns the nonce an officer signs to claim its share.
+  // Maps to POST /api/v1/barrier/[recovery/]officers/{username}/claim/begin.
+  shareClaimBegin(username: string, domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse>;
 
-  // rekey generates new Shamir shares for the existing root key.
-  // Maps to POST /api/v1/barrier/rekey.
-  rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
+  // shareClaimComplete verifies the officer's signature over the nonce and
+  // returns the officer's sealed share.
+  // Maps to POST /api/v1/barrier/[recovery/]officers/{username}/claim/complete.
+  shareClaimComplete(
+    req: BarrierShareClaimCompleteRequest,
+    domain?: BarrierDomain,
+  ): Promise<BarrierShareClaimCompleteResponse>;
+
+  // quorumBegin returns a holder's challenge in a quorum round. Unseal,
+  // rekey, recover and root-token each run as a quorum round.
+  // Maps to POST /api/v1/barrier/quorum/begin.
+  quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
+
+  // quorumSubmit answers a challenge with the holder's share. The round's
+  // operation runs once enough holders have submitted.
+  // Maps to POST /api/v1/barrier/quorum/submit.
+  quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome>;
+
+  // rekeyStart opens a rekey round; holders then submit with op 'rekey'.
+  // Maps to POST /api/v1/barrier/rekey/start.
+  rekeyStart(req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound>;
 
   // generateRecoveryKeys generates Shamir recovery shares for disaster recovery.
   // Maps to POST /api/v1/barrier/recovery/generate.
   generateRecoveryKeys(req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
-
-  // recoverWithKeys unseals the barrier using recovery shares.
-  // Maps to POST /api/v1/barrier/recovery/recover.
-  recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void>;
 
   // deleteRecoveryKeys removes recovery key metadata from storage.
   // Maps to DELETE /api/v1/barrier/recovery.
@@ -1064,11 +1081,6 @@ export interface BarrierClient {
   // recoveryStatus reports whether recovery key metadata exists.
   // Maps to GET /api/v1/barrier/recovery/status.
   recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse>;
-
-  // generateRootToken creates a new root token by proving knowledge of the
-  // master key through Shamir shares.
-  // Maps to POST /api/v1/barrier/root-token.
-  generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
 
   // enableEncryption starts migrating an unencrypted barrier to a keyed
   // strategy. req.tenant_id selects a tenant's barrier; omitted, the system
@@ -1101,13 +1113,20 @@ export interface TenantBarrierClient {
   // Maps to POST /api/v1/tenants/{id}/barrier/unseal.
   tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void>;
 
-  // tenantBarrierUnsealShare submits a single Shamir share toward the tenant's
-  // unseal quorum and reports progress.
-  // Maps to POST /api/v1/tenants/{id}/barrier/unseal-share.
-  tenantBarrierUnsealShare(
+  // tenantBarrierQuorumBegin returns a holder's challenge in a tenant quorum
+  // round, such as the unseal of a Shamir tenant barrier.
+  // Maps to POST /api/v1/tenants/{id}/barrier/quorum/begin.
+  tenantBarrierQuorumBegin(
     tenantId: string,
-    share: string,
-  ): Promise<TenantBarrierUnsealShareResponse>;
+    req: TenantBarrierQuorumBeginRequest,
+  ): Promise<BarrierQuorumChallenge>;
+
+  // tenantBarrierQuorumSubmit answers a tenant quorum challenge with the
+  // holder's share. Maps to POST /api/v1/tenants/{id}/barrier/quorum/submit.
+  tenantBarrierQuorumSubmit(
+    tenantId: string,
+    req: TenantBarrierQuorumSubmitRequest,
+  ): Promise<BarrierQuorumOutcome>;
 
   // tenantBarrierSeal transitions the tenant's barrier to the sealed state.
   // Maps to POST /api/v1/tenants/{id}/barrier/seal.
@@ -1141,9 +1160,9 @@ export interface SealClient {
 // Ceremony sub-client
 // ---------------------------------------------------------------------------
 
-// CeremonyClient drives the initialization ceremony lifecycle including
-// M-of-N officer enrollment, certificate claims, share distribution, and
-// CSR signing. Paths: /api/v1/init.
+// CeremonyClient drives the initialization ceremony and CSR signing.
+// Paths: /api/v1/init. Officers register, claim their shares and answer
+// quorum challenges through BarrierClient.
 export interface CeremonyClient {
   // initialize starts the initialization ceremony.
   // Maps to POST /api/v1/init/initialize.
@@ -1153,34 +1172,10 @@ export interface CeremonyClient {
   // Maps to GET /api/v1/init/status.
   status(): Promise<CeremonyStatusResponse>;
 
-  // claimCertBegin starts a certificate claim challenge for an officer.
-  // Maps to POST /api/v1/init/claim-cert/begin.
-  claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
-
-  // claimCertComplete completes the certificate claim by submitting the
-  // signed nonce. Maps to POST /api/v1/init/claim-cert/complete.
-  claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
-
-  // claimShareBegin starts the Shamir share claim for an enrolled officer
-  // and returns the nonce the officer must sign. The server binds the
-  // caller's mTLS certificate thumbprint to the nonce.
-  // Maps to POST /api/v1/init/officer-share/begin.
-  claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
-  // claimShareComplete verifies the officer's signature over the begin nonce,
-  // from the same certificate, and returns the officer's Shamir share.
-  // Maps to POST /api/v1/init/officer-share/complete.
-  claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
-
   // signCSR signs a CSR during or after the ceremony.
   // Maps to POST /api/v1/init/sign-csr.
   signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
 
-  // enrollExternalOfficer enrols an officer whose key material lives outside
-  // the daemon. Either cert_pem or pubkey_pem must be supplied (not both).
-  // Maps to POST /api/v1/init/enroll-external-officer.
-  enrollExternalOfficer(
-    req: CeremonyEnrollExternalOfficerRequest,
-  ): Promise<CeremonyEnrollExternalOfficerResponse>;
 }
 
 // ---------------------------------------------------------------------------

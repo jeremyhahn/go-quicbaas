@@ -14,7 +14,7 @@
   import type { BarrierClient, BarrierUnsealResponse } from '../types.ts';
 
   interface Props {
-    client: BarrierClient;
+    client: Pick<BarrierClient, 'unseal'>;
     label?: string;
     placeholder?: string;
     onunseal?: (resp: BarrierUnsealResponse) => void;
@@ -41,7 +41,7 @@
     }
     submitting = true;
     try {
-      const resp = await client.unseal({ share: value.trim() });
+      const resp = await client.unseal({ passphrase: value.trim() });
       value = '';
       onunseal?.(resp);
     } catch (e) {

@@ -95,44 +95,12 @@ describe('McpBarrierClient tools', () => {
       want: { shares: [], threshold: 2, total_shares: 3 },
     },
     {
-      name: 'unsealWithShare',
-      call: (c) => c.barrier.unsealWithShare({ share: 'share-1' }),
-      tool: 'qrdb_barrier_shamir_unseal_share',
-      args: { share: 'share-1' },
-      reply: { required: 2, submitted: 1, complete: false },
-      want: { required: 2, submitted: 1, complete: false },
-    },
-    {
-      name: 'unsealWithShares',
-      call: (c) => c.barrier.unsealWithShares({ shares: ['share-1', 'share-2'] }),
-      tool: 'qrdb_barrier_shamir_unseal_shares',
-      args: { shares: ['share-1', 'share-2'] },
-      reply: { status: 'unsealed' },
-      want: undefined,
-    },
-    {
-      name: 'rekey',
-      call: (c) => c.barrier.rekey({ threshold: 3, total: 5 }),
-      tool: 'qrdb_barrier_rekey',
-      args: { threshold: 3, total: 5 },
-      reply: { threshold: 3, total_shares: 5, share_count: 5 },
-      want: { shares: [], threshold: 3, total_shares: 5 },
-    },
-    {
       name: 'generateRecoveryKeys',
       call: (c) => c.barrier.generateRecoveryKeys({ threshold: 2, total: 4 }),
       tool: 'qrdb_barrier_recovery_generate',
       args: { threshold: 2, total: 4 },
       reply: { threshold: 2, total: 4, share_count: 4 },
       want: { keys: [], threshold: 2, total: 4 },
-    },
-    {
-      name: 'recoverWithKeys',
-      call: (c) => c.barrier.recoverWithKeys({ keys: ['key-1', 'key-2'] }),
-      tool: 'qrdb_barrier_recovery_recover',
-      args: { keys: ['key-1', 'key-2'] },
-      reply: { status: 'recovered' },
-      want: undefined,
     },
     {
       name: 'deleteRecoveryKeys',
@@ -149,14 +117,6 @@ describe('McpBarrierClient tools', () => {
       args: {},
       reply: { has_recovery_keys: true },
       want: { has_keys: true },
-    },
-    {
-      name: 'generateRootToken',
-      call: (c) => c.barrier.generateRootToken({ shares: ['share-1', 'share-2'] }),
-      tool: 'qrdb_barrier_root_token',
-      args: { shares: ['share-1', 'share-2'] },
-      reply: { token: 'ab12', created_at: '2026-10-17T00:00:00Z' },
-      want: { token: 'ab12', created_at: '2026-10-17T00:00:00Z' },
     },
     {
       name: 'enableEncryption on the system barrier',
@@ -253,61 +213,12 @@ describe('McpCeremonyClient tools', () => {
       want: { state: 'initialized', spki_pin: 'pin' },
     },
     {
-      name: 'claimCertBegin',
-      call: (c) => c.ceremony.claimCertBegin({ username: 'officer-1' }),
-      tool: 'qrdb_ceremony_claim_cert_begin',
-      args: { username: 'officer-1' },
-      reply: { nonce_hex: 'beef', expires_at: '2026-10-17T00:05:00Z' },
-      want: { nonce_hex: 'beef', expires_at: '2026-10-17T00:05:00Z' },
-    },
-    {
-      name: 'claimCertComplete',
-      call: (c) => c.ceremony.claimCertComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' }),
-      tool: 'qrdb_ceremony_claim_cert_complete',
-      args: { username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' },
-      reply: { cert_pem: 'CERT', ca_cert_pem: 'CA' },
-      want: { cert_pem: 'CERT', ca_cert_pem: 'CA' },
-    },
-    {
-      name: 'claimShareBegin',
-      call: (c) => c.ceremony.claimShareBegin({ username: 'officer-1' }),
-      tool: 'qrdb_ceremony_begin_claim_share',
-      args: { username: 'officer-1' },
-      reply: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
-      want: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
-    },
-    {
-      // The signature travels as the caller's base64; the tool's base64 share
-      // is decoded back into the share JSON.
-      name: 'claimShareComplete',
-      call: (c) => c.ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' }),
-      tool: 'qrdb_ceremony_complete_claim_share',
-      args: { username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' },
-      reply: { share_index: 3, share: btoa('{"index":3}') },
-      want: { share_index: 3, share_json: '{"index":3}' },
-    },
-    {
       name: 'signCSR',
       call: (c) => c.ceremony.signCSR({ username: 'svc-1', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'admin' }),
       tool: 'qrdb_ceremony_sign_csr',
       args: { username: 'svc-1', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'admin' },
       reply: { cert_pem: 'CERT' },
       want: { cert_pem: 'CERT' },
-    },
-    {
-      name: 'enrollExternalOfficer',
-      call: (c) =>
-        c.ceremony.enrollExternalOfficer({
-          username: 'officer-2',
-          pubkey_pem: 'PUB',
-          share_index: 2,
-          auth_factor: 'piv',
-          share_bytes: 'share',
-        }),
-      tool: 'qrdb_ceremony_enroll_external_officer',
-      args: { username: 'officer-2', pubkey_pem: 'PUB', share_index: 2, auth_factor: 'piv', share_bytes: 'share' },
-      reply: { sealed_share: 'c2VhbGVk' },
-      want: { sealed_share: 'c2VhbGVk' },
     },
   ];
 
@@ -329,23 +240,6 @@ describe('McpCeremonyClient tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('claimShareComplete refuses a share that is not base64 as McpError', async () => {
-    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { share_index: 1, share: '%%%' })));
-
-    const err = await new McpClient(endpoint)
-      .ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' })
-      .catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(McpError);
-  });
-
-  it('claimShareComplete surfaces a tool error reply as McpError', async () => {
-    toolError();
-
-    await expect(
-      new McpClient(endpoint).ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' }),
-    ).rejects.toBeInstanceOf(McpError);
-  });
 });
 
 describe('McpClient bootstrap', () => {
