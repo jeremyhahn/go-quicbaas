@@ -207,12 +207,22 @@ export interface EnrollOfficerRequest {
   csr_pem: string;
 }
 
+/**
+ * EnrolledOfficer is the certificate issued to an enrolled officer. The
+ * officer presents it over mTLS to claim its share, and the officer list
+ * never returns it, so the enrolling view must hand it over.
+ */
+export interface EnrolledOfficer {
+  cert_pem: string;
+  role: string;
+}
+
 /** CeremonyClient is the structural API the ceremony components consume. */
 export interface CeremonyClient {
   listOfficers(): Promise<CeremonyOfficer[]>;
   beginClaim(username: string): Promise<ShareClaimChallenge>;
   claimShare(req: ClaimShareRequest): Promise<ClaimedShare>;
-  enrollOfficer(req: EnrollOfficerRequest): Promise<void>;
+  enrollOfficer(req: EnrollOfficerRequest): Promise<EnrolledOfficer>;
 }
 
 // ---------------------------------------------------------------------------

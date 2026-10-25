@@ -82,6 +82,16 @@ function unavailableSpy(): FetchSpy {
   return spy;
 }
 
+// readBlob reads a Blob as text; jsdom's Blob has no text() method.
+function readBlob(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
 vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
@@ -193,6 +203,38 @@ describe('CeremonyView', () => {
         body: { username: 'carol', csr_pem: csr },
       });
     });
+  });
+
+  it('delivers the enrolled officer certificate: shown and downloadable after the form clears', async () => {
+    const certPEM = '-----BEGIN CERTIFICATE-----\nCAROL\n-----END CERTIFICATE-----';
+    spy = makeFetchSpy({
+      '/api/v1/barrier/officers': (call) =>
+        call.method === 'GET' ? { officers: mockOfficers } : { cert_pem: certPEM, role: 'officer' },
+    });
+    vi.stubGlobal('fetch', spy.mock);
+    const blobs: Blob[] = [];
+    URL.createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return 'blob:officer-cert'; });
+    URL.revokeObjectURL = vi.fn();
+    const downloads: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+
+    render(CeremonyView);
+    const form = (await screen.findByTestId('ceremony-enroll-form')) as HTMLFormElement;
+    await fireEvent.input(within(form).getByLabelText(/^Username$/i), { target: { value: 'carol' } });
+    await fireEvent.input(within(form).getByLabelText(/^CSR \(PEM\)$/i), { target: { value: csr } });
+    await fireEvent.submit(form);
+
+    const issued = await screen.findByTestId('ceremony-enrolled-cert');
+    expect(issued).toHaveTextContent('CAROL');
+    expect((within(form).getByLabelText(/^Username$/i) as HTMLInputElement).value).toBe('');
+
+    await fireEvent.click(within(issued).getByRole('button', { name: /Download certificate/i }));
+    expect(downloads).toEqual(['carol.crt.pem']);
+    expect(blobs).toHaveLength(1);
+    expect(await readBlob(blobs[0])).toBe(certPEM);
+    click.mockRestore();
   });
 
   it('refuses to enroll without a CSR and sends nothing', async () => {

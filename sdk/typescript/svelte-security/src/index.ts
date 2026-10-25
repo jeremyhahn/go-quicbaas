@@ -50,6 +50,7 @@ export type {
   ClaimShareRequest,
   ClaimedShare,
   EnrollOfficerRequest,
+  EnrolledOfficer,
   CeremonyClient,
   BootstrapMethod,
   BootstrapRequest,

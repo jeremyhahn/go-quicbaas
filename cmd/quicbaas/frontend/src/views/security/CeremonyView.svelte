@@ -19,7 +19,8 @@
     1. The barrier's key holders with claim status, share index, and factors.
     2. A share-claim flow: the officer requests a nonce, signs it offline
        with its key, and receives its share sealed to that key.
-    3. An officer enrollment form (username + CSR).
+    3. An officer enrollment form (username + CSR) that shows the issued
+       officer certificate with a download control.
 
   All HTTP traffic flows through the typed @quicbaas/sdk BarrierClient, which
   maps every method to the barrier holder routes the server serves:
@@ -30,6 +31,7 @@
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import { downloadText } from '../../lib/download.ts';
   import { Users } from 'lucide-svelte';
   import { APIError, createBarrierClient, isWailsRuntime } from '@quicbaas/sdk';
   import type { BarrierOfficer } from '@quicbaas/sdk';
@@ -93,7 +95,8 @@
         });
       },
       async enrollOfficer(req) {
-        await sdk.registerOfficer({ username: req.username, csr_pem: req.csr_pem });
+        const resp = await sdk.registerOfficer({ username: req.username, csr_pem: req.csr_pem });
+        return { cert_pem: resp.cert_pem, role: resp.role };
       },
     };
   }
@@ -145,6 +148,10 @@
   let enrollCSR = $state('');
   let enrolling = $state(false);
   let enrollError: string | null = $state(null);
+  // enrolledCert holds the certificate issued to the last enrolled officer.
+  // The officer needs it for mTLS to claim its share, and the officer list
+  // never returns it, so it stays shown until the next enrollment.
+  let enrolledCert: { username: string; cert_pem: string } | null = $state(null);
 
   async function onEnrollFile(e: Event): Promise<void> {
     const input = e.target as HTMLInputElement;
@@ -164,9 +171,11 @@
       return;
     }
     enrolling = true;
+    enrolledCert = null;
     try {
       const username = enrollUsername.trim();
-      await client.enrollOfficer({ username, csr_pem: enrollCSR });
+      const enrolled = await client.enrollOfficer({ username, csr_pem: enrollCSR });
+      enrolledCert = { username, cert_pem: enrolled.cert_pem };
       showToast({ message: `Officer ${username} enrolled`, type: 'success' });
       enrollUsername = '';
       enrollCSR = '';
@@ -303,6 +312,24 @@
           {enrolling ? 'Enrolling...' : 'Enroll Officer'}
         </button>
       </form>
+
+      {#if enrolledCert !== null}
+        {@const issued = enrolledCert}
+        <div class="space-y-2" data-testid="ceremony-enrolled-cert">
+          <p class="text-sm">
+            Certificate issued to <span class="font-mono">{issued.username}</span>. Give it to
+            the officer: it authenticates the share claim over mTLS and is not shown again.
+          </p>
+          <pre class="bg-base-300 rounded p-3 font-mono text-xs overflow-x-auto">{issued.cert_pem}</pre>
+          <button
+            class="btn btn-outline btn-sm"
+            type="button"
+            onclick={() => downloadText(`${issued.username}.crt.pem`, issued.cert_pem)}
+          >
+            Download certificate
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
