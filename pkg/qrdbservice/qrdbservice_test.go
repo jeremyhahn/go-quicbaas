@@ -95,16 +95,26 @@ func TestGrants_ResolveEveryNameAgainstQRDB(t *testing.T) {
 }
 
 // TestGrants_HoldNoAdministrativeAuthority pins the least grant: the
-// principal reads and writes data and nothing else.
+// principal creates no tenant, reads no plaintext credential, and holds no
+// seal verb the CLI does not call nor any tenant-only barrier verb.
 func TestGrants_HoldNoAdministrativeAuthority(t *testing.T) {
 	perms, err := Grants()
 	require.NoError(t, err)
 	for _, forbidden := range []qrdbsdk.Permission{
-		qrdbsdk.PermissionSealUnseal, qrdbsdk.PermissionSealRekey,
 		qrdbsdk.PermissionTenantsCreate, qrdbsdk.PermissionCredentialsRetrieve,
+		"seal:initialize_shamir", "tenant_barrier:seal", "tenant_barrier:officer_list",
 	} {
 		assert.NotContains(t, perms, forbidden)
 	}
+}
+
+// TestGrants_HoldTheCLISealOperations pins ruling 179: the CLI's embedded
+// client acts as this principal, so it holds the seal verbs the CLI calls.
+func TestGrants_HoldTheCLISealOperations(t *testing.T) {
+	perms, err := Grants()
+	require.NoError(t, err)
+	assert.Contains(t, perms, qrdbsdk.PermissionSealUnseal)
+	assert.Contains(t, perms, qrdbsdk.PermissionSealRekey)
 }
 
 func TestParseGrants_RejectsAnUnknownName(t *testing.T) {
