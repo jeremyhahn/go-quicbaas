@@ -95,6 +95,13 @@ func newPasskeyFixture(t *testing.T) *passkeyFixture {
 // returns, so a test can run the invitation ceremony on an auth-enabled node.
 func newPasskeyFixtureOn(t *testing.T, buildNode func(*testing.T, ...qrdbnode.NodeOption) *qrdbnode.Node) *passkeyFixture {
 	t.Helper()
+	return newPasskeyFixtureAssured(t, buildNode, iam.WebAuthnAssuranceHardware)
+}
+
+// newPasskeyFixtureAssured is newPasskeyFixtureOn under the enrollment
+// assurance policy a deployment configures (iam.webauthn.assurance).
+func newPasskeyFixtureAssured(t *testing.T, buildNode func(*testing.T, ...qrdbnode.NodeOption) *qrdbnode.Node, assurance iam.WebAuthnAssurance) *passkeyFixture {
+	t.Helper()
 	srv := withTempServer(t)
 	srv.buildLoginSessionIssuer()
 	srv.buildLoginFactorVerifiers()
@@ -130,9 +137,9 @@ func newPasskeyFixtureOn(t *testing.T, buildNode func(*testing.T, ...qrdbnode.No
 		QRDB:                node.Client(),
 		Service:             node,
 		AttestationRecorder: srv.qrdbAttestationRecorder,
-		Assurance:           iam.WebAuthnAssuranceHardware,
+		Assurance:           assurance,
 		AAGUIDAllowlist:     iam.NewAAGUIDAllowlist([]string{hex.EncodeToString(passkeyAAGUID)}, iam.AAGUIDPolicyStrict),
-		Admins:              iam.NewWebAuthnAdminResolver(users, qrdbadapter.WrapRole(c.identityStore)),
+		Admins:              srv.webAuthnAdminResolver(users, c.identityStore),
 		AttestationRoots:    roots,
 	})
 	require.NoError(t, err)
@@ -594,11 +601,12 @@ func (f *passkeyFixture) inviteSystemUser(ctx context.Context, t *testing.T) pas
 }
 
 // inviteUser creates a pending user in tenantID with its invite.
-func (f *passkeyFixture) inviteUser(ctx context.Context, t *testing.T, tenantID string) passkeyInvite {
+func (f *passkeyFixture) inviteUser(ctx context.Context, t *testing.T, tenantID string, roleIDs ...string) passkeyInvite {
 	t.Helper()
 	user, token, _, err := f.c.identityStore.CreateInvitedUser(ctx, tenantID, iam.CreateUserOptions{
 		Email:    "invitee@example.com",
 		Username: "invitee",
+		Roles:    roleIDs,
 	}, f.c.inviteStore, time.Hour)
 	require.NoError(t, err)
 	return passkeyInvite{userID: user.ID, token: token}

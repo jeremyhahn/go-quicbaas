@@ -466,16 +466,25 @@ func normalizedAttestationFormat(attestationType string) string {
 type adminRoleResolver struct {
 	users WebAuthnUserResolver
 	roles WebAuthnRoleResolver
+	// bindRoleRead binds the context the role reads run under; nil uses the
+	// lookup context as is.
+	bindRoleRead func(ctx context.Context, tenantID string) (context.Context, error)
 }
 
 // NewWebAuthnAdminResolver adapts the canonical user and role stores to the
 // gate's resolver seam. A nil store yields a nil resolver, which the gate
 // treats as "cannot tell" and resolves to administrative.
-func NewWebAuthnAdminResolver(users WebAuthnUserResolver, roles WebAuthnRoleResolver) WebAuthnAdminResolver {
+//
+// bindRoleRead, when set, binds the context the role reads run under. The
+// check runs during registration, before the registrant has a session, and
+// the embedded qrdb node authorizes every role read, so the server binds them
+// to its service principal (roles:read). When nil the lookup context is used
+// as is.
+func NewWebAuthnAdminResolver(users WebAuthnUserResolver, roles WebAuthnRoleResolver, bindRoleRead func(ctx context.Context, tenantID string) (context.Context, error)) WebAuthnAdminResolver {
 	if users == nil || roles == nil {
 		return nil
 	}
-	return &adminRoleResolver{users: users, roles: roles}
+	return &adminRoleResolver{users: users, roles: roles, bindRoleRead: bindRoleRead}
 }
 
 // IsAdministrativeAccount implements WebAuthnAdminResolver. A user lookup
@@ -509,10 +518,24 @@ func (r *adminRoleResolver) IsAdministrativeAccount(ctx context.Context, tenantI
 		return false, &WebAuthnUserResolverError{Reason: "canonical user resolver returned nil user"}
 	}
 
-	for _, roleName := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
-		held, err := holdsSystemRole(lookupCtx, r.roles, tenantID, user.Roles, roleName)
+	roleCtx := lookupCtx
+	if r.bindRoleRead != nil {
+		roleCtx, err = r.bindRoleRead(lookupCtx, tenantID)
 		if err != nil {
-			return true, nil
+			return false, &WebAuthnRoleResolverError{Reason: "bind the role read context", Err: err}
+		}
+	}
+	// A failed role read is reported as the error it is. The gate holds an
+	// account it cannot classify to the administrator bar; the resolver does
+	// not answer "administrative" for it.
+	for _, roleName := range []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO} {
+		held, err := holdsSystemRole(roleCtx, r.roles, tenantID, user.Roles, roleName)
+		if err != nil {
+			var roleErr *WebAuthnRoleResolverError
+			if errors.As(err, &roleErr) {
+				return false, err
+			}
+			return false, &WebAuthnRoleResolverError{Reason: "resolve role " + roleName, Err: err}
 		}
 		if held {
 			return true, nil

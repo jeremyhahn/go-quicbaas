@@ -583,7 +583,7 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 				Settings:            iam.NewTenantManagerWebAuthnSettings(tenantManager),
 				Assurance:           assurance,
 				AAGUIDAllowlist:     aaguidAllowlist,
-				Admins:              iam.NewWebAuthnAdminResolver(userStorage, qrdbadapter.WrapRole(identityStore)),
+				Admins:              s.webAuthnAdminResolver(userStorage, identityStore),
 				AttestationRoots:    attestationRoots,
 			}
 			// The embedded node refuses a call with no identity, including

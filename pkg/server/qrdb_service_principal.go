@@ -7,6 +7,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 )
 
@@ -93,6 +95,15 @@ func (s *Server) issuanceReadContext(ctx context.Context, tenantID string) (cont
 		return ctx, nil
 	}
 	return s.ServiceContext(ctx)
+}
+
+// webAuthnAdminResolver answers the WebAuthn attestation gate's "is this an
+// administrator" question over users and identity's roles. The question is
+// asked during registration, before the registrant has a session, so its role
+// reads are bound the way issuance binds its reads (issuanceReadContext): a
+// system-tenant account's roles are read as the node's service principal.
+func (s *Server) webAuthnAdminResolver(users iam.WebAuthnUserResolver, identity *iam.IdentityStore) iam.WebAuthnAdminResolver {
+	return iam.NewWebAuthnAdminResolver(users, qrdbadapter.WrapRole(identity), s.issuanceReadContext)
 }
 
 // DelegatedContext binds ctx to the identity a tenant-issued delegation
