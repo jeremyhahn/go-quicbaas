@@ -1325,12 +1325,65 @@ func TestEnsureHNSWIndex_ScanError(t *testing.T) {
 	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
 		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3, DistanceMetric: "L2"}, nil
 	}
+	scanErr := &vectorScanFailedError{}
 	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, errors.New("scan failed")
+		return nil, scanErr
 	}
 	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
+	require.ErrorIs(t, err, scanErr)
+	assert.Nil(t, index)
+	assert.NotContains(t, svc.indexes, "test-ns", "a failed scan must publish no index")
+}
+
+// TestEnsureHNSWIndex_ScanForbiddenCachesNoIndex covers a caller who may read
+// a populated namespace's metadata but not list its vectors: the scan's
+// permission error is returned, no index is cached, and a later caller who
+// may list the vectors builds the full index and finds the matches.
+func TestEnsureHNSWIndex_ScanForbiddenCachesNoIndex(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	svc.indexMu.Lock()
+	delete(svc.indexes, "test-ns")
+	svc.indexMu.Unlock()
+
+	stored := []*interfaces.VectorValue{
+		{ID: 1, Embedding: []float32{1, 0, 0}},
+		{ID: 2, Embedding: []float32{0, 1, 0}},
+	}
+	mayList := false
+	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		if !mayList {
+			return nil, &qbErrors.QBError{
+				Code: qbErrors.ErrForbidden,
+				Op:   "vector.ScanNamespace",
+				Err:  &vectorListDeniedError{},
+			}
+		}
+		return stored, nil
+	}
+	svc.indexFactory = &vecMockVectorIndexFactory{
+		createFn: func(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+			return newVecRecordingIndex(), nil
+		},
+	}
+	ctx := tenantctx.WithSystem(context.Background())
+
+	_, err := svc.ensureIndex(ctx, "test-ns")
+	require.Error(t, err)
+	assert.True(t, IsForbidden(err), "want the scan's permission error, got %v", err)
+	assert.NotContains(t, svc.indexes, "test-ns", "a failed scan must publish no index")
+
+	mayList = true
+	resp, err := svc.SearchSimilar(ctx, &SearchSimilarRequest{
+		Namespace:   "test-ns",
+		QueryVector: []float32{1, 0, 0},
+		K:           10,
+	})
 	require.NoError(t, err)
-	assert.NotNil(t, index)
+	ids := make([]uint64, 0, len(resp.Results))
+	for _, r := range resp.Results {
+		ids = append(ids, r.ID)
+	}
+	assert.ElementsMatch(t, []uint64{1, 2}, ids)
 }
 
 func TestEnsureHNSWIndex_InsertError(t *testing.T) {
@@ -1345,13 +1398,50 @@ func TestEnsureHNSWIndex_InsertError(t *testing.T) {
 	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
 		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}}, nil
 	}
+	insertErr := &vectorScanFailedError{}
 	failIndex := newVecMockVectorIndex()
-	failIndex.insertFn = func(_ uint64, _ []float32) error { return errors.New("insert failed") }
+	failIndex.insertFn = func(_ uint64, _ []float32) error { return insertErr }
 	svc.indexFactory = newVecMockVectorIndexFactory(failIndex)
 	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
+	require.ErrorIs(t, err, insertErr)
+	assert.Nil(t, index)
+	assert.NotContains(t, svc.indexes, "test-ns", "a partly loaded index must not be published")
 }
+
+// vectorScanFailedError fails a namespace scan or index insert in a test.
+type vectorScanFailedError struct{}
+
+func (*vectorScanFailedError) Error() string { return "vector scan failed" }
+
+// vectorListDeniedError stands for qrdb refusing vector:list to the caller.
+type vectorListDeniedError struct{}
+
+func (*vectorListDeniedError) Error() string { return "vector:list not granted" }
+
+// vecRecordingIndex is an index that answers a search with every vector
+// inserted into it, so a test can see whether the index was fully loaded.
+type vecRecordingIndex struct {
+	*vecMockVectorIndex
+	ids []uint64
+}
+
+func newVecRecordingIndex() *vecRecordingIndex {
+	idx := &vecRecordingIndex{vecMockVectorIndex: newVecMockVectorIndex()}
+	idx.insertFn = func(id uint64, _ []float32) error {
+		idx.ids = append(idx.ids, id)
+		return nil
+	}
+	idx.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
+		results := make([]*interfaces.SearchResult, 0, len(idx.ids))
+		for _, id := range idx.ids {
+			results = append(results, &interfaces.SearchResult{ID: id})
+		}
+		return results, nil
+	}
+	return idx
+}
+
+func (r *vecRecordingIndex) Count() int64 { return int64(len(r.ids)) }
 
 func TestEnsureHNSWIndex_ConcurrentCreation(t *testing.T) {
 	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
@@ -1385,8 +1475,13 @@ func TestEnsureHNSWIndex_ConcurrentCreation(t *testing.T) {
 func TestLoadNamespaces_WithFactory(t *testing.T) {
 	storage := newVecMockStorage()
 	logger := newVecTestLogger()
-	mockIndex := newVecMockVectorIndex()
-	factory := newVecMockVectorIndexFactory(mockIndex)
+	created := 0
+	factory := &vecMockVectorIndexFactory{
+		createFn: func(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+			created++
+			return newVecMockVectorIndex(), nil
+		},
+	}
 
 	storage.listNamespacesFn = func(_ context.Context) ([]interfaces.VectorNamespaceInfo, error) {
 		return []interfaces.VectorNamespaceInfo{
@@ -1397,35 +1492,24 @@ func TestLoadNamespaces_WithFactory(t *testing.T) {
 
 	svc, err := NewVectorService(storage, logger, WithVectorIndexFactory(factory))
 	require.NoError(t, err)
-	vs := svc.(*vectorService)
-	assert.Len(t, vs.indexes, 2)
+	// Populated namespaces get no empty index at startup: an empty cached
+	// index would answer every search with no matches. ensureIndex builds
+	// each index, with its vectors, on first use.
+	assert.Empty(t, svc.(*vectorService).indexes)
+	assert.Zero(t, created)
 }
 
-func TestLoadNamespaces_FactoryCreateError(t *testing.T) {
+func TestLoadNamespaces_ListError(t *testing.T) {
 	storage := newVecMockStorage()
 	logger := newVecTestLogger()
-
+	listErr := &vectorScanFailedError{}
 	storage.listNamespacesFn = func(_ context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-		return []interfaces.VectorNamespaceInfo{
-			{Name: "ns-fail", Dimension: 128},
-			{Name: "ns-ok", Dimension: 64},
-		}, nil
+		return nil, listErr
 	}
 
-	callCount := 0
-	factory := &vecMockVectorIndexFactory{
-		createFn: func(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
-			callCount++
-			if callCount == 1 {
-				return nil, errors.New("create failed")
-			}
-			return newVecMockVectorIndex(), nil
-		},
-	}
-
-	svc, err := NewVectorService(storage, logger, WithVectorIndexFactory(factory))
-	require.NoError(t, err)
-	assert.Len(t, svc.(*vectorService).indexes, 1)
+	svc, err := NewVectorService(storage, logger, WithVectorIndexFactory(newVecMockVectorIndexFactory(newVecMockVectorIndex())))
+	require.ErrorIs(t, err, listErr)
+	assert.Nil(t, svc)
 }
 
 func TestCreateNamespace_SDKSuccess(t *testing.T) {
@@ -1937,6 +2021,26 @@ func TestPerformIndexRebuild_ScanError(t *testing.T) {
 
 	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j6", "test-ns", nil)
 	require.Error(t, err)
+}
+
+func TestPerformIndexRebuild_InsertErrorKeepsOldIndex(t *testing.T) {
+	svc, storage, _, oldIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}}, nil
+	}
+	insertErr := &vectorScanFailedError{}
+	failIndex := newVecMockVectorIndex()
+	failIndex.insertFn = func(_ uint64, _ []float32) error { return insertErr }
+	svc.indexFactory = newVecMockVectorIndexFactory(failIndex)
+	job := &RebuildJobState{JobID: "j7", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs["j7"] = job
+	svc.jobMu.Unlock()
+
+	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j7", "test-ns", nil)
+	require.ErrorIs(t, err, insertErr)
+	assert.ErrorIs(t, job.Error, insertErr)
+	assert.Same(t, oldIndex, svc.indexes["test-ns"], "a partly rebuilt index must not replace the old one")
 }
 
 func TestRebuildIndex_Synchronous(t *testing.T) {
