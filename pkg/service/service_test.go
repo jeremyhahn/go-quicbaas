@@ -2758,6 +2758,9 @@ type vecTransport struct {
 	batchUpsertFn        func(ctx context.Context, req *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error)
 	batchDeleteVectorsFn func(ctx context.Context, req *qrdbtransport.BatchDeleteVectorsRequest) (*qrdbtransport.BatchDeleteVectorsResponse, error)
 	searchSimilarFn      func(ctx context.Context, req *qrdbtransport.SearchSimilarRequest) (*qrdbtransport.SearchSimilarResponse, error)
+	rebuildIndexFn       func(ctx context.Context, req *qrdbtransport.RebuildIndexRequest) (*qrdbtransport.RebuildIndexResponse, error)
+	getRebuildProgressFn func(ctx context.Context, req *qrdbtransport.GetRebuildProgressRequest) (*qrdbtransport.GetRebuildProgressResponse, error)
+	getIndexStatsFn      func(ctx context.Context, req *qrdbtransport.GetIndexStatsRequest) (*qrdbtransport.GetIndexStatsResponse, error)
 }
 
 func (v *vecTransport) CreateNamespace(ctx context.Context, req *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
@@ -2847,15 +2850,24 @@ func (v *vecTransport) SearchByID(_ context.Context, _ *qrdbtransport.SearchByID
 	return &qrdbtransport.SearchByIDResponse{}, nil
 }
 
-func (v *vecTransport) RebuildIndex(_ context.Context, _ *qrdbtransport.RebuildIndexRequest) (*qrdbtransport.RebuildIndexResponse, error) {
+func (v *vecTransport) RebuildIndex(ctx context.Context, req *qrdbtransport.RebuildIndexRequest) (*qrdbtransport.RebuildIndexResponse, error) {
+	if v.rebuildIndexFn != nil {
+		return v.rebuildIndexFn(ctx, req)
+	}
 	return &qrdbtransport.RebuildIndexResponse{}, nil
 }
 
-func (v *vecTransport) GetRebuildProgress(_ context.Context, _ *qrdbtransport.GetRebuildProgressRequest) (*qrdbtransport.GetRebuildProgressResponse, error) {
+func (v *vecTransport) GetRebuildProgress(ctx context.Context, req *qrdbtransport.GetRebuildProgressRequest) (*qrdbtransport.GetRebuildProgressResponse, error) {
+	if v.getRebuildProgressFn != nil {
+		return v.getRebuildProgressFn(ctx, req)
+	}
 	return &qrdbtransport.GetRebuildProgressResponse{}, nil
 }
 
-func (v *vecTransport) GetIndexStats(_ context.Context, _ *qrdbtransport.GetIndexStatsRequest) (*qrdbtransport.GetIndexStatsResponse, error) {
+func (v *vecTransport) GetIndexStats(ctx context.Context, req *qrdbtransport.GetIndexStatsRequest) (*qrdbtransport.GetIndexStatsResponse, error) {
+	if v.getIndexStatsFn != nil {
+		return v.getIndexStatsFn(ctx, req)
+	}
 	return &qrdbtransport.GetIndexStatsResponse{}, nil
 }
 

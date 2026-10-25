@@ -1492,6 +1492,13 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	}
 	scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 
+	// Node-backed searches read qrdb's index, so the rebuild and its new
+	// settings must act on that index; rebuilding the local one would
+	// report success while searches kept using the old index.
+	if vc, err := v.vectorClient(); err == nil {
+		return v.rebuildThroughQRDB(ctx, vc, scopedNamespace, req)
+	}
+
 	// Generate job ID
 	jobID := uuid.New().String()
 
@@ -1573,6 +1580,11 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildProgressRequest) (*GetRebuildProgressResponse, error) {
 	if err := v.validateGetRebuildProgressRequest(req); err != nil {
 		return nil, err
+	}
+
+	// A node-backed rebuild runs in qrdb, which owns its job.
+	if vc, err := v.vectorClient(); err == nil {
+		return v.rebuildProgressThroughQRDB(ctx, vc, req)
 	}
 
 	var job *RebuildJobState
@@ -1852,6 +1864,12 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 		}
 	}
 
+	// Node-backed searches read qrdb's index, so its statistics are the
+	// ones that describe what searches use.
+	if vc, err := v.vectorClient(); err == nil {
+		return v.indexStatsThroughQRDB(ctx, vc, scopedNamespace, req)
+	}
+
 	// qrdb checks the namespace inside its own index-stats verb, in the
 	// caller's tenant, so no separate metadata read (and its
 	// vector:namespace_info permission) is needed for the dimension.
@@ -1930,6 +1948,94 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 			CacheHitRate:        0.0,
 		},
 		Timestamp: time.Now().UnixNano(),
+	}, nil
+}
+
+// rebuildThroughQRDB rebuilds the node's index for the namespace, the index
+// node-backed searches read, with the request's index settings.
+func (v *vectorService) rebuildThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, scopedNamespace string, req *RebuildIndexRequest) (*RebuildIndexResponse, error) {
+	resp, err := vc.RebuildIndex(ctx, &qrdbtransport.RebuildIndexRequest{
+		Namespace:   scopedNamespace,
+		IndexConfig: req.IndexConfig,
+		Async:       req.Async,
+		ShardID:     v.resolveShardID(req.ShardID),
+	})
+	if err != nil {
+		return nil, v.qrdbError("vector.RebuildIndex", "rebuild_index", err)
+	}
+	return &RebuildIndexResponse{
+		JobID:                  resp.JobID,
+		Status:                 resp.Status,
+		VectorsProcessed:       resp.VectorsProcessed,
+		TotalVectors:           resp.TotalVectors,
+		PercentComplete:        resp.PercentComplete,
+		EstimatedTimeRemaining: resp.EstimatedTimeRemaining,
+		Timestamp:              resp.Timestamp,
+		Success:                resp.Success,
+	}, nil
+}
+
+// rebuildProgressThroughQRDB reports the progress of a rebuild the node runs.
+func (v *vectorService) rebuildProgressThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, req *GetRebuildProgressRequest) (*GetRebuildProgressResponse, error) {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var scopedNamespace string
+	if req.Namespace != "" {
+		scopedNamespace = vectorTenantScopedNamespace(tenantID, req.Namespace)
+	}
+	resp, err := vc.GetRebuildProgress(ctx, &qrdbtransport.GetRebuildProgressRequest{
+		JobID:     req.JobID,
+		Namespace: scopedNamespace,
+	})
+	if err != nil {
+		return nil, v.qrdbError("vector.GetRebuildProgress", "get_rebuild_progress", err)
+	}
+	return &GetRebuildProgressResponse{
+		JobID:                    resp.JobID,
+		Namespace:                vectorTenantStripNamespace(tenantID, resp.Namespace),
+		Status:                   resp.Status,
+		VectorsProcessed:         resp.VectorsProcessed,
+		TotalVectors:             resp.TotalVectors,
+		PercentComplete:          resp.PercentComplete,
+		ElapsedTimeMs:            resp.ElapsedTimeMs,
+		EstimatedTimeRemainingMs: resp.EstimatedTimeRemainingMs,
+		StartedAt:                resp.StartedAt,
+		CompletedAt:              resp.CompletedAt,
+		Error:                    resp.Error,
+	}, nil
+}
+
+// indexStatsThroughQRDB reports the statistics of the node's index for the
+// namespace, the index node-backed searches read.
+func (v *vectorService) indexStatsThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, scopedNamespace string, req *GetIndexStatsRequest) (*GetIndexStatsResponse, error) {
+	resp, err := vc.GetIndexStats(ctx, &qrdbtransport.GetIndexStatsRequest{
+		Namespace: scopedNamespace,
+		ShardID:   v.resolveShardID(req.ShardID),
+	})
+	if err != nil {
+		return nil, v.qrdbError("vector.GetIndexStats", "get_index_stats", err)
+	}
+	indexConfig := resp.IndexConfig
+	if indexConfig == nil {
+		indexConfig = make(map[string]string)
+	}
+	var performance *IndexPerformanceMetrics
+	if resp.SearchPerformance != nil {
+		converted := IndexPerformanceMetrics(*resp.SearchPerformance)
+		performance = &converted
+	}
+	return &GetIndexStatsResponse{
+		Namespace:         req.Namespace,
+		IndexType:         resp.IndexType,
+		VectorCount:       resp.VectorCount,
+		Dimension:         resp.Dimension,
+		IndexSizeBytes:    resp.IndexSizeBytes,
+		MemoryUsageBytes:  resp.MemoryUsageBytes,
+		IndexConfig:       indexConfig,
+		SearchPerformance: performance,
+		Timestamp:         resp.Timestamp,
 	}, nil
 }
 
