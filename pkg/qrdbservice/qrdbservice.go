@@ -92,9 +92,10 @@ var grantNames = []string{
 	// The CLI's embedded client acting as the system (cmd/quicbaas client.go
 	// ServicePrincipalIdentity): its Security() barrier, ceremony,
 	// credential and factor verbs. tenant_barrier:* is tenant-only in
-	// go-qrdb and refused to the system tenant, so it is not granted. The quorum, share-claim, enable-encryption and tenant
-	// init/unseal/status verbs are identity:gated in go-qrdb and need no
-	// grant; init-shamir is refused by the SDK before it is sent.
+	// go-qrdb and refused to the system tenant, so it is not granted. The
+	// quorum, share-claim, enable-encryption and tenant init/unseal/status
+	// verbs are identity:gated in go-qrdb and need no grant; init-shamir is
+	// refused by the SDK before it is sent.
 	"seal:status",                  // BarrierClient.BarrierStatus: barrier status
 	"seal:bootstrap",               // BarrierClient.BarrierInitialize: barrier init
 	"seal:unseal",                  // BarrierClient.BarrierUnseal: barrier unseal
