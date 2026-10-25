@@ -135,6 +135,9 @@ func (id EmbeddedIdentity) authMiddleware() (*qrdbsdk.AuthMiddleware, error) {
 // authorization would otherwise never see the delegation's grants. The
 // service principal authorizes nothing here: its calls are not delegated.
 func (id EmbeddedIdentity) authorize(ctx context.Context, perms ...qrdbsdk.Permission) error {
+	if id.delegator == nil {
+		return nil
+	}
 	mw, err := id.authMiddleware()
 	if err != nil {
 		return err
