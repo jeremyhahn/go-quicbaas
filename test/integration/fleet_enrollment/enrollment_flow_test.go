@@ -107,10 +107,14 @@ func (f *enrollmentFixture) registerRaw(t *testing.T, cert *x509.Certificate, ba
 func (f *enrollmentFixture) authorizedHeartbeat(t *testing.T) http.Handler {
 	t.Helper()
 
+	roles := &enrolledRoles{records: f.identity, tenant: enrollTenant}
 	authMiddleware := qrdbmiddleware.New(
-		qrdbrbac.New(&enrolledRoles{records: f.identity, tenant: enrollTenant}),
+		qrdbrbac.New(roles),
 		qrdbmiddleware.WithAuthenticator(qrdbauth.NewMTLSAuthenticator()),
 		qrdbmiddleware.WithUserService(&enrolledUsers{records: f.identity}),
+		// go-qrdb decides tenant ownership against the role records and
+		// refuses every authenticated request without this resolver.
+		qrdbmiddleware.WithRoleResolver(roles),
 	)
 
 	routes := qrdbmiddleware.NewRESTRouteRegistry()
@@ -236,7 +240,7 @@ func (f *enrollmentFixture) dispatchQuery(t *testing.T, tenantID, backend string
 // landed in another tenant's namespace.
 func TestE2E_AgentEnrollment_RegisterHeartbeatDispatch(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	// 1. Enroll.
 	enrolled := f.register(t, cert)
@@ -297,7 +301,7 @@ func TestE2E_AgentEnrollment_RegisterHeartbeatDispatch(t *testing.T) {
 // without an operator deleting anything.
 func TestE2E_AgentEnrollment_TransportVocabularyReachesNobody(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	enrolled := f.registerAdvertising(t, cert, []string{"acp"})
 
@@ -340,7 +344,7 @@ func TestE2E_AgentEnrollment_TransportVocabularyReachesNobody(t *testing.T) {
 // because dispatch does not wait for a heartbeat.
 func TestE2E_AgentEnrollment_RestartThenReRegisterRefreshesTheRecord(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	first := f.registerAdvertising(t, cert, []string{"acp"})
 	for _, backend := range servedBackends {
@@ -388,11 +392,11 @@ func TestE2E_AgentEnrollment_RestartThenReRegisterRefreshesTheRecord(t *testing.
 func TestE2E_AgentEnrollment_ReRegisteringUnderAnotherPrincipalIsRefused(t *testing.T) {
 	f := newEnrollmentFixture(t)
 
-	owner := agentCertificate(t, enrollTenant, enrollAgent)
+	owner := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	enrolled := f.register(t, owner)
 
 	// A CommonName that sanitises to the same agent id as the owner's.
-	intruderCert := agentCertificate(t, enrollTenant, strings.ReplaceAll(enrollAgent, "-", " "))
+	intruderCert := f.issuedCertificate(t, enrollTenant, strings.ReplaceAll(enrollAgent, "-", " "))
 	require.Equal(t, enrolled.AgentID, iam.FleetNodeAppName(enrollTenant, intruderCert.Subject.CommonName),
 		"the scenario only means anything if the two subjects collide on one agent id")
 
@@ -408,13 +412,29 @@ func TestE2E_AgentEnrollment_ReRegisteringUnderAnotherPrincipalIsRefused(t *test
 	require.Empty(t, f.dispatchQuery(t, enrollTenant, "ollama"))
 }
 
+// TestE2E_AgentEnrollment_UnrecordedCertificateIsRefused: a certificate that
+// is well formed for the tenant but that the fleet issuer never recorded does
+// not enroll, and leaves no agent behind.
+func TestE2E_AgentEnrollment_UnrecordedCertificateIsRefused(t *testing.T) {
+	f := newEnrollmentFixture(t)
+	cert := agentCertificate(t, enrollTenant, enrollAgent)
+
+	w := f.registerRaw(t, cert, servedBackends)
+	require.Equal(t, http.StatusForbidden, w.Code, "register body: %s", w.Body.String())
+	require.Contains(t, w.Body.String(), "certificate_not_recorded")
+
+	count, agents := f.listAgents(t, enrollTenant)
+	require.Zero(t, count, "a refused enrollment must create no agent")
+	require.Empty(t, agents, "a refused enrollment must create no agent")
+}
+
 // TestE2E_AgentEnrollment_HeartbeatWithoutEnrollmentIsRefused is the control:
 // the same heartbeat, from the same certificate, with no enrollment behind it.
 // It reproduces the live 403 exactly, which is what makes the passing case
 // above evidence rather than assertion.
 func TestE2E_AgentEnrollment_HeartbeatWithoutEnrollmentIsRefused(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	w := f.heartbeat(t, cert, iam.FleetNodeAppName(enrollTenant, enrollAgent), "enrollment-bearer")
 	require.Equal(t, http.StatusForbidden, w.Code)
@@ -426,7 +446,7 @@ func TestE2E_AgentEnrollment_HeartbeatWithoutEnrollmentIsRefused(t *testing.T) {
 // stays exactly as visible afterwards.
 func TestE2E_AgentEnrollment_ReRegistrationConverges(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	first := f.register(t, cert)
 	second := f.register(t, cert)

@@ -303,7 +303,12 @@ func TestSelfRegistration_Enabled_RegistrantBecomesTenantAdmin(t *testing.T) {
 		}
 	})
 
-	t.Run("the passkey signs the registrant in", func(t *testing.T) {
+	// The registrant's tenant is not the system tenant, so on this release the
+	// verified passkey login is refused with 412 tenant_login_refused until
+	// go-quicbaas #1816 re-pins go-qrdb (v0.54.0-alpha). The ceremony still
+	// verifies the passkey first: begin must succeed and the refusal must be
+	// the typed one, not the uniform login rejection.
+	t.Run("the passkey login is refused for the registrant's tenant until #1816", func(t *testing.T) {
 		status, body := d.do(t, http.MethodPost, loginBeginPath, "", map[string]string{
 			"type":      "fido2",
 			"hint":      alpha.email,
@@ -331,17 +336,14 @@ func TestSelfRegistration_Enabled_RegistrantBecomesTenantAdmin(t *testing.T) {
 				"credential_id": credentialID,
 			},
 		})
-		require.Equalf(t, http.StatusOK, status, "login/finish: %s", body)
-		var finish struct {
-			Bearer   string `json:"bearer"`
-			Identity *struct {
-				TenantID string `json:"tenant_id"`
-			} `json:"identity"`
+		require.Equalf(t, http.StatusPreconditionFailed, status, "login/finish: %s", body)
+		var refusal struct {
+			Error  string `json:"error"`
+			Bearer string `json:"bearer"`
 		}
-		require.NoError(t, json.Unmarshal(body, &finish))
-		require.NotEmpty(t, finish.Bearer, "login must mint a bearer")
-		require.NotNil(t, finish.Identity, "login must resolve an identity")
-		assert.Equal(t, alpha.finish.TenantID, finish.Identity.TenantID,
-			"the passkey must sign the registrant into their own tenant")
+		require.NoError(t, json.Unmarshal(body, &refusal))
+		assert.Equal(t, "tenant_login_refused", refusal.Error,
+			"a non-system tenant login must carry the typed refusal (#1816)")
+		assert.Empty(t, refusal.Bearer, "a refused login must not mint a bearer")
 	})
 }

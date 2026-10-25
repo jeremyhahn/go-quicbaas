@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
@@ -393,7 +394,7 @@ func skipIfProtocolUnavailable(t *testing.T, protocol string, endpoint string) {
 
 		tlsCfg, err := helpers.IntegrationTLSConfig()
 		require.NoError(t, err, "load integration TLS config")
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
 		if err != nil {
 			require.NoError(t, err, "%s service must be available at %s", protocol, endpoint)
 		}
@@ -448,11 +449,21 @@ type RESTClient struct {
 }
 
 // NewRESTClient creates a new REST client.
-func NewRESTClient(baseURL string) *RESTClient {
+func NewRESTClient(t *testing.T, baseURL string) *RESTClient {
+	t.Helper()
 	return &RESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantHTTPClient(t, 30*time.Second),
 	}
+}
+
+// asTenantPrincipal is the option every kms gRPC client dials with. KMS
+// verbs are tenant data-plane verbs, so the calls carry the tenant
+// principal's bearer (helpers.TenantGRPCCredentials), not only the system
+// admin's client certificate.
+func asTenantPrincipal(t *testing.T) grpcclient.ClientOption {
+	t.Helper()
+	return grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 }
 
 // RESTKeyAttributesRequest matches the REST API expected format.

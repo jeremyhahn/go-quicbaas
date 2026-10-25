@@ -32,7 +32,8 @@ import (
 // newClient returns a fresh embedded SDK client.
 func newClient(t *testing.T) quicbaas.Client {
 	t.Helper()
-	c, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(testService))
+	c, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(testService),
+		quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(testServer)))
 	require.NoError(t, err, "create embedded client")
 	t.Cleanup(func() { _ = c.Close() })
 	return c

@@ -171,7 +171,7 @@ services:
       secrets:
         - gomodauth
     working_dir: /workspace/go-quicbaas
-    command: ["go", "run", "./test/integration/certfixture/cmd", "/etc/quicbaas/certs"]
+    command: ["go", "run", "-tags", "codec_json", "./test/integration/certfixture/cmd", "/etc/quicbaas/certs"]
     volumes:
       - quicbaas-certs:/etc/quicbaas/certs
     networks:

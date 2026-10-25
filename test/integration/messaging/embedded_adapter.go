@@ -59,7 +59,7 @@ func (a *embeddedAdapter) Setup(ctx context.Context) error {
 		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
-	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc), helpers.EmbeddedSystemIdentity())
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}

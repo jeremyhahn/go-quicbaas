@@ -29,6 +29,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Topology declares the identities a harness needs certificates for.
@@ -73,12 +77,19 @@ func (t *Topology) Validate() error {
 	if len(t.Nodes) == 0 {
 		return ErrNoTopologyNodes
 	}
+	hasTrustDomain := strings.TrimSpace(t.SPIFFETrustDomain) != ""
+	ids := spiffeNames{}
 	for _, node := range t.Nodes {
 		if strings.TrimSpace(node.File) == "" {
 			return ErrNoFileStem
 		}
 		if strings.TrimSpace(node.CommonName) == "" {
 			return ErrNoCommonName
+		}
+		if hasTrustDomain {
+			if err := ids.claim(tenantctx.SystemTenantID, qrdbsdk.SpiffeKindService, node.CommonName); err != nil {
+				return err
+			}
 		}
 	}
 	for _, client := range t.Clients {
@@ -88,8 +99,14 @@ func (t *Topology) Validate() error {
 		if strings.TrimSpace(client.CommonName) == "" {
 			return ErrNoCommonName
 		}
-		if client.TenantID != "" && strings.TrimSpace(t.SPIFFETrustDomain) == "" {
+		if client.TenantID == "" {
+			continue
+		}
+		if !hasTrustDomain {
 			return ErrNoTrustDomain
+		}
+		if err := ids.claim(client.TenantID, qrdbsdk.SpiffeKindUser, client.CommonName); err != nil {
+			return err
 		}
 	}
 	return nil

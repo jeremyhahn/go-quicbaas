@@ -212,7 +212,10 @@ func TestGRPCKeyGeneration(t *testing.T) {
     defer cancel()
 
     endpoints := getGRPCEndpoints()
-    client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithInsecure())
+    tlsCfg, err := helpers.IntegrationTLSConfig()
+    require.NoError(t, err)
+    // KMS verbs are tenant data-plane verbs: act as the tenant principal.
+    client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
     require.NoError(t, err)
     defer client.Close()
 
@@ -230,7 +233,7 @@ func TestRESTKeyGeneration(t *testing.T) {
     defer cancel()
 
     endpoints := getRESTEndpoints()
-    client := NewRESTClient(endpoints[0])
+    client := NewRESTClient(t, endpoints[0]) // carries the tenant principal's bearer
 
     // Test implementation...
 }
@@ -314,7 +317,9 @@ ok      github.com/jeremyhahn/go-quicbaas/test/integration/kms    45.678s
    defer cancel()
 
    endpoints := getGRPCEndpoints()
-   client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithInsecure())
+   tlsCfg, err := helpers.IntegrationTLSConfig()
+   require.NoError(t, err)
+   client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
    require.NoError(t, err)
    defer client.Close()
 

@@ -49,7 +49,7 @@ const (
 	mappingFile = "pkg/api/grpc/authz_mapping.go"
 	mappingVar  = "grpcMethodPermissions"
 	protoDir    = "api/proto"
-	authzImport = `import "pkg/api/grpc/proto/qrdbv1/authz.proto";`
+	authzImport = `import "qrdb/v1/permission.proto";`
 )
 
 // ParseError reports a failure to extract the permission table from the
@@ -185,7 +185,7 @@ var (
 
 // annotateFile rewrites one .proto file in place, expanding every mapped
 // single-line rpc into a block carrying the permission option, and adds the
-// qrdb authz.proto import when at least one RPC was annotated. Already
+// qrdb permission.proto import when at least one RPC was annotated. Already
 // annotated files (import present) are left untouched so the tool is
 // idempotent. It returns the number of RPCs annotated.
 func annotateFile(path string, perms map[string]string, annotated map[string]bool) (int, error) {
@@ -194,7 +194,7 @@ func annotateFile(path string, perms map[string]string, annotated map[string]boo
 		return 0, err
 	}
 	content := string(data)
-	if strings.Contains(content, "qrdbv1/authz.proto") {
+	if strings.Contains(content, "qrdb/v1/permission.proto") {
 		// Record which of this file's RPCs the table covers so the unmatched
 		// report stays accurate on re-runs, then leave the file untouched.
 		markAnnotated(content, perms, annotated)

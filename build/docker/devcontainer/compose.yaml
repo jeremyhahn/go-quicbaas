@@ -23,6 +23,8 @@ x-build: &build
     GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
     GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
     GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
+    # The UTC date, so the apt upgrade layer rebuilds daily (Dockerfile).
+    APT_UPGRADE_DATE: ${APT_UPGRADE_DATE:-}
   secrets:
     - gomodauth
 
@@ -58,6 +60,7 @@ services:
         GO_IMAGE_DIGEST: ${GO_IMAGE_DIGEST:-}
         GO_BUILD_PROXY: ${GO_BUILD_PROXY:-}
         GO_BUILD_PRIVATE: ${GO_BUILD_PRIVATE:-}
+        APT_UPGRADE_DATE: ${APT_UPGRADE_DATE:-}
         # The Makefile's INTEGRATION_BUILD_TAGS, the tag set the test driver is
         # built with, so the nodes and the driver agree.
         BUILD_TAGS: ${INTEGRATION_BUILD_TAGS:-}

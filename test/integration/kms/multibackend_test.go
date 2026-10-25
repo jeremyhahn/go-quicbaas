@@ -48,7 +48,7 @@ func TestRESTBackendStatus(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewMultiBackendRESTClient(endpoints[0])
+	client := NewMultiBackendRESTClient(t, endpoints[0])
 
 	t.Run("get backend status", func(t *testing.T) {
 		resp, err := client.BackendStatus(ctx)
@@ -95,7 +95,7 @@ func TestRESTBackendTest(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewMultiBackendRESTClient(endpoints[0])
+	client := NewMultiBackendRESTClient(t, endpoints[0])
 
 	t.Run("run backend test", func(t *testing.T) {
 		resp, err := client.BackendTest(ctx)
@@ -138,7 +138,7 @@ func TestGRPCBackendOperations(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
 	require.NoError(t, err, "must be able to connect to gRPC server in integration tests")
 	defer client.Close()
 
@@ -181,8 +181,8 @@ func TestMultiBackendKeyRouting(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewMultiBackendRESTClient(endpoints[0])
-	keyClient := NewRESTClient(endpoints[0])
+	client := NewMultiBackendRESTClient(t, endpoints[0])
+	keyClient := NewRESTClient(t, endpoints[0])
 
 	// Check if backend status is available
 	statusResp, err := client.BackendStatus(ctx)
@@ -257,8 +257,8 @@ func TestBackendFailoverBehavior(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewMultiBackendRESTClient(endpoints[0])
-	keyClient := NewRESTClient(endpoints[0])
+	client := NewMultiBackendRESTClient(t, endpoints[0])
+	keyClient := NewRESTClient(t, endpoints[0])
 
 	// Check backend status first
 	statusResp, err := client.BackendStatus(ctx)
@@ -343,8 +343,8 @@ func TestBackendCapabilities(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewMultiBackendRESTClient(endpoints[0])
-	keyClient := NewRESTClient(endpoints[0])
+	client := NewMultiBackendRESTClient(t, endpoints[0])
+	keyClient := NewRESTClient(t, endpoints[0])
 
 	statusResp, err := client.BackendStatus(ctx)
 	require.NoError(t, err, "backend status must be available in integration tests")
@@ -416,10 +416,11 @@ type MultiBackendRESTClient struct {
 }
 
 // NewMultiBackendRESTClient creates a new multi-backend REST client.
-func NewMultiBackendRESTClient(baseURL string) *MultiBackendRESTClient {
+func NewMultiBackendRESTClient(t *testing.T, baseURL string) *MultiBackendRESTClient {
+	t.Helper()
 	return &MultiBackendRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantHTTPClient(t, 30*time.Second),
 	}
 }
 
@@ -544,7 +545,7 @@ func TestRESTDEKOperations(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewDEKRESTClient(endpoints[0])
+	client := NewDEKRESTClient(t, endpoints[0])
 
 	t.Run("create and get DEK", func(t *testing.T) {
 		// DEK paths are normalized without leading/trailing slashes
@@ -668,10 +669,11 @@ type DEKRESTClient struct {
 }
 
 // NewDEKRESTClient creates a new DEK REST client.
-func NewDEKRESTClient(baseURL string) *DEKRESTClient {
+func NewDEKRESTClient(t *testing.T, baseURL string) *DEKRESTClient {
+	t.Helper()
 	return &DEKRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantHTTPClient(t, 30*time.Second),
 	}
 }
 

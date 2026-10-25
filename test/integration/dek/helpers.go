@@ -130,7 +130,7 @@ func (c *embeddedProtocolClient) Setup(t *testing.T, ctx context.Context) error 
 	}
 
 	// Use "embedded" as a placeholder address since the embedded transport ignores it
-	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc), helpers.EmbeddedSystemIdentity())
 	if err != nil {
 		return fmt.Errorf("failed to create embedded client: %w", err)
 	}

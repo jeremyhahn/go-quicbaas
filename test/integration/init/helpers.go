@@ -218,7 +218,10 @@ func allocPortBundle(t *testing.T, transport string, dataDir string) PortBundle 
 	case "grpc":
 		bundle.GRPC = netport.MustReserveOne(t)
 	case "quic":
-		bundle.QUIC = netport.MustReserveOne(t)
+		// quicbaasd has no QUIC listener of its own: go-qrdb's unified REST
+		// server serves HTTP/3 on the REST port over UDP
+		// (docs/multiprotocol-api/architecture.md, QUIC).
+		bundle.QUIC = bundle.REST
 	case "mcp":
 		bundle.MCP = netport.MustReserveOne(t)
 	default:
@@ -461,7 +464,7 @@ func splitLines(data []byte) []string {
 const matrixPassphrase = "init-matrix-passphrase-2026"
 
 // matrixTrustDomain is the SPIFFE trust domain every matrix init runs under.
-// It is mandatory: the CA stamps spiffe://<trust-domain>/tenant/system/user/admin
+// It is mandatory: the CA stamps spiffe://system/user/admin
 // onto the admin certificate and login resolves the tenant from that SAN, so
 // init fails closed without it.
 const matrixTrustDomain = "quicbaas.integration.test"
@@ -641,8 +644,9 @@ func startDaemonWithConfig(
 
 	// Build the env-var override set that turns each transport on/off
 	// at the listener layer. The CLI flag set covers REST + gRPC + unix;
-	// QUIC and MCP have no CLI flags so we drive them through the
-	// canonical env-var contract (pkg/config/loader.go applyEnvironmentOverrides).
+	// MCP has no CLI flag so we drive it through the canonical env-var
+	// contract (pkg/config/loader.go applyEnvironmentOverrides). QUIC needs
+	// nothing: HTTP/3 rides the REST port.
 	env := []string{
 		// HOME isolates xkms key material under the data dir.
 		"HOME=" + dataDir,
@@ -658,14 +662,6 @@ func startDaemonWithConfig(
 			"QUICBAAS_SEAL_STRATEGY=passphrase",
 			"QUICBAAS_SEAL_PASSPHRASE="+matrixPassphrase,
 		)
-	}
-	if transport == "quic" {
-		env = append(env,
-			"QUICBAAS_SERVER_QUIC_ENABLED=true",
-			fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
-		)
-	} else {
-		env = append(env, "QUICBAAS_SERVER_QUIC_ENABLED=false")
 	}
 	if transport == "mcp" {
 		env = append(env,

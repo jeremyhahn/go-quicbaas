@@ -73,17 +73,21 @@ func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
 		return endpoints[0]
 	}
 	timeout := quicbaas.WithTimeout(30 * time.Second)
+	// REST binds a tenant only from a bearer, so the REST client logs in with
+	// the admin certificate the other transports present.
+	restEndpoint := first(helpers.GetRESTEndpoints(), "REST")
+	restBearer := helpers.AuthPIV(t, restEndpoint)
 	return map[string]func() (quicbaas.Client, error){
 		"REST": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetRESTEndpoints(), "REST"), quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(restEndpoint, quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), quicbaas.WithAuthToken(restBearer), timeout)
 		},
 		"gRPC": func() (quicbaas.Client, error) {
 			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
-			quicCfg := tlsCfg.Clone()
-			quicCfg.NextProtos = []string{"quicbaas-quic"}
-			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), timeout)
+			// The QUIC transport speaks REST over HTTP/3 and defaults the
+			// ALPN to "h3"; the retired "quicbaas-quic" ALPN never handshakes.
+			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(tlsCfg), timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
 			socket := helpers.GetUnixSocketPath()

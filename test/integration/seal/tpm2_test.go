@@ -35,6 +35,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"testing"
@@ -115,11 +116,11 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 		t.Fatalf("swtpm provision: NewStorageFactory: %v", err)
 	}
 
-	ekAuth, err := xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	ekAuth, err := xkmstypes.NewLiteralSecretValue(t.Context(), []byte(tpmstore.DEFAULT_PASSWORD))
 	if err != nil {
 		t.Fatalf("swtpm provision: seal EK hierarchy auth: %v", err)
 	}
-	srkAuth, err := xkmstypes.NewLiteralSecretValue([]byte(tpmstore.DEFAULT_PASSWORD))
+	srkAuth, err := xkmstypes.NewLiteralSecretValue(t.Context(), []byte(tpmstore.DEFAULT_PASSWORD))
 	if err != nil {
 		t.Fatalf("swtpm provision: seal SRK hierarchy auth: %v", err)
 	}
@@ -153,7 +154,7 @@ func provisionSwtpm(t *testing.T, host string, port int) {
 	}
 	params := &pkgtpm2.Params{
 		Config:    cfg,
-		BlobStore: sf.BlobStore(),
+		CertStore: tpmstore.NewBlobCertStore(slog.Default(), sf.KeyBackend()),
 		Backend:   sf.KeyBackend(),
 	}
 

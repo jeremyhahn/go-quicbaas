@@ -18,7 +18,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -247,30 +246,7 @@ func writeMCPSessionToken(bearer string, expiresAt time.Time) error {
 		}
 		path = filepath.Join(home, ".quicbaas", "token")
 	}
-	return writeSessionToken(path, bearer, expiresAt)
-}
-
-// writeSessionToken writes bearer at path in the session-envelope format the
-// CLI's token manager reads.
-func writeSessionToken(path, bearer string, expiresAt time.Time) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	payload := struct {
-		AccessToken  string    `json:"access_token"`
-		RefreshToken string    `json:"refresh_token"`
-		ExpiresAt    time.Time `json:"expires_at"`
-		TokenType    string    `json:"token_type"`
-	}{
-		AccessToken: bearer,
-		ExpiresAt:   expiresAt,
-		TokenType:   "Bearer",
-	}
-	data, err := json.Marshal(&payload)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o600)
+	return helpers.WriteCLISession(path, bearer, expiresAt)
 }
 
 // IsSkipped returns true if the command should be skipped for this transport.

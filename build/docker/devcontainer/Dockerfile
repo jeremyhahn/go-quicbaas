@@ -44,7 +44,15 @@ ENV GOTOOLCHAIN=local \
     GOWORK=off \
     PATH=/opt/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+# APT_UPGRADE_DATE: the current UTC date, set by the Makefile. The upgrade RUN
+# line below never changes otherwise, so BuildKit would reuse its cached layer
+# and freeze the packages of the day it was built: `trivy image` then fails on
+# advisories Debian has already fixed (#1389, libbrotli1; #1501 is the same
+# fault in the merge-result image). Naming the date rebuilds it once a day.
+ARG APT_UPGRADE_DATE
+
 RUN set -eux; \
+    echo "apt upgrade for ${APT_UPGRADE_DATE}"; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
     apt-get upgrade -y; \

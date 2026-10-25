@@ -18,16 +18,22 @@ package iam_test
 
 import (
 	"bytes"
+	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // AdminAssignmentRequest represents a request to create an admin assignment.
@@ -97,7 +103,6 @@ type AdminCheckResponse struct {
 
 // ImpersonationRequest represents a request to start impersonation.
 type ImpersonationRequest struct {
-	AdminUserID  string `json:"admin_user_id"`
 	TargetUserID string `json:"target_user_id"`
 	TenantID     string `json:"tenant_id"`
 	Reason       string `json:"reason"`
@@ -131,8 +136,28 @@ type ListImpersonationsResponse struct {
 }
 
 // generateUniqueUserID generates a unique user ID for testing.
+// setupAdminCluster is setupTestCluster acting as the system admin. Admin
+// assignments and impersonation are control-plane state the system admin
+// holds, and a caller with no bearer has no tenant to read or write them in.
+func setupAdminCluster(t *testing.T) *testCluster {
+	t.Helper()
+	cluster := setupTestCluster(t)
+	source := func(ctx context.Context) (string, error) {
+		return helpers.AuthSystemAdminContext(ctx, cluster.httpEndpoint)
+	}
+	transport, err := dataplane.NewBearerTransport(source, cluster.client.Transport)
+	require.NoError(t, err, "system admin HTTP transport")
+	cluster.client.Transport = transport
+	return cluster
+}
+
 func generateUniqueUserID() string {
-	return fmt.Sprintf("user-%s", uuid.New().String()[:8])
+	// Admin user IDs are qrdb uint64 user IDs carried as decimal strings
+	// (json:"user_id,string"); a non-numeric ID fails to decode and the
+	// handler answers 400. The shift keeps the ID within int64 and the OR
+	// keeps it non-zero, which the handler requires.
+	id := uuid.New()
+	return strconv.FormatUint(binary.BigEndian.Uint64(id[:8])>>1|1, 10)
 }
 
 // createTestAssignment is a helper to create a test admin assignment.
@@ -175,13 +200,123 @@ func deleteTestAssignment(t *testing.T, cluster *testCluster, assignmentID strin
 	resp.Body.Close()
 }
 
+// impersonationFixture is a provisioned tenant whose admin is logged in, and a
+// real user in that tenant. The ids are the numeric account ids the server
+// keys admin assignments and impersonation sessions by.
+type impersonationFixture struct {
+	tenantID     string
+	adminUserID  string
+	targetUserID string
+
+	// admin sends requests as the tenant admin. StartImpersonation takes the
+	// acting admin from the caller's bearer, never from the request body.
+	admin *http.Client
+}
+
+// setupImpersonationFixture provisions a tenant with the system admin, reads
+// the tenant admin's numeric user id from its bearer, and creates a target
+// user in the same tenant. The tenant is deleted when the test ends.
+func setupImpersonationFixture(t *testing.T, cluster *testCluster) *impersonationFixture {
+	t.Helper()
+
+	systemBearer, err := helpers.AuthSystemAdminContext(t.Context(), cluster.httpEndpoint)
+	require.NoError(t, err, "system admin login")
+
+	tenantID := "impersonation-" + uuid.New().String()[:8]
+	tenant, err := helpers.ProvisionTenant(t.Context(), cluster.httpEndpoint, tenantID, systemBearer)
+	require.NoError(t, err, "provision tenant")
+	t.Cleanup(func() {
+		assert.NoError(t, helpers.DeleteTenant(context.Background(), cluster.httpEndpoint, tenantID, systemBearer),
+			"delete tenant")
+	})
+
+	adminUserID, err := helpers.BearerUserID(tenant.AdminBearer)
+	require.NoError(t, err, "tenant admin user id")
+
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	admin := newIntegrationHTTPClient(tlsCfg)
+	admin.Transport, err = dataplane.NewBearerTransport(func(context.Context) (string, error) {
+		return tenant.AdminBearer, nil
+	}, admin.Transport)
+	require.NoError(t, err, "tenant admin HTTP transport")
+
+	fixture := &impersonationFixture{
+		tenantID:    tenantID,
+		adminUserID: strconv.FormatUint(adminUserID, 10),
+		admin:       admin,
+	}
+	fixture.targetUserID = fixture.createUser(t, cluster)
+	return fixture
+}
+
+// createUser creates a user in the fixture's tenant and returns its numeric id.
+func (f *impersonationFixture) createUser(t *testing.T, cluster *testCluster) string {
+	t.Helper()
+
+	name := "target-" + uuid.New().String()[:8]
+	body, err := json.Marshal(map[string]string{
+		"email":    name + "@test.local",
+		"username": name,
+		"name":     "Impersonation Target " + name,
+	})
+	require.NoError(t, err)
+
+	resp, err := f.admin.Post(
+		cluster.httpEndpoint+"/api/v1/tenants/"+f.tenantID+"/users",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created for target user")
+
+	var user struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&user))
+	require.NotEmpty(t, user.ID, "created user has no id")
+	return user.ID
+}
+
+// assign grants the fixture's admin an admin role scoped to its tenant, as the
+// system admin, and removes the assignment when the test ends.
+func (f *impersonationFixture) assign(t *testing.T, cluster *testCluster, role string, permissions ...string) {
+	t.Helper()
+
+	created := createTestAssignment(t, cluster, AdminAssignmentRequest{
+		UserID:      f.adminUserID,
+		AdminRole:   role,
+		TenantIDs:   []string{f.tenantID},
+		Permissions: permissions,
+		GrantedBy:   "system",
+	})
+	t.Cleanup(func() { deleteTestAssignment(t, cluster, created.ID) })
+}
+
+// startImpersonation posts req as the fixture's admin.
+func (f *impersonationFixture) startImpersonation(t *testing.T, cluster *testCluster, req ImpersonationRequest) *http.Response {
+	t.Helper()
+
+	body, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	resp, err := f.admin.Post(
+		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	require.NoError(t, err)
+	return resp
+}
+
 // ============================================================================
 // Assignment CRUD Tests
 // ============================================================================
 
 // TestAdmin_CreateAssignment_Success tests creating a valid admin assignment.
 func TestAdmin_CreateAssignment_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	userID := generateUniqueUserID()
@@ -244,7 +379,7 @@ func TestAdmin_CreateAssignment_Success(t *testing.T) {
 
 // TestAdmin_CreateAssignment_InvalidRole tests creating an assignment with invalid role.
 func TestAdmin_CreateAssignment_InvalidRole(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	userID := generateUniqueUserID()
@@ -277,7 +412,7 @@ func TestAdmin_CreateAssignment_InvalidRole(t *testing.T) {
 
 // TestAdmin_CreateAssignment_MissingUserID tests creating an assignment without user ID.
 func TestAdmin_CreateAssignment_MissingUserID(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	req := AdminAssignmentRequest{
@@ -302,7 +437,7 @@ func TestAdmin_CreateAssignment_MissingUserID(t *testing.T) {
 
 // TestAdmin_CreateAssignment_MissingGrantedBy tests creating an assignment without granted_by.
 func TestAdmin_CreateAssignment_MissingGrantedBy(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	req := AdminAssignmentRequest{
@@ -327,7 +462,7 @@ func TestAdmin_CreateAssignment_MissingGrantedBy(t *testing.T) {
 
 // TestAdmin_GetAssignment_Success tests retrieving an assignment by ID.
 func TestAdmin_GetAssignment_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment first
@@ -365,7 +500,7 @@ func TestAdmin_GetAssignment_Success(t *testing.T) {
 
 // TestAdmin_GetAssignment_NotFound tests retrieving a non-existent assignment.
 func TestAdmin_GetAssignment_NotFound(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	nonExistentID := uuid.New().String()
@@ -380,7 +515,7 @@ func TestAdmin_GetAssignment_NotFound(t *testing.T) {
 
 // TestAdmin_UpdateAssignment_Success tests updating an existing assignment.
 func TestAdmin_UpdateAssignment_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment first
@@ -435,7 +570,7 @@ func TestAdmin_UpdateAssignment_Success(t *testing.T) {
 
 // TestAdmin_UpdateAssignment_NotFound tests updating a non-existent assignment.
 func TestAdmin_UpdateAssignment_NotFound(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	nonExistentID := uuid.New().String()
@@ -465,7 +600,7 @@ func TestAdmin_UpdateAssignment_NotFound(t *testing.T) {
 
 // TestAdmin_DeleteAssignment_Success tests deleting an existing assignment.
 func TestAdmin_DeleteAssignment_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment first
@@ -503,7 +638,7 @@ func TestAdmin_DeleteAssignment_Success(t *testing.T) {
 
 // TestAdmin_DeleteAssignment_NotFound tests deleting a non-existent assignment.
 func TestAdmin_DeleteAssignment_NotFound(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	nonExistentID := uuid.New().String()
@@ -525,11 +660,12 @@ func TestAdmin_DeleteAssignment_NotFound(t *testing.T) {
 
 // TestAdmin_ListAssignments_Empty tests listing assignments when none exist.
 func TestAdmin_ListAssignments_Empty(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Use a unique filter to ensure empty results
-	uniqueFilter := uuid.New().String()
+	// A fresh qrdb user ID (uint64) that holds no assignment; a UUID is not a
+	// user ID and the handler answers it 400.
+	uniqueFilter := generateUniqueUserID()
 
 	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + uniqueFilter)
 	require.NoError(t, err)
@@ -548,7 +684,7 @@ func TestAdmin_ListAssignments_Empty(t *testing.T) {
 
 // TestAdmin_ListAssignments_WithFiltering tests listing assignments with various filters.
 func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create multiple assignments with different roles and tenants
@@ -674,7 +810,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 // TestAdmin_CheckPermission_Allowed tests checking a permission that is allowed.
 func TestAdmin_CheckPermission_Allowed(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment with specific permissions
@@ -720,7 +856,7 @@ func TestAdmin_CheckPermission_Allowed(t *testing.T) {
 
 // TestAdmin_CheckPermission_Denied tests checking a permission that is denied.
 func TestAdmin_CheckPermission_Denied(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create a read_only assignment (no user:create permission)
@@ -765,11 +901,11 @@ func TestAdmin_CheckPermission_Denied(t *testing.T) {
 
 // TestAdmin_CheckPermission_NoAssignment tests checking permission for user without assignment.
 func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Use a user ID that doesn't have any assignment
-	nonExistentUser := uuid.New().String()
+	nonExistentUser := generateUniqueUserID()
 
 	checkReq := AdminCheckRequest{
 		UserID:     nonExistentUser,
@@ -800,7 +936,7 @@ func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 
 // TestAdmin_CheckPermission_ExpiredAssignment tests permission check with expired assignment.
 func TestAdmin_CheckPermission_ExpiredAssignment(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment with past expiry
@@ -860,7 +996,7 @@ func TestAdmin_CheckPermission_ExpiredAssignment(t *testing.T) {
 
 // TestAdmin_CheckPermission_TenantScope tests tenant-scoped permission checking.
 func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create tenant-scoped admin
@@ -932,7 +1068,7 @@ func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
 
 // TestAdmin_CheckPermission_DeniedPermissions tests explicit permission denial.
 func TestAdmin_CheckPermission_DeniedPermissions(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create assignment with explicitly denied permissions
@@ -978,54 +1114,34 @@ func TestAdmin_CheckPermission_DeniedPermissions(t *testing.T) {
 
 // TestAdmin_StartImpersonation_Success tests starting impersonation with proper permissions.
 func TestAdmin_StartImpersonation_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create super admin with impersonation permission
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
+	// The tenant admin is granted impersonation in its tenant and starts the
+	// session itself: the server records the caller as the acting admin.
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "super_admin", "user:impersonate")
 
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
-
-	// Start impersonation
-	targetUserID := generateUniqueUserID()
-	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: targetUserID,
-		TenantID:     "test-tenant",
+	resp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+		TargetUserID: fixture.targetUserID,
+		TenantID:     fixture.tenantID,
 		Reason:       "Support ticket #12345 - user cannot access dashboard",
 		Duration:     "1h",
-	}
-
-	body, err := json.Marshal(impersonationReq)
-	require.NoError(t, err)
-
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
+	})
 	defer resp.Body.Close()
 
 	// Assert: Response status is 200 OK
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start")
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start")
 
 	var session ImpersonationSessionResponse
-	err = json.NewDecoder(resp.Body).Decode(&session)
+	err := json.NewDecoder(resp.Body).Decode(&session)
 	require.NoError(t, err)
 
 	// Assert: Session created with correct fields
 	assert.NotEmpty(t, session.ID, "Session ID should not be empty")
-	assert.Equal(t, adminUserID, session.AdminUserID, "AdminUserID should match")
-	assert.Equal(t, targetUserID, session.TargetUserID, "TargetUserID should match")
-	assert.Equal(t, "test-tenant", session.TenantID, "TenantID should match")
+	assert.Equal(t, fixture.adminUserID, session.AdminUserID, "AdminUserID should be the authenticated caller")
+	assert.Equal(t, fixture.targetUserID, session.TargetUserID, "TargetUserID should match")
+	assert.Equal(t, fixture.tenantID, session.TenantID, "TenantID should match")
 	assert.Equal(t, "Support ticket #12345 - user cannot access dashboard", session.Reason, "Reason should match")
 	assert.NotEmpty(t, session.StartedAt, "StartedAt should be set")
 	assert.NotEmpty(t, session.ExpiresAt, "ExpiresAt should be set")
@@ -1034,37 +1150,19 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 
 // TestAdmin_StartImpersonation_NotAllowed tests starting impersonation without permission.
 func TestAdmin_StartImpersonation_NotAllowed(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create admin without impersonation permission
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:    adminUserID,
-		AdminRole: "read_only", // No impersonation permission
-		GrantedBy: "system",
-	}
+	// The tenant admin holds only read_only, which has no impersonation
+	// permission, so a well-formed request against a real target is denied.
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "read_only")
 
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
-
-	// Attempt impersonation
-	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: generateUniqueUserID(),
-		TenantID:     "test-tenant",
+	resp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+		TargetUserID: fixture.targetUserID,
+		TenantID:     fixture.tenantID,
 		Reason:       "Unauthorized attempt",
-	}
-
-	body, err := json.Marshal(impersonationReq)
-	require.NoError(t, err)
-
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
+	})
 	defer resp.Body.Close()
 
 	// Assert: Response status is 403 Forbidden
@@ -1073,37 +1171,19 @@ func TestAdmin_StartImpersonation_NotAllowed(t *testing.T) {
 
 // TestAdmin_StartImpersonation_MissingReason tests starting impersonation without reason.
 func TestAdmin_StartImpersonation_MissingReason(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create super admin
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:    adminUserID,
-		AdminRole: "super_admin",
-		GrantedBy: "system",
-	}
+	// A real numeric target, so the 400 comes from the missing reason and not
+	// from an unparseable target id.
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "super_admin", "user:impersonate")
 
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
-
-	// Attempt impersonation without reason
-	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: generateUniqueUserID(),
-		TenantID:     "test-tenant",
+	resp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+		TargetUserID: fixture.targetUserID,
+		TenantID:     fixture.tenantID,
 		// Missing reason
-	}
-
-	body, err := json.Marshal(impersonationReq)
-	require.NoError(t, err)
-
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
+	})
 	defer resp.Body.Close()
 
 	// Assert: Response status is 400 Bad Request
@@ -1112,48 +1192,28 @@ func TestAdmin_StartImpersonation_MissingReason(t *testing.T) {
 
 // TestAdmin_EndImpersonation_Success tests ending an impersonation session.
 func TestAdmin_EndImpersonation_Success(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create super admin
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
-
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "super_admin", "user:impersonate")
 
 	// Start impersonation
-	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: generateUniqueUserID(),
-		TenantID:     "test-tenant",
+	startResp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+		TargetUserID: fixture.targetUserID,
+		TenantID:     fixture.tenantID,
 		Reason:       "Testing impersonation flow",
 		Duration:     "1h",
-	}
-
-	body, err := json.Marshal(impersonationReq)
-	require.NoError(t, err)
-
-	startResp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
+	})
 	defer startResp.Body.Close()
 
 	require.Equal(t, http.StatusOK, startResp.StatusCode)
 
 	var session ImpersonationSessionResponse
-	err = json.NewDecoder(startResp.Body).Decode(&session)
+	err := json.NewDecoder(startResp.Body).Decode(&session)
 	require.NoError(t, err)
 
-	// End impersonation
+	// End impersonation as the admin who started it
 	endReq, err := http.NewRequest(
 		http.MethodPost,
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/"+session.ID+"/end",
@@ -1161,7 +1221,7 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	endResp, err := cluster.client.Do(endReq)
+	endResp, err := fixture.admin.Do(endReq)
 	require.NoError(t, err)
 	defer endResp.Body.Close()
 
@@ -1178,7 +1238,7 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 
 // TestAdmin_EndImpersonation_NotFound tests ending a non-existent impersonation session.
 func TestAdmin_EndImpersonation_NotFound(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	nonExistentID := uuid.New().String()
@@ -1200,53 +1260,32 @@ func TestAdmin_EndImpersonation_NotFound(t *testing.T) {
 
 // TestAdmin_ListActiveImpersonations tests listing active impersonation sessions.
 func TestAdmin_ListActiveImpersonations(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create super admin
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "super_admin", "user:impersonate")
 
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
-
-	// Start multiple impersonation sessions
+	// Start multiple impersonation sessions, each against its own real user
 	var sessionIDs []string
 	for i := 0; i < 3; i++ {
-		impersonationReq := ImpersonationRequest{
-			AdminUserID:  adminUserID,
-			TargetUserID: generateUniqueUserID(),
-			TenantID:     "test-tenant",
+		resp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+			TargetUserID: fixture.createUser(t, cluster),
+			TenantID:     fixture.tenantID,
 			Reason:       fmt.Sprintf("Testing session %d", i+1),
 			Duration:     "1h",
-		}
+		})
+		require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start %d", i+1)
 
-		body, err := json.Marshal(impersonationReq)
-		require.NoError(t, err)
-
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-			"application/json",
-			bytes.NewReader(body),
-		)
-		require.NoError(t, err)
-
-		if resp.StatusCode == http.StatusOK {
-			var session ImpersonationSessionResponse
-			err = json.NewDecoder(resp.Body).Decode(&session)
-			require.NoError(t, err)
-			sessionIDs = append(sessionIDs, session.ID)
-		}
+		var session ImpersonationSessionResponse
+		err := json.NewDecoder(resp.Body).Decode(&session)
 		resp.Body.Close()
+		require.NoError(t, err)
+		sessionIDs = append(sessionIDs, session.ID)
 	}
 
-	// List active impersonations
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?active=true")
+	// List active impersonations as the system admin
+	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation/?active=true")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1279,57 +1318,39 @@ func TestAdmin_ListActiveImpersonations(t *testing.T) {
 			nil,
 		)
 		require.NoError(t, err)
-		resp, err := cluster.client.Do(req)
-		if err == nil {
-			resp.Body.Close()
-		}
+		resp, err := fixture.admin.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
 	}
 }
 
 // TestAdmin_ListImpersonations_FilterByAdmin tests filtering impersonations by admin user.
 func TestAdmin_ListImpersonations_FilterByAdmin(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create two different admins
-	admin1ID := generateUniqueUserID()
-	admin2ID := generateUniqueUserID()
-
-	for _, adminID := range []string{admin1ID, admin2ID} {
-		createReq := AdminAssignmentRequest{
-			UserID:      adminID,
-			AdminRole:   "super_admin",
-			Permissions: []string{"user:impersonate"},
-			GrantedBy:   "system",
-		}
-		created := createTestAssignment(t, cluster, createReq)
-		defer deleteTestAssignment(t, cluster, created.ID)
+	// Two logged-in admins, each in its own tenant
+	admins := []*impersonationFixture{
+		setupImpersonationFixture(t, cluster),
+		setupImpersonationFixture(t, cluster),
 	}
 
-	// Create impersonation sessions for both admins
-	for _, adminID := range []string{admin1ID, admin2ID} {
-		impersonationReq := ImpersonationRequest{
-			AdminUserID:  adminID,
-			TargetUserID: generateUniqueUserID(),
-			TenantID:     "test-tenant",
+	// Each admin starts a session as itself
+	for _, admin := range admins {
+		admin.assign(t, cluster, "super_admin", "user:impersonate")
+		resp := admin.startImpersonation(t, cluster, ImpersonationRequest{
+			TargetUserID: admin.targetUserID,
+			TenantID:     admin.tenantID,
 			Reason:       "Testing filter",
 			Duration:     "1h",
-		}
-
-		body, err := json.Marshal(impersonationReq)
-		require.NoError(t, err)
-
-		resp, err := cluster.client.Post(
-			cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-			"application/json",
-			bytes.NewReader(body),
-		)
-		require.NoError(t, err)
+		})
 		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start")
 	}
 
 	// List impersonations for admin1 only
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?admin_user_id=" + admin1ID)
+	admin1ID := admins[0].adminUserID
+	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation/?admin_user_id=" + admin1ID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1339,7 +1360,8 @@ func TestAdmin_ListImpersonations_FilterByAdmin(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, err)
 
-	// All returned should belong to admin1
+	// admin1's session is listed, and every returned session belongs to admin1
+	require.NotEmpty(t, result.Sessions, "admin1's session should be listed")
 	for _, session := range result.Sessions {
 		assert.Equal(t, admin1ID, session.AdminUserID, "All sessions should belong to admin1")
 	}
@@ -1351,7 +1373,7 @@ func TestAdmin_ListImpersonations_FilterByAdmin(t *testing.T) {
 
 // TestAdmin_CreateAssignment_AllRoles tests creating assignments for all valid roles.
 func TestAdmin_CreateAssignment_AllRoles(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	roles := []string{
@@ -1383,7 +1405,7 @@ func TestAdmin_CreateAssignment_AllRoles(t *testing.T) {
 
 // TestAdmin_UpdateAssignment_Deactivate tests deactivating an assignment.
 func TestAdmin_UpdateAssignment_Deactivate(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create an assignment
@@ -1453,7 +1475,7 @@ func TestAdmin_UpdateAssignment_Deactivate(t *testing.T) {
 
 // TestAdmin_CreateAssignment_WithResourceScopes tests creating assignment with resource scopes.
 func TestAdmin_CreateAssignment_WithResourceScopes(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	userID := generateUniqueUserID()
@@ -1491,7 +1513,7 @@ func TestAdmin_CreateAssignment_WithResourceScopes(t *testing.T) {
 
 // TestAdmin_CheckPermission_WithResourceContext tests permission check with resource context.
 func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create scoped admin
@@ -1573,7 +1595,7 @@ func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
 
 // TestAdmin_Assignment_WithExpiry tests creating assignment with expiry and verifying expiration behavior.
 func TestAdmin_Assignment_WithExpiry(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create assignment with future expiry
@@ -1618,66 +1640,45 @@ func TestAdmin_Assignment_WithExpiry(t *testing.T) {
 
 // TestAdmin_Impersonation_AuditTrail tests that impersonation creates audit trail.
 func TestAdmin_Impersonation_AuditTrail(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
-	// Create super admin
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
-
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
+	fixture := setupImpersonationFixture(t, cluster)
+	fixture.assign(t, cluster, "super_admin", "user:impersonate")
 
 	// Start impersonation
-	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: generateUniqueUserID(),
-		TenantID:     "test-tenant",
+	resp := fixture.startImpersonation(t, cluster, ImpersonationRequest{
+		TargetUserID: fixture.targetUserID,
+		TenantID:     fixture.tenantID,
 		Reason:       "Audit trail test",
 		Duration:     "30m",
-	}
-
-	body, err := json.Marshal(impersonationReq)
-	require.NoError(t, err)
-
-	resp, err := cluster.client.Post(
-		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
+	})
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK {
-		var session ImpersonationSessionResponse
-		err = json.NewDecoder(resp.Body).Decode(&session)
-		require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start")
 
-		// Assert: AuditLogID is set
-		assert.NotEmpty(t, session.AuditLogID, "AuditLogID should be set for impersonation")
+	var session ImpersonationSessionResponse
+	err := json.NewDecoder(resp.Body).Decode(&session)
+	require.NoError(t, err)
 
-		// End impersonation to clean up
-		endReq, err := http.NewRequest(
-			http.MethodPost,
-			cluster.httpEndpoint+"/api/v1/admin/impersonation/"+session.ID+"/end",
-			nil,
-		)
-		require.NoError(t, err)
-		endResp, err := cluster.client.Do(endReq)
-		if err == nil {
-			endResp.Body.Close()
-		}
-	}
+	// Assert: AuditLogID is set
+	assert.NotEmpty(t, session.AuditLogID, "AuditLogID should be set for impersonation")
+
+	// End impersonation to clean up
+	endReq, err := http.NewRequest(
+		http.MethodPost,
+		cluster.httpEndpoint+"/api/v1/admin/impersonation/"+session.ID+"/end",
+		nil,
+	)
+	require.NoError(t, err)
+	endResp, err := fixture.admin.Do(endReq)
+	require.NoError(t, err)
+	endResp.Body.Close()
 }
 
 // TestAdmin_MultipleAssignments_SameUser tests a user with multiple assignments.
 func TestAdmin_MultipleAssignments_SameUser(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	userID := generateUniqueUserID()
@@ -1749,7 +1750,7 @@ func TestAdmin_MultipleAssignments_SameUser(t *testing.T) {
 
 // TestAdmin_Pagination tests pagination for listing assignments.
 func TestAdmin_Pagination(t *testing.T) {
-	cluster := setupTestCluster(t)
+	cluster := setupAdminCluster(t)
 	defer cluster.Close()
 
 	// Create multiple assignments

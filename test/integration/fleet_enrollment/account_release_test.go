@@ -87,6 +87,8 @@ var daemonAccountRoutes = []accountRoute{
 	{http.MethodGet, "/api/v1/agent-accounts/{id}"},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}/usage"},
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/reservations"},
+	{http.MethodDelete, "/api/v1/agent-accounts/{id}/reservations/{rid}"},
 }
 
 // adminAccountRoutes are the writes a tenant admin makes against the
@@ -128,10 +130,15 @@ func (f *enrollmentFixture) accountEdge(t *testing.T, cert *x509.Certificate, wa
 	// makes.
 	quicbaaspermission.Register()
 
+	roles := &enrolledRoles{records: f.identity, tenant: enrollTenant}
 	authMiddleware := qrdbmiddleware.New(
-		qrdbrbac.New(&enrolledRoles{records: f.identity, tenant: enrollTenant}),
+		qrdbrbac.New(roles),
 		qrdbmiddleware.WithAuthenticator(qrdbauth.NewMTLSAuthenticator()),
 		qrdbmiddleware.WithUserService(&enrolledUsers{records: f.identity}),
+		// Tenant ownership (does the caller hold Admin?) is decided against
+		// the same role records; go-qrdb refuses every authenticated request
+		// without this resolver.
+		qrdbmiddleware.WithRoleResolver(roles),
 	)
 
 	routes := qrdbmiddleware.NewRESTRouteRegistry()
@@ -186,7 +193,10 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 	// The tenant admin holds go-qrdb's built-in admin role. The harness role
 	// store carries that role's grants for these routes, and only the grants
 	// the built-in role really holds: a route whose permission it does not
-	// hold fails here instead of passing on a hand-made grant.
+	// hold fails here instead of passing on a hand-made grant. quicbaas's
+	// grants to that role exist only once Register has run, so it runs
+	// before the lookup, as server.NewServer runs it before serving.
+	quicbaaspermission.Register()
 	grants := make([]string, 0, len(adminAccountRoutes))
 	for _, route := range adminAccountRoutes {
 		spec := f.routeSpec(t, route.method, route.pattern)
@@ -315,7 +325,7 @@ var _ fleet.TokenSource = (*enrollmentBearerSource)(nil)
 // and gets injectable credential material for the spawn it was dispatched.
 func TestE2E_AgentEnrollment_PooledCredentialReachesTheDaemon(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 
 	// 1. Enroll. The grant the enrollment writes must carry the release
 	//    permission, or every step after this is unreachable.
@@ -356,7 +366,7 @@ func TestE2E_AgentEnrollment_PooledCredentialReachesTheDaemon(t *testing.T) {
 // scope default, over API-backed metadata.
 func TestE2E_AgentEnrollment_PooledCredentialAutoSelects(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, cert)
 
 	f.seedAccount(t, "", false)
@@ -380,7 +390,7 @@ func TestE2E_AgentEnrollment_PooledCredentialAutoSelects(t *testing.T) {
 // host, however the host asks.
 func TestE2E_AgentEnrollment_RevokedAccountIsNotReleased(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, cert)
 
 	accountID := f.seedAccount(t, "", true)
@@ -405,12 +415,12 @@ func TestE2E_AgentEnrollment_UnenrolledPrincipalIsRefusedTheRelease(t *testing.T
 	f := newEnrollmentFixture(t)
 
 	// Enrolled, so the pool and the route exist.
-	enrolledCert := agentCertificate(t, enrollTenant, enrollAgent)
+	enrolledCert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, enrolledCert)
 	accountID := f.seedAccount(t, "", true)
 
 	// NOT enrolled: no user record, therefore no role, therefore no grant.
-	strangerCert := agentCertificate(t, enrollTenant, "agent-not-enrolled")
+	strangerCert := f.issuedCertificate(t, enrollTenant, "agent-not-enrolled")
 	edge := f.releaseEdge(t, strangerCert, "stranger-bearer")
 	pool := daemonAccountPool(t, edge, "stranger-bearer")
 
@@ -427,7 +437,7 @@ func TestE2E_AgentEnrollment_UnenrolledPrincipalIsRefusedTheRelease(t *testing.T
 // see it being honoured.
 func TestE2E_AgentEnrollment_ProjectFencedAccountStaysFenced(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, cert)
 
 	fenced := f.seedAccount(t, "project-x", true)
@@ -451,7 +461,7 @@ func TestE2E_AgentEnrollment_ProjectFencedAccountStaysFenced(t *testing.T) {
 // handout with its own audit event on the control plane.
 func TestE2E_AgentEnrollment_ReleaseIsServedFromCacheOnRepeatSpawns(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, cert)
 	accountID := f.seedAccount(t, "", true)
 
@@ -477,7 +487,7 @@ func TestE2E_AgentEnrollment_ReleaseIsServedFromCacheOnRepeatSpawns(t *testing.T
 // plane and the next spawn on the worker host uses the new one.
 func TestE2E_AgentEnrollment_RotationOnTheCentralReachesTheDaemon(t *testing.T) {
 	f := newEnrollmentFixture(t)
-	cert := agentCertificate(t, enrollTenant, enrollAgent)
+	cert := f.issuedCertificate(t, enrollTenant, enrollAgent)
 	f.register(t, cert)
 	accountID := f.seedAccount(t, "", true)
 

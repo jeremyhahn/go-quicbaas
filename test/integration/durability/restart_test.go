@@ -44,6 +44,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -137,7 +139,7 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	ctx := context.Background()
 
-	tenantID := "durability-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	tenantID := qrdbsdk.SystemTenantID
 	email := "restart-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "@example.com"
 
 	var userID uint64
@@ -147,20 +149,14 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 	srv := bootServer(t, dataDir)
 	iamSvc := iamService(t, srv)
 
-	_, err := iamSvc.CreateTenant(ctx, &service.CreateTenantRequest{
-		ID:   tenantID,
-		Name: "Durability Tenant",
-	})
-	require.NoError(t, err, "create tenant")
-
-	roleResp, err := iamSvc.CreateRole(ctx, &service.IAMCreateRoleRequest{
-		TenantID:    tenantID,
-		Name:        "durability-role",
-		Permissions: []string{"kv:get"},
-	})
-	require.NoError(t, err, "create role")
-	require.NotNil(t, roleResp.Role)
-	roleID = roleResp.Role.ID
+	// The user is bound to a role go-qrdb seeded with the system tenant:
+	// creating one is roles:create, the tenant SO's own verb, and this test
+	// has no SO. CreateUser checks the role exists, a role read the embedded
+	// node authorizes, so the calls run as the node's service principal,
+	// which go-qrdb lets act in the system tenant only.
+	roleID = qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameUser)
+	ctx, err := srv.ServiceContext(ctx)
+	require.NoError(t, err, "bind the service principal")
 
 	createResp, err := iamSvc.CreateUser(ctx, &service.IAMCreateUserRequest{
 		TenantID: tenantID,
@@ -189,6 +185,8 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 	defer shutdownServer(t, srv)
 
 	iamSvc = iamService(t, srv)
+	ctx, err = srv.ServiceContext(context.Background())
+	require.NoError(t, err, "bind the restarted node's service principal")
 
 	got, err := iamSvc.GetUser(ctx, &service.IAMGetUserRequest{TenantID: tenantID, UserID: userID})
 	require.NoError(t, err, "user must survive the restart")
@@ -217,25 +215,30 @@ func TestIAMUserSurvivesDaemonRestart(t *testing.T) {
 // store that reverted to a stale on-disk snapshot would resurrect it).
 func TestIAMUserRestartDoesNotResurrectDeletedUser(t *testing.T) {
 	dataDir := t.TempDir()
-	ctx := context.Background()
 
-	tenantID := "durability-del-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	// The node's service principal acts in the system tenant only, so the
+	// user lives there, bound to the seeded user role, exactly as in
+	// TestIAMUserSurvivesDaemonRestart.
+	tenantID := qrdbsdk.SystemTenantID
+	roleID := qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameUser)
 	email := "deleted-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "@example.com"
 
 	srv := bootServer(t, dataDir)
 	iamSvc := iamService(t, srv)
-
-	_, err := iamSvc.CreateTenant(ctx, &service.CreateTenantRequest{ID: tenantID, Name: "Durability Delete Tenant"})
-	require.NoError(t, err, "create tenant")
+	ctx, err := srv.ServiceContext(context.Background())
+	require.NoError(t, err, "bind the service principal")
 
 	createResp, err := iamSvc.CreateUser(ctx, &service.IAMCreateUserRequest{
 		TenantID: tenantID,
 		Email:    email,
 		Username: "deleteduser",
 		Name:     "Deleted User",
+		Roles:    []string{roleID},
 	})
 	require.NoError(t, err, "create user")
+	require.NotNil(t, createResp.User)
 	userID := createResp.User.ID
+	require.NotZero(t, userID)
 
 	_, err = iamSvc.DeleteUser(ctx, &service.IAMDeleteUserRequest{TenantID: tenantID, UserID: userID})
 	require.NoError(t, err, "delete user")
@@ -246,9 +249,20 @@ func TestIAMUserRestartDoesNotResurrectDeletedUser(t *testing.T) {
 	defer shutdownServer(t, srv)
 
 	iamSvc = iamService(t, srv)
+	ctx, err = srv.ServiceContext(context.Background())
+	require.NoError(t, err, "bind the restarted node's service principal")
 
 	_, err = iamSvc.GetUser(ctx, &service.IAMGetUserRequest{TenantID: tenantID, UserID: userID})
 	require.Error(t, err, "a deleted user must not be resurrected by a restart")
+
+	// The list succeeding proves the caller may read the tenant's users, so
+	// the user's absence is the store's answer, not an authorization refusal.
+	listed, err := iamSvc.ListUsers(ctx, &service.IAMListUsersRequest{TenantID: tenantID})
+	require.NoError(t, err, "list users after restart")
+	for _, u := range listed.Users {
+		assert.NotEqual(t, userID, u.ID, "restarted daemon must not list the deleted user")
+		assert.NotEqual(t, email, u.Email, "restarted daemon must not list the deleted user's email")
+	}
 }
 
 // TestMain keeps the suite honest about leaked temp state: t.TempDir cleans up

@@ -113,19 +113,6 @@ func runBackendCell(t *testing.T, daemonBinary, cliBinary, backend, transport st
 
 	// Phase 4: a real round trip through the engine. This is the assertion
 	// that distinguishes a working backend from a daemon that merely booted.
-	//
-	// The memory engine is exempt, and that exemption is itself the finding:
-	// `quicbaasd init` runs in its OWN process, so first-boot IAM state
-	// written to a non-durable engine is gone before `quicbaasd start` opens
-	// it. The daemon comes up healthy with an empty store and no
-	// administrator, so the admin credential init issued cannot authenticate.
-	// Memory is therefore viable for single-process / embedded use, not for
-	// the init-then-restart deployment flow the durable engines support.
-	if backend == "memory" {
-		t.Log("memory backend: skipping the authenticated round trip — " +
-			"first-boot state cannot survive the init/start process boundary")
-		return
-	}
 	verifyDataRoundTrip(ctx, t, cliBinary, transport, ports, dataDir, backend)
 
 	if stopErr := daemon.Stop(); stopErr != nil {

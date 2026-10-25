@@ -502,7 +502,7 @@ func (c *embeddedAuthClient) Setup(t *testing.T, ctx context.Context) error {
 		return fmt.Errorf("failed to get embedded service: %w", err)
 	}
 
-	client, err := quicbaas.NewClient("embedded://", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded://", quicbaas.WithEmbedded(svc), helpers.EmbeddedSystemIdentity())
 	if err != nil {
 		return fmt.Errorf("failed to create embedded client: %w", err)
 	}

@@ -126,3 +126,26 @@ func (e *DecodeError) Error() string {
 }
 
 func (e *DecodeError) Unwrap() error { return e.Cause }
+
+// SPIFFENameCollisionError reports two fixtures of one topology whose common
+// names derive the same SPIFFE ID, spiffe://<TenantID>/<Kind>/<Name>. Each
+// principal needs its own ID, so the topology is refused before anything is
+// issued.
+type SPIFFENameCollisionError struct {
+	// TenantID is the trust domain both IDs share.
+	TenantID string
+
+	// Kind is the SPIFFE kind both IDs share ("user" or "svc").
+	Kind string
+
+	// Name is the SPIFFEName both common names derive.
+	Name string
+
+	// First and Second are the two common names, in topology order.
+	First, Second string
+}
+
+func (e *SPIFFENameCollisionError) Error() string {
+	return "certfixture: " + e.First + " and " + e.Second +
+		" both derive spiffe://" + e.TenantID + "/" + e.Kind + "/" + e.Name
+}

@@ -540,7 +540,7 @@ func (e *embeddedTimeseriesProtocol) Setup(t *testing.T, ctx context.Context) er
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
-	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc), helpers.EmbeddedSystemIdentity())
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}

@@ -17,7 +17,9 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"net"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -157,8 +159,11 @@ func TestIssueServer_CarriesTheDeclaredNamesAndBothEKUs(t *testing.T) {
 			t.Errorf("certificate is not valid for %q: %v", want, err)
 		}
 	}
-	if len(cert.IPAddresses) != 2 {
-		t.Errorf("IP SANs = %v, want two", cert.IPAddresses)
+	if want := []string{"localhost", "test-node1", "quicbaas-node1"}; !slices.Equal(cert.DNSNames, want) {
+		t.Errorf("DNS SANs = %v, want %v", cert.DNSNames, want)
+	}
+	if len(cert.IPAddresses) != 2 || !cert.IPAddresses[0].Equal(net.ParseIP("127.0.0.1")) || !cert.IPAddresses[1].Equal(net.ParseIP("::1")) {
+		t.Errorf("IP SANs = %v, want [127.0.0.1 ::1]", cert.IPAddresses)
 	}
 
 	for _, eku := range []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth} {
@@ -170,8 +175,12 @@ func TestIssueServer_CarriesTheDeclaredNamesAndBothEKUs(t *testing.T) {
 			t.Errorf("serving leaf does not verify for EKU %v: %v", eku, err)
 		}
 	}
-	if len(cert.URIs) != 0 {
-		t.Errorf("URI SANs = %v; a node identity carries no tenant SAN", cert.URIs)
+	// A node is issued under the system tenant, so with a trust domain it
+	// carries the service SPIFFE ID the stack identifies it by. The tenant is
+	// the SPIFFE trust domain; the cluster trust domain is not in the ID.
+	wantURI := "spiffe://system/svc/test-node1"
+	if len(cert.URIs) != 1 || cert.URIs[0].String() != wantURI {
+		t.Errorf("URI SANs = %v, want exactly [%s]", cert.URIs, wantURI)
 	}
 }
 
@@ -223,7 +232,9 @@ func TestIssueClient_CarriesTheTenantSPIFFESAN(t *testing.T) {
 	}
 
 	cert := issued.Certificate
-	want := "spiffe://" + trustDomain + "/tenant/system/user/admin@certfixture.test"
+	// The CN and email SAN keep the full address; the SPIFFE name is its
+	// local part.
+	want := "spiffe://system/user/admin"
 	var uris []string
 	for _, u := range cert.URIs {
 		uris = append(uris, u.String())

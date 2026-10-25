@@ -33,14 +33,22 @@ package init
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
@@ -65,7 +73,19 @@ const sdkLivenessTimeout = 10 * time.Second
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir string) {
 	t.Helper()
 
-	client, err := newSDKClient(transport, ports, dataDir)
+	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+	defer cancel()
+
+	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
+	if err != nil {
+		t.Fatalf("load daemon CA for transport %q: %v", transport, err)
+	}
+	var session []quicbaas.Option
+	if transport == "mcp" {
+		session = mcpLivenessSession(ctx, t, ports, tlsCfg, dataDir)
+	}
+
+	client, err := newSDKClient(transport, ports, tlsCfg, session...)
 	if err != nil {
 		t.Fatalf("construct SDK client for transport %q: %v", transport, err)
 	}
@@ -74,9 +94,6 @@ func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBu
 			t.Logf("SDK client Close: %v", closeErr)
 		}
 	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
-	defer cancel()
 
 	// We dispatch via Transport().Request directly because the SDK's
 	// per-transport Liveness decoding is inconsistent: gRPC + Unix +
@@ -163,49 +180,118 @@ func isMapHealthyByAlive(m map[string]interface{}) bool {
 }
 
 // newSDKClient constructs a quicbaas.Client targeting the requested
-// transport. The TLS trust pool is loaded from the daemon's
-// auto-generated CA chain so the SDK accepts the self-signed server
-// cert; CLAUDE.md bans WithInsecure so explicit CA trust is the only
-// supported path.
-func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.Client, error) {
-	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
-	if err != nil {
-		return nil, err
-	}
+// transport. tlsCfg carries the trust pool loaded from the daemon's
+// auto-generated CA chain (loadDaemonCATLSConfig) so the SDK accepts the
+// self-signed server cert; CLAUDE.md bans WithInsecure so explicit CA
+// trust is the only supported path. extra appends session options.
+func newSDKClient(transport string, ports PortBundle, tlsCfg *tls.Config, extra ...quicbaas.Option) (quicbaas.Client, error) {
+	var opts []quicbaas.Option
+	var address string
 	switch transport {
 	case "rest":
-		address := fmt.Sprintf("https://127.0.0.1:%d/api/v1", ports.REST)
-		return quicbaas.NewClient(address,
-			quicbaas.WithREST(),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		address = fmt.Sprintf("https://127.0.0.1:%d/api/v1", ports.REST)
+		opts = append(opts, quicbaas.WithREST())
 	case "grpc":
-		address := fmt.Sprintf("127.0.0.1:%d", ports.GRPC)
-		return quicbaas.NewClient(address,
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		address = fmt.Sprintf("127.0.0.1:%d", ports.GRPC)
 	case "quic":
-		address := fmt.Sprintf("127.0.0.1:%d", ports.QUIC)
+		address = fmt.Sprintf("127.0.0.1:%d", ports.QUIC)
 		// QUIC requires NextProtos that the server advertises. The
 		// daemon uses the standard "h3" + "quicbaas" ALPNs; we let the
 		// transport layer set its own preference list.
-		return quicbaas.NewClient(address,
-			quicbaas.WithQUIC(),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		opts = append(opts, quicbaas.WithQUIC())
 	case "mcp":
-		address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
-		return quicbaas.NewClient(address,
-			quicbaas.WithMCP(),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		address = fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
+		opts = append(opts, quicbaas.WithMCP())
 	case "unix":
-		return quicbaas.NewClient("unix",
-			quicbaas.WithUnix(ports.Unix),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+		address = "unix"
+		opts = append(opts, quicbaas.WithUnix(ports.Unix))
+	default:
+		return nil, fmt.Errorf("newSDKClient: unknown transport %q", transport)
 	}
-	return nil, fmt.Errorf("newSDKClient: unknown transport %q", transport)
+	opts = append(opts, quicbaas.WithTLSConfig(tlsCfg))
+	opts = append(opts, extra...)
+	return quicbaas.NewClient(address, opts...)
+}
+
+// mcpAdminSessionOptions logs the first-boot administrator in over MCP with
+// the certificate first-boot issued it, exactly as `quicbaas auth login
+// --method mtls` does, and returns the client options that carry the session.
+// MCP refuses an unauthenticated initialize, so the MCP cell must log in
+// before any other call.
+// mcpLivenessSession returns the session options the MCP liveness probe runs
+// with. MCP authenticates at initialize, so an unsealed cell presents the
+// administrator's first-boot credential and logs in first. A sealed Shamir
+// cell defers first boot until the live ceremony unseals, so it has no admin
+// credential yet: its probe stays the anonymous sealed-window liveness call.
+func mcpLivenessSession(ctx context.Context, t *testing.T, ports PortBundle, tlsCfg *tls.Config, dataDir string) []quicbaas.Option {
+	t.Helper()
+
+	sealed, err := awaitingShamirCeremony(dataDir)
+	if err != nil {
+		t.Fatalf("admin credential for the mcp cell: %v", err)
+	}
+	if sealed {
+		return nil
+	}
+	if err := addAdminClientCert(tlsCfg, dataDir); err != nil {
+		t.Fatalf("load admin client certificate: %v", err)
+	}
+	return mcpAdminSessionOptions(ctx, t, ports, tlsCfg, dataDir)
+}
+
+func mcpAdminSessionOptions(ctx context.Context, t *testing.T, ports PortBundle, tlsCfg *tls.Config, dataDir string) []quicbaas.Option {
+	t.Helper()
+
+	certPath := filepath.Join(dataDir, "admin", "admin.crt")
+	// #nosec G304 - certPath rooted at t.TempDir()
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatalf("read admin certificate %s: %v", certPath, err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		t.Fatalf("admin certificate %s: no PEM block", certPath)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse admin certificate %s: %v", certPath, err)
+	}
+
+	loginClient, err := newSDKClient("mcp", ports, tlsCfg)
+	if err != nil {
+		t.Fatalf("construct MCP login client: %v", err)
+	}
+	defer func() {
+		if closeErr := loginClient.Close(); closeErr != nil {
+			t.Logf("MCP login client Close: %v", closeErr)
+		}
+	}()
+
+	auth := loginClient.Security().Auth()
+	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
+		Type:     qrdbtransport.FactorTypeMTLS,
+		Hint:     "admin",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	if err != nil {
+		t.Fatalf("admin mTLS BeginLogin over mcp: %v", err)
+	}
+	// The server derives the mtls lookup keys from the verified peer
+	// certificate; the fingerprint sent here is advisory, as in the CLI.
+	sum := sha256.Sum256(cert.Raw)
+	resp, err := auth.FinishLogin(ctx, qrdbtransport.FinishLoginRequest{
+		SessionID:      begin.SessionID,
+		Type:           qrdbtransport.FactorTypeMTLS,
+		LookupKey:      sum[:],
+		MethodMetadata: map[string]string{"credential_sha256": hex.EncodeToString(sum[:])},
+	})
+	if err != nil {
+		t.Fatalf("admin mTLS FinishLogin over mcp: %v", err)
+	}
+	if resp == nil || resp.Bearer == "" {
+		t.Fatal("admin mTLS login over mcp issued no bearer")
+	}
+	return []quicbaas.Option{quicbaas.WithMCPAuthToken(resp.Bearer)}
 }
 
 // loadDaemonCATLSConfig reads the CA chain quicbaasd writes after start
@@ -227,6 +313,49 @@ func loadDaemonCATLSConfig(dataDir string) (*tls.Config, error) {
 		RootCAs:    pool,
 		ServerName: "127.0.0.1",
 	}, nil
+}
+
+// addAdminClientCert makes tlsCfg present the administrator's mTLS
+// credential first-boot wrote under dataDir/admin.
+func addAdminClientCert(tlsCfg *tls.Config, dataDir string) error {
+	pair, err := tls.LoadX509KeyPair(
+		filepath.Join(dataDir, "admin", "admin.crt"),
+		filepath.Join(dataDir, "admin", "admin.key"),
+	)
+	if err != nil {
+		return fmt.Errorf("addAdminClientCert: %w", err)
+	}
+	tlsCfg.Certificates = []tls.Certificate{pair}
+	return nil
+}
+
+// awaitingShamirCeremony reports whether the daemon under dataDir is a Shamir
+// cell still sealed before its ceremony: first boot has not run, so neither
+// admin credential file exists yet. Absent files on any other strategy, or
+// only one of the pair present, is an error rather than a sealed cell.
+func awaitingShamirCeremony(dataDir string) (bool, error) {
+	present := 0
+	for _, name := range []string{"admin.crt", "admin.key"} {
+		_, err := os.Stat(filepath.Join(dataDir, "admin", name))
+		switch {
+		case err == nil:
+			present++
+		case !errors.Is(err, fs.ErrNotExist):
+			return false, fmt.Errorf("awaitingShamirCeremony: %w", err)
+		}
+	}
+	if present > 0 {
+		return false, nil
+	}
+	marker, err := readInitDoneMarker(dataDir)
+	if err != nil {
+		return false, fmt.Errorf("awaitingShamirCeremony: %w", err)
+	}
+	if marker.BarrierStrategy != "shamir" {
+		return false, fmt.Errorf("awaitingShamirCeremony: no admin credential under %s for barrier strategy %q",
+			dataDir, marker.BarrierStrategy)
+	}
+	return true, nil
 }
 
 // isReflectivelyHealthy inspects a non-map Liveness response via

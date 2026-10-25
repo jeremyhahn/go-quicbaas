@@ -1179,7 +1179,7 @@ func (c *restProtocolClient) Name() string { return "REST" }
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
-	c.client = NewRESTClient(endpoints[0])
+	c.client = NewRESTClient(t, endpoints[0])
 	return nil
 }
 
@@ -1248,7 +1248,7 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", endpoints[0])
 	c.client = client
 
@@ -1343,7 +1343,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 	c.conn = conn
 
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfg), asTenantPrincipal(t))
 	require.NoError(t, err, "Failed to create gRPC client over unix socket at %s", socketPath)
 	c.client = client
 

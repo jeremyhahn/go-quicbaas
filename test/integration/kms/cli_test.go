@@ -30,6 +30,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -87,17 +89,24 @@ type cliTestContext struct {
 	address   string
 	timeout   time.Duration
 	outputFmt string
+	// home is the CLI's own HOME, holding the tenant principal's session,
+	// so the CLI never reads a session saved on the machine running it.
+	home string
 }
 
 // newCLITestContext creates a new CLI test context.
 func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
+	binary := skipIfNoCLIBinary(t)
+	home := t.TempDir()
+	helpers.SaveTenantPrincipalCLISession(t, helpers.GetRESTEndpoints()[0], home)
 	return &cliTestContext{
 		t:         t,
-		binary:    skipIfNoCLIBinary(t),
+		binary:    binary,
 		protocol:  protocol,
 		address:   address,
 		timeout:   30 * time.Second,
 		outputFmt: "json",
+		home:      home,
 	}
 }
 
@@ -118,6 +127,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = append(os.Environ(), "HOME="+c.home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -155,6 +165,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = append(os.Environ(), "HOME="+c.home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

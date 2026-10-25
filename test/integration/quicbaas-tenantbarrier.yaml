@@ -73,7 +73,7 @@ storage:
 # passphrase strategy and is auto-initialised + auto-unsealed at startup via
 # QUICBAAS_SEAL_PASSPHRASE (injected by docker-compose.seal.yml). With the
 # seal subsystem live, the embedded qrdb node accepts per-tenant barrier
-# init/unseal/unseal-share/seal/status.
+# init/unseal/quorum/seal/status.
 seal:
   enabled: true
   strategy: passphrase
@@ -98,6 +98,10 @@ iam:
   # the fixture client certificates carry spiffe://<td>/tenant/... SANs, and
   # login pins the configured trust domain against the presented one.
   spiffe_trust_domain: quicbaas.integration
+
+  # The suite logs in from one client for every node's health check and again
+  # in its tests; go-xkms's default of 10 logins a minute answers 429 (#1771).
+  login_rate_per_min: 600
   piv_login:
     enabled: true
     ca_file: /etc/quicbaas/certs/ca.crt

@@ -58,7 +58,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/server"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -165,7 +168,10 @@ func Open(ctx context.Context, cfg Config) (*Authority, error) {
 		return nil, &AuthorityError{Op: "open ca", Dir: keystoreDir, Cause: err}
 	}
 
-	svc, err := server.NewCAService(ca, cfg.SPIFFETrustDomain)
+	// The adapter gets no trust domain: it would derive the SPIFFE name from
+	// the common name, which for a login credential is an email that go-qrdb
+	// refuses as a path segment. The fixture adds the SPIFFE SAN itself.
+	svc, err := server.NewCAService(ca, "")
 	if err != nil {
 		return nil, &AuthorityError{Op: "ca service", Dir: keystoreDir, Cause: err}
 	}
@@ -246,8 +252,8 @@ type ClientFixture struct {
 	File string `json:"file"`
 
 	// CommonName is the subject common name. For a login credential this is
-	// the principal's email, which is also what the SPIFFE SAN's name segment
-	// carries.
+	// the principal's email. The SPIFFE SAN's name segment is SPIFFEName of
+	// it: "admin@integration.test" carries spiffe://<tenant>/user/admin.
 	CommonName string `json:"common_name"`
 
 	// Email, when set, is added as an rfc822Name SAN so a server-side identity
@@ -263,12 +269,14 @@ type ClientFixture struct {
 	ValidityDays int `json:"validity_days,omitempty"`
 }
 
-// IssueServer issues a node's serving credential.
+// IssueServer issues a node's serving credential under the system tenant:
+// go-xkms v0.58 refuses a request without a tenant, and names `system` the
+// tenant of the node's own certificates.
 func (a *Authority) IssueServer(ctx context.Context, f ServerFixture) (*Issued, error) {
 	if f.CommonName == "" {
 		return nil, ErrNoCommonName
 	}
-	sans := make([]string, 0, len(f.DNSNames)+len(f.IPAddresses))
+	sans := make([]string, 0, len(f.DNSNames)+len(f.IPAddresses)+1)
 	for _, name := range f.DNSNames {
 		sans = append(sans, "DNS:"+name)
 	}
@@ -278,12 +286,20 @@ func (a *Authority) IssueServer(ctx context.Context, f ServerFixture) (*Issued, 
 		}
 		sans = append(sans, "IP:"+addr)
 	}
+	if a.trustDomain != "" {
+		uri, err := spiffeURISAN(tenantctx.SystemTenantID, qrdbsdk.SpiffeKindService, f.CommonName)
+		if err != nil {
+			return nil, &IssueError{CommonName: f.CommonName, Cause: err}
+		}
+		sans = append(sans, uri)
+	}
 	return a.issue(ctx, &xkmstransport.IssueCertificateRequest{
 		Profile:      ProfileDual,
 		CommonName:   f.CommonName,
 		Organization: a.organization,
 		SANs:         sans,
 		ValidityDays: validity(f.ValidityDays),
+		TenantID:     tenantctx.SystemTenantID,
 	})
 }
 
@@ -300,6 +316,13 @@ func (a *Authority) IssueClient(ctx context.Context, f ClientFixture) (*Issued, 
 	var sans []string
 	if f.Email != "" {
 		sans = append(sans, "Email:"+f.Email)
+	}
+	if f.TenantID != "" {
+		uri, err := spiffeURISAN(f.TenantID, qrdbsdk.SpiffeKindUser, f.CommonName)
+		if err != nil {
+			return nil, &IssueError{CommonName: f.CommonName, Cause: err}
+		}
+		sans = append(sans, uri)
 	}
 	return a.issue(ctx, &xkmstransport.IssueCertificateRequest{
 		Profile:      ProfileClient,

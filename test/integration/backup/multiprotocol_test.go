@@ -222,7 +222,7 @@ func (c *embeddedBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.WrappedMessageError{Message: "failed to get embedded service", Cause: err}
 	}
 
-	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(svc), helpers.EmbeddedSystemIdentity())
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to create embedded client", Cause: err}
 	}

@@ -378,14 +378,14 @@ PROTOC := protoc
 PROTOC_PREFIX ?= $(HOME)/.local
 BUF := buf
 
-# PROTO_QRDB_DIR points at a go-qrdb source tree so the quicbaas protos can
-# import pkg/api/grpc/proto/qrdbv1/authz.proto (the qrdb.v1.permission method
+# PROTO_QRDB_DIR points at a go-qrdb SDK proto/ directory so the quicbaas
+# protos can import qrdb/v1/permission.proto (the qrdb.v1.permission method
 # option the unified server's reflection interceptor enforces). It defaults to
-# the go-qrdb release go.mod pins, read from the module cache, so generated code
+# the go-qrdb/sdk/go release go.mod pins, read from the module cache, so generated code
 # always matches the qrdb QuicBaaS builds and deploys with -- never a sibling
 # checkout's unreleased main. Override it only to test against a qrdb change
 # before that change is tagged.
-PROTO_QRDB_DIR ?= $(shell GOWORK=off $(GOCMD) list -m -f '{{.Dir}}' github.com/jeremyhahn/go-qrdb 2>/dev/null)
+PROTO_QRDB_DIR ?= $(shell GOWORK=off $(GOCMD) list -m -f '{{.Dir}}' github.com/jeremyhahn/go-qrdb/sdk/go 2>/dev/null)/proto
 
 # Colors for output (using tput for portability)
 RED := $(shell tput setaf 1 2>/dev/null || echo "")
@@ -464,9 +464,9 @@ check-proto-tools: ## Fail unless protoc, protoc-gen-go and protoc-gen-go-grpc a
 .PHONY: proto-gen
 proto-gen: check-proto-tools ## Generate protobuf code from .proto files
 	@echo "$(BLUE)Generating protobuf code...$(NC)"
-	@if [ ! -f "$(PROTO_QRDB_DIR)/pkg/api/grpc/proto/qrdbv1/authz.proto" ]; then \
-		echo "$(RED)qrdb authz.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(NC)"; \
-		echo "$(RED)Fetch the pinned release: go mod download github.com/jeremyhahn/go-qrdb$(NC)"; \
+	@if [ ! -f "$(PROTO_QRDB_DIR)/qrdb/v1/permission.proto" ]; then \
+		echo "$(RED)qrdb permission.proto not found under PROTO_QRDB_DIR=$(PROTO_QRDB_DIR)$(NC)"; \
+		echo "$(RED)Fetch the pinned release: go mod download github.com/jeremyhahn/go-qrdb/sdk/go$(NC)"; \
 		exit 1; \
 	fi
 	@$(PROTOC) -I. -I$(PROTO_QRDB_DIR) \
@@ -2234,7 +2234,7 @@ integration-test-tenantbarrier: ## Run per-tenant barrier integration tests agai
 	COMPOSE_PROJECT_NAME="$(COMPOSE_PROJECT_TENANTBARRIER)"; \
 	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	echo "$(YELLOW)Issuing integration mTLS/PIV fixtures through the QuicBaaS CA...$(NC)"; \
-	$(GOCMD) run ./test/integration/certfixture/cmd test/integration/certs; \
+	$(GOCMD) run -tags codec_json ./test/integration/certfixture/cmd test/integration/certs; \
 	echo "$(YELLOW)Cleaning up any previous tenantbarrier containers...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	trap '$(GOMODAUTH_CLEAR); $(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
@@ -2448,6 +2448,17 @@ ifneq ($(strip $(MODULE_ENV_FILE)),)
 GOMODAUTH_ENV := $(MODULE_ENV_FILE)
 endif
 export GOMODAUTH_ENV
+# compose build runs through buildx bake, which refuses to read a path outside
+# the build context unless granted. The gomodauth secret sits outside the
+# context by design, and compose cannot pass --allow=fs.read, so turn off
+# bake's fs-entitlement check for the builds this Makefile starts.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
+
+# docker compose runs `compose build` through buildx bake, and bake refuses
+# a local read outside the build context unless it is granted. The gomodauth
+# secret sits outside the context by design, and compose cannot pass
+# --allow=fs.read, so turn off bake's fs-entitlement check for these builds.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 
 # Where integration-test backs go.mod up while the stack runs, restored after.
 # Overridable so a gate that drives the recipe never touches a real run's copy.
@@ -5036,7 +5047,7 @@ bench-kvstore: ## Run kvstore package benchmarks
 test-sdk-go: ## Run Go SDK unit tests (excludes integration tests)
 	@echo "$(BLUE)Running Go SDK unit tests...$(NC)"
 	@cd sdk/go || exit 1; $(call go_packages,./...,/test/); \
-	go test -v -race -count=1 $$pkgs
+	go test -v -race -tags codec_json -count=1 $$pkgs
 	@echo "$(GREEN)✓ Go SDK unit tests passed$(NC)"
 
 .PHONY: test-sdk-go-coverage
@@ -5610,10 +5621,15 @@ SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
 # CI names the integration image per run (ci-template IT_IMAGE), so its
 # trivy and teardown steps find the image this built.
 INTEGRATION_IMAGE = $(or $(IT_IMAGE),$(DEVCONTAINER_REPO):integration-$(shell git rev-parse HEAD)$(SOURCE_DIRTY))
+# The base stage's `apt-get upgrade` line never changes, so a cached layer
+# keeps packages Debian has since fixed and `trivy image` fails on them (#1389,
+# libbrotli1; #1501 is the same fault in the merge-result image). The UTC date
+# as a build argument rebuilds that layer at least once a day.
+APT_UPGRADE_DATE := $(shell date -u +%Y-%m-%d)
 DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
 	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
-	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
+	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' APT_UPGRADE_DATE='$(APT_UPGRADE_DATE)' \
 	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml

@@ -856,7 +856,8 @@ func NewQUICClient(endpoint string) (*QUICClient, error) {
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
 	}
-	tlsCfg.NextProtos = []string{"quicbaas-quic"}
+	// The ALPN is left for quictransport.New to default to "h3": the QUIC
+	// transport speaks REST over HTTP/3, not the retired "quicbaas-quic".
 	cfg := &transport.Config{
 		Address:         endpoint,
 		Timeout:         30 * time.Second,

@@ -271,7 +271,11 @@ func TestE2E_ACandidateThatFailsItsProbesIsNeverPromoted(t *testing.T) {
 	oldBuild.Agents = softwarefactoryworker.Agents{ClaudeCode: "1.0.0", Codex: "1.0.0", Gemini: "1.0.0"}
 	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{stale}, Labels: oldBuild.Labels()})
 	require.NoError(t, err)
-	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: build.Labels()})
+	// The real Dockerfile writes the languages label from its ARG; without it
+	// the refresher refuses the candidate before a single probe runs.
+	candidateLabels := build.Labels()
+	candidateLabels[softwarefactoryworker.LabelLanguages] = "go"
+	_, err = rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{candidate}, Labels: candidateLabels})
 	require.NoError(t, err)
 	removeImages(t, stale, candidate)
 

@@ -34,12 +34,14 @@ import (
 	qrdbpermission "github.com/jeremyhahn/go-qrdb/pkg/permission"
 	qrdbrole "github.com/jeremyhahn/go-qrdb/pkg/role"
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
@@ -52,9 +54,6 @@ import (
 const (
 	enrollTenant = "automatethethings"
 	enrollAgent  = "agent-agent-04"
-	// fleetRegistrarOU is the Organizational Unit the register endpoint
-	// requires on an agent certificate.
-	fleetRegistrarOU = "agents"
 )
 
 // -----------------------------------------------------------------------------
@@ -276,6 +275,30 @@ func (r *enrolledRoles) ResolvePermissions(ctx context.Context, roleIDs []string
 	return out, nil
 }
 
+// GetRoleByName returns the named role of tenantID, the read go-qrdb's auth
+// middleware decides tenant ownership with (does the caller hold Admin?). A
+// missing role is go-qrdb's RoleNotFoundError, which it reads as "does not
+// hold it"; any other failure is returned as it is.
+func (r *enrolledRoles) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbrole.Role, error) {
+	stored, err := r.records.GetRoleByName(ctx, tenantID, name)
+	if err != nil {
+		if iam.IsRoleNotFound(err) {
+			return nil, &qrdbrole.RoleNotFoundError{ID: name}
+		}
+		return nil, err
+	}
+	granted := make([]qrdbpermission.Permission, 0, len(stored.Permissions))
+	for _, p := range stored.Permissions {
+		granted = append(granted, qrdbpermission.Permission(p))
+	}
+	return &qrdbrole.Role{
+		ID:          stored.ID,
+		Name:        stored.Name,
+		TenantID:    stored.TenantID,
+		Permissions: granted,
+	}, nil
+}
+
 // -----------------------------------------------------------------------------
 // Fixture
 // -----------------------------------------------------------------------------
@@ -292,6 +315,11 @@ type enrollmentFixture struct {
 	// accountStore is the same metadata store the service writes through, kept
 	// so a scenario can move an account into a refusing state directly.
 	accountStore orchestration.AccountStore
+
+	// certRecords is the production record store enrollment verifies a
+	// client certificate against: only what the fleet issuer recorded
+	// enrolls.
+	certRecords *service.KVFleetNodeCertRecords
 
 	// admin is the tenant admin's edge to the pool, minted on first use by
 	// adminEdge.
@@ -318,8 +346,9 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	store := newTenantRoutingStore()
 	registry := orchestration.NewFleetRegistry(store)
 
+	agentStore := orchestration.NewInMemoryAgentStore()
 	agentSvc, err := orchestration.NewAgentService(
-		orchestration.NewInMemoryAgentStore(),
+		agentStore,
 		map[string]orchestration.AgentBackend{},
 		logger.NewAdapter(log),
 	)
@@ -340,10 +369,23 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	accountSvc := service.NewAccountService(accountStore, accountSecrets)
 	accountWirer, ok := accountSvc.(interface {
 		SetTokenManager(*orchestration.AccountTokenManager)
+		SetUsageTracker(orchestration.CostTracker)
+		SetSessionReserver(orchestration.AccountSessionReserver)
 	})
-	require.True(t, ok, "the account service must accept a token manager, as server lifecycle wires it")
+	require.True(t, ok, "the account service must accept a token manager, a usage tracker and a session reserver, as server lifecycle wires them")
+	// Session reservations count the session records the agent store holds,
+	// as pkg/server lifecycle_orchestration counts them.
+	sessionCounter, err := orchestration.NewAccountSessionCounter(agentStore)
+	require.NoError(t, err)
+	accountWirer.SetSessionReserver(sessionCounter)
 	accountWirer.SetTokenManager(
 		orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0))
+	// Usage is read from the cost ledger the turn path writes, as pkg/server
+	// lifecycle_orchestration binds it; the daemon's account resolver reads
+	// it before it picks a pooled account. The ledger keys carry the tenant,
+	// and it needs a store that reports a missing key as not-found (the
+	// KVStore contract), which the routing store above does not.
+	accountWirer.SetUsageTracker(orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
 
 	svc := &enrollmentService{
 		MockQuicBaaS:   testutil.NewMockQuicBaaS(),
@@ -359,6 +401,9 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	srv, err := restapi.NewServer(svc, cfg, log)
 	require.NoError(t, err)
 	srv.SetFleetRegistrar(server.NewFleetRegistrar(registry))
+	certRecords, err := service.NewKVFleetNodeCertRecords(kvstore.NewMemory())
+	require.NoError(t, err)
+	srv.SetFleetNodeCertRecords(certRecords)
 
 	return &enrollmentFixture{
 		server:       srv,
@@ -366,7 +411,17 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 		identity:     identityRecords,
 		store:        store,
 		accountStore: accountStore,
+		certRecords:  certRecords,
 	}
+}
+
+// issuedCertificate mints the certificate the fleet issuer issues and
+// records it for tenantID, as the issuer does before it hands it out.
+func (f *enrollmentFixture) issuedCertificate(t *testing.T, tenantID, commonName string) *x509.Certificate {
+	t.Helper()
+	cert := agentCertificate(t, tenantID, commonName)
+	require.NoError(t, f.certRecords.RecordFleetNodeCertificate(context.Background(), tenantID, cert))
+	return cert
 }
 
 // enrollmentTenants is the minimal iam.TenantManager AppManager needs: this
@@ -384,8 +439,15 @@ func (m *enrollmentTenants) GetTenant(_ context.Context, id string) (*iam.Tenant
 func (m *enrollmentTenants) CheckQuota(_ context.Context, _, _ string) error { return nil }
 
 // agentCertificate mints the certificate the deploy service issues: the tenant
-// on Organization, OU=agents, ClientAuth EKU, and the tenant-scoped SPIFFE SAN
-// go-qrdb derives the identity's tenant from.
+// on Organization and as the only OU, ClientAuth EKU, and the
+// tenant-scoped SPIFFE SAN spiffe://<tenant>/svc/<name> go-qrdb derives the
+// identity's tenant from. The kind is go-qrdb's service kind, as the production
+// fleet issuer (pkg/service XKMSFleetNodeCertIssuer) stamps it: enrolment
+// refuses any other kind.
+//
+// The tenant is the ONLY OU, as go-xkms v0.57+ issues it (CA m779 62(a)). A
+// second OU would not stay second: x509 encodes all OUs in one RDN SET, which
+// DER sorts, so OU=agents would become the first OU and name the wrong tenant.
 func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certificate {
 	t.Helper()
 
@@ -395,8 +457,7 @@ func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certifica
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	require.NoError(t, err)
 
-	spiffeID, err := url.Parse("spiffe://burnin.example.internal/tenant/" +
-		tenantID + "/user/" + commonName)
+	spiffeID, err := url.Parse("spiffe://" + tenantID + "/" + qrdbsdk.SpiffeKindService + "/" + commonName)
 	require.NoError(t, err)
 
 	tmpl := &x509.Certificate{
@@ -404,7 +465,7 @@ func agentCertificate(t *testing.T, tenantID, commonName string) *x509.Certifica
 		Subject: pkix.Name{
 			CommonName:         commonName,
 			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(24 * time.Hour),

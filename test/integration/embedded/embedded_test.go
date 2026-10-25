@@ -173,6 +173,7 @@ func newEmbeddedClient(t *testing.T) quicbaas.Client {
 	client, err := quicbaas.NewClient(
 		"embedded://local",
 		quicbaas.WithEmbedded(testService),
+		quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(testServer)),
 	)
 	require.NoError(t, err, "failed to create embedded SDK client")
 	return client

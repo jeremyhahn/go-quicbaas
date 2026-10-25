@@ -39,7 +39,7 @@ func TestRESTKeyGeneration(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	tests := []struct {
 		name              string
@@ -144,7 +144,7 @@ func TestRESTKeyRetrieval(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	keyName := generateUniqueKeyName("rest-retrieval")
 	genReq := &service.GenerateKeyRequest{
@@ -196,7 +196,7 @@ func TestRESTKeyListing(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	// Create multiple test keys
 	prefix := generateUniqueKeyName("rest-list")
@@ -267,7 +267,7 @@ func TestRESTKeyRotation(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	keyName := generateUniqueKeyName("rest-rotation")
 	genReq := &service.GenerateKeyRequest{
@@ -333,7 +333,7 @@ func TestRESTKeyDeletion(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	t.Run("force delete key", func(t *testing.T) {
 		keyName := generateUniqueKeyName("rest-delete")
@@ -381,7 +381,7 @@ func TestRESTKeyStatusUpdate(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	keyName := generateUniqueKeyName("rest-status")
 	genReq := &service.GenerateKeyRequest{
@@ -439,7 +439,7 @@ func TestRESTEncryptionDecryption(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	// Create encryption key
 	keyName := generateUniqueKeyName("rest-encrypt")
@@ -566,7 +566,7 @@ func TestRESTKeyVersions(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	keyName := generateUniqueKeyName("rest-versions")
 	genReq := &service.GenerateKeyRequest{
@@ -614,7 +614,7 @@ func TestRESTHierarchicalKeys(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	// Create keys with hierarchical names
 	basePath := generateUniqueKeyName("tenant")
@@ -676,7 +676,7 @@ func TestRESTClusterConsistency(t *testing.T) {
 	require.GreaterOrEqual(t, len(endpoints), 2,
 		"Cluster consistency test requires at least 2 nodes, got %d", len(endpoints))
 
-	client1 := NewRESTClient(endpoints[0])
+	client1 := NewRESTClient(t, endpoints[0])
 
 	// KMS keys are node-local by design - test operations on same node
 	t.Run("key operations on same node", func(t *testing.T) {
@@ -815,7 +815,7 @@ func TestRESTClusterConsistency(t *testing.T) {
 
 	t.Run("key not visible on other nodes (expected)", func(t *testing.T) {
 		// This test documents that KMS keys are node-local by design
-		client2 := NewRESTClient(endpoints[1])
+		client2 := NewRESTClient(t, endpoints[1])
 		keyName := generateUniqueKeyName("rest-local-only")
 
 		genReq := &service.GenerateKeyRequest{

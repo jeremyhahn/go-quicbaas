@@ -164,7 +164,7 @@ func (s *tenantAdminSession) prepare(t *testing.T) error {
 	if bearer == s.bearer {
 		return nil
 	}
-	if err := writeSessionToken(s.tokenPath, bearer, expiresAt); err != nil {
+	if err := helpers.WriteCLISession(s.tokenPath, bearer, expiresAt); err != nil {
 		return &TenantAdminModeError{Step: "write admin session", TenantID: s.tenantID, Cause: err}
 	}
 	s.bearer = bearer

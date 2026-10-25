@@ -63,7 +63,8 @@ func newProjectClient(t *testing.T) quicbaas.Client {
 
 	svc := srv.Service()
 	require.NotNil(t, svc, "a started server must expose its service")
-	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded://local", quicbaas.WithEmbedded(svc),
+		quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(srv)))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	return client
