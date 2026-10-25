@@ -172,7 +172,7 @@ func TestWebAuthnAttestationGate_AssuranceAnyRefusesAdminRoleID(t *testing.T) {
 		hardwareAllowlist(),
 		NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{
 			"admin@example.com": {Email: "admin@example.com", Roles: []string{"role-admin-id"}},
-		}}, stubAttestRoles()),
+		}}, stubAttestRoles(), nil),
 	)
 
 	result, err := gate.Evaluate(context.Background(), "t1", "admin@example.com", "none", virtualAAGUID)
@@ -493,7 +493,7 @@ func TestAdminRoleResolver(t *testing.T) {
 		"admin@example.com":  {Email: "admin@example.com", Roles: []string{"role-user-id", "role-admin-id"}},
 		"so@example.com":     {Email: "so@example.com", Roles: []string{"role-so-id"}},
 		"tenant@example.com": {Email: "tenant@example.com", Roles: []string{"role-user-id", "role-audit-id"}},
-	}}, stubAttestRoles())
+	}}, stubAttestRoles(), nil)
 
 	for email, want := range map[string]bool{
 		"admin@example.com":  true,
@@ -511,13 +511,23 @@ func TestAdminRoleResolver(t *testing.T) {
 
 	failingRoles := NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{
 		"tenant@example.com": {Email: "tenant@example.com", Roles: []string{"role-user-id"}},
-	}}, &stubAttestRoleResolver{err: errors.New("role resolver unavailable")})
+	}}, &stubAttestRoleResolver{err: errors.New("role resolver unavailable")}, nil)
 	got, err := failingRoles.IsAdministrativeAccount(context.Background(), "t1", "tenant@example.com")
-	if err != nil {
-		t.Fatalf("IsAdministrativeAccount with failing role resolver: %v", err)
+	var roleErr *WebAuthnRoleResolverError
+	if !errors.As(err, &roleErr) {
+		t.Fatalf("IsAdministrativeAccount with failing role resolver: err = %v, want *WebAuthnRoleResolverError", err)
 	}
-	if !got {
-		t.Fatal("role resolver failure was reported as non-administrative")
+	if got {
+		t.Fatal("role resolver failure was reported as an answer of administrative")
+	}
+
+	failingBind := NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{
+		"tenant@example.com": {Email: "tenant@example.com", Roles: []string{"role-user-id"}},
+	}}, stubAttestRoles(), func(context.Context, string) (context.Context, error) {
+		return nil, errors.New("service principal unavailable")
+	})
+	if _, err := failingBind.IsAdministrativeAccount(context.Background(), "t1", "tenant@example.com"); !errors.As(err, &roleErr) {
+		t.Fatalf("IsAdministrativeAccount with failing role-read binder: err = %v, want *WebAuthnRoleResolverError", err)
 	}
 }
 
@@ -525,13 +535,13 @@ func TestAdminRoleResolver(t *testing.T) {
 // unresolvable account must return an error, NOT (false, nil). A false would
 // be read by the gate as "tenant user" and could downgrade an administrator.
 func TestAdminRoleResolver_ErrorsAreNotFalse(t *testing.T) {
-	resolver := NewWebAuthnAdminResolver(&stubAttestUserResolver{err: errors.New("store unavailable")}, stubAttestRoles())
+	resolver := NewWebAuthnAdminResolver(&stubAttestUserResolver{err: errors.New("store unavailable")}, stubAttestRoles(), nil)
 
 	if _, err := resolver.IsAdministrativeAccount(context.Background(), "t1", "admin@example.com"); err == nil {
 		t.Fatal("a store failure was reported as a successful non-administrative answer")
 	}
 
-	missing := NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{}}, stubAttestRoles())
+	missing := NewWebAuthnAdminResolver(&stubAttestUserResolver{users: map[string]*User{}}, stubAttestRoles(), nil)
 	if _, err := missing.IsAdministrativeAccount(context.Background(), "t1", "ghost@example.com"); err == nil {
 		t.Fatal("an unknown account was reported as a successful non-administrative answer")
 	}
@@ -540,11 +550,11 @@ func TestAdminRoleResolver_ErrorsAreNotFalse(t *testing.T) {
 // TestNewWebAuthnAdminResolver_NilStore returns a nil resolver, which the gate
 // treats as "cannot tell" and therefore as administrative.
 func TestNewWebAuthnAdminResolver_NilStore(t *testing.T) {
-	if r := NewWebAuthnAdminResolver(nil, stubAttestRoles()); r != nil {
-		t.Fatalf("NewWebAuthnAdminResolver(nil, stubAttestRoles()) = %v, want nil", r)
+	if r := NewWebAuthnAdminResolver(nil, stubAttestRoles(), nil); r != nil {
+		t.Fatalf("NewWebAuthnAdminResolver(nil, stubAttestRoles(), nil) = %v, want nil", r)
 	}
-	if r := NewWebAuthnAdminResolver(&stubAttestUserResolver{}, nil); r != nil {
-		t.Fatalf("NewWebAuthnAdminResolver(userResolver, nil) = %v, want nil", r)
+	if r := NewWebAuthnAdminResolver(&stubAttestUserResolver{}, nil, nil); r != nil {
+		t.Fatalf("NewWebAuthnAdminResolver(userResolver, nil, nil) = %v, want nil", r)
 	}
 }
 
@@ -607,7 +617,7 @@ func TestAdminRoleResolver_NilReceiver(t *testing.T) {
 // TestAdminRoleResolver_NilUserIsAnError covers the store that answers
 // (nil, nil) — an absent user must not read as "not an administrator".
 func TestAdminRoleResolver_NilUserIsAnError(t *testing.T) {
-	resolver := NewWebAuthnAdminResolver(&stubAttestNilUserResolver{}, stubAttestRoles())
+	resolver := NewWebAuthnAdminResolver(&stubAttestNilUserResolver{}, stubAttestRoles(), nil)
 	if _, err := resolver.IsAdministrativeAccount(context.Background(), "t1", "a@b.c"); err == nil {
 		t.Fatal("a nil user was reported as a successful non-administrative answer")
 	}
