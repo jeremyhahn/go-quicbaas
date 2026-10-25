@@ -121,3 +121,31 @@ func (id EmbeddedIdentity) authMiddleware() (*qrdbsdk.AuthMiddleware, error) {
 	}
 	return mw, nil
 }
+
+// authorize enforces perms for a delegated identity through the node's own
+// AuthMiddleware, against the tenant the delegation binds to. It guards
+// calls whose backend runs as the service principal, where node
+// authorization would otherwise never see the delegation's grants. The
+// service principal authorizes nothing here: its calls are not delegated.
+func (id EmbeddedIdentity) authorize(ctx context.Context, perms ...qrdbsdk.Permission) error {
+	mw, err := id.authMiddleware()
+	if err != nil {
+		return err
+	}
+	if mw == nil {
+		return nil
+	}
+	bound, err := id.bind(ctx)
+	if err != nil {
+		return err
+	}
+	// An unbound tenant is the system scope, as for qrdb's own embedded
+	// transport.
+	tenantID, _ := qrdbsdk.TenantFromContext(bound)
+	for _, perm := range perms {
+		if err := mw.AuthorizeTenant(bound, tenantID, perm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
