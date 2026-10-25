@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"net"
 	"os"
@@ -200,19 +202,96 @@ func (s *Server) issueServerCert(ctx context.Context, ca xkmssdk.TrustedCA, requ
 // prefers a stored chain over the standalone leaf, so a failed chain write
 // can never pair a stale chain with a new leaf.
 func storeServerCertInKeyStore(ctx context.Context, ca xkmssdk.TrustedCA, cn string, cert *x509.Certificate) error {
-	caCert, err := ca.CACertificate()
-	if err == nil && caCert == nil {
-		err = ErrServerCertChainCAMissing
-	}
+	chain, err := serverCertIssuerChain(ca, cert)
 	if err != nil {
-		return api.NewOperationFailedError("load CA certificate for the server TLS chain", err)
+		return err
 	}
 	keyStore := ca.KeyStore()
-	if err := keyStore.SaveCertChain(ctx, cn, []*x509.Certificate{cert, caCert}); err != nil {
+	// A restart whose CA reports fewer issuers than the chain a previous boot
+	// stored keeps that complete chain. A read failure leaves nothing to
+	// keep, and the chain is written as built.
+	if stored, readErr := keyStore.GetCertChain(ctx, cn); readErr == nil && extendsChain(stored, chain) {
+		chain = stored
+	} else if err := keyStore.SaveCertChain(ctx, cn, chain); err != nil {
 		return api.NewOperationFailedError("store server TLS certificate chain in keystore", err)
 	}
 	if err := keyStore.SaveCert(ctx, cn, cert); err != nil {
 		return api.NewOperationFailedError("store server TLS certificate in keystore", err)
 	}
 	return nil
+}
+
+// serverCertIssuerChain returns leaf followed by every issuer the CA holds
+// above it: the issuing CA certificate, then each CA bundle certificate
+// whose subject names the previous certificate's issuer, up to a self-issued
+// certificate or the last issuer the bundle carries. A go-xkms intermediate
+// CA's bundle is itself and its parent, so an intermediate issued under
+// another intermediate keeps both.
+func serverCertIssuerChain(ca xkmssdk.TrustedCA, leaf *x509.Certificate) ([]*x509.Certificate, error) {
+	caCert, err := ca.CACertificate()
+	if err == nil && caCert == nil {
+		err = ErrServerCertChainCAMissing
+	}
+	if err != nil {
+		return nil, api.NewOperationFailedError("load CA certificate for the server TLS chain", err)
+	}
+	bundlePEM, err := ca.CABundle()
+	if err != nil {
+		return nil, api.NewOperationFailedError("load CA bundle for the server TLS chain", err)
+	}
+	var bundle []*x509.Certificate
+	for rest := bundlePEM; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, api.NewOperationFailedError("parse CA bundle for the server TLS chain", err)
+		}
+		bundle = append(bundle, cert)
+	}
+
+	chain := []*x509.Certificate{leaf, caCert}
+	for current := caCert; !bytes.Equal(current.RawIssuer, current.RawSubject); {
+		issuer := issuerIn(bundle, current, chain)
+		if issuer == nil {
+			break
+		}
+		chain = append(chain, issuer)
+		current = issuer
+	}
+	return chain, nil
+}
+
+// issuerIn returns the certificate in candidates whose subject is cert's
+// issuer and that chain does not already carry, or nil.
+func issuerIn(candidates []*x509.Certificate, cert *x509.Certificate, chain []*x509.Certificate) *x509.Certificate {
+	for _, candidate := range candidates {
+		if bytes.Equal(candidate.RawSubject, cert.RawIssuer) && !slices.ContainsFunc(chain, candidate.Equal) {
+			return candidate
+		}
+	}
+	return nil
+}
+
+// extendsChain reports whether stored begins with every certificate of
+// chain and carries more issuers, each named by the certificate before it:
+// a complete chain for the same leaf and issuers.
+func extendsChain(stored, chain []*x509.Certificate) bool {
+	if len(stored) <= len(chain) {
+		return false
+	}
+	for i, cert := range chain {
+		if !stored[i].Equal(cert) {
+			return false
+		}
+	}
+	for i := len(chain); i < len(stored); i++ {
+		if !bytes.Equal(stored[i-1].RawIssuer, stored[i].RawSubject) {
+			return false
+		}
+	}
+	return true
 }

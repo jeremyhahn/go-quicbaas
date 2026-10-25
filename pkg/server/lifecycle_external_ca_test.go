@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
@@ -27,7 +28,7 @@ import (
 
 // externalCAMock is a controllable TrustedCA for issueTLSCertFromExternalCA.
 // Only IssueCertificate, the keystore copy of the issued leaf (CACertificate,
-// KeyStore) and ServerTLSConfig are exercised; every other method is the
+// CABundle, KeyStore) and ServerTLSConfig are exercised; every other method is the
 // embedded nil interface and must not be called.
 type externalCAMock struct {
 	xkmsca.TrustedCA
@@ -44,6 +45,10 @@ func (m *externalCAMock) CertStore() xkmssdk.CertStore { return m.certs }
 func (m *externalCAMock) KeyStore() xkmssdk.ServiceBackend { return m.keys }
 
 func (m *externalCAMock) CACertificate() (*x509.Certificate, error) { return m.caCert, nil }
+
+func (m *externalCAMock) CABundle() ([]byte, error) {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: m.caCert.Raw}), nil
+}
 
 func (m *externalCAMock) IssueCertificate(_ context.Context, _ *xkmsca.CertificateRequest) (*xkmsca.IssuedCertificate, error) {
 	if m.issueErr != nil {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -41,6 +42,9 @@ type sanCAMock struct {
 	keys         *sanKeyStoreMock
 	caCert       *x509.Certificate
 	caCertErr    error
+	issuer       *chainTestCA        // signs issued leaves; nil issues them self-signed
+	bundle       []*x509.Certificate // CABundle; nil serves caCert alone
+	bundleErr    error
 	issueErr     error
 	revokeErr    error
 	isRevokedErr error
@@ -56,7 +60,7 @@ func (m *sanCAMock) IssueCertificate(_ context.Context, req *xkmssdk.TrustedCACe
 	if _, exists := m.certs.certs[req.Subject.CommonName]; exists {
 		return nil, xkmssdk.ErrCertificateAlreadyExists
 	}
-	cert := newSANTestLeaf(m.certs.t, req.Subject.CommonName, req.SANS)
+	cert := newSANTestLeafFrom(m.certs.t, req.Subject.CommonName, req.SANS, m.issuer)
 	m.certs.certs[req.Subject.CommonName] = cert
 	m.issued++
 	return &xkmssdk.TrustedCAIssuedCertificate{Certificate: cert, SerialNumber: cert.SerialNumber}, nil
@@ -95,6 +99,22 @@ func (m *sanCAMock) CACertificate() (*x509.Certificate, error) {
 	return m.caCert, m.caCertErr
 }
 
+// CABundle mirrors go-xkms: the issuing CA certificate, then its parent.
+func (m *sanCAMock) CABundle() ([]byte, error) {
+	if m.bundleErr != nil {
+		return nil, m.bundleErr
+	}
+	bundle := m.bundle
+	if bundle == nil && m.caCert != nil {
+		bundle = []*x509.Certificate{m.caCert}
+	}
+	var out []byte
+	for _, cert := range bundle {
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})...)
+	}
+	return out, nil
+}
+
 // ServerTLSConfig mirrors go-xkms: the served certificate comes from the
 // keystore by Common Name, never from the CertStore.
 func (m *sanCAMock) ServerTLSConfig(_ context.Context, attrs *xkmssdk.KeyAttributes, _ bool) (*tls.Config, error) {
@@ -131,6 +151,14 @@ func (k *sanKeyStoreMock) SaveCertChain(_ context.Context, keyID string, chain [
 	k.chains[keyID] = chain
 	k.writes = append(k.writes, "chain")
 	return nil
+}
+
+func (k *sanKeyStoreMock) GetCertChain(_ context.Context, keyID string) ([]*x509.Certificate, error) {
+	chain, ok := k.chains[keyID]
+	if !ok {
+		return nil, errSANTestNotFound
+	}
+	return chain, nil
 }
 
 func (k *sanKeyStoreMock) SaveCert(_ context.Context, keyID string, cert *x509.Certificate) error {
@@ -186,6 +214,13 @@ func (s *sanCertStoreMock) DeleteCertificate(cn string) error {
 // newSANTestLeaf returns a self-signed certificate carrying sans.
 func newSANTestLeaf(t *testing.T, cn string, sans *xkmssdk.TrustedCASubjectAlternativeNames) *x509.Certificate {
 	t.Helper()
+	return newSANTestLeafFrom(t, cn, sans, nil)
+}
+
+// newSANTestLeafFrom returns a certificate carrying sans, signed by issuer,
+// or self-signed when issuer is nil.
+func newSANTestLeafFrom(t *testing.T, cn string, sans *xkmssdk.TrustedCASubjectAlternativeNames, issuer *chainTestCA) *x509.Certificate {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
@@ -200,7 +235,11 @@ func newSANTestLeaf(t *testing.T, cn string, sans *xkmssdk.TrustedCASubjectAlter
 	for _, entry := range sans.IPs {
 		tmpl.IPAddresses = append(tmpl.IPAddresses, net.ParseIP(entry))
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	parent, signer := tmpl, crypto.Signer(key)
+	if issuer != nil {
+		parent, signer = issuer.cert, issuer.key
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signer)
 	require.NoError(t, err)
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
