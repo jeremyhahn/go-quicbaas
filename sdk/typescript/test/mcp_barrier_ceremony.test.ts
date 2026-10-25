@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { McpClient } from '../src/mcp';
-import { McpError, SOPINRequiresTLSError } from '../src/errors';
+import { CeremonyAdminSelectorError, McpError, SOPINRequiresTLSError } from '../src/errors';
 import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
 const endpoint = 'https://node.example:8081/mcp';
@@ -197,9 +197,12 @@ describe('McpCeremonyClient tools', () => {
           user_pin: 'user-pin-1234',
           threshold: 2,
           credential_seal_strategy: 'passphrase',
+          policy: 'any-enrolled',
           officers: [{ username: 'officer-1', csr_pem: 'CSR-1' }],
           hostname: 'node.example',
           sans: ['node.example', '10.0.0.1'],
+          admin_csr_pem: 'ADMIN-CSR',
+          secret: utf8('barrier passphrase'),
         }),
       tool: 'qrdb_ceremony_initialize',
       args: {
@@ -207,18 +210,43 @@ describe('McpCeremonyClient tools', () => {
         user_pin: 'user-pin-1234',
         threshold: 2,
         credential_seal_strategy: 'passphrase',
+        policy: 'any-enrolled',
         officers: [{ username: 'officer-1', csr_pem: 'CSR-1' }],
         hostname: 'node.example',
         sans: ['node.example', '10.0.0.1'],
+        admin_csr_pem: 'ADMIN-CSR',
+        secret: 'barrier passphrase',
       },
       reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
     },
     {
       name: 'initialize without the optional fields',
-      call: (c) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0 }),
+      call: (c) =>
+        c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true }),
       tool: 'qrdb_ceremony_initialize',
-      args: { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0 },
+      args: { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true },
+      reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
+      want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
+    },
+    {
+      name: 'initialize with a bring-your-own admin certificate',
+      call: (c) =>
+        c.ceremony.initialize({
+          so_pin: 'so-pin-1234',
+          user_pin: 'user-pin-1234',
+          threshold: 0,
+          admin_cert_pem: 'ADMIN-CERT',
+          admin_cert_pool_pem: 'ADMIN-POOL',
+        }),
+      tool: 'qrdb_ceremony_initialize',
+      args: {
+        so_pin: 'so-pin-1234',
+        user_pin: 'user-pin-1234',
+        threshold: 0,
+        admin_cert_pem: 'ADMIN-CERT',
+        admin_cert_pool_pem: 'ADMIN-POOL',
+      },
       reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
     },
@@ -249,12 +277,29 @@ describe('McpCeremonyClient tools', () => {
   });
 
   it.each([
-    ['initialize', (c: McpClient) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0 })],
+    [
+      'initialize',
+      (c: McpClient) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0, admin_generate: true }),
+    ],
     ['signCSR', (c: McpClient) => c.ceremony.signCSR({ username: 'u', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'r' })],
   ] as const)('%s refuses to send an SO PIN over plaintext http', async (_name, call) => {
     const err = await call(new McpClient(plainEndpoint)).catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no selector', {}, []],
+    ['two selectors', { admin_csr_pem: 'CSR', admin_generate: true }, ['admin_csr_pem', 'admin_generate']],
+    ['an explicit false generate alone', { admin_generate: false }, []],
+  ] as const)('initialize with %s fails before any call', async (_name, selector, selected) => {
+    const err = await new McpClient(endpoint).ceremony
+      .initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0, ...selector })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CeremonyAdminSelectorError);
+    expect((err as CeremonyAdminSelectorError).selected).toEqual(selected);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
