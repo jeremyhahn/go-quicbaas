@@ -50,7 +50,14 @@ func TestPasswordFieldCanaryNoPlaintextEscape(t *testing.T) {
 	if err := json.Unmarshal([]byte(`"`+encoded+`"`), &f); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !bytes.Equal(f.Buffer().Bytes(), plaintext) {
+	match := false
+	if err := f.Buffer().WithBytes(func(b []byte) error {
+		match = bytes.Equal(b, plaintext)
+		return nil
+	}); err != nil {
+		t.Fatalf("read buffer: %v", err)
+	}
+	if !match {
 		t.Fatalf("plaintext mismatch in buffer before destroy")
 	}
 	f.Destroy()
