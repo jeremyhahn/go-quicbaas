@@ -84,15 +84,18 @@ type RebuildJobState struct {
 
 // CompactionJobState tracks the state of a compaction job.
 type CompactionJobState struct {
-	OperationID    string
-	Namespace      string
-	InProgress     bool
-	BytesCompacted int64
-	TotalBytes     int64
-	StartedAt      time.Time
-	CompletedAt    *time.Time
-	Error          error
-	mu             sync.RWMutex
+	OperationID string
+	// UpstreamOperationID is the ID qrdb gave the compaction; an async job
+	// follows qrdb's progress by it until qrdb reports it finished.
+	UpstreamOperationID string
+	Namespace           string
+	InProgress          bool
+	BytesCompacted      int64
+	TotalBytes          int64
+	StartedAt           time.Time
+	CompletedAt         *time.Time
+	Error               error
+	mu                  sync.RWMutex
 }
 
 // VectorRaftNodeSetter allows injecting a Raft node into a VectorService
@@ -2315,12 +2318,12 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	// tenant, so no separate metadata read (and its vector:namespace_info
 	// permission) is needed. An async request hands the compaction to qrdb,
 	// which accepts or refuses it before the reply and runs it in the
-	// background.
+	// background. The job stays in progress until qrdb reports the
+	// compaction finished (see refreshCompaction).
 	if req.Async {
 		if _, err := v.startCompaction(ctx, job, scopedNamespace, true); err != nil {
 			return nil, err
 		}
-		v.completeCompaction(job)
 
 		return &CompactNamespaceResponse{
 			OperationID: operationID,
@@ -2386,7 +2389,8 @@ func (v *vectorService) startCompaction(ctx context.Context, job *CompactionJobS
 	job.TotalBytes = preSizeBytes
 	job.mu.Unlock()
 
-	if err := v.storage.Compact(ctx, namespace, async); err != nil {
+	upstreamID, err := v.storage.Compact(ctx, namespace, async)
+	if err != nil {
 		job.mu.Lock()
 		job.Error = err
 		job.mu.Unlock()
@@ -2403,6 +2407,9 @@ func (v *vectorService) startCompaction(ctx context.Context, job *CompactionJobS
 			Err:  &api.OperationFailedError{Operation: "compaction", Cause: err},
 		}
 	}
+	job.mu.Lock()
+	job.UpstreamOperationID = upstreamID
+	job.mu.Unlock()
 	return preSizeBytes, nil
 }
 
@@ -2482,10 +2489,20 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 	v.mu.RUnlock()
 
+	job, err := v.findCompactionJob(req)
+	if err != nil {
+		return nil, err
+	}
+	v.refreshCompaction(ctx, job)
+	return compactionProgressResponse(job), nil
+}
+
+// findCompactionJob returns the job req names: the one with its operation
+// ID, or else the namespace's most recent one.
+func (v *vectorService) findCompactionJob(req *GetCompactionProgressRequest) (*CompactionJobState, error) {
 	v.jobMu.RLock()
 	defer v.jobMu.RUnlock()
 
-	// If operation ID provided, look for specific job
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
 		if !exists {
@@ -2495,43 +2512,9 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 				Err:  &api.NotFoundError{Resource: "compaction operation", ID: req.OperationID},
 			}
 		}
-
-		job.mu.RLock()
-		defer job.mu.RUnlock()
-
-		var completedAt *int64
-		if job.CompletedAt != nil {
-			ts := job.CompletedAt.UnixNano()
-			completedAt = &ts
-		}
-
-		var errMsg string
-		if job.Error != nil {
-			errMsg = job.Error.Error()
-		}
-
-		percentComplete := 0.0
-		if job.TotalBytes > 0 {
-			percentComplete = float64(job.BytesCompacted) / float64(job.TotalBytes) * 100
-		}
-		if !job.InProgress && job.Error == nil {
-			percentComplete = 100.0
-		}
-
-		return &GetCompactionProgressResponse{
-			OperationID:     job.OperationID,
-			Namespace:       job.Namespace,
-			BytesCompacted:  job.BytesCompacted,
-			TotalBytes:      job.TotalBytes,
-			PercentComplete: percentComplete,
-			InProgress:      job.InProgress,
-			StartedAt:       job.StartedAt.UnixNano(),
-			CompletedAt:     completedAt,
-			Error:           errMsg,
-		}, nil
+		return job, nil
 	}
 
-	// Find the most recent job for the namespace
 	var latestJob *CompactionJobState
 	for _, job := range v.compactionJobs {
 		if job.Namespace == req.Namespace {
@@ -2540,7 +2523,6 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 			}
 		}
 	}
-
 	if latestJob == nil {
 		return nil, &qbErrors.QBError{
 			Code: qbErrors.ErrNotFound,
@@ -2548,40 +2530,94 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 			Err:  &api.NotFoundError{Resource: "compaction operations for namespace", ID: req.Namespace},
 		}
 	}
+	return latestJob, nil
+}
 
-	latestJob.mu.RLock()
-	defer latestJob.mu.RUnlock()
+// refreshCompaction brings an in-progress job up to date with qrdb's
+// progress for the compaction it runs in the background. A failed progress
+// read leaves the job as it was: the compaction is still qrdb's to finish.
+func (v *vectorService) refreshCompaction(ctx context.Context, job *CompactionJobState) {
+	job.mu.RLock()
+	inProgress := job.InProgress
+	namespace := job.Namespace
+	upstreamID := job.UpstreamOperationID
+	job.mu.RUnlock()
+	if !inProgress || upstreamID == "" {
+		return
+	}
+
+	progress, err := v.storage.CompactionProgress(ctx, namespace, upstreamID)
+	if err != nil {
+		v.logger.WithFields(map[string]interface{}{
+			"namespace":             namespace,
+			"upstream_operation_id": upstreamID,
+			"error":                 err,
+		}).Debug("compaction progress unavailable")
+		return
+	}
+
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if !job.InProgress {
+		return
+	}
+	job.BytesCompacted = progress.BytesCompacted
+	if progress.TotalBytes > 0 {
+		job.TotalBytes = progress.TotalBytes
+	}
+	if progress.InProgress {
+		return
+	}
+	if progress.Error != "" {
+		job.Error = &UpstreamCompactionError{
+			Namespace:   namespace,
+			OperationID: upstreamID,
+			Reason:      progress.Error,
+		}
+	}
+	completedAt := time.Now()
+	if progress.CompletedAt != nil {
+		completedAt = time.Unix(0, *progress.CompletedAt)
+	}
+	job.CompletedAt = &completedAt
+	job.InProgress = false
+}
+
+// compactionProgressResponse reports job's progress.
+func compactionProgressResponse(job *CompactionJobState) *GetCompactionProgressResponse {
+	job.mu.RLock()
+	defer job.mu.RUnlock()
 
 	var completedAt *int64
-	if latestJob.CompletedAt != nil {
-		ts := latestJob.CompletedAt.UnixNano()
+	if job.CompletedAt != nil {
+		ts := job.CompletedAt.UnixNano()
 		completedAt = &ts
 	}
 
 	var errMsg string
-	if latestJob.Error != nil {
-		errMsg = latestJob.Error.Error()
+	if job.Error != nil {
+		errMsg = job.Error.Error()
 	}
 
 	percentComplete := 0.0
-	if latestJob.TotalBytes > 0 {
-		percentComplete = float64(latestJob.BytesCompacted) / float64(latestJob.TotalBytes) * 100
+	if job.TotalBytes > 0 {
+		percentComplete = float64(job.BytesCompacted) / float64(job.TotalBytes) * 100
 	}
-	if !latestJob.InProgress && latestJob.Error == nil {
+	if !job.InProgress && job.Error == nil {
 		percentComplete = 100.0
 	}
 
 	return &GetCompactionProgressResponse{
-		OperationID:     latestJob.OperationID,
-		Namespace:       latestJob.Namespace,
-		BytesCompacted:  latestJob.BytesCompacted,
-		TotalBytes:      latestJob.TotalBytes,
+		OperationID:     job.OperationID,
+		Namespace:       job.Namespace,
+		BytesCompacted:  job.BytesCompacted,
+		TotalBytes:      job.TotalBytes,
 		PercentComplete: percentComplete,
-		InProgress:      latestJob.InProgress,
-		StartedAt:       latestJob.StartedAt.UnixNano(),
+		InProgress:      job.InProgress,
+		StartedAt:       job.StartedAt.UnixNano(),
 		CompletedAt:     completedAt,
 		Error:           errMsg,
-	}, nil
+	}
 }
 
 // validateCompactNamespaceRequest validates the compact namespace request.

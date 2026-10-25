@@ -289,5 +289,33 @@ func TestNodeVectorStorage_Compact_ClientClosed(t *testing.T) {
 	vs := newNodeVectorStorage(vec)
 	require.NoError(t, client.Close())
 
-	assert.Error(t, vs.Compact(context.Background(), "ns", false))
+	operationID, err := vs.Compact(context.Background(), "ns", false)
+	assert.Error(t, err)
+	assert.Empty(t, operationID)
+	_, err = vs.CompactionProgress(context.Background(), "ns", "op")
+	assert.Error(t, err)
+}
+
+// Compact hands back qrdb's operation ID, and CompactionProgress follows the
+// compaction qrdb knows by it.
+func TestNodeVectorStorage_CompactionProgress(t *testing.T) {
+	vs := newEmbeddedVectorStorage(t)
+	ctx := context.Background()
+	const ns = "compacted"
+	require.NoError(t, vs.CreateNamespace(ctx, &interfaces.VectorNamespaceInfo{
+		Name: ns, Dimension: 3, DistanceMetric: "cosine", IndexType: "flat",
+	}))
+
+	operationID, err := vs.Compact(ctx, ns, false)
+	require.NoError(t, err)
+	require.NotEmpty(t, operationID, "qrdb's operation ID is kept")
+
+	progress, err := vs.CompactionProgress(ctx, ns, operationID)
+	require.NoError(t, err)
+	assert.False(t, progress.InProgress)
+	assert.NotNil(t, progress.CompletedAt)
+	assert.Empty(t, progress.Error)
+
+	_, err = vs.CompactionProgress(ctx, ns, "no-such-operation")
+	assert.Error(t, err, "qrdb knows no compaction by that ID")
 }

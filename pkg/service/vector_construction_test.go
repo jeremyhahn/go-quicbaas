@@ -41,6 +41,7 @@ type vecMockStorage struct {
 	getNamespaceInfoFn   func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error)
 	getStatsFn           func(ctx context.Context, namespace string) (*interfaces.VectorStorageStats, error)
 	compactFn            func(ctx context.Context, namespace string, async bool) error
+	compactionProgressFn func(ctx context.Context, namespace, operationID string) (*interfaces.VectorCompactionProgress, error)
 	closeFn              func() error
 }
 
@@ -107,11 +108,24 @@ func (m *vecMockStorage) GetStats(ctx context.Context, namespace string) (*inter
 	return &interfaces.VectorStorageStats{}, nil
 }
 
-func (m *vecMockStorage) Compact(ctx context.Context, namespace string, async bool) error {
+// vecMockUpstreamOperationID is the operation ID the mock storage gives
+// every compaction it accepts.
+const vecMockUpstreamOperationID = "qrdb-compaction-1"
+
+func (m *vecMockStorage) Compact(ctx context.Context, namespace string, async bool) (string, error) {
 	if m.compactFn != nil {
-		return m.compactFn(ctx, namespace, async)
+		if err := m.compactFn(ctx, namespace, async); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return vecMockUpstreamOperationID, nil
+}
+
+func (m *vecMockStorage) CompactionProgress(ctx context.Context, namespace, operationID string) (*interfaces.VectorCompactionProgress, error) {
+	if m.compactionProgressFn != nil {
+		return m.compactionProgressFn(ctx, namespace, operationID)
+	}
+	return &interfaces.VectorCompactionProgress{InProgress: true}, nil
 }
 
 func (m *vecMockStorage) CreateNamespace(_ context.Context, _ *interfaces.VectorNamespaceInfo) error {

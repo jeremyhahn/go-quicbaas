@@ -78,6 +78,18 @@ func (e *InvalidTransitionError) Error() string {
 	return "invalid compaction state transition from " + e.From.String() + " to " + e.To.String()
 }
 
+// UpstreamCompactionError reports a compaction qrdb accepted and then failed
+// in the background.
+type UpstreamCompactionError struct {
+	Namespace   string
+	OperationID string
+	Reason      string
+}
+
+func (e *UpstreamCompactionError) Error() string {
+	return "compaction " + e.OperationID + " of namespace " + e.Namespace + " failed: " + e.Reason
+}
+
 // CompactionPlan describes what a compaction will do.
 type CompactionPlan struct {
 	// Namespace is the target namespace for compaction.
