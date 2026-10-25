@@ -22,26 +22,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// delegationTenantKey is the context key tenantBinder binds a delegation's
-// tenant under, standing in for the identity qrdb's DelegatedContext binds.
+// delegationTenantKey is the context key grantBinder binds a delegation's
+// tenant under, so a recording servicer sees the tenant a call reached it in.
 type delegationTenantKey struct{}
-
-// tenantBinder binds every delegated call to tenant, or refuses it.
-type tenantBinder struct {
-	tenant string
-	refuse error
-}
-
-func (b *tenantBinder) ServiceContext(ctx context.Context) (context.Context, error) {
-	return b.DelegatedContext(ctx, nil)
-}
-
-func (b *tenantBinder) DelegatedContext(ctx context.Context, _ []*x509.Certificate) (context.Context, error) {
-	if b.refuse != nil {
-		return nil, b.refuse
-	}
-	return context.WithValue(ctx, delegationTenantKey{}, b.tenant), nil
-}
 
 // boundTenant returns the tenant a binder bound ctx to, or "".
 func boundTenant(ctx context.Context) string {
@@ -126,7 +109,7 @@ func newDelegatedQRDBClient(t *testing.T, binder EmbeddedIdentityBinder, kv *ten
 func TestEmbeddedQRDB_RefusedDelegationNeverDispatches(t *testing.T) {
 	kv := &tenantRecordingKV{memKV: newMemKV()}
 	barrier := &tenantRecordingBarrier{}
-	c := newDelegatedQRDBClient(t, &tenantBinder{refuse: bindRefusedError{}}, kv, barrier)
+	c := newRefusedGrantClient(t, kv, barrier)
 
 	store, err := c.DataStore()
 	if err != nil {
@@ -152,7 +135,7 @@ func TestEmbeddedQRDB_RefusedDelegationNeverDispatches(t *testing.T) {
 func TestEmbeddedQRDB_DelegationCarriesItsTenant(t *testing.T) {
 	kv := &tenantRecordingKV{memKV: newMemKV()}
 	barrier := &tenantRecordingBarrier{}
-	c := newDelegatedQRDBClient(t, &tenantBinder{tenant: "acme"}, kv, barrier)
+	c := newGrantClient(t, []string{"kv:get", permSealStatus}, kv, barrier)
 
 	store, err := c.DataStore()
 	if err != nil {
@@ -179,7 +162,7 @@ func TestEmbeddedQRDB_DelegationCarriesItsTenant(t *testing.T) {
 
 func TestEmbeddedQRDB_DelegationGuardedWritesCarryItsTenant(t *testing.T) {
 	kv := &tenantRecordingKV{memKV: newMemKV()}
-	c := newDelegatedQRDBClient(t, &tenantBinder{tenant: "acme"}, kv, &tenantRecordingBarrier{})
+	c := newGrantClient(t, []string{permKVPut, "kv:delete"}, kv, &tenantRecordingBarrier{})
 	store := atomicDataStore(t, c)
 	ctx := context.Background()
 
@@ -206,7 +189,7 @@ func TestEmbeddedQRDB_DelegationGuardedWritesCarryItsTenant(t *testing.T) {
 
 func TestEmbeddedQRDB_RefusedDelegationNeverDispatchesGuardedWrites(t *testing.T) {
 	kv := &tenantRecordingKV{memKV: newMemKV()}
-	c := newDelegatedQRDBClient(t, &tenantBinder{refuse: bindRefusedError{}}, kv, &tenantRecordingBarrier{})
+	c := newRefusedGrantClient(t, kv, &tenantRecordingBarrier{})
 	store := atomicDataStore(t, c)
 	ctx := context.Background()
 
