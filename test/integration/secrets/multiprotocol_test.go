@@ -1808,7 +1808,7 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	// Connect to first endpoint
 	endpoint := endpoints[0]
 
-	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint, grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 	if err != nil {
 		return fmt.Errorf("failed to connect to gRPC endpoint %s: %w", endpoint, err)
 	}
@@ -1904,6 +1904,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {

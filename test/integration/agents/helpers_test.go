@@ -86,9 +86,10 @@ func (e *HTTPResponseError) Unwrap() error {
 	return ErrHTTPResponse
 }
 
-// newTLSClient creates an HTTP client with TLS skip verify and the given timeout.
-func newTLSClient(timeout time.Duration) *http.Client {
-	return helpers.NewHTTPClient(timeout)
+// newTLSClient creates a CA-pinned HTTP client with the given timeout that
+// authenticates as the system admin: the agent routes are authorized.
+func newTLSClient(ctx context.Context, timeout time.Duration) (*http.Client, error) {
+	return helpers.SystemAdminHTTPClient(ctx, timeout)
 }
 
 // postJSON sends an HTTP POST request with a JSON body and returns the response.
@@ -105,7 +106,10 @@ func postJSON(ctx context.Context, url string, body interface{}) (*http.Response
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newTLSClient(ctx, 30*time.Second)
+	if clientErr != nil {
+		return nil, &HTTPRequestError{URL: url, Method: "POST", Cause: clientErr}
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "POST", Cause: doErr}
@@ -123,7 +127,10 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newTLSClient(ctx, 30*time.Second)
+	if clientErr != nil {
+		return nil, &HTTPRequestError{URL: url, Method: "GET", Cause: clientErr}
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "GET", Cause: doErr}
@@ -152,7 +159,10 @@ func deleteJSON(ctx context.Context, url string) (*http.Response, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := newTLSClient(30 * time.Second)
+	client, clientErr := newTLSClient(ctx, 30*time.Second)
+	if clientErr != nil {
+		return nil, &HTTPRequestError{URL: url, Method: "DELETE", Cause: clientErr}
+	}
 	resp, doErr := client.Do(req)
 	if doErr != nil {
 		return nil, &HTTPRequestError{URL: url, Method: "DELETE", Cause: doErr}

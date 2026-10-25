@@ -320,7 +320,7 @@ type GRPCClient struct {
 }
 
 // NewGRPCClient creates a new gRPC protocol client.
-func NewGRPCClient(endpoint string) (*GRPCClient, error) {
+func NewGRPCClient(endpoint string, creds credentials.PerRPCCredentials) (*GRPCClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -330,6 +330,7 @@ func NewGRPCClient(endpoint string) (*GRPCClient, error) {
 	}
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(creds),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -811,7 +812,7 @@ type UnixSocketClient struct {
 }
 
 // NewUnixSocketClient creates a new Unix socket protocol client.
-func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
+func NewUnixSocketClient(socketPath string, creds credentials.PerRPCCredentials) (*UnixSocketClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -821,6 +822,7 @@ func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
 	}
 	conn, err := grpc.DialContext(ctx, "unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(creds),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -851,7 +853,7 @@ type QUICClient struct {
 }
 
 // NewQUICClient creates a new QUIC protocol client.
-func NewQUICClient(endpoint string) (*QUICClient, error) {
+func NewQUICClient(endpoint, bearer string) (*QUICClient, error) {
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
@@ -865,6 +867,7 @@ func NewQUICClient(endpoint string) (*QUICClient, error) {
 		MaxRetries:      3,
 		RetryBackoff:    100 * time.Millisecond,
 		MaxRetryBackoff: 5 * time.Second,
+		AuthToken:       bearer,
 	}
 
 	t, err := quictransport.New(cfg)
@@ -1661,21 +1664,21 @@ func requireProtocolClient(t *testing.T, protocol Protocol, cluster *testCluster
 
 	case ProtocolGRPC:
 		// Try to create gRPC client - fail if not available
-		grpcClient, err := NewGRPCClient(cluster.grpcEndpoint)
+		grpcClient, err := NewGRPCClient(cluster.grpcEndpoint, helpers.SystemAdminGRPCCredentials(t))
 		require.NoError(t, err, "gRPC protocol must be available - ensure the test cluster is properly configured with gRPC endpoint")
 		return grpcClient
 
 	case ProtocolQUIC:
 		// QUIC client - uses SDK QUIC transport
 		require.NotEmpty(t, cluster.quicEndpoint, "QUIC endpoint must be configured for test cluster")
-		quicClient, err := NewQUICClient(cluster.quicEndpoint)
+		quicClient, err := NewQUICClient(cluster.quicEndpoint, helpers.AuthPIV(t, cluster.httpEndpoint))
 		require.NoError(t, err, "QUIC protocol must be available - ensure the test cluster is properly configured with QUIC endpoint")
 		return quicClient
 
 	case ProtocolUnixSocket:
 		// Unix socket client - gRPC over Unix domain socket
 		require.NotEmpty(t, cluster.unixSocket, "Unix socket must be configured for test cluster")
-		unixClient, err := NewUnixSocketClient(cluster.unixSocket)
+		unixClient, err := NewUnixSocketClient(cluster.unixSocket, helpers.SystemAdminGRPCCredentials(t))
 		require.NoError(t, err, "Unix socket protocol must be available - ensure the test cluster is properly configured with Unix socket")
 		return unixClient
 

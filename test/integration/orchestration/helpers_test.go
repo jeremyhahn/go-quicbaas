@@ -59,7 +59,10 @@ func postJSON(ctx context.Context, url string, body interface{}) (*http.Response
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.SystemAdminHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return nil, &testHTTPError{URL: url, Method: req.Method, Cause: err}
+	}
 	return client.Do(req)
 }
 
@@ -71,7 +74,10 @@ func getJSON(ctx context.Context, url string, result interface{}) (*http.Respons
 	}
 	req.Header.Set("Accept", "application/json")
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client, err := helpers.SystemAdminHTTPClient(ctx, 30*time.Second)
+	if err != nil {
+		return nil, &testHTTPError{URL: url, Method: req.Method, Cause: err}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, &testHTTPError{URL: url, Method: "GET", Cause: err}

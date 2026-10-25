@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -35,8 +36,10 @@ type restAdapter struct {
 	httpClient *http.Client
 }
 
-// newRESTAdapter creates a new REST adapter.
-func newRESTAdapter() *restAdapter {
+// newRESTAdapter creates a REST adapter that authenticates as the system
+// admin, matching the embedded adapter's system identity.
+func newRESTAdapter(t *testing.T) *restAdapter {
+	t.Helper()
 	endpoints := helpers.GetRESTEndpoints()
 	baseURL := "https://localhost:8080"
 	if len(endpoints) > 0 {
@@ -44,7 +47,7 @@ func newRESTAdapter() *restAdapter {
 	}
 	return &restAdapter{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewSystemAdminHTTPClient(t, 30*time.Second),
 	}
 }
 

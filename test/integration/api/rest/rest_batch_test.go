@@ -77,9 +77,12 @@ type DeleteResponse struct {
 	ID         uint64 `json:"id"`
 }
 
-// newTLSHTTPClient creates an HTTP client configured for self-signed TLS certs.
+// newTLSHTTPClient creates a CA-pinned HTTP client that authenticates as the
+// system admin: the batch and cluster management routes are authorized.
 func newTLSHTTPClient(timeout time.Duration) *http.Client {
-	return helpers.NewHTTPClient(timeout)
+	client := helpers.NewHTTPClient(timeout)
+	client.Transport = helpers.SystemAdminTransport(client.Transport)
+	return client
 }
 
 // TestRESTBatchPutSuccess tests successful atomic batch put via REST API

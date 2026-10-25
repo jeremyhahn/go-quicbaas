@@ -58,6 +58,7 @@ type testCluster struct {
 	quicEndpoint string
 	unixSocket   string
 	client       *http.Client
+	anonymous    *http.Client // carries no credential, for refusal checks
 	grpcConn     *grpc.ClientConn
 }
 
@@ -238,7 +239,11 @@ func setupTestCluster(t *testing.T) *testCluster {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
+	// The IAM routes are authorized: a request that brings no bearer of its
+	// own is sent as the system admin. Refusal checks use cluster.anonymous.
+	anonymous := newIntegrationHTTPClient(tlsCfg)
 	httpClient := newIntegrationHTTPClient(tlsCfg)
+	httpClient.Transport = helpers.SystemAdminDefaultTransport(t, httpClient.Transport)
 
 	// Create gRPC connection
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -246,6 +251,7 @@ func setupTestCluster(t *testing.T) *testCluster {
 
 	grpcConn, err := grpc.DialContext(ctx, grpcEndpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err, "Failed to connect to gRPC endpoint")
@@ -256,6 +262,7 @@ func setupTestCluster(t *testing.T) *testCluster {
 		quicEndpoint: quicEndpoint,
 		unixSocket:   unixSocket,
 		client:       httpClient,
+		anonymous:    anonymous,
 		grpcConn:     grpcConn,
 	}
 }

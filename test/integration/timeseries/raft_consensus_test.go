@@ -275,6 +275,7 @@ func getLeaderNode(ctx context.Context, t *testing.T) (string, uint64) {
 		connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
 		conn, err := grpc.DialContext(connCtx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 			grpc.WithBlock(),
 		)
 		connCancel()
@@ -520,6 +521,7 @@ func TestTimeSeriesRaft_LeaderFailover(t *testing.T) {
 	connCtx, connCancel := context.WithTimeout(ctx, 5*time.Second)
 	conn, err := grpc.DialContext(connCtx, grpcEndpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(failoverTLSCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()

@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestClusterManagement_CreateShards tests creating new Raft shards dynamically.
@@ -38,7 +39,8 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -166,7 +168,8 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	if err != nil {
 		t.Fatalf("Failed to connect to node1: %v", err)
 	}

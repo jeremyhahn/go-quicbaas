@@ -158,11 +158,13 @@ type SchedulerRESTClient struct {
 	httpClient *http.Client
 }
 
-// NewSchedulerRESTClient creates a new scheduler REST client.
-func NewSchedulerRESTClient(baseURL string) *SchedulerRESTClient {
+// NewSchedulerRESTClient creates a scheduler REST client that authenticates as the
+// system admin: the scheduler routes are authorized.
+func NewSchedulerRESTClient(t *testing.T, baseURL string) *SchedulerRESTClient {
+	t.Helper()
 	return &SchedulerRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewSystemAdminHTTPClient(t, 30*time.Second),
 	}
 }
 

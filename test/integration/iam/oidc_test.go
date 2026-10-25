@@ -630,7 +630,7 @@ func TestUserInfoEndpointRequiresAuth(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, cluster.httpEndpoint+"/oauth2/userinfo", nil)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Do(req)
+		resp, err := cluster.anonymous.Do(req)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 

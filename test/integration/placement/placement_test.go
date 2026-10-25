@@ -77,26 +77,28 @@ func transports(t *testing.T) map[string]func() (quicbaas.Client, error) {
 	// the admin certificate the other transports present.
 	restEndpoint := first(helpers.GetRESTEndpoints(), "REST")
 	restBearer := helpers.AuthPIV(t, restEndpoint)
+	// Every other transport carries the same admin bearer under require_authz.
+	adminBearer := quicbaas.WithAuthToken(restBearer)
 	return map[string]func() (quicbaas.Client, error){
 		"REST": func() (quicbaas.Client, error) {
 			return quicbaas.NewClient(restEndpoint, quicbaas.WithREST(), quicbaas.WithTLSConfig(tlsCfg), quicbaas.WithAuthToken(restBearer), timeout)
 		},
 		"gRPC": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetClusterEndpoints(), "gRPC"), quicbaas.WithTLSConfig(tlsCfg), adminBearer, timeout)
 		},
 		"QUIC": func() (quicbaas.Client, error) {
 			// The QUIC transport speaks REST over HTTP/3 and defaults the
 			// ALPN to "h3"; the retired "quicbaas-quic" ALPN never handshakes.
-			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(tlsCfg), adminBearer, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
 			socket := helpers.GetUnixSocketPath()
 			unixCfg := tlsCfg.Clone()
 			unixCfg.ServerName = "localhost"
-			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), timeout)
+			return quicbaas.NewClient("unix://"+socket, quicbaas.WithUnix(socket), quicbaas.WithTLSConfig(unixCfg), adminBearer, timeout)
 		},
 		"MCP": func() (quicbaas.Client, error) {
-			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), timeout)
+			return quicbaas.NewClient(first(helpers.GetMCPEndpoints(), "MCP"), quicbaas.WithMCP(), quicbaas.WithTLSConfig(tlsCfg), adminBearer, timeout)
 		},
 	}
 }

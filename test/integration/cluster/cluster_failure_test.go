@@ -106,6 +106,7 @@ func TestNodeFailureAndRecovery(t *testing.T) {
 		tlsCfg1 := requireTLSConfig(t)
 		conn, err := grpc.DialContext(connCtx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg1)),
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 			grpc.WithBlock(),
 		)
 		connCancel()
@@ -194,6 +195,7 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 	tlsCfg2 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -242,6 +244,7 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 		tlsCfg3 := requireTLSConfig(t)
 		conn2, err2 := grpc.DialContext(connCtx2, endpoints[1],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 			grpc.WithBlock(),
 		)
 		connCancel2()
@@ -271,6 +274,7 @@ func TestNetworkPartition(t *testing.T) {
 	tlsCfg4 := requireTLSConfig(t)
 	conn1, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -348,6 +352,7 @@ func TestNodeReplacement(t *testing.T) {
 	tlsCfg5 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -423,6 +428,7 @@ func TestSlowNode(t *testing.T) {
 	tlsCfg6 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -486,6 +492,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	tlsCfg7 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg7)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()
@@ -523,6 +530,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	tlsCfg8 := requireTLSConfig(t)
 	conn2, err := grpc.DialContext(connCtx2, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg8)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel2()
@@ -535,6 +543,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 		tlsCfg9 := requireTLSConfig(t)
 		conn2, err = grpc.DialContext(connCtx3, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg9)),
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 			grpc.WithBlock(),
 		)
 		connCancel3()
@@ -578,6 +587,7 @@ func TestConcurrentFailuresAndWrites(t *testing.T) {
 	tlsCfg10 := requireTLSConfig(t)
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg10)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	connCancel()

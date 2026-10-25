@@ -18,6 +18,8 @@ package messaging
 import (
 	"context"
 
+	"google.golang.org/grpc"
+
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
@@ -51,7 +53,12 @@ func (a *grpcAdapter) Setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(tlsCfg))
+	creds, err := helpers.NewSystemAdminGRPCCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(creds)))
 	if err != nil {
 		return err
 	}
@@ -151,7 +158,12 @@ func (a *unixSocketAdapter) Setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	creds, err := helpers.NewSystemAdminGRPCCredentials(ctx)
+	if err != nil {
+		return err
+	}
+	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(creds)))
 	if err != nil {
 		return err
 	}

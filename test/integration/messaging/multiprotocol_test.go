@@ -154,7 +154,7 @@ func TestMessagingMultiProtocol(t *testing.T) {
 	})
 
 	t.Run("REST", func(t *testing.T) {
-		testMessagingProtocol(t, ctx, newRESTAdapter())
+		testMessagingProtocol(t, ctx, newRESTAdapter(t))
 	})
 
 	t.Run("UnixSocket", func(t *testing.T) {

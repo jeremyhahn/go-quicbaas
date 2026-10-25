@@ -38,14 +38,18 @@ import (
 // the integration CA cert IS available (TLS cluster), helpers.NewHTTPClient
 // is preferred; otherwise a plain client with a fresh transport is returned.
 func newInsecureHTTPClient(timeout time.Duration) *http.Client {
+	// Every request authenticates as the system admin: the cluster routes are
+	// authorized.
 	if _, err := helpers.IntegrationTLSConfig(); err == nil {
-		return helpers.NewHTTPClient(timeout)
+		client := helpers.NewHTTPClient(timeout)
+		client.Transport = helpers.SystemAdminTransport(client.Transport)
+		return client
 	}
 	// Plain HTTP with a dedicated transport so each caller gets its own
 	// connection pool and cannot be affected by another caller's stale connections.
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: &http.Transport{},
+		Transport: helpers.SystemAdminTransport(&http.Transport{}),
 	}
 }
 
