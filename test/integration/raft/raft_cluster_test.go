@@ -84,6 +84,7 @@ func TestRaftClusterFormation(t *testing.T) {
 		require.NoError(t, tlsErr1, "load integration TLS config")
 		conn, err := grpc.DialContext(ctx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg1)),
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 			grpc.WithBlock(),
 		)
 		require.NoError(t, err, "Failed to connect to node %d", i+1)
@@ -115,6 +116,7 @@ func TestRaftClusterLeaderElection(t *testing.T) {
 	require.NoError(t, tlsErr2, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	require.NoError(t, err)
@@ -157,6 +159,7 @@ func TestRaftDataReplication(t *testing.T) {
 	require.NoError(t, tlsErr3, "load integration TLS config")
 	conn1, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
@@ -208,6 +211,7 @@ func TestRaftDataReplication(t *testing.T) {
 			require.NoError(t, tlsErr4, "load integration TLS config")
 			conn, err = grpc.DialContext(ctx, endpoint,
 				grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
+				grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 				grpc.WithBlock(),
 				grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 			)
@@ -280,6 +284,7 @@ func TestRaftConsistentReads(t *testing.T) {
 	require.NoError(t, tlsErr5, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
@@ -363,6 +368,7 @@ func TestRaftDeleteOperation(t *testing.T) {
 	require.NoError(t, tlsErr6, "load integration TLS config")
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)

@@ -35,7 +35,7 @@ import (
 func TestGRPC_ClusterStatus(t *testing.T) {
 	tlsConfig, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	conn, err := grpc.Dial("test-node1:50051", grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithBlock(), grpc.WithTimeout(5*time.Second))
+	conn, err := grpc.Dial("test-node1:50051", grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)), grpc.WithBlock(), grpc.WithTimeout(5*time.Second))
 	if err != nil {
 		t.Fatalf("failed to dial grpc: %v", err)
 	}

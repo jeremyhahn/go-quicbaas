@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // isRetryableRaftError checks if an error is a transient Raft error that should be retried.
@@ -154,7 +155,8 @@ func TestDataDistributionRebalancing(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -270,7 +272,8 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -401,7 +404,8 @@ func TestRebalancingMultipleShards(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
@@ -495,7 +499,8 @@ func TestRebalancingIdempotency(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
