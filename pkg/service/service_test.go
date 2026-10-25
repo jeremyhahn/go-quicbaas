@@ -2757,6 +2757,7 @@ type vecTransport struct {
 	deleteVectorFn       func(ctx context.Context, req *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error)
 	batchUpsertFn        func(ctx context.Context, req *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error)
 	batchDeleteVectorsFn func(ctx context.Context, req *qrdbtransport.BatchDeleteVectorsRequest) (*qrdbtransport.BatchDeleteVectorsResponse, error)
+	searchSimilarFn      func(ctx context.Context, req *qrdbtransport.SearchSimilarRequest) (*qrdbtransport.SearchSimilarResponse, error)
 }
 
 func (v *vecTransport) CreateNamespace(ctx context.Context, req *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
@@ -2827,7 +2828,10 @@ func (v *vecTransport) UpdateMetadata(_ context.Context, req *qrdbtransport.Upda
 	return &qrdbtransport.UpdateVectorMetadataResponse{ID: req.ID, Version: 1, Success: true}, nil
 }
 
-func (v *vecTransport) SearchSimilar(_ context.Context, _ *qrdbtransport.SearchSimilarRequest) (*qrdbtransport.SearchSimilarResponse, error) {
+func (v *vecTransport) SearchSimilar(ctx context.Context, req *qrdbtransport.SearchSimilarRequest) (*qrdbtransport.SearchSimilarResponse, error) {
+	if v.searchSimilarFn != nil {
+		return v.searchSimilarFn(ctx, req)
+	}
 	return &qrdbtransport.SearchSimilarResponse{}, nil
 }
 
@@ -2975,6 +2979,15 @@ func newVecSvcWithSDK(t *testing.T, namespace string, dimension uint32) (*vector
 	svc.indexes[namespace] = mockIndex
 
 	return svc, storage, vt, mockIndex
+}
+
+// newVecSvcLocalIndex builds the service without a qrdb client, the only case
+// in which the local index answers a search.
+func newVecSvcLocalIndex(t *testing.T, namespace string, dimension uint32) (*vectorService, *vecMockStorage, *vecTransport, *vecMockVectorIndex) {
+	t.Helper()
+	svc, storage, vt, index := newVecSvcWithSDK(t, namespace, dimension)
+	svc.sdkProvider = nil
+	return svc, storage, vt, index
 }
 
 func TestConvertFromStringMap_Nil(t *testing.T) {

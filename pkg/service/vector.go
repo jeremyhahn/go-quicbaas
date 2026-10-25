@@ -1198,17 +1198,26 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 		}
 	}
 
-	// Get or create HNSW index (lazily initialize if needed for replicated data)
+	// qrdb's search verb authorizes the caller and hydrates and filters the
+	// results under the caller's own grants. The local index is shared by
+	// every caller in the tenant, so a warm index must not answer for the
+	// caller: it would skip that check and change the answer.
+	if vc, err := v.vectorClient(); err == nil {
+		return v.searchThroughQRDB(ctx, vc, scopedNamespace, req)
+	}
+
+	// Without a qrdb client (an in-process service with no node), the local
+	// index answers. Get or create it (lazily, for replicated data).
 	index, err := v.ensureIndex(ctx, scopedNamespace)
 	if err != nil {
-		// The local index cannot be built: the namespace has not replicated
-		// to this node yet, or building the index needs namespace metadata
-		// the caller is not granted. qrdb's own search verb answers instead.
 		v.logger.WithFields(map[string]interface{}{
 			"namespace": req.Namespace,
 			"error":     err,
-		}).Debug("local vector index unavailable, searching through qrdb")
-		return v.searchThroughQRDB(ctx, scopedNamespace, req)
+		}).Debug("no qrdb vector client and no local vector index, returning empty results")
+		return &SearchSimilarResponse{
+			Results:   []*VectorSearchResult{},
+			Timestamp: time.Now().UnixNano(),
+		}, nil
 	}
 
 	// Perform HNSW search
@@ -1249,21 +1258,26 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 			Rank:     i + 1,
 		}
 
-		// Fetch full vector and metadata if requested
-		if req.IncludeVectors || req.IncludeMetadata {
+		// Fetch the full vector when it, its metadata or a metadata filter
+		// is needed. A failed read fails the search: dropping it would
+		// return results without their data or past the filter.
+		if req.IncludeVectors || req.IncludeMetadata || req.MetadataFilter != nil {
 			vec, err := v.storage.GetVector(ctx, scopedNamespace, res.ID)
-			if err == nil {
-				if req.IncludeVectors {
-					result.Vector = vec.Embedding
+			if err != nil {
+				if v.metrics != nil {
+					v.metrics.operationErrors.With("search_similar", "hydrate_failed").Inc()
 				}
-				if req.IncludeMetadata {
-					result.Metadata = convertFromStringMap(vec.Metadata)
-
-					// Apply metadata filter
-					if req.MetadataFilter != nil && !matchesMetadataFilter(result.Metadata, req.MetadataFilter) {
-						continue
-					}
-				}
+				return nil, err
+			}
+			metadata := convertFromStringMap(vec.Metadata)
+			if req.MetadataFilter != nil && !matchesMetadataFilter(metadata, req.MetadataFilter) {
+				continue
+			}
+			if req.IncludeVectors {
+				result.Vector = vec.Embedding
+			}
+			if req.IncludeMetadata {
+				result.Metadata = metadata
 			}
 		}
 
@@ -1279,29 +1293,19 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 
 // searchThroughQRDB answers a search with qrdb's own search verb, which checks
 // the namespace inside the caller's tenant and so needs only
-// vector:search_similar. A namespace qrdb does not hold for the caller, or no
-// qrdb client at all, gives empty results, as a namespace not yet replicated
-// to this node does.
-func (v *vectorService) searchThroughQRDB(ctx context.Context, scopedNamespace string, req *SearchSimilarRequest) (*SearchSimilarResponse, error) {
-	empty := &SearchSimilarResponse{
-		Results:   []*VectorSearchResult{},
-		Timestamp: time.Now().UnixNano(),
-	}
-	vc, err := v.vectorClient()
-	if err != nil {
-		v.logger.WithFields(map[string]interface{}{
-			"namespace": req.Namespace,
-			"error":     err,
-		}).Debug("no qrdb vector client, returning empty results")
-		return empty, nil
-	}
-
+// vector:search_similar, and which hydrates and filters the results under the
+// caller's grants. A namespace qrdb does not hold for the caller gives empty
+// results, as a namespace not yet replicated to this node does.
+func (v *vectorService) searchThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, scopedNamespace string, req *SearchSimilarRequest) (*SearchSimilarResponse, error) {
 	searchStart := time.Now()
 	resp, err := vc.SearchSimilar(ctx, qrdbSearchRequest(req, scopedNamespace, v.resolveShardID(req.ShardID)))
 	if err != nil {
 		var notFound *qrdbtransport.NamespaceNotFoundError
 		if errors.As(err, &notFound) {
-			return empty, nil
+			return &SearchSimilarResponse{
+				Results:   []*VectorSearchResult{},
+				Timestamp: time.Now().UnixNano(),
+			}, nil
 		}
 		return nil, v.qrdbError("vector.SearchSimilar", "search_similar", err)
 	}
