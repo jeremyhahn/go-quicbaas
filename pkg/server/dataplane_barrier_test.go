@@ -243,6 +243,7 @@ func dataPlaneCeremonyClient(
 	require.NoError(t, err)
 	bundle.Barrier = svc
 	bundle.Ceremony = qrdbsdk.NewServiceCeremonyService(ceremonyCore)
+	bundle.Core = ceremonyCore
 
 	// Bind the platform CA adapter to the ceremony core and the transport,
 	// as startService does, so the ceremony can mint the server identity it
@@ -258,16 +259,11 @@ func dataPlaneCeremonyClient(
 	t.Cleanup(func() { _ = node.Close() })
 	s := &Server{logger: buildTestLogger(t), qrdbNode: node}
 
-	// Ceremony init seals each officer share under a PIN, so the client
-	// carries the software PIN backend quicbaasd selects without a TPM.
-	pinCfg := &config.Config{}
-	pinCfg.Storage.DataDir = t.TempDir()
-	pinBackend, err := buildPINBackend(pinCfg, slog.Default(), nil)
-	require.NoError(t, err)
-	ceremonyCore.SetPINBackend(pinBackend)
-
+	// Ceremony init seals each officer share under a PIN. As in
+	// startService, the backend is handed only to newBootstrapCeremonyClient,
+	// which attaches it to the selected (persistent) ceremony core.
 	client, err := newBootstrapCeremonyClient(
-		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, pinBackend, ca)
+		s.GetQRDBKVServicer(), s.GetQRDBAdminServicer(), bundle, newCeremonyTestPINBackend(t), ca)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	return client

@@ -162,7 +162,10 @@ func buildBootstrapCeremonyServices(logger *slog.Logger, dataDir, trustDomain st
 // qrdbembedded.WithPINBackend is what makes the transport-level barrier
 // verbs honor the SOPin / UserPin fields of BarrierInitializeRequest (and
 // verify the SO PIN on rekey / recovery-generate) instead of silently
-// dropping them. A nil pinBackend preserves the PIN-less dev behavior. ca is
+// dropping them. The same backend is attached to cs.Core, the selected
+// ceremony core on either storage path, because Initialize provisions the
+// mandatory SO / User PINs on it; with a nil pinBackend the core refuses
+// Initialize with qrdb's ErrBackendNotConfigured. ca is
 // the CeremonyCA the transport hands `qrdb init` (CeremonyInitialize takes
 // its CA from the transport, not from the core's SetCA); nil leaves the
 // ceremony on the BYO-TLS path. All
@@ -177,6 +180,15 @@ func newBootstrapCeremonyClient(
 ) (*qrdbsdk.Client, error) {
 	if cs == nil || cs.Barrier == nil || cs.Ceremony == nil || cs.Credential == nil {
 		return nil, &CeremonyWiringError{Stage: "bootstrap-client services"}
+	}
+
+	// cs.Core is whichever ceremony core startService selected: the
+	// bootstrap stack's own core on the memory fallback, or the persistent
+	// data-plane core. Initialize provisions the SO/User PINs on that core's
+	// backend, so the server's PIN backend is attached here, once, for both
+	// storage paths.
+	if pinBackend != nil && cs.Core != nil {
+		cs.Core.SetPINBackend(pinBackend)
 	}
 
 	opts := []qrdbembedded.Option{

@@ -1994,11 +1994,6 @@ func (s *Server) startService() error {
 					if ceremonyCA != nil {
 						dpCeremonyCore.SetCA(ceremonyCA)
 					}
-					// qrdb init seals each officer share under a PIN; the
-					// ceremony core verifies it against the node's backend.
-					if s.pinBackend != nil {
-						dpCeremonyCore.SetPINBackend(s.pinBackend)
-					}
 					// Under go-qrdb v0.47 the persistent barrier refuses a
 					// standalone barrier initialize: `qrdb init` -- the
 					// ceremony over this same barrier -- is the only way to
