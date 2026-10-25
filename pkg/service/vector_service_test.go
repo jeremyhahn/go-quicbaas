@@ -1340,7 +1340,7 @@ func TestEnsureHNSWIndex_ScanError(t *testing.T) {
 // permission error is returned, no index is cached, and a later caller who
 // may list the vectors builds the full index and finds the matches.
 func TestEnsureHNSWIndex_ScanForbiddenCachesNoIndex(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, _ := newVecSvcLocalIndex(t, "test-ns", 3)
 	svc.indexMu.Lock()
 	delete(svc.indexes, "test-ns")
 	svc.indexMu.Unlock()
@@ -1769,7 +1769,7 @@ func TestBatchUpsert_IndexInsertError(t *testing.T) {
 }
 
 func TestSearchSimilar_WithResults(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.5}}, nil
 	}
@@ -1781,7 +1781,7 @@ func TestSearchSimilar_WithResults(t *testing.T) {
 }
 
 func TestSearchSimilar_WithMinScore(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.5}, {ID: 3, Distance: 0.9}}, nil
 	}
@@ -1793,7 +1793,7 @@ func TestSearchSimilar_WithMinScore(t *testing.T) {
 }
 
 func TestSearchSimilar_WithVectorsAndMetadata(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}}, nil
 	}
@@ -1810,7 +1810,7 @@ func TestSearchSimilar_WithVectorsAndMetadata(t *testing.T) {
 }
 
 func TestSearchSimilar_WithMetadataFilter(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.2}}, nil
 	}
@@ -1830,7 +1830,7 @@ func TestSearchSimilar_WithMetadataFilter(t *testing.T) {
 }
 
 func TestSearchSimilar_SearchError_EmptyIndex(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.countVal = 0
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return nil, errors.New("error")
@@ -1843,7 +1843,7 @@ func TestSearchSimilar_SearchError_EmptyIndex(t *testing.T) {
 }
 
 func TestSearchSimilar_SearchError_NonEmptyIndex(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, _, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.countVal = 10
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return nil, errors.New("error")
@@ -1868,22 +1868,72 @@ func TestSearchSimilar_NoIndex_ReturnsEmpty(t *testing.T) {
 }
 
 func TestSearchSimilar_GetVectorError(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}}, nil
 	}
+	readErr := &qbErrors.QBError{Code: qbErrors.ErrForbidden, Op: "vector.GetVector", Err: &vectorListDeniedError{}}
 	storage.getVectorFn = func(_ context.Context, _ string, _ uint64) (*interfaces.VectorValue, error) {
-		return nil, errors.New("not found")
+		return nil, readErr
+	}
+	for _, req := range []*SearchSimilarRequest{
+		{Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 1, IncludeVectors: true},
+		{Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 1, MetadataFilter: map[string]interface{}{"color": "red"}},
+	} {
+		resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), req)
+		require.ErrorIs(t, err, readErr, "a failed read must fail the search, not drop the data or the filter")
+		assert.Nil(t, resp)
+	}
+}
+
+// A metadata filter applies even when the caller does not ask for the
+// metadata back.
+func TestSearchSimilar_MetadataFilterWithoutIncludeMetadata(t *testing.T) {
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
+	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
+		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.2}}, nil
+	}
+	storage.getVectorFn = func(_ context.Context, _ string, id uint64) (*interfaces.VectorValue, error) {
+		colors := map[uint64]string{1: "red", 2: "blue"}
+		return &interfaces.VectorValue{ID: id, Metadata: map[string]string{"color": colors[id]}}, nil
 	}
 	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
-		Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 1, IncludeVectors: true,
+		Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 2, MetadataFilter: map[string]interface{}{"color": "blue"},
 	})
 	require.NoError(t, err)
-	assert.Len(t, resp.Results, 1)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, uint64(2), resp.Results[0].ID)
+	assert.Nil(t, resp.Results[0].Metadata)
+}
+
+// With a qrdb client the search runs through qrdb's authorized verb, even
+// when the local index is warm.
+func TestSearchSimilar_WarmIndexStillSearchesThroughQRDB(t *testing.T) {
+	svc, storage, vt, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
+		return []*interfaces.SearchResult{{ID: 99, Distance: 0.1}}, nil
+	}
+	storage.getVectorFn = func(_ context.Context, _ string, _ uint64) (*interfaces.VectorValue, error) {
+		return nil, &qbErrors.QBError{Code: qbErrors.ErrForbidden, Op: "vector.GetVector", Err: &vectorListDeniedError{}}
+	}
+	vt.searchSimilarFn = func(_ context.Context, req *qrdbtransport.SearchSimilarRequest) (*qrdbtransport.SearchSimilarResponse, error) {
+		assert.Equal(t, map[string]interface{}{"color": "red"}, req.MetadataFilter)
+		return &qrdbtransport.SearchSimilarResponse{Results: []*qrdbtransport.VectorSearchResult{
+			{ID: 7, Score: 0.1, Metadata: map[string]interface{}{"color": "red"}},
+		}}, nil
+	}
+	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
+		Namespace: "test-ns", QueryVector: []float32{1, 2, 3}, K: 1, IncludeMetadata: true,
+		MetadataFilter: map[string]interface{}{"color": "red"},
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, uint64(7), resp.Results[0].ID)
+	assert.Equal(t, "red", resp.Results[0].Metadata["color"])
 }
 
 func TestHybridSearch_Success(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.2}, {ID: 3, Distance: 0.3}}, nil
 	}
@@ -1904,7 +1954,7 @@ func TestHybridSearch_Success(t *testing.T) {
 }
 
 func TestHybridSearch_LimitedByK(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	mockIndex.searchFn = func(_ []float32, _ int, _ *interfaces.SearchParams) ([]*interfaces.SearchResult, error) {
 		return []*interfaces.SearchResult{
 			{ID: 1, Distance: 0.1}, {ID: 2, Distance: 0.2}, {ID: 3, Distance: 0.3}, {ID: 4, Distance: 0.4},
@@ -2506,7 +2556,7 @@ func TestSearchByID_VectorNotFound(t *testing.T) {
 }
 
 func TestSearchByID_Success(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	storage.getVectorFn = func(_ context.Context, _ string, id uint64) (*interfaces.VectorValue, error) {
 		return &interfaces.VectorValue{ID: id, Embedding: []float32{1, 2, 3}}, nil
 	}
@@ -2520,7 +2570,7 @@ func TestSearchByID_Success(t *testing.T) {
 }
 
 func TestSearchByID_ExcludeSelf(t *testing.T) {
-	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	svc, storage, _, mockIndex := newVecSvcLocalIndex(t, "test-ns", 3)
 	storage.getVectorFn = func(_ context.Context, _ string, id uint64) (*interfaces.VectorValue, error) {
 		return &interfaces.VectorValue{ID: id, Embedding: []float32{1, 2, 3}}, nil
 	}

@@ -343,6 +343,52 @@ func TestVectorService_SearchNeedsOnlyTheSearchVerb(t *testing.T) {
 	assert.Empty(t, other.Results, "another tenant's namespace must stay out of reach")
 }
 
+// A caller granted only vector:search_similar gets the same, correct answer
+// whether or not another caller has warmed the tenant's local index: a warm
+// index must not drop the vectors, the metadata or the MetadataFilter.
+func TestVectorService_SearchAnswersAlikeBeforeAndAfterAWarmIndex(t *testing.T) {
+	s := newStrictPrincipalServer(t)
+	svc := newNodeVectorService(t, s)
+	_, err := svc.CreateNamespace(tenantVectorCaller(t, "acme", "vector:namespace_create"),
+		&service.CreateNamespaceRequest{Namespace: "acme-docs", Dimension: 3, DistanceMetric: "cosine", IndexType: "flat"})
+	require.NoError(t, err)
+	upsert := tenantVectorCaller(t, "acme", "vector:upsert")
+	for _, req := range []*service.UpsertVectorRequest{
+		{Namespace: "acme-docs", ID: 7, Vector: []float32{1, 0, 0}, Metadata: map[string]interface{}{"lang": "go"}},
+		{Namespace: "acme-docs", ID: 8, Vector: []float32{0.9, 0.1, 0}, Metadata: map[string]interface{}{"lang": "rust"}},
+	} {
+		_, err = svc.UpsertVector(upsert, req)
+		require.NoError(t, err)
+	}
+	search := &service.SearchSimilarRequest{
+		Namespace:       "acme-docs",
+		QueryVector:     []float32{1, 0, 0},
+		K:               2,
+		IncludeVectors:  true,
+		IncludeMetadata: true,
+		MetadataFilter:  map[string]interface{}{"lang": "go"},
+	}
+	restricted := tenantVectorCaller(t, "acme", "vector:search_similar")
+
+	cold, err := svc.SearchSimilar(restricted, search)
+	require.NoError(t, err)
+	require.Len(t, cold.Results, 1, "the filter must leave only the matching vector")
+	assert.Equal(t, uint64(7), cold.Results[0].ID)
+	assert.Equal(t, []float32{1, 0, 0}, cold.Results[0].Vector)
+	assert.Equal(t, "go", cold.Results[0].Metadata["lang"])
+
+	_, err = svc.SearchSimilar(tenantVectorCaller(t, "acme",
+		"vector:search_similar", "vector:namespace_info", "vector:list", "vector:get"), search)
+	require.NoError(t, err)
+
+	warm, err := svc.SearchSimilar(restricted, search)
+	require.NoError(t, err)
+	require.Len(t, warm.Results, 1, "a warm index must apply the same filter")
+	assert.Equal(t, cold.Results[0].ID, warm.Results[0].ID)
+	assert.Equal(t, cold.Results[0].Vector, warm.Results[0].Vector)
+	assert.Equal(t, cold.Results[0].Metadata, warm.Results[0].Metadata)
+}
+
 type unexpectedDimensionError struct{ got uint32 }
 
 func (e *unexpectedDimensionError) Error() string {
