@@ -649,7 +649,7 @@ func (c *grpcVectorClient) Setup(t *testing.T, ctx context.Context) error {
 	// node. Try each endpoint until we find one that can serve vector writes.
 	var lastErr error
 	for _, endpoint := range endpoints {
-		conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+		conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint, grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)))
 		if err != nil {
 			lastErr = err
 			t.Logf("gRPC vector client: endpoint %s connection failed: %v", endpoint, err)

@@ -678,7 +678,7 @@ func TestCrossProtocol_RESTToGRPC(t *testing.T) {
 	grpcEndpoints := helpers.GetClusterEndpoints()
 	require.NotEmpty(t, grpcEndpoints, "gRPC endpoints must be available for integration tests")
 
-	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0])
+	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0], grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 	defer conn.Close()
 
@@ -722,7 +722,7 @@ func TestCrossProtocol_GRPCToREST(t *testing.T) {
 	path := fmt.Sprintf("test/cross-protocol/grpc-to-rest/%d", time.Now().UnixNano())
 
 	// Create via gRPC
-	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0])
+	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0], grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 	defer conn.Close()
 
@@ -1063,7 +1063,7 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 	// Test tenant isolation via gRPC
 	require.NotEmpty(t, grpcEndpoints, "gRPC endpoints must be available for integration tests")
 	t.Run("gRPC_tenant_isolation", func(t *testing.T) {
-		conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0])
+		conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, grpcEndpoints[0], grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)))
 		require.NoError(t, err, "Failed to connect to gRPC endpoint %s", grpcEndpoints[0])
 		defer conn.Close()
 
@@ -1085,6 +1085,7 @@ func TestMultiProtocol_TenantIsolation(t *testing.T) {
 		conn, err := grpc.DialContext(ctx,
 			"unix://"+socketPath,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+			grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
 		)
 		require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 		defer conn.Close()
