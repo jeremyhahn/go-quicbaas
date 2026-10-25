@@ -208,12 +208,13 @@ func storeServerCertInKeyStore(ctx context.Context, ca xkmssdk.TrustedCA, cn str
 	}
 	keyStore := ca.KeyStore()
 	// A restart whose CA reports fewer issuers than the chain a previous boot
-	// stored keeps that complete chain. A read failure leaves nothing to
-	// keep, and the chain is written as built.
-	if stored, readErr := keyStore.GetCertChain(ctx, cn); readErr == nil && extendsChain(stored, chain) {
-		chain = stored
-	} else if err := keyStore.SaveCertChain(ctx, cn, chain); err != nil {
-		return api.NewOperationFailedError("store server TLS certificate chain in keystore", err)
+	// stored keeps that complete chain, so it is not rewritten. A read failure
+	// leaves nothing to keep, and the chain is written as built.
+	stored, readErr := keyStore.GetCertChain(ctx, cn)
+	if readErr != nil || !extendsChain(stored, chain) {
+		if err := keyStore.SaveCertChain(ctx, cn, chain); err != nil {
+			return api.NewOperationFailedError("store server TLS certificate chain in keystore", err)
+		}
 	}
 	if err := keyStore.SaveCert(ctx, cn, cert); err != nil {
 		return api.NewOperationFailedError("store server TLS certificate in keystore", err)
