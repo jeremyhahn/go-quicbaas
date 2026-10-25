@@ -49,6 +49,10 @@ export declare class McpError extends QuicBaaSError {
     readonly code?: number;
     constructor(tool: string, message: string, code?: number);
 }
+export declare class McpSecretNotTextError extends QuicBaaSError {
+    readonly field: string;
+    constructor(field: string);
+}
 export declare class SSHError extends QuicBaaSError {
     /** HTTP status code from the server response. */
     readonly status: number;
