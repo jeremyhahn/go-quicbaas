@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { McpClient } from '../src/mcp';
-import { CeremonyAdminSelectorError, McpError, SOPINRequiresTLSError } from '../src/errors';
+import { CeremonyAdminSelectorError, McpError, McpSecretNotTextError, SOPINRequiresTLSError } from '../src/errors';
 import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
 const endpoint = 'https://node.example:8081/mcp';
@@ -313,5 +313,54 @@ describe('McpClient bootstrap', () => {
     // @ts-expect-error bootstrap is a RestClient-only member
     expect(client.bootstrap).toBeUndefined();
     expect('bootstrap' in client).toBe(false);
+  });
+});
+
+// A barrier credential is bytes; MCP carries it as a JSON string. The
+// conversion keeps every valid UTF-8 byte, a leading BOM included, and
+// refuses bytes no string can carry before any request is sent, as the Go
+// MCP transport's secretArg does: a credential altered on the way would
+// initialize a barrier that the caller's real bytes can never unseal.
+describe('McpClient secret arguments', () => {
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8('pass phrase')]);
+  const malformed = new Uint8Array([0x70, 0x77, 0xff, 0xfe]);
+  const ceremonyReq = { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true };
+
+  const verbs: { name: string; field: string; call: (c: McpClient, secret: Uint8Array) => Promise<unknown> }[] = [
+    { name: 'barrier.initialize', field: 'secret', call: (c, s) => c.barrier.initialize({ secret: s }) },
+    { name: 'barrier.unseal', field: 'secret', call: (c, s) => c.barrier.unseal({ secret: s }) },
+    {
+      name: 'barrier.initializeShamir',
+      field: 'secret',
+      call: (c, s) => c.barrier.initializeShamir({ secret: s, threshold: 2, total_shares: 3 }),
+    },
+    {
+      name: 'barrier.enableEncryption',
+      field: 'passphrase',
+      call: (c, s) => c.barrier.enableEncryption({ strategy: 'passphrase', passphrase: s }),
+    },
+    { name: 'ceremony.initialize', field: 'secret', call: (c, s) => c.ceremony.initialize({ ...ceremonyReq, secret: s }) },
+  ];
+
+  it.each(verbs)('$name sends a secret with a leading BOM byte for byte', async (v) => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { threshold: 2, total_shares: 3 })));
+
+    await v.call(new McpClient(endpoint), bom);
+
+    const calls = toolCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    const sent = (calls[0].params?.arguments as Record<string, unknown>)[v.field] as string;
+    expect(sent.charCodeAt(0)).toBe(0xfeff);
+    expect(new TextEncoder().encode(sent)).toEqual(bom);
+  });
+
+  it.each(verbs)('$name refuses malformed UTF-8 before any request', async (v) => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, {})));
+
+    const err = await v.call(new McpClient(endpoint), malformed).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(McpSecretNotTextError);
+    expect((err as McpSecretNotTextError).field).toBe(v.field);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
