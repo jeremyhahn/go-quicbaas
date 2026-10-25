@@ -512,6 +512,40 @@ func TestGrants_IncludeTheVectorServiceVerbs(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestGrants_HoldEveryVectorVerbTheServerCalls pins, per call site, that the
+// principal holds the permission the pinned go-qrdb declares on each vector
+// verb a service-principal-bound path calls.
+func TestGrants_HoldEveryVectorVerbTheServerCalls(t *testing.T) {
+	cases := []struct {
+		site string
+		perm string
+	}{
+		{"pkg/server nodeVectorStorage CreateNamespace", "vector:namespace_create"},
+		{"pkg/server nodeVectorStorage DeleteNamespace", "vector:namespace_delete"},
+		{"pkg/server nodeVectorStorage ListNamespaces", "vector:namespace_list"},
+		{"pkg/server nodeVectorStorage GetNamespaceInfo", "vector:namespace_info"},
+		{"pkg/server nodeVectorStorage UpsertVector", "vector:upsert"},
+		{"pkg/server nodeVectorStorage GetVector", "vector:get"},
+		{"pkg/server nodeVectorStorage DeleteVector", "vector:delete"},
+		{"pkg/server nodeVectorStorage BatchUpsert", "vector:batch_upsert"},
+		{"pkg/server nodeVectorStorage BatchDeleteVectors", "vector:batch_delete"},
+		{"pkg/server nodeVectorStorage ListVectors", "vector:list"},
+		{"pkg/server nodeVectorStorage SearchByMetadata", "vector:search_by_metadata"},
+		{"pkg/server nodeVectorStorage GetIndexStats", "vector:get_index_stats"},
+		{"pkg/server nodeVectorStorage CompactNamespace", "vector:compact"},
+		{"pkg/server nodeVectorStorage GetCompactionProgress", "vector:get_compaction_progress"},
+		{"pkg/service vectorService SearchSimilar", "vector:search_similar"},
+		{"pkg/service distributed SearchSimilar", "vector:search_similar"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.site, func(t *testing.T) {
+			assert.Contains(t, grantNames, tc.perm)
+			_, err := parseGrants([]string{tc.perm})
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestParseGrants_RejectsAnUnknownVectorVerb(t *testing.T) {
 	_, err := parseGrants([]string{"vector:get", "vector:teleport"})
 	var grantErr *GrantError

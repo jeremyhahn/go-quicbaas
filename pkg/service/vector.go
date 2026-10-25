@@ -2547,20 +2547,23 @@ func (v *vectorService) refreshCompaction(ctx context.Context, job *CompactionJo
 	}
 
 	progress, err := v.storage.CompactionProgress(ctx, namespace, upstreamID)
-	if err != nil {
-		v.logger.WithFields(map[string]interface{}{
-			"namespace":             namespace,
-			"upstream_operation_id": upstreamID,
-			"error":                 err,
-		}).Debug("compaction progress unavailable")
-		return
-	}
 
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	if !job.InProgress {
 		return
 	}
+	if err != nil {
+		job.Error = &CompactionProgressError{
+			Namespace:   namespace,
+			OperationID: upstreamID,
+			Err:         err,
+		}
+		return
+	}
+	// While the job runs, its only error is a progress read's; this read
+	// succeeded, so that error no longer holds.
+	job.Error = nil
 	job.BytesCompacted = progress.BytesCompacted
 	if progress.TotalBytes > 0 {
 		job.TotalBytes = progress.TotalBytes
