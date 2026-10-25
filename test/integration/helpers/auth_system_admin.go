@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"google.golang.org/grpc/credentials"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
 )
 
 // systemAdminPrincipalName names the fixture system admin in errors.
@@ -53,6 +55,48 @@ func SystemAdminHTTPClient(ctx context.Context, timeout time.Duration) (*http.Cl
 func SystemAdminGRPCCredentials(t *testing.T) credentials.PerRPCCredentials {
 	t.Helper()
 	return systemAdminAuth.grpcCredentials(t)
+}
+
+// SystemAdminDefaultTransport wraps base so a request with no Authorization
+// header carries the system admin's bearer, while a request that sets its own
+// header (another principal's token, or a bad token on purpose) keeps it. It
+// is for suites whose one shared client makes both kinds of request.
+func SystemAdminDefaultTransport(t *testing.T, base http.RoundTripper) http.RoundTripper {
+	t.Helper()
+	transport, err := systemAdminAuth.newDefaultTransport(context.Background(), base)
+	if err != nil {
+		t.Fatalf("%s HTTP transport: %v", systemAdminPrincipalName, err)
+	}
+	return transport
+}
+
+// newDefaultTransport returns base wrapped so the principal's bearer is the
+// default Authorization, never an override.
+func (r *principalRegistry) newDefaultTransport(ctx context.Context, base http.RoundTripper) (http.RoundTripper, error) {
+	source, err := r.newTokenSource(ctx)
+	if err != nil {
+		return nil, err
+	}
+	authed, err := dataplane.NewBearerTransport(source, base)
+	if err != nil {
+		return nil, &PrincipalAuthError{Principal: r.name, Step: "HTTP transport", Cause: err}
+	}
+	return &defaultBearerTransport{base: base, authed: authed}, nil
+}
+
+// defaultBearerTransport sends a request that already carries an
+// Authorization header through base untouched, and any other through authed.
+type defaultBearerTransport struct {
+	base   http.RoundTripper
+	authed http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (d *defaultBearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Authorization") != "" {
+		return d.base.RoundTrip(req)
+	}
+	return d.authed.RoundTrip(req)
 }
 
 // enrollSystemAdmin loads the fixture system admin cert and key. Nothing is

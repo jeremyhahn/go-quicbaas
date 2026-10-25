@@ -329,7 +329,7 @@ func setupIAMCLITestTenant(t *testing.T) string {
 	tenantID := generateUniqueTenantIDForCLI()
 	restEndpoint := getRESTEndpointForCLI()
 
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	reqBody := map[string]interface{}{
 		"id":   tenantID,
@@ -374,7 +374,7 @@ func cleanupIAMCLITestTenant(t *testing.T, tenantID string) {
 	}
 
 	restEndpoint := getRESTEndpointForCLI()
-	client := helpers.NewHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	req, err := http.NewRequest(http.MethodDelete,
 		fmt.Sprintf("%s/api/v1/tenants/%s", restEndpoint, tenantID),

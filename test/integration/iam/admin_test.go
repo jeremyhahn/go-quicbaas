@@ -141,14 +141,7 @@ type ListImpersonationsResponse struct {
 // holds, and a caller with no bearer has no tenant to read or write them in.
 func setupAdminCluster(t *testing.T) *testCluster {
 	t.Helper()
-	cluster := setupTestCluster(t)
-	source := func(ctx context.Context) (string, error) {
-		return helpers.AuthSystemAdminContext(ctx, cluster.httpEndpoint)
-	}
-	transport, err := dataplane.NewBearerTransport(source, cluster.client.Transport)
-	require.NoError(t, err, "system admin HTTP transport")
-	cluster.client.Transport = transport
-	return cluster
+	return setupTestCluster(t)
 }
 
 func generateUniqueUserID() string {

@@ -18,6 +18,8 @@ package helpers
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,6 +91,58 @@ func TestSystemAdminGRPCCredentials_CarryTheBearer(t *testing.T) {
 	md, err := creds.GetRequestMetadata(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{"authorization": "Bearer system-bearer"}, md)
+}
+
+// systemAdminDefaultServer records the Authorization header of every request.
+func systemAdminDefaultServer(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &seen
+}
+
+// A request without its own Authorization gets the system admin's bearer; one
+// that sets its own (a bad token on purpose) reaches the server unchanged.
+func TestSystemAdminDefaultTransport_FillsOnlyAMissingAuthorization(t *testing.T) {
+	writeSystemAdminFixture(t)
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "system-bearer", 900, nil
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+	transport, err := registry.newDefaultTransport(context.Background(), http.DefaultTransport)
+	require.NoError(t, err)
+	srv, seen := systemAdminDefaultServer(t)
+	client := &http.Client{Transport: transport}
+
+	anonymous, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	resp, err := client.Do(anonymous)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	own, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	require.NoError(t, err)
+	own.Header.Set("Authorization", "Bearer invalid-token")
+	resp, err = client.Do(own)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	require.Equal(t, []string{"Bearer system-bearer", "Bearer invalid-token"}, *seen)
+}
+
+func TestSystemAdminDefaultTransport_LoginFailureIsReturned(t *testing.T) {
+	writeSystemAdminFixture(t)
+	refused := errors.New("login refused")
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "", 0, refused
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+
+	_, err := registry.newDefaultTransport(context.Background(), http.DefaultTransport)
+	require.ErrorIs(t, err, refused)
 }
 
 func TestSystemAdminGRPCCredentials_LoginFailureIsReturned(t *testing.T) {
