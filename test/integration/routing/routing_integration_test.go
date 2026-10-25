@@ -31,9 +31,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// testHTTPClient is a package-level HTTP client configured with CA-pinned TLS
-// trust for the integration cluster.
-var testHTTPClient = helpers.NewHTTPClient(30 * time.Second)
+// testHTTPClient returns a CA-pinned client for the integration cluster that
+// authenticates as the system admin: the debug routes are authorized.
+func testHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
+	return helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
+}
 
 // TestRoutingDebug verifies that the routing debug endpoint reflects config pins.
 func TestRoutingDebug(t *testing.T) {
@@ -43,7 +46,7 @@ func TestRoutingDebug(t *testing.T) {
 	}
 
 	// Expect users pinned to shard 2 in integration config
-	resp, err := testHTTPClient.Get(node1 + "/api/v1/debug/route/users/0")
+	resp, err := testHTTPClient(t).Get(node1 + "/api/v1/debug/route/users/0")
 	if err != nil {
 		t.Fatalf("failed to call route debug endpoint: %v", err)
 	}
@@ -77,7 +80,7 @@ func TestRoutingDebugModulo(t *testing.T) {
 	}
 	for _, c := range cases {
 		url := fmt.Sprintf("%s/api/v1/debug/route/%s/%d", base, "events", c.id)
-		resp, err := testHTTPClient.Get(url)
+		resp, err := testHTTPClient(t).Get(url)
 		if err != nil {
 			t.Fatalf("GET %s: %v", url, err)
 		}
@@ -96,7 +99,7 @@ func TestRoutingDebugNoIDDefault(t *testing.T) {
 		base = "https://test-node1:8080"
 	}
 	url := base + "/api/v1/debug/route/metrics/0"
-	resp, err := testHTTPClient.Get(url)
+	resp, err := testHTTPClient(t).Get(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -120,7 +123,7 @@ func TestRoutingDebugConsistencyAcrossNodes(t *testing.T) {
 	var expected string
 	for i, base := range nodes {
 		url := fmt.Sprintf("%s/api/v1/debug/route/%s/%d", base, entity, id)
-		resp, err := testHTTPClient.Get(url)
+		resp, err := testHTTPClient(t).Get(url)
 		if err != nil {
 			t.Fatalf("node%d GET %s: %v", i+1, url, err)
 		}
@@ -150,7 +153,7 @@ func TestRoutingMultiplePins(t *testing.T) {
 	// and is excluded from kvShards by default. See quicbaas.yaml for configuration.
 	for _, et := range []struct{ et, want string }{{"users", "2"}, {"orders", "1"}} {
 		url := base + "/api/v1/debug/route/" + et.et + "/12345"
-		resp, err := testHTTPClient.Get(url)
+		resp, err := testHTTPClient(t).Get(url)
 		if err != nil {
 			t.Fatalf("GET %s: %v", url, err)
 		}

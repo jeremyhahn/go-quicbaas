@@ -145,6 +145,40 @@ func TestSystemAdminDefaultTransport_LoginFailureIsReturned(t *testing.T) {
 	require.ErrorIs(t, err, refused)
 }
 
+// The lazy transport logs in on the first request and sends the bearer on it.
+func TestSystemAdminLazyTransport_SendsTheBearer(t *testing.T) {
+	writeSystemAdminFixture(t)
+	logins := 0
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		logins++
+		return "system-bearer", 900, nil
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+	transport := registry.lazyTransport(http.DefaultTransport)
+	require.Zero(t, logins, "no login before the first request")
+	srv, seen := systemAdminDefaultServer(t)
+
+	resp, err := (&http.Client{Transport: transport}).Get(srv.URL)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, []string{"Bearer system-bearer"}, *seen)
+}
+
+// A failed login fails the request: nothing reaches the server anonymously.
+func TestSystemAdminLazyTransport_LoginFailureFailsTheRequest(t *testing.T) {
+	writeSystemAdminFixture(t)
+	refused := errors.New("login refused")
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "", 0, refused
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+	srv, seen := systemAdminDefaultServer(t)
+
+	_, err := (&http.Client{Transport: registry.lazyTransport(http.DefaultTransport)}).Get(srv.URL)
+	require.ErrorIs(t, err, refused)
+	require.Empty(t, *seen)
+}
+
 func TestSystemAdminGRPCCredentials_LoginFailureIsReturned(t *testing.T) {
 	writeSystemAdminFixture(t)
 	refused := errors.New("login refused")

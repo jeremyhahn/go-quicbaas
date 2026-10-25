@@ -57,6 +57,45 @@ func SystemAdminGRPCCredentials(t *testing.T) credentials.PerRPCCredentials {
 	return systemAdminAuth.grpcCredentials(t)
 }
 
+// NewSystemAdminGRPCCredentials is SystemAdminGRPCCredentials returning its
+// error, for callers without a *testing.T.
+func NewSystemAdminGRPCCredentials(ctx context.Context) (credentials.PerRPCCredentials, error) {
+	return systemAdminAuth.newGRPCCredentials(ctx)
+}
+
+// SystemAdminTransport wraps base so every request carries the system admin's
+// bearer. The login happens on the first request, not here, so package-level
+// clients can use it; a failed login fails that request rather than sending
+// it anonymously.
+func SystemAdminTransport(base http.RoundTripper) http.RoundTripper {
+	return systemAdminAuth.lazyTransport(base)
+}
+
+// lazyTransport returns base wrapped with the principal's bearer, logging in
+// against the first REST endpoint when a request first needs it.
+func (r *principalRegistry) lazyTransport(base http.RoundTripper) http.RoundTripper {
+	return &lazyBearerTransport{base: base, source: func(ctx context.Context) (string, error) {
+		return r.bearer(ctx, GetRESTEndpoints()[0])
+	}}
+}
+
+// lazyBearerTransport sets Authorization from source on every request.
+type lazyBearerTransport struct {
+	base   http.RoundTripper
+	source func(context.Context) (string, error)
+}
+
+// RoundTrip implements http.RoundTripper.
+func (l *lazyBearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	bearer, err := l.source(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	authed := req.Clone(req.Context())
+	authed.Header.Set("Authorization", "Bearer "+bearer)
+	return l.base.RoundTrip(authed)
+}
+
 // SystemAdminDefaultTransport wraps base so a request with no Authorization
 // header carries the system admin's bearer, while a request that sets its own
 // header (another principal's token, or a bad token on purpose) keeps it. It
