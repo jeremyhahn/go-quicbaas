@@ -199,6 +199,10 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 	if err != nil {
 		return nil, err
 	}
+	bearer, err := SystemAdminBearer(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Retry connection with exponential backoff
 	backoff := retryBackoff
@@ -207,6 +211,7 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 			endpoint,
 			quicbaas.WithTimeout(timeout),
 			quicbaas.WithTLSConfig(tlsCfg),
+			quicbaas.WithAuthToken(bearer),
 		)
 		if err == nil {
 			return client, nil

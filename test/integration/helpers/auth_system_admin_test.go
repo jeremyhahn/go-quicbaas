@@ -146,6 +146,38 @@ func TestSystemAdminDefaultTransport_LoginFailureIsReturned(t *testing.T) {
 }
 
 // The lazy transport logs in on the first request and sends the bearer on it.
+// restBearer logs in once and hands back the principal's bearer.
+func TestSystemAdminRESTBearer_ReturnsTheBearer(t *testing.T) {
+	writeSystemAdminFixture(t)
+	logins := 0
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		logins++
+		return "system-bearer", 900, nil
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+
+	for range 2 {
+		bearer, err := registry.restBearer(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "system-bearer", bearer)
+	}
+	require.Equal(t, 1, logins, "the bearer is cached after the first login")
+}
+
+// A failed login is returned, never an empty bearer.
+func TestSystemAdminRESTBearer_LoginFailureIsReturned(t *testing.T) {
+	writeSystemAdminFixture(t)
+	refused := errors.New("login refused")
+	login := func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "", 0, refused
+	}
+	registry := newPrincipalRegistry(systemAdminPrincipalName, enrollSystemAdmin, login)
+
+	bearer, err := registry.restBearer(t.Context())
+	require.ErrorIs(t, err, refused)
+	require.Empty(t, bearer)
+}
+
 func TestSystemAdminLazyTransport_SendsTheBearer(t *testing.T) {
 	writeSystemAdminFixture(t)
 	logins := 0

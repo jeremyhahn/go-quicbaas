@@ -74,9 +74,19 @@ func SystemAdminTransport(base http.RoundTripper) http.RoundTripper {
 // lazyTransport returns base wrapped with the principal's bearer, logging in
 // against the first REST endpoint when a request first needs it.
 func (r *principalRegistry) lazyTransport(base http.RoundTripper) http.RoundTripper {
-	return &lazyBearerTransport{base: base, source: func(ctx context.Context) (string, error) {
-		return r.bearer(ctx, GetRESTEndpoints()[0])
-	}}
+	return &lazyBearerTransport{base: base, source: r.restBearer}
+}
+
+// SystemAdminBearer returns the system admin's bearer, for SDK clients built
+// without a *testing.T (quicbaas.WithAuthToken).
+func SystemAdminBearer(ctx context.Context) (string, error) {
+	return systemAdminAuth.restBearer(ctx)
+}
+
+// restBearer returns the principal's bearer, logging in against the first
+// REST endpoint when needed.
+func (r *principalRegistry) restBearer(ctx context.Context) (string, error) {
+	return r.bearer(ctx, GetRESTEndpoints()[0])
 }
 
 // lazyBearerTransport sets Authorization from source on every request.

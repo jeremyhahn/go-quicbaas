@@ -276,7 +276,11 @@ func clusterNodeURLs(t *testing.T) []string {
 // from the node itself, and opens an SDK client over REST to it.
 func connectSchedulerNodes(t *testing.T, urls []string) []schedulerNode {
 	t.Helper()
-	opts := []quicbaas.Option{quicbaas.WithREST(), quicbaas.WithTimeout(schedulerRequestTimeout)}
+	opts := []quicbaas.Option{
+		quicbaas.WithREST(),
+		quicbaas.WithTimeout(schedulerRequestTimeout),
+		quicbaas.WithAuthToken(helpers.AuthPIV(t, urls[0])),
+	}
 	if tlsCfg, err := helpers.IntegrationTLSConfig(); err == nil {
 		opts = append(opts, quicbaas.WithTLSConfig(tlsCfg))
 	}
