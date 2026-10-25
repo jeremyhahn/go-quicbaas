@@ -271,6 +271,7 @@ describe('BarrierView strategy-aware rendering', () => {
         username: 'officer-1',
         factor: 'mtls',
         nonce: 'bm9uY2U=',
+        method_data: { purpose: 'system/unseal/unseal' },
         expires_at: '2026-10-25T00:05:00Z',
       }),
       '/api/v1/barrier/quorum/submit': () => ({ domain: 'unseal', op: 'unseal', required: 2, submitted: 1, complete: false }),
@@ -284,7 +285,11 @@ describe('BarrierView strategy-aware rendering', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Request challenge/i }));
 
     expect(await screen.findByTestId('shamir-challenge')).toHaveTextContent('ch-1');
-    expect(screen.getByTestId('shamir-challenge')).toHaveTextContent('bm9uY2U=');
+    expect(screen.getByTestId('shamir-challenge')).toHaveTextContent('system/unseal/unseal');
+    // The holder signs qrdb's canonical mtls.ChallengeMessage, never the bare nonce.
+    expect(screen.getByTestId('shamir-signing-message')).toHaveValue(
+      'cXJkYi9tdGxzLWNoYWxsZW5nZS92MQBjaC0xAHN5c3RlbS91bnNlYWwvdW5zZWFsAG5vbmNl',
+    );
     expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/quorum/begin'))).toMatchObject({
       method: 'POST',
       body: { domain: 'unseal', op: 'unseal', username: 'officer-1' },
@@ -310,6 +315,32 @@ describe('BarrierView strategy-aware rendering', () => {
       },
     });
     expect(spy.calls.some((c) => c.url.includes('/unseal-share'))).toBe(false);
+  });
+
+  it('shamir unseal shows a challenge with no purpose as an error, not a nonce to sign', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'shamir', sealed: true, threshold: 2 }),
+      '/api/v1/barrier/quorum/begin': () => ({
+        challenge_id: 'ch-1',
+        domain: 'unseal',
+        op: 'unseal',
+        username: 'officer-1',
+        factor: 'mtls',
+        nonce: 'bm9uY2U=',
+        expires_at: '2026-10-25T00:05:00Z',
+      }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await screen.findByTestId('shamir-share-input');
+
+    await fireEvent.input(screen.getByLabelText(/Officer username/i), { target: { value: 'officer-1' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Request challenge/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no purpose/);
+    expect(screen.queryByTestId('shamir-challenge')).toBeNull();
+    expect(screen.queryByText(/bm9uY2U=/)).toBeNull();
   });
 
   it('shamir unseal shows the server refusal and keeps the progress', async () => {

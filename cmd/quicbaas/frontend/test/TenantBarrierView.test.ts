@@ -81,7 +81,8 @@ describe('TenantBarrierView seal and unseal routes', () => {
       { strategy: 'shamir', sealed: false, initialized: true, shamir_threshold: 1, shamir_total: 1 },
       {
         [`${BASE}/quorum/begin`]: {
-          challenge_id: 'c-1', factor: 'cert', nonce: 'n-1', expires_at: '2030-01-01T00:00:00Z',
+          challenge_id: 'c-1', factor: 'mtls', nonce: 'bm9uY2U=', expires_at: '2030-01-01T00:00:00Z',
+          method_data: { purpose: 'tenant/unseal/seal' },
         },
         [`${BASE}/quorum/submit`]: { submitted: 1, required: 1, complete: true },
       },
