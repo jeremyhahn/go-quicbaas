@@ -154,19 +154,27 @@ var unmappedToolGroups = []unmappedToolGroup{
 		},
 	},
 	{
-		// Both siblings treat login as PRE-AUTHENTICATION, not as a
-		// permission: gRPC lists /quicbaas.login.v1.Login/BeginLogin and
-		// FinishLogin among its public methods, and REST declares the login
-		// routes in authz_public_routes.go. The MCP equivalent of that
-		// treatment is membership in publicTools, which WIDENS the
-		// unauthenticated MCP surface. That is a security-posture decision for
-		// the owner, not a mapping, so the tools stay dead — failing closed.
-		reason: "siblings treat login as pre-auth (gRPC public methods, REST public routes); " +
-			"the MCP equivalent is publicTools membership, which widens the unauthenticated surface",
-		resolution: "owner decision: add to publicTools, or keep login off the MCP transport",
+		// go-qrdb declares the share-holder claim and quorum verbs
+		// identity-gated: any authenticated caller may reach them, and the
+		// verb itself checks that the caller's certificate is the holder's.
+		// REST serves them as RouteAuthSession. The bespoke MCP gate has no
+		// authenticated-without-permission bucket; publicTools would widen
+		// the unauthenticated surface, so they stay dead here. On the unified
+		// server go-qrdb serves them natively (qrdbNativeDuplicateTools).
+		reason: "identity-gated in go-qrdb (REST RouteAuthSession); the bespoke MCP gate " +
+			"has no authenticated-without-permission bucket and publicTools is unauthenticated",
+		resolution: "owner decision: an identity-gated MCP bucket, or serve these from go-qrdb only",
 		tools: []string{
-			"quicbaas_login_begin",
-			"quicbaas_login_finish",
+			"qrdb_barrier_share_claim_begin",
+			"qrdb_barrier_share_claim_complete",
+			"qrdb_barrier_recovery_share_claim_begin",
+			"qrdb_barrier_recovery_share_claim_complete",
+			"qrdb_barrier_quorum_begin",
+			"qrdb_barrier_quorum_submit",
+			"qrdb_tenant_barrier_share_claim_begin",
+			"qrdb_tenant_barrier_share_claim_complete",
+			"qrdb_tenant_barrier_quorum_begin",
+			"qrdb_tenant_barrier_quorum_submit",
 		},
 	},
 }

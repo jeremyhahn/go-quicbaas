@@ -74,11 +74,11 @@ func pivSpiffeLeaf(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, 
 	t.Helper()
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
 	require.NoError(t, err)
-	spiffeURI, err := url.Parse("spiffe://" + pivTrustDomain + "/tenant/" + tenant + "/user/78")
+	spiffeURI, err := url.Parse("spiffe://" + tenant + "/user/78")
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(99),
-		Subject:      pkix.Name{CommonName: "PIV User"},
+		Subject:      pkix.Name{CommonName: "PIV User", OrganizationalUnit: []string{tenant}},
 		URIs:         []*url.URL{spiffeURI},
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(time.Hour),

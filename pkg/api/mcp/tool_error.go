@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/sdlc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	mcptransport "github.com/jeremyhahn/go-quicbaas/sdk/go/transport/mcp"
 )
 
@@ -89,6 +90,17 @@ func ToolErrorResult(log *logger.Logger, tool string, err error) *mcpgo.CallTool
 // classification REST applies (qberrors.DescribesRequest). An error with no
 // class answers internal error, so it is sanitized like any server failure.
 func toolErrorMessage(log *logger.Logger, tool string, err error) string {
+	// The init-shamir refusal names the ceremony bootstrap path and the tenant
+	// login refusal names the release gap (#1816); neither carries server
+	// state, so they reach the caller unsanitized.
+	var refused *sdkerrors.SystemShamirInitRefusedError
+	if stderrors.As(err, &refused) {
+		return err.Error()
+	}
+	var tenantRefused *sdkerrors.TenantLoginRefusedError
+	if stderrors.As(err, &tenantRefused) {
+		return err.Error()
+	}
 	var qbErr *qberrors.QBError
 	if qberrors.As(err, &qbErr) {
 		if qberrors.DescribesRequest(qbErr.Code) {

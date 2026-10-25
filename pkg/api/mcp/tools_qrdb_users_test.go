@@ -101,6 +101,12 @@ func (m *mcpMockUserServicer) EnableUser(context.Context, uint64) error {
 func (m *mcpMockUserServicer) DisableUser(context.Context, uint64) error {
 	return errors.New("not implemented")
 }
+func (m *mcpMockUserServicer) SuspendUser(context.Context, uint64) error {
+	return errors.New("not implemented")
+}
+func (m *mcpMockUserServicer) UnsuspendUser(context.Context, uint64) error {
+	return errors.New("not implemented")
+}
 
 var _ qrdbsdk.UserServicer = (*mcpMockUserServicer)(nil)
 
@@ -164,6 +170,20 @@ func (m *mcpMockUserAuthFactorServicer) Remove(ctx context.Context, factorID str
 	if m.removeFn != nil {
 		return m.removeFn(ctx, factorID, force)
 	}
+	return nil
+}
+
+// AddConditional, FactorSetVersion and Delete complete go-qrdb's servicer;
+// no MCP tool reaches them.
+func (m *mcpMockUserAuthFactorServicer) AddConditional(ctx context.Context, userID uint64, factor *qrdbsdk.AuthFactor, cond qrdbsdk.FactorAddCondition) (uint64, error) {
+	return 0, nil
+}
+
+func (m *mcpMockUserAuthFactorServicer) FactorSetVersion(ctx context.Context, userID uint64) (uint64, error) {
+	return 0, nil
+}
+
+func (m *mcpMockUserAuthFactorServicer) Delete(ctx context.Context, factorID string, force bool) error {
 	return nil
 }
 func (m *mcpMockUserAuthFactorServicer) Rotate(ctx context.Context, oldID string, newFactor *qrdbsdk.AuthFactor) error {

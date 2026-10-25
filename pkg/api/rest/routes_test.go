@@ -154,7 +154,9 @@ import (
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
 // and prompts:write.
-const baseRouteTableSize = 672
+// PLUS 11 net for go-qrdb v0.47's barrier holder verbs (go-quicbaas#1389):
+// 32 holder routes added, 21 share-submission and ceremony-claim routes removed.
+const baseRouteTableSize = 683
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
@@ -342,6 +344,24 @@ func TestRoutes_SessionRoutes(t *testing.T) {
 		// go-quicbaas#990). Its end-to-end authorization is pinned in
 		// pkg/apimodule module_barrier_enable_encryption_authz_test.go.
 		"POST /v1/barrier/enable-encryption": {},
+		// go-qrdb v0.47 holder verbs it declares identity-gated: the share
+		// claim and quorum steps authenticate the holder themselves.
+		"POST /api/v1/barrier/officers/{username}/claim/begin":                        {},
+		"POST /api/v1/barrier/officers/{username}/claim/complete":                     {},
+		"POST /api/v1/barrier/quorum/begin":                                           {},
+		"POST /api/v1/barrier/quorum/submit":                                          {},
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/begin":               {},
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/complete":            {},
+		"POST /api/v1/tenants/{tenant_id}/barrier/officers/{username}/claim/begin":    {},
+		"POST /api/v1/tenants/{tenant_id}/barrier/officers/{username}/claim/complete": {},
+		"POST /api/v1/tenants/{tenant_id}/barrier/quorum/begin":                       {},
+		"POST /api/v1/tenants/{tenant_id}/barrier/quorum/submit":                      {},
+		"POST /v1/barrier/officers/{username}/claim/begin":                            {},
+		"POST /v1/barrier/officers/{username}/claim/complete":                         {},
+		"POST /v1/barrier/quorum/begin":                                               {},
+		"POST /v1/barrier/quorum/submit":                                              {},
+		"POST /v1/barrier/recovery/officers/{username}/claim/begin":                   {},
+		"POST /v1/barrier/recovery/officers/{username}/claim/complete":                {},
 	}
 	got := map[string]struct{}{}
 	for _, spec := range Routes() {
@@ -370,6 +390,8 @@ func routeAuthLabel(a RouteAuth) string {
 		return "session"
 	case RouteAuthPermission:
 		return "permission"
+	case RouteAuthRefused:
+		return "refused"
 	default:
 		return "unknown"
 	}
@@ -499,16 +521,23 @@ func TestModuleRoutes_ExcludesInitOnly(t *testing.T) {
 		"GET /api/v1/barrier/status",
 		"POST /api/v1/barrier/unseal",
 		"POST /api/v1/barrier/seal",
-		"POST /api/v1/barrier/rekey",
+		"POST /api/v1/barrier/cluster-unseal",
+		"GET /api/v1/barrier/officers",
+		"POST /api/v1/barrier/officers",
+		"POST /api/v1/barrier/officers/revoke",
+		"POST /api/v1/barrier/officers/{username}/claim/begin",
+		"POST /api/v1/barrier/officers/{username}/claim/complete",
+		"POST /api/v1/barrier/quorum/begin",
+		"POST /api/v1/barrier/quorum/submit",
+		"POST /api/v1/barrier/recovery/officers",
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/begin",
+		"POST /api/v1/barrier/recovery/officers/{username}/claim/complete",
+		"POST /api/v1/barrier/rekey/start",
 		"POST /api/v1/barrier/recovery/generate",
-		"POST /api/v1/barrier/recovery/recover",
 		"GET /api/v1/barrier/recovery/status",
 		"DELETE /api/v1/barrier/recovery",
-		"POST /api/v1/barrier/root-token",
 		"POST /api/v1/barrier/initialize",
 		"POST /api/v1/barrier/shamir/initialize",
-		"POST /api/v1/barrier/shamir/unseal-share",
-		"POST /api/v1/barrier/shamir/unseal-shares",
 		"POST /api/v1/barrier/enable-encryption",
 	} {
 		if _, ok := moduleSet[want]; !ok {

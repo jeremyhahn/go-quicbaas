@@ -494,7 +494,9 @@ func initFullTestXKMS(t *testing.T) {
 	// Key-version records, so keys can be rotated.
 	versionStorage, err := xkmssdk.NewMemoryBackend()
 	require.NoError(t, err)
-	keyVersions, err := xkmssdk.NewKeyVersionStore(versionStorage)
+	versionDAOs, err := xkmssdk.NewBackendDAOFactory(versionStorage)
+	require.NoError(t, err)
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionDAOs)
 	require.NoError(t, err)
 
 	// Initialize QuicBaaS xkms with the backend

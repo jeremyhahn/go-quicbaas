@@ -29,7 +29,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
-	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest/secureio"
@@ -53,8 +53,11 @@ func sshTestFingerprint(seed string) string {
 func newSSHTestServer(t *testing.T) (*Server, xkmsssh.Client, func()) {
 	t.Helper()
 
-	backend := xkmsstorage.NewMemory()
-	sshClient, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Backend: backend})
+	daos, err := xkmssdk.NewBackendDAOFactory(xkmssdk.NewStorageMemory())
+	require.NoError(t, err)
+	stores, err := xkmsssh.NewStores(daos)
+	require.NoError(t, err)
+	sshClient, err := xkmsssh.NewEmbedded(xkmsssh.EmbeddedOptions{Stores: stores})
 	require.NoError(t, err)
 
 	server, mockSvc, cleanup := setupMockServer(t)

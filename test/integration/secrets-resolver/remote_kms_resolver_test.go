@@ -412,7 +412,7 @@ func TestRemoteKMSResolver_ResolveFromRemote(t *testing.T) {
 
 	// Verify the result
 	assert.Equal(t, remoteURI, result.Raw, "Raw should match input URI")
-	assert.Equal(t, secretValue, result.String(), "Value should match stored secret")
+	assert.Equal(t, secretValue, plaintextOf(t, result), "Value should match stored secret")
 	assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy, "Strategy should be remote_kms")
 
 	t.Logf("Successfully resolved secret from remote node: %s", remoteURI)
@@ -456,7 +456,7 @@ func TestRemoteKMSResolver_ResolveFromRemote_MultiNode(t *testing.T) {
 			result, err := resolver.Resolve(ctx, uri)
 			require.NoError(t, err, "Should resolve from node1: %s", path)
 			require.NotNil(t, result)
-			assert.Equal(t, expectedValue, result.String())
+			assert.Equal(t, expectedValue, plaintextOf(t, result))
 			assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy)
 			t.Logf("Resolved from node1: %s", path)
 		}
@@ -469,7 +469,7 @@ func TestRemoteKMSResolver_ResolveFromRemote_MultiNode(t *testing.T) {
 			result, err := resolver.Resolve(ctx, uri)
 			require.NoError(t, err, "Should resolve from node2: %s", path)
 			require.NotNil(t, result)
-			assert.Equal(t, expectedValue, result.String())
+			assert.Equal(t, expectedValue, plaintextOf(t, result))
 			assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy)
 			t.Logf("Resolved from node2: %s", path)
 		}
@@ -609,7 +609,7 @@ func TestRemoteKMSResolver_FallbackPort(t *testing.T) {
 	require.NoError(t, err, "Should resolve URI without explicit port")
 	require.NotNil(t, result)
 
-	assert.Equal(t, `{"password":"secret-without-port"}`, result.String())
+	assert.Equal(t, `{"password":"secret-without-port"}`, plaintextOf(t, result))
 	assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy)
 
 	t.Logf("Successfully resolved URI without port: %s", uri)
@@ -710,7 +710,7 @@ func TestRemoteKMSResolver_RegistryIntegration(t *testing.T) {
 		require.NotNil(t, result)
 
 		assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy)
-		assert.Equal(t, `{"token":"registry-integration-token"}`, result.String())
+		assert.Equal(t, `{"token":"registry-integration-token"}`, plaintextOf(t, result))
 		t.Logf("Registry resolved remote-kms URI successfully")
 	})
 
@@ -721,7 +721,7 @@ func TestRemoteKMSResolver_RegistryIntegration(t *testing.T) {
 		require.NotNil(t, result)
 
 		assert.Equal(t, secrets.StrategyLiteral, result.Strategy)
-		assert.Equal(t, literal, result.String())
+		assert.Equal(t, literal, plaintextOf(t, result))
 		t.Logf("Registry correctly fell back to literal for non-URI")
 	})
 }
@@ -765,7 +765,7 @@ func TestRemoteKMSResolver_SpecialCharactersInPath(t *testing.T) {
 			result, err := resolver.Resolve(ctx, uri)
 			require.NoError(t, err, "Should resolve path: %s", tp.path)
 			require.NotNil(t, result)
-			assert.Equal(t, tp.value, result.String())
+			assert.Equal(t, tp.value, plaintextOf(t, result))
 			t.Logf("Resolved path with special characters: %s", tp.path)
 		})
 	}
@@ -793,10 +793,10 @@ func TestRemoteKMSResolver_LargeSecret(t *testing.T) {
 
 	require.NoError(t, err, "Should resolve large secret")
 	require.NotNil(t, result)
-	assert.Equal(t, 8192, len(result.String()), "Should preserve large secret size")
+	assert.Equal(t, 8192, len(plaintextOf(t, result)), "Should preserve large secret size")
 	assert.Equal(t, secrets.StrategyRemoteKMS, result.Strategy)
 
-	t.Logf("Successfully resolved large secret (%d bytes)", len(result.String()))
+	t.Logf("Successfully resolved large secret (%d bytes)", len(plaintextOf(t, result)))
 }
 
 // TestRemoteKMSResolver_ConcurrentResolution tests thread safety.
@@ -837,9 +837,16 @@ func TestRemoteKMSResolver_ConcurrentResolution(t *testing.T) {
 				result, err := resolver.Resolve(ctx, uri)
 				if err != nil {
 					resultChan <- resolveResult{uri: uri, err: err}
-				} else {
-					resultChan <- resolveResult{uri: uri, value: result.String()}
+					continue
 				}
+				// No t.Fatal off the test goroutine: a read failure is
+				// reported through the channel like a resolve failure.
+				var value string
+				err = result.WithBytes(ctx, func(b []byte) error {
+					value = string(b) //secure:unwiped test assertion only
+					return nil
+				})
+				resultChan <- resolveResult{uri: uri, value: value, err: err}
 			}
 		}(g)
 	}

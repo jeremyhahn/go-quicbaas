@@ -17,7 +17,6 @@ package mcp
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -38,14 +37,12 @@ import (
 //   qrdb_barrier_unseal
 //   qrdb_barrier_seal
 //   qrdb_barrier_shamir_initialize
-//   qrdb_barrier_shamir_unseal_share
-//   qrdb_barrier_shamir_unseal_shares
-//   qrdb_barrier_rekey
 //   qrdb_barrier_recovery_generate
-//   qrdb_barrier_recovery_recover
 //   qrdb_barrier_recovery_delete
 //   qrdb_barrier_recovery_status
-//   qrdb_barrier_root_token
+//
+// plus the share-holder tools in tools_barrier_holders.go. Shares are never
+// typed in: holders claim them and submit through an authenticated quorum.
 //
 // All tools delegate to a BarrierServicer installed via
 // ToolRegistry.SetBarrierService. When the service is unwired, every tool
@@ -86,33 +83,6 @@ type BarrierServiceUnavailableError struct{}
 // mapper's message-pattern fallback still classifies it correctly.
 func (e *BarrierServiceUnavailableError) Error() string {
 	return "barrier service unavailable: not configured"
-}
-
-// BarrierShareRequiredError is returned when a Shamir share submission tool
-// is called without the required share value.
-type BarrierShareRequiredError struct{}
-
-// Error implements the error interface.
-func (e *BarrierShareRequiredError) Error() string {
-	return "share is required"
-}
-
-// BarrierSharesRequiredError is returned when a Shamir bulk-unseal or
-// root-token generation tool is called without any share values.
-type BarrierSharesRequiredError struct{}
-
-// Error implements the error interface.
-func (e *BarrierSharesRequiredError) Error() string {
-	return "shares is required"
-}
-
-// BarrierRecoveryKeysRequiredError is returned when the recovery-recover tool
-// is called without any recovery key values.
-type BarrierRecoveryKeysRequiredError struct{}
-
-// Error implements the error interface.
-func (e *BarrierRecoveryKeysRequiredError) Error() string {
-	return "keys is required"
 }
 
 // BarrierThresholdInvalidError is returned when a Shamir threshold/total
@@ -222,14 +192,10 @@ func (r *ToolRegistry) registerBarrierTools() {
 
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_barrier_shamir_initialize",
-		Description: "Initialise the barrier with Shamir secret sharing. Share material is never returned (qrdb share-free contract); officers claim their shares through the identity-gated claim endpoints.",
+		Description: "Initialise the barrier with Shamir secret sharing. Share material is never returned (qrdb share-free contract); holders claim their shares through the identity-gated claim tools.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"secret": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional master passphrase. Most strategies generate one when omitted.",
-				},
 				"threshold": map[string]interface{}{
 					"type":        "integer",
 					"description": "Minimum number of shares required to reconstruct the root key.",
@@ -240,97 +206,29 @@ func (r *ToolRegistry) registerBarrierTools() {
 					"description": "Total number of Shamir shares to generate.",
 					"minimum":     1,
 				},
+				"policy":   map[string]interface{}{"type": "string", "description": argHolderPolicy.description},
+				"so_pin":   map[string]interface{}{"type": "string", "description": argHolderSOPin.description},
+				"user_pin": map[string]interface{}{"type": "string", "description": "User PIN verified against the node's PIN backend."},
 			},
 			"required": []string{"threshold", "total_shares"},
 		},
 	})
 
 	r.addTool(ToolDefinition{
-		Name:        "qrdb_barrier_shamir_unseal_share",
-		Description: "Submit a single Shamir share toward the unseal quorum threshold.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"share": map[string]interface{}{
-					"type":        "string",
-					"description": "A single Shamir share value.",
-				},
-			},
-			"required": []string{"share"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_barrier_shamir_unseal_shares",
-		Description: "Unseal the barrier in a single call using a complete set of Shamir shares.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"shares": map[string]interface{}{
-					"type":        "array",
-					"description": "Complete set of Shamir shares to unseal the barrier.",
-					"items":       map[string]interface{}{"type": "string"},
-				},
-			},
-			"required": []string{"shares"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_barrier_rekey",
-		Description: "Generate new Shamir shares for the existing root key with the supplied threshold and total parameters.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"threshold": map[string]interface{}{
-					"type":        "integer",
-					"description": "New minimum number of shares required for reconstruction.",
-					"minimum":     1,
-				},
-				"total": map[string]interface{}{
-					"type":        "integer",
-					"description": "New total number of shares to generate.",
-					"minimum":     1,
-				},
-			},
-			"required": []string{"threshold", "total"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
 		Name:        "qrdb_barrier_recovery_generate",
-		Description: "Generate recovery key shares from the root key for disaster-recovery scenarios.",
+		Description: "Generate the recovery key's share set for disaster recovery. Share material is never returned; recovery holders claim their shares through the identity-gated claim tools.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"threshold": map[string]interface{}{
 					"type":        "integer",
-					"description": "Minimum number of recovery keys required for recovery.",
+					"description": "Minimum number of recovery shares required for recovery.",
 					"minimum":     1,
 				},
-				"total": map[string]interface{}{
-					"type":        "integer",
-					"description": "Total number of recovery keys to generate.",
-					"minimum":     1,
-				},
+				"policy": map[string]interface{}{"type": "string", "description": argHolderPolicy.description},
+				"so_pin": map[string]interface{}{"type": "string", "description": argHolderSOPin.description},
 			},
-			"required": []string{"threshold", "total"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_barrier_recovery_recover",
-		Description: "Unseal the barrier using a complete set of recovery keys.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"keys": map[string]interface{}{
-					"type":        "array",
-					"description": "Complete set of recovery key values.",
-					"items":       map[string]interface{}{"type": "string"},
-				},
-			},
-			"required": []string{"keys"},
+			"required": []string{"threshold"},
 		},
 	})
 
@@ -349,22 +247,6 @@ func (r *ToolRegistry) registerBarrierTools() {
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_barrier_root_token",
-		Description: "Mint a new root token by proving knowledge of the master key with Shamir shares.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"shares": map[string]interface{}{
-					"type":        "array",
-					"description": "Complete set of Shamir shares used to authorise the operation.",
-					"items":       map[string]interface{}{"type": "string"},
-				},
-			},
-			"required": []string{"shares"},
 		},
 	})
 
@@ -565,6 +447,8 @@ func (r *ToolRegistry) registerBarrierTools() {
 			"required": []string{"tenant_id"},
 		},
 	})
+
+	registerHolderTools(r, barrierHolderTools)
 }
 
 // barrierToolNames enumerates every tool name owned by the barrier surface.
@@ -577,14 +461,9 @@ var barrierToolNames = map[string]struct{}{
 	"qrdb_barrier_unseal":                   {},
 	"qrdb_barrier_seal":                     {},
 	"qrdb_barrier_shamir_initialize":        {},
-	"qrdb_barrier_shamir_unseal_share":      {},
-	"qrdb_barrier_shamir_unseal_shares":     {},
-	"qrdb_barrier_rekey":                    {},
 	"qrdb_barrier_recovery_generate":        {},
-	"qrdb_barrier_recovery_recover":         {},
 	"qrdb_barrier_recovery_delete":          {},
 	"qrdb_barrier_recovery_status":          {},
-	"qrdb_barrier_root_token":               {},
 	"qrdb_barrier_enable_encryption":        {},
 	"qrdb_tenant_barrier_enable_encryption": {},
 	"qrdb_tenant_update_quotas":             {},
@@ -609,14 +488,9 @@ var barrierExecutors = map[string]barrierExecutor{
 	"qrdb_barrier_unseal":                   executeBarrierUnseal,
 	"qrdb_barrier_seal":                     executeBarrierSeal,
 	"qrdb_barrier_shamir_initialize":        executeBarrierShamirInitialize,
-	"qrdb_barrier_shamir_unseal_share":      executeBarrierShamirUnsealShare,
-	"qrdb_barrier_shamir_unseal_shares":     executeBarrierShamirUnsealShares,
-	"qrdb_barrier_rekey":                    executeBarrierRekey,
 	"qrdb_barrier_recovery_generate":        executeBarrierRecoveryGenerate,
-	"qrdb_barrier_recovery_recover":         executeBarrierRecoveryRecover,
 	"qrdb_barrier_recovery_delete":          executeBarrierRecoveryDelete,
 	"qrdb_barrier_recovery_status":          executeBarrierRecoveryStatus,
-	"qrdb_barrier_root_token":               executeBarrierRootToken,
 	"qrdb_barrier_enable_encryption":        executeBarrierEnableEncryption,
 	"qrdb_tenant_barrier_enable_encryption": executeBarrierTenantEnableEncryption,
 }
@@ -709,86 +583,20 @@ func executeBarrierSeal(ctx context.Context, svc service.BarrierServicer, args m
 
 // executeBarrierShamirInitialize implements qrdb_barrier_shamir_initialize.
 func executeBarrierShamirInitialize(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	secret := credentialArg(args, "secret")
-	defer secure.Wipe(secret)
 	threshold := getInt(args, "threshold")
 	total := getInt(args, "total_shares")
 	if err := validateBarrierThreshold(threshold, total); err != nil {
 		return nil, err
 	}
-	info, err := svc.BarrierInitializeShamir(ctx, secret, threshold, total)
-	if err != nil {
-		return nil, err
-	}
-	return shamirInitToMap(info), nil
-}
-
-// executeBarrierShamirUnsealShare implements qrdb_barrier_shamir_unseal_share.
-func executeBarrierShamirUnsealShare(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	share := getString(args, "share")
-	if share == "" {
-		return nil, &BarrierShareRequiredError{}
-	}
-	progress, err := svc.BarrierUnsealWithShare(ctx, share)
-	if err != nil {
-		return nil, err
-	}
-	return unsealShareProgressToMap(progress), nil
-}
-
-// executeBarrierShamirUnsealShares implements
-// qrdb_barrier_shamir_unseal_shares. Accepts either a string slice or a
-// comma-separated string in the "shares" argument to mirror the qrdb-style
-// MCP input shape.
-func executeBarrierShamirUnsealShares(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	shares := parseBarrierShareSlice(args, "shares")
-	if len(shares) == 0 {
-		return nil, &BarrierSharesRequiredError{}
-	}
-	if err := svc.BarrierUnsealWithShares(ctx, shares); err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "unsealed"}, nil
-}
-
-// executeBarrierRekey implements qrdb_barrier_rekey.
-func executeBarrierRekey(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	threshold := getInt(args, "threshold")
-	total := getInt(args, "total")
-	if err := validateBarrierThreshold(threshold, total); err != nil {
-		return nil, err
-	}
-	info, err := svc.BarrierRekey(ctx, threshold, total)
-	if err != nil {
-		return nil, err
-	}
-	return shamirInitToMap(info), nil
+	return holderVerb(ctx, args, svc.BarrierInitializeShamir)
 }
 
 // executeBarrierRecoveryGenerate implements qrdb_barrier_recovery_generate.
 func executeBarrierRecoveryGenerate(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	threshold := getInt(args, "threshold")
-	total := getInt(args, "total")
-	if err := validateBarrierThreshold(threshold, total); err != nil {
-		return nil, err
+	if getInt(args, "threshold") <= 0 {
+		return nil, &BarrierThresholdInvalidError{Reason: "threshold must be greater than 0"}
 	}
-	info, err := svc.BarrierGenerateRecoveryKeys(ctx, threshold, total)
-	if err != nil {
-		return nil, err
-	}
-	return recoveryKeysToMap(info), nil
-}
-
-// executeBarrierRecoveryRecover implements qrdb_barrier_recovery_recover.
-func executeBarrierRecoveryRecover(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	keys := parseBarrierShareSlice(args, "keys")
-	if len(keys) == 0 {
-		return nil, &BarrierRecoveryKeysRequiredError{}
-	}
-	if err := svc.BarrierRecoverWithKeys(ctx, keys); err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"status": "recovered"}, nil
+	return holderVerb(ctx, args, svc.BarrierGenerateRecoveryKeys)
 }
 
 // executeBarrierRecoveryDelete implements qrdb_barrier_recovery_delete.
@@ -808,19 +616,6 @@ func executeBarrierRecoveryStatus(ctx context.Context, svc service.BarrierServic
 	return map[string]interface{}{"has_recovery_keys": hasKeys}, nil
 }
 
-// executeBarrierRootToken implements qrdb_barrier_root_token.
-func executeBarrierRootToken(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-	shares := parseBarrierShareSlice(args, "shares")
-	if len(shares) == 0 {
-		return nil, &BarrierSharesRequiredError{}
-	}
-	info, err := svc.BarrierGenerateRootToken(ctx, shares)
-	if err != nil {
-		return nil, err
-	}
-	return rootTokenToMap(info), nil
-}
-
 // executeBarrierEnableEncryption implements qrdb_barrier_enable_encryption.
 // It migrates the SYSTEM barrier from none-strategy to a keyed at-rest
 // encryption strategy in place.
@@ -829,13 +624,12 @@ func executeBarrierEnableEncryption(ctx context.Context, svc service.BarrierServ
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}
-	opts, err := buildMigrationOptions(targetStrategy, args)
+	opts, err := buildMigrationOptions(ctx, targetStrategy, args)
 	if err != nil {
 		return nil, err
 	}
-	defer opts.Credentials.Secret.Destroy()
 	// tenantID="" routes to the system barrier scope inside EnableEncryption.
-	if err := svc.EnableEncryption(ctx, "", opts); err != nil {
+	if err := enableEncryptionAndDestroy(ctx, svc, "", opts); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{"status": "encryption enabled"}, nil
@@ -853,12 +647,11 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 	if targetStrategy == "" {
 		return nil, &BarrierTargetStrategyRequiredError{}
 	}
-	opts, err := buildMigrationOptions(targetStrategy, args)
+	opts, err := buildMigrationOptions(ctx, targetStrategy, args)
 	if err != nil {
 		return nil, err
 	}
-	defer opts.Credentials.Secret.Destroy()
-	if err := svc.EnableEncryption(ctx, tenantID, opts); err != nil {
+	if err := enableEncryptionAndDestroy(ctx, svc, tenantID, opts); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
@@ -867,9 +660,23 @@ func executeBarrierTenantEnableEncryption(ctx context.Context, svc service.Barri
 	}, nil
 }
 
+// enableEncryptionAndDestroy runs the barrier migration and then destroys
+// the protected-memory secret opts carries. The migration error wins; a
+// destroy failure is returned when the migration itself succeeded, because
+// a secret that could not be destroyed is still resident.
+func enableEncryptionAndDestroy(ctx context.Context, svc service.BarrierServicer, tenantID string, opts qrdbsdk.MigrationOptions) error {
+	err := svc.EnableEncryption(ctx, tenantID, opts)
+	if opts.Credentials.Secret != nil {
+		if destroyErr := opts.Credentials.Secret.Destroy(); destroyErr != nil && err == nil {
+			return destroyErr
+		}
+	}
+	return err
+}
+
 // buildMigrationOptions constructs a qrdbsdk.MigrationOptions from the tool
 // args map, applying defaults for mechanism and availability when omitted.
-func buildMigrationOptions(targetStrategy string, args map[string]interface{}) (qrdbsdk.MigrationOptions, error) {
+func buildMigrationOptions(ctx context.Context, targetStrategy string, args map[string]interface{}) (qrdbsdk.MigrationOptions, error) {
 	mech := getString(args, "mechanism")
 	if mech == "" {
 		mech = string(qrdbsdk.MechanismSwap)
@@ -887,7 +694,7 @@ func buildMigrationOptions(targetStrategy string, args map[string]interface{}) (
 	}
 	if passphrase := credentialArg(args, "passphrase"); len(passphrase) > 0 {
 		defer secure.Wipe(passphrase)
-		creds, err := qrdbsdk.CredentialsFor(passphrase)
+		creds, err := qrdbsdk.CredentialsFor(ctx, passphrase)
 		if err != nil {
 			return qrdbsdk.MigrationOptions{}, err
 		}
@@ -969,36 +776,6 @@ func validateBarrierThreshold(threshold, total int) error {
 	return nil
 }
 
-// parseBarrierShareSlice extracts a list of share/key strings from the args
-// map under the supplied key. The MCP transport may deliver these as either
-// a JSON array (preferred) or a comma-separated string; both are accepted so
-// the same tool surface is usable from CLI shells and structured callers.
-func parseBarrierShareSlice(args map[string]interface{}, key string) []string {
-	if values := getStringSlice(args, key); len(values) > 0 {
-		out := make([]string, 0, len(values))
-		for _, v := range values {
-			trimmed := strings.TrimSpace(v)
-			if trimmed != "" {
-				out = append(out, trimmed)
-			}
-		}
-		return out
-	}
-	raw := getString(args, key)
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
-}
-
 // barrierTimeFormat is the ONE rendering every barrier timestamp uses on
 // every transport. It is RFC3339Nano, not RFC3339, because go-qrdb's own
 // qrdb.v1 gRPC barrier surface — which quicbaas's unix and gRPC transports
@@ -1021,50 +798,6 @@ func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} 
 	}
 	if !info.InitializedAt.IsZero() {
 		resp["initialized_at"] = info.InitializedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
-
-// shamirInitToMap renders a ShamirInitInfo as the JSON wire shape shared with
-// handlers_barrier.go. Share material is never present; officers claim shares
-// via the qrdb share-claim flow.
-func shamirInitToMap(info *service.ShamirInitInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":    info.Threshold,
-		"total_shares": info.TotalShares,
-		"share_count":  info.ShareCount,
-	}
-}
-
-// unsealShareProgressToMap renders an UnsealShareProgress as the JSON wire
-// shape shared with handlers_barrier.go.
-func unsealShareProgressToMap(p *service.UnsealShareProgress) map[string]interface{} {
-	return map[string]interface{}{
-		"required":  p.Required,
-		"submitted": p.Submitted,
-		"complete":  p.Complete,
-	}
-}
-
-// recoveryKeysToMap renders a RecoveryKeysInfo as the JSON wire shape shared
-// with handlers_barrier.go. Recovery share material is never present;
-// officers claim shares via the qrdb recovery share-claim flow.
-func recoveryKeysToMap(info *service.RecoveryKeysInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":   info.Threshold,
-		"total":       info.Total,
-		"share_count": info.ShareCount,
-	}
-}
-
-// rootTokenToMap renders a RootTokenInfo as the JSON wire shape shared with
-// handlers_barrier.go.
-func rootTokenToMap(info *service.RootTokenInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"token": info.Token,
-	}
-	if !info.CreatedAt.IsZero() {
-		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
 	}
 	return resp
 }

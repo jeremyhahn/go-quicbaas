@@ -26,6 +26,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // =============================================================================
@@ -458,17 +459,20 @@ func TestCachedAccountCredential_EvictionWipesTheBuffer(t *testing.T) {
 	cache.store("acct-1", entry)
 
 	// While cached, the buffer still holds the sealed envelope.
-	if got := entry.secret.Bytes(); !bytes.Equal(got, []byte(secret)) {
-		t.Fatalf("cached buffer = %q, want the sealed envelope", got)
+	if err := entry.secret.WithBytes(func(got []byte) error {
+		if !bytes.Equal(got, []byte(secret)) {
+			t.Fatalf("cached buffer = %q, want the sealed envelope", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("cached buffer unreadable: %v", err)
 	}
 
 	cache.Forget("acct-1")
 
 	// Eviction dropped the cache's only reference, so the buffer is destroyed
-	// and returns no bytes — the plaintext is not left for the GC.
-	if got := entry.secret.Bytes(); got != nil {
-		t.Errorf("buffer still readable after eviction: %q", got)
-	}
+	// and lends no bytes — the plaintext is not left for the GC.
+	assertWiped(t, entry.secret, "after eviction")
 	// A retired entry can never be read again.
 	if _, ok := entry.copyOut(); ok {
 		t.Error("copyOut succeeded on a retired entry")
@@ -486,9 +490,7 @@ func TestCachedAccountCredential_StoreWipesTheReplaced(t *testing.T) {
 	replacement := mustCachedCredential(t, []byte(`{"access_token":"new"}`), time.Time{}, time.Now().UTC().Add(time.Hour))
 	cache.store("acct-1", replacement)
 
-	if got := old.secret.Bytes(); got != nil {
-		t.Errorf("replaced buffer still readable: %q", got)
-	}
+	assertWiped(t, old.secret, "replaced entry")
 	body, ok := replacement.copyOut()
 	if !ok || !bytes.Contains(body, []byte(`"new"`)) {
 		t.Errorf("replacement not served: body=%q ok=%t", body, ok)
@@ -510,9 +512,7 @@ func TestMaterializingSecrets_CloseWipesEveryBuffer(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	for i, e := range entries {
-		if got := e.secret.Bytes(); got != nil {
-			t.Errorf("entry %d buffer still readable after Close: %q", i, got)
-		}
+		assertWiped(t, e.secret, fmt.Sprintf("entry %d after Close", i))
 	}
 }
 
@@ -540,15 +540,18 @@ func TestCachedAccountCredential_ReadOutlivesEviction(t *testing.T) {
 	wg.Wait()
 
 	// The buffer must still be readable: our reference outranks the eviction.
-	if got := entry.secret.Bytes(); !bytes.Equal(got, []byte(secret)) {
-		t.Errorf("in-flight read saw %q, want the sealed envelope", got)
+	if err := entry.secret.WithBytes(func(got []byte) error {
+		if !bytes.Equal(got, []byte(secret)) {
+			t.Errorf("in-flight read saw %q, want the sealed envelope", got)
+		}
+		return nil
+	}); err != nil {
+		t.Errorf("in-flight read failed: %v", err)
 	}
 	entry.release()
 
 	// Now the last reference is gone and the buffer is wiped.
-	if got := entry.secret.Bytes(); got != nil {
-		t.Errorf("buffer still readable after the last reader released: %q", got)
-	}
+	assertWiped(t, entry.secret, "after the last reader released")
 }
 
 // capturingLogger records every formatted line so a test can assert what did —
@@ -652,5 +655,19 @@ func TestMaterializingSecrets_TheReleasedGenerationReachesTheEnvelope(t *testing
 		if cred.Generation != want {
 			t.Errorf("%s: envelope generation = %d, want %d", accountID, cred.Generation, want)
 		}
+	}
+}
+
+// assertWiped fails t unless buf has been destroyed: a read of a destroyed
+// buffer lends no bytes and reports *secure.NilBufferError.
+func assertWiped(t *testing.T, buf *secure.Buffer, what string) {
+	t.Helper()
+	err := buf.WithBytes(func(got []byte) error {
+		t.Errorf("%s: buffer still readable: %q", what, got)
+		return nil
+	})
+	var destroyed *secure.NilBufferError
+	if !errors.As(err, &destroyed) {
+		t.Errorf("%s: err = %v (%T), want *secure.NilBufferError", what, err, err)
 	}
 }

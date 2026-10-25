@@ -104,13 +104,18 @@ func TestHandleBarrierEnableEncryption_OK(t *testing.T) {
 			// The credential is protected memory the handler destroys once
 			// this call returns, so it can only be compared from in here.
 			if opts.Credentials.Secret != nil {
-				plain, err := opts.Credentials.Secret.Open()
+				plain, err := opts.Credentials.Secret.Open(context.Background())
 				if err != nil {
 					t.Errorf("open the forwarded credential: %v", err)
 					return nil
 				}
 				defer plain.Destroy()
-				passphraseMatched = plain.EqualTo([]byte("s3cr3t"))
+				equal, err := plain.EqualTo([]byte("s3cr3t"))
+				if err != nil {
+					t.Errorf("compare the forwarded credential: %v", err)
+					return nil
+				}
+				passphraseMatched = equal
 			}
 			return nil
 		},

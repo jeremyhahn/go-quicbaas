@@ -38,20 +38,18 @@ var errBarrierBoom = stderrors.New("barrier boom")
 
 // fakeBarrierService is a hand-written test double for service.BarrierServicer.
 // Methods delegate to optional function fields so a test can shape each path.
+// The embedded nil interface supplies the officer and quorum verbs, which
+// handlers_barrier_holders_test.go drives through its own double.
 type fakeBarrierService struct {
+	service.BarrierServicer
 	statusFn           func(ctx context.Context) (*service.BarrierStatusInfo, error)
 	initializeFn       func(ctx context.Context, secret []byte) error
 	unsealFn           func(ctx context.Context, secret []byte) error
 	sealFn             func(ctx context.Context, req *service.BarrierSealRequest) error
-	initShamirFn       func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error)
-	unsealWithShareFn  func(ctx context.Context, share string) (*service.UnsealShareProgress, error)
-	unsealWithSharesFn func(ctx context.Context, shares []string) error
-	rekeyFn            func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error)
-	genRecoveryFn      func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error)
-	recoverWithKeysFn  func(ctx context.Context, keys []string) error
+	initShamirFn       func(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error)
+	genRecoveryFn      func(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error)
 	deleteRecoveryFn   func(ctx context.Context) error
 	hasRecoveryFn      func(ctx context.Context) (bool, error)
-	genRootTokenFn     func(ctx context.Context, shares []string) (*service.RootTokenInfo, error)
 	enableEncryptionFn func(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error
 }
 
@@ -83,46 +81,18 @@ func (f *fakeBarrierService) BarrierSeal(ctx context.Context, req *service.Barri
 	return nil
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+func (f *fakeBarrierService) BarrierInitializeShamir(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 	if f.initShamirFn != nil {
-		return f.initShamirFn(ctx, secret, threshold, total)
+		return f.initShamirFn(ctx, req)
 	}
-	return &service.ShamirInitInfo{}, nil
+	return &qrdbtransport.BarrierInitializeShamirResponse{}, nil
 }
 
-func (f *fakeBarrierService) BarrierUnsealWithShare(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
-	if f.unsealWithShareFn != nil {
-		return f.unsealWithShareFn(ctx, share)
-	}
-	return &service.UnsealShareProgress{}, nil
-}
-
-func (f *fakeBarrierService) BarrierUnsealWithShares(ctx context.Context, shares []string) error {
-	if f.unsealWithSharesFn != nil {
-		return f.unsealWithSharesFn(ctx, shares)
-	}
-	return nil
-}
-
-func (f *fakeBarrierService) BarrierRekey(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-	if f.rekeyFn != nil {
-		return f.rekeyFn(ctx, threshold, total)
-	}
-	return &service.ShamirInitInfo{}, nil
-}
-
-func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 	if f.genRecoveryFn != nil {
-		return f.genRecoveryFn(ctx, threshold, total)
+		return f.genRecoveryFn(ctx, req)
 	}
-	return &service.RecoveryKeysInfo{}, nil
-}
-
-func (f *fakeBarrierService) BarrierRecoverWithKeys(ctx context.Context, keys []string) error {
-	if f.recoverWithKeysFn != nil {
-		return f.recoverWithKeysFn(ctx, keys)
-	}
-	return nil
+	return &qrdbtransport.BarrierRecoveryKeysResponse{}, nil
 }
 
 func (f *fakeBarrierService) BarrierDeleteRecoveryKeys(ctx context.Context) error {
@@ -137,13 +107,6 @@ func (f *fakeBarrierService) BarrierHasRecoveryKeys(ctx context.Context) (bool, 
 		return f.hasRecoveryFn(ctx)
 	}
 	return false, nil
-}
-
-func (f *fakeBarrierService) BarrierGenerateRootToken(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-	if f.genRootTokenFn != nil {
-		return f.genRootTokenFn(ctx, shares)
-	}
-	return &service.RootTokenInfo{}, nil
 }
 
 func (f *fakeBarrierService) EnableEncryption(ctx context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
@@ -369,12 +332,12 @@ func TestHandleBarrierSeal_ServiceError(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+		initShamirFn: func(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+			return &qrdbtransport.BarrierInitializeShamirResponse{Threshold: req.Threshold, TotalShares: req.TotalShares, ShareCount: req.TotalShares}, nil
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
-		`{"secret":"eA==","threshold":2,"total_shares":3}`)
+		`{"threshold":2,"total_shares":3}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -394,9 +357,9 @@ func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
 	svc := &fakeBarrierService{}
 	cases := []string{
-		`{"secret":"eA==","threshold":0,"total_shares":3}`,
-		`{"secret":"eA==","threshold":2,"total_shares":0}`,
-		`{"secret":"eA==","threshold":4,"total_shares":3}`,
+		`{"threshold":0,"total_shares":3}`,
+		`{"threshold":2,"total_shares":0}`,
+		`{"threshold":4,"total_shares":3}`,
 	}
 	for _, body := range cases {
 		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize", body)
@@ -408,12 +371,12 @@ func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
 
 func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		initShamirFn: func(ctx context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
+		initShamirFn: func(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize",
-		`{"secret":"eA==","threshold":2,"total_shares":3}`)
+		`{"threshold":2,"total_shares":3}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
@@ -423,108 +386,9 @@ func TestHandleBarrierShamirInitialize_ServiceError(t *testing.T) {
 // Shamir unseal-share / unseal-shares
 // =============================================================================
 
-func TestHandleBarrierShamirUnsealShare_OK(t *testing.T) {
-	svc := &fakeBarrierService{
-		unsealWithShareFn: func(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
-			return &service.UnsealShareProgress{Required: 3, Submitted: 1, Complete: false}, nil
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-share", `{"share":"abc"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["required"].(float64) != 3 || resp["submitted"].(float64) != 1 || resp["complete"] != false {
-		t.Fatalf("unexpected progress body: %v", resp)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShare_MissingShare(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/shamir/unseal-share", `{"share":""}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShare_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{
-		unsealWithShareFn: func(ctx context.Context, share string) (*service.UnsealShareProgress, error) {
-			return nil, errBarrierBoom
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-share", `{"share":"abc"}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShares_OK(t *testing.T) {
-	svc := &fakeBarrierService{unsealWithSharesFn: func(ctx context.Context, shares []string) error { return nil }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":["a","b"]}`)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShares_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShares_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{unsealWithSharesFn: func(ctx context.Context, shares []string) error { return errBarrierBoom }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":["a","b"]}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
 // =============================================================================
 // Rekey
 // =============================================================================
-
-func TestHandleBarrierRekey_OK(t *testing.T) {
-	svc := &fakeBarrierService{
-		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRekey_Validation(t *testing.T) {
-	svc := &fakeBarrierService{}
-	for _, body := range []string{
-		`{"threshold":0,"total":3}`,
-		`{"threshold":2,"total":0}`,
-		`{"threshold":4,"total":3}`,
-	} {
-		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
-	}
-}
-
-func TestHandleBarrierRekey_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{
-		rekeyFn: func(ctx context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			return nil, errBarrierBoom
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
 
 // =============================================================================
 // Recovery generate / recover / delete / status
@@ -532,11 +396,11 @@ func TestHandleBarrierRekey_ServiceError(t *testing.T) {
 
 func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 	svc := &fakeBarrierService{
-		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
+		genRecoveryFn: func(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+			return &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: req.Threshold, Total: 3, ShareCount: 3}, nil
 		},
 	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2,"total":3}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
@@ -556,9 +420,8 @@ func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 func TestHandleBarrierRecoveryGenerate_Validation(t *testing.T) {
 	svc := &fakeBarrierService{}
 	for _, body := range []string{
-		`{"threshold":0,"total":3}`,
-		`{"threshold":2,"total":0}`,
-		`{"threshold":5,"total":3}`,
+		`{"threshold":0}`,
+		`{"threshold":-1}`,
 	} {
 		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", body)
 		if w.Code != http.StatusBadRequest {
@@ -569,34 +432,11 @@ func TestHandleBarrierRecoveryGenerate_Validation(t *testing.T) {
 
 func TestHandleBarrierRecoveryGenerate_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
-		genRecoveryFn: func(ctx context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
+		genRecoveryFn: func(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
 			return nil, errBarrierBoom
 		},
 	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2,"total":3}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRecoveryRecover_OK(t *testing.T) {
-	svc := &fakeBarrierService{recoverWithKeysFn: func(ctx context.Context, keys []string) error { return nil }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":["a","b"]}`)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRecoveryRecover_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRecoveryRecover_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{recoverWithKeysFn: func(ctx context.Context, keys []string) error { return errBarrierBoom }}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":["a","b"]}`)
+	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", `{"threshold":2}`)
 	if w.Code < 500 {
 		t.Fatalf("expected 5xx, got %d", w.Code)
 	}
@@ -669,60 +509,3 @@ func TestHandleBarrierRecoveryStatus_ServiceError(t *testing.T) {
 // =============================================================================
 // Root token
 // =============================================================================
-
-func TestHandleBarrierRootToken_OK(t *testing.T) {
-	now := time.Now()
-	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return &service.RootTokenInfo{Token: "deadbeef", CreatedAt: now}, nil
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a","b"]}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["token"] != "deadbeef" {
-		t.Fatalf("unexpected root token body: %v", resp)
-	}
-	if _, ok := resp["created_at"]; !ok {
-		t.Fatalf("expected created_at in body: %v", resp)
-	}
-}
-
-func TestHandleBarrierRootToken_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRootToken_ServiceError(t *testing.T) {
-	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return nil, errBarrierBoom
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a"]}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRootToken_ZeroCreatedAtOmitted(t *testing.T) {
-	svc := &fakeBarrierService{
-		genRootTokenFn: func(ctx context.Context, shares []string) (*service.RootTokenInfo, error) {
-			return &service.RootTokenInfo{Token: "deadbeef"}, nil
-		},
-	}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":["a"]}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	if strings.Contains(w.Body.String(), "created_at") {
-		t.Fatalf("zero CreatedAt should be omitted: %s", w.Body.String())
-	}
-}

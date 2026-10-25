@@ -35,6 +35,7 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 
 	"github.com/stretchr/testify/require"
 )
@@ -155,6 +156,23 @@ func signWith(key crypto.Signer) func(nonce []byte) ([]byte, error) {
 	}
 }
 
+// adminCallerOptions returns the client options that make tr's caller the
+// admin. A verified client certificate makes the admin the caller on every
+// transport but REST, which takes the caller only from a bearer, so on REST
+// the admin logs in with the same certificate first.
+func adminCallerOptions(t *testing.T, tr loginTransport) []quicbaas.Option {
+	t.Helper()
+	if tr != transportREST {
+		return nil
+	}
+	endpoints := helpers.GetRESTEndpoints()
+	require.NotEmpty(t, endpoints, "REST endpoint")
+	certPath, keyPath, caPath := adminCertPaths()
+	bearer, err := helpers.AuthPIVContext(context.Background(), endpoints[0], certPath, keyPath, caPath)
+	require.NoError(t, err, "admin PIV login")
+	return []quicbaas.Option{quicbaas.WithAuthToken(bearer)}
+}
+
 // A passkey the administrator enrolls through AdminFactors().Enroll is the
 // credential the unified login resolves to that administrator, on every
 // transport. Without a FIDO2 handler Enroll refuses before the server is asked.
@@ -164,7 +182,7 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 
 	for _, tr := range allLoginTransports() {
 		t.Run(string(tr), func(t *testing.T) {
-			c, err := newLoginClient(t, tr, mtlsTLSConfig(t))
+			c, err := newLoginClient(t, tr, mtlsTLSConfig(t), adminCallerOptions(t, tr)...)
 			require.NoError(t, err, "[%s] build client", tr)
 			defer c.Close()
 
@@ -216,7 +234,9 @@ func TestAdminFactors_PIVEnrollsThenLogsIn(t *testing.T) {
 
 			mem, err := xkmssdk.NewMemoryBackend()
 			require.NoError(t, err, "memory backend")
-			slots, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{Backend: mem, PEMEnabled: true})
+			daos, err := xkmssdk.NewBackendDAOFactory(mem)
+			require.NoError(t, err, "DAO factory")
+			slots, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{DAOs: daos})
 			require.NoError(t, err, "PIV certificate store")
 			card := xkmssdk.NewSoftwarePIVKeyGenerator()
 

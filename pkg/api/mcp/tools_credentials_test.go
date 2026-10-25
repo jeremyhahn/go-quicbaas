@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 )
@@ -48,8 +49,8 @@ func (m *mockCredentialServicer) CredentialStore(ctx context.Context, name strin
 	return nil
 }
 
-func (m *mockCredentialServicer) CredentialRetrieve(ctx context.Context, name string) ([]byte, error) {
-	return []byte("v"), nil
+func (m *mockCredentialServicer) CredentialRetrieveBuffer(ctx context.Context, name string) (*qrdbsecure.Buffer, error) {
+	return qrdbsecure.NewBufferFromBytes([]byte("v"))
 }
 
 func (m *mockCredentialServicer) CredentialSubmit(ctx context.Context, name string, value []byte) error {
@@ -90,11 +91,15 @@ func (m *mockCredentialServicer) CredentialRotate(ctx context.Context, name stri
 	}, nil
 }
 
-func (m *mockCredentialServicer) CredentialRetrieveVersion(ctx context.Context, name string, version uint64) ([]byte, error) {
+func (m *mockCredentialServicer) CredentialRetrieveVersionBuffer(ctx context.Context, name string, version uint64) (*qrdbsecure.Buffer, error) {
+	value := []byte("version-value")
 	if m.retrieveVerFn != nil {
-		return m.retrieveVerFn(ctx, name, version)
+		var err error
+		if value, err = m.retrieveVerFn(ctx, name, version); err != nil {
+			return nil, err
+		}
 	}
-	return []byte("version-value"), nil
+	return qrdbsecure.NewBufferFromBytes(value)
 }
 
 func (m *mockCredentialServicer) CredentialListVersions(ctx context.Context, name string) ([]qrdbsdk.CredentialVersion, error) {

@@ -33,7 +33,7 @@ import (
 // decision so operators see when a fleet node has been re-published, and
 // MUST NOT panic on any input.
 type FleetHeartbeatRecoverer interface {
-	Recover(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) bool
+	Recover(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) (bool, error)
 }
 
 // SetFleetHeartbeatRecoverer wires the recoverer used by
@@ -66,13 +66,13 @@ func (s *Server) fleetHeartbeatRecovererSnapshot() interface{} {
 // contract. Keeping the type assertion behind this single method gives
 // HandleFleetNodeHeartbeat one call site without depending on the
 // concrete IAMHeartbeatRecoverer.
-func (s *Server) tryRecoverFleetHeartbeat(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) bool {
+func (s *Server) tryRecoverFleetHeartbeat(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) (bool, error) {
 	rec := s.fleetHeartbeatRecovererSnapshot()
 	if rec == nil {
-		return false
+		return false, nil
 	}
 	if recoverer, ok := rec.(FleetHeartbeatRecoverer); ok {
 		return recoverer.Recover(ctx, r, tenantID, nodeID, payload)
 	}
-	return false
+	return false, nil
 }

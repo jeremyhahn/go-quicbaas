@@ -18,9 +18,11 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	stderrors "errors"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -36,9 +38,10 @@ import (
 //
 //   qrdb_tenant_barrier_init
 //   qrdb_tenant_barrier_unseal
-//   qrdb_tenant_barrier_unseal_share
 //   qrdb_tenant_barrier_seal
 //   qrdb_tenant_barrier_status
+//
+// plus the share-holder tools in tools_barrier_holders.go.
 //
 // All tools delegate to a TenantBarrierServicer installed via
 // ToolRegistry.SetTenantBarrierService. When the service is unwired, every tool
@@ -75,13 +78,44 @@ func (e *TenantBarrierTenantIDRequiredError) Error() string {
 	return "tenant_id is required"
 }
 
-// TenantBarrierShareRequiredError is returned when the unseal_share tool is
-// called without the required share argument.
-type TenantBarrierShareRequiredError struct{}
+// TenantBarrierOfficersArgError reports a qrdb_tenant_barrier_init officers
+// argument that does not decode into go-qrdb's officer roster type.
+type TenantBarrierOfficersArgError struct {
+	Cause error
+}
 
 // Error implements the error interface.
-func (e *TenantBarrierShareRequiredError) Error() string {
-	return "share is required"
+func (e *TenantBarrierOfficersArgError) Error() string {
+	return "tenant_barrier.init: invalid officers argument: " + e.Cause.Error()
+}
+
+// Unwrap returns the decode error.
+func (e *TenantBarrierOfficersArgError) Unwrap() error {
+	return e.Cause
+}
+
+// ErrorCode classifies the error as invalid input.
+func (e *TenantBarrierOfficersArgError) ErrorCode() qberrors.ErrorCode {
+	return qberrors.ErrInvalidInput
+}
+
+// tenantBarrierOfficersArg decodes the optional officers argument into
+// go-qrdb's own roster type, so every field go-qrdb defines reaches it and
+// none is dropped. An absent argument yields a nil roster.
+func tenantBarrierOfficersArg(args map[string]interface{}) ([]qrdbtransport.OfficerRegisterRequest, error) {
+	raw, ok := args["officers"]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, &TenantBarrierOfficersArgError{Cause: err}
+	}
+	var officers []qrdbtransport.OfficerRegisterRequest
+	if err := json.Unmarshal(data, &officers); err != nil {
+		return nil, &TenantBarrierOfficersArgError{Cause: err}
+	}
+	return officers, nil
 }
 
 // registerTenantBarrierTools adds every qrdb_tenant_barrier_* tool definition
@@ -90,7 +124,7 @@ func (e *TenantBarrierShareRequiredError) Error() string {
 func (r *ToolRegistry) registerTenantBarrierTools() {
 	r.addTool(ToolDefinition{
 		Name:        "qrdb_tenant_barrier_init",
-		Description: "Initialize the per-tenant barrier with the selected sealing strategy (none, passphrase, or shamir). Share material is never returned (qrdb share-free contract); the response reports only threshold/total metadata.",
+		Description: "Initialize the per-tenant barrier with the selected sealing strategy (none, passphrase, or shamir). Share material is never returned (qrdb share-free contract); the response reports threshold/total metadata and, for an inline officers roster, each holder's certificate.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -116,6 +150,15 @@ func (r *ToolRegistry) registerTenantBarrierTools() {
 					"description": "Total number of Shamir shares to generate. Only for the shamir strategy.",
 					"minimum":     1,
 				},
+				"officers": map[string]interface{}{
+					"type":        "array",
+					"description": "Inline Shamir share-holder roster (go-qrdb OfficerRegisterRequest objects: username, role, csr_pem, encryption_kem, encryption_key, factors, designated), registered atomically with initialization. Its length must equal shares. Only for the shamir strategy.",
+					"items":       map[string]interface{}{"type": "object"},
+				},
+				"policy": map[string]interface{}{
+					"type":        "string",
+					"description": "Factor policy the inline officers enrol under: designated (default) or any-enrolled. Ignored without officers.",
+				},
 			},
 			"required": []string{"tenant_id", "strategy"},
 		},
@@ -137,25 +180,6 @@ func (r *ToolRegistry) registerTenantBarrierTools() {
 				},
 			},
 			"required": []string{"tenant_id", "key"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_tenant_barrier_unseal_share",
-		Description: "Submit a single Shamir share toward the per-tenant barrier quorum threshold. Returns quorum progress including whether the barrier was unsealed.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"tenant_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The tenant whose barrier to unseal.",
-				},
-				"share": map[string]interface{}{
-					"type":        "string",
-					"description": "A single Shamir share value.",
-				},
-			},
-			"required": []string{"tenant_id", "share"},
 		},
 	})
 
@@ -188,16 +212,17 @@ func (r *ToolRegistry) registerTenantBarrierTools() {
 			"required": []string{"tenant_id"},
 		},
 	})
+
+	registerHolderTools(r, tenantBarrierHolderTools)
 }
 
 // tenantBarrierToolNames enumerates every tool name owned by the per-tenant
 // barrier surface. Membership is used by isTenantBarrierTool to route dispatch.
 var tenantBarrierToolNames = map[string]struct{}{
-	"qrdb_tenant_barrier_init":         {},
-	"qrdb_tenant_barrier_unseal":       {},
-	"qrdb_tenant_barrier_unseal_share": {},
-	"qrdb_tenant_barrier_seal":         {},
-	"qrdb_tenant_barrier_status":       {},
+	"qrdb_tenant_barrier_init":   {},
+	"qrdb_tenant_barrier_unseal": {},
+	"qrdb_tenant_barrier_seal":   {},
+	"qrdb_tenant_barrier_status": {},
 }
 
 // isTenantBarrierTool reports whether the given tool name belongs to the
@@ -215,11 +240,10 @@ type tenantBarrierExecutor func(context.Context, service.TenantBarrierServicer, 
 // tools. Lookup is O(1) and keeps executeTenantBarrierTool free of a multi-arm
 // switch.
 var tenantBarrierExecutors = map[string]tenantBarrierExecutor{
-	"qrdb_tenant_barrier_init":         executeTenantBarrierInit,
-	"qrdb_tenant_barrier_unseal":       executeTenantBarrierUnseal,
-	"qrdb_tenant_barrier_unseal_share": executeTenantBarrierUnsealShare,
-	"qrdb_tenant_barrier_seal":         executeTenantBarrierSeal,
-	"qrdb_tenant_barrier_status":       executeTenantBarrierStatus,
+	"qrdb_tenant_barrier_init":   executeTenantBarrierInit,
+	"qrdb_tenant_barrier_unseal": executeTenantBarrierUnseal,
+	"qrdb_tenant_barrier_seal":   executeTenantBarrierSeal,
+	"qrdb_tenant_barrier_status": executeTenantBarrierStatus,
 }
 
 // executeTenantBarrierTool dispatches a per-tenant barrier call to the
@@ -273,16 +297,21 @@ func executeTenantBarrierInit(ctx context.Context, svc service.TenantBarrierServ
 		return nil, &TenantBarrierTenantIDRequiredError{}
 	}
 
+	officers, err := tenantBarrierOfficersArg(args)
+	if err != nil {
+		return nil, err
+	}
 	passphrase := credentialArg(args, "passphrase")
 	defer secure.Wipe(passphrase)
-	result, err := svc.TenantBarrierInit(
-		ctx,
-		tenantID,
-		passphrase,
-		getInt(args, "threshold"),
-		getInt(args, "shares"),
-		getString(args, "strategy"),
-	)
+	result, err := svc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+		TenantID:   tenantID,
+		Passphrase: passphrase,
+		Threshold:  getInt(args, "threshold"),
+		Shares:     getInt(args, "shares"),
+		Strategy:   getString(args, "strategy"),
+		Officers:   officers,
+		Policy:     getString(args, "policy"),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -296,6 +325,7 @@ func executeTenantBarrierInit(ctx context.Context, svc service.TenantBarrierServ
 			"threshold":    result.Threshold,
 			"total_shares": result.TotalShares,
 			"share_count":  result.ShareCount,
+			"holders":      result.Holders,
 		}, nil
 	}
 	return map[string]interface{}{
@@ -329,39 +359,6 @@ func executeTenantBarrierUnseal(ctx context.Context, svc service.TenantBarrierSe
 	return map[string]interface{}{
 		"status":    "unsealed",
 		"tenant_id": tenantID,
-	}, nil
-}
-
-// executeTenantBarrierUnsealShare implements qrdb_tenant_barrier_unseal_share.
-func executeTenantBarrierUnsealShare(ctx context.Context, svc service.TenantBarrierServicer, args map[string]interface{}) (interface{}, error) {
-	tenantID := getString(args, "tenant_id")
-	if tenantID == "" {
-		return nil, &TenantBarrierTenantIDRequiredError{}
-	}
-	share := getString(args, "share")
-	if share == "" {
-		return nil, &TenantBarrierShareRequiredError{}
-	}
-
-	progress, err := svc.TenantBarrierUnsealShare(ctx, tenantID, share)
-	if err != nil {
-		return nil, err
-	}
-	if progress == nil {
-		return map[string]interface{}{
-			"tenant_id": tenantID,
-			"required":  0,
-			"submitted": 0,
-			"complete":  false,
-			"sealed":    true,
-		}, nil
-	}
-	return map[string]interface{}{
-		"tenant_id": progress.TenantID,
-		"required":  progress.Required,
-		"submitted": progress.Submitted,
-		"complete":  progress.Complete,
-		"sealed":    progress.Sealed,
 	}, nil
 }
 

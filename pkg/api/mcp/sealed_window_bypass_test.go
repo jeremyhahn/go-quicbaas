@@ -99,10 +99,11 @@ func TestMCPSealedWindowAuthBypass_AdmitsAndAudits(t *testing.T) {
 			wantBypass: true,
 		},
 		{
-			name:       "sealed pre-operational ceremony status bypasses",
+			// go-qrdb v0.50: ceremony status is not a sealed-window verb.
+			name:       "sealed pre-operational ceremony status does not bypass",
 			sealed:     true,
 			tool:       "qrdb_ceremony_status",
-			wantBypass: true,
+			wantBypass: false,
 		},
 		{
 			// The ceremony status / claim tools are ScopePreOperational. On an

@@ -28,6 +28,12 @@ var publicTools = map[string]bool{
 	// qrdb-mirror health tool (Health.Check is exposed as qrdb_health — see
 	// pkg/api/mcp/CLAUDE.md). Liveness/readiness stay quicbaas_*.
 	"qrdb_health": true,
+	// Login is pre-authentication on every transport: gRPC lists
+	// Login/BeginLogin and FinishLogin among its public methods and REST
+	// declares the login routes in authz_public_routes.go (owner item 134,
+	// ruled permit). The mtls factor still needs the TLS leaf qrdb verified.
+	"quicbaas_login_begin":  true,
+	"quicbaas_login_finish": true,
 }
 
 // IsPublicTool returns true if the tool does not require authentication.

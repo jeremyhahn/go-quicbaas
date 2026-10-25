@@ -17,7 +17,7 @@
 // test matrix.
 //
 // Identity model (owner decision): tenant-barrier MUTATIONS
-// (init/unseal/unseal-share/seal) run under tenant-admin identities minted
+// (init/unseal/quorum/seal) run under tenant-admin identities minted
 // via helpers.AuthTenantAdmin — tenant admins self-bootstrap their own
 // barriers per the locked architecture. The system-admin bearer may READ any
 // tenant barrier's status (control-plane observability) and is DENIED every
@@ -272,7 +272,7 @@ func TestTenantBarrier_Passphrase(t *testing.T) {
 //   - submitting threshold-1 (2) shares keeps the barrier sealed
 //   - submitting the 3rd share unseals the barrier (complete=true)
 //   - status after the threshold share reports unsealed
-//   - seal → unseal-share cycle works a second time
+//   - seal → quorum unseal cycle works a second time
 func TestTenantBarrier_Shamir(t *testing.T) {
 	poolAvailable := volumePoolAvailable(t)
 	t.Logf("volume pool available: %v", poolAvailable)
@@ -309,13 +309,18 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 
 	// --- Volume pool is present: run the full lifecycle ---
 
-	var shares []string
+	holders := make([]*tenantBarrierHolder, shamirTotal)
+	for i := range holders {
+		holders[i] = newTenantBarrierHolder(t, fmt.Sprintf("officer-%d", i+1))
+	}
+	var issued bool
 
-	t.Run("init_shamir_3_of_5_returns_200_with_shares", func(t *testing.T) {
+	t.Run("init_shamir_3_of_5_returns_200_with_holder_certs", func(t *testing.T) {
 		status, resp, body, err := initTenantBarrier(ctx, tenantID, bearer, tenantBarrierInitReq{
 			Strategy:  "shamir",
 			Threshold: shamirThreshold,
 			Shares:    shamirTotal,
+			Officers:  roster(holders),
 		})
 		require.NoErrorf(t, err, "init shamir: network error")
 		require.Equalf(t, http.StatusOK, status,
@@ -328,10 +333,15 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 			"init response threshold must match requested value")
 		assert.Equalf(t, shamirTotal, resp.TotalShares,
 			"init response total_shares must match requested value")
-		require.Lenf(t, resp.Shares, shamirTotal,
-			"init response must contain exactly total_shares=%d shares; got %d; body=%s",
-			shamirTotal, len(resp.Shares), body)
-		shares = resp.Shares
+		assert.Equalf(t, shamirTotal, resp.ShareCount,
+			"every share must be sealed to an officer")
+		require.Lenf(t, resp.Holders, shamirTotal,
+			"init response must carry one certificate per officer; body=%s", body)
+		for i, cert := range resp.Holders {
+			require.Equalf(t, holders[i].Username, cert.Username, "holder certs must follow roster order")
+			holders[i].CertPEM = cert.CertPEM
+		}
+		issued = true
 	})
 
 	t.Run("status_after_shamir_init_sealed", func(t *testing.T) {
@@ -346,30 +356,33 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 			"status shamir_total must match init value")
 	})
 
-	// Guard: shares must be populated before proceeding.
-	require.NotEmptyf(t, shares, "shares must be populated by init sub-case")
+	// Guard: officers must hold certificates before proceeding.
+	require.Truef(t, issued, "officer certificates must be issued by the init sub-case")
+
+	t.Run("officers_claim_their_shares", func(t *testing.T) {
+		for _, h := range holders[:shamirThreshold] {
+			claimTenantBarrierShare(t, ctx, tenantID, bearer, h)
+			require.NotEmptyf(t, h.Share, "officer %s claim must open a share", h.Username)
+		}
+	})
 
 	t.Run("submit_threshold_minus_1_shares_leaves_sealed", func(t *testing.T) {
 		// Submit the first (threshold-1) shares; each must leave the barrier sealed.
 		for i := 0; i < shamirThreshold-1; i++ {
-			i := i
+			h := holders[i]
 			t.Run(fmt.Sprintf("share_%d_of_%d", i+1, shamirThreshold-1), func(t *testing.T) {
-				status, resp, body, err := unsealShareTenantBarrier(ctx, tenantID, bearer, shares[i])
-				require.NoErrorf(t, err, "unseal-share %d: network error", i+1)
+				status, resp, body, err := submitTenantUnsealShare(ctx, tenantID, bearer, h)
+				require.NoErrorf(t, err, "quorum submit %d: network error", i+1)
 				require.Equalf(t, http.StatusOK, status,
-					"unseal-share %d must return 200; body=%s", i+1, body)
-				require.NotNilf(t, resp, "unseal-share %d response must not be nil", i+1)
+					"quorum submit %d must return 200; body=%s", i+1, body)
+				require.NotNilf(t, resp, "quorum submit %d response must not be nil", i+1)
 
-				assert.Equalf(t, tenantID, resp.TenantID,
-					"unseal-share %d response tenant_id mismatch", i+1)
 				assert.Equalf(t, shamirThreshold, resp.Required,
-					"unseal-share %d required must equal threshold", i+1)
+					"quorum submit %d required must equal threshold", i+1)
 				assert.Equalf(t, i+1, resp.Submitted,
-					"unseal-share %d submitted must equal shares submitted so far", i+1)
+					"quorum submit %d submitted must equal shares submitted so far", i+1)
 				assert.Falsef(t, resp.Complete,
-					"unseal-share %d complete must be false before threshold", i+1)
-				assert.Truef(t, resp.Sealed,
-					"unseal-share %d sealed must be true before threshold", i+1)
+					"quorum submit %d complete must be false before threshold", i+1)
 			})
 		}
 	})
@@ -384,19 +397,16 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 
 	t.Run("submit_threshold_share_unseals_barrier", func(t *testing.T) {
 		// Submit the threshold-th share; this must complete the quorum.
-		thresholdShare := shares[shamirThreshold-1]
-		status, resp, body, err := unsealShareTenantBarrier(ctx, tenantID, bearer, thresholdShare)
-		require.NoErrorf(t, err, "unseal-share (threshold): network error")
+		status, resp, body, err := submitTenantUnsealShare(ctx, tenantID, bearer, holders[shamirThreshold-1])
+		require.NoErrorf(t, err, "quorum submit (threshold): network error")
 		require.Equalf(t, http.StatusOK, status,
-			"unseal-share (threshold) must return 200; body=%s", body)
-		require.NotNilf(t, resp, "unseal-share (threshold) response must not be nil")
+			"quorum submit (threshold) must return 200; body=%s", body)
+		require.NotNilf(t, resp, "quorum submit (threshold) response must not be nil")
 
 		assert.Truef(t, resp.Complete,
-			"unseal-share (threshold) complete must be true; resp=%+v body=%s", resp, body)
-		assert.Falsef(t, resp.Sealed,
-			"unseal-share (threshold) sealed must be false after quorum; resp=%+v body=%s", resp, body)
+			"quorum submit (threshold) complete must be true; resp=%+v body=%s", resp, body)
 		assert.Equalf(t, shamirThreshold, resp.Submitted,
-			"unseal-share (threshold) submitted must equal threshold")
+			"quorum submit (threshold) submitted must equal threshold")
 	})
 
 	t.Run("status_after_threshold_share_unsealed", func(t *testing.T) {
@@ -653,7 +663,7 @@ func TestTenantBarrier_VolumePoolAbsent(t *testing.T) {
 // service-layer denial ("system-tenant callers may not perform per-tenant
 // barrier operations"), while the status read returns 200. The per-tenant
 // barrier surface has no rekey/rotate verb; the negative matrix therefore
-// covers every registered mutation (init/unseal/unseal-share/seal).
+// covers every registered mutation (init/unseal/quorum/seal).
 func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
 	adminToken := adminBearer(t)
 	tenantID := fmt.Sprintf("tb-sysneg-%d", time.Now().UnixNano())
@@ -697,10 +707,10 @@ func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
 		requireTypedDenial(t, "unseal", status, body)
 	})
 
-	t.Run("unseal_share_denied_403_typed", func(t *testing.T) {
-		status, _, body, err := unsealShareTenantBarrier(ctx, tenantID, adminToken, "dummy-share")
-		require.NoErrorf(t, err, "system-admin unseal-share: network error")
-		requireTypedDenial(t, "unseal-share", status, body)
+	t.Run("quorum_begin_denied_403_typed", func(t *testing.T) {
+		status, _, body, err := submitTenantUnsealShare(ctx, tenantID, adminToken, newTenantBarrierHolder(t, "officer-1"))
+		require.NoErrorf(t, err, "system-admin quorum begin: network error")
+		requireTypedDenial(t, "quorum begin", status, body)
 	})
 
 	t.Run("seal_denied_403_typed", func(t *testing.T) {
@@ -774,14 +784,6 @@ func TestTenantBarrier_SystemAdminWritePosture_GRPC(t *testing.T) {
 			Key:      []byte("irrelevant"),
 		})
 		requirePermissionDenied(t, "Unseal", err)
-	})
-
-	t.Run("unseal_share_permission_denied", func(t *testing.T) {
-		_, err := client.UnsealShare(rpcCtx, &pb.TenantBarrierUnsealShareRequest{
-			TenantId: tenantID,
-			Share:    "dummy-share",
-		})
-		requirePermissionDenied(t, "UnsealShare", err)
 	})
 
 	t.Run("seal_permission_denied", func(t *testing.T) {

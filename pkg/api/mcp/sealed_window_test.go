@@ -57,10 +57,10 @@ func TestSealedWindowDeniesTool_SealedAdmitDenyTable(t *testing.T) {
 		{"qrdb_barrier_status", false},
 		{"qrdb_barrier_initialize", false},
 		{"qrdb_barrier_unseal", false},
-		{"qrdb_barrier_shamir_unseal_share", false},
-		{"qrdb_barrier_root_token", false},
-		{"qrdb_ceremony_status", false},
-		{"quicbaas_ceremony_list_officers", false},
+		// go-qrdb v0.50: a sealed node answers no status question but
+		// barrier status and lists no holder to an anonymous caller.
+		{"qrdb_ceremony_status", true},
+		{"quicbaas_ceremony_list_officers", true},
 
 		// The strict ceremony model (sealedwindow.StrictCeremonyExclusions)
 		// withholds the ceremony verbs that MINT or DISTRIBUTE trust from

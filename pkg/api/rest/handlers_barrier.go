@@ -28,6 +28,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -66,31 +67,13 @@ type (
 	barrierUnsealRequest = qrdbtransport.BarrierUnsealRequest
 
 	// barrierShamirInitializeRequest is the JSON payload for
-	// POST /api/v1/barrier/shamir/initialize. Secret is base64 on the wire.
+	// POST /api/v1/barrier/shamir/initialize. It carries no secret: the
+	// shares are sealed to registered officers, never returned.
 	barrierShamirInitializeRequest = qrdbtransport.BarrierInitializeShamirRequest
-
-	// barrierShamirUnsealShareRequest is the JSON payload for
-	// POST /api/v1/barrier/shamir/unseal-share.
-	barrierShamirUnsealShareRequest = qrdbtransport.BarrierUnsealShareRequest
-
-	// barrierShamirUnsealSharesRequest is the JSON payload for
-	// POST /api/v1/barrier/shamir/unseal-shares.
-	barrierShamirUnsealSharesRequest = qrdbtransport.BarrierUnsealSharesRequest
-
-	// barrierRekeyRequest is the JSON payload for POST /api/v1/barrier/rekey.
-	barrierRekeyRequest = qrdbtransport.BarrierRekeyRequest
 
 	// barrierRecoveryGenerateRequest is the JSON payload for
 	// POST /api/v1/barrier/recovery/generate.
 	barrierRecoveryGenerateRequest = qrdbtransport.BarrierGenerateRecoveryKeysRequest
-
-	// barrierRecoveryRecoverRequest is the JSON payload for
-	// POST /api/v1/barrier/recovery/recover.
-	barrierRecoveryRecoverRequest = qrdbtransport.BarrierRecoverWithKeysRequest
-
-	// barrierRootTokenRequest is the JSON payload for
-	// POST /api/v1/barrier/root-token.
-	barrierRootTokenRequest = qrdbtransport.BarrierGenerateRootTokenRequest
 )
 
 // barrierEnableEncryptionRequest is the JSON payload for
@@ -205,6 +188,17 @@ func wipeCredential(secret *[]byte) func() {
 	return func() { secure.Wipe(*secret) }
 }
 
+// destroyCredentials destroys the protected-memory secret a barrier
+// migration was handed. Credentials without a secret are a no-op. The
+// destroy error is returned, not dropped: a secret that could not be
+// destroyed is still resident and the caller must hear about it.
+func destroyCredentials(creds qrdbsdk.Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
+}
+
 // requireBarrierService writes a 503 Service Unavailable response when the
 // barrier facade is unwired. Returns true when the service is present.
 func (s *Server) requireBarrierService(w http.ResponseWriter, r *http.Request) bool {
@@ -268,48 +262,6 @@ func barrierStatusToResponse(info *service.BarrierStatusInfo) map[string]interfa
 	}
 	if !info.InitializedAt.IsZero() {
 		resp["initialized_at"] = info.InitializedAt.UTC().Format(barrierTimeFormat)
-	}
-	return resp
-}
-
-// shamirInitToResponse maps a ShamirInitInfo to its JSON wire shape. Share
-// material is never present; officers claim shares via the qrdb share-claim
-// flow.
-func shamirInitToResponse(info *service.ShamirInitInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":    info.Threshold,
-		"total_shares": info.TotalShares,
-		"share_count":  info.ShareCount,
-	}
-}
-
-// unsealShareProgressToResponse maps an UnsealShareProgress to its JSON shape.
-func unsealShareProgressToResponse(p *service.UnsealShareProgress) map[string]interface{} {
-	return map[string]interface{}{
-		"required":  p.Required,
-		"submitted": p.Submitted,
-		"complete":  p.Complete,
-	}
-}
-
-// recoveryKeysToResponse maps a RecoveryKeysInfo to its JSON shape. Recovery
-// share material is never present; officers claim shares via the qrdb
-// recovery share-claim flow.
-func recoveryKeysToResponse(info *service.RecoveryKeysInfo) map[string]interface{} {
-	return map[string]interface{}{
-		"threshold":   info.Threshold,
-		"total":       info.Total,
-		"share_count": info.ShareCount,
-	}
-}
-
-// rootTokenToResponse maps a RootTokenInfo to its JSON shape.
-func rootTokenToResponse(info *service.RootTokenInfo) map[string]interface{} {
-	resp := map[string]interface{}{
-		"token": info.Token,
-	}
-	if !info.CreatedAt.IsZero() {
-		resp["created_at"] = info.CreatedAt.UTC().Format(barrierTimeFormat)
 	}
 	return resp
 }
@@ -384,7 +336,7 @@ func (s *Server) HandleBarrierSeal(w http.ResponseWriter, r *http.Request) {
 	soPIN := []byte(req.SOPin)
 	defer wipeCredential(&soPIN)()
 
-	if err := s.barrierSvc.BarrierSeal(r.Context(), &service.BarrierSealRequest{SOPIN: soPIN}); err != nil {
+	if err := s.barrierSvc.BarrierSeal(holderContext(r), &service.BarrierSealRequest{SOPIN: soPIN}); err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -399,7 +351,6 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 	}
 
 	var req barrierShamirInitializeRequest
-	defer wipeCredential(&req.Secret)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
@@ -416,92 +367,19 @@ func (s *Server) HandleBarrierShamirInitialize(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	info, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), req.Secret, req.Threshold, req.TotalShares)
+	resp, err := s.barrierSvc.BarrierInitializeShamir(r.Context(), &req)
+	var refused *sdkerrors.SystemShamirInitRefusedError
+	if errors.As(err, &refused) {
+		// The refusal names the ceremony; it is safe to show the caller.
+		RespondError(w, r, http.StatusPreconditionFailed, err)
+		return
+	}
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, shamirInitToResponse(info))
-}
-
-// HandleBarrierShamirUnsealShare handles POST /api/v1/barrier/shamir/unseal-share.
-func (s *Server) HandleBarrierShamirUnsealShare(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	var req barrierShamirUnsealShareRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Share == "" {
-		RespondBadRequest(w, r, "share is required")
-		return
-	}
-
-	progress, err := s.barrierSvc.BarrierUnsealWithShare(r.Context(), req.Share)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, unsealShareProgressToResponse(progress))
-}
-
-// HandleBarrierShamirUnsealShares handles POST /api/v1/barrier/shamir/unseal-shares.
-func (s *Server) HandleBarrierShamirUnsealShares(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	var req barrierShamirUnsealSharesRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if len(req.Shares) == 0 {
-		RespondBadRequest(w, r, "shares is required")
-		return
-	}
-
-	if err := s.barrierSvc.BarrierUnsealWithShares(r.Context(), req.Shares); err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// HandleBarrierRekey handles POST /api/v1/barrier/rekey.
-func (s *Server) HandleBarrierRekey(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	var req barrierRekeyRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Threshold <= 0 {
-		RespondBadRequest(w, r, "threshold must be greater than 0")
-		return
-	}
-	if req.Total <= 0 {
-		RespondBadRequest(w, r, "total must be greater than 0")
-		return
-	}
-	if req.Threshold > req.Total {
-		RespondBadRequest(w, r, "threshold cannot exceed total")
-		return
-	}
-
-	info, err := s.barrierSvc.BarrierRekey(r.Context(), req.Threshold, req.Total)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, shamirInitToResponse(info))
+	RespondJSON(w, r, http.StatusOK, resp)
 }
 
 // HandleBarrierRecoveryGenerate handles POST /api/v1/barrier/recovery/generate.
@@ -518,45 +396,14 @@ func (s *Server) HandleBarrierRecoveryGenerate(w http.ResponseWriter, r *http.Re
 		RespondBadRequest(w, r, "threshold must be greater than 0")
 		return
 	}
-	if req.Total <= 0 {
-		RespondBadRequest(w, r, "total must be greater than 0")
-		return
-	}
-	if req.Threshold > req.Total {
-		RespondBadRequest(w, r, "threshold cannot exceed total")
-		return
-	}
 
-	info, err := s.barrierSvc.BarrierGenerateRecoveryKeys(r.Context(), req.Threshold, req.Total)
+	resp, err := s.barrierSvc.BarrierGenerateRecoveryKeys(r.Context(), &req)
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
 
-	RespondJSON(w, r, http.StatusOK, recoveryKeysToResponse(info))
-}
-
-// HandleBarrierRecoveryRecover handles POST /api/v1/barrier/recovery/recover.
-func (s *Server) HandleBarrierRecoveryRecover(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	var req barrierRecoveryRecoverRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if len(req.Keys) == 0 {
-		RespondBadRequest(w, r, "keys is required")
-		return
-	}
-
-	if err := s.barrierSvc.BarrierRecoverWithKeys(r.Context(), req.Keys); err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	RespondJSON(w, r, http.StatusOK, resp)
 }
 
 // HandleBarrierRecoveryDelete handles DELETE /api/v1/barrier/recovery.
@@ -594,30 +441,6 @@ func (s *Server) HandleBarrierRecoveryStatus(w http.ResponseWriter, r *http.Requ
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
 		"has_keys": hasKeys,
 	})
-}
-
-// HandleBarrierRootToken handles POST /api/v1/barrier/root-token.
-func (s *Server) HandleBarrierRootToken(w http.ResponseWriter, r *http.Request) {
-	if !s.requireBarrierService(w, r) {
-		return
-	}
-
-	var req barrierRootTokenRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if len(req.Shares) == 0 {
-		RespondBadRequest(w, r, "shares is required")
-		return
-	}
-
-	info, err := s.barrierSvc.BarrierGenerateRootToken(r.Context(), req.Shares)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, rootTokenToResponse(info))
 }
 
 // HandleBarrierEnableEncryption handles
@@ -666,16 +489,19 @@ func (s *Server) HandleBarrierEnableEncryption(w http.ResponseWriter, r *http.Re
 		ShamirTotal:     req.ShamirTotal,
 	}
 	if len(req.Passphrase) > 0 {
-		creds, credErr := qrdbsdk.CredentialsFor(req.Passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(r.Context(), req.Passphrase)
 		if credErr != nil {
 			s.handleServiceError(w, r, credErr)
 			return
 		}
-		defer creds.Secret.Destroy()
 		opts.Credentials = creds
 	}
 
-	if err := s.barrierSvc.EnableEncryption(r.Context(), "", opts); err != nil {
+	err := s.barrierSvc.EnableEncryption(r.Context(), "", opts)
+	if destroyErr := destroyCredentials(opts.Credentials); destroyErr != nil && err == nil {
+		err = destroyErr
+	}
+	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
@@ -734,12 +560,11 @@ func (s *Server) HandleBarrierWireEnableEncryption(w http.ResponseWriter, r *htt
 		ShamirTotal:     req.ShamirTotal,
 	}
 	if len(req.Passphrase) > 0 {
-		creds, credErr := qrdbsdk.CredentialsFor(req.Passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(r.Context(), req.Passphrase)
 		if credErr != nil {
 			s.handleServiceError(w, r, credErr)
 			return
 		}
-		defer creds.Secret.Destroy()
 		opts.Credentials = creds
 	}
 
@@ -747,7 +572,11 @@ func (s *Server) HandleBarrierWireEnableEncryption(w http.ResponseWriter, r *htt
 	if req.TenantID != "" {
 		scope = barrierScopeTenant
 	}
-	if err := s.barrierSvc.EnableEncryption(r.Context(), req.TenantID, opts); err != nil {
+	err := s.barrierSvc.EnableEncryption(r.Context(), req.TenantID, opts)
+	if destroyErr := destroyCredentials(opts.Credentials); destroyErr != nil && err == nil {
+		err = destroyErr
+	}
+	if err != nil {
 		if req.TenantID != "" {
 			s.handleTenantBarrierError(w, r, err)
 			return

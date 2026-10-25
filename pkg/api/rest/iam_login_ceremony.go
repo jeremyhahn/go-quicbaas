@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -138,7 +139,24 @@ func respondLoginCeremonyError(w http.ResponseWriter, r *http.Request, err error
 			NewIAMAPIError(ErrBadRequest, err.Error()))
 		return
 	}
+	if respondTenantLoginRefused(w, r, err) {
+		return
+	}
 	RespondLoginRejected(w, r)
+}
+
+// respondTenantLoginRefused writes 412 tenant_login_refused and reports true
+// when err is the non-system tenant refusal, which login and passkey
+// invitation activation return until #1816. The refusal names only the
+// release gap, so it is safe to show the caller.
+func respondTenantLoginRefused(w http.ResponseWriter, r *http.Request, err error) bool {
+	var tenantRefused *sdkerrors.TenantLoginRefusedError
+	if !errors.As(err, &tenantRefused) {
+		return false
+	}
+	RespondIAMError(w, r, http.StatusPreconditionFailed,
+		NewIAMAPIError(ErrTenantLoginRefused, tenantRefused.Error()))
+	return true
 }
 
 // CeremonyBeginLogin handles POST /api/v1/auth/login/begin.

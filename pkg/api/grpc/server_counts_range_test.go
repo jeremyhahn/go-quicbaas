@@ -86,23 +86,6 @@ func TestCountHandlers_ResponseOutOfRange(t *testing.T) {
 				return err
 			},
 		},
-		{
-			name:  "CeremonyCompleteClaimShare share index",
-			field: "share_index",
-			call: func(*testing.T) error {
-				srv := newTestCeremonyServer(&mockCeremonyService{
-					completeShareFn: func(context.Context, string, string, []byte) (*service.CeremonyClaimShareResult, error) {
-						return &service.CeremonyClaimShareResult{ShareIndex: tooBig}, nil
-					},
-				})
-				_, err := srv.CeremonyCompleteClaimShare(ctx, &pb.CeremonyCompleteClaimShareRequest{
-					Username:  "officer",
-					NonceHex:  "deadbeef",
-					Signature: []byte("sig"),
-				})
-				return err
-			},
-		},
 	}
 
 	for _, tt := range tests {

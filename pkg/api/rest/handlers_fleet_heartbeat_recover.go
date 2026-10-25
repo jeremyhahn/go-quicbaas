@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // recoverLogger is the narrow logging surface the recoverer uses. The
@@ -73,14 +74,27 @@ type IAMHeartbeatRecovererDeps struct {
 	// operators can audit which fleet nodes the central re-published after a
 	// restart. Required.
 	Logger recoverLogger
+
+	// TrustDomain is the cluster's SPIFFE trust domain
+	// (iam.spiffe_trust_domain). A certificate whose OU names it is refused,
+	// as at enrolment (fleetNodeCertTenant).
+	TrustDomain string
+
+	// CertRecords is the store of certificates the fleet issuer issued. A
+	// peer certificate it holds no record of, for the request's tenant, is
+	// refused as at enrolment. Required. Stopgap until the go-xkms agent
+	// claim re-pin (go-quicbaas#1821).
+	CertRecords service.FleetNodeCertRecords
 }
 
 // IAMHeartbeatRecoverer implements FleetHeartbeatRecoverer using the
 // request's mTLS peer certificate to re-publish a missing fleet node into
 // the fleet registry. Safe for concurrent callers.
 type IAMHeartbeatRecoverer struct {
-	registrar iam.FleetRegistrar
-	logger    recoverLogger
+	registrar   iam.FleetRegistrar
+	logger      recoverLogger
+	trustDomain string
+	certRecords service.FleetNodeCertRecords
 }
 
 // Compile-time interface satisfaction check.
@@ -96,57 +110,78 @@ func NewIAMHeartbeatRecoverer(deps IAMHeartbeatRecovererDeps) (*IAMHeartbeatReco
 	if deps.Logger == nil {
 		return nil, ErrHeartbeatRecoverNoLogger
 	}
+	if deps.CertRecords == nil {
+		return nil, ErrHeartbeatRecoverNoCertRecords
+	}
 	return &IAMHeartbeatRecoverer{
-		registrar: deps.Registrar,
-		logger:    deps.Logger,
+		registrar:   deps.Registrar,
+		logger:      deps.Logger,
+		trustDomain: deps.TrustDomain,
+		certRecords: deps.CertRecords,
 	}, nil
 }
 
 // Recover walks the recovery decision tree:
 //
-//  1. Extract & validate the mTLS peer certificate (OU=fleet nodes stamp +
-//     ClientAuth EKU). Missing/invalid → return false.
-//  2. Read the certificate tenant from Subject.Organization. Missing or
-//     not matching the supplied tenantID → return false.
-//  3. Derive the canonical AgentID from (certTenant, cert CN) via
+//  1. Extract & validate the mTLS peer certificate (ClientAuth EKU).
+//     Missing/invalid → return false.
+//  2. Read the certificate tenant and prove it is an agent certificate
+//     (fleetNodeCertTenant). Refused, or not matching the supplied
+//     tenantID → return false.
+//  3. Look the certificate up in the fleet issuer's records. No record
+//     for tenantID → return the *service.FleetNodeCertNotRecordedError,
+//     which the heartbeat handler answers with 403 as enrolment does; a
+//     lookup failure → return false.
+//  4. Derive the canonical AgentID from (certTenant, cert CN) via
 //     iam.FleetNodeAppName. Mismatch with the supplied nodeID → return
 //     false (defence: a stolen cert for one daemon must not heartbeat
 //     as a different daemon).
-//  4. Republish the fleet node to the fleet registry through the registrar.
+//  5. Republish the fleet node to the fleet registry through the registrar.
 //     Failure → return false. Success → log INFO and return true.
 //
 // Returning false makes the heartbeat handler fall through to its
 // original 404 path so the fleet node's client-side fallback can re-enroll
-// explicitly.
-func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) bool {
+// explicitly. The error is non-nil only for a certificate
+// the fleet issuer did not record.
+func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, tenantID, nodeID string, payload *heartbeatBody) (bool, error) {
 	if r == nil || r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		return false
+		return false, nil
 	}
 
 	peer, err := validateRecoveryPeerCert(r.TLS.PeerCertificates[0])
 	if err != nil {
 		h.logger.Warnf("agent heartbeat recover: cert validation failed: agent=%s tenant=%s: %v",
 			nodeID, tenantID, err)
-		return false
+		return false, nil
 	}
 
-	certTenant := strings.TrimSpace(extractCertTenant(peer))
-	if certTenant == "" {
-		h.logger.Warnf("agent heartbeat recover: peer cert missing tenant claim: agent=%s tenant=%s",
-			nodeID, tenantID)
-		return false
+	certTenant, err := fleetNodeCertTenant(peer, h.trustDomain)
+	if err != nil {
+		h.logger.Warnf("agent heartbeat recover: agent=%s tenant=%s: %v", nodeID, tenantID, err)
+		return false, nil
 	}
 	if certTenant != tenantID {
 		h.logger.Warnf("agent heartbeat recover: cert tenant=%q does not match request tenant=%q for agent=%s",
 			certTenant, tenantID, nodeID)
-		return false
+		return false, nil
+	}
+
+	if err := h.certRecords.VerifyFleetNodeCertificate(ctx, tenantID, peer); err != nil {
+		var notRecorded *service.FleetNodeCertNotRecordedError
+		if errors.As(err, &notRecorded) {
+			h.logger.Warnf("agent heartbeat recover: agent=%s tenant=%s: %v", nodeID, tenantID, notRecorded)
+			return false, notRecorded
+		}
+		h.logger.Warnf("agent heartbeat recover: cert record lookup failed: agent=%s tenant=%s: %v",
+			nodeID, tenantID, err)
+		return false, nil
 	}
 
 	expected := iam.FleetNodeAppName(certTenant, peer.Subject.CommonName)
 	if expected != nodeID {
 		h.logger.Warnf("agent heartbeat recover: cert identity %q does not match agent_id %q (cn=%s tenant=%s)",
 			expected, nodeID, peer.Subject.CommonName, certTenant)
-		return false
+		return false, nil
 	}
 
 	host := recoveredHostFromHeartbeat(payload, peer)
@@ -174,35 +209,25 @@ func (h *IAMHeartbeatRecoverer) Recover(ctx context.Context, r *http.Request, te
 		if isFleetNodeAlreadyExistsError(err) {
 			h.logger.Infof("agent heartbeat recover: race lost — peer registrar already published agent=%s tenant=%s",
 				nodeID, certTenant)
-			return true
+			return true, nil
 		}
 		h.logger.Warnf("agent heartbeat recover: registrar.RegisterFleetNode failed: agent=%s tenant=%s: %v",
 			nodeID, certTenant, err)
-		return false
+		return false, nil
 	}
 
 	h.logger.Infof("agent re-registered via heartbeat: id=%s tenant=%s reason=registry-lost",
 		nodeID, certTenant)
-	return true
+	return true, nil
 }
 
-// validateRecoveryPeerCert mirrors the OU + ClientAuth EKU stamps the
-// mTLS register handler enforces, so a cert that was minted for any
-// other purpose cannot drive a recovery. Returns the cert verbatim on
-// success.
+// validateRecoveryPeerCert mirrors the ClientAuth EKU stamp the mTLS
+// register handler enforces; Recover then applies the same agent-certificate
+// check (fleetNodeCertTenant), so a cert that was minted for any other
+// purpose cannot drive a recovery. Returns the cert verbatim on success.
 func validateRecoveryPeerCert(peer *x509.Certificate) (*x509.Certificate, error) {
 	if peer == nil {
 		return nil, ErrHeartbeatRecoverNoPeerCert
-	}
-	hasOU := false
-	for _, ou := range peer.Subject.OrganizationalUnit {
-		if ou == fleetRegistrarOU {
-			hasOU = true
-			break
-		}
-	}
-	if !hasOU {
-		return nil, ErrHeartbeatRecoverInvalidPeerOU
 	}
 	hasClientAuth := false
 	for _, usage := range peer.ExtKeyUsage {
@@ -359,13 +384,13 @@ var ErrHeartbeatRecoverNoRegistrar = errors.New("agent heartbeat recover: regist
 // called without a logger.
 var ErrHeartbeatRecoverNoLogger = errors.New("agent heartbeat recover: logger required")
 
+// ErrHeartbeatRecoverNoCertRecords indicates NewIAMHeartbeatRecoverer was
+// called without the fleet issuer's certificate record store.
+var ErrHeartbeatRecoverNoCertRecords = errors.New("agent heartbeat recover: certificate records required")
+
 // ErrHeartbeatRecoverNoPeerCert indicates the request did not present
 // any mTLS peer certificate; recovery cannot authenticate the fleet node.
 var ErrHeartbeatRecoverNoPeerCert = errors.New("agent heartbeat recover: missing mTLS peer certificate")
-
-// ErrHeartbeatRecoverInvalidPeerOU indicates the peer cert is missing
-// the canonical "agents" OU stamp.
-var ErrHeartbeatRecoverInvalidPeerOU = errors.New("agent heartbeat recover: peer certificate missing required OU=agents stamp")
 
 // ErrHeartbeatRecoverInvalidPeerEKU indicates the peer cert is missing
 // the ClientAuth Extended Key Usage.

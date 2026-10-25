@@ -154,8 +154,9 @@ func SetupEmbeddedServer() (service.QuicBaaS, *server.Server, error) {
 		return nil, nil, ErrEmbeddedServerNilService{}
 	}
 
-	// Register the service so GetEmbeddedService can find it.
-	RegisterEmbeddedService(svc)
+	// Register the service so GetEmbeddedService can find it, and the
+	// server so EmbeddedSystemIdentity names its service principal.
+	RegisterEmbeddedService(svc, srv)
 
 	return svc, srv, nil
 }

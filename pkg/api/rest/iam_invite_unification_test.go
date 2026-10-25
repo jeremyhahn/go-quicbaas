@@ -29,6 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -93,7 +95,9 @@ func (s *unificationInviteService) GetIdentityStore(_ context.Context) (*iam.Ide
 func newUnificationInviteHandler(t *testing.T, inviteStore iam.InviteStore) (*IAMHandler, string, uint64) {
 	t.Helper()
 
-	const tenantID = "tenant-unify"
+	// The system tenant: passkey invitation activation runs its ceremony only
+	// there until go-quicbaas #1816.
+	const tenantID = qrdbsdk.SystemTenantID
 	const userID uint64 = 74
 	const email = "unify@example.com"
 

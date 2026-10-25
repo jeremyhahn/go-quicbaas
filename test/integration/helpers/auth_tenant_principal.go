@@ -57,6 +57,21 @@ func AuthTenantPrincipal(t *testing.T, baseURL string) string {
 	return tenantPrincipalAuth.mustBearer(t, baseURL)
 }
 
+// SaveTenantPrincipalCLISession logs the tenant principal of the cluster at
+// baseURL in, as AuthTenantPrincipal does, and saves its session under home
+// where the quicbaas CLI reads it, so a CLI run with HOME=home acts as that
+// principal. It calls t.Fatal on any failure.
+func SaveTenantPrincipalCLISession(t *testing.T, baseURL, home string) {
+	t.Helper()
+	token, err := tenantPrincipalAuth.session(context.Background(), baseURL)
+	if err != nil {
+		t.Fatalf("%s session for %q: %v", tenantPrincipalAuth.name, baseURL, err)
+	}
+	if err := WriteCLISession(CLISessionPath(home), token.Bearer, token.ExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TenantPrincipalID returns the tenant of the tenant principal of the cluster
 // at baseURL, provisioning it on first use. A request naming a tenant must
 // name this one: a tenant-bound caller is refused for any other.

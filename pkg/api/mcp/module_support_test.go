@@ -17,16 +17,20 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"regexp"
 	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil"
 )
 
@@ -234,4 +238,57 @@ func TestUpstreamToolContext_ProjectsQRDBIdentity(t *testing.T) {
 	if _, ok := auth.SubjectFromContext(plain); ok {
 		t.Fatal("identity-less context must not gain a Subject")
 	}
+}
+
+// peerCertLoginClient is a qrdb LoginClient double that records the verified
+// peer certificate the login facade forwards a FinishLogin with.
+type peerCertLoginClient struct {
+	qrdbtransport.LoginClient
+	gotCert *x509.Certificate
+}
+
+func (c *peerCertLoginClient) FinishLogin(ctx context.Context, _ qrdbtransport.FinishLoginRequest) (*qrdbtransport.FinishLoginResponse, error) {
+	c.gotCert = service.VerifiedPeerCertFromContext(ctx)
+	return &qrdbtransport.FinishLoginResponse{Bearer: "tok"}, nil
+}
+
+// TestInvokeTool_LoginFinishBridgesVerifiedPeerCert proves the MCP module path
+// hands the TLS leaf qrdb verified to the login facade, so an mtls
+// quicbaas_login_finish completes, and that a call without one is refused with
+// the facade's typed error rather than trusting the client-supplied key.
+func TestInvokeTool_LoginFinishBridgesVerifiedPeerCert(t *testing.T) {
+	args := map[string]interface{}{"session_id": "s1", "type": "mtls"}
+
+	t.Run("verified_peer_cert", func(t *testing.T) {
+		client := &peerCertLoginClient{}
+		srv := newModuleSupportMCPServer(t)
+		srv.tools = newLoginRegistry(t, service.NewLoginService(client))
+		leaf := &x509.Certificate{Raw: []byte("leaf"), RawSubjectPublicKeyInfo: []byte("spki")}
+		ctx := qrdbsdk.WithTLSState(context.Background(), &tls.ConnectionState{
+			VerifiedChains: [][]*x509.Certificate{{leaf}},
+		})
+
+		if _, err := srv.InvokeTool(ctx, "quicbaas_login_finish", args); err != nil {
+			t.Fatalf("InvokeTool: %v", err)
+		}
+		if client.gotCert != leaf {
+			t.Fatalf("login facade saw cert %v, want the verified leaf", client.gotCert)
+		}
+	})
+
+	t.Run("no_peer_cert", func(t *testing.T) {
+		client := &peerCertLoginClient{}
+		srv := newModuleSupportMCPServer(t)
+		srv.tools = newLoginRegistry(t, service.NewLoginService(client))
+		ctx := qrdbsdk.WithTLSState(context.Background(), &tls.ConnectionState{})
+
+		_, err := srv.InvokeTool(ctx, "quicbaas_login_finish", args)
+		var required *service.MTLSPeerCertRequiredError
+		if !errors.As(err, &required) {
+			t.Fatalf("expected *service.MTLSPeerCertRequiredError, got %T: %v", err, err)
+		}
+		if client.gotCert != nil {
+			t.Fatal("a call without a verified peer cert must not reach the node")
+		}
+	})
 }

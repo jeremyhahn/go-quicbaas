@@ -248,7 +248,7 @@ func TestSDLCBinding_ReadUnbindAndDelivery(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
 	rec = sdlcCall(t, server, "tenant-a", http.MethodDelete, "/api/v1/sdlc/projects/p1/binding", nil)
-	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	rec = sdlcCall(t, server, "tenant-a", http.MethodGet, "/api/v1/sdlc/projects/p1/binding", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

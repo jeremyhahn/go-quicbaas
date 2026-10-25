@@ -15,6 +15,7 @@ package secret_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
@@ -31,7 +32,7 @@ var (
 	_ qrdbsecret.ResolvedStrategy = secret.StrategyLiteral
 	_ secret.ResolvedStrategy     = qrdbsecret.StrategyLiteral
 
-	_ func(string, []byte, qrdbsecret.ResolvedStrategy) (*qrdbsecret.SecretValue, error) = secret.NewSecretValue
+	_ func(context.Context, string, []byte, qrdbsecret.ResolvedStrategy) (*qrdbsecret.SecretValue, error) = secret.NewSecretValue
 )
 
 // TestStrategyConstants_AreTheGoQRDBValues pins every resolved strategy to the
@@ -54,21 +55,34 @@ func TestStrategyConstants_AreTheGoQRDBValues(t *testing.T) {
 	}
 }
 
+// plaintext opens value and returns a copy of its plaintext.
+func plaintext(t *testing.T, value *secret.SecretValue) []byte {
+	t.Helper()
+	var out []byte
+	if err := value.WithBytes(context.Background(), func(b []byte) error {
+		out = bytes.Clone(b)
+		return nil
+	}); err != nil {
+		t.Fatalf("WithBytes: %v", err)
+	}
+	return out
+}
+
 // TestNewSecretValue_SealsAndKeepsMetadata proves the re-exported constructor
 // seals the plaintext, leaves the caller's slice intact and records the
 // reference and strategy it was given.
 func TestNewSecretValue_SealsAndKeepsMetadata(t *testing.T) {
-	plaintext := []byte("db-password")
-	value, err := secret.NewSecretValue("credential://db-password", plaintext, secret.StrategyCredential)
+	given := []byte("db-password")
+	value, err := secret.NewSecretValue(context.Background(), "credential://db-password", given, secret.StrategyCredential)
 	if err != nil {
 		t.Fatalf("NewSecretValue: %v", err)
 	}
 	defer value.Clear()
 
-	if !bytes.Equal(value.Bytes(), []byte("db-password")) {
-		t.Fatal("Bytes did not return the sealed plaintext")
+	if !bytes.Equal(plaintext(t, value), []byte("db-password")) {
+		t.Fatal("WithBytes did not return the sealed plaintext")
 	}
-	if !bytes.Equal(plaintext, []byte("db-password")) {
+	if !bytes.Equal(given, []byte("db-password")) {
 		t.Fatal("NewSecretValue modified the caller's slice")
 	}
 	if value.Raw != "credential://db-password" || value.Strategy != secret.StrategyCredential {
@@ -79,20 +93,20 @@ func TestNewSecretValue_SealsAndKeepsMetadata(t *testing.T) {
 // TestNewSecretValue_EmptyValueHoldsNothing proves an empty plaintext yields a
 // value whose accessor reports empty, and that Clear leaves nothing behind.
 func TestNewSecretValue_EmptyValueHoldsNothing(t *testing.T) {
-	value, err := secret.NewSecretValue("literal://", nil, secret.StrategyLiteral)
+	value, err := secret.NewSecretValue(context.Background(), "literal://", nil, secret.StrategyLiteral)
 	if err != nil {
 		t.Fatalf("NewSecretValue(empty): %v", err)
 	}
-	if len(value.Bytes()) != 0 {
+	if len(plaintext(t, value)) != 0 {
 		t.Fatal("an empty value must report empty")
 	}
 
-	sealed, err := secret.NewSecretValue("literal://x", []byte("x"), secret.StrategyLiteral)
+	sealed, err := secret.NewSecretValue(context.Background(), "literal://x", []byte("x"), secret.StrategyLiteral)
 	if err != nil {
 		t.Fatalf("NewSecretValue: %v", err)
 	}
 	sealed.Clear()
-	if len(sealed.Bytes()) != 0 {
+	if len(plaintext(t, sealed)) != 0 {
 		t.Fatal("a cleared value must report empty")
 	}
 }

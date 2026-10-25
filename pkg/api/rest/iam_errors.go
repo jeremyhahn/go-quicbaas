@@ -115,6 +115,7 @@ const (
 	ErrClientCertRequired    = "client_cert_required"
 	ErrPIVCertIssuerRejected = "piv_cert_issuer_rejected"
 	ErrAAGUIDNotAllowed      = "aaguid_not_allowed"
+	ErrTenantLoginRefused    = "tenant_login_refused"
 )
 
 // Client-facing messages for failures whose internal detail must not travel.

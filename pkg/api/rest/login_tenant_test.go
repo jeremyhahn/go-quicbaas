@@ -83,7 +83,9 @@ func newDeriveTestServer(t *testing.T, trustDomain string, hrd HomeRealmResolver
 	return srv
 }
 
-func spiffeLeafCert(t *testing.T, cn, spiffeURI string) *x509.Certificate {
+// spiffeLeafCert mints a self-signed leaf with the given SPIFFE SAN and, when
+// ou is non-empty, a first OU naming the tenant go-qrdb checks the SAN against.
+func spiffeLeafCert(t *testing.T, cn, spiffeURI, ou string) *x509.Certificate {
 	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{
@@ -99,6 +101,9 @@ func spiffeLeafCert(t *testing.T, cn, spiffeURI string) *x509.Certificate {
 		}
 		tmpl.URIs = []*url.URL{u}
 	}
+	if ou != "" {
+		tmpl.Subject.OrganizationalUnit = []string{ou}
+	}
 	der, _ := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	cert, err := x509.ParseCertificate(der)
 	if err != nil {
@@ -110,7 +115,7 @@ func spiffeLeafCert(t *testing.T, cn, spiffeURI string) *x509.Certificate {
 // Scenario (c): mTLS login resolves the tenant from the SPIFFE SAN.
 func TestDeriveLoginTenant_FromSPIFFESAN(t *testing.T) {
 	srv := newDeriveTestServer(t, "example.com", nil)
-	cert := spiffeLeafCert(t, "alice", "spiffe://example.com/tenant/tenant-acme/user/alice")
+	cert := spiffeLeafCert(t, "alice", "spiffe://tenant-acme/user/alice", "tenant-acme")
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 
 	got, err := srv.deriveLoginTenant(context.Background(), req, cert, "")
@@ -125,7 +130,7 @@ func TestDeriveLoginTenant_FromSPIFFESAN(t *testing.T) {
 // The SO / bootstrap cert (tenant/system) resolves the system tenant.
 func TestDeriveLoginTenant_SystemBootstrap(t *testing.T) {
 	srv := newDeriveTestServer(t, "example.com", nil)
-	cert := spiffeLeafCert(t, "so", "spiffe://example.com/tenant/system/user/so")
+	cert := spiffeLeafCert(t, "so", "spiffe://system/user/so", "system")
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 
 	got, err := srv.deriveLoginTenant(context.Background(), req, cert, "")
@@ -158,7 +163,7 @@ func TestDeriveLoginTenant_HRDBrowser(t *testing.T) {
 func TestDeriveLoginTenant_FailClosed_NoSANNoHint(t *testing.T) {
 	hrd := &fakeRealmResolver{} // empty directory
 	srv := newDeriveTestServer(t, "example.com", hrd)
-	cert := spiffeLeafCert(t, "broker", "") // no SPIFFE SAN
+	cert := spiffeLeafCert(t, "broker", "", "") // no SPIFFE SAN
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 
 	got, err := srv.deriveLoginTenant(context.Background(), req, cert, "")
@@ -173,7 +178,7 @@ func TestDeriveLoginTenant_FailClosed_NoSANNoHint(t *testing.T) {
 // A foreign trust domain on the cert fails closed.
 func TestDeriveLoginTenant_ForeignTrustDomain_FailsClosed(t *testing.T) {
 	srv := newDeriveTestServer(t, "example.com", nil)
-	cert := spiffeLeafCert(t, "m", "spiffe://evil.example/tenant/tenant-acme/user/m")
+	cert := spiffeLeafCert(t, "m", "spiffe://evil.example/user/m", "")
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 
 	if _, err := srv.deriveLoginTenant(context.Background(), req, cert, ""); err == nil {

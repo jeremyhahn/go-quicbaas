@@ -35,7 +35,7 @@ import (
 // (pkg/apimodule RegisterHTTP). Re-running spec's Resource:Action here would
 // double-authorize the call against a different decision point.
 func (s *Server) BindRoute(spec RouteSpec) http.Handler {
-	var h http.Handler = spec.Handler(s)
+	var h http.Handler = spec.bind(s)
 
 	switch spec.Group {
 	case GroupAPI:

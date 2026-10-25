@@ -93,7 +93,10 @@ func TestSSHBufferProvider_Passphrase(t *testing.T) {
 		src, err := secure.NewBuffer(8)
 		require.NoError(t, err)
 		defer src.Destroy()
-		copy(src.Bytes(), []byte("secret12"))
+		require.NoError(t, src.WithBytes(func(b []byte) error {
+			copy(b, "secret12")
+			return nil
+		}))
 
 		p := &sshBufferProvider{buf: src}
 		clone, err := p.Passphrase(ctx, "key")
@@ -103,7 +106,18 @@ func TestSSHBufferProvider_Passphrase(t *testing.T) {
 
 		// The clone is independent: it carries the same bytes but is not the
 		// same buffer, so destroying the source must not corrupt it.
-		assert.Equal(t, src.Bytes(), clone.Bytes())
+		assert.Equal(t, bufferBytes(t, src), bufferBytes(t, clone))
 		assert.NotSame(t, src, clone)
 	})
+}
+
+// bufferBytes copies a secure buffer's contents out for comparison.
+func bufferBytes(t *testing.T, b *secure.Buffer) []byte {
+	t.Helper()
+	var out []byte
+	require.NoError(t, b.WithBytes(func(p []byte) error {
+		out = append([]byte(nil), p...)
+		return nil
+	}))
+	return out
 }

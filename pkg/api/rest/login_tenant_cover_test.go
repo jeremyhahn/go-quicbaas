@@ -44,7 +44,7 @@ func TestDeriveLoginTenant_HRDFromSNIHost(t *testing.T) {
 func TestDeriveLoginTenant_NoSAN_ReissueRequired(t *testing.T) {
 	hrd := &fakeRealmResolver{}
 	srv := newDeriveTestServer(t, "example.com", hrd)
-	cert := spiffeLeafCert(t, "broker", "")
+	cert := spiffeLeafCert(t, "broker", "", "")
 	req := httptest.NewRequest(http.MethodPost, "/login", nil)
 
 	_, err := srv.deriveLoginTenant(context.Background(), req, cert, "")

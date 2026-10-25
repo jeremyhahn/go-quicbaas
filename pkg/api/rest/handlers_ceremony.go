@@ -16,9 +16,9 @@
 package rest
 
 import (
-	"encoding/base64"
 	"net/http"
-	"time"
+
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -35,74 +35,12 @@ import (
 // REST request types (local, unexported — JSON shape only).
 // ---------------------------------------------------------------------------
 
-// ceremonyOfficer describes a single officer participating in the ceremony.
-type ceremonyOfficer struct {
-	Username string `json:"username"`
-	CSRPEM   string `json:"csr_pem"`
-}
-
-// ceremonyInitializeRequest is the JSON payload for POST /api/v1/init/initialize.
-type ceremonyInitializeRequest struct {
-	SOPin                  string            `json:"so_pin"`
-	UserPin                string            `json:"user_pin"`
-	CredentialSealStrategy string            `json:"credential_seal_strategy,omitempty"`
-	Threshold              int               `json:"threshold"`
-	Officers               []ceremonyOfficer `json:"officers,omitempty"`
-	Hostname               string            `json:"hostname,omitempty"`
-	SANs                   []string          `json:"sans,omitempty"`
-}
-
-// claimCertBeginRequest is the JSON payload for
-// POST /api/v1/init/claim-cert/begin.
-type claimCertBeginRequest struct {
-	Username string `json:"username"`
-}
-
-// claimCertCompleteRequest is the JSON payload for
-// POST /api/v1/init/claim-cert/complete.
-type claimCertCompleteRequest struct {
-	Username  string `json:"username"`
-	NonceHex  string `json:"nonce_hex"`
-	Signature string `json:"signature"` // base64-encoded
-}
-
-// beginClaimShareRequest is the JSON payload for
-// POST /api/v1/init/officer-share/begin.
-type beginClaimShareRequest struct {
-	Username string `json:"username"`
-}
-
-// completeClaimShareRequest is the JSON payload for
-// POST /api/v1/init/officer-share/complete.
-type completeClaimShareRequest struct {
-	Username  string `json:"username"`
-	NonceHex  string `json:"nonce_hex"`
-	Signature string `json:"signature"` // base64-encoded
-}
-
 // signCSRRequest is the JSON payload for POST /api/v1/init/sign-csr.
 type signCSRRequest struct {
 	Username string `json:"username"`
 	SOPin    string `json:"so_pin"`
 	CSRPEM   string `json:"csr_pem"`
 	Role     string `json:"role"`
-}
-
-// enrollExternalOfficerRequest is the JSON payload for
-// POST /api/v1/init/enroll-external-officer.
-type enrollExternalOfficerRequest struct {
-	Username   string `json:"username"`
-	CertPEM    string `json:"cert_pem,omitempty"`
-	PubKeyPEM  string `json:"pubkey_pem,omitempty"`
-	ShareIndex int    `json:"share_index"`
-	AuthFactor string `json:"auth_factor"`
-	ShareBytes []byte `json:"share_bytes,omitempty"`
-}
-
-// enrollExternalOfficerResponse is the JSON response for
-// POST /api/v1/init/enroll-external-officer.
-type enrollExternalOfficerResponse struct {
-	SealedShare string `json:"sealed_share,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +66,26 @@ func ceremonyInitToResponse(info *service.CeremonyInitInfo) map[string]interface
 		"state":        info.State,
 		"share_count":  info.ShareCount,
 	}
-	// The SO identity is CSR-based; the server never holds officer private keys.
+	addCeremonyCredentials(resp, info)
 	return resp
+}
+
+// addCeremonyCredentials adds the issued holder certificates and the
+// bootstrap admin credential to resp, under go-qrdb's JSON names. qrdb returns
+// a generated admin key exactly once, so dropping it here would lose it.
+func addCeremonyCredentials(resp map[string]interface{}, info *service.CeremonyInitInfo) {
+	if len(info.Holders) > 0 {
+		resp["holders"] = info.Holders
+	}
+	if len(info.AdminCertPEM) > 0 {
+		resp["admin_cert_pem"] = string(info.AdminCertPEM)
+	}
+	if len(info.AdminKeyPEM) > 0 {
+		resp["admin_key_pem"] = info.AdminKeyPEM
+	}
+	if info.AdminCredentialSource != "" {
+		resp["admin_credential_source"] = info.AdminCredentialSource
+	}
 }
 
 // ceremonyStatusToResponse maps a CeremonyStatusInfo to its JSON shape.
@@ -141,25 +97,6 @@ func ceremonyStatusToResponse(info *service.CeremonyStatusInfo) map[string]inter
 		resp["spki_pin"] = info.SPKIPin
 	}
 	return resp
-}
-
-// ceremonyChallengeToResponse maps a CeremonyChallenge to its JSON shape.
-func ceremonyChallengeToResponse(c *service.CeremonyChallenge) map[string]interface{} {
-	resp := map[string]interface{}{
-		"nonce_hex": c.NonceHex,
-	}
-	if !c.ExpiresAt.IsZero() {
-		resp["expires_at"] = c.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	return resp
-}
-
-// ceremonyClaimCertToResponse maps a CeremonyClaimCertResult to its JSON shape.
-func ceremonyClaimCertToResponse(r *service.CeremonyClaimCertResult) map[string]interface{} {
-	return map[string]interface{}{
-		"cert_pem":    string(r.CertPEM),
-		"ca_cert_pem": string(r.CACertPEM),
-	}
 }
 
 // ceremonySignCSRToResponse maps a CeremonySignCSRResult to its JSON shape.
@@ -179,27 +116,36 @@ func (s *Server) HandleCeremonyInitialize(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var req ceremonyInitializeRequest
+	// The payload is go-qrdb's own request type, so every officer and policy
+	// field reaches qrdb without narrowing.
+	var req transport.CeremonyInitializeRequest
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}
 
-	officers := make([]service.CeremonyOfficer, 0, len(req.Officers))
-	for _, o := range req.Officers {
-		officers = append(officers, service.CeremonyOfficer{
-			Username: o.Username,
-			CSRPEM:   o.CSRPEM,
-		})
+	secret, err := service.NewCeremonySecret(r.Context(), req.Secret)
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+	if secret != nil {
+		defer secret.Destroy()
 	}
 
-	info, err := s.ceremonySvc.CeremonyInitialize(r.Context(), &service.CeremonyInitRequest{
+	info, err := s.ceremonySvc.CeremonyInitialize(holderContext(r), &service.CeremonyInitRequest{
 		SOPin:                  req.SOPin,
 		UserPin:                req.UserPin,
 		CredentialSealStrategy: req.CredentialSealStrategy,
 		Threshold:              req.Threshold,
-		Officers:               officers,
+		Policy:                 req.Policy,
+		Officers:               req.Officers,
 		Hostname:               req.Hostname,
 		SANs:                   req.SANs,
+		AdminCSRPEM:            req.AdminCSRPEM,
+		AdminCertPEM:           req.AdminCertPEM,
+		AdminCertPoolPEM:       req.AdminCertPoolPEM,
+		AdminGenerate:          req.AdminGenerate,
+		Secret:                 secret,
 	})
 	if err != nil {
 		s.handleServiceError(w, r, err)
@@ -215,140 +161,13 @@ func (s *Server) HandleCeremonyStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := s.ceremonySvc.CeremonyStatus(r.Context())
+	info, err := s.ceremonySvc.CeremonyStatus(holderContext(r))
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
 	}
 
 	RespondJSON(w, r, http.StatusOK, ceremonyStatusToResponse(info))
-}
-
-// HandleCeremonyClaimCertBegin handles POST /api/v1/init/claim-cert/begin.
-func (s *Server) HandleCeremonyClaimCertBegin(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCeremonyService(w, r) {
-		return
-	}
-
-	var req claimCertBeginRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Username == "" {
-		RespondBadRequest(w, r, "username is required")
-		return
-	}
-
-	challenge, err := s.ceremonySvc.CeremonyBeginClaimCert(r.Context(), req.Username)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, ceremonyChallengeToResponse(challenge))
-}
-
-// HandleCeremonyClaimCertComplete handles POST /api/v1/init/claim-cert/complete.
-func (s *Server) HandleCeremonyClaimCertComplete(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCeremonyService(w, r) {
-		return
-	}
-
-	var req claimCertCompleteRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Username == "" {
-		RespondBadRequest(w, r, "username is required")
-		return
-	}
-	if req.NonceHex == "" {
-		RespondBadRequest(w, r, "nonce_hex is required")
-		return
-	}
-	if req.Signature == "" {
-		RespondBadRequest(w, r, "signature is required")
-		return
-	}
-
-	result, err := s.ceremonySvc.CeremonyCompleteClaimCert(r.Context(), req.Username, req.NonceHex, req.Signature)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, ceremonyClaimCertToResponse(result))
-}
-
-// HandleCeremonyBeginClaimShare handles
-// POST /api/v1/init/officer-share/begin (and the qrdb wire mirror
-// POST /v1/ceremony/officer-share/begin). The caller's certificate
-// thumbprint is derived by the qrdb node from the transport connection;
-// it never travels in the request body.
-func (s *Server) HandleCeremonyBeginClaimShare(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCeremonyService(w, r) {
-		return
-	}
-
-	var req beginClaimShareRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Username == "" {
-		RespondBadRequest(w, r, "username is required")
-		return
-	}
-
-	challenge, err := s.ceremonySvc.CeremonyBeginClaimShare(r.Context(), req.Username)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, ceremonyChallengeToResponse(challenge))
-}
-
-// HandleCeremonyCompleteClaimShare handles
-// POST /api/v1/init/officer-share/complete (and the qrdb wire mirror
-// POST /v1/ceremony/officer-share/complete). The signed challenge nonce is
-// verified by the qrdb node and the share is released exactly once.
-func (s *Server) HandleCeremonyCompleteClaimShare(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCeremonyService(w, r) {
-		return
-	}
-
-	var req completeClaimShareRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Username == "" {
-		RespondBadRequest(w, r, "username is required")
-		return
-	}
-	if req.NonceHex == "" {
-		RespondBadRequest(w, r, "nonce_hex is required")
-		return
-	}
-	if req.Signature == "" {
-		RespondBadRequest(w, r, "signature is required")
-		return
-	}
-	sig, decErr := base64.StdEncoding.DecodeString(req.Signature)
-	if decErr != nil {
-		RespondBadRequest(w, r, "signature must be base64-encoded")
-		return
-	}
-
-	result, err := s.ceremonySvc.CeremonyCompleteClaimShare(r.Context(), req.Username, req.NonceHex, sig)
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
-		"share_index": result.ShareIndex,
-		"share_json":  result.ShareJSON,
-	})
 }
 
 // HandleCeremonySignCSR handles POST /api/v1/init/sign-csr.
@@ -370,7 +189,7 @@ func (s *Server) HandleCeremonySignCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.ceremonySvc.CeremonySignCSR(r.Context(), req.Username, req.SOPin, req.CSRPEM, req.Role)
+	result, err := s.ceremonySvc.CeremonySignCSR(holderContext(r), req.Username, req.SOPin, req.CSRPEM, req.Role)
 	if err != nil {
 		s.handleServiceError(w, r, err)
 		return
@@ -405,48 +224,4 @@ func (s *Server) HandleCeremonyListOfficers(w http.ResponseWriter, r *http.Reque
 	RespondJSON(w, r, http.StatusOK, map[string]interface{}{
 		"officers": []interface{}{},
 	})
-}
-
-// HandleCeremonyEnrollExternalOfficer handles
-// POST /api/v1/init/enroll-external-officer.
-func (s *Server) HandleCeremonyEnrollExternalOfficer(w http.ResponseWriter, r *http.Request) {
-	if !s.requireCeremonyService(w, r) {
-		return
-	}
-
-	var req enrollExternalOfficerRequest
-	if !readBarrierJSON(w, r, &req) {
-		return
-	}
-	if req.Username == "" {
-		RespondBadRequest(w, r, "username is required")
-		return
-	}
-	if req.CertPEM == "" && req.PubKeyPEM == "" {
-		RespondBadRequest(w, r, "exactly one of cert_pem or pubkey_pem is required")
-		return
-	}
-	if req.CertPEM != "" && req.PubKeyPEM != "" {
-		RespondBadRequest(w, r, "cert_pem and pubkey_pem are mutually exclusive")
-		return
-	}
-	if req.AuthFactor == "" {
-		RespondBadRequest(w, r, "auth_factor is required")
-		return
-	}
-
-	resp, err := s.ceremonySvc.CeremonyEnrollExternalOfficer(r.Context(), &service.CeremonyEnrollExternalOfficerRequest{
-		Username:   req.Username,
-		CertPEM:    req.CertPEM,
-		PubKeyPEM:  req.PubKeyPEM,
-		ShareIndex: req.ShareIndex,
-		AuthFactor: req.AuthFactor,
-		ShareBytes: req.ShareBytes,
-	})
-	if err != nil {
-		s.handleServiceError(w, r, err)
-		return
-	}
-
-	RespondJSON(w, r, http.StatusOK, enrollExternalOfficerResponse{SealedShare: resp.SealedShare})
 }

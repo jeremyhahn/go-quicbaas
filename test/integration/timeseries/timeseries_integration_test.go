@@ -77,7 +77,7 @@ func TestTimeSeriesStorage_BasicOperations(t *testing.T) {
 		}
 
 		// Write batch
-		err := storage.WriteBatch(points)
+		err := storage.WriteBatch(ctx, points)
 		require.NoError(t, err)
 
 		// Query all points
@@ -137,7 +137,7 @@ func TestTimeSeriesStorage_Aggregations(t *testing.T) {
 		{Metric: "test.metric", Tags: nil, Value: 30, Timestamp: now.Add(-2 * time.Minute)},
 		{Metric: "test.metric", Tags: nil, Value: 40, Timestamp: now.Add(-1 * time.Minute)},
 	}
-	err := storage.WriteBatch(points)
+	err := storage.WriteBatch(ctx, points)
 	require.NoError(t, err)
 
 	t.Run("AggregationSum", func(t *testing.T) {
@@ -205,9 +205,10 @@ func TestTimeSeriesStorage_Aggregations(t *testing.T) {
 func TestTimeSeriesStorage_RetentionPolicy(t *testing.T) {
 	storage, cleanup := createStorage(t)
 	defer cleanup()
+	ctx := context.Background()
 
 	t.Run("GetDefaultRetentionPolicy", func(t *testing.T) {
-		policy, err := storage.GetRetentionPolicy("nonexistent.metric")
+		policy, err := storage.GetRetentionPolicy(ctx, "nonexistent.metric")
 		require.NoError(t, err)
 		require.NotNil(t, policy)
 		// Default policy has infinite retention (0 duration)
@@ -223,11 +224,11 @@ func TestTimeSeriesStorage_RetentionPolicy(t *testing.T) {
 		}
 
 		// Set policy
-		err := storage.SetRetentionPolicy(metric, policy)
+		err := storage.SetRetentionPolicy(ctx, metric, policy)
 		require.NoError(t, err)
 
 		// Get policy back
-		retrieved, err := storage.GetRetentionPolicy(metric)
+		retrieved, err := storage.GetRetentionPolicy(ctx, metric)
 		require.NoError(t, err)
 		require.NotNil(t, retrieved)
 		assert.Equal(t, policy.Duration, retrieved.Duration)
@@ -252,7 +253,7 @@ func TestTimeSeriesStorage_DeleteSeries(t *testing.T) {
 			{Metric: "delete.test", Tags: nil, Value: 2, Timestamp: now.Add(-1 * time.Minute)},
 			{Metric: "delete.test", Tags: nil, Value: 3, Timestamp: now},
 		}
-		err := storage.WriteBatch(points)
+		err := storage.WriteBatch(ctx, points)
 		require.NoError(t, err)
 
 		// Verify points exist
@@ -301,19 +302,19 @@ func TestTimeSeriesStorage_ListMetrics(t *testing.T) {
 	}
 
 	t.Run("ListAllMetrics", func(t *testing.T) {
-		result, err := storage.ListMetrics("", 0)
+		result, err := storage.ListMetrics(ctx, "", 0)
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(result), 5)
 	})
 
 	t.Run("ListMetricsWithPrefix", func(t *testing.T) {
-		result, err := storage.ListMetrics("cpu", 0)
+		result, err := storage.ListMetrics(ctx, "cpu", 0)
 		require.NoError(t, err)
 		assert.Len(t, result, 2) // cpu.usage, cpu.system
 	})
 
 	t.Run("ListMetricsWithLimit", func(t *testing.T) {
-		result, err := storage.ListMetrics("", 2)
+		result, err := storage.ListMetrics(ctx, "", 2)
 		require.NoError(t, err)
 		assert.Len(t, result, 2)
 	})

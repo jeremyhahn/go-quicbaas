@@ -54,10 +54,6 @@ type (
 	// tenantBarrierUnsealBody is the JSON payload for POST .../barrier/unseal.
 	// Key is base64-encoded on the wire by encoding/json.
 	tenantBarrierUnsealBody = qrdbtransport.TenantBarrierUnsealRequest
-
-	// tenantBarrierUnsealShareBody is the JSON payload for
-	// POST .../barrier/unseal-share.
-	tenantBarrierUnsealShareBody = qrdbtransport.TenantBarrierUnsealShareRequest
 )
 
 // tenantBarrierEnableEncryptionBody is the JSON payload for
@@ -100,6 +96,11 @@ func (s *Server) handleTenantBarrierError(w http.ResponseWriter, r *http.Request
 		RespondError(w, r, http.StatusUnprocessableEntity, err)
 		return
 	}
+	var unsupported *service.TenantBarrierInitStatementUnsupportedError
+	if stderrors.As(err, &unsupported) {
+		RespondError(w, r, http.StatusNotImplemented, err)
+		return
+	}
 	s.handleServiceError(w, r, err)
 }
 
@@ -135,7 +136,10 @@ func (s *Server) HandleTenantBarrierInit(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := svc.TenantBarrierInit(r.Context(), tenantID, body.Passphrase, body.Threshold, body.Shares, body.Strategy)
+	// The body is go-qrdb's request type, so the inline Shamir Officers
+	// roster and its Policy travel with it; the URL names the tenant.
+	body.TenantID = tenantID
+	result, err := svc.TenantBarrierInit(r.Context(), &body)
 	if err != nil {
 		s.handleTenantBarrierError(w, r, err)
 		return
@@ -166,11 +170,9 @@ func (s *Server) HandleTenantBarrierUnseal(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Both fields are key material: Key is the tenant root key and Share is a
-	// Shamir share of it (this route consumes Key; unseal-share consumes the
-	// other). Neither may outlive the request, on any return path.
+	// Shamir share of it (this route consumes Key). Neither may outlive the request, on any return path.
 	var body tenantBarrierUnsealBody
 	defer wipeCredential(&body.Key)()
-	defer wipeCredential(&body.Share)()
 	if !readBarrierJSON(w, r, &body) {
 		return
 	}
@@ -180,37 +182,6 @@ func (s *Server) HandleTenantBarrierUnseal(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	RespondNoContent(w, r)
-}
-
-// HandleTenantBarrierUnsealShare handles POST
-// /api/v1/tenants/{tenant_id}/barrier/unseal-share — submits one Shamir share
-// toward the per-tenant quorum and returns the quorum progress.
-func (s *Server) HandleTenantBarrierUnsealShare(w http.ResponseWriter, r *http.Request) {
-	svc, ok := s.requireTenantBarrierService(w, r)
-	if !ok {
-		return
-	}
-	tenantID := chi.URLParam(r, "tenant_id")
-	if tenantID == "" {
-		RespondBadRequest(w, r, "tenant ID is required")
-		return
-	}
-
-	var body tenantBarrierUnsealShareBody
-	if !readBarrierJSON(w, r, &body) {
-		return
-	}
-	if body.Share == "" {
-		RespondBadRequest(w, r, "share is required")
-		return
-	}
-
-	progress, err := svc.TenantBarrierUnsealShare(r.Context(), tenantID, body.Share)
-	if err != nil {
-		s.handleTenantBarrierError(w, r, err)
-		return
-	}
-	RespondJSON(w, r, http.StatusOK, progress)
 }
 
 // HandleTenantBarrierSeal handles POST /api/v1/tenants/{tenant_id}/barrier/seal.
@@ -298,16 +269,19 @@ func (s *Server) HandleTenantBarrierEnableEncryption(w http.ResponseWriter, r *h
 		ShamirTotal:     body.ShamirTotal,
 	}
 	if len(body.Passphrase) > 0 {
-		creds, credErr := qrdbsdk.CredentialsFor(body.Passphrase)
+		creds, credErr := qrdbsdk.CredentialsFor(r.Context(), body.Passphrase)
 		if credErr != nil {
 			s.handleServiceError(w, r, credErr)
 			return
 		}
-		defer creds.Secret.Destroy()
 		opts.Credentials = creds
 	}
 
-	if err := barrierSvc.EnableEncryption(r.Context(), tenantID, opts); err != nil {
+	err := barrierSvc.EnableEncryption(r.Context(), tenantID, opts)
+	if destroyErr := destroyCredentials(opts.Credentials); destroyErr != nil && err == nil {
+		err = destroyErr
+	}
+	if err != nil {
 		s.handleTenantBarrierError(w, r, err)
 		return
 	}

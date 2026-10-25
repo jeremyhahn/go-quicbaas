@@ -146,23 +146,31 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// authz_mapping.go lines 259-276. Each tool gets its own minimum-privilege
 	// permission; the former "qrdb_barrier" prefix catch-all is gone so an
 	// unmapped future barrier tool is default-denied.
-	"qrdb_barrier_status":                   {"tenant_barrier", "status"},
-	"qrdb_barrier_initialize":               {"tenant_barrier", "init"},
-	"qrdb_barrier_unseal":                   {"tenant_barrier", "unseal"},
-	"qrdb_barrier_seal":                     {"tenant_barrier", "seal"},
-	"qrdb_barrier_shamir_initialize":        {"seal", "initialize_shamir"},
-	"qrdb_barrier_shamir_unseal_share":      {"barrier", "unseal-share"},
-	"qrdb_barrier_shamir_unseal_shares":     {"barrier", "unseal-share"},
-	"qrdb_barrier_rekey":                    {"seal", "rekey"},
-	"qrdb_barrier_recovery_generate":        {"seal", "generate_recovery"},
-	"qrdb_barrier_recovery_recover":         {"seal", "recover_with_keys"},
-	"qrdb_barrier_recovery_delete":          {"seal", "generate_recovery"},
-	"qrdb_barrier_recovery_status":          {"seal", "status"},
-	"qrdb_barrier_root_token":               {"seal", "bootstrap"},
-	"qrdb_barrier_enable_encryption":        {"seal", "enable_encryption"},
-	"qrdb_tenant_barrier_enable_encryption": {"tenant_barrier", "enable_encryption"},
-	"qrdb_tenant_update_quotas":             {"tenants", "set_quotas"},
-	"qrdb_tenant_update_entitlements":       {"tenants", "set_entitlements"},
+	"qrdb_barrier_status":            {"tenant_barrier", "status"},
+	"qrdb_barrier_initialize":        {"tenant_barrier", "init"},
+	"qrdb_barrier_unseal":            {"tenant_barrier", "unseal"},
+	"qrdb_barrier_seal":              {"tenant_barrier", "seal"},
+	"qrdb_barrier_shamir_initialize": {"seal", "initialize_shamir"},
+	"qrdb_barrier_recovery_generate": {"seal", "generate_recovery"},
+	"qrdb_barrier_recovery_delete":   {"seal", "generate_recovery"},
+	"qrdb_barrier_recovery_status":   {"seal", "status"},
+	"qrdb_barrier_enable_encryption": {"seal", "enable_encryption"},
+	// Share-holder tools, copied from the REST holder routes
+	// (routes_permissions_generated.go). The claim and quorum tools are
+	// identity-gated there and declared in authz_qrdb_unmapped.go here.
+	"qrdb_barrier_cluster_unseal":            {"seal", "unseal"},
+	"qrdb_barrier_officer_list":              {"seal", "officer_list"},
+	"qrdb_barrier_officer_register":          {"seal", "officer_register"},
+	"qrdb_barrier_recovery_officer_register": {"seal", "officer_register"},
+	"qrdb_barrier_officer_revoke":            {"seal", "officer_revoke"},
+	"qrdb_barrier_rekey_start":               {"seal", "rekey"},
+	"qrdb_tenant_barrier_officer_list":       {"tenant_barrier", "officer_list"},
+	"qrdb_tenant_barrier_officer_register":   {"tenant_barrier", "officer_register"},
+	"qrdb_tenant_barrier_officer_revoke":     {"tenant_barrier", "officer_revoke"},
+	"qrdb_tenant_barrier_rekey_start":        {"tenant_barrier", "rekey"},
+	"qrdb_tenant_barrier_enable_encryption":  {"tenant_barrier", "enable_encryption"},
+	"qrdb_tenant_update_quotas":              {"tenants", "set_quotas"},
+	"qrdb_tenant_update_entitlements":        {"tenants", "set_entitlements"},
 
 	// Cache (admin capabilities)
 	"quicbaas_cache_stats": {"admin", "status"},
@@ -455,13 +463,12 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// Cross-signing mints a CA certificate (basicConstraints CA:TRUE over a
 	// foreign ROOT's key), which qrdb documents as strictly more privileged
 	// than leaf issuance, so it authorizes with ca:create. The AIA chain walk
-	// fetches and imports issuer certificates, the same mutation
-	// quicbaas_trust_auto_import_aia performs, so it carries the same
-	// write-strength verb. Device identity issuance mints END-ENTITY TCG
-	// EK / AK / IDevID certificates and stays on certs:generate.
+	// fetches and imports issuer certificates, so it carries certs:enroll,
+	// the permission go-xkms v0.55 assigns its own chain verb. Device identity issuance mints END-ENTITY TCG
+	// EK / AK / IDevID certificates and stays on leaf issuance: certs:issue.
 	"quicbaas_certificate_cross_sign":            {"ca", "create"},
-	"quicbaas_certificate_chain":                 {"certs", "generate"},
-	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
+	"quicbaas_certificate_chain":                 {"certs", "enroll"},
+	"quicbaas_certificate_issue_device_identity": {"certs", "issue"},
 
 	// Ollama -> ollama
 	"quicbaas_ollama_health":      {"ollama", "health"},
@@ -494,13 +501,13 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// six quicbaas.certificate.v1.CertificateService RPCs, so they carry the
 	// gRPC mapping's (resource, action) pairs verbatim
 	// (pkg/api/grpc/authz_mapping.go): issuance and CSR signing MINT a leaf
-	// certificate (certs:generate), revocation drives the CRL (certs:revoke),
+	// certificate (certs:issue), revocation drives the CRL (certs:revoke),
 	// and verification / CA-certificate / TLS-config retrieval are reads
 	// (certs:read). Without these entries the default-deny gate hid the whole
 	// base certificate surface from tools/list while the three certificate
 	// EXTENSION tools below were visible.
-	"quicbaas_certificate_issue":          {"certs", "generate"},
-	"quicbaas_certificate_sign_csr":       {"certs", "generate"},
+	"quicbaas_certificate_issue":          {"certs", "issue"},
+	"quicbaas_certificate_sign_csr":       {"certs", "issue"},
 	"quicbaas_certificate_revoke":         {"certs", "revoke"},
 	"quicbaas_certificate_verify":         {"certs", "read"},
 	"quicbaas_certificate_get_ca":         {"certs", "read"},
@@ -515,18 +522,12 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// There is deliberately NO "qrdb_ceremony" prefix catch-all: it resolved the
 	// entire WRITE surface to the read-strength ceremony:status, which qrdb
 	// grants to the read-only Auditor role, while CeremonyInitialize /
-	// CeremonySignCSR / CeremonyEnrollExternalOfficer are Security-Officer
-	// exclusive. A reader could therefore mint the CA, sign arbitrary certs and
-	// subvert the Shamir quorum. A future ceremony tool must fail closed here,
+	// CeremonySignCSR are Security-Officer exclusive. A reader could therefore
+	// mint the CA and sign arbitrary certs. A future ceremony tool must fail closed here,
 	// not inherit a read.
-	"qrdb_ceremony_initialize":              {"ceremony", "initialize"},
-	"qrdb_ceremony_status":                  {"ceremony", "status"},
-	"qrdb_ceremony_claim_cert_begin":        {"ceremony", "claim_cert"},
-	"qrdb_ceremony_claim_cert_complete":     {"ceremony", "claim_cert"},
-	"qrdb_ceremony_begin_claim_share":       {"ceremony", "claim_share_begin"},
-	"qrdb_ceremony_complete_claim_share":    {"ceremony", "claim_share_complete"},
-	"qrdb_ceremony_sign_csr":                {"ceremony", "sign_csr"},
-	"qrdb_ceremony_enroll_external_officer": {"ceremony", "enroll_custodian"},
+	"qrdb_ceremony_initialize": {"ceremony", "initialize"},
+	"qrdb_ceremony_status":     {"ceremony", "status"},
+	"qrdb_ceremony_sign_csr":   {"ceremony", "sign_csr"},
 	// Officer listing is a read (quicbaas.ceremony.v1.Ceremony/
 	// CeremonyListOfficers, and the GET /officers REST rule). It keeps the
 	// quicbaas_ prefix because it has no qrdb mirror.
@@ -815,15 +816,15 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"xkms.certExists":    {"certs", "read"},
 	"xkms.getCertChain":  {"certs", "read"},
 	"xkms.listCerts":     {"certs", "list"},
-	"xkms.saveCert":      {"certs", "generate"},
-	"xkms.saveCertChain": {"certs", "generate"},
+	"xkms.saveCert":      {"certs", "enroll"},
+	"xkms.saveCertChain": {"certs", "enroll"},
 	"xkms.deleteCert":    {"certs", "revoke"},
 
 	"xkms.ca.getBundle":   {"ca", "read"},
 	"xkms.ca.getCert":     {"ca", "read"},
 	"xkms.ca.isRevoked":   {"certs", "read"},
-	"xkms.ca.signCSR":     {"certs", "generate"},
-	"xkms.ca.issueCert":   {"certs", "generate"},
+	"xkms.ca.signCSR":     {"certs", "issue"},
+	"xkms.ca.issueCert":   {"certs", "issue"},
 	"xkms.ca.revokeCert":  {"certs", "revoke"},
 	"xkms.ca.generateCRL": {"certs", "revoke"},
 
@@ -841,8 +842,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// canonical mount resolves (pkg/api/rest/authz_pep_mapping.go). The
 	// authentication verbs stay behind authorization on MCP — REST and QUIC
 	// treat them as pre-auth, but widening the UNAUTHENTICATED MCP tool
-	// surface is an owner decision (see the quicbaas_login_begin precedent
-	// in authz_qrdb_unmapped.go); authenticated callers use them for
+	// surface is an owner decision, ruled per tool (owner item 134 admitted
+	// only quicbaas_login_begin/finish to publicTools); authenticated callers use them for
 	// step-up verification of an enrolled factor, a factor read.
 	"xkms.fido2.beginRegistration":    {"user_authfactors", "add"},
 	"xkms.fido2.finishRegistration":   {"user_authfactors", "add"},
@@ -883,9 +884,11 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_attestation_delete_reference_values": {"attestation", "provision"},
 	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
 
-	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
-	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
-	"quicbaas_trust_publish_dane":           {"certs", "generate"},
+	// The trust family, as on REST and gRPC: AIA import and DANE publish
+	// change what the node trusts or publishes, so they are trust:write.
+	"quicbaas_trust_cross_signed_root_pool": {"trust", "read"},
+	"quicbaas_trust_auto_import_aia":        {"trust", "write"},
+	"quicbaas_trust_publish_dane":           {"trust", "write"},
 
 	// Timeseries
 	"quicbaas_timeseries_query":  {"timeseries", "query"},
@@ -916,18 +919,17 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"qrdb_vector_batch_delete": {"vector", "batch_delete"},
 
 	// Per-tenant barrier -> tenant_barrier
-	"qrdb_tenant_barrier_init":         {"tenant_barrier", "init"},
-	"qrdb_tenant_barrier_unseal":       {"tenant_barrier", "unseal"},
-	"qrdb_tenant_barrier_unseal_share": {"tenant_barrier", "unseal"},
-	"qrdb_tenant_barrier_seal":         {"tenant_barrier", "seal"},
-	"qrdb_tenant_barrier_status":       {"tenant_barrier", "status"},
+	"qrdb_tenant_barrier_init":   {"tenant_barrier", "init"},
+	"qrdb_tenant_barrier_unseal": {"tenant_barrier", "unseal"},
+	"qrdb_tenant_barrier_seal":   {"tenant_barrier", "seal"},
+	"qrdb_tenant_barrier_status": {"tenant_barrier", "status"},
 }
 
 // getToolQRDBPermission returns the qrdb-canonical (resource, action) for the
 // tool and whether a mapping exists. Exact match is preferred over prefix match.
 // Among prefix matches the LONGEST matching prefix wins, so a specific tool
-// (e.g. "qrdb_tenant_barrier_unseal_share") resolves to its own entry rather
-// than a shorter surface prefix (e.g. "qrdb_tenant_barrier_unseal"). Map
+// (e.g. "qrdb_credential_delete") resolves to its own entry rather
+// than a shorter surface prefix (e.g. "qrdb_credential"). Map
 // iteration order is otherwise non-deterministic, so longest-prefix selection is
 // required for a stable decision. An unmapped tool has ok=false: the
 // default-deny authz gate denies it under RequireAuthz.

@@ -2530,9 +2530,7 @@ func TestRotate_VerificationSeesTheSecretOnlyDuringTheCall(t *testing.T) {
 	if lifecycle.verifiedWith != "new-secret" {
 		t.Fatalf("verified with %q: the adapter must see the real secret DURING the call", lifecycle.verifiedWith)
 	}
-	if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
-		t.Fatal("the enclave outlived the rotation")
-	}
+	requireWiped(t, lifecycle.mintedTokens[0].Secret, "the enclave outlived the rotation")
 }
 
 // TestReadStoredToken_WipesTheDataItFetched: a metadata read must not leave
@@ -2678,9 +2676,7 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 		if len(lifecycle.mintedTokens) != 1 {
 			t.Fatalf("fixture: %d minted tokens retained", len(lifecycle.mintedTokens))
 		}
-		if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
-			t.Fatal("the minted secret's enclave survived a successful rotation")
-		}
+		requireWiped(t, lifecycle.mintedTokens[0].Secret, "the minted secret's enclave survived a successful rotation")
 		// The STORE holds a usable copy — the destruction reached only the
 		// rotation's enclave.
 		if got := string(store.data[testSecretPath][tokenSecretKey]); got != "new-secret" {
@@ -2695,8 +2691,20 @@ func TestRotate_DestroysTheMintedSecretOnEveryPath(t *testing.T) {
 		if _, err := rotator.Rotate(context.Background(), testSpec()); err == nil {
 			t.Fatal("a divergent mint was accepted")
 		}
-		if lifecycle.mintedTokens[0].Secret.Bytes() != nil {
-			t.Fatal("the refused divergent secret's enclave survived the refusal path")
-		}
+		requireWiped(t, lifecycle.mintedTokens[0].Secret, "the refused divergent secret's enclave survived the refusal path")
 	})
+}
+
+// requireWiped stops t unless buf has been destroyed: a read of a destroyed
+// buffer lends no bytes and reports *secure.NilBufferError.
+func requireWiped(t *testing.T, buf *secure.Buffer, failure string) {
+	t.Helper()
+	err := buf.WithBytes(func([]byte) error {
+		t.Fatal(failure)
+		return nil
+	})
+	var destroyed *secure.NilBufferError
+	if !errors.As(err, &destroyed) {
+		t.Fatalf("%s: err = %v (%T), want *secure.NilBufferError", failure, err, err)
+	}
 }

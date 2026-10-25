@@ -130,7 +130,6 @@ func seedPersistentDatabase(t *testing.T, dbRoot string) {
 	seed := qrdbsdk.NewManager(slog.Default(), dbRoot)
 	_, err := seed.Create(qrdbsdk.DatabaseConfig{
 		Name:    seededDatabaseName,
-		Engine:  qrdbsdk.EngineKV,
 		Backend: qrdbsdk.BackendPebble,
 	})
 	require.NoError(t, err, "seeding a persistent tenant database must succeed")

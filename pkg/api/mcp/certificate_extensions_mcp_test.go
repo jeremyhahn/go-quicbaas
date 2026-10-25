@@ -62,8 +62,8 @@ func TestCertificateExtensionToolsAreRegistered(t *testing.T) {
 func TestCertificateExtensionToolsHaveAuthzMapping(t *testing.T) {
 	cases := map[string]struct{ resource, action string }{
 		"quicbaas_certificate_cross_sign":            {"ca", "create"},
-		"quicbaas_certificate_chain":                 {"certs", "generate"},
-		"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
+		"quicbaas_certificate_chain":                 {"certs", "enroll"},
+		"quicbaas_certificate_issue_device_identity": {"certs", "issue"},
 	}
 
 	for tool, want := range cases {

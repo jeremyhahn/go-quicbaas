@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -37,8 +38,11 @@ import (
 
 // fakeBarrierService implements service.BarrierServicer with scripted
 // responses. Production-grade enough for unit tests; not a stub of real
-// barrier behaviour.
+// barrier behaviour. The embedded nil interface supplies the share-holder
+// verbs, which tools_barrier_holders_test.go drives through its own double.
 type fakeBarrierService struct {
+	service.BarrierServicer
+
 	// scripted return values
 	status          *service.BarrierStatusInfo
 	statusErr       error
@@ -47,38 +51,21 @@ type fakeBarrierService struct {
 	sealErr         error
 	soPIN           string
 	gotSealPIN      []byte
-	shamirInit      *service.ShamirInitInfo
+	shamirInit      *qrdbtransport.BarrierInitializeShamirResponse
 	shamirInitErr   error
-	unsealShare     *service.UnsealShareProgress
-	unsealShareErr  error
-	unsealSharesErr error
-	rekey           *service.ShamirInitInfo
-	rekeyErr        error
-	recoveryKeys    *service.RecoveryKeysInfo
+	recoveryKeys    *qrdbtransport.BarrierRecoveryKeysResponse
 	recoveryKeysErr error
-	recoverErr      error
 	deleteRecErr    error
 	hasRecoveryKeys bool
 	hasRecoveryErr  error
-	rootToken       *service.RootTokenInfo
-	rootTokenErr    error
 
 	enableEncryptionErr error
 
 	// observed arguments
 	gotInitSecret        string
 	gotUnsealSecret      string
-	gotShamirThr         int
-	gotShamirTotal       int
-	gotShamirSecret      string
-	gotShare             string
-	gotShares            []string
-	gotRekeyThr          int
-	gotRekeyTotal        int
-	gotRecGenThr         int
-	gotRecGenTotal       int
-	gotRecKeys           []string
-	gotRootShares        []string
+	gotShamirReq         *qrdbtransport.BarrierInitializeShamirRequest
+	gotRecGenReq         *qrdbtransport.BarrierGenerateRecoveryKeysRequest
 	gotEnableEncSecret   []byte
 	gotEnableEncTenantID string
 	gotEnableEncOpts     qrdbsdk.MigrationOptions
@@ -109,38 +96,14 @@ func (f *fakeBarrierService) BarrierSeal(_ context.Context, req *service.Barrier
 	return f.sealErr
 }
 
-func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
-	f.gotShamirSecret = string(secret)
-	f.gotShamirThr = threshold
-	f.gotShamirTotal = total
+func (f *fakeBarrierService) BarrierInitializeShamir(_ context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+	f.gotShamirReq = req
 	return f.shamirInit, f.shamirInitErr
 }
 
-func (f *fakeBarrierService) BarrierUnsealWithShare(_ context.Context, share string) (*service.UnsealShareProgress, error) {
-	f.gotShare = share
-	return f.unsealShare, f.unsealShareErr
-}
-
-func (f *fakeBarrierService) BarrierUnsealWithShares(_ context.Context, shares []string) error {
-	f.gotShares = append([]string(nil), shares...)
-	return f.unsealSharesErr
-}
-
-func (f *fakeBarrierService) BarrierRekey(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-	f.gotRekeyThr = threshold
-	f.gotRekeyTotal = total
-	return f.rekey, f.rekeyErr
-}
-
-func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-	f.gotRecGenThr = threshold
-	f.gotRecGenTotal = total
+func (f *fakeBarrierService) BarrierGenerateRecoveryKeys(_ context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+	f.gotRecGenReq = req
 	return f.recoveryKeys, f.recoveryKeysErr
-}
-
-func (f *fakeBarrierService) BarrierRecoverWithKeys(_ context.Context, keys []string) error {
-	f.gotRecKeys = append([]string(nil), keys...)
-	return f.recoverErr
 }
 
 func (f *fakeBarrierService) BarrierDeleteRecoveryKeys(_ context.Context) error {
@@ -151,11 +114,6 @@ func (f *fakeBarrierService) BarrierHasRecoveryKeys(_ context.Context) (bool, er
 	return f.hasRecoveryKeys, f.hasRecoveryErr
 }
 
-func (f *fakeBarrierService) BarrierGenerateRootToken(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
-	f.gotRootShares = append([]string(nil), shares...)
-	return f.rootToken, f.rootTokenErr
-}
-
 func (f *fakeBarrierService) EnableEncryption(_ context.Context, tenantID string, opts qrdbsdk.MigrationOptions) error {
 	f.gotEnableEncTenantID = tenantID
 	f.gotEnableEncOpts = opts
@@ -163,10 +121,13 @@ func (f *fakeBarrierService) EnableEncryption(_ context.Context, tenantID string
 	// returns, so the plaintext has to be read out from in here.
 	f.gotEnableEncSecret = nil
 	if opts.Credentials.Secret != nil {
-		if plain, err := opts.Credentials.Secret.Open(); err == nil {
-			defer plain.Destroy()
-			if b, openErr := plain.Open(); openErr == nil {
+		if plain, err := opts.Credentials.Secret.Open(context.Background()); err == nil {
+			defer func() { _ = plain.Destroy() }()
+			if readErr := plain.WithBytes(func(b []byte) error {
 				f.gotEnableEncSecret = append([]byte(nil), b...)
+				return nil
+			}); readErr != nil {
+				f.gotEnableEncSecret = nil
 			}
 		}
 	}
@@ -263,20 +224,17 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 			HardwareBacked: true,
 			InitializedAt:  now,
 		},
-		shamirInit: &service.ShamirInitInfo{
+		shamirInit: &qrdbtransport.BarrierInitializeShamirResponse{
 			Threshold:   2,
 			TotalShares: 3,
 			ShareCount:  3,
 		},
-		unsealShare: &service.UnsealShareProgress{Required: 2, Submitted: 1, Complete: false},
-		rekey:       &service.ShamirInitInfo{Threshold: 2, TotalShares: 2, ShareCount: 2},
-		recoveryKeys: &service.RecoveryKeysInfo{
+		recoveryKeys: &qrdbtransport.BarrierRecoveryKeysResponse{
 			Threshold:  2,
 			Total:      2,
 			ShareCount: 2,
 		},
 		hasRecoveryKeys: true,
-		rootToken:       &service.RootTokenInfo{Token: "tok-123", CreatedAt: now},
 	}
 	r := newBarrierTestRegistry(t, fake)
 	ctx := context.Background()
@@ -312,84 +270,26 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 
 	t.Run("shamir_initialize", func(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_barrier_shamir_initialize", map[string]interface{}{
-			"secret":       "boot",
 			"threshold":    2,
 			"total_shares": 3,
+			"policy":       "any-enrolled",
+			"so_pin":       "so-pin",
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 3, m["total_shares"])
-		assert.Equal(t, 3, m["share_count"])
-		// Share-free contract: share material must never appear in tool output.
-		assert.NotContains(t, m, "shares")
-		assert.Equal(t, "boot", fake.gotShamirSecret)
-	})
-
-	t.Run("shamir_unseal_share", func(t *testing.T) {
-		out, err := r.ExecuteTool(ctx, "qrdb_barrier_shamir_unseal_share", map[string]interface{}{"share": "abc"})
-		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["required"])
-		assert.Equal(t, 1, m["submitted"])
-		assert.Equal(t, false, m["complete"])
-		assert.Equal(t, "abc", fake.gotShare)
-	})
-
-	t.Run("shamir_unseal_shares_array", func(t *testing.T) {
-		_, err := r.ExecuteTool(ctx, "qrdb_barrier_shamir_unseal_shares", map[string]interface{}{
-			"shares": []interface{}{"x", "y", "z"},
-		})
-		require.NoError(t, err)
-		assert.Equal(t, []string{"x", "y", "z"}, fake.gotShares)
-	})
-
-	t.Run("shamir_unseal_shares_csv", func(t *testing.T) {
-		_, err := r.ExecuteTool(ctx, "qrdb_barrier_shamir_unseal_shares", map[string]interface{}{
-			"shares": "p, q ,r",
-		})
-		require.NoError(t, err)
-		assert.Equal(t, []string{"p", "q", "r"}, fake.gotShares)
-	})
-
-	t.Run("rekey", func(t *testing.T) {
-		out, err := r.ExecuteTool(ctx, "qrdb_barrier_rekey", map[string]interface{}{
-			"threshold": 2,
-			"total":     2,
-		})
-		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 2, m["total_shares"])
-		assert.Equal(t, 2, m["share_count"])
-		// Share-free contract: share material must never appear in tool output.
-		assert.NotContains(t, m, "shares")
-		assert.Equal(t, 2, fake.gotRekeyThr)
-		assert.Equal(t, 2, fake.gotRekeyTotal)
+		// Share-free contract: the response carries counts, never shares.
+		assert.Equal(t, fake.shamirInit, out)
+		assert.Equal(t, &qrdbtransport.BarrierInitializeShamirRequest{
+			Threshold: 2, TotalShares: 3, Policy: "any-enrolled", SOPin: "so-pin",
+		}, fake.gotShamirReq)
 	})
 
 	t.Run("recovery_generate", func(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_barrier_recovery_generate", map[string]interface{}{
 			"threshold": 2,
-			"total":     2,
 		})
 		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, 2, m["threshold"])
-		assert.Equal(t, 2, m["total"])
-		assert.Equal(t, 2, m["share_count"])
-		// Share-free contract: recovery key material must never appear in tool output.
-		assert.NotContains(t, m, "keys")
-		assert.Equal(t, 2, fake.gotRecGenThr)
-		assert.Equal(t, 2, fake.gotRecGenTotal)
-	})
-
-	t.Run("recovery_recover", func(t *testing.T) {
-		_, err := r.ExecuteTool(ctx, "qrdb_barrier_recovery_recover", map[string]interface{}{
-			"keys": []interface{}{"r1", "r2"},
-		})
-		require.NoError(t, err)
-		assert.Equal(t, []string{"r1", "r2"}, fake.gotRecKeys)
+		assert.Equal(t, fake.recoveryKeys, out)
+		assert.Equal(t, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2}, fake.gotRecGenReq)
 	})
 
 	t.Run("recovery_delete", func(t *testing.T) {
@@ -401,17 +301,6 @@ func TestBarrierToolsExecuteSuccess(t *testing.T) {
 		out, err := r.ExecuteTool(ctx, "qrdb_barrier_recovery_status", nil)
 		require.NoError(t, err)
 		assert.Equal(t, true, out.(map[string]interface{})["has_recovery_keys"])
-	})
-
-	t.Run("root_token", func(t *testing.T) {
-		out, err := r.ExecuteTool(ctx, "qrdb_barrier_root_token", map[string]interface{}{
-			"shares": []interface{}{"s1", "s2"},
-		})
-		require.NoError(t, err)
-		m := out.(map[string]interface{})
-		assert.Equal(t, "tok-123", m["token"])
-		assert.Equal(t, "2026-01-01T12:00:00Z", m["created_at"])
-		assert.Equal(t, []string{"s1", "s2"}, fake.gotRootShares)
 	})
 
 	t.Run("enable_encryption_system", func(t *testing.T) {
@@ -558,40 +447,10 @@ func TestBarrierToolsValidation(t *testing.T) {
 			expectedErr: &BarrierThresholdInvalidError{},
 		},
 		{
-			name:        "shamir_unseal_share missing",
-			tool:        "qrdb_barrier_shamir_unseal_share",
-			args:        map[string]interface{}{},
-			expectedErr: &BarrierShareRequiredError{},
-		},
-		{
-			name:        "shamir_unseal_shares missing",
-			tool:        "qrdb_barrier_shamir_unseal_shares",
-			args:        map[string]interface{}{},
-			expectedErr: &BarrierSharesRequiredError{},
-		},
-		{
-			name:        "rekey threshold zero",
-			tool:        "qrdb_barrier_rekey",
-			args:        map[string]interface{}{"threshold": 0, "total": 3},
-			expectedErr: &BarrierThresholdInvalidError{},
-		},
-		{
-			name:        "recovery_generate threshold>total",
+			name:        "recovery_generate threshold zero",
 			tool:        "qrdb_barrier_recovery_generate",
-			args:        map[string]interface{}{"threshold": 5, "total": 3},
+			args:        map[string]interface{}{"threshold": 0},
 			expectedErr: &BarrierThresholdInvalidError{},
-		},
-		{
-			name:        "recovery_recover missing keys",
-			tool:        "qrdb_barrier_recovery_recover",
-			args:        map[string]interface{}{},
-			expectedErr: &BarrierRecoveryKeysRequiredError{},
-		},
-		{
-			name:        "root_token missing shares",
-			tool:        "qrdb_barrier_root_token",
-			args:        map[string]interface{}{},
-			expectedErr: &BarrierSharesRequiredError{},
 		},
 		{
 			name:        "enable_encryption missing strategy",
@@ -669,10 +528,6 @@ func TestBarrierToolsUnavailable(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, err := r.ExecuteTool(context.Background(), name, map[string]interface{}{
 				"secret":       "x",
-				"share":        "x",
-				"shares":       []interface{}{"x"},
-				"keys":         []interface{}{"x"},
-				"index":        1,
 				"threshold":    1,
 				"total":        1,
 				"total_shares": 1,
@@ -698,14 +553,9 @@ func TestBarrierToolsPropagatesServiceError(t *testing.T) {
 		unsealErr:           sentinel,
 		sealErr:             sentinel,
 		shamirInitErr:       sentinel,
-		unsealShareErr:      sentinel,
-		unsealSharesErr:     sentinel,
-		rekeyErr:            sentinel,
 		recoveryKeysErr:     sentinel,
-		recoverErr:          sentinel,
 		deleteRecErr:        sentinel,
 		hasRecoveryErr:      sentinel,
-		rootTokenErr:        sentinel,
 		enableEncryptionErr: sentinel,
 	}
 	r := newBarrierTestRegistry(t, fake)
@@ -721,14 +571,9 @@ func TestBarrierToolsPropagatesServiceError(t *testing.T) {
 		{"qrdb_barrier_unseal", map[string]interface{}{"secret": "x"}},
 		{"qrdb_barrier_seal", nil},
 		{"qrdb_barrier_shamir_initialize", map[string]interface{}{"threshold": 1, "total_shares": 2}},
-		{"qrdb_barrier_shamir_unseal_share", map[string]interface{}{"share": "x"}},
-		{"qrdb_barrier_shamir_unseal_shares", map[string]interface{}{"shares": []interface{}{"x"}}},
-		{"qrdb_barrier_rekey", map[string]interface{}{"threshold": 1, "total": 2}},
-		{"qrdb_barrier_recovery_generate", map[string]interface{}{"threshold": 1, "total": 2}},
-		{"qrdb_barrier_recovery_recover", map[string]interface{}{"keys": []interface{}{"k"}}},
+		{"qrdb_barrier_recovery_generate", map[string]interface{}{"threshold": 1}},
 		{"qrdb_barrier_recovery_delete", nil},
 		{"qrdb_barrier_recovery_status", nil},
-		{"qrdb_barrier_root_token", map[string]interface{}{"shares": []interface{}{"x"}}},
 		{"qrdb_barrier_enable_encryption", map[string]interface{}{"target_strategy": "passphrase"}},
 		{"qrdb_tenant_barrier_enable_encryption", map[string]interface{}{"tenant_id": "t1", "target_strategy": "passphrase"}},
 	}
@@ -771,9 +616,6 @@ func TestBarrierToolsErrorMessages(t *testing.T) {
 	}{
 		{&BarrierServiceUnavailableError{}, "barrier service unavailable: not configured"},
 		{&GovernanceServiceUnavailableError{}, "governance service unavailable: not configured"},
-		{&BarrierShareRequiredError{}, "share is required"},
-		{&BarrierSharesRequiredError{}, "shares is required"},
-		{&BarrierRecoveryKeysRequiredError{}, "keys is required"},
 		{&BarrierThresholdInvalidError{Reason: "x"}, "invalid threshold/total: x"},
 		{&BarrierTargetStrategyRequiredError{}, "target_strategy is required"},
 		{&BarrierTenantIDRequiredError{}, "tenant_id is required"},

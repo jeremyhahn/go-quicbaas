@@ -39,15 +39,10 @@ import (
 // (pkg/api/rest/authz_pep_mapping.go) and ceremonySubOpPermissions on QUIC
 // (pkg/api/quic/handler_authz_qrdb.go).
 var wantCeremonyPerms = map[string]qrdbToolResource{
-	"qrdb_ceremony_initialize":              {"ceremony", "initialize"},
-	"qrdb_ceremony_status":                  {"ceremony", "status"},
-	"qrdb_ceremony_claim_cert_begin":        {"ceremony", "claim_cert"},
-	"qrdb_ceremony_claim_cert_complete":     {"ceremony", "claim_cert"},
-	"qrdb_ceremony_begin_claim_share":       {"ceremony", "claim_share_begin"},
-	"qrdb_ceremony_complete_claim_share":    {"ceremony", "claim_share_complete"},
-	"qrdb_ceremony_sign_csr":                {"ceremony", "sign_csr"},
-	"qrdb_ceremony_enroll_external_officer": {"ceremony", "enroll_custodian"},
-	"quicbaas_ceremony_list_officers":       {"ceremony", "status"},
+	"qrdb_ceremony_initialize":        {"ceremony", "initialize"},
+	"qrdb_ceremony_status":            {"ceremony", "status"},
+	"qrdb_ceremony_sign_csr":          {"ceremony", "sign_csr"},
+	"quicbaas_ceremony_list_officers": {"ceremony", "status"},
 }
 
 // TestCeremonyToolsGranularAuthzMapping is the per-tool exhaustive guard for the
@@ -83,10 +78,9 @@ func TestCeremonyToolsGranularAuthzMapping(t *testing.T) {
 // TestCeremonyWriteToolsAreNotStatus is the direct regression assertion for the
 // escalation this change closes. qrdb grants ceremony:status to Admin, Operator
 // AND the read-only Auditor role (go-qrdb/pkg/permission/builtin_role_grants.go),
-// while CeremonyInitialize / CeremonySignCSR / CeremonyEnrollExternalOfficer are
-// Security-Officer exclusive. Resolving those tools to ceremony:status let an
-// Auditor mint the CA, sign arbitrary certificates from the ceremony CA, seal a
-// Shamir share to an attacker-supplied key and claim officer shares.
+// while CeremonyInitialize / CeremonySignCSR are Security-Officer exclusive.
+// Resolving those tools to ceremony:status let an Auditor mint the CA and sign
+// arbitrary certificates from the ceremony CA.
 //
 // Restoring the "qrdb_ceremony" prefix catch-all fails this test: every tool
 // below would resolve to ceremony:status again.
@@ -96,11 +90,6 @@ func TestCeremonyWriteToolsAreNotStatus(t *testing.T) {
 	for _, name := range []string{
 		"qrdb_ceremony_initialize",
 		"qrdb_ceremony_sign_csr",
-		"qrdb_ceremony_enroll_external_officer",
-		"qrdb_ceremony_claim_cert_begin",
-		"qrdb_ceremony_claim_cert_complete",
-		"qrdb_ceremony_begin_claim_share",
-		"qrdb_ceremony_complete_claim_share",
 	} {
 		t.Run(name, func(t *testing.T) {
 			res, act, ok := getToolQRDBPermission(name)

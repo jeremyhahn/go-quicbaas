@@ -19,6 +19,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"math"
+	"reflect"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -28,6 +29,7 @@ import (
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // errTenantBarrierGRPCBoom drives the generic (non-sentinel) error branch.
@@ -35,20 +37,25 @@ var errTenantBarrierGRPCBoom = stderrors.New("tenant barrier grpc boom")
 
 // fakeTenantBarrierServicer is a hand-written test double for
 // service.TenantBarrierServicer. Methods delegate to optional function fields
-// so a test can shape each path.
+// so a test can shape each path. The officer and quorum verbs the gRPC server
+// does not serve come from the embedded interface and are never called here.
 type fakeTenantBarrierServicer struct {
-	initFn        func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
-	unsealFn      func(ctx context.Context, tenantID string, key []byte) error
-	unsealShareFn func(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error)
-	sealFn        func(ctx context.Context, tenantID string) error
-	statusFn      func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
+	service.TenantBarrierServicer
+
+	initFn func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	// initReq records the request the last TenantBarrierInit call received.
+	initReq  *qrdbtransport.TenantBarrierInitRequest
+	unsealFn func(ctx context.Context, tenantID string, key []byte) error
+	sealFn   func(ctx context.Context, tenantID string) error
+	statusFn func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
 }
 
-func (f *fakeTenantBarrierServicer) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+func (f *fakeTenantBarrierServicer) TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
+	f.initReq = req
 	if f.initFn != nil {
-		return f.initFn(ctx, tenantID, passphrase, threshold, shares, strategy)
+		return f.initFn(ctx, req.TenantID, req.Passphrase, req.Threshold, req.Shares, req.Strategy)
 	}
-	return &qrdbtransport.TenantBarrierInitResponse{TenantID: tenantID}, nil
+	return &qrdbtransport.TenantBarrierInitResponse{TenantID: req.TenantID}, nil
 }
 
 func (f *fakeTenantBarrierServicer) TenantBarrierUnseal(ctx context.Context, tenantID string, key []byte) error {
@@ -56,13 +63,6 @@ func (f *fakeTenantBarrierServicer) TenantBarrierUnseal(ctx context.Context, ten
 		return f.unsealFn(ctx, tenantID, key)
 	}
 	return nil
-}
-
-func (f *fakeTenantBarrierServicer) TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-	if f.unsealShareFn != nil {
-		return f.unsealShareFn(ctx, tenantID, share)
-	}
-	return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: tenantID}, nil
 }
 
 func (f *fakeTenantBarrierServicer) TenantBarrierSeal(ctx context.Context, tenantID string) error {
@@ -142,10 +142,7 @@ func TestTenantBarrierRPCs_BarrierNotEnabled_FailedPrecondition(t *testing.T) {
 			return nil, sentinel
 		},
 		unsealFn: func(context.Context, string, []byte) error { return sentinel },
-		unsealShareFn: func(context.Context, string, string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-			return nil, sentinel
-		},
-		sealFn: func(context.Context, string) error { return sentinel },
+		sealFn:   func(context.Context, string) error { return sentinel },
 		statusFn: func(context.Context, string) (*qrdbtransport.TenantBarrierStatusResponse, error) {
 			return nil, sentinel
 		},
@@ -163,10 +160,6 @@ func TestTenantBarrierRPCs_BarrierNotEnabled_FailedPrecondition(t *testing.T) {
 		}},
 		{"unseal", func() error {
 			_, err := srv.Unseal(ctx, &pb.TenantBarrierUnsealRequest{TenantId: "t1", Key: []byte("k")})
-			return err
-		}},
-		{"unseal_share", func() error {
-			_, err := srv.UnsealShare(ctx, &pb.TenantBarrierUnsealShareRequest{TenantId: "t1", Share: "s"})
 			return err
 		}},
 		{"seal", func() error {
@@ -212,13 +205,6 @@ func TestTenantBarrierRPCs_ResponseOutOfRange(t *testing.T) {
 			},
 		}
 	}
-	unsealProgress := func(required, submitted int) *fakeTenantBarrierServicer {
-		return &fakeTenantBarrierServicer{
-			unsealShareFn: func(context.Context, string, string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-				return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: "t1", Required: required, Submitted: submitted}, nil
-			},
-		}
-	}
 	statusInfo := func(threshold, total int) *fakeTenantBarrierServicer {
 		return &fakeTenantBarrierServicer{
 			statusFn: func(context.Context, string) (*qrdbtransport.TenantBarrierStatusResponse, error) {
@@ -228,10 +214,6 @@ func TestTenantBarrierRPCs_ResponseOutOfRange(t *testing.T) {
 	}
 	initCall := func(srv *TenantBarrierGRPCServer) error {
 		_, err := srv.Init(ctx, &pb.TenantBarrierInitRequest{TenantId: "t1", Strategy: "shamir"})
-		return err
-	}
-	unsealShareCall := func(srv *TenantBarrierGRPCServer) error {
-		_, err := srv.UnsealShare(ctx, &pb.TenantBarrierUnsealShareRequest{TenantId: "t1", Share: "s"})
 		return err
 	}
 	statusCall := func(srv *TenantBarrierGRPCServer) error {
@@ -247,8 +229,6 @@ func TestTenantBarrierRPCs_ResponseOutOfRange(t *testing.T) {
 	}{
 		{name: "init threshold", field: "threshold", svc: initResult(tooBig, 5), call: initCall},
 		{name: "init total shares", field: "total_shares", svc: initResult(3, tooBig), call: initCall},
-		{name: "unseal share required", field: "required", svc: unsealProgress(tooBig, 1), call: unsealShareCall},
-		{name: "unseal share submitted", field: "submitted", svc: unsealProgress(3, tooBig), call: unsealShareCall},
 		{name: "status shamir threshold", field: "shamir_threshold", svc: statusInfo(tooBig, 5), call: statusCall},
 		{name: "status shamir total", field: "shamir_total", svc: statusInfo(3, tooBig), call: statusCall},
 	}
@@ -300,6 +280,137 @@ func TestTenantBarrierRPCs_NonUTF8CredentialReachesServiceIntactAndIsWiped(t *te
 	}
 }
 
+// TestTenantBarrierRPCs_InitForwardsOfficersAndPolicy proves the inline
+// Shamir roster and policy cross the gRPC wire into go-qrdb's request type
+// and that the issued holder certificates come back on the response.
+func TestTenantBarrierRPCs_InitForwardsOfficersAndPolicy(t *testing.T) {
+	svc := &fakeTenantBarrierServicer{
+		initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			return &qrdbtransport.TenantBarrierInitResponse{
+				Holders: []qrdbtransport.TenantBarrierHolderCert{
+					{Username: "alice", Role: "officer", CertPEM: "ALICE-CERT"},
+				},
+			}, nil
+		},
+	}
+	srv := NewTenantBarrierGRPCServer(svc, nil)
+
+	req := &pb.TenantBarrierInitRequest{
+		TenantId:  "t1",
+		Strategy:  "shamir",
+		Threshold: 2,
+		Shares:    3,
+		Policy:    "designated",
+		Officers: []*pb.TenantBarrierOfficer{
+			{
+				Username:      "alice",
+				Role:          "officer",
+				CsrPem:        "ALICE-CSR",
+				EncryptionKem: "ML-KEM-768",
+				EncryptionKey: []byte("ALICE-KEY"),
+				Designated:    "piv",
+				Factors: []*pb.TenantBarrierHolderFactor{
+					{Name: "piv", ParamsJson: []byte(`{"slot":"9a"}`)},
+					{Name: "passphrase"},
+				},
+			},
+		},
+	}
+	resp, err := srv.Init(context.Background(), overTheWire(t, req))
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	want := []qrdbtransport.OfficerRegisterRequest{{
+		Username:      "alice",
+		Role:          "officer",
+		CSRPEM:        "ALICE-CSR",
+		EncryptionKEM: "ML-KEM-768",
+		EncryptionKey: []byte("ALICE-KEY"),
+		Designated:    "piv",
+		Factors: []qrdbtransport.HolderFactorEnrolment{
+			{Name: "piv", Params: map[string]any{"slot": "9a"}},
+			{Name: "passphrase"},
+		},
+	}}
+	if svc.initReq == nil {
+		t.Fatal("service was not called")
+	}
+	if !reflect.DeepEqual(svc.initReq.Officers, want) {
+		t.Fatalf("officers = %+v, want %+v", svc.initReq.Officers, want)
+	}
+	if svc.initReq.Policy != "designated" {
+		t.Fatalf("policy = %q, want designated", svc.initReq.Policy)
+	}
+	if len(resp.GetHolders()) != 1 || resp.GetHolders()[0].GetUsername() != "alice" ||
+		resp.GetHolders()[0].GetRole() != "officer" || resp.GetHolders()[0].GetCertPem() != "ALICE-CERT" {
+		t.Fatalf("holders = %+v, want alice/officer/ALICE-CERT", resp.GetHolders())
+	}
+}
+
+// TestTenantBarrierRPCs_InitMalformedFactorParamsRefused proves a factor whose
+// params_json is not a JSON object is refused before go-qrdb is called.
+func TestTenantBarrierRPCs_InitMalformedFactorParamsRefused(t *testing.T) {
+	svc := &fakeTenantBarrierServicer{}
+	srv := NewTenantBarrierGRPCServer(svc, nil)
+
+	req := &pb.TenantBarrierInitRequest{
+		TenantId: "t1",
+		Strategy: "shamir",
+		Officers: []*pb.TenantBarrierOfficer{{
+			Username: "alice",
+			Factors:  []*pb.TenantBarrierHolderFactor{{Name: "piv", ParamsJson: []byte(`["not","an","object"]`)}},
+		}},
+	}
+	_, err := srv.Init(context.Background(), req)
+	requireGRPCCode(t, err, codes.InvalidArgument)
+	if svc.initReq != nil {
+		t.Fatal("service was called with a malformed roster")
+	}
+}
+
+// TestTenantBarrierRPCs_InitInvalidRosterErrorUnchanged proves go-qrdb's typed
+// roster error reaches the caller through the standard error mapping, not a
+// handler-specific rewrite.
+func TestTenantBarrierRPCs_InitInvalidRosterErrorUnchanged(t *testing.T) {
+	rosterErr := &qrdbtransport.FactorTypeUnsupportedError{Type: "bogus"}
+	svc := &fakeTenantBarrierServicer{
+		initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			return nil, rosterErr
+		},
+	}
+	srv := NewTenantBarrierGRPCServer(svc, nil)
+
+	req := &pb.TenantBarrierInitRequest{
+		TenantId: "t1",
+		Strategy: "shamir",
+		Officers: []*pb.TenantBarrierOfficer{{Username: "alice", Factors: []*pb.TenantBarrierHolderFactor{{Name: "bogus"}}}},
+	}
+	_, err := srv.Init(context.Background(), req)
+	want := ToGRPCError(rosterErr)
+	if status.Code(err) != status.Code(want) || status.Convert(err).Message() != status.Convert(want).Message() {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+}
+
+// TestTenantBarrierRPCs_InitStatementUnsupportedIsUnimplemented confirms the
+// raft-isolated init refusal (Codex 6757 finding 1) answers Unimplemented
+// with its text: the gRPC request carries no go-qrdb Signer either.
+func TestTenantBarrierRPCs_InitStatementUnsupportedIsUnimplemented(t *testing.T) {
+	refusal := &service.TenantBarrierInitStatementUnsupportedError{TenantID: "t1"}
+	svc := &fakeTenantBarrierServicer{
+		initFn: func(context.Context, string, []byte, int, int, string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			return nil, refusal
+		},
+	}
+	srv := NewTenantBarrierGRPCServer(svc, nil)
+
+	_, err := srv.Init(context.Background(), &pb.TenantBarrierInitRequest{TenantId: "t1", Strategy: "none"})
+	if status.Code(err) != codes.Unimplemented || status.Convert(err).Message() != refusal.Error() {
+		t.Fatalf("err = %v, want Unimplemented %q", err, refusal.Error())
+	}
+}
+
 func TestTenantBarrierEnableEncryption_NonUTF8PassphraseReachesServiceIntact(t *testing.T) {
 	var matched bool
 	barrier := &mockBarrierService{
@@ -307,13 +418,18 @@ func TestTenantBarrierEnableEncryption_NonUTF8PassphraseReachesServiceIntact(t *
 			if tenantID != "t1" {
 				t.Errorf("tenant = %q, want t1", tenantID)
 			}
-			plain, err := opts.Credentials.Secret.Open()
+			plain, err := opts.Credentials.Secret.Open(context.Background())
 			if err != nil {
 				t.Errorf("open the forwarded credential: %v", err)
 				return nil
 			}
 			defer plain.Destroy()
-			matched = plain.EqualTo(nonUTF8Credential)
+			equal, err := plain.EqualTo(nonUTF8Credential)
+			if err != nil {
+				t.Errorf("compare the forwarded credential: %v", err)
+				return nil
+			}
+			matched = equal
 			return nil
 		},
 	}

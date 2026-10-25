@@ -17,14 +17,15 @@ package rest
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -33,14 +34,9 @@ var errCeremonyBoom = stderrors.New("ceremony boom")
 
 // fakeCeremonyService is a hand-written test double for service.CeremonyServicer.
 type fakeCeremonyService struct {
-	initFn           func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error)
-	statusFn         func(ctx context.Context) (*service.CeremonyStatusInfo, error)
-	beginClaimFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
-	completeClaimFn  func(ctx context.Context, username, nonceHex, signatureBase64 string) (*service.CeremonyClaimCertResult, error)
-	beginShareFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
-	completeShareFn  func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error)
-	signCSRFn        func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
-	enrollExternalFn func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error)
+	initFn    func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error)
+	statusFn  func(ctx context.Context) (*service.CeremonyStatusInfo, error)
+	signCSRFn func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
 }
 
 func (f *fakeCeremonyService) CeremonyInitialize(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
@@ -57,46 +53,11 @@ func (f *fakeCeremonyService) CeremonyStatus(ctx context.Context) (*service.Cere
 	return &service.CeremonyStatusInfo{}, nil
 }
 
-func (f *fakeCeremonyService) CeremonyBeginClaimCert(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-	if f.beginClaimFn != nil {
-		return f.beginClaimFn(ctx, username)
-	}
-	return &service.CeremonyChallenge{}, nil
-}
-
-func (f *fakeCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, signatureBase64 string) (*service.CeremonyClaimCertResult, error) {
-	if f.completeClaimFn != nil {
-		return f.completeClaimFn(ctx, username, nonceHex, signatureBase64)
-	}
-	return &service.CeremonyClaimCertResult{}, nil
-}
-
-func (f *fakeCeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-	if f.beginShareFn != nil {
-		return f.beginShareFn(ctx, username)
-	}
-	return &service.CeremonyChallenge{}, nil
-}
-
-func (f *fakeCeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
-	if f.completeShareFn != nil {
-		return f.completeShareFn(ctx, username, nonceHex, signature)
-	}
-	return &service.CeremonyClaimShareResult{}, nil
-}
-
 func (f *fakeCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
 	if f.signCSRFn != nil {
 		return f.signCSRFn(ctx, username, soPin, csrPEM, role)
 	}
 	return &service.CeremonySignCSRResult{}, nil
-}
-
-func (f *fakeCeremonyService) CeremonyEnrollExternalOfficer(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-	if f.enrollExternalFn != nil {
-		return f.enrollExternalFn(ctx, req)
-	}
-	return &service.CeremonyEnrollExternalOfficerResponse{}, nil
 }
 
 func ceremonyServer(t *testing.T, svc service.CeremonyServicer) *Server {
@@ -179,6 +140,88 @@ func TestHandleCeremonyInitialize_OmitsEmptySOFields(t *testing.T) {
 	}
 }
 
+// TestHandleCeremonyInitialize_DeliversIssuedCredentials pins Codex 6800 P1:
+// the generated admin key, the admin certificate and the holder certificates
+// reach the caller in go-qrdb's own response shape, the one the SDK decodes.
+func TestHandleCeremonyInitialize_DeliversIssuedCredentials(t *testing.T) {
+	holders := []transport.CeremonyHolderCert{{Username: "carol", Role: "custodian", CertPEM: "carol-cert"}}
+	svc := &fakeCeremonyService{
+		initFn: func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			return &service.CeremonyInitInfo{
+				State:                 "initialized",
+				Holders:               holders,
+				AdminCertPEM:          []byte("admin-cert"),
+				AdminKeyPEM:           []byte("admin-key"),
+				AdminCredentialSource: "generated",
+			}, nil
+		},
+	}
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/initialize", `{"admin_generate":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp transport.CeremonyInitializeResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(resp.AdminKeyPEM) != "admin-key" || resp.AdminCertPEM != "admin-cert" || resp.AdminCredentialSource != "generated" {
+		t.Fatalf("admin credential not delivered: %+v", resp)
+	}
+	if len(resp.Holders) != 1 || resp.Holders[0] != holders[0] {
+		t.Fatalf("holder certificates not delivered: %+v", resp.Holders)
+	}
+}
+
+// TestHandleCeremonyInitialize_ForwardsEveryOfficerField pins that the REST
+// payload reaches the service as go-qrdb's own officer request, policy
+// included.
+func TestHandleCeremonyInitialize_ForwardsEveryOfficerField(t *testing.T) {
+	var gotReq *service.CeremonyInitRequest
+	svc := &fakeCeremonyService{
+		initFn: func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			gotReq = req
+			return &service.CeremonyInitInfo{}, nil
+		},
+	}
+	body := `{"threshold":2,"policy":"any-enrolled","admin_generate":true,"officers":[{"username":"carol","role":"custodian","csr_pem":"csr","encryption_kem":"dhkem-x25519","encryption_key":"AQID","factors":[{"name":"totp","params":{"digits":6}}],"designated":"totp"}]}`
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/initialize", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	want := service.CeremonyOfficer{
+		Username:      "carol",
+		Role:          "custodian",
+		CSRPEM:        "csr",
+		EncryptionKEM: "dhkem-x25519",
+		EncryptionKey: []byte{1, 2, 3},
+		Factors:       []transport.HolderFactorEnrolment{{Name: "totp", Params: map[string]any{"digits": float64(6)}}},
+		Designated:    "totp",
+	}
+	if gotReq.Policy != "any-enrolled" || len(gotReq.Officers) != 1 || !reflect.DeepEqual(gotReq.Officers[0], want) {
+		t.Fatalf("officer request narrowed: policy=%q officers=%+v", gotReq.Policy, gotReq.Officers)
+	}
+}
+
+// TestHandleCeremonyInitialize_RefusesUndecodableOfficer pins that an officer
+// whose encryption key is not base64 is refused before the service is called.
+func TestHandleCeremonyInitialize_RefusesUndecodableOfficer(t *testing.T) {
+	called := false
+	svc := &fakeCeremonyService{
+		initFn: func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			called = true
+			return &service.CeremonyInitInfo{}, nil
+		},
+	}
+	body := `{"admin_generate":true,"officers":[{"username":"carol","csr_pem":"csr","encryption_key":"not base64!"}]}`
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/initialize", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Fatal("service called with an undecodable officer")
+	}
+}
+
 func TestHandleCeremonyInitialize_BadJSON(t *testing.T) {
 	w := doCeremonyReq(t, ceremonyServer(t, &fakeCeremonyService{}), http.MethodPost, "/api/v1/init/initialize", `{bad`)
 	if w.Code != http.StatusBadRequest {
@@ -250,184 +293,13 @@ func TestHandleCeremonyStatus_ServiceError(t *testing.T) {
 // Claim-cert begin
 // =============================================================================
 
-func TestHandleCeremonyClaimCertBegin_OK(t *testing.T) {
-	exp := time.Now().Add(time.Minute)
-	svc := &fakeCeremonyService{
-		beginClaimFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-			return &service.CeremonyChallenge{NonceHex: "abcd", ExpiresAt: exp}, nil
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-cert/begin", `{"username":"alice"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["nonce_hex"] != "abcd" {
-		t.Fatalf("unexpected challenge body: %v", resp)
-	}
-	if _, ok := resp["expires_at"]; !ok {
-		t.Fatalf("expected expires_at: %v", resp)
-	}
-}
-
-func TestHandleCeremonyClaimCertBegin_MissingUsername(t *testing.T) {
-	w := doCeremonyReq(t, ceremonyServer(t, &fakeCeremonyService{}), http.MethodPost, "/api/v1/init/claim-cert/begin", `{"username":""}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleCeremonyClaimCertBegin_ServiceError(t *testing.T) {
-	svc := &fakeCeremonyService{
-		beginClaimFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-			return nil, errCeremonyBoom
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-cert/begin", `{"username":"alice"}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
 // =============================================================================
 // Claim-cert complete
 // =============================================================================
 
-func TestHandleCeremonyClaimCertComplete_OK(t *testing.T) {
-	svc := &fakeCeremonyService{
-		completeClaimFn: func(ctx context.Context, username, nonceHex, sig string) (*service.CeremonyClaimCertResult, error) {
-			return &service.CeremonyClaimCertResult{CertPEM: []byte("cert"), CACertPEM: []byte("ca")}, nil
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-cert/complete",
-		`{"username":"alice","nonce_hex":"ab","signature":"sig"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["cert_pem"] != "cert" || resp["ca_cert_pem"] != "ca" {
-		t.Fatalf("unexpected complete body: %v", resp)
-	}
-}
-
-func TestHandleCeremonyClaimCertComplete_Validation(t *testing.T) {
-	svc := &fakeCeremonyService{}
-	for _, body := range []string{
-		`{"username":"","nonce_hex":"ab","signature":"sig"}`,
-		`{"username":"alice","nonce_hex":"","signature":"sig"}`,
-		`{"username":"alice","nonce_hex":"ab","signature":""}`,
-	} {
-		w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/claim-cert/complete", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
-	}
-}
-
 // =============================================================================
 // Officer share claim handshake (begin / complete)
 // =============================================================================
-
-func TestHandleCeremonyBeginClaimShare_OK(t *testing.T) {
-	expires := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	svc := &fakeCeremonyService{
-		beginShareFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-			if username != "alice" {
-				t.Fatalf("expected alice, got %q", username)
-			}
-			return &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: expires}, nil
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/begin", `{"username":"alice"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["nonce_hex"] != "deadbeef" {
-		t.Fatalf("unexpected begin body: %v", resp)
-	}
-	if resp["expires_at"] == "" {
-		t.Fatalf("expected expires_at, got %v", resp)
-	}
-}
-
-func TestHandleCeremonyBeginClaimShare_MissingUsername(t *testing.T) {
-	w := doCeremonyReq(t, ceremonyServer(t, &fakeCeremonyService{}), http.MethodPost, "/api/v1/init/officer-share/begin", `{}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestHandleCeremonyBeginClaimShare_ServiceError(t *testing.T) {
-	svc := &fakeCeremonyService{
-		beginShareFn: func(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-			return nil, errCeremonyBoom
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/begin", `{"username":"alice"}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
-
-func TestHandleCeremonyCompleteClaimShare_OK(t *testing.T) {
-	svc := &fakeCeremonyService{
-		completeShareFn: func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
-			if username != "alice" || nonceHex != "deadbeef" || string(signature) != "sig" {
-				t.Fatalf("unexpected params: %s %s %q", username, nonceHex, signature)
-			}
-			return &service.CeremonyClaimShareResult{ShareIndex: 2, ShareJSON: `{"share":"v"}`}, nil
-		},
-	}
-	body := `{"username":"alice","nonce_hex":"deadbeef","signature":"` + base64.StdEncoding.EncodeToString([]byte("sig")) + `"}`
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", body)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["share_index"] != float64(2) || resp["share_json"] != `{"share":"v"}` {
-		t.Fatalf("unexpected complete body: %v", resp)
-	}
-}
-
-func TestHandleCeremonyCompleteClaimShare_Validation(t *testing.T) {
-	svc := &fakeCeremonyService{}
-	for _, body := range []string{
-		`{"username":"","nonce_hex":"ab","signature":"c2ln"}`,
-		`{"username":"alice","nonce_hex":"","signature":"c2ln"}`,
-		`{"username":"alice","nonce_hex":"ab","signature":""}`,
-		`{"username":"alice","nonce_hex":"ab","signature":"%%%not-base64%%%"}`,
-	} {
-		w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
-	}
-}
-
-func TestHandleCeremonyCompleteClaimShare_ServiceError(t *testing.T) {
-	svc := &fakeCeremonyService{
-		completeShareFn: func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
-			return nil, errCeremonyBoom
-		},
-	}
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/officer-share/complete", `{"username":"alice","nonce_hex":"ab","signature":"c2ln"}`)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
 
 // =============================================================================
 // Sign-CSR
@@ -488,60 +360,3 @@ func TestHandleCeremonyListOfficers_EmptyRoster(t *testing.T) {
 // =============================================================================
 // Enroll external officer
 // =============================================================================
-
-func TestHandleCeremonyEnrollExternalOfficer_OK(t *testing.T) {
-	var gotReq *service.CeremonyEnrollExternalOfficerRequest
-	svc := &fakeCeremonyService{
-		enrollExternalFn: func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-			gotReq = req
-			return &service.CeremonyEnrollExternalOfficerResponse{SealedShare: "sealed"}, nil
-		},
-	}
-	body := `{"username":"alice","cert_pem":"cert","share_index":2,"auth_factor":"piv"}`
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/enroll-external-officer", body)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	if gotReq.Username != "alice" || gotReq.ShareIndex != 2 || gotReq.AuthFactor != "piv" {
-		t.Fatalf("unexpected forwarded request: %+v", gotReq)
-	}
-	var resp enrollExternalOfficerResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.SealedShare != "sealed" {
-		t.Fatalf("unexpected enroll body: %+v", resp)
-	}
-}
-
-func TestHandleCeremonyEnrollExternalOfficer_Validation(t *testing.T) {
-	svc := &fakeCeremonyService{}
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"missing username", `{"username":"","cert_pem":"c","auth_factor":"piv"}`},
-		{"neither cert nor pubkey", `{"username":"alice","auth_factor":"piv"}`},
-		{"both cert and pubkey", `{"username":"alice","cert_pem":"c","pubkey_pem":"p","auth_factor":"piv"}`},
-		{"missing auth_factor", `{"username":"alice","cert_pem":"c"}`},
-	}
-	for _, c := range cases {
-		w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/enroll-external-officer", c.body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("%s: expected 400, got %d", c.name, w.Code)
-		}
-	}
-}
-
-func TestHandleCeremonyEnrollExternalOfficer_ServiceError(t *testing.T) {
-	svc := &fakeCeremonyService{
-		enrollExternalFn: func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-			return nil, errCeremonyBoom
-		},
-	}
-	body := `{"username":"alice","pubkey_pem":"pk","auth_factor":"piv"}`
-	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/enroll-external-officer", body)
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}

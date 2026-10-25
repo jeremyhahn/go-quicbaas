@@ -90,8 +90,13 @@ func TestPasswordFieldUnmarshalJSON(t *testing.T) {
 			if f.Size() != len(tc.wantBytes) {
 				t.Fatalf("size mismatch: got %d, want %d", f.Size(), len(tc.wantBytes))
 			}
-			if string(f.Buffer().Bytes()) != string(tc.wantBytes) {
-				t.Fatalf("bytes mismatch: got %q, want %q", f.Buffer().Bytes(), tc.wantBytes)
+			if err := f.Buffer().WithBytes(func(got []byte) error {
+				if string(got) != string(tc.wantBytes) {
+					t.Fatalf("bytes mismatch: got %q, want %q", got, tc.wantBytes)
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("WithBytes: %v", err)
 			}
 		})
 	}
@@ -145,5 +150,24 @@ func TestMalformedPasswordErrorUnwrap(t *testing.T) {
 	}
 	if e.Error() == "" {
 		t.Fatalf("expected non-empty Error()")
+	}
+}
+
+// Input whose padding does not complete a base64 quantum is refused as a
+// malformed password, never decoded past the end of the buffer.
+func TestPasswordFieldUnmarshalJSON_TruncatedPaddingIsMalformed(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{`"AAAA="`, `"AAAAA=="`, `"AAA"`} {
+		var f PasswordField
+		err := f.UnmarshalJSON([]byte(input))
+
+		var malformed *MalformedPasswordError
+		if !errors.As(err, &malformed) {
+			t.Fatalf("UnmarshalJSON(%s) = %v, want *MalformedPasswordError", input, err)
+		}
+		if f.Size() != 0 {
+			t.Fatalf("UnmarshalJSON(%s) kept a %d-byte buffer", input, f.Size())
+		}
 	}
 }

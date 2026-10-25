@@ -106,6 +106,16 @@ func loginWithPIVCA(ctx context.Context, baseURL string, certPEM, keyPEM []byte)
 // the principal on first use and logging in again once the bearer nears
 // expiry. A failed enrollment is not remembered, so the next call retries it.
 func (r *principalRegistry) bearer(ctx context.Context, baseURL string) (string, error) {
+	token, err := r.session(ctx, baseURL)
+	if err != nil {
+		return "", err
+	}
+	return token.Bearer, nil
+}
+
+// session is bearer with the time the bearer stops being reused, for a
+// caller such as the CLI that saves the session and checks its expiry.
+func (r *principalRegistry) session(ctx context.Context, baseURL string) (pivCachedToken, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	r.Lock()
@@ -115,21 +125,21 @@ func (r *principalRegistry) bearer(ctx context.Context, baseURL string) (string,
 	if !ok {
 		enrolled, err := r.enroll(ctx, baseURL)
 		if err != nil {
-			return "", err
+			return pivCachedToken{}, err
 		}
 		principal = enrolled
 		r.principals[baseURL] = principal
 	}
 	if time.Now().Before(principal.token.ExpiresAt) {
-		return principal.token.Bearer, nil
+		return principal.token, nil
 	}
 
 	bearer, expiresIn, err := r.login(ctx, baseURL, principal.certPEM, principal.keyPEM)
 	if err != nil {
-		return "", &PrincipalAuthError{Principal: r.name, Step: "PIV login", TenantID: principal.tenantID, Cause: err}
+		return pivCachedToken{}, &PrincipalAuthError{Principal: r.name, Step: "PIV login", TenantID: principal.tenantID, Cause: err}
 	}
 	principal.token = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
-	return bearer, nil
+	return principal.token, nil
 }
 
 // tenantID returns the tenant of the principal enrolled for baseURL, or ""

@@ -126,6 +126,10 @@ func (h *IAMHandler) respondInviteError(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
+	if respondTenantLoginRefused(w, r, err) {
+		return
+	}
+
 	switch {
 	// Absent, expired and spent collapse to one opaque answer. PIV is if
 	// anything the more exposed route: PIVActivator resolves the invite

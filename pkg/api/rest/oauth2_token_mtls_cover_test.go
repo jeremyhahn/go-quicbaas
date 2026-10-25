@@ -55,11 +55,11 @@ func mtlsSpiffeCert(t *testing.T, tenant string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
 	require.NoError(t, err)
-	spiffeURI, err := url.Parse("spiffe://" + mtlsTrustDomain + "/tenant/" + tenant + "/svc/agent")
+	spiffeURI, err := url.Parse("spiffe://" + tenant + "/svc/agent")
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(123),
-		Subject:      pkix.Name{CommonName: "agent"},
+		Subject:      pkix.Name{CommonName: "agent", OrganizationalUnit: []string{tenant}},
 		URIs:         []*url.URL{spiffeURI},
 		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(time.Hour),

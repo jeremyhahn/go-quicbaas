@@ -20,7 +20,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -32,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // fleetAppManagerAccessor is the narrow interface the register handler
@@ -101,11 +101,12 @@ type fleetEnrollResponse struct {
 // potentially-public endpoint against hostile large uploads.
 const defaultRegisterRequestMaxBytes int64 = 64 * 1024
 
-// fleetRegistrarOU is the Organizational Unit the server requires on
-// fleet node mTLS certificates. The deploy-service cert issuer stamps this
-// value by default; anything else is rejected to stop a client cert
-// that was minted for a different purpose from authenticating here.
-const fleetRegistrarOU = "agents"
+// fleetNodeSPIFFEKind is the SPIFFE workload kind of an agent certificate: a
+// fleet node is a machine identity, and the agent issuer stamps go-qrdb's
+// service kind (pkg/service XKMSFleetNodeCertIssuer). The kind, not the subject
+// OU, is what marks a certificate as an agent's: go-xkms v0.57 stamps the
+// tenant as the first OU of every certificate it signs (CA m779 62(a)).
+const fleetNodeSPIFFEKind = qrdbsdk.SpiffeKindService
 
 // registerFleetEnrollmentPublicRoutes wires the mTLS-only register
 // route (POST /api/v1/fleet/enroll) onto the root router. The
@@ -124,14 +125,15 @@ func (s *Server) registerFleetEnrollmentPublicRoutes(router interface {
 
 // HandleFleetEnroll handles POST /api/v1/fleet/enroll. The TLS
 // handshake establishes the daemon's identity via a client certificate
-// issued by the server's CA. This handler extracts the tenant claim
-// from the certificate's Organization field, verifies the required OU
-// and ClientAuth EKU are present, and mints OAuth2 client credentials
-// the daemon uses for heartbeat and event-forwarding from that point on.
+// issued by the server's CA. This handler reads the tenant from the
+// certificate's first OU, verifies the certificate is an agent's
+// (fleetNodeCertTenant) and carries the ClientAuth EKU, and mints OAuth2
+// client credentials the daemon uses for heartbeat and event-forwarding from
+// that point on.
 //
-// The request body's tenant_id is cross-checked against the certificate
-// Organization value to prevent a valid certificate from registering
-// for a tenant the operator did not intend.
+// The request body's tenant_id is cross-checked against the certificate's
+// tenant to prevent a valid certificate from registering for a tenant the
+// operator did not intend.
 func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -165,39 +167,45 @@ func (s *Server) HandleFleetEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The cert Organization carries the tenant claim. Cross-check
-	// against the request body so a valid cert cannot be used to
+	// The certificate's OU carries its tenant, and go-qrdb authenticates it
+	// into that tenant (or into its SPIFFE SAN's, which must agree). It must be
+	// the tenant being registered, or the identity enrolled below is written
+	// where the authenticator never looks, and a valid certificate could
 	// register a daemon for an unintended tenant.
-	certTenant := extractCertTenant(peer)
-	if certTenant == "" {
-		respondFleetEnrollError(w, r, http.StatusUnauthorized, "invalid_client", "peer certificate missing tenant claim (Organization)")
+	certTenant, err := fleetNodeCertTenant(peer, s.config.SPIFFETrustDomain)
+	if err != nil {
+		var notAgent *FleetNodeCertNotAgentError
+		var noSPIFFE *FleetNodeCertNoSPIFFEError
+		var clusterOU *FleetNodeCertOUIsTrustDomainError
+		if errors.Is(err, errInvalidPeerOU) || errors.As(err, &notAgent) || errors.As(err, &noSPIFFE) || errors.As(err, &clusterOU) {
+			respondFleetEnrollError(w, r, http.StatusUnauthorized, "invalid_client", err.Error())
+			return
+		}
+		respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
 		return
 	}
 	if certTenant != req.TenantID {
-		respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch",
-			fmt.Sprintf("certificate tenant %q does not match request tenant %q", certTenant, req.TenantID))
+		mismatch := &FleetNodeCertTenantMismatchError{Certificate: certTenant, Registering: req.TenantID}
+		respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", mismatch.Error())
 		return
 	}
 
-	// The tenant go-qrdb will AUTHENTICATE this certificate into must be the
-	// tenant being registered, or the identity enrolled below is written where
-	// the authenticator never looks. qrdb derives it from the certificate's
-	// tenant-scoped SPIFFE SAN (pkg/auth MTLSAuthenticator.TenantFromCert), so
-	// that SAN — not the Organization claim cross-checked above — is the
-	// authority when both are present.
-	if err := assertCertAuthenticatesInto(peer, req.TenantID); err != nil {
-		// A certificate carrying NO tenant SPIFFE SAN is reported, not
-		// refused: it is a certificate this build's issuer would not mint, and
-		// turning it into a registration failure would lock out a fleet that
-		// enrolled with one. Its consequence is stated instead, because the
-		// enrollment below cannot help it.
-		var noTenantSAN *FleetNodeCertNoSPIFFETenantError
-		if !errors.As(err, &noTenantSAN) {
-			respondFleetEnrollError(w, r, http.StatusForbidden, "tenant_mismatch", err.Error())
+	// Stopgap until go-quicbaas#1821: only a certificate the fleet issuer
+	// recorded for this tenant enrolls. A server with no record store fails
+	// closed rather than skipping the check.
+	records := s.fleetNodeCertRecordsOrNil()
+	if records == nil {
+		respondFleetEnrollError(w, r, http.StatusInternalServerError, "server_error", "fleet node certificate records not available")
+		return
+	}
+	if err := records.VerifyFleetNodeCertificate(ctx, req.TenantID, peer); err != nil {
+		var notRecorded *service.FleetNodeCertNotRecordedError
+		if errors.As(err, &notRecorded) {
+			respondFleetEnrollError(w, r, http.StatusForbidden, "certificate_not_recorded", notRecorded.Error())
 			return
 		}
-		s.logger.Warnf("agent register: %v; re-issue the certificate with a tenant-scoped SPIFFE SAN or its"+
-			" control-plane calls will stay unauthorized", err)
+		respondFleetEnrollError(w, r, http.StatusInternalServerError, "server_error", "fleet node certificate record lookup failed")
+		return
 	}
 
 	// The address is checked before anything is issued: a node the control
@@ -385,8 +393,8 @@ func (s *Server) fleetNodeDialAddress(ctx context.Context, req *fleetEnrollReque
 }
 
 // extractFleetNodePeerCertificate pulls the mTLS peer certificate from the
-// request's TLS state and asserts the cert carries the required OU and
-// EKU stamps. Any missing/invalid value is surfaced as a typed error.
+// request's TLS state and asserts the cert carries the ClientAuth EKU. Any
+// missing/invalid value is surfaced as a typed error.
 func extractFleetNodePeerCertificate(r *http.Request) (*x509.Certificate, error) {
 	if r.TLS == nil {
 		return nil, errMissingPeerCertificate
@@ -397,19 +405,6 @@ func extractFleetNodePeerCertificate(r *http.Request) (*x509.Certificate, error)
 	peer := r.TLS.PeerCertificates[0]
 	if peer == nil {
 		return nil, errMissingPeerCertificate
-	}
-
-	// Require the "agents" OU stamp — defence-in-depth against
-	// operator misuse of a cert the same CA minted for another role.
-	found := false
-	for _, ou := range peer.Subject.OrganizationalUnit {
-		if ou == fleetRegistrarOU {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, errInvalidPeerOU
 	}
 
 	// Require ClientAuth EKU.
@@ -426,14 +421,15 @@ func extractFleetNodePeerCertificate(r *http.Request) (*x509.Certificate, error)
 	return peer, nil
 }
 
-// extractCertTenant returns the tenant ID carried on the peer
-// certificate's Organization field. Empty return means the claim is
-// missing and registration must be rejected.
+// extractCertTenant returns the tenant ID carried in the peer certificate's
+// first Organizational Unit, where every layer puts it (DS-1899) and go-xkms
+// v0.57 stamps it on every certificate it signs (CA m779 62(a)). Empty return
+// means the claim is missing and registration must be rejected.
 func extractCertTenant(cert *x509.Certificate) string {
-	if cert == nil || len(cert.Subject.Organization) == 0 {
+	if cert == nil || len(cert.Subject.OrganizationalUnit) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(cert.Subject.Organization[0])
+	return strings.TrimSpace(cert.Subject.OrganizationalUnit[0])
 }
 
 // sanitizeAppName delegates to iam.SanitizeAppName so the REST handler
@@ -587,31 +583,44 @@ func registerMTLSApp(ctx context.Context, log interface {
 	return mtlsAppName
 }
 
-// assertCertAuthenticatesInto verifies the certificate authenticates into
-// tenantID — the tenant whose IAM the enrolled identity is written to.
+// fleetNodeCertTenant returns the tenant an agent certificate authenticates
+// into, refusing a certificate that is not an agent's.
 //
-// go-qrdb derives an mTLS identity's tenant from the certificate's
-// tenant-scoped SPIFFE SAN, falling back to the first Organizational Unit when
-// there is none (pkg/auth MTLSAuthenticator.TenantFromCert). This endpoint
-// requires OU=fleet nodes, so that fallback can never name a tenant: a certificate
-// carrying no SPIFFE SAN authenticates into a tenant called "agents" and its
-// principal is unresolvable wherever this enrollment writes it. Both
-// conditions are reported rather than papered over.
+// The tenant is the first subject OU (extractCertTenant). go-qrdb
+// authenticates an mTLS identity into a tenant only when that OU and the trust
+// domain of its SPIFFE SAN, spiffe://<tenant>/<kind>/<name>, agree (sdk
+// TenantFromClientCert). A SAN, when present, must therefore name the same
+// tenant as the OU, and the agent kind the agent issuer stamps: a SAN of
+// another kind is a certificate the CA minted for another role. The SAN's kind
+// is the proof that the certificate is an agent's (CA m779, ruling 62(a)), so a
+// certificate with no SPIFFE SAN is refused: its OU alone names a tenant, not
+// an agent, and any tenant client certificate carries one. A malformed SAN
+// fails closed, exactly as go-qrdb's authenticator does with it.
 //
-// A malformed SAN fails closed, exactly as qrdb's authenticator does with it.
-func assertCertAuthenticatesInto(peer *x509.Certificate, tenantID string) error {
-	id, err := qrdbsdk.TenantFromCert(peer, "")
-	switch {
-	case err == nil:
-		if id.TenantID != tenantID {
-			return &FleetNodeCertTenantMismatchError{Certificate: id.TenantID, Registering: tenantID}
-		}
-		return nil
-	case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
-		return &FleetNodeCertNoSPIFFETenantError{CommonName: peer.Subject.CommonName}
-	default:
-		return &FleetNodeCertSPIFFEInvalidError{Cause: err}
+// clusterTrustDomain is the cluster's own SPIFFE trust domain
+// (iam.spiffe_trust_domain). It is never a tenant: go-qrdb refuses to
+// authenticate a certificate whose OU names it, so it is refused here before
+// any grant is written. Empty skips the check, as go-qrdb does.
+func fleetNodeCertTenant(peer *x509.Certificate, clusterTrustDomain string) (string, error) {
+	tenantID := extractCertTenant(peer)
+	if tenantID == "" {
+		return "", errInvalidPeerOU
 	}
+	if clusterTrustDomain != "" && tenantID == clusterTrustDomain {
+		return "", &FleetNodeCertOUIsTrustDomainError{OU: tenantID}
+	}
+	id, err := qrdbsdk.WorkloadFromCert(peer)
+	switch {
+	case errors.Is(err, qrdbsdk.ErrSpiffeNoTenantID):
+		return "", &FleetNodeCertNoSPIFFEError{OU: tenantID}
+	case err != nil:
+		return "", &FleetNodeCertSPIFFEInvalidError{Cause: err}
+	case id.Kind != fleetNodeSPIFFEKind:
+		return "", &FleetNodeCertNotAgentError{Kind: id.Kind}
+	case id.TrustDomain != tenantID:
+		return "", &FleetNodeCertOUTenantMismatchError{OU: tenantID, SPIFFE: id.TrustDomain}
+	}
+	return tenantID, nil
 }
 
 // enrollFleetNodeCertIdentity confers the fleet node runtime grant on the identity the
@@ -642,7 +651,7 @@ func enrollFleetNodeCertIdentity(ctx context.Context, service interface{}, tenan
 	return err
 }
 
-// FleetNodeCertTenantMismatchError reports a client certificate whose SPIFFE SAN
+// FleetNodeCertTenantMismatchError reports a client certificate that
 // authenticates into a different tenant than the one being registered.
 type FleetNodeCertTenantMismatchError struct {
 	// Certificate is the tenant the certificate authenticates into.
@@ -657,19 +666,70 @@ func (e *FleetNodeCertTenantMismatchError) Error() string {
 		", not the registering tenant " + strconv.Quote(e.Registering)
 }
 
-// FleetNodeCertNoSPIFFETenantError reports a client certificate carrying no
-// tenant-scoped SPIFFE SAN. Such a certificate authenticates into a tenant
-// named by its OU — "agents" on this endpoint — so no enrollment in the
-// registering tenant could ever authorize it.
-type FleetNodeCertNoSPIFFETenantError struct {
-	// CommonName is the certificate subject, for the operator's log.
-	CommonName string
+// FleetNodeCertNotAgentError reports a client certificate whose SPIFFE SAN
+// names a workload kind other than the agent kind: the CA minted it for
+// another role, so it may not register a fleet node.
+type FleetNodeCertNotAgentError struct {
+	// Kind is the SPIFFE workload kind the certificate carries.
+	Kind string
 }
 
 // Error implements the error interface.
-func (e *FleetNodeCertNoSPIFFETenantError) Error() string {
-	return "agent register: certificate for " + strconv.Quote(e.CommonName) +
-		" carries no tenant-scoped SPIFFE SAN, so it cannot authenticate into the registering tenant"
+func (e *FleetNodeCertNotAgentError) Error() string {
+	return "agent register: certificate SPIFFE kind " + strconv.Quote(e.Kind) +
+		" is not the agent kind " + strconv.Quote(fleetNodeSPIFFEKind)
+}
+
+// FleetNodeCertNoSPIFFEError reports a client certificate that carries no
+// SPIFFE SAN. Without a SAN it has no workload kind, so nothing proves it is
+// an agent's: a tenant OU alone is on every client certificate of the tenant.
+type FleetNodeCertNoSPIFFEError struct {
+	// OU is the tenant the certificate's first Organizational Unit names.
+	OU string
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCertNoSPIFFEError) Error() string {
+	return "agent register: certificate for tenant " + strconv.Quote(e.OU) +
+		" carries no SPIFFE SAN, so it does not prove the agent kind " + strconv.Quote(fleetNodeSPIFFEKind)
+}
+
+// FleetNodeCertOUTenantMismatchError reports a client certificate whose OU
+// tenant and SPIFFE SAN tenant disagree. go-qrdb authenticates it into the
+// SAN's tenant, so the OU's claim is not the identity it logs in as.
+type FleetNodeCertOUTenantMismatchError struct {
+	// OU is the tenant the certificate's first Organizational Unit names.
+	OU string
+	// SPIFFE is the tenant the certificate's SPIFFE SAN names.
+	SPIFFE string
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCertOUTenantMismatchError) Error() string {
+	return "agent register: certificate OU tenant " + strconv.Quote(e.OU) +
+		" does not match its SPIFFE tenant " + strconv.Quote(e.SPIFFE)
+}
+
+// FleetNodeCertOUIsTrustDomainError reports a client certificate whose OU
+// names the cluster's own SPIFFE trust domain. That domain is never a tenant:
+// go-qrdb refuses to authenticate such a certificate, so a fleet node enrolled
+// with it would hold a grant on an identity that can never log in.
+type FleetNodeCertOUIsTrustDomainError struct {
+	// OU is the certificate's first Organizational Unit, which equals the
+	// cluster trust domain.
+	OU string
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCertOUIsTrustDomainError) Error() string {
+	return "agent register: certificate OU " + strconv.Quote(e.OU) +
+		" is the cluster trust domain, which names no tenant"
+}
+
+// Unwrap exposes go-qrdb's cause, so errors.Is matches the refusal go-qrdb's
+// authenticator gives the same certificate.
+func (e *FleetNodeCertOUIsTrustDomainError) Unwrap() error {
+	return qrdbsdk.ErrClientCertificateTenantIsClusterTrustDomain
 }
 
 // FleetNodeCertSPIFFEInvalidError reports a malformed SPIFFE SAN. Fails closed,
@@ -721,9 +781,9 @@ var (
 	// present a peer certificate. Surfaced to operators as 401.
 	errMissingPeerCertificate = errors.New("agent register: missing mTLS peer certificate")
 
-	// errInvalidPeerOU indicates the peer certificate's OU value is not
-	// the canonical "agents" stamp.
-	errInvalidPeerOU = errors.New("agent register: peer certificate missing required OU=agents stamp")
+	// errInvalidPeerOU indicates the peer certificate carries no tenant in
+	// its first Organizational Unit.
+	errInvalidPeerOU = errors.New("agent register: peer certificate missing the tenant OU")
 
 	// errInvalidPeerEKU indicates the peer certificate does not carry
 	// the ClientAuth Extended Key Usage.

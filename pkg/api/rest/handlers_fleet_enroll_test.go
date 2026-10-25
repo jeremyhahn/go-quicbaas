@@ -17,6 +17,8 @@ package rest
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -25,6 +27,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -256,26 +259,73 @@ func newFleetEnrollTestServer(t *testing.T, eventIngestURL string) *Server {
 	require.NoError(t, err)
 
 	srv.SetEventIngestURL(eventIngestURL)
+	srv.SetFleetNodeCertRecords(fleetTestCertRecordStore(t))
 	return srv
 }
 
 // agentRegisterTestPeerCert mints a self-signed certificate carrying
-// the OU=agents stamp + ClientAuth EKU + Organization=tenant the
-// register handler validates. Self-signed is fine here — the handler
+// the OU=tenant stamp, the agent SPIFFE SAN (CA m779 62(a)) and the
+// ClientAuth EKU the register
+// handler validates. Self-signed is fine here — the handler
 // authenticates by inspecting the parsed cert directly, not by
 // verifying the chain.
 func agentRegisterTestPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 	t.Helper()
+	pub, spki := fleetTestPeerKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
 		Subject: pkix.Name{
 			CommonName:         cn,
-			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		ExtKeyUsage:             []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:                    agentSPIFFEURIs(t, tenantID, cn),
+		PublicKey:               pub,
+		RawSubjectPublicKeyInfo: spki,
 	}
+	recordFleetTestCert(t, tenantID, tmpl)
 	return tmpl
+}
+
+// fleetTestPeerKey returns a fresh public key and its DER SubjectPublicKeyInfo,
+// so each minted peer certificate has its own SPKI thumbprint, the key the
+// fleet issuer's record store is looked up by.
+func fleetTestPeerKey(t *testing.T) (ed25519.PublicKey, []byte) {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	return pub, spki
+}
+
+// fleetTestCertRecords stands in for the fleet issuer's record store. The
+// peer-certificate helpers record each certificate they mint for a tenant,
+// as the issuer records each certificate it issues, and every test server
+// reads it, so a refusal a test asserts still comes from the check under
+// test rather than from a missing record.
+var fleetTestCertRecords = sync.OnceValues(func() (*service.KVFleetNodeCertRecords, error) {
+	return service.NewKVFleetNodeCertRecords(qrdbsdk.NewMemoryKVStore())
+})
+
+// fleetTestCertRecordStore returns the shared record store.
+func fleetTestCertRecordStore(t *testing.T) *service.KVFleetNodeCertRecords {
+	t.Helper()
+	records, err := fleetTestCertRecords()
+	require.NoError(t, err)
+	return records
+}
+
+// recordFleetTestCert records cert as issued for tenantID. A certificate
+// minted with no tenant is left unrecorded: the issuer never issues one, and
+// the handlers refuse it on its missing tenant before any record lookup.
+func recordFleetTestCert(t *testing.T, tenantID string, cert *x509.Certificate) {
+	t.Helper()
+	if strings.TrimSpace(tenantID) == "" {
+		return
+	}
+	err := fleetTestCertRecordStore(t).RecordFleetNodeCertificate(context.Background(), tenantID, cert)
+	require.NoError(t, err)
 }
 
 // TestHandleAgentRegister_AdvertisesEventIngestAddr asserts the
@@ -397,8 +447,12 @@ func enrollWithCN(t *testing.T, srv *Server, cn string) *httptest.ResponseRecord
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/fleet/enroll", strings.NewReader(body))
 	req.Host = "198.51.100.91:18080"
 	req.Header.Set("Content-Type", "application/json")
+	// The SAN names a valid workload so the cert proves the agent kind; only
+	// the common name under test varies.
+	cert := agentRegisterTestPeerCert(t, "acme", cn)
+	cert.URIs = agentSPIFFEURIs(t, "acme", "agent01")
 	req.TLS = &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{agentRegisterTestPeerCert(t, "acme", cn)},
+		PeerCertificates: []*x509.Certificate{cert},
 	}
 	w := httptest.NewRecorder()
 	srv.HandleFleetEnroll(w, req)

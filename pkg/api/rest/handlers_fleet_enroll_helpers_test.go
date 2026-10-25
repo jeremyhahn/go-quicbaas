@@ -86,7 +86,7 @@ func TestMergeRegisterMetadata_NilCert(t *testing.T) {
 func TestExtractCertTenant(t *testing.T) {
 	assert.Equal(t, "", extractCertTenant(nil))
 	assert.Equal(t, "", extractCertTenant(&x509.Certificate{}))
-	cert := &x509.Certificate{Subject: pkix.Name{Organization: []string{" acme "}}}
+	cert := &x509.Certificate{Subject: pkix.Name{OrganizationalUnit: []string{" acme "}, Organization: []string{"not-the-tenant"}}}
 	assert.Equal(t, "acme", extractCertTenant(cert))
 }
 

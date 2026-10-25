@@ -107,19 +107,24 @@ type recoveryServer struct {
 
 func (m *recoveryServer) Agent() orchestration.AgentService { return m.agentService }
 
-// recoverPeerCert mints a self-signed certificate carrying the OU=agents
-// stamp + ClientAuth EKU + Organization=tenant the recoverer validates.
+// recoverPeerCert mints a self-signed certificate carrying the OU=tenant
+// stamp, agent SPIFFE SAN and ClientAuth EKU the recoverer validates
+// (CA m779 62(a)).
 func recoverPeerCert(t *testing.T, tenantID, cn string) *x509.Certificate {
 	t.Helper()
+	pub, spki := fleetTestPeerKey(t)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(43),
 		Subject: pkix.Name{
 			CommonName:         cn,
-			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		ExtKeyUsage:             []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:                    agentSPIFFEURIs(t, tenantID, cn),
+		PublicKey:               pub,
+		RawSubjectPublicKeyInfo: spki,
 	}
+	recordFleetTestCert(t, tenantID, tmpl)
 	return tmpl
 }
 
@@ -153,8 +158,10 @@ func newRecoveryTestServer(t *testing.T, failsBeforeRecover int32) (*Server, *re
 
 	registrar := &recoverTestRegistrar{failNth: -1}
 	recoverer, err := NewIAMHeartbeatRecoverer(IAMHeartbeatRecovererDeps{
-		Registrar: registrar,
-		Logger:    &recoverTestLogger{t: t},
+		Registrar:   registrar,
+		Logger:      &recoverTestLogger{t: t},
+		TrustDomain: recoverTestTrustDomain,
+		CertRecords: fleetTestCertRecordStore(t),
 	})
 	if err != nil {
 		t.Fatalf("NewIAMHeartbeatRecoverer: %v", err)
@@ -332,6 +339,30 @@ func TestHeartbeat_RejectsUnknownIDWithMismatchedCert(t *testing.T) {
 	}
 }
 
+// recoverTestTrustDomain is the cluster trust domain the recovery test server
+// runs under.
+const recoverTestTrustDomain = "cluster.test"
+
+// TestHeartbeat_RejectsRecoveryWhenOUIsTheTrustDomain asserts a certificate
+// whose OU names the cluster trust domain cannot re-publish a fleet node: it
+// names no tenant, exactly as at enrolment.
+func TestHeartbeat_RejectsRecoveryWhenOUIsTheTrustDomain(t *testing.T) {
+	const cn = "198.51.100.91"
+	cert := recoverPeerCert(t, recoverTestTrustDomain, cn)
+	requestedID := iam.FleetNodeAppName(recoverTestTrustDomain, cn)
+
+	srv, _, registrar := newRecoveryTestServer(t, 100)
+
+	rec := makeHeartbeatRequest(t, srv, recoverTestTrustDomain, requestedID, cert)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a trust-domain OU, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if calls := registrar.snapshot(); len(calls) != 0 {
+		t.Errorf("registrar must not be called for a trust-domain OU, got %d calls", len(calls))
+	}
+}
+
 // TestHeartbeat_RejectsUnknownIDWithWrongTenant asserts a cert minted
 // for tenant-X cannot recover an agent claimed under tenant-Y, even
 // when the CN matches.
@@ -363,7 +394,7 @@ func TestHeartbeat_RejectsUnknownIDWithMissingOU(t *testing.T) {
 		Subject: pkix.Name{
 			CommonName:   cn,
 			Organization: []string{tenantID},
-			// No OU stamp.
+			// No tenant OU stamp.
 		},
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
@@ -376,7 +407,7 @@ func TestHeartbeat_RejectsUnknownIDWithMissingOU(t *testing.T) {
 		t.Fatalf("expected 404 on missing OU, got %d", rec.Code)
 	}
 	if calls := registrar.snapshot(); len(calls) != 0 {
-		t.Errorf("registrar must not be called without OU=agents")
+		t.Errorf("registrar must not be called without a tenant OU")
 	}
 }
 
@@ -402,6 +433,11 @@ func TestNewIAMHeartbeatRecoverer_ValidatesDeps(t *testing.T) {
 			name: "no_logger",
 			deps: IAMHeartbeatRecovererDeps{Registrar: &recoverTestRegistrar{}},
 			want: ErrHeartbeatRecoverNoLogger,
+		},
+		{
+			name: "no_cert_records",
+			deps: IAMHeartbeatRecovererDeps{Registrar: &recoverTestRegistrar{}, Logger: &recoverTestLogger{t: t}},
+			want: ErrHeartbeatRecoverNoCertRecords,
 		},
 	}
 	for _, tc := range cases {

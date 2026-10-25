@@ -35,17 +35,19 @@ import (
 
 // SetupGRPCConnectionToEndpoint creates a gRPC connection to a specific endpoint.
 // Uses non-blocking dial with a 30-second timeout to prevent hanging tests.
-func SetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
+// opts follow the TLS defaults, so a caller adds the credentials it acts with.
+func SetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	tlsCfg, err := IntegrationTLSConfig()
 	if err != nil {
 		return nil, err
 	}
 
 	// Create a connection with timeout - don't use WithBlock() as it can hang
-	conn, err := grpc.DialContext(ctx, endpoint,
+	dialOpts := append([]grpc.DialOption{
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
-	)
+	}, opts...)
+	conn, err := grpc.DialContext(ctx, endpoint, dialOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -71,8 +73,8 @@ func SetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint s
 }
 
 // MustSetupGRPCConnectionToEndpoint creates a gRPC connection or fails the test
-func MustSetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string) *grpc.ClientConn {
-	conn, err := SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+func MustSetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string, opts ...grpc.DialOption) *grpc.ClientConn {
+	conn, err := SetupGRPCConnectionToEndpoint(t, ctx, endpoint, opts...)
 	require.NoError(t, err, "Failed to connect to gRPC server at %s", endpoint)
 	return conn
 }

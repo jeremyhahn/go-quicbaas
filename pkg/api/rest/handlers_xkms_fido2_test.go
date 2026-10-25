@@ -26,9 +26,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -38,6 +41,10 @@ import (
 type fakeFIDO2Service struct {
 	tenantID string
 	err      error
+
+	// subject and subjectOK record the caller BeginAddCredential saw.
+	subject   interfaces.Subject
+	subjectOK bool
 }
 
 func (f *fakeFIDO2Service) BeginRegistration(_ context.Context, tenantID string, _ *transportTypes.BeginRegistrationRequest) (*transportTypes.BeginRegistrationResponse, error) {
@@ -48,8 +55,9 @@ func (f *fakeFIDO2Service) BeginRegistration(_ context.Context, tenantID string,
 	return &transportTypes.BeginRegistrationResponse{SessionID: "s1", OptionsJSON: `{"publicKey":{}}`}, nil
 }
 
-func (f *fakeFIDO2Service) BeginAddCredential(_ context.Context, tenantID string) (*transportTypes.BeginRegistrationResponse, error) {
+func (f *fakeFIDO2Service) BeginAddCredential(ctx context.Context, tenantID string) (*transportTypes.BeginRegistrationResponse, error) {
 	f.tenantID = tenantID
+	f.subject, f.subjectOK = auth.SubjectFromContext(ctx)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -87,6 +95,51 @@ func newXKMSFIDO2Server(t *testing.T, fake service.FIDO2Service) *Server {
 	s, mock := newTestServer(t)
 	mock.FIDO2Svc = fake
 	return s
+}
+
+// bindFIDO2AddCredential binds the passkey add-credential handler the way the
+// qrdb module does, so a test exercises the identity projection in BindRoute
+// rather than calling the handler directly.
+func bindFIDO2AddCredential(s *Server) http.Handler {
+	return s.BindRoute(RouteSpec{
+		Method: http.MethodPost, Pattern: "/api/v1/xkms/fido2/credentials/begin",
+		Auth: RouteAuthPermission, Resource: "user_authfactors", Action: "add",
+		Handler: func(s *Server) http.HandlerFunc { return s.HandleXKMSFIDO2BeginAddCredential },
+	})
+}
+
+// A verified qrdb identity on the request must reach BeginAddCredential as an
+// authenticated subject in its own tenant (go-quicbaas#1727).
+func TestHandleXKMSFIDO2BeginAddCredential_QRDBIdentityReachesService(t *testing.T) {
+	fake := &fakeFIDO2Service{}
+	h := bindFIDO2AddCredential(newXKMSFIDO2Server(t, fake))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/credentials/begin", nil)
+	identity := &qrdbsdk.Identity{Subject: "alice", TenantID: "acme", Roles: []string{"tenant-admin"}}
+	req = req.WithContext(qrdbsdk.WithIdentity(req.Context(), identity))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.True(t, fake.subjectOK, "no subject reached the FIDO2 service")
+	assert.True(t, fake.subject.Authenticated, "subject must be authenticated")
+	assert.Equal(t, "alice", fake.subject.ID)
+	assert.Equal(t, "acme", fake.subject.TenantID)
+	assert.Equal(t, "acme", fake.tenantID)
+}
+
+// Without a qrdb identity BindRoute must not invent a caller: the service sees
+// no authenticated subject and so refuses (service.BeginAddCredential).
+func TestHandleXKMSFIDO2BeginAddCredential_NoIdentityRefused(t *testing.T) {
+	fake := &fakeFIDO2Service{}
+	h := bindFIDO2AddCredential(newXKMSFIDO2Server(t, fake))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/fido2/credentials/begin", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assert.False(t, fake.subjectOK, "a subject reached the service without an identity")
+	assert.False(t, fake.subject.Authenticated, "subject must not be authenticated")
 }
 
 func TestHandleXKMSFIDO2BeginRegistration_Happy(t *testing.T) {

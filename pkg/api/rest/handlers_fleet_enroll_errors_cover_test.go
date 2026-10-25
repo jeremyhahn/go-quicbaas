@@ -51,7 +51,7 @@ func TestHandleAgentRegister_NoPeerCert(t *testing.T) {
 
 func TestHandleAgentRegister_InvalidOU(t *testing.T) {
 	srv := newFleetEnrollTestServer(t, "")
-	// Cert without the OU=agents stamp.
+	// Cert without a tenant OU (the tenant sits only in Organization).
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "agent01", Organization: []string{"acme"}},
@@ -80,7 +80,7 @@ func TestHandleAgentRegister_MissingTenant(t *testing.T) {
 
 func TestHandleAgentRegister_TenantMismatch(t *testing.T) {
 	srv := newFleetEnrollTestServer(t, "")
-	// Cert Organization=acme but request tenant=other -> 403.
+	// Cert OU tenant=acme but request tenant=other -> 403.
 	cert := agentRegisterTestPeerCert(t, "acme", "agent01")
 	w := httptest.NewRecorder()
 	srv.HandleFleetEnroll(w, agentRegisterReq(t, `{"tenant_id":"other"}`, cert))
@@ -89,10 +89,10 @@ func TestHandleAgentRegister_TenantMismatch(t *testing.T) {
 
 func TestHandleAgentRegister_CertMissingTenant(t *testing.T) {
 	srv := newFleetEnrollTestServer(t, "")
-	// Cert has the OU + EKU but no Organization -> tenant claim missing -> 401.
+	// Cert has the EKU but a blank OU -> tenant claim missing -> 401.
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "agent01", OrganizationalUnit: []string{fleetRegistrarOU}},
+		Subject:      pkix.Name{CommonName: "agent01", OrganizationalUnit: []string{" "}},
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	w := httptest.NewRecorder()

@@ -54,7 +54,7 @@
 // Identity model (owner decision): the system-admin bearer (helpers.AuthPIV)
 // is a CONTROL-PLANE identity — it provisions tenants and may READ any
 // tenant barrier's status, but it is DENIED every tenant-barrier mutation
-// (init/unseal/unseal-share/seal). All barrier lifecycle writes are performed
+// (init/unseal/quorum/seal). All barrier lifecycle writes are performed
 // under a tenant-admin bearer minted via helpers.AuthTenantAdmin, matching
 // the locked architecture where tenant admins self-bootstrap their own
 // barriers.
@@ -80,8 +80,16 @@ package tenantbarrier
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,6 +97,8 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -142,6 +152,12 @@ func tenantAdminBearer(t *testing.T, tenantID string) string {
 // and injects the supplied bearer. A nil body is safe (maps to an empty POST
 // body, correct for seal).
 func doREST(ctx context.Context, method, path string, bearer string, reqBody interface{}) (int, []byte, error) {
+	return doRESTWith(ctx, helpers.NewHTTPClient(restTimeout), method, path, bearer, reqBody)
+}
+
+// doRESTWith is doREST over client, for a call that must present its own
+// client certificate.
+func doRESTWith(ctx context.Context, client *http.Client, method, path string, bearer string, reqBody interface{}) (int, []byte, error) {
 	var bodyReader io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -150,8 +166,6 @@ func doREST(ctx context.Context, method, path string, bearer string, reqBody int
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-
-	client := helpers.NewHTTPClient(restTimeout)
 
 	url := restBaseURL() + path
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
@@ -193,35 +207,27 @@ type tenantBarrierInitReq struct {
 	Passphrase string `json:"passphrase,omitempty"`
 	Threshold  int    `json:"threshold,omitempty"`
 	Shares     int    `json:"shares,omitempty"`
+	// Officers is the Shamir share-holder roster; its length must equal
+	// Shares.
+	Officers []qrdbtransport.OfficerRegisterRequest `json:"officers,omitempty"`
 }
 
-// tenantBarrierInitResp is the 200 body for a Shamir init.
+// tenantBarrierInitResp is the 200 body for a Shamir init: each share is
+// sealed to an officer, never returned, and Holders carries the
+// certificate issued to each officer in roster order.
 type tenantBarrierInitResp struct {
-	TenantID    string   `json:"tenant_id"`
-	Strategy    string   `json:"strategy"`
-	Shares      []string `json:"shares"`
-	Threshold   int      `json:"threshold"`
-	TotalShares int      `json:"total_shares"`
+	TenantID    string                                  `json:"tenant_id"`
+	Strategy    string                                  `json:"strategy"`
+	Threshold   int                                     `json:"threshold"`
+	TotalShares int                                     `json:"total_shares"`
+	ShareCount  int                                     `json:"share_count"`
+	Holders     []qrdbtransport.TenantBarrierHolderCert `json:"holders"`
 }
 
 // tenantBarrierUnsealReq is the wire body for POST .../barrier/unseal.
 // Key is base64-encoded by encoding/json.
 type tenantBarrierUnsealReq struct {
 	Key []byte `json:"key,omitempty"`
-}
-
-// tenantBarrierUnsealShareReq is the wire body for POST .../barrier/unseal-share.
-type tenantBarrierUnsealShareReq struct {
-	Share string `json:"share,omitempty"`
-}
-
-// tenantBarrierUnsealShareResp is the 200 body returned by unseal-share.
-type tenantBarrierUnsealShareResp struct {
-	TenantID  string `json:"tenant_id"`
-	Required  int    `json:"required"`
-	Submitted int    `json:"submitted"`
-	Complete  bool   `json:"complete"`
-	Sealed    bool   `json:"sealed"`
 }
 
 // tenantBarrierStatusResp is the 200 body returned by GET .../barrier/status.
@@ -266,22 +272,121 @@ func unsealTenantBarrier(ctx context.Context, tenantID, bearer string, key []byt
 	return doREST(ctx, http.MethodPost, barrierPath(tenantID, "unseal"), bearer, tenantBarrierUnsealReq{Key: key})
 }
 
-// unsealShareTenantBarrier submits one Shamir share via POST .../barrier/unseal-share
-// and decodes the progress response. Expected status 200.
-func unsealShareTenantBarrier(ctx context.Context, tenantID, bearer, share string) (int, *tenantBarrierUnsealShareResp, []byte, error) {
-	status, body, err := doREST(ctx, http.MethodPost, barrierPath(tenantID, "unseal-share"), bearer,
-		tenantBarrierUnsealShareReq{Share: share})
+// tenantBarrierHolder is one Shamir officer's client side: the key its CSR
+// carries, the certificate init issued to it, and the share its claim
+// opened.
+type tenantBarrierHolder struct {
+	Username string
+	Key      *ecdsa.PrivateKey
+	CSRPEM   string
+	CertPEM  string
+	Share    []byte
+}
+
+// newTenantBarrierHolder generates an officer's P-256 key and CSR. The
+// server names the issued certificate, so the CSR subject is not read.
+func newTenantBarrierHolder(t *testing.T, username string) *tenantBarrierHolder {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoErrorf(t, err, "officer %s: generate key", username)
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: username}}, key)
+	require.NoErrorf(t, err, "officer %s: create CSR", username)
+	return &tenantBarrierHolder{
+		Username: username,
+		Key:      key,
+		CSRPEM:   string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})),
+	}
+}
+
+// roster renders the holders as the init request's officer roster.
+func roster(holders []*tenantBarrierHolder) []qrdbtransport.OfficerRegisterRequest {
+	officers := make([]qrdbtransport.OfficerRegisterRequest, len(holders))
+	for i, h := range holders {
+		officers[i] = qrdbtransport.OfficerRegisterRequest{Username: h.Username, CSRPEM: h.CSRPEM}
+	}
+	return officers
+}
+
+// holderHTTPClient is the integration client presenting h's issued
+// certificate: qrdb binds a share claim to the certificate on the
+// connection, so a claim made without it is refused.
+func holderHTTPClient(t *testing.T, h *tenantBarrierHolder) *http.Client {
+	t.Helper()
+	block, _ := pem.Decode([]byte(h.CertPEM))
+	require.NotNilf(t, block, "officer %s: issued certificate is not PEM", h.Username)
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoErrorf(t, err, "integration TLS config")
+	tlsCfg = tlsCfg.Clone()
+	tlsCfg.Certificates = []tls.Certificate{{Certificate: [][]byte{block.Bytes}, PrivateKey: h.Key}}
+	return &http.Client{Timeout: restTimeout, Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+}
+
+// claimTenantBarrierShare runs h's claim handshake over its own mTLS
+// connection and opens the delivered envelope into h.Share.
+func claimTenantBarrierShare(t *testing.T, ctx context.Context, tenantID, bearer string, h *tenantBarrierHolder) {
+	t.Helper()
+	client := holderHTTPClient(t, h)
+	claimPath := barrierPath(tenantID, "officers/"+h.Username+"/claim/")
+
+	status, body, err := doRESTWith(ctx, client, http.MethodPost, claimPath+"begin", bearer,
+		qrdbtransport.ShareClaimBeginRequest{Username: h.Username})
+	require.NoErrorf(t, err, "claim begin %s: network error", h.Username)
+	require.Equalf(t, http.StatusOK, status, "claim begin %s must return 200; body=%s", h.Username, body)
+	var begin qrdbtransport.ShareClaimBeginResponse
+	require.NoErrorf(t, json.Unmarshal(body, &begin), "claim begin %s: decode body=%s", h.Username, body)
+
+	nonce, err := hex.DecodeString(begin.NonceHex)
+	require.NoErrorf(t, err, "claim begin %s: nonce is not hex", h.Username)
+	signature, err := qrdbsdk.SignShareClaim(h.Key, qrdbsdk.TenantClaimLabel(tenantID), h.Username, nonce)
+	require.NoErrorf(t, err, "claim %s: sign", h.Username)
+
+	status, body, err = doRESTWith(ctx, client, http.MethodPost, claimPath+"complete", bearer,
+		qrdbtransport.ShareClaimCompleteRequest{Username: h.Username, NonceHex: begin.NonceHex, Signature: signature})
+	require.NoErrorf(t, err, "claim complete %s: network error", h.Username)
+	require.Equalf(t, http.StatusOK, status, "claim complete %s must return 200; body=%s", h.Username, body)
+	var done qrdbtransport.ShareClaimCompleteResponse
+	require.NoErrorf(t, json.Unmarshal(body, &done), "claim complete %s: decode body=%s", h.Username, body)
+
+	envelope, err := qrdbsdk.ParseShareEnvelope(done.Envelope)
+	require.NoErrorf(t, err, "claim %s: parse envelope", h.Username)
+	h.Share, err = envelope.OpenWithKey(h.Key)
+	require.NoErrorf(t, err, "claim %s: open envelope", h.Username)
+}
+
+// submitTenantUnsealShare answers h's mtls challenge for the unseal quorum
+// (POST .../barrier/quorum/begin) and submits h's share with it (POST
+// .../barrier/quorum/submit), decoding the quorum's progress. A refused
+// begin returns its status and body without a submit.
+func submitTenantUnsealShare(ctx context.Context, tenantID, bearer string, h *tenantBarrierHolder) (int, *qrdbtransport.QuorumOutcome, []byte, error) {
+	const op = "unseal"
+	status, body, err := doREST(ctx, http.MethodPost, barrierPath(tenantID, "quorum/begin"), bearer,
+		qrdbtransport.TenantQuorumBeginRequest{Op: op, Username: h.Username})
+	if err != nil || status != http.StatusOK {
+		return status, nil, body, err
+	}
+	var challenge qrdbtransport.QuorumChallenge
+	if jerr := json.Unmarshal(body, &challenge); jerr != nil {
+		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: decode challenge: %w; raw=%s", jerr, body)
+	}
+	response, err := qrdbsdk.SignQuorumChallenge(h.Key, challenge.ChallengeID,
+		challenge.MethodData[qrdbsdk.QuorumChallengePurposeKey], challenge.Nonce)
 	if err != nil {
-		return 0, nil, nil, err
+		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: sign challenge: %w", err)
 	}
-	if status == http.StatusOK && len(body) > 0 {
-		var resp tenantBarrierUnsealShareResp
-		if jerr := json.Unmarshal(body, &resp); jerr != nil {
-			return status, nil, body, fmt.Errorf("unsealShareTenantBarrier: decode body: %w; raw=%s", jerr, body)
-		}
-		return status, &resp, body, nil
+
+	status, body, err = doREST(ctx, http.MethodPost, barrierPath(tenantID, "quorum/submit"), bearer,
+		qrdbtransport.TenantQuorumSubmitRequest{
+			Op: op, Username: h.Username, ChallengeID: challenge.ChallengeID,
+			Factor: challenge.Factor, Response: response, Share: h.Share,
+		})
+	if err != nil || status != http.StatusOK {
+		return status, nil, body, err
 	}
-	return status, nil, body, nil
+	var outcome qrdbtransport.QuorumOutcome
+	if jerr := json.Unmarshal(body, &outcome); jerr != nil {
+		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: decode outcome: %w; raw=%s", jerr, body)
+	}
+	return status, &outcome, body, nil
 }
 
 // statusTenantBarrier calls GET .../barrier/status and decodes the response.

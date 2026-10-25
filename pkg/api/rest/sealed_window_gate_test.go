@@ -64,13 +64,21 @@ func TestRESTSealedWindowGate_SealedAdmitDenyTable(t *testing.T) {
 		// bootstrap). The handlers themselves may fail (no barrier service
 		// wired in this fixture) but the request must NOT be rejected by the
 		// sealed gate.
-		{"barrier status (qrdb wire)", http.MethodGet, "/v1/barrier/status", false},
+		// go-qrdb v0.50 makes barrier status ListenerOnly: only the boot-time
+		// sealed-window listener serves the qrdb wire path, never a sealed
+		// regular listener, whose gate this is.
+		{"barrier status (qrdb wire, listener only)", http.MethodGet, "/v1/barrier/status", true},
 		{"barrier status (api mirror)", http.MethodGet, "/api/v1/barrier/status", false},
 		{"barrier unseal (qrdb wire)", http.MethodPost, "/v1/barrier/unseal", false},
 		{"barrier initialize (api mirror)", http.MethodPost, "/api/v1/barrier/initialize", false},
-		{"shamir unseal-share", http.MethodPost, "/v1/barrier/shamir/unseal-share", false},
-		{"ceremony status (qrdb wire)", http.MethodGet, "/v1/ceremony/status", false},
-		{"init status (api mirror)", http.MethodGet, "/api/v1/init/status", false},
+		{"quorum submit (qrdb wire)", http.MethodPost, "/v1/barrier/quorum/submit", false},
+		{"share claim begin (api mirror)", http.MethodPost, "/api/v1/barrier/officers/alice/claim/begin", false},
+		// AuthenticatedOnly: the gate admits it; authentication still applies.
+		{"cluster unseal (qrdb wire)", http.MethodPost, "/v1/barrier/cluster-unseal", false},
+		// go-qrdb v0.50: a sealed node answers no status question but
+		// barrier status.
+		{"ceremony status (qrdb wire)", http.MethodGet, "/v1/ceremony/status", true},
+		{"init status (api mirror)", http.MethodGet, "/api/v1/init/status", true},
 		{"bootstrap prefix", http.MethodPost, "/api/v1/bootstrap/auto", false},
 
 		// Off-allowlist surfaces: sealed envelope.
@@ -83,13 +91,16 @@ func TestRESTSealedWindowGate_SealedAdmitDenyTable(t *testing.T) {
 		{"barrier enable-encryption (deliberate exclusion)", http.MethodPost, "/api/v1/barrier/enable-encryption", true},
 		{"iam users", http.MethodGet, "/api/v1/iam/users", true},
 		{"user factors wire", http.MethodGet, "/v1/users/factors/list", true},
+		{"shamir unseal-share (withdrawn in go-qrdb v0.47)", http.MethodPost, "/v1/barrier/shamir/unseal-share", true},
+		{"officer revoke (not a claim pattern)", http.MethodPost, "/v1/barrier/officers/revoke", true},
 
 		// The strict ceremony model (sealedwindow.StrictCeremonyExclusions)
-		// withholds the three ceremony verbs that MINT or DISTRIBUTE trust on
-		// EVERY transport. They keep their full entries in the canonical
-		// Table — so the quicbaas table still diffs mechanically against
-		// qrdb's, which allowlists all three — but every derivation skips
-		// them, so the sealed gate must reject them. Reaching any of these
+		// withholds the ceremony verbs that MINT trust on EVERY transport.
+		// They keep their full entries in the canonical Table — so the
+		// quicbaas table still diffs mechanically against qrdb's, which
+		// allowlists both — but every derivation skips them, so the sealed
+		// gate must reject them. External officer enrollment left the API
+		// with the go-qrdb v0.47 ceremony cut and stays rejected. Reaching any of these
 		// pre-authentication on a fresh daemon hands over the trust root; they
 		// are driven in-process by `quicbaasd init` instead.
 		{"ceremony initialize (strict exclusion)", http.MethodPost, "/v1/ceremony/initialize", true},

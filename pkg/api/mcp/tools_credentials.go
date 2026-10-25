@@ -310,11 +310,20 @@ func executeCredentialRetrieveVersion(ctx context.Context, svc qrdbsdk.ServiceCr
 		return nil, &CredentialNameRequiredError{}
 	}
 	version := getUint64(args, "version")
-	value, err := svc.CredentialRetrieveVersion(ctx, name, version)
+	buf, err := svc.CredentialRetrieveVersionBuffer(ctx, name, version)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"value": string(value)}, nil
+	defer buf.Destroy()
+	var value string
+	if err := buf.WithBytes(func(b []byte) error {
+		//secure:unwiped wire-boundary the MCP tool result is a JSON string, the one place the credential leaves protected memory.
+		value = string(b)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"value": value}, nil
 }
 
 func executeCredentialListVersions(ctx context.Context, svc qrdbsdk.ServiceCredentialServicer, args map[string]interface{}) (interface{}, error) {

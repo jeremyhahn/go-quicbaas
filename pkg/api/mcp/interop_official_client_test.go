@@ -22,6 +22,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
@@ -64,7 +65,7 @@ func connectOfficialClient(t *testing.T) *mcp.ClientSession {
 		mcpserver.WithToolCapabilities(false))
 	module.RegisterMCP(srv)
 
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "go-sdk-interop", Version: "1.8.0"}, nil)

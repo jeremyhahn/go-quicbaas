@@ -15,7 +15,11 @@
 
 package rest
 
-import "context"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+)
 
 // SetFleetRegistrar wires the fleet-registry registrar used by the
 // mTLS agent-register handler. The caller should pass an
@@ -30,6 +34,24 @@ func (s *Server) SetFleetRegistrar(registrar interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fleetRegistrar = registrar
+}
+
+// SetFleetNodeCertRecords wires the issued-cert record store fleet
+// enrollment checks: a client certificate the fleet issuer did not record
+// for the registering tenant is refused (stopgap until go-quicbaas#1821).
+// Wired from pkg/server lifecycle; with no store every enrollment fails.
+func (s *Server) SetFleetNodeCertRecords(records service.FleetNodeCertRecords) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fleetNodeCertRecords = records
+}
+
+// fleetNodeCertRecordsOrNil returns the wired record store under the read
+// lock, or nil when none is set.
+func (s *Server) fleetNodeCertRecordsOrNil() service.FleetNodeCertRecords {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fleetNodeCertRecords
 }
 
 // FleetAddressProber checks that the control plane can resolve and dial a

@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,18 +43,21 @@ var errTenantBarrierBoom = stderrors.New("tenant barrier boom")
 // service.TenantBarrierServicer. Methods delegate to optional function fields so
 // a test can shape each path.
 type fakeTenantBarrierService struct {
-	initFn        func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
-	unsealFn      func(ctx context.Context, tenantID string, key []byte) error
-	unsealShareFn func(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error)
-	sealFn        func(ctx context.Context, tenantID string) error
-	statusFn      func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
+	service.TenantBarrierServicer
+	initFn func(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error)
+	// initReq records the request the last TenantBarrierInit call received.
+	initReq  *qrdbtransport.TenantBarrierInitRequest
+	unsealFn func(ctx context.Context, tenantID string, key []byte) error
+	sealFn   func(ctx context.Context, tenantID string) error
+	statusFn func(ctx context.Context, tenantID string) (*qrdbtransport.TenantBarrierStatusResponse, error)
 }
 
-func (f *fakeTenantBarrierService) TenantBarrierInit(ctx context.Context, tenantID string, passphrase []byte, threshold, shares int, strategy string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+func (f *fakeTenantBarrierService) TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
+	f.initReq = req
 	if f.initFn != nil {
-		return f.initFn(ctx, tenantID, passphrase, threshold, shares, strategy)
+		return f.initFn(ctx, req.TenantID, req.Passphrase, req.Threshold, req.Shares, req.Strategy)
 	}
-	return &qrdbtransport.TenantBarrierInitResponse{TenantID: tenantID}, nil
+	return &qrdbtransport.TenantBarrierInitResponse{TenantID: req.TenantID}, nil
 }
 
 func (f *fakeTenantBarrierService) TenantBarrierUnseal(ctx context.Context, tenantID string, key []byte) error {
@@ -61,13 +65,6 @@ func (f *fakeTenantBarrierService) TenantBarrierUnseal(ctx context.Context, tena
 		return f.unsealFn(ctx, tenantID, key)
 	}
 	return nil
-}
-
-func (f *fakeTenantBarrierService) TenantBarrierUnsealShare(ctx context.Context, tenantID, share string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-	if f.unsealShareFn != nil {
-		return f.unsealShareFn(ctx, tenantID, share)
-	}
-	return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: tenantID}, nil
 }
 
 func (f *fakeTenantBarrierService) TenantBarrierSeal(ctx context.Context, tenantID string) error {
@@ -126,7 +123,6 @@ func TestTenantBarrier_ServiceUnavailable(t *testing.T) {
 	}{
 		{"init", http.MethodPost, `{}`, s.HandleTenantBarrierInit},
 		{"unseal", http.MethodPost, `{}`, s.HandleTenantBarrierUnseal},
-		{"unseal-share", http.MethodPost, `{"share":"x"}`, s.HandleTenantBarrierUnsealShare},
 		{"seal", http.MethodPost, "", s.HandleTenantBarrierSeal},
 		{"status", http.MethodGet, "", s.HandleTenantBarrierStatus},
 	}
@@ -156,7 +152,6 @@ func TestTenantBarrier_MissingTenantID(t *testing.T) {
 	}{
 		{"init", http.MethodPost, `{}`, s.HandleTenantBarrierInit},
 		{"unseal", http.MethodPost, `{}`, s.HandleTenantBarrierUnseal},
-		{"unseal-share", http.MethodPost, `{"share":"x"}`, s.HandleTenantBarrierUnsealShare},
 		{"seal", http.MethodPost, "", s.HandleTenantBarrierSeal},
 		{"status", http.MethodGet, "", s.HandleTenantBarrierStatus},
 	}
@@ -244,6 +239,78 @@ func TestTenantBarrierInit_ServiceError(t *testing.T) {
 	}
 }
 
+// TestTenantBarrierInit_StatementUnsupportedIs501 pins Codex 6757 finding 1
+// on REST: the JSON body cannot carry the go-qrdb Signer, so a raft-isolated
+// tenant's init is refused 501 with the typed refusal's text.
+func TestTenantBarrierInit_StatementUnsupportedIs501(t *testing.T) {
+	refusal := &service.TenantBarrierInitStatementUnsupportedError{TenantID: "tenant-a"}
+	svc := &fakeTenantBarrierService{
+		initFn: func(_ context.Context, _ string, _ []byte, _, _ int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			return nil, refusal
+		},
+	}
+	w := httptest.NewRecorder()
+	tenantBarrierServer(t, svc).HandleTenantBarrierInit(w,
+		tenantBarrierReq(http.MethodPost, "tenant-a", `{"strategy":"none"}`))
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "raft-isolated") {
+		t.Fatalf("expected the refusal text, got %s", w.Body.String())
+	}
+}
+
+// The inline Shamir roster and its policy in the body reach the service in
+// go-qrdb's request type, the URL names the tenant, and the holder
+// certificates go-qrdb issues come back (Codex 6709 P1).
+func TestTenantBarrierInit_ForwardsOfficersAndPolicy(t *testing.T) {
+	svc := &fakeTenantBarrierService{
+		initFn: func(_ context.Context, tenantID string, _ []byte, threshold, shares int, _ string) (*qrdbtransport.TenantBarrierInitResponse, error) {
+			return &qrdbtransport.TenantBarrierInitResponse{
+				TenantID:    tenantID,
+				Strategy:    "shamir",
+				Threshold:   threshold,
+				TotalShares: shares,
+				Holders:     []qrdbtransport.TenantBarrierHolderCert{{Username: "officer-1", Role: "unseal", CertPEM: "cert-1"}},
+			}, nil
+		},
+	}
+	body := `{"tenant_id":"tenant-b","strategy":"shamir","threshold":1,"shares":1,"policy":"any-enrolled",` +
+		`"officers":[{"username":"officer-1","role":"unseal","csr_pem":"csr-1","factors":[{"name":"mtls"}],"designated":"mtls"}]}`
+	w := httptest.NewRecorder()
+	tenantBarrierServer(t, svc).HandleTenantBarrierInit(w, tenantBarrierReq(http.MethodPost, "tenant-a", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	got := svc.initReq
+	if got == nil {
+		t.Fatal("service received no init request")
+	}
+	if got.TenantID != "tenant-a" {
+		t.Errorf("tenant = %q, want the URL's tenant-a", got.TenantID)
+	}
+	if got.Policy != "any-enrolled" {
+		t.Errorf("policy = %q, want any-enrolled", got.Policy)
+	}
+	want := []qrdbtransport.OfficerRegisterRequest{{
+		Username: "officer-1", Role: "unseal", CSRPEM: "csr-1",
+		Factors:    []qrdbtransport.HolderFactorEnrolment{{Name: "mtls"}},
+		Designated: "mtls",
+	}}
+	if !reflect.DeepEqual(got.Officers, want) {
+		t.Errorf("officers = %+v, want %+v", got.Officers, want)
+	}
+
+	var resp qrdbtransport.TenantBarrierInitResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Holders) != 1 || resp.Holders[0].CertPEM != "cert-1" {
+		t.Errorf("holder certificates = %+v, want officer-1's", resp.Holders)
+	}
+}
+
 // =============================================================================
 // Unseal
 // =============================================================================
@@ -283,43 +350,6 @@ func TestTenantBarrierUnseal_ServiceError(t *testing.T) {
 // =============================================================================
 // Unseal-share
 // =============================================================================
-
-func TestTenantBarrierUnsealShare_OK(t *testing.T) {
-	svc := &fakeTenantBarrierService{
-		unsealShareFn: func(_ context.Context, tenantID, _ string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-			return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: tenantID, Required: 3, Submitted: 1}, nil
-		},
-	}
-	w := httptest.NewRecorder()
-	tenantBarrierServer(t, svc).HandleTenantBarrierUnsealShare(w,
-		tenantBarrierReq(http.MethodPost, "tenant-a", `{"share":"abc"}`))
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestTenantBarrierUnsealShare_MissingShare(t *testing.T) {
-	w := httptest.NewRecorder()
-	tenantBarrierServer(t, &fakeTenantBarrierService{}).HandleTenantBarrierUnsealShare(w,
-		tenantBarrierReq(http.MethodPost, "tenant-a", `{"share":""}`))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
-func TestTenantBarrierUnsealShare_ServiceError(t *testing.T) {
-	svc := &fakeTenantBarrierService{
-		unsealShareFn: func(_ context.Context, _, _ string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-			return nil, errTenantBarrierBoom
-		},
-	}
-	w := httptest.NewRecorder()
-	tenantBarrierServer(t, svc).HandleTenantBarrierUnsealShare(w,
-		tenantBarrierReq(http.MethodPost, "tenant-a", `{"share":"abc"}`))
-	if w.Code < 500 {
-		t.Fatalf("expected 5xx, got %d", w.Code)
-	}
-}
 
 // =============================================================================
 // Seal
@@ -407,10 +437,6 @@ func barrierNotEnabledCases(s *Server, failErr error) []struct {
 			}}},
 		{"unseal", http.MethodPost, `{"key":"YWJj"}`, s.HandleTenantBarrierUnseal,
 			&fakeTenantBarrierService{unsealFn: func(context.Context, string, []byte) error { return failErr }}},
-		{"unseal-share", http.MethodPost, `{"share":"x"}`, s.HandleTenantBarrierUnsealShare,
-			&fakeTenantBarrierService{unsealShareFn: func(context.Context, string, string) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-				return nil, failErr
-			}}},
 		{"seal", http.MethodPost, "", s.HandleTenantBarrierSeal,
 			&fakeTenantBarrierService{sealFn: func(context.Context, string) error { return failErr }}},
 		{"status", http.MethodGet, "", s.HandleTenantBarrierStatus,

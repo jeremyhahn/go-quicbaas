@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -3010,7 +3011,7 @@ func TestRunDaemon_ServerStartError(t *testing.T) {
 // reinstated, this test kills the test binary instead of passing, which is
 // exactly the signal a reviewer needs.
 func TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler(t *testing.T) {
-	sec, err := secure.NewSecret([]byte("held across a SIGTERM"))
+	sec, err := secure.NewSecret(context.Background(), []byte("held across a SIGTERM"))
 	require.NoError(t, err)
 	t.Cleanup(sec.Destroy)
 
@@ -3036,7 +3037,7 @@ func TestSecureSubsystem_DoesNotInstallProcessKillingSignalHandler(t *testing.T)
 	// could observe SIGTERM and still be killed mid-shutdown. Hold the
 	// goroutine past that window; surviving it is the assertion.
 	<-time.After(250 * time.Millisecond)
-	opened, err := sec.Open()
+	opened, err := sec.Open(context.Background())
 	require.NoError(t, err, "the process must still be alive, with its secrets, after SIGTERM")
 	opened.Destroy()
 }

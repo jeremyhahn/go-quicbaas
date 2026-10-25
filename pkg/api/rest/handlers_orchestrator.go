@@ -33,6 +33,7 @@ import (
 
 	qerrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -1707,7 +1708,15 @@ func (s *Server) HandleFleetNodeHeartbeat(w http.ResponseWriter, r *http.Request
 		// Try idempotent recovery — if the recoverer accepts the cert
 		// it has already re-published the agent, so the retry below
 		// hits the live entry and succeeds.
-		if recovered := s.tryRecoverFleetHeartbeat(ctx, r, tenantID, nodeID, &payload); recovered {
+		recovered, recoverErr := s.tryRecoverFleetHeartbeat(ctx, r, tenantID, nodeID, &payload)
+		// A certificate the fleet issuer did not record is refused as at
+		// enrolment (go-quicbaas#1821).
+		var notRecorded *service.FleetNodeCertNotRecordedError
+		if stderrors.As(recoverErr, &notRecorded) {
+			respondFleetEnrollError(w, r, http.StatusForbidden, "certificate_not_recorded", notRecorded.Error())
+			return
+		}
+		if recovered {
 			err = agentSvc.FleetNodeHeartbeat(ctx, tenantID, nodeID, observed)
 		}
 	}

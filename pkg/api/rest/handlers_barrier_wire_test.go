@@ -139,154 +139,56 @@ func TestBarrierWire_InitializeCarriesExactSecretBytes(t *testing.T) {
 	}
 }
 
-// TestBarrierWire_ShamirInitializeCarriesExactSecretBytes asserts the property
-// for `barrier init-shamir`, and that the M-of-N parameters riding alongside
-// the credential survive the same round trip.
-func TestBarrierWire_ShamirInitializeCarriesExactSecretBytes(t *testing.T) {
-	var (
-		got                []byte
-		gotThr, gotTotal   int
-		wantThr, wantTotal = 2, 3
-	)
+// TestBarrierWire_ShamirInitializeCarriesQuorum asserts `barrier init-shamir`
+// carries its M-of-N parameters across the go-qrdb REST transport and decodes
+// the share-free response go-qrdb returns.
+func TestBarrierWire_ShamirInitializeCarriesQuorum(t *testing.T) {
+	var got qrdbtransport.BarrierInitializeShamirRequest
 	svc := &fakeBarrierService{
-		initShamirFn: func(_ context.Context, secret []byte, threshold, total int) (*service.ShamirInitInfo, error) {
-			got = append([]byte(nil), secret...)
-			gotThr, gotTotal = threshold, total
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
+		initShamirFn: func(_ context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+			got = *req
+			return &qrdbtransport.BarrierInitializeShamirResponse{
+				Threshold: req.Threshold, TotalShares: req.TotalShares, ShareCount: req.TotalShares,
+			}, nil
 		},
 	}
 	client := newQRDBRESTClient(t, barrierServer(t, svc))
 
 	resp, err := client.BarrierInitializeShamir(context.Background(), &qrdbtransport.BarrierInitializeShamirRequest{
-		Secret:      append([]byte(nil), wirePassphrase...),
-		Threshold:   wantThr,
-		TotalShares: wantTotal,
+		Threshold:   2,
+		TotalShares: 3,
+		Policy:      "any",
 	})
 	if err != nil {
 		t.Fatalf("BarrierInitializeShamir over the qrdb REST transport: %v", err)
 	}
-	if !bytes.Equal(got, wirePassphrase) {
-		t.Fatalf("secret reached the service as %q, want %q", got, wirePassphrase)
+	if got.Threshold != 2 || got.TotalShares != 3 || got.Policy != "any" {
+		t.Fatalf("request reached the service as %+v", got)
 	}
-	if gotThr != wantThr || gotTotal != wantTotal {
-		t.Fatalf("quorum reached the service as %d-of-%d, want %d-of-%d", gotThr, gotTotal, wantThr, wantTotal)
-	}
-	if resp.Threshold != wantThr || resp.TotalShares != wantTotal {
-		t.Fatalf("response decoded as %d-of-%d, want %d-of-%d", resp.Threshold, resp.TotalShares, wantThr, wantTotal)
+	if resp.Threshold != 2 || resp.TotalShares != 3 || resp.ShareCount != 3 {
+		t.Fatalf("response decoded as %+v", resp)
 	}
 }
 
-// TestBarrierWire_ShareVerbsCarryShareStrings covers the share-bearing verbs,
-// whose fields go-qrdb deliberately kept as `string` (a Shamir share is
-// already a printable encoding). They are asserted here so a future
-// over-correction that retypes them to []byte — and so base64-wraps an
-// already-encoded share — is caught by the same file.
-func TestBarrierWire_ShareVerbsCarryShareStrings(t *testing.T) {
-	const share = "1-8f3a2b"
-	var (
-		gotShare  string
-		gotShares []string
-	)
+// TestBarrierWire_RecoveryGenerateCarriesThreshold covers recovery-key
+// generation, whose request go-qrdb v0.47 reduced to a threshold and policy.
+func TestBarrierWire_RecoveryGenerateCarriesThreshold(t *testing.T) {
+	var got qrdbtransport.BarrierGenerateRecoveryKeysRequest
 	svc := &fakeBarrierService{
-		unsealWithShareFn: func(_ context.Context, s string) (*service.UnsealShareProgress, error) {
-			gotShare = s
-			return &service.UnsealShareProgress{Required: 2, Submitted: 1}, nil
-		},
-		unsealWithSharesFn: func(_ context.Context, shares []string) error {
-			gotShares = shares
-			return nil
+		genRecoveryFn: func(_ context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error) {
+			got = *req
+			return &qrdbtransport.BarrierRecoveryKeysResponse{Threshold: req.Threshold, Total: 4, ShareCount: 4}, nil
 		},
 	}
 	client := newQRDBRESTClient(t, barrierServer(t, svc))
-	ctx := context.Background()
 
-	progress, err := client.BarrierUnsealWithShare(ctx, &qrdbtransport.BarrierUnsealShareRequest{Share: share})
-	if err != nil {
-		t.Fatalf("BarrierUnsealWithShare: %v", err)
-	}
-	if gotShare != share {
-		t.Fatalf("share reached the service as %q, want %q", gotShare, share)
-	}
-	if progress.Required != 2 || progress.Submitted != 1 {
-		t.Fatalf("progress decoded as %d/%d, want 1/2", progress.Submitted, progress.Required)
-	}
-
-	if err := client.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{
-		Shares: []string{share, "2-11c4de"},
-	}); err != nil {
-		t.Fatalf("BarrierUnsealWithShares: %v", err)
-	}
-	if len(gotShares) != 2 || gotShares[0] != share {
-		t.Fatalf("shares reached the service as %q", gotShares)
-	}
-}
-
-// TestBarrierWire_QuorumVerbsCarryCounts covers rekey, recovery-key generation
-// and recovery, root-token minting and recovery status — the barrier verbs
-// that carry no credential. They share this file because they share the wire
-// contract: each request shape is an alias of the go-qrdb transport type, so a
-// field renamed upstream fails to compile rather than silently decoding zero.
-func TestBarrierWire_QuorumVerbsCarryCounts(t *testing.T) {
-	var (
-		gotRekeyThr, gotRekeyTotal int
-		gotGenThr, gotGenTotal     int
-		gotKeys, gotTokenShares    []string
-	)
-	svc := &fakeBarrierService{
-		rekeyFn: func(_ context.Context, threshold, total int) (*service.ShamirInitInfo, error) {
-			gotRekeyThr, gotRekeyTotal = threshold, total
-			return &service.ShamirInitInfo{Threshold: threshold, TotalShares: total, ShareCount: total}, nil
-		},
-		genRecoveryFn: func(_ context.Context, threshold, total int) (*service.RecoveryKeysInfo, error) {
-			gotGenThr, gotGenTotal = threshold, total
-			return &service.RecoveryKeysInfo{Threshold: threshold, Total: total, ShareCount: total}, nil
-		},
-		recoverWithKeysFn: func(_ context.Context, keys []string) error { gotKeys = keys; return nil },
-		genRootTokenFn: func(_ context.Context, shares []string) (*service.RootTokenInfo, error) {
-			gotTokenShares = shares
-			return &service.RootTokenInfo{Token: "root-tok"}, nil
-		},
-	}
-	client := newQRDBRESTClient(t, barrierServer(t, svc))
-	ctx := context.Background()
-
-	rekey, err := client.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{Threshold: 3, Total: 5})
-	if err != nil {
-		t.Fatalf("BarrierRekey: %v", err)
-	}
-	if gotRekeyThr != 3 || gotRekeyTotal != 5 || rekey.Threshold != 3 || rekey.TotalShares != 5 {
-		t.Fatalf("rekey quorum: service saw %d-of-%d, client decoded %d-of-%d",
-			gotRekeyThr, gotRekeyTotal, rekey.Threshold, rekey.TotalShares)
-	}
-
-	keys, err := client.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
-		Threshold: 2, Total: 4,
-	})
+	keys, err := client.BarrierGenerateRecoveryKeys(context.Background(),
+		&qrdbtransport.BarrierGenerateRecoveryKeysRequest{Threshold: 2})
 	if err != nil {
 		t.Fatalf("BarrierGenerateRecoveryKeys: %v", err)
 	}
-	if gotGenThr != 2 || gotGenTotal != 4 || keys.Threshold != 2 || keys.Total != 4 {
-		t.Fatalf("recovery quorum: service saw %d-of-%d, client decoded %d-of-%d",
-			gotGenThr, gotGenTotal, keys.Threshold, keys.Total)
-	}
-
-	if err := client.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{
-		Keys: []string{"k1", "k2"},
-	}); err != nil {
-		t.Fatalf("BarrierRecoverWithKeys: %v", err)
-	}
-	if len(gotKeys) != 2 {
-		t.Fatalf("recovery keys reached the service as %q", gotKeys)
-	}
-
-	tok, err := client.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
-		Shares: []string{"s1", "s2"},
-	})
-	if err != nil {
-		t.Fatalf("BarrierGenerateRootToken: %v", err)
-	}
-	if len(gotTokenShares) != 2 || tok.Token != "root-tok" {
-		t.Fatalf("root token: service saw shares %q, client decoded token %q", gotTokenShares, tok.Token)
+	if got.Threshold != 2 || keys.Threshold != 2 || keys.Total != 4 {
+		t.Fatalf("recovery quorum: service saw %+v, client decoded %+v", got, keys)
 	}
 }
 
@@ -472,13 +374,13 @@ func TestTenantBarrierWire_UnsealCarriesExactKeyBytes(t *testing.T) {
 
 // TestTenantBarrierWire_UnsealWipesKeyOnAPartialDecode is the error-handling
 // half, and the reason the cleanup is registered before the decode here too:
-// `key` decodes, `share` then fails to, the request is refused, and the tenant
+// `key` decodes, `tenant_id` then fails to, the request is refused, and the tenant
 // root key would otherwise be left on the heap.
 func TestTenantBarrierWire_UnsealWipesKeyOnAPartialDecode(t *testing.T) {
 	var body tenantBarrierUnsealBody
 	cleanup := wipeCredential(&body.Key)
 
-	if err := json.Unmarshal([]byte(`{"key":"aHVudGVyMg==","share":42}`), &body); err == nil {
+	if err := json.Unmarshal([]byte(`{"key":"aHVudGVyMg==","tenant_id":42}`), &body); err == nil {
 		t.Fatal("precondition: this body must fail to decode")
 	}
 	if !bytes.Equal(body.Key, []byte("hunter2")) {
@@ -519,7 +421,6 @@ func TestBarrierRequestShapesMatchQRDBTransport(t *testing.T) {
 	}{
 		{"barrier initialize", barrierInitializeRequest{}, "Secret", "secret"},
 		{"barrier unseal", barrierUnsealRequest{}, "Secret", "secret"},
-		{"barrier shamir initialize", barrierShamirInitializeRequest{}, "Secret", "secret"},
 		{"barrier enable encryption", barrierEnableEncryptionRequest{}, "Passphrase", "passphrase,omitempty"},
 		{"tenant barrier init", tenantBarrierInitBody{}, "Passphrase", "passphrase,omitempty"},
 		{"tenant barrier unseal", tenantBarrierUnsealBody{}, "Key", "key,omitempty"},
@@ -556,15 +457,9 @@ func TestBarrierRequestShapesAreQRDBAliases(t *testing.T) {
 		{"initialize", barrierInitializeRequest{}, qrdbtransport.BarrierInitializeRequest{}},
 		{"unseal", barrierUnsealRequest{}, qrdbtransport.BarrierUnsealRequest{}},
 		{"shamir initialize", barrierShamirInitializeRequest{}, qrdbtransport.BarrierInitializeShamirRequest{}},
-		{"unseal share", barrierShamirUnsealShareRequest{}, qrdbtransport.BarrierUnsealShareRequest{}},
-		{"unseal shares", barrierShamirUnsealSharesRequest{}, qrdbtransport.BarrierUnsealSharesRequest{}},
-		{"rekey", barrierRekeyRequest{}, qrdbtransport.BarrierRekeyRequest{}},
 		{"recovery generate", barrierRecoveryGenerateRequest{}, qrdbtransport.BarrierGenerateRecoveryKeysRequest{}},
-		{"recovery recover", barrierRecoveryRecoverRequest{}, qrdbtransport.BarrierRecoverWithKeysRequest{}},
-		{"root token", barrierRootTokenRequest{}, qrdbtransport.BarrierGenerateRootTokenRequest{}},
 		{"tenant init", tenantBarrierInitBody{}, qrdbtransport.TenantBarrierInitRequest{}},
 		{"tenant unseal", tenantBarrierUnsealBody{}, qrdbtransport.TenantBarrierUnsealRequest{}},
-		{"tenant unseal share", tenantBarrierUnsealShareBody{}, qrdbtransport.TenantBarrierUnsealShareRequest{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -584,15 +479,15 @@ func TestBarrierRequestShapesAreQRDBAliases(t *testing.T) {
 // cleanup contract: the closure must wipe the slice the decode left behind,
 // not the nil slice that existed when the closure was registered.
 //
-// The body below is the exact hazard — `secret` is well-formed and `threshold`
+// The body below is the exact hazard — `secret` is well-formed and `so_pin`
 // is not, so encoding/json populates the credential and THEN reports an error.
 // The request is refused, the service is never called, and without this
 // cleanup the plaintext stays on the heap.
 func TestWipeCredential_ZeroesWhatTheDecodeProduced(t *testing.T) {
-	var req barrierShamirInitializeRequest
+	var req barrierInitializeRequest
 	cleanup := wipeCredential(&req.Secret)
 
-	if err := json.Unmarshal([]byte(`{"secret":"aHVudGVyMg==","threshold":"not-a-number"}`), &req); err == nil {
+	if err := json.Unmarshal([]byte(`{"secret":"aHVudGVyMg==","so_pin":12345}`), &req); err == nil {
 		t.Fatal("precondition: this body must fail to decode")
 	}
 	if !bytes.Equal(req.Secret, []byte("hunter2")) {
@@ -704,9 +599,9 @@ func TestBarrierWire_RejectedRequestsNeverReachTheService(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false
 			svc := &fakeBarrierService{
-				initShamirFn: func(context.Context, []byte, int, int) (*service.ShamirInitInfo, error) {
+				initShamirFn: func(context.Context, *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
 					called = true
-					return &service.ShamirInitInfo{}, nil
+					return &qrdbtransport.BarrierInitializeShamirResponse{}, nil
 				},
 				unsealFn: func(context.Context, []byte) error { called = true; return nil },
 			}

@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/permission"
 	"github.com/jeremyhahn/go-qrdb/pkg/role"
 	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // secretsVaultMCPGrants is the ONE canonical answer to "what does a caller need
@@ -212,7 +213,7 @@ func TestSecretsVaultMCPPermissions_TenantScopeOutcomes(t *testing.T) {
 		})
 
 		t.Run(name+"/system_tenant_not_lifted", func(t *testing.T) {
-			err := authorizeVaultPermission(t, perm, tenant.SystemTenantID, ownTenant)
+			err := authorizeVaultPermission(t, perm, qrdbsdk.SystemTenantID, ownTenant)
 			require.Error(t, err,
 				"%s requires %s, which qrdb registers self-strict; the system tenant must not reach a tenant's vault", tool, perm)
 			assert.Contains(t, err.Error(), "system tenant is not lifted",
@@ -220,7 +221,7 @@ func TestSecretsVaultMCPPermissions_TenantScopeOutcomes(t *testing.T) {
 		})
 
 		t.Run(name+"/system_tenant_own_vault_admitted", func(t *testing.T) {
-			assert.NoError(t, authorizeVaultPermission(t, perm, tenant.SystemTenantID, tenant.SystemTenantID),
+			assert.NoError(t, authorizeVaultPermission(t, perm, qrdbsdk.SystemTenantID, qrdbsdk.SystemTenantID),
 				"%s requires %s, which must admit the system tenant acting in its own vault", tool, perm)
 		})
 	}

@@ -1416,7 +1416,9 @@ func initXKMSForTest(t *testing.T) func() {
 	require.True(t, xkmssdk.ServiceIsInitialized())
 
 	// Key-version records, as the server wires them, so RotateKey works.
-	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	versionDAOs, err := xkmssdk.NewBackendDAOFactory(xkmssdk.NewStorageMemory())
+	require.NoError(t, err)
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionDAOs)
 	require.NoError(t, err)
 	svc, err := xkmssdk.Get()
 	require.NoError(t, err)

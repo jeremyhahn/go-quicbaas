@@ -189,9 +189,9 @@ func newIntrospectFixture(t *testing.T) *introspectFixture {
 	// The stored form is the PBKDF2 digest since the #37 migration; a bcrypt
 	// digest here fails closed under GODEBUG=fips140=only, which this package
 	// is gated on.
-	introspectSec, err := secure.NewSecret([]byte(introspectSecret))
+	introspectSec, err := secure.NewSecret(t.Context(), []byte(introspectSecret))
 	require.NoError(t, err)
-	hashed, err := iam.HashClientSecret(introspectSec)
+	hashed, err := iam.HashClientSecret(t.Context(), introspectSec)
 	introspectSec.Destroy()
 	require.NoError(t, err)
 	require.NoError(t, backend.CreateApp(context.Background(), &iam.Application{
@@ -263,7 +263,7 @@ func introspectRequest(token string, withCert bool) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/oauth2/introspect", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if withCert {
-		spiffeURI, _ := url.Parse("spiffe://broker.example.com/tenant/tenant-a/svc/resource-server")
+		spiffeURI, _ := url.Parse("spiffe://tenant-a/svc/resource-server")
 		cert := &x509.Certificate{
 			Subject:      pkix.Name{CommonName: "rs.example.com"},
 			URIs:         []*url.URL{spiffeURI},
@@ -389,7 +389,7 @@ func TestIntrospect_DualIdentityAudit(t *testing.T) {
 	ev := events[0]
 	assert.Equal(t, introspectTenant, ev.TenantID)
 	require.NotNil(t, ev.Actor)
-	assert.Equal(t, "spiffe://broker.example.com/tenant/tenant-a/svc/resource-server", ev.Actor.ServiceIdentity)
+	assert.Equal(t, "spiffe://tenant-a/svc/resource-server", ev.Actor.ServiceIdentity)
 	assert.Equal(t, introspectClientID, ev.Actor.UserID)
 	assert.Contains(t, ev.Actor.Scopes, "agent:runtime:spawn")
 	assert.Equal(t, "oauth2.introspect", ev.Action)

@@ -16,11 +16,14 @@ package grpc
 import (
 	"context"
 	stderrors "errors"
+	"reflect"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -35,14 +38,9 @@ import (
 // Each method dispatches to an injected closure when set, otherwise it
 // returns zero values.
 type mockCeremonyService struct {
-	initFn           func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error)
-	statusFn         func(ctx context.Context) (*service.CeremonyStatusInfo, error)
-	beginFn          func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
-	completeFn       func(ctx context.Context, username, nonceHex, sigB64 string) (*service.CeremonyClaimCertResult, error)
-	beginShareFn     func(ctx context.Context, username string) (*service.CeremonyChallenge, error)
-	completeShareFn  func(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error)
-	signCSRFn        func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
-	enrollExternalFn func(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error)
+	initFn    func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error)
+	statusFn  func(ctx context.Context) (*service.CeremonyStatusInfo, error)
+	signCSRFn func(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error)
 }
 
 var _ service.CeremonyServicer = (*mockCeremonyService)(nil)
@@ -61,46 +59,11 @@ func (m *mockCeremonyService) CeremonyStatus(ctx context.Context) (*service.Cere
 	return &service.CeremonyStatusInfo{}, nil
 }
 
-func (m *mockCeremonyService) CeremonyBeginClaimCert(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-	if m.beginFn != nil {
-		return m.beginFn(ctx, username)
-	}
-	return &service.CeremonyChallenge{}, nil
-}
-
-func (m *mockCeremonyService) CeremonyCompleteClaimCert(ctx context.Context, username, nonceHex, sigB64 string) (*service.CeremonyClaimCertResult, error) {
-	if m.completeFn != nil {
-		return m.completeFn(ctx, username, nonceHex, sigB64)
-	}
-	return &service.CeremonyClaimCertResult{}, nil
-}
-
-func (m *mockCeremonyService) CeremonyBeginClaimShare(ctx context.Context, username string) (*service.CeremonyChallenge, error) {
-	if m.beginShareFn != nil {
-		return m.beginShareFn(ctx, username)
-	}
-	return &service.CeremonyChallenge{}, nil
-}
-
-func (m *mockCeremonyService) CeremonyCompleteClaimShare(ctx context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
-	if m.completeShareFn != nil {
-		return m.completeShareFn(ctx, username, nonceHex, signature)
-	}
-	return &service.CeremonyClaimShareResult{}, nil
-}
-
 func (m *mockCeremonyService) CeremonySignCSR(ctx context.Context, username, soPin, csrPEM, role string) (*service.CeremonySignCSRResult, error) {
 	if m.signCSRFn != nil {
 		return m.signCSRFn(ctx, username, soPin, csrPEM, role)
 	}
 	return &service.CeremonySignCSRResult{}, nil
-}
-
-func (m *mockCeremonyService) CeremonyEnrollExternalOfficer(ctx context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-	if m.enrollExternalFn != nil {
-		return m.enrollExternalFn(ctx, req)
-	}
-	return &service.CeremonyEnrollExternalOfficerResponse{}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +194,101 @@ func TestCeremonyInitialize_FacadeError(t *testing.T) {
 	}
 }
 
+// TestCeremonyInitialize_DeliversIssuedCredentials pins Codex 6800 P1: the
+// generated admin key, the admin certificate and the holder certificates
+// reach the gRPC caller.
+func TestCeremonyInitialize_DeliversIssuedCredentials(t *testing.T) {
+	mock := &mockCeremonyService{
+		initFn: func(_ context.Context, _ *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			return &service.CeremonyInitInfo{
+				State:                 "initialized",
+				Holders:               []qrdbtransport.CeremonyHolderCert{{Username: "carol", Role: "custodian", CertPEM: "carol-cert"}},
+				AdminCertPEM:          []byte("admin-cert"),
+				AdminKeyPEM:           []byte("admin-key"),
+				AdminCredentialSource: "generated",
+			}, nil
+		},
+	}
+	resp, err := newTestCeremonyServer(mock).CeremonyInitialize(context.Background(), &pb.CeremonyInitializeRequest{AdminGenerate: true})
+	if err != nil {
+		t.Fatalf("CeremonyInitialize: %v", err)
+	}
+	if string(resp.GetAdminKeyPem()) != "admin-key" || resp.GetAdminCertPem() != "admin-cert" || resp.GetAdminCredentialSource() != "generated" {
+		t.Fatalf("admin credential not delivered: %v", resp)
+	}
+	holders := resp.GetHolders()
+	if len(holders) != 1 || holders[0].GetUsername() != "carol" || holders[0].GetRole() != "custodian" || holders[0].GetCertPem() != "carol-cert" {
+		t.Fatalf("holder certificates not delivered: %v", holders)
+	}
+}
+
+// TestCeremonyInitialize_ForwardsEveryOfficerField pins that every officer
+// field and the policy reach the service unchanged.
+func TestCeremonyInitialize_ForwardsEveryOfficerField(t *testing.T) {
+	var got *service.CeremonyInitRequest
+	mock := &mockCeremonyService{
+		initFn: func(_ context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			got = req
+			return &service.CeremonyInitInfo{}, nil
+		},
+	}
+	_, err := newTestCeremonyServer(mock).CeremonyInitialize(context.Background(), &pb.CeremonyInitializeRequest{
+		Threshold:     2,
+		Policy:        "any-enrolled",
+		AdminGenerate: true,
+		Officers: []*pb.CeremonyOfficer{{
+			Username:      "carol",
+			Role:          "custodian",
+			CsrPem:        "csr",
+			EncryptionKem: "dhkem-x25519",
+			EncryptionKey: []byte{1, 2, 3},
+			Factors:       []*pb.CeremonyHolderFactor{{Name: "totp", ParamsJson: []byte(`{"digits":6}`)}},
+			Designated:    "totp",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CeremonyInitialize: %v", err)
+	}
+	want := service.CeremonyOfficer{
+		Username:      "carol",
+		Role:          "custodian",
+		CSRPEM:        "csr",
+		EncryptionKEM: "dhkem-x25519",
+		EncryptionKey: []byte{1, 2, 3},
+		Factors:       []qrdbtransport.HolderFactorEnrolment{{Name: "totp", Params: map[string]any{"digits": float64(6)}}},
+		Designated:    "totp",
+	}
+	if got.Policy != "any-enrolled" || len(got.Officers) != 1 || !reflect.DeepEqual(got.Officers[0], want) {
+		t.Fatalf("officer request narrowed: policy=%q officers=%+v", got.Policy, got.Officers)
+	}
+}
+
+// TestCeremonyInitialize_RefusesNonObjectFactorParams pins that a factor whose
+// params_json is not a JSON object is InvalidArgument and never reaches the
+// service.
+func TestCeremonyInitialize_RefusesNonObjectFactorParams(t *testing.T) {
+	called := false
+	mock := &mockCeremonyService{
+		initFn: func(_ context.Context, _ *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			called = true
+			return &service.CeremonyInitInfo{}, nil
+		},
+	}
+	_, err := newTestCeremonyServer(mock).CeremonyInitialize(context.Background(), &pb.CeremonyInitializeRequest{
+		AdminGenerate: true,
+		Officers: []*pb.CeremonyOfficer{{
+			Username: "carol",
+			Factors:  []*pb.CeremonyHolderFactor{{Name: "totp", ParamsJson: []byte(`[1]`)}},
+		}},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+	if called {
+		t.Fatal("service called with an undecodable factor")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CeremonyStatus
 // ---------------------------------------------------------------------------
@@ -259,172 +317,6 @@ func TestCeremonyStatus_FacadeError(t *testing.T) {
 	_, err := srv.CeremonyStatus(context.Background(), &emptypb.Empty{})
 	if err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// CeremonyClaimCertBegin / Complete
-// ---------------------------------------------------------------------------
-
-func TestCeremonyClaimCertBegin_Success(t *testing.T) {
-	expires := time.Date(2025, 5, 6, 7, 8, 9, 0, time.UTC)
-	mock := &mockCeremonyService{
-		beginFn: func(_ context.Context, username string) (*service.CeremonyChallenge, error) {
-			if username != "alice" {
-				t.Fatalf("expected username 'alice', got %q", username)
-			}
-			return &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: expires}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyClaimCertBegin(context.Background(), &pb.CeremonyClaimCertBeginRequest{Username: "alice"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.GetNonceHex() != "deadbeef" {
-		t.Fatalf("unexpected nonce: %q", resp.GetNonceHex())
-	}
-	if resp.GetExpiresAt() != expires.UTC().Format(time.RFC3339) {
-		t.Fatalf("unexpected expires_at: %s", resp.GetExpiresAt())
-	}
-}
-
-func TestCeremonyClaimCertBegin_NilRequest(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	_, err := srv.CeremonyClaimCertBegin(context.Background(), nil)
-	assertGRPCCode(t, err, codes.InvalidArgument)
-}
-
-func TestCeremonyClaimCertBegin_MissingUsername(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	_, err := srv.CeremonyClaimCertBegin(context.Background(), &pb.CeremonyClaimCertBeginRequest{Username: ""})
-	assertGRPCCode(t, err, codes.InvalidArgument)
-}
-
-func TestCeremonyClaimCertComplete_Success(t *testing.T) {
-	var sawUser, sawNonce, sawSig string
-	mock := &mockCeremonyService{
-		completeFn: func(_ context.Context, username, nonceHex, sigB64 string) (*service.CeremonyClaimCertResult, error) {
-			sawUser, sawNonce, sawSig = username, nonceHex, sigB64
-			return &service.CeremonyClaimCertResult{
-				CertPEM:   []byte("CERT"),
-				CACertPEM: []byte("CACERT"),
-			}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyClaimCertComplete(context.Background(), &pb.CeremonyClaimCertCompleteRequest{
-		Username:  "u",
-		NonceHex:  "abcd",
-		Signature: "c2lnLXNpZw==",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if sawUser != "u" || sawNonce != "abcd" || sawSig != "c2lnLXNpZw==" {
-		t.Fatalf("unexpected propagation: %s, %s, %s", sawUser, sawNonce, sawSig)
-	}
-	if string(resp.GetCertPem()) != "CERT" || string(resp.GetCaCertPem()) != "CACERT" {
-		t.Fatalf("unexpected response: %#v", resp)
-	}
-}
-
-func TestCeremonyClaimCertComplete_Validation(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	cases := []struct {
-		name string
-		req  *pb.CeremonyClaimCertCompleteRequest
-	}{
-		{"nil request", nil},
-		{"missing username", &pb.CeremonyClaimCertCompleteRequest{NonceHex: "x", Signature: "s"}},
-		{"missing nonce_hex", &pb.CeremonyClaimCertCompleteRequest{Username: "u", Signature: "s"}},
-		{"missing signature", &pb.CeremonyClaimCertCompleteRequest{Username: "u", NonceHex: "x"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, err := srv.CeremonyClaimCertComplete(context.Background(), c.req)
-			assertGRPCCode(t, err, codes.InvalidArgument)
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// CeremonyBeginClaimShare / CeremonyCompleteClaimShare
-// ---------------------------------------------------------------------------
-
-func TestCeremonyBeginClaimShare_Success(t *testing.T) {
-	expires := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
-	mock := &mockCeremonyService{
-		beginShareFn: func(_ context.Context, username string) (*service.CeremonyChallenge, error) {
-			if username != "officer" {
-				t.Fatalf("expected officer, got %q", username)
-			}
-			return &service.CeremonyChallenge{NonceHex: "deadbeef", ExpiresAt: expires}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyBeginClaimShare(context.Background(), &pb.CeremonyBeginClaimShareRequest{Username: "officer"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.GetNonceHex() != "deadbeef" {
-		t.Fatalf("expected deadbeef, got %q", resp.GetNonceHex())
-	}
-	if resp.GetExpiresAt() == "" {
-		t.Fatal("expected expires_at to be set")
-	}
-}
-
-func TestCeremonyBeginClaimShare_Validation(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	_, err := srv.CeremonyBeginClaimShare(context.Background(), nil)
-	assertGRPCCode(t, err, codes.InvalidArgument)
-	_, err = srv.CeremonyBeginClaimShare(context.Background(), &pb.CeremonyBeginClaimShareRequest{Username: ""})
-	assertGRPCCode(t, err, codes.InvalidArgument)
-}
-
-func TestCeremonyCompleteClaimShare_Success(t *testing.T) {
-	mock := &mockCeremonyService{
-		completeShareFn: func(_ context.Context, username, nonceHex string, signature []byte) (*service.CeremonyClaimShareResult, error) {
-			if username != "officer" || nonceHex != "deadbeef" || string(signature) != "sig" {
-				t.Fatalf("unexpected params: %s %s %q", username, nonceHex, signature)
-			}
-			return &service.CeremonyClaimShareResult{ShareIndex: 2, ShareJSON: `{"share":"v"}`}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyCompleteClaimShare(context.Background(), &pb.CeremonyCompleteClaimShareRequest{
-		Username:  "officer",
-		NonceHex:  "deadbeef",
-		Signature: []byte("sig"),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resp.GetShareIndex() != 2 {
-		t.Fatalf("expected share_index 2, got %d", resp.GetShareIndex())
-	}
-	if resp.GetShare() != `{"share":"v"}` {
-		t.Fatalf("unexpected share: %q", resp.GetShare())
-	}
-}
-
-func TestCeremonyCompleteClaimShare_Validation(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	cases := []struct {
-		name string
-		req  *pb.CeremonyCompleteClaimShareRequest
-	}{
-		{"nil request", nil},
-		{"missing username", &pb.CeremonyCompleteClaimShareRequest{NonceHex: "x", Signature: []byte("s")}},
-		{"missing nonce_hex", &pb.CeremonyCompleteClaimShareRequest{Username: "u", Signature: []byte("s")}},
-		{"missing signature", &pb.CeremonyCompleteClaimShareRequest{Username: "u", NonceHex: "x"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, err := srv.CeremonyCompleteClaimShare(context.Background(), c.req)
-			assertGRPCCode(t, err, codes.InvalidArgument)
-		})
 	}
 }
 
@@ -475,98 +367,6 @@ func TestCeremonySignCSR_Validation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// CeremonyListOfficers
-// ---------------------------------------------------------------------------
-
-func TestCeremonyListOfficers_EmptyRosterWhenWired(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	resp, err := srv.CeremonyListOfficers(context.Background(), &emptypb.Empty{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.GetOfficers()) != 0 {
-		t.Fatalf("expected empty roster, got %d entries", len(resp.GetOfficers()))
-	}
-}
-
-func TestCeremonyListOfficers_UnavailableWhenUnwired(t *testing.T) {
-	srv := newTestCeremonyServer(nil)
-	_, err := srv.CeremonyListOfficers(context.Background(), &emptypb.Empty{})
-	assertGRPCCode(t, err, codes.Unavailable)
-}
-
-// ---------------------------------------------------------------------------
-// CeremonyEnrollExternalOfficer
-// ---------------------------------------------------------------------------
-
-func TestCeremonyEnrollExternalOfficer_Success(t *testing.T) {
-	var seen *service.CeremonyEnrollExternalOfficerRequest
-	mock := &mockCeremonyService{
-		enrollExternalFn: func(_ context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-			seen = req
-			return &service.CeremonyEnrollExternalOfficerResponse{SealedShare: "sealed-b64"}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	resp, err := srv.CeremonyEnrollExternalOfficer(context.Background(), &pb.CeremonyEnrollExternalOfficerRequest{
-		Username:   "u",
-		CertPem:    "CERTPEM",
-		ShareIndex: 3,
-		AuthFactor: "mtls",
-		ShareBytes: []byte{0x01, 0x02},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if seen == nil || seen.Username != "u" || seen.CertPEM != "CERTPEM" || seen.ShareIndex != 3 || seen.AuthFactor != "mtls" {
-		t.Fatalf("unexpected propagation: %#v", seen)
-	}
-	if resp.GetSealedShare() != "sealed-b64" {
-		t.Fatalf("unexpected sealed_share: %q", resp.GetSealedShare())
-	}
-}
-
-func TestCeremonyEnrollExternalOfficer_Validation(t *testing.T) {
-	srv := newTestCeremonyServer(&mockCeremonyService{})
-	cases := []struct {
-		name string
-		req  *pb.CeremonyEnrollExternalOfficerRequest
-	}{
-		{"nil request", nil},
-		{"missing username", &pb.CeremonyEnrollExternalOfficerRequest{CertPem: "c", AuthFactor: "mtls"}},
-		{"missing both cert and pubkey", &pb.CeremonyEnrollExternalOfficerRequest{Username: "u", AuthFactor: "mtls"}},
-		{"both cert and pubkey", &pb.CeremonyEnrollExternalOfficerRequest{Username: "u", CertPem: "c", PubkeyPem: "p", AuthFactor: "mtls"}},
-		{"missing auth_factor", &pb.CeremonyEnrollExternalOfficerRequest{Username: "u", CertPem: "c"}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			_, err := srv.CeremonyEnrollExternalOfficer(context.Background(), c.req)
-			assertGRPCCode(t, err, codes.InvalidArgument)
-		})
-	}
-}
-
-func TestCeremonyEnrollExternalOfficer_PubKeyVariant(t *testing.T) {
-	mock := &mockCeremonyService{
-		enrollExternalFn: func(_ context.Context, req *service.CeremonyEnrollExternalOfficerRequest) (*service.CeremonyEnrollExternalOfficerResponse, error) {
-			if req.PubKeyPEM != "PUB" {
-				t.Fatalf("expected pubkey_pem propagation, got %q", req.PubKeyPEM)
-			}
-			return &service.CeremonyEnrollExternalOfficerResponse{}, nil
-		},
-	}
-	srv := newTestCeremonyServer(mock)
-	_, err := srv.CeremonyEnrollExternalOfficer(context.Background(), &pb.CeremonyEnrollExternalOfficerRequest{
-		Username:   "u",
-		PubkeyPem:  "PUB",
-		AuthFactor: "webauthn",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Unavailable propagation across every handler
 // ---------------------------------------------------------------------------
 
@@ -585,32 +385,8 @@ func TestCeremony_AllHandlersReturnUnavailableWhenUnwired(t *testing.T) {
 			_, err := srv.CeremonyStatus(ctx, &emptypb.Empty{})
 			return err
 		}},
-		{"CeremonyClaimCertBegin", func() error {
-			_, err := srv.CeremonyClaimCertBegin(ctx, &pb.CeremonyClaimCertBeginRequest{Username: "u"})
-			return err
-		}},
-		{"CeremonyClaimCertComplete", func() error {
-			_, err := srv.CeremonyClaimCertComplete(ctx, &pb.CeremonyClaimCertCompleteRequest{Username: "u", NonceHex: "x", Signature: "s"})
-			return err
-		}},
-		{"CeremonyBeginClaimShare", func() error {
-			_, err := srv.CeremonyBeginClaimShare(ctx, &pb.CeremonyBeginClaimShareRequest{Username: "u"})
-			return err
-		}},
-		{"CeremonyCompleteClaimShare", func() error {
-			_, err := srv.CeremonyCompleteClaimShare(ctx, &pb.CeremonyCompleteClaimShareRequest{Username: "u", NonceHex: "x", Signature: []byte("s")})
-			return err
-		}},
 		{"CeremonySignCSR", func() error {
 			_, err := srv.CeremonySignCSR(ctx, &pb.CeremonySignCSRRequest{Username: "u", CsrPem: "csr"})
-			return err
-		}},
-		{"CeremonyListOfficers", func() error {
-			_, err := srv.CeremonyListOfficers(ctx, &emptypb.Empty{})
-			return err
-		}},
-		{"CeremonyEnrollExternalOfficer", func() error {
-			_, err := srv.CeremonyEnrollExternalOfficer(ctx, &pb.CeremonyEnrollExternalOfficerRequest{Username: "u", CertPem: "c", AuthFactor: "mtls"})
 			return err
 		}},
 	}

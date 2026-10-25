@@ -181,11 +181,11 @@ func (a *xkmsCAServicer) SignCSR(ctx context.Context, req *xkmstransport.SignCSR
 // spiffe.BuildURI synthesis site SignCSR uses. When the trust domain or tenant
 // is empty no SPIFFE SAN is requested (single-domain / pre-broker mode).
 func (a *xkmsCAServicer) applyKeypairSPIFFE(certReq *xkmssdk.TrustedCACertificateRequest, profile, tenantID string) {
+	certReq.TenantID = tenantID
 	if a.spiffeTrustDomain == "" || tenantID == "" {
 		return
 	}
 	certReq.SPIFFETrustDomain = a.spiffeTrustDomain
-	certReq.TenantID = tenantID
 	certReq.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 }
 
@@ -198,24 +198,30 @@ func (a *xkmsCAServicer) signOptionsWithSPIFFE(profile string, validityDays int,
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
+		TenantID:     tenantID,
 	}
 	if a.spiffeTrustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = a.spiffeTrustDomain
-		opts.TenantID = tenantID
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	}
 	return opts
 }
 
-// resolveTenant returns the tenant SignCSR and IssueCertificate stamp into
-// the SPIFFE URI SAN. The request's tenant_id is caller-supplied, so it is
-// resolved against the tenant bound to ctx (tenantctx.Target): empty means
-// the caller's own tenant, and a foreign one is refused. A request that
-// names no tenant while SPIFFE synthesis is off needs no tenant, because
-// nothing is stamped.
+// resolveTenant returns the tenant SignCSR and IssueCertificate issue for:
+// go-xkms v0.58 stamps it as the certificate's first subject OU, and the
+// SPIFFE URI SAN when a trust domain is set. The request's tenant_id is
+// caller-supplied, so it is resolved against the tenant bound to ctx
+// (tenantctx.Target): empty means the caller's own tenant, and a foreign one
+// is refused. With SPIFFE synthesis off, a request that names no tenant takes
+// the bound one, or none; go-xkms then refuses a tenantless request itself
+// ("A request without a tenant is refused with `ca.ErrTenantRequired`").
 func (a *xkmsCAServicer) resolveTenant(ctx context.Context, op, requested string) (string, error) {
 	if requested == "" && a.spiffeTrustDomain == "" {
-		return "", nil
+		tenantID, bound := tenantctx.Lookup(ctx)
+		if !bound {
+			return "", nil
+		}
+		return tenantID, nil
 	}
 	tenantID, err := tenantctx.Target(ctx, op, requested)
 	if err != nil {

@@ -345,6 +345,12 @@ type Server struct {
 	sealedProbe     qrdbsdk.SealedWindowProbe
 	sealedAllowlist []string
 
+	// sealedListener, when set by SetSealedWindowListenerGate, marks this
+	// server as the boot-time sealed-window listener: setupRouter installs
+	// qrdb's listener gate, which serves the ListenerOnly verbs (barrier
+	// status) and refuses every request once the barrier is unsealed.
+	sealedListener qrdbsdk.SealedWindowListenerProbe
+
 	// sealedBypass is the shared sealed-window authentication-bypass
 	// predicate (probe + canonical-table lookup), derived by
 	// SetSealedWindowGate from the same probe that drives the sealed gate.
@@ -367,6 +373,11 @@ type Server struct {
 	// fleetAddressProber refuses, at enrollment, a fleet node address the
 	// control plane cannot resolve and dial. Nil registers it unprobed.
 	fleetAddressProber FleetAddressProber
+
+	// fleetNodeCertRecords holds the record of every certificate the fleet
+	// issuer issued; enrollment accepts no other (stopgap until
+	// go-quicbaas#1821). Nil refuses every enrollment.
+	fleetNodeCertRecords service.FleetNodeCertRecords
 
 	// fleetClustered is true when this control plane is one node of a
 	// cluster: enrollment then refuses a loopback fleet node address, which
@@ -519,7 +530,9 @@ func (s *Server) setupRouter() {
 	// mirror qrdb's pre-auth sealed surface (handlers enforce their own
 	// credentials, e.g. officer cert + nonce checks). Pass-through when the
 	// probe reports unsealed.
-	if s.sealedProbe != nil {
+	if s.sealedListener != nil {
+		r.Use(qrdbsdk.SealedWindowListenerMiddleware(s.sealedListener, s.sealedAllowlist))
+	} else if s.sealedProbe != nil {
 		r.Use(qrdbsdk.SealedWindowMiddleware(s.sealedProbe, s.sealedAllowlist))
 	}
 
@@ -619,7 +632,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	// mount-root pattern ("/" relative to a wire mount) needs no alias: the
 	// enclosing r.Route mount dispatches the bare prefix itself.
 	register := func(g chi.Router, spec RouteSpec, prefix string) {
-		h := spec.Handler(s)
+		h := spec.bind(s)
 		rel := strings.TrimPrefix(spec.Pattern, prefix)
 		g.MethodFunc(spec.Method, rel, h)
 		if bare := strings.TrimSuffix(rel, "/"); bare != rel && bare != "" {

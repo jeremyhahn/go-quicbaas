@@ -124,7 +124,7 @@ func (s *inMemoryTimeSeriesStorage) WritePoint(_ context.Context, point *interfa
 }
 
 // WriteBatch writes multiple data points atomically.
-func (s *inMemoryTimeSeriesStorage) WriteBatch(points []interfaces.DataPoint) error {
+func (s *inMemoryTimeSeriesStorage) WriteBatch(_ context.Context, points []interfaces.DataPoint) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -209,7 +209,7 @@ func (s *inMemoryTimeSeriesStorage) DeleteSeries(_ context.Context, req *interfa
 }
 
 // GetRetentionPolicy retrieves the retention policy for a metric.
-func (s *inMemoryTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfaces.RetentionPolicy, error) {
+func (s *inMemoryTimeSeriesStorage) GetRetentionPolicy(_ context.Context, metric string) (*interfaces.RetentionPolicy, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -223,7 +223,7 @@ func (s *inMemoryTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfac
 }
 
 // SetRetentionPolicy sets the retention policy for a metric.
-func (s *inMemoryTimeSeriesStorage) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
+func (s *inMemoryTimeSeriesStorage) SetRetentionPolicy(_ context.Context, metric string, policy *interfaces.RetentionPolicy) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -232,7 +232,7 @@ func (s *inMemoryTimeSeriesStorage) SetRetentionPolicy(metric string, policy *in
 }
 
 // ListMetrics returns metric names matching the optional prefix.
-func (s *inMemoryTimeSeriesStorage) ListMetrics(prefix string, limit int) ([]string, error) {
+func (s *inMemoryTimeSeriesStorage) ListMetrics(_ context.Context, prefix string, limit int) ([]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

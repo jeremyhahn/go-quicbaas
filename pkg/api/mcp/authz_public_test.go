@@ -30,6 +30,10 @@ func TestIsPublicTool(t *testing.T) {
 		{"health tool is public", "qrdb_health", true},
 		{"version tool is public", "quicbaas_version", true},
 		{"liveness tool is public", "quicbaas_liveness", true},
+		// Login is pre-authentication, as on gRPC and REST (owner item 134).
+		{"login begin is public", "quicbaas_login_begin", true},
+		{"login finish is public", "quicbaas_login_finish", true},
+		{"fido2 authentication is not public", "xkms.fido2.beginAuthentication", false},
 		{"get tool is not public", "qrdb_get", false},
 		{"put tool is not public", "qrdb_put", false},
 		{"delete tool is not public", "qrdb_delete", false},

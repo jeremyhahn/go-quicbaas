@@ -17,10 +17,7 @@ package mcp
 
 import (
 	"context"
-	"encoding/base64"
-	"time"
-
-	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+	"encoding/json"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -34,13 +31,11 @@ import (
 //
 //   qrdb_ceremony_initialize
 //   qrdb_ceremony_status
-//   qrdb_ceremony_claim_cert_begin
-//   qrdb_ceremony_claim_cert_complete
-//   qrdb_ceremony_begin_claim_share
-//   qrdb_ceremony_complete_claim_share
 //   qrdb_ceremony_sign_csr
 //   quicbaas_ceremony_list_officers
-//   qrdb_ceremony_enroll_external_officer
+//
+// Share-holder claims moved to the barrier holder tools
+// (tools_barrier_holders.go) with go-qrdb v0.47.
 //
 // All tools delegate to a CeremonyServicer installed via
 // ToolRegistry.SetCeremonyService. When the service is unwired, every tool
@@ -95,30 +90,24 @@ func (e *CeremonyFieldConflictError) Error() string {
 	return "ceremony: " + e.Reason
 }
 
-// CeremonyFieldInvalidError is returned when a tool argument is present but
-// malformed (share_bytes that is not standard base64 on the external-officer
-// tool). It is classified as invalid input.
-type CeremonyFieldInvalidError struct {
-	Field  string
-	Reason string
-	Err    error
+// CeremonyOfficersArgError reports a qrdb_ceremony_initialize officers
+// argument that does not decode into go-qrdb's officer request type.
+type CeremonyOfficersArgError struct {
+	Cause error
 }
 
 // Error implements the error interface.
-func (e *CeremonyFieldInvalidError) Error() string {
-	if e.Err != nil {
-		return "ceremony: invalid " + e.Field + ": " + e.Reason + ": " + e.Err.Error()
-	}
-	return "ceremony: invalid " + e.Field + ": " + e.Reason
+func (e *CeremonyOfficersArgError) Error() string {
+	return "ceremony.initialize: invalid officers argument: " + e.Cause.Error()
 }
 
-// Unwrap returns the underlying decode error, if any.
-func (e *CeremonyFieldInvalidError) Unwrap() error {
-	return e.Err
+// Unwrap returns the decoding error.
+func (e *CeremonyOfficersArgError) Unwrap() error {
+	return e.Cause
 }
 
 // ErrorCode classifies the error as invalid input.
-func (e *CeremonyFieldInvalidError) ErrorCode() qberrors.ErrorCode {
+func (e *CeremonyOfficersArgError) ErrorCode() qberrors.ErrorCode {
 	return qberrors.ErrInvalidInput
 }
 
@@ -150,14 +139,33 @@ func (r *ToolRegistry) registerCeremonyTools() {
 				},
 				"officers": map[string]interface{}{
 					"type":        "array",
-					"description": "Officers participating in the ceremony.",
+					"description": "Officers participating in the ceremony (go-qrdb CeremonyOfficerRequest objects: username, role, csr_pem, encryption_kem, encryption_key, factors, designated).",
 					"items": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
-							"username": map[string]interface{}{"type": "string"},
-							"csr_pem":  map[string]interface{}{"type": "string"},
+							"username":       map[string]interface{}{"type": "string"},
+							"role":           map[string]interface{}{"type": "string", "description": "Holder role: so (default) or custodian."},
+							"csr_pem":        map[string]interface{}{"type": "string"},
+							"encryption_kem": map[string]interface{}{"type": "string", "description": "HPKE suite of a separate share-envelope key."},
+							"encryption_key": map[string]interface{}{"type": "string", "description": "Base64 of the separate share-envelope public key."},
+							"factors": map[string]interface{}{
+								"type":        "array",
+								"description": "Additional factor enrolments.",
+								"items": map[string]interface{}{
+									"type": "object",
+									"properties": map[string]interface{}{
+										"name":   map[string]interface{}{"type": "string"},
+										"params": map[string]interface{}{"type": "object"},
+									},
+								},
+							},
+							"designated": map[string]interface{}{"type": "string", "description": "The factor fixed at enrolment under the designated policy; mtls when empty."},
 						},
 					},
+				},
+				"policy": map[string]interface{}{
+					"type":        "string",
+					"description": "Shamir custody policy for threshold >= 2: designated (default) or any-enrolled.",
 				},
 				"hostname": map[string]interface{}{
 					"type":        "string",
@@ -167,6 +175,26 @@ func (r *ToolRegistry) registerCeremonyTools() {
 					"type":        "array",
 					"description": "Optional Subject Alternative Names for the TLS certificate.",
 					"items":       map[string]interface{}{"type": "string"},
+				},
+				"admin_csr_pem": map[string]interface{}{
+					"type":        "string",
+					"description": "Bootstrap admin CSR to sign. Exactly one of admin_csr_pem, admin_cert_pem or admin_generate is required.",
+				},
+				"admin_cert_pem": map[string]interface{}{
+					"type":        "string",
+					"description": "Bootstrap admin's own certificate (bring-your-own).",
+				},
+				"admin_cert_pool_pem": map[string]interface{}{
+					"type":        "string",
+					"description": "CA pool that verifies admin_cert_pem.",
+				},
+				"admin_generate": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Generate the bootstrap admin credential. Dev/test only.",
+				},
+				"secret": map[string]interface{}{
+					"type":        "string",
+					"description": "System barrier passphrase; required when the barrier strategy needs one.",
 				},
 			},
 		},
@@ -178,64 +206,6 @@ func (r *ToolRegistry) registerCeremonyTools() {
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_claim_cert_begin",
-		Description: "Start the certificate-claim handshake for an officer, returning a challenge nonce.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{
-					"type":        "string",
-					"description": "Officer username initiating the certificate claim.",
-				},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_claim_cert_complete",
-		Description: "Complete the certificate-claim handshake by submitting the officer's nonce signature.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":  map[string]interface{}{"type": "string", "description": "Officer username completing the claim."},
-				"nonce_hex": map[string]interface{}{"type": "string", "description": "Hex-encoded challenge nonce from the begin step."},
-				"signature": map[string]interface{}{"type": "string", "description": "Base64-encoded signature over the nonce."},
-			},
-			"required": []string{"username", "nonce_hex", "signature"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_begin_claim_share",
-		Description: "Start the Shamir share claim handshake for an officer, returning the challenge nonce to sign. Caller identity is derived from the connection, never from the arguments.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username": map[string]interface{}{
-					"type":        "string",
-					"description": "Officer username claiming their Shamir share.",
-				},
-			},
-			"required": []string{"username"},
-		},
-	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_complete_claim_share",
-		Description: "Complete the Shamir share claim handshake by submitting the officer's nonce signature. The share is released exactly once.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":  map[string]interface{}{"type": "string", "description": "Officer username completing the share claim."},
-				"nonce_hex": map[string]interface{}{"type": "string", "description": "Hex-encoded challenge nonce from the begin step."},
-				"signature": map[string]interface{}{"type": "string", "description": "Base64-encoded signature over the nonce."},
-			},
-			"required": []string{"username", "nonce_hex", "signature"},
 		},
 	})
 
@@ -262,36 +232,14 @@ func (r *ToolRegistry) registerCeremonyTools() {
 			"properties": map[string]interface{}{},
 		},
 	})
-
-	r.addTool(ToolDefinition{
-		Name:        "qrdb_ceremony_enroll_external_officer",
-		Description: "Enrol an officer whose key material lives outside the daemon. Exactly one of cert_pem or pubkey_pem must be supplied.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"username":    map[string]interface{}{"type": "string", "description": "Unique officer identifier."},
-				"cert_pem":    map[string]interface{}{"type": "string", "description": "PEM-encoded X.509 certificate. Mutually exclusive with pubkey_pem."},
-				"pubkey_pem":  map[string]interface{}{"type": "string", "description": "PEM-encoded SPKI public key. Mutually exclusive with cert_pem."},
-				"share_index": map[string]interface{}{"type": "integer", "description": "1-based Shamir share index assigned to this officer."},
-				"auth_factor": map[string]interface{}{"type": "string", "description": "Auth-factor identifier (mtls, webauthn, piv)."},
-				"share_bytes": map[string]interface{}{"type": "string", "description": "Optional base64 plaintext share to seal to the officer's public key."},
-			},
-			"required": []string{"username", "auth_factor"},
-		},
-	})
 }
 
 // ceremonyToolNames enumerates every tool name owned by the ceremony surface.
 var ceremonyToolNames = map[string]struct{}{
-	"qrdb_ceremony_initialize":              {},
-	"qrdb_ceremony_status":                  {},
-	"qrdb_ceremony_claim_cert_begin":        {},
-	"qrdb_ceremony_claim_cert_complete":     {},
-	"qrdb_ceremony_begin_claim_share":       {},
-	"qrdb_ceremony_complete_claim_share":    {},
-	"qrdb_ceremony_sign_csr":                {},
-	"quicbaas_ceremony_list_officers":       {},
-	"qrdb_ceremony_enroll_external_officer": {},
+	"qrdb_ceremony_initialize":        {},
+	"qrdb_ceremony_status":            {},
+	"qrdb_ceremony_sign_csr":          {},
+	"quicbaas_ceremony_list_officers": {},
 }
 
 // isCeremonyTool reports whether the given tool name belongs to the ceremony
@@ -306,15 +254,10 @@ type ceremonyExecutor func(context.Context, service.CeremonyServicer, map[string
 
 // ceremonyExecutors is the map-based dispatch table for ceremony tools.
 var ceremonyExecutors = map[string]ceremonyExecutor{
-	"qrdb_ceremony_initialize":              executeCeremonyInitialize,
-	"qrdb_ceremony_status":                  executeCeremonyStatus,
-	"qrdb_ceremony_claim_cert_begin":        executeCeremonyClaimCertBegin,
-	"qrdb_ceremony_claim_cert_complete":     executeCeremonyClaimCertComplete,
-	"qrdb_ceremony_begin_claim_share":       executeCeremonyBeginClaimShare,
-	"qrdb_ceremony_complete_claim_share":    executeCeremonyCompleteClaimShare,
-	"qrdb_ceremony_sign_csr":                executeCeremonySignCSR,
-	"quicbaas_ceremony_list_officers":       executeCeremonyListOfficers,
-	"qrdb_ceremony_enroll_external_officer": executeCeremonyEnrollExternalOfficer,
+	"qrdb_ceremony_initialize":        executeCeremonyInitialize,
+	"qrdb_ceremony_status":            executeCeremonyStatus,
+	"qrdb_ceremony_sign_csr":          executeCeremonySignCSR,
+	"quicbaas_ceremony_list_officers": executeCeremonyListOfficers,
 }
 
 // executeCeremonyTool dispatches a ceremony-surface call to the appropriate
@@ -338,6 +281,21 @@ func (r *ToolRegistry) executeCeremonyTool(ctx context.Context, name string, arg
 
 // executeCeremonyInitialize implements qrdb_ceremony_initialize.
 func executeCeremonyInitialize(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
+	adminGenerate, err := getStrictBool(args, "admin_generate")
+	if err != nil {
+		return nil, err
+	}
+	officers, err := parseCeremonyOfficers(args)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := service.NewCeremonySecret(ctx, credentialArg(args, "secret"))
+	if err != nil {
+		return nil, err
+	}
+	if secret != nil {
+		defer secret.Destroy()
+	}
 	req := &service.CeremonyInitRequest{
 		SOPin:                  getString(args, "so_pin"),
 		UserPin:                getString(args, "user_pin"),
@@ -345,7 +303,13 @@ func executeCeremonyInitialize(ctx context.Context, svc service.CeremonyServicer
 		Threshold:              getInt(args, "threshold"),
 		Hostname:               getString(args, "hostname"),
 		SANs:                   getStringSlice(args, "sans"),
-		Officers:               parseCeremonyOfficers(args),
+		Policy:                 getString(args, "policy"),
+		Officers:               officers,
+		AdminCSRPEM:            getString(args, "admin_csr_pem"),
+		AdminCertPEM:           getString(args, "admin_cert_pem"),
+		AdminCertPoolPEM:       getString(args, "admin_cert_pool_pem"),
+		AdminGenerate:          adminGenerate,
+		Secret:                 secret,
 	}
 	info, err := svc.CeremonyInitialize(ctx, req)
 	if err != nil {
@@ -361,85 +325,6 @@ func executeCeremonyStatus(ctx context.Context, svc service.CeremonyServicer, _ 
 		return nil, err
 	}
 	return ceremonyStatusToMap(info), nil
-}
-
-// executeCeremonyClaimCertBegin implements qrdb_ceremony_claim_cert_begin.
-func executeCeremonyClaimCertBegin(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
-	username := getString(args, "username")
-	if username == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "username"}
-	}
-	challenge, err := svc.CeremonyBeginClaimCert(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	return ceremonyChallengeToMap(challenge), nil
-}
-
-// executeCeremonyClaimCertComplete implements
-// qrdb_ceremony_claim_cert_complete.
-func executeCeremonyClaimCertComplete(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
-	username := getString(args, "username")
-	if username == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "username"}
-	}
-	nonceHex := getString(args, "nonce_hex")
-	if nonceHex == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "nonce_hex"}
-	}
-	signature := getString(args, "signature")
-	if signature == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "signature"}
-	}
-	result, err := svc.CeremonyCompleteClaimCert(ctx, username, nonceHex, signature)
-	if err != nil {
-		return nil, err
-	}
-	return ceremonyClaimCertToMap(result), nil
-}
-
-// executeCeremonyBeginClaimShare implements qrdb_ceremony_begin_claim_share.
-func executeCeremonyBeginClaimShare(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
-	username := getString(args, "username")
-	if username == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "username"}
-	}
-	challenge, err := svc.CeremonyBeginClaimShare(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	return ceremonyChallengeToMap(challenge), nil
-}
-
-// executeCeremonyCompleteClaimShare implements
-// qrdb_ceremony_complete_claim_share. The signature arrives base64-encoded
-// and the released share is returned base64-encoded under the "share" key,
-// mirroring qrdb's own MCP tool contract exactly.
-func executeCeremonyCompleteClaimShare(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
-	username := getString(args, "username")
-	if username == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "username"}
-	}
-	nonceHex := getString(args, "nonce_hex")
-	if nonceHex == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "nonce_hex"}
-	}
-	sigB64 := getString(args, "signature")
-	if sigB64 == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "signature"}
-	}
-	sig, decErr := base64.StdEncoding.DecodeString(sigB64)
-	if decErr != nil {
-		return nil, &CeremonyFieldConflictError{Reason: "signature must be base64-encoded"}
-	}
-	result, err := svc.CeremonyCompleteClaimShare(ctx, username, nonceHex, sig)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"share_index": result.ShareIndex,
-		"share":       base64.StdEncoding.EncodeToString([]byte(result.ShareJSON)),
-	}, nil
 }
 
 // executeCeremonySignCSR implements qrdb_ceremony_sign_csr.
@@ -472,89 +357,27 @@ func executeCeremonyListOfficers(_ context.Context, _ service.CeremonyServicer, 
 	}, nil
 }
 
-// executeCeremonyEnrollExternalOfficer implements
-// qrdb_ceremony_enroll_external_officer.
-func executeCeremonyEnrollExternalOfficer(ctx context.Context, svc service.CeremonyServicer, args map[string]interface{}) (interface{}, error) {
-	username := getString(args, "username")
-	if username == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "username"}
-	}
-	authFactor := getString(args, "auth_factor")
-	if authFactor == "" {
-		return nil, &CeremonyFieldRequiredError{Field: "auth_factor"}
-	}
-	certPEM := getString(args, "cert_pem")
-	pubKeyPEM := getString(args, "pubkey_pem")
-	if certPEM == "" && pubKeyPEM == "" {
-		return nil, &CeremonyFieldConflictError{
-			Reason: "exactly one of cert_pem or pubkey_pem is required",
-		}
-	}
-	if certPEM != "" && pubKeyPEM != "" {
-		return nil, &CeremonyFieldConflictError{
-			Reason: "cert_pem and pubkey_pem are mutually exclusive",
-		}
-	}
-
-	// share_bytes is optional; when present it is the base64 of a binary
-	// Shamir share, which a JSON string cannot carry raw.
-	var shareBytes []byte
-	if shareB64 := getString(args, "share_bytes"); shareB64 != "" {
-		decoded, decErr := base64.StdEncoding.DecodeString(shareB64)
-		if decErr != nil {
-			return nil, &CeremonyFieldInvalidError{Field: "share_bytes", Reason: "must be standard base64", Err: decErr}
-		}
-		shareBytes = decoded
-		defer secure.Wipe(shareBytes)
-	}
-
-	req := &service.CeremonyEnrollExternalOfficerRequest{
-		Username:   username,
-		CertPEM:    certPEM,
-		PubKeyPEM:  pubKeyPEM,
-		ShareIndex: getInt(args, "share_index"),
-		AuthFactor: authFactor,
-		ShareBytes: shareBytes,
-	}
-	resp, err := svc.CeremonyEnrollExternalOfficer(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"sealed_share": resp.SealedShare}, nil
-}
-
 // ---------------------------------------------------------------------------
 // Helpers — argument parsing and response mapping
 // ---------------------------------------------------------------------------
 
-// parseCeremonyOfficers extracts a list of CeremonyOfficer from the args
-// "officers" key. The MCP transport may deliver these as a JSON array of
-// objects with username + csr_pem fields. Missing/empty entries are skipped.
-func parseCeremonyOfficers(args map[string]interface{}) []service.CeremonyOfficer {
+// parseCeremonyOfficers decodes the "officers" argument into go-qrdb's own
+// officer request type, so every field go-qrdb defines reaches it. An absent
+// argument yields a nil roster.
+func parseCeremonyOfficers(args map[string]interface{}) ([]service.CeremonyOfficer, error) {
 	raw, ok := args["officers"]
 	if !ok || raw == nil {
-		return nil
+		return nil, nil
 	}
-	list, ok := raw.([]interface{})
-	if !ok {
-		return nil
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, &CeremonyOfficersArgError{Cause: err}
 	}
-	out := make([]service.CeremonyOfficer, 0, len(list))
-	for _, item := range list {
-		entry, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		username := getString(entry, "username")
-		if username == "" {
-			continue
-		}
-		out = append(out, service.CeremonyOfficer{
-			Username: username,
-			CSRPEM:   getString(entry, "csr_pem"),
-		})
+	var officers []service.CeremonyOfficer
+	if err := json.Unmarshal(data, &officers); err != nil {
+		return nil, &CeremonyOfficersArgError{Cause: err}
 	}
-	return out
+	return officers, nil
 }
 
 // ceremonyInitToMap renders a CeremonyInitInfo as the JSON wire shape shared
@@ -567,7 +390,20 @@ func ceremonyInitToMap(info *service.CeremonyInitInfo) map[string]interface{} {
 		"state":        info.State,
 		"share_count":  info.ShareCount,
 	}
-	// The SO identity is CSR-based; the server never holds officer private keys.
+	// qrdb returns a generated admin key exactly once: deliver it, the admin
+	// certificate and the holder certificates under go-qrdb's JSON names.
+	if len(info.Holders) > 0 {
+		resp["holders"] = info.Holders
+	}
+	if len(info.AdminCertPEM) > 0 {
+		resp["admin_cert_pem"] = string(info.AdminCertPEM)
+	}
+	if len(info.AdminKeyPEM) > 0 {
+		resp["admin_key_pem"] = info.AdminKeyPEM
+	}
+	if info.AdminCredentialSource != "" {
+		resp["admin_credential_source"] = info.AdminCredentialSource
+	}
 	return resp
 }
 
@@ -581,27 +417,6 @@ func ceremonyStatusToMap(info *service.CeremonyStatusInfo) map[string]interface{
 		resp["spki_pin"] = info.SPKIPin
 	}
 	return resp
-}
-
-// ceremonyChallengeToMap renders a CeremonyChallenge as the JSON wire shape
-// shared with handlers_ceremony.go.
-func ceremonyChallengeToMap(c *service.CeremonyChallenge) map[string]interface{} {
-	resp := map[string]interface{}{
-		"nonce_hex": c.NonceHex,
-	}
-	if !c.ExpiresAt.IsZero() {
-		resp["expires_at"] = c.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	return resp
-}
-
-// ceremonyClaimCertToMap renders a CeremonyClaimCertResult as the JSON wire
-// shape shared with handlers_ceremony.go.
-func ceremonyClaimCertToMap(r *service.CeremonyClaimCertResult) map[string]interface{} {
-	return map[string]interface{}{
-		"cert_pem":    string(r.CertPEM),
-		"ca_cert_pem": string(r.CACertPEM),
-	}
 }
 
 // ceremonySignCSRToMap renders a CeremonySignCSRResult as the JSON wire shape

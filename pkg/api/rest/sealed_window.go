@@ -74,3 +74,26 @@ func (s *Server) SetSealedWindowGate(
 	// predicate into the installed authz middleware).
 	s.setupRouter()
 }
+
+// SetSealedWindowListenerGate installs the gate of the boot-time sealed-window
+// listener, go-qrdb's listener gate (qrdbsdk.SealedWindowListenerMiddleware),
+// in place of the regular-listener gate SetSealedWindowGate installs. go-qrdb
+// v0.50 serves the ListenerOnly verbs (barrier status) only on this listener,
+// serves its first-boot verbs only while probe reports enrollment open, and
+// refuses every request once probe reports the barrier unsealed. The
+// authentication bypass is derived from the same probe, as in
+// SetSealedWindowGate.
+//
+// Must be called before Start. A nil probe leaves the gate uninstalled.
+func (s *Server) SetSealedWindowListenerGate(
+	probe qrdbsdk.SealedWindowListenerProbe,
+	operational sealedwindow.OperationalProbe,
+	allowlist []string,
+) {
+	s.sealedListener = probe
+	var sealed qrdbsdk.SealedWindowProbe
+	if probe != nil {
+		sealed = probe
+	}
+	s.SetSealedWindowGate(sealed, operational, allowlist)
+}

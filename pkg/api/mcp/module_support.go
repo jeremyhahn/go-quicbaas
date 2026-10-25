@@ -17,10 +17,14 @@ package mcp
 
 import (
 	"context"
+	"crypto/x509"
 	"sort"
 	"strings"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
 // ToolSpec describes one tool of the quicbaas MCP surface for the
@@ -43,6 +47,11 @@ type ToolSpec struct {
 	Action   string
 	// Public marks the unauthenticated discovery/health tools.
 	Public bool
+	// Anonymous marks the public tools qrdb serves to a caller with no
+	// credentials at all: the login tools, which run before the caller has
+	// an identity. qrdb refuses a tool it serves anonymously that still
+	// declares a permission, so an anonymous tool declares none.
+	Anonymous bool
 	// Description is the tool's registry description.
 	Description string
 	// InputSchema is the tool's declared JSON schema (the same schema the
@@ -98,83 +107,93 @@ func ToolName(name string) string {
 // (ToolRegistry.registerTools) is UNCHANGED and keeps serving them on a
 // standalone (non-composed) deployment.
 var qrdbNativeDuplicateTools = map[string]struct{}{
-	"qrdb_barrier_enable_encryption":     {},
-	"qrdb_barrier_initialize":            {},
-	"qrdb_barrier_recovery_delete":       {},
-	"qrdb_barrier_recovery_generate":     {},
-	"qrdb_barrier_recovery_recover":      {},
-	"qrdb_barrier_recovery_status":       {},
-	"qrdb_barrier_rekey":                 {},
-	"qrdb_barrier_root_token":            {},
-	"qrdb_barrier_seal":                  {},
-	"qrdb_barrier_shamir_initialize":     {},
-	"qrdb_barrier_shamir_unseal_share":   {},
-	"qrdb_barrier_shamir_unseal_shares":  {},
-	"qrdb_barrier_status":                {},
-	"qrdb_barrier_unseal":                {},
-	"qrdb_ceremony_begin_claim_share":    {},
-	"qrdb_ceremony_claim_cert_begin":     {},
-	"qrdb_ceremony_claim_cert_complete":  {},
-	"qrdb_ceremony_complete_claim_share": {},
-	"qrdb_ceremony_initialize":           {},
-	"qrdb_ceremony_sign_csr":             {},
-	"qrdb_ceremony_status":               {},
-	"qrdb_credential_delete":             {},
-	"qrdb_credential_gc_expired":         {},
-	"qrdb_credential_list":               {},
-	"qrdb_credential_list_versions":      {},
-	"qrdb_credential_retrieve_version":   {},
-	"qrdb_credential_rotate":             {},
-	"qrdb_credential_strategy":           {},
-	"qrdb_credential_submit":             {},
-	"qrdb_delete":                        {},
-	"qrdb_get":                           {},
-	"qrdb_health":                        {},
-	"qrdb_list":                          {},
-	"qrdb_put":                           {},
-	"qrdb_role_assign":                   {},
-	"qrdb_role_create":                   {},
-	"qrdb_role_delete":                   {},
-	"qrdb_role_list":                     {},
-	"qrdb_tenant_barrier_init":           {},
-	"qrdb_tenant_barrier_seal":           {},
-	"qrdb_tenant_barrier_status":         {},
-	"qrdb_tenant_barrier_unseal":         {},
-	"qrdb_tenant_barrier_unseal_share":   {},
-	"qrdb_tenant_update_entitlements":    {},
-	"qrdb_tenant_update_quotas":          {},
-	"qrdb_ts_delete_series":              {},
-	"qrdb_ts_get_retention_policy":       {},
-	"qrdb_ts_list_metrics":               {},
-	"qrdb_ts_query":                      {},
-	"qrdb_ts_set_retention_policy":       {},
-	"qrdb_ts_write":                      {},
-	"qrdb_ts_write_batch":                {},
-	"qrdb_ts_write_point":                {},
-	"qrdb_user_authfactor_add":           {},
-	"qrdb_user_authfactor_get":           {},
-	"qrdb_user_authfactor_list":          {},
-	"qrdb_user_authfactor_login":         {},
-	"qrdb_user_authfactor_relabel":       {},
-	"qrdb_user_authfactor_remove":        {},
-	"qrdb_user_authfactor_rotate":        {},
-	"qrdb_user_get":                      {},
-	"qrdb_user_get_by_cert_thumbprint":   {},
-	"qrdb_user_get_by_username":          {},
-	"qrdb_vector_batch_delete":           {},
-	"qrdb_vector_batch_upsert":           {},
-	"qrdb_vector_create_namespace":       {},
-	"qrdb_vector_delete":                 {},
-	"qrdb_vector_delete_namespace":       {},
-	"qrdb_vector_get":                    {},
-	"qrdb_vector_get_namespace_info":     {},
-	"qrdb_vector_list":                   {},
-	"qrdb_vector_list_namespaces":        {},
-	"qrdb_vector_rebuild_index":          {},
-	"qrdb_vector_search_by_id":           {},
-	"qrdb_vector_search_similar":         {},
-	"qrdb_vector_update_metadata":        {},
-	"qrdb_vector_upsert":                 {},
+	"qrdb_barrier_cluster_unseal":                {},
+	"qrdb_barrier_enable_encryption":             {},
+	"qrdb_barrier_initialize":                    {},
+	"qrdb_barrier_officer_list":                  {},
+	"qrdb_barrier_officer_register":              {},
+	"qrdb_barrier_officer_revoke":                {},
+	"qrdb_barrier_quorum_begin":                  {},
+	"qrdb_barrier_quorum_submit":                 {},
+	"qrdb_barrier_recovery_delete":               {},
+	"qrdb_barrier_recovery_generate":             {},
+	"qrdb_barrier_recovery_officer_register":     {},
+	"qrdb_barrier_recovery_share_claim_begin":    {},
+	"qrdb_barrier_recovery_share_claim_complete": {},
+	"qrdb_barrier_recovery_status":               {},
+	"qrdb_barrier_rekey_start":                   {},
+	"qrdb_barrier_seal":                          {},
+	"qrdb_barrier_shamir_initialize":             {},
+	"qrdb_barrier_share_claim_begin":             {},
+	"qrdb_barrier_share_claim_complete":          {},
+	"qrdb_barrier_status":                        {},
+	"qrdb_barrier_unseal":                        {},
+	"qrdb_ceremony_initialize":                   {},
+	"qrdb_ceremony_sign_csr":                     {},
+	"qrdb_ceremony_status":                       {},
+	"qrdb_credential_delete":                     {},
+	"qrdb_credential_gc_expired":                 {},
+	"qrdb_credential_list":                       {},
+	"qrdb_credential_list_versions":              {},
+	"qrdb_credential_retrieve_version":           {},
+	"qrdb_credential_rotate":                     {},
+	"qrdb_credential_strategy":                   {},
+	"qrdb_credential_submit":                     {},
+	"qrdb_delete":                                {},
+	"qrdb_get":                                   {},
+	"qrdb_health":                                {},
+	"qrdb_list":                                  {},
+	"qrdb_put":                                   {},
+	"qrdb_role_assign":                           {},
+	"qrdb_role_create":                           {},
+	"qrdb_role_delete":                           {},
+	"qrdb_role_list":                             {},
+	"qrdb_tenant_barrier_init":                   {},
+	"qrdb_tenant_barrier_officer_list":           {},
+	"qrdb_tenant_barrier_officer_register":       {},
+	"qrdb_tenant_barrier_officer_revoke":         {},
+	"qrdb_tenant_barrier_quorum_begin":           {},
+	"qrdb_tenant_barrier_quorum_submit":          {},
+	"qrdb_tenant_barrier_rekey_start":            {},
+	"qrdb_tenant_barrier_seal":                   {},
+	"qrdb_tenant_barrier_share_claim_begin":      {},
+	"qrdb_tenant_barrier_share_claim_complete":   {},
+	"qrdb_tenant_barrier_status":                 {},
+	"qrdb_tenant_barrier_unseal":                 {},
+	"qrdb_tenant_update_entitlements":            {},
+	"qrdb_tenant_update_quotas":                  {},
+	"qrdb_ts_delete_series":                      {},
+	"qrdb_ts_get_retention_policy":               {},
+	"qrdb_ts_list_metrics":                       {},
+	"qrdb_ts_query":                              {},
+	"qrdb_ts_set_retention_policy":               {},
+	"qrdb_ts_write":                              {},
+	"qrdb_ts_write_batch":                        {},
+	"qrdb_ts_write_point":                        {},
+	"qrdb_user_authfactor_add":                   {},
+	"qrdb_user_authfactor_get":                   {},
+	"qrdb_user_authfactor_list":                  {},
+	"qrdb_user_authfactor_login":                 {},
+	"qrdb_user_authfactor_relabel":               {},
+	"qrdb_user_authfactor_remove":                {},
+	"qrdb_user_authfactor_rotate":                {},
+	"qrdb_user_get":                              {},
+	"qrdb_user_get_by_cert_thumbprint":           {},
+	"qrdb_user_get_by_username":                  {},
+	"qrdb_vector_batch_delete":                   {},
+	"qrdb_vector_batch_upsert":                   {},
+	"qrdb_vector_create_namespace":               {},
+	"qrdb_vector_delete":                         {},
+	"qrdb_vector_delete_namespace":               {},
+	"qrdb_vector_get":                            {},
+	"qrdb_vector_get_namespace_info":             {},
+	"qrdb_vector_list":                           {},
+	"qrdb_vector_list_namespaces":                {},
+	"qrdb_vector_rebuild_index":                  {},
+	"qrdb_vector_search_by_id":                   {},
+	"qrdb_vector_search_similar":                 {},
+	"qrdb_vector_update_metadata":                {},
+	"qrdb_vector_upsert":                         {},
 }
 
 // ModuleTools enumerates the full quicbaas MCP tool surface for the
@@ -216,6 +235,7 @@ func ModuleTools() []ToolSpec {
 		}
 		if IsPublicTool(def.Name) {
 			spec.Public = true
+			spec.Anonymous = isLoginTool(def.Name)
 		} else if resource, action, ok := getToolQRDBPermission(def.Name); ok {
 			spec.Resource = resource
 			spec.Action = action
@@ -248,8 +268,27 @@ func (s *Server) InvokeTool(ctx context.Context, name string, args map[string]in
 
 // upstreamToolContext projects a qrdb identity already authenticated by the
 // unified server into the quicbaas principal contract (Subject + tenant
-// binding), matching the injection the token-based gate performs. A context
-// without a qrdb identity is returned unchanged.
+// binding), matching the injection the token-based gate performs, and bridges
+// the TLS leaf qrdb verified for this request into the login facade's
+// verified-peer-cert slot, as the REST and gRPC adapters do from their own
+// connection state. A context with neither is returned unchanged.
 func upstreamToolContext(ctx context.Context) context.Context {
+	if cert := verifiedPeerCertFromQRDB(ctx); cert != nil {
+		ctx = service.WithVerifiedPeerCert(ctx, cert)
+	}
 	return auth.ContextWithIdentitySubject(ctx)
+}
+
+// verifiedPeerCertFromQRDB returns the leaf of the first chain qrdb's MCP
+// server verified during the TLS handshake (stored with qrdbsdk.WithTLSState),
+// or nil when the request carried no verified client certificate.
+func verifiedPeerCertFromQRDB(ctx context.Context) *x509.Certificate {
+	state := qrdbsdk.TLSStateFromContext(ctx)
+	if state == nil {
+		return nil
+	}
+	if len(state.VerifiedChains) > 0 && len(state.VerifiedChains[0]) > 0 {
+		return state.VerifiedChains[0][0]
+	}
+	return nil
 }

@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -138,6 +139,32 @@ func TestPrincipalBearer_LoginFailureIsTyped(t *testing.T) {
 	require.Equal(t, "PIV login", authErr.Step)
 	require.Equal(t, "tenant-1", authErr.TenantID)
 	require.ErrorIs(t, err, errLoginRefused)
+}
+
+// The CLI saves the session with its expiry and refuses one past it, so
+// session must return the bearer's real expiry, not a zero time.
+func TestPrincipalSession_ReturnsBearerAndExpiry(t *testing.T) {
+	fake := &fakeEnrollment{expiresIn: 3600}
+	registry := newFakeRegistry(fake)
+
+	before := time.Now()
+	token, err := registry.session(context.Background(), testBaseURL)
+	require.NoError(t, err)
+
+	require.Equal(t, "bearer-1", token.Bearer)
+	require.WithinRange(t, token.ExpiresAt, before.Add(3540*time.Second), time.Now().Add(3540*time.Second))
+}
+
+func TestPrincipalSession_LoginFailureIsTyped(t *testing.T) {
+	registry := newFakeRegistry(&fakeEnrollment{loginFail: true})
+
+	token, err := registry.session(context.Background(), testBaseURL)
+
+	var authErr *PrincipalAuthError
+	require.ErrorAs(t, err, &authErr)
+	require.Equal(t, "PIV login", authErr.Step)
+	require.ErrorIs(t, err, errLoginRefused)
+	require.Empty(t, token.Bearer, "a failed login returns no bearer")
 }
 
 func TestPrincipalTenantID_EmptyUntilEnrolled(t *testing.T) {

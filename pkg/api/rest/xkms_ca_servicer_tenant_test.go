@@ -24,6 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	stderrors "errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -91,11 +92,11 @@ func spiffeTenant(t *testing.T, certPEM []byte) string {
 	if err != nil {
 		t.Fatalf("parse certificate: %v", err)
 	}
-	id, err := qrdbsdk.TenantFromCert(cert, testTrustDomain)
+	tenantID, err := qrdbsdk.TenantFromClientCert(cert, testTrustDomain)
 	if err != nil {
 		t.Fatalf("read SPIFFE tenant: %v", err)
 	}
-	return id.TenantID
+	return tenantID
 }
 
 // issueVerbs runs SignCSR or IssueCertificate with the given tenant_id and
@@ -190,23 +191,49 @@ func TestXKMSCAServicer_NoTenantBoundRefused(t *testing.T) {
 	}
 }
 
-func TestXKMSCAServicer_NoTrustDomainNeedsNoTenant(t *testing.T) {
+// TestXKMSCAServicer_NoTrustDomainIssuesForTheBoundTenant pins go-xkms v0.58's
+// CA contract with SPIFFE synthesis off: "Every issued certificate carries its
+// tenant as the first subject OU ... A request without a tenant is refused
+// with `ca.ErrTenantRequired`" (go-xkms CHANGELOG, tenant-subject-ou).
+func TestXKMSCAServicer_NoTrustDomainIssuesForTheBoundTenant(t *testing.T) {
 	a := newXKMSCAServicer(testca.New(t, "xkmsca-no-spiffe-ca"), "")
 
-	resp, err := a.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+	// No tenant bound or named: the CA itself refuses, so nothing is issued.
+	_, err := a.IssueCertificate(context.Background(), &xkmstransport.IssueCertificateRequest{
+		CommonName:   "leaf.example.test",
+		ValidityDays: 1,
+	})
+	var opErr *XKMSCAOperationError
+	if !stderrors.As(err, &opErr) || !strings.Contains(err.Error(), "names no tenant") {
+		t.Fatalf("issue without a tenant: want the CA's tenant-required refusal, got %T: %v", err, err)
+	}
+
+	// The bound tenant reaches the CA and is stamped as the first OU, with
+	// no SPIFFE SAN because no trust domain is configured.
+	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+	resp, err := a.IssueCertificate(ctx, &xkmstransport.IssueCertificateRequest{
 		CommonName:   "leaf.example.test",
 		ValidityDays: 1,
 	})
 	if err != nil {
-		t.Fatalf("issue without a tenant or trust domain: %v", err)
+		t.Fatalf("issue for the bound tenant: %v", err)
 	}
-	if len(resp.CertificatePEM) == 0 {
-		t.Fatal("empty certificate")
+	block, _ := pem.Decode(resp.CertificatePEM)
+	if block == nil {
+		t.Fatal("issued certificate is not PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse issued certificate: %v", err)
+	}
+	if ou := cert.Subject.OrganizationalUnit; len(ou) == 0 || ou[0] != "tenant-a" {
+		t.Fatalf("subject OU = %v, want tenant-a first", ou)
+	}
+	if len(cert.URIs) != 0 {
+		t.Fatalf("URI SANs = %v, want none without a trust domain", cert.URIs)
 	}
 
-	// A named tenant is still checked: nothing is stamped, but a foreign
-	// tenant_id is never accepted silently.
-	ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+	// A named foreign tenant is never accepted silently.
 	_, err = a.IssueCertificate(ctx, &xkmstransport.IssueCertificateRequest{
 		CommonName: "leaf.example.test",
 		TenantID:   "tenant-b",

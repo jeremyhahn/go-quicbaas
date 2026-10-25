@@ -70,14 +70,21 @@ func TestBarrierRootMount_AllVerbsRegistered(t *testing.T) {
 		{http.MethodPost, "/v1/barrier/unseal"},
 		{http.MethodPost, "/v1/barrier/seal"},
 		{http.MethodPost, "/v1/barrier/shamir/initialize"},
-		{http.MethodPost, "/v1/barrier/shamir/unseal-share"},
-		{http.MethodPost, "/v1/barrier/shamir/unseal-shares"},
-		{http.MethodPost, "/v1/barrier/rekey"},
+		{http.MethodPost, "/v1/barrier/cluster-unseal"},
+		{http.MethodGet, "/v1/barrier/officers"},
+		{http.MethodPost, "/v1/barrier/officers"},
+		{http.MethodPost, "/v1/barrier/officers/revoke"},
+		{http.MethodPost, "/v1/barrier/officers/alice/claim/begin"},
+		{http.MethodPost, "/v1/barrier/officers/alice/claim/complete"},
+		{http.MethodPost, "/v1/barrier/quorum/begin"},
+		{http.MethodPost, "/v1/barrier/quorum/submit"},
+		{http.MethodPost, "/v1/barrier/recovery/officers"},
+		{http.MethodPost, "/v1/barrier/recovery/officers/alice/claim/begin"},
+		{http.MethodPost, "/v1/barrier/recovery/officers/alice/claim/complete"},
+		{http.MethodPost, "/v1/barrier/rekey/start"},
 		{http.MethodPost, "/v1/barrier/recovery/generate"},
-		{http.MethodPost, "/v1/barrier/recovery/recover"},
 		{http.MethodDelete, "/v1/barrier/recovery"},
 		{http.MethodGet, "/v1/barrier/recovery/status"},
-		{http.MethodPost, "/v1/barrier/root-token"},
 	}
 	for _, c := range cases {
 		w := doBarrierReq(t, s, c.method, c.path, "{}")
@@ -89,7 +96,7 @@ func TestBarrierRootMount_AllVerbsRegistered(t *testing.T) {
 
 // TestCeremonyRootMount_AllVerbsRegistered asserts every path the qrdb
 // CeremonyClient requests resolves to a handler. The qrdb client splits its
-// verbs across /v1/ceremony/* and /v1/init/enroll-external-officer.
+// verbs across /v1/ceremony/*.
 func TestCeremonyRootMount_AllVerbsRegistered(t *testing.T) {
 	s, _, cleanup := setupMockServer(t)
 	t.Cleanup(cleanup)
@@ -99,12 +106,7 @@ func TestCeremonyRootMount_AllVerbsRegistered(t *testing.T) {
 	}{
 		{http.MethodGet, "/v1/ceremony/status"},
 		{http.MethodPost, "/v1/ceremony/initialize"},
-		{http.MethodPost, "/v1/ceremony/claim-cert/begin"},
-		{http.MethodPost, "/v1/ceremony/claim-cert/complete"},
-		{http.MethodPost, "/v1/ceremony/officer-share/begin"},
-		{http.MethodPost, "/v1/ceremony/officer-share/complete"},
 		{http.MethodPost, "/v1/ceremony/sign-csr"},
-		{http.MethodPost, "/v1/init/enroll-external-officer"},
 	}
 	for _, c := range cases {
 		w := doBarrierReq(t, s, c.method, c.path, "{}")

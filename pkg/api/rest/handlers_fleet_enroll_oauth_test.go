@@ -91,6 +91,7 @@ func newAgentOAuthFixture(t *testing.T) *agentOAuthFixture {
 	srv, err := NewServer(wrapper, cfg, log)
 	require.NoError(t, err)
 	srv.SetEventIngestURL("https://198.51.100.91:19090")
+	srv.SetFleetNodeCertRecords(fleetTestCertRecordStore(t))
 
 	return &agentOAuthFixture{server: srv, storage: storage, kv: kv, identity: identityRecords}
 }
@@ -112,18 +113,19 @@ func agentOAuthSignedPeerCert(t *testing.T, tenantID, commonName string) *x509.C
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:         commonName,
-			Organization:       []string{tenantID},
-			OrganizationalUnit: []string{fleetRegistrarOU},
+			OrganizationalUnit: []string{tenantID},
 		},
 		NotBefore:   time.Now().Add(-time.Hour),
 		NotAfter:    time.Now().Add(time.Hour),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		URIs:        agentSPIFFEURIs(t, tenantID, commonName),
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
 	require.NoError(t, err)
 
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
+	recordFleetTestCert(t, tenantID, cert)
 	return cert
 }
 

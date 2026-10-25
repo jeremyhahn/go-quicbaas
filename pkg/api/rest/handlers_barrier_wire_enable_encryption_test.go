@@ -64,13 +64,18 @@ func (c *enableEncryptionCapture) service(t *testing.T) *fakeBarrierService {
 			c.tenantID = tenantID
 			c.opts = opts
 			if opts.Credentials.Secret != nil {
-				plain, err := opts.Credentials.Secret.Open()
+				plain, err := opts.Credentials.Secret.Open(context.Background())
 				if err != nil {
 					t.Errorf("open the forwarded credential: %v", err)
 					return nil
 				}
 				defer plain.Destroy()
-				c.passphraseIsWire = plain.EqualTo(wirePassphrase)
+				equal, err := plain.EqualTo(wirePassphrase)
+				if err != nil {
+					t.Errorf("compare the forwarded credential: %v", err)
+					return nil
+				}
+				c.passphraseIsWire = equal
 			}
 			return nil
 		},

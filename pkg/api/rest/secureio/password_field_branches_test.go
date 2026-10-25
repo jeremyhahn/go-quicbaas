@@ -105,11 +105,10 @@ func TestPasswordFieldUnmarshalNotAString(t *testing.T) {
 	}
 }
 
-// TestPasswordFieldUnmarshalEmptyAfterDecode covers the branch where a
-// quoted token holds 1..3 base64 characters, for which the decoded
-// length rounds down to zero bytes. That is treated as a malformed
-// password rather than a silent empty value.
-func TestPasswordFieldUnmarshalEmptyAfterDecode(t *testing.T) {
+// TestPasswordFieldUnmarshalPartialQuantum covers a quoted token that
+// holds 1..3 base64 characters: less than one whole quantum is a
+// malformed password rather than a silent empty value.
+func TestPasswordFieldUnmarshalPartialQuantum(t *testing.T) {
 	t.Parallel()
 
 	var f PasswordField
@@ -122,8 +121,8 @@ func TestPasswordFieldUnmarshalEmptyAfterDecode(t *testing.T) {
 	if !errors.As(err, &malformed) {
 		t.Fatalf("returned %T, want *MalformedPasswordError", err)
 	}
-	if malformed.Reason != "password empty after decode" {
-		t.Fatalf("Reason = %q, want %q", malformed.Reason, "password empty after decode")
+	if malformed.Reason != "base64 length is not a multiple of 4" {
+		t.Fatalf("Reason = %q, want %q", malformed.Reason, "base64 length is not a multiple of 4")
 	}
 }
 
@@ -167,7 +166,12 @@ func TestPasswordFieldUnmarshalExactFit(t *testing.T) {
 	if f.Size() != len(plaintext) {
 		t.Fatalf("Size() = %d, want %d", f.Size(), len(plaintext))
 	}
-	if string(f.Buffer().Bytes()) != string(plaintext) {
-		t.Fatalf("Bytes() = %q, want %q", f.Buffer().Bytes(), plaintext)
+	if err := f.Buffer().WithBytes(func(got []byte) error {
+		if string(got) != string(plaintext) {
+			t.Fatalf("WithBytes() = %q, want %q", got, plaintext)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("WithBytes: %v", err)
 	}
 }

@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 )
 
 // ErrEmbeddedServiceNotAvailable is returned when the embedded service is not available
@@ -38,17 +40,26 @@ type EmbeddedServer struct{}
 // Test packages that initialize an embedded server can register it here
 // for use by cross-protocol tests that call GetEmbeddedService.
 var embeddedServiceRegistry struct {
-	svc interface{}
-	set bool
+	svc    interface{}
+	binder quicbaas.EmbeddedIdentityBinder
+	set    bool
 }
 
 // RegisterEmbeddedService registers an embedded QuicBaaS service for use by
 // integration tests. This is called by test packages that initialize an
 // embedded server (e.g., test/integration/embedded) to make the service
 // available to cross-protocol tests via GetEmbeddedService.
-func RegisterEmbeddedService(svc interface{}) {
+func RegisterEmbeddedService(svc interface{}, binder quicbaas.EmbeddedIdentityBinder) {
 	embeddedServiceRegistry.svc = svc
+	embeddedServiceRegistry.binder = binder
 	embeddedServiceRegistry.set = true
+}
+
+// EmbeddedSystemIdentity names the registered embedded server's service
+// principal as the identity of an embedded client that acts as the system.
+// Pass it with quicbaas.WithEmbedded(svc).
+func EmbeddedSystemIdentity() quicbaas.Option {
+	return quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(embeddedServiceRegistry.binder))
 }
 
 // IsEmbeddedAvailable returns true if the embedded service has been

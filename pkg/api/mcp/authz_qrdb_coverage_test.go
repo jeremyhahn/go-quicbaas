@@ -297,8 +297,8 @@ func TestMCPPermissions_CertificateToolsMatchGRPC(t *testing.T) {
 
 	expected := map[string]qrdbToolResource{
 		// Writes: issuance and CSR signing mint a leaf; revoke drives the CRL.
-		"quicbaas_certificate_issue":    {"certs", "generate"},
-		"quicbaas_certificate_sign_csr": {"certs", "generate"},
+		"quicbaas_certificate_issue":    {"certs", "issue"},
+		"quicbaas_certificate_sign_csr": {"certs", "issue"},
 		"quicbaas_certificate_revoke":   {"certs", "revoke"},
 		// Reads.
 		"quicbaas_certificate_verify":         {"certs", "read"},
@@ -307,8 +307,8 @@ func TestMCPPermissions_CertificateToolsMatchGRPC(t *testing.T) {
 		// The certificate EXTENSION tools, pinned alongside so the two halves
 		// of the surface cannot drift apart again.
 		"quicbaas_certificate_cross_sign":            {"ca", "create"},
-		"quicbaas_certificate_chain":                 {"certs", "generate"},
-		"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
+		"quicbaas_certificate_chain":                 {"certs", "enroll"},
+		"quicbaas_certificate_issue_device_identity": {"certs", "issue"},
 	}
 
 	writeActions := map[string]bool{"generate": true, "revoke": true, "create": true}

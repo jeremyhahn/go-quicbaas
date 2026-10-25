@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -227,4 +228,78 @@ func TestHandleTrustPublishDANE(t *testing.T) {
 		server.HandleTrustPublishDANE(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+}
+
+// TestTrustRoutes_TrustFamilyPermissions pins the trust surface to the
+// registered trust family, the same grant on every transport: the pool read
+// is trust:read, and AIA import and DANE publish, which change what the
+// node trusts or publishes, are trust:write. Both write routes are then
+// served rather than refused.
+func TestTrustRoutes_TrustFamilyPermissions(t *testing.T) {
+	registered := registeredPermissionSet(t)
+	cases := []struct {
+		method, path, want string
+	}{
+		{http.MethodGet, "/api/v1/trust/cross-signed-roots", "trust:read"},
+		{http.MethodPost, "/api/v1/trust/auto-import-aia", "trust:write"},
+		{http.MethodPost, "/api/v1/trust/publish-dane", "trust:write"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			resource, action, ok := routePermissionForPath(tc.path, tc.method)
+			require.Truef(t, ok, "%s %s resolved no permission", tc.method, tc.path)
+			assert.Equal(t, tc.want, resource+":"+action)
+			_, found := registered[tc.want]
+			assert.Truef(t, found, "%s is not registered", tc.want)
+		})
+	}
+}
+
+// TestTrustWriteRoutes_Served confirms AIA import and DANE publish reach the
+// trust service once they carry a permission, instead of the typed refusal.
+func TestTrustWriteRoutes_Served(t *testing.T) {
+	for _, path := range []string{"/api/v1/trust/auto-import-aia", "/api/v1/trust/publish-dane"} {
+		t.Run(path, func(t *testing.T) {
+			server, mockSvc, cleanup := setupMockServer(t)
+			defer cleanup()
+			mockSvc.TrustSvc = &stubTrustService{imported: 1, published: 1}
+
+			req := tenantRequest("acme", http.MethodPost, path, bytes.NewReader([]byte(`{}`)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			server.router.ServeHTTP(w, req)
+
+			refusal := (&UnassignedRouteError{Method: http.MethodPost, Pattern: path}).Error()
+			assert.NotContains(t, w.Body.String(), refusal)
+			assert.NotEqual(t, http.StatusForbidden, w.Code)
+		})
+	}
+}
+
+// TestRouteSpecBind_ServesHandlerUnlessRefused proves bind leaves every
+// other auth class on its own handler.
+func TestRouteSpecBind_ServesHandlerUnlessRefused(t *testing.T) {
+	var called bool
+	spec := RouteSpec{
+		Method:  http.MethodGet,
+		Pattern: "/api/v1/probe",
+		Auth:    RouteAuthPermission,
+		Handler: func(*Server) http.HandlerFunc {
+			return func(w http.ResponseWriter, _ *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusNoContent)
+			}
+		},
+	}
+	w := httptest.NewRecorder()
+	spec.bind(nil)(w, httptest.NewRequest(http.MethodGet, spec.Pattern, nil))
+	assert.True(t, called)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	called = false
+	spec.Auth = RouteAuthRefused
+	w = httptest.NewRecorder()
+	spec.bind(nil)(w, httptest.NewRequest(http.MethodGet, spec.Pattern, nil))
+	assert.False(t, called)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }

@@ -141,6 +141,7 @@ func (s *activationService) GetWebAuthnManager(context.Context) (WebAuthnManager
 // activationFixture is a handler wired for a complete FIDO2 finish.
 type activationFixture struct {
 	handler  *IAMHandler
+	tenant   string
 	token    string
 	invites  iam.InviteStore
 	users    iam.UserStorage
@@ -231,6 +232,7 @@ func setupActivation(t *testing.T, mode activationWriteMode) (*activationFixture
 
 	return &activationFixture{
 		handler:  &IAMHandler{server: server},
+		tenant:   inviteTenant,
 		token:    token,
 		invites:  invites,
 		users:    mem,
@@ -267,11 +269,11 @@ func (f *activationFixture) call(
 	t.Helper()
 
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", inviteTenant)
+	rctx.URLParams.Add("tenant_id", f.tenant)
 	rctx.URLParams.Add("token", f.token)
 
 	req := httptest.NewRequest(method,
-		"/api/v1/iam/"+inviteTenant+"/invites/"+f.token+suffix, strings.NewReader(body))
+		"/api/v1/iam/"+f.tenant+"/invites/"+f.token+suffix, strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	req.Header.Set("Content-Type", "application/json")
 

@@ -35,6 +35,12 @@ const (
 	// RouteAuthPermission requires an authenticated identity holding the
 	// route's Resource:Action permission.
 	RouteAuthPermission
+	// RouteAuthRefused requires an authenticated identity and then refuses
+	// the call with UnassignedRouteError: neither go-qrdb nor go-xkms assigns
+	// the verb a permission, so no role could ever be granted it. The
+	// handler stays registered so the route resolves to a typed refusal, not
+	// a 404, as gRPC's unassignedGRPCMethods and MCP's unmappedToolGroups do.
+	RouteAuthRefused
 )
 
 // RouteGroup names the middleware profile a route is served under. The
@@ -222,6 +228,18 @@ type RouteSpec struct {
 	Handler func(s *Server) http.HandlerFunc
 }
 
+// bind returns the handler the route serves on s. A RouteAuthRefused route
+// answers 403 with UnassignedRouteError and never reaches its handler.
+func (spec RouteSpec) bind(s *Server) http.HandlerFunc {
+	if spec.Auth != RouteAuthRefused {
+		return spec.Handler(s)
+	}
+	refusal := &UnassignedRouteError{Method: spec.Method, Pattern: spec.Pattern}
+	return func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, r, http.StatusForbidden, refusal)
+	}
+}
+
 // frozenPermission is one routes_permissions_generated.go table entry: the
 // authorization contract the REST PEP mapper computed for a route the LAST
 // time the freeze was regenerated, before the mapper was deleted (see the
@@ -314,14 +332,21 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/barrier/initialize", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierInitialize }},
 		{Method: "DELETE", Pattern: "/api/v1/barrier/recovery", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryDelete }},
 		{Method: "POST", Pattern: "/api/v1/barrier/recovery/generate", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryGenerate }},
-		{Method: "POST", Pattern: "/api/v1/barrier/recovery/recover", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryRecover }},
 		{Method: "GET", Pattern: "/api/v1/barrier/recovery/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryStatus }},
-		{Method: "POST", Pattern: "/api/v1/barrier/rekey", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRekey }},
-		{Method: "POST", Pattern: "/api/v1/barrier/root-token", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRootToken }},
 		{Method: "POST", Pattern: "/api/v1/barrier/seal", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierSeal }},
 		{Method: "POST", Pattern: "/api/v1/barrier/shamir/initialize", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirInitialize }},
-		{Method: "POST", Pattern: "/api/v1/barrier/shamir/unseal-share", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirUnsealShare }},
-		{Method: "POST", Pattern: "/api/v1/barrier/shamir/unseal-shares", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirUnsealShares }},
+		{Method: "POST", Pattern: "/api/v1/barrier/cluster-unseal", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierClusterUnseal }},
+		{Method: "GET", Pattern: "/api/v1/barrier/officers", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerList }},
+		{Method: "POST", Pattern: "/api/v1/barrier/officers", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerRegister }},
+		{Method: "POST", Pattern: "/api/v1/barrier/officers/revoke", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerRevoke }},
+		{Method: "POST", Pattern: "/api/v1/barrier/officers/{username}/claim/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShareClaimBegin }},
+		{Method: "POST", Pattern: "/api/v1/barrier/officers/{username}/claim/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShareClaimComplete }},
+		{Method: "POST", Pattern: "/api/v1/barrier/quorum/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierQuorumBegin }},
+		{Method: "POST", Pattern: "/api/v1/barrier/quorum/submit", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierQuorumSubmit }},
+		{Method: "POST", Pattern: "/api/v1/barrier/recovery/officers", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryOfficerRegister }},
+		{Method: "POST", Pattern: "/api/v1/barrier/recovery/officers/{username}/claim/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryShareClaimBegin }},
+		{Method: "POST", Pattern: "/api/v1/barrier/recovery/officers/{username}/claim/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryShareClaimComplete }},
+		{Method: "POST", Pattern: "/api/v1/barrier/rekey/start", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRekeyStart }},
 		{Method: "GET", Pattern: "/api/v1/barrier/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierStatus }},
 		{Method: "POST", Pattern: "/api/v1/barrier/unseal", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierUnseal }},
 		{Method: "POST", Pattern: "/api/v1/batch/delete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleBatchDelete }},
@@ -394,12 +419,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/api/v1/hooks/task-completed", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleHookTaskCompleted }},
 		{Method: "POST", Pattern: "/api/v1/hooks/task-created", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleHookTaskCreated }},
 		{Method: "POST", Pattern: "/api/v1/hooks/teammate-idle", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleHookTeammateIdle }},
-		{Method: "POST", Pattern: "/api/v1/init/claim-cert/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyClaimCertBegin }},
-		{Method: "POST", Pattern: "/api/v1/init/claim-cert/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyClaimCertComplete }},
-		{Method: "POST", Pattern: "/api/v1/init/enroll-external-officer", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyEnrollExternalOfficer }},
 		{Method: "POST", Pattern: "/api/v1/init/initialize", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyInitialize }},
-		{Method: "POST", Pattern: "/api/v1/init/officer-share/begin", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyBeginClaimShare }},
-		{Method: "POST", Pattern: "/api/v1/init/officer-share/complete", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyCompleteClaimShare }},
 		{Method: "GET", Pattern: "/api/v1/init/officers", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyListOfficers }},
 		{Method: "POST", Pattern: "/api/v1/init/sign-csr", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonySignCSR }},
 		{Method: "GET", Pattern: "/api/v1/init/status", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyStatus }},
@@ -794,33 +814,31 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "POST", Pattern: "/v1/barrier/initialize", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierInitialize }},
 		{Method: "DELETE", Pattern: "/v1/barrier/recovery", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryDelete }},
 		{Method: "POST", Pattern: "/v1/barrier/recovery/generate", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryGenerate }},
-		{Method: "POST", Pattern: "/v1/barrier/recovery/recover", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryRecover }},
 		{Method: "GET", Pattern: "/v1/barrier/recovery/status", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryStatus }},
-		{Method: "POST", Pattern: "/v1/barrier/rekey", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRekey }},
-		{Method: "POST", Pattern: "/v1/barrier/root-token", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRootToken }},
 		{Method: "POST", Pattern: "/v1/barrier/seal", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierSeal }},
 		{Method: "POST", Pattern: "/v1/barrier/shamir/initialize", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirInitialize }},
-		{Method: "POST", Pattern: "/v1/barrier/shamir/unseal-share", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirUnsealShare }},
-		{Method: "POST", Pattern: "/v1/barrier/shamir/unseal-shares", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShamirUnsealShares }},
+		{Method: "POST", Pattern: "/v1/barrier/cluster-unseal", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierClusterUnseal }},
+		{Method: "GET", Pattern: "/v1/barrier/officers", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerList }},
+		{Method: "POST", Pattern: "/v1/barrier/officers", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerRegister }},
+		{Method: "POST", Pattern: "/v1/barrier/officers/revoke", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierOfficerRevoke }},
+		{Method: "POST", Pattern: "/v1/barrier/officers/{username}/claim/begin", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShareClaimBegin }},
+		{Method: "POST", Pattern: "/v1/barrier/officers/{username}/claim/complete", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierShareClaimComplete }},
+		{Method: "POST", Pattern: "/v1/barrier/quorum/begin", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierQuorumBegin }},
+		{Method: "POST", Pattern: "/v1/barrier/quorum/submit", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierQuorumSubmit }},
+		{Method: "POST", Pattern: "/v1/barrier/recovery/officers", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryOfficerRegister }},
+		{Method: "POST", Pattern: "/v1/barrier/recovery/officers/{username}/claim/begin", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryShareClaimBegin }},
+		{Method: "POST", Pattern: "/v1/barrier/recovery/officers/{username}/claim/complete", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRecoveryShareClaimComplete }},
+		{Method: "POST", Pattern: "/v1/barrier/rekey/start", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierRekeyStart }},
 		{Method: "GET", Pattern: "/v1/barrier/status", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierStatus }},
 		{Method: "POST", Pattern: "/v1/barrier/unseal", Group: GroupBarrierWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleBarrierUnseal }},
 
 		// --- GroupCeremonyWire ---
 		// Load-bearing for the standalone sealed-window REST listener; see
 		// the RouteGroup doc comment.
-		{Method: "POST", Pattern: "/v1/ceremony/claim-cert/begin", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyClaimCertBegin }},
-		{Method: "POST", Pattern: "/v1/ceremony/claim-cert/complete", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyClaimCertComplete }},
 		{Method: "POST", Pattern: "/v1/ceremony/initialize", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyInitialize }},
-		{Method: "POST", Pattern: "/v1/ceremony/officer-share/begin", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyBeginClaimShare }},
-		{Method: "POST", Pattern: "/v1/ceremony/officer-share/complete", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyCompleteClaimShare }},
 		{Method: "GET", Pattern: "/v1/ceremony/officers", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyListOfficers }},
 		{Method: "POST", Pattern: "/v1/ceremony/sign-csr", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonySignCSR }},
 		{Method: "GET", Pattern: "/v1/ceremony/status", Group: GroupCeremonyWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyStatus }},
-
-		// --- GroupInitWire ---
-		// Load-bearing for the standalone sealed-window REST listener; see
-		// the RouteGroup doc comment.
-		{Method: "POST", Pattern: "/v1/init/enroll-external-officer", Group: GroupInitWire, Handler: func(s *Server) http.HandlerFunc { return s.HandleCeremonyEnrollExternalOfficer }},
 	}
 
 	// Cluster CA secret delivery (tpm-kek): mounted only when the active
@@ -913,28 +931,30 @@ var moduleExcludedPathPrefixes = []string{
 // owner there, and go-qrdb's registrar panics on the duplicate. GET
 // /v1/ceremony/officers is quicbaas's own and stays on the module surface.
 var qrdbNativeWireRoutes = map[string]bool{
-	"POST /v1/barrier/enable-encryption":       true,
-	"POST /v1/barrier/initialize":              true,
-	"DELETE /v1/barrier/recovery":              true,
-	"POST /v1/barrier/recovery/generate":       true,
-	"POST /v1/barrier/recovery/recover":        true,
-	"GET /v1/barrier/recovery/status":          true,
-	"POST /v1/barrier/rekey":                   true,
-	"POST /v1/barrier/root-token":              true,
-	"POST /v1/barrier/seal":                    true,
-	"POST /v1/barrier/shamir/initialize":       true,
-	"POST /v1/barrier/shamir/unseal-share":     true,
-	"POST /v1/barrier/shamir/unseal-shares":    true,
-	"GET /v1/barrier/status":                   true,
-	"POST /v1/barrier/unseal":                  true,
-	"POST /v1/ceremony/claim-cert/begin":       true,
-	"POST /v1/ceremony/claim-cert/complete":    true,
-	"POST /v1/ceremony/initialize":             true,
-	"POST /v1/ceremony/officer-share/begin":    true,
-	"POST /v1/ceremony/officer-share/complete": true,
-	"POST /v1/ceremony/sign-csr":               true,
-	"GET /v1/ceremony/status":                  true,
-	"POST /v1/init/enroll-external-officer":    true,
+	"POST /v1/barrier/enable-encryption":                           true,
+	"POST /v1/barrier/initialize":                                  true,
+	"DELETE /v1/barrier/recovery":                                  true,
+	"POST /v1/barrier/recovery/generate":                           true,
+	"GET /v1/barrier/recovery/status":                              true,
+	"POST /v1/barrier/seal":                                        true,
+	"POST /v1/barrier/shamir/initialize":                           true,
+	"POST /v1/barrier/cluster-unseal":                              true,
+	"GET /v1/barrier/officers":                                     true,
+	"POST /v1/barrier/officers":                                    true,
+	"POST /v1/barrier/officers/revoke":                             true,
+	"POST /v1/barrier/officers/{username}/claim/begin":             true,
+	"POST /v1/barrier/officers/{username}/claim/complete":          true,
+	"POST /v1/barrier/quorum/begin":                                true,
+	"POST /v1/barrier/quorum/submit":                               true,
+	"POST /v1/barrier/recovery/officers":                           true,
+	"POST /v1/barrier/recovery/officers/{username}/claim/begin":    true,
+	"POST /v1/barrier/recovery/officers/{username}/claim/complete": true,
+	"POST /v1/barrier/rekey/start":                                 true,
+	"GET /v1/barrier/status":                                       true,
+	"POST /v1/barrier/unseal":                                      true,
+	"POST /v1/ceremony/initialize":                                 true,
+	"POST /v1/ceremony/sign-csr":                                   true,
+	"GET /v1/ceremony/status":                                      true,
 }
 
 // ModuleRoutes returns the subset of Routes() safe to register on the

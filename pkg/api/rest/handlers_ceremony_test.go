@@ -44,12 +44,7 @@ func TestCeremonyRoutesAreRegistered(t *testing.T) {
 		{"status", http.MethodGet, "/api/v1/init/status"},
 		{"officers", http.MethodGet, "/api/v1/init/officers"},
 		{"initialize", http.MethodPost, "/api/v1/init/initialize"},
-		{"claim-cert/begin", http.MethodPost, "/api/v1/init/claim-cert/begin"},
-		{"claim-cert/complete", http.MethodPost, "/api/v1/init/claim-cert/complete"},
-		{"officer-share-begin", http.MethodPost, "/api/v1/init/officer-share/begin"},
-		{"officer-share-complete", http.MethodPost, "/api/v1/init/officer-share/complete"},
 		{"sign-csr", http.MethodPost, "/api/v1/init/sign-csr"},
-		{"enroll-external-officer", http.MethodPost, "/api/v1/init/enroll-external-officer"},
 	}
 
 	for _, tc := range cases {

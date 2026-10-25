@@ -77,6 +77,29 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 	}
 }
 
+// TestTrustToolsTrustFamilyPermissions pins the trust tools to the same
+// permissions REST and gRPC assign: the pool read is trust:read, and AIA
+// import and DANE publish, which change what the node trusts or publishes,
+// are trust:write.
+func TestTrustToolsTrustFamilyPermissions(t *testing.T) {
+	cases := []struct {
+		tool   string
+		action string
+	}{
+		{"quicbaas_trust_cross_signed_root_pool", "read"},
+		{"quicbaas_trust_auto_import_aia", "write"},
+		{"quicbaas_trust_publish_dane", "write"},
+	}
+	for _, c := range cases {
+		res, act, ok := getToolQRDBPermission(c.tool)
+		require.True(t, ok, "%s resolved no permission", c.tool)
+		assert.Equal(t, "trust", res, c.tool)
+		assert.Equal(t, c.action, act, c.tool)
+		_, dead := unmappedTools[c.tool]
+		assert.False(t, dead, "%s is mapped, so it must not be declared dead", c.tool)
+	}
+}
+
 // TestGetToolQRDBPermission_Unmapped pins the default-deny half of the mapper.
 //
 // Two distinct cases must stay unmapped:
@@ -94,7 +117,6 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 		"quicbaas_iam_group_create",
 		"quicbaas_iam_policy_update",
 		"quicbaas_mfa_enroll_begin",
-		"quicbaas_login_begin",
 		// Not registered tools.
 		"quicbaas_kms_generate",
 		"quicbaas_unknown_thing",
@@ -112,7 +134,7 @@ func TestGetToolQRDBPermission_Unmapped(t *testing.T) {
 // barrierToolNames but absent from qrdbToolExactMapping would otherwise be
 // default-denied at the gate, making it unreachable even to authorised callers.
 func TestBarrierToolsGranularAuthzMapping(t *testing.T) {
-	// wantBarrierPerms is the exact gRPC-canonical table for the 17 barrier
+	// wantBarrierPerms is the exact gRPC-canonical table for the mapped barrier
 	// tools. Values are copied from pkg/api/grpc/authz_mapping.go.
 	wantBarrierPerms := map[string]qrdbToolResource{
 		"qrdb_barrier_status":                   {"tenant_barrier", "status"},
@@ -120,25 +142,49 @@ func TestBarrierToolsGranularAuthzMapping(t *testing.T) {
 		"qrdb_barrier_unseal":                   {"tenant_barrier", "unseal"},
 		"qrdb_barrier_seal":                     {"tenant_barrier", "seal"},
 		"qrdb_barrier_shamir_initialize":        {"seal", "initialize_shamir"},
-		"qrdb_barrier_shamir_unseal_share":      {"barrier", "unseal-share"},
-		"qrdb_barrier_shamir_unseal_shares":     {"barrier", "unseal-share"},
-		"qrdb_barrier_rekey":                    {"seal", "rekey"},
 		"qrdb_barrier_recovery_generate":        {"seal", "generate_recovery"},
-		"qrdb_barrier_recovery_recover":         {"seal", "recover_with_keys"},
 		"qrdb_barrier_recovery_delete":          {"seal", "generate_recovery"},
 		"qrdb_barrier_recovery_status":          {"seal", "status"},
-		"qrdb_barrier_root_token":               {"seal", "bootstrap"},
 		"qrdb_barrier_enable_encryption":        {"seal", "enable_encryption"},
 		"qrdb_tenant_barrier_enable_encryption": {"tenant_barrier", "enable_encryption"},
 		"qrdb_tenant_update_quotas":             {"tenants", "set_quotas"},
 		"qrdb_tenant_update_entitlements":       {"tenants", "set_entitlements"},
+		// Share-holder tools: values copied from the REST holder routes.
+		"qrdb_barrier_cluster_unseal":            {"seal", "unseal"},
+		"qrdb_barrier_officer_list":              {"seal", "officer_list"},
+		"qrdb_barrier_officer_register":          {"seal", "officer_register"},
+		"qrdb_barrier_recovery_officer_register": {"seal", "officer_register"},
+		"qrdb_barrier_officer_revoke":            {"seal", "officer_revoke"},
+		"qrdb_barrier_rekey_start":               {"seal", "rekey"},
+	}
+	// identityGated are the holder tools go-qrdb serves without a permission
+	// (the verb checks the caller is the holder). They must stay unmapped and
+	// be declared in unmappedToolGroups, never resolve to a permission.
+	identityGated := map[string]bool{
+		"qrdb_barrier_share_claim_begin":             true,
+		"qrdb_barrier_share_claim_complete":          true,
+		"qrdb_barrier_recovery_share_claim_begin":    true,
+		"qrdb_barrier_recovery_share_claim_complete": true,
+		"qrdb_barrier_quorum_begin":                  true,
+		"qrdb_barrier_quorum_submit":                 true,
+	}
+	declaredDead := map[string]bool{}
+	for _, g := range unmappedToolGroups {
+		for _, tool := range g.tools {
+			declaredDead[tool] = true
+		}
+	}
+	for name := range identityGated {
+		_, _, ok := getToolQRDBPermission(name)
+		assert.Falsef(t, ok, "identity-gated tool %q must not resolve to a permission", name)
+		assert.Truef(t, declaredDead[name], "identity-gated tool %q must be declared in unmappedToolGroups", name)
 	}
 
 	// Assert the expectation table covers every tool in the dispatch map so
 	// this test fails loudly when a new tool is added to barrierToolNames
 	// without a corresponding entry here and in qrdbToolExactMapping.
 	for name := range barrierToolNames {
-		if _, ok := wantBarrierPerms[name]; !ok {
+		if _, ok := wantBarrierPerms[name]; !ok && !identityGated[name] {
 			t.Errorf("barrierToolNames contains %q which has no entry in wantBarrierPerms; add it to both the exact mapping and this table", name)
 		}
 	}

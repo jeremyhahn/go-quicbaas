@@ -18,6 +18,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -77,8 +78,12 @@ func registryMCPTransport(t *testing.T, reg *ToolRegistry, onCall func(tool stri
 		})
 	}
 
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
-	tr, err := sdkmcp.New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
+	// TLS, because the SDK refuses to send a PIN or barrier secret over
+	// http:// and some round trips through this helper carry one.
+	httpSrv := httptest.NewUnstartedServer(mcpserver.NewStreamableHTTPServer(srv))
+	httpSrv.StartTLS()
+	tr, err := sdkmcp.New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second},
+		sdkmcp.WithHTTPClient(httpSrv.Client()))
 	if err != nil {
 		httpSrv.Close()
 		t.Fatalf("failed to create MCP transport: %v", err)
