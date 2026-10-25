@@ -25,6 +25,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
@@ -60,7 +61,7 @@ func TestSchedulerAvailability(t *testing.T) {
 		endpoints := getRESTEndpoints()
 		for _, endpoint := range endpoints {
 			t.Run(endpoint, func(t *testing.T) {
-				client := NewSchedulerRESTClient(endpoint)
+				client := NewSchedulerRESTClient(t, endpoint)
 
 				resp, err := client.GetStatus(ctx)
 				require.NoError(t, err, "Scheduler must be available on REST at %s", endpoint)
@@ -76,7 +77,8 @@ func TestSchedulerAvailability(t *testing.T) {
 			t.Run(endpoint, func(t *testing.T) {
 				tlsCfg, err := helpers.IntegrationTLSConfig()
 				require.NoError(t, err, "load integration TLS config")
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg),
+					grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t))))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 
@@ -100,7 +102,7 @@ func TestSchedulerJobLifecycle(t *testing.T) {
 // testRESTJobLifecycle tests job lifecycle via REST.
 func testRESTJobLifecycle(t *testing.T, ctx context.Context) {
 	endpoints := getRESTEndpoints()
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is running
 	status, err := client.GetStatus(ctx)
@@ -170,7 +172,7 @@ func TestSchedulerRecurringJob(t *testing.T) {
 	defer cancel()
 
 	endpoints := getRESTEndpoints()
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is available
 	_, err := client.GetStatus(ctx)
@@ -205,7 +207,7 @@ func TestSchedulerJobPauseResume(t *testing.T) {
 
 	endpoints := getRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available")
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is running
 	status, err := client.GetStatus(ctx)
