@@ -453,6 +453,8 @@ consistent with every other quicbaas verb.
 | Unix | gRPC over Unix domain socket (default) |
 | Embedded | In-process via `Security().Barrier()` |
 
+`tenant barrier quorum begin|submit` over `--transport unix` refuses before dialling with `TenantQuorumUnixUnsupportedError` (`CodeUnimplemented`) until go-qrdb#1156 lets the Unix listener serve `qrdb.v1.TenantBarrierService`.
+
 ---
 
 ## 7. Cross-references

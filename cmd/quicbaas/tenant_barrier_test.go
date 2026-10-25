@@ -35,6 +35,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // fakeTenantBarrierClient records requests so tests can assert what would be
@@ -572,6 +574,7 @@ func cloneTenantBarrierInitReq(req *qrdbtransport.TenantBarrierInitRequest) *qrd
 // TestTenantBarrierQuorum_BeginAndSubmitCarryTheTenant proves both quorum
 // steps address the named tenant's barrier, never the system one.
 func TestTenantBarrierQuorum_BeginAndSubmitCarryTheTenant(t *testing.T) {
+	withTransport(t, "rest")
 	defer resetTenantBarrierFlags()
 	fc := &fakeTenantBarrierClient{
 		submitFunc: func(_ context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
@@ -605,8 +608,73 @@ func TestTenantBarrierQuorum_BeginAndSubmitCarryTheTenant(t *testing.T) {
 	assert.Contains(t, out.String(), "1 of 2")
 }
 
+// withTransport selects --transport for one test and restores it after.
+func withTransport(t *testing.T, name string) {
+	t.Helper()
+	orig := transport
+	transport = name
+	t.Cleanup(func() { transport = orig })
+}
+
+// TestTenantBarrierQuorum_UnixRefusesBeforeDialling proves begin and submit
+// over the Unix transport refuse with the typed go-qrdb#1156 error before the
+// client is built.
+func TestTenantBarrierQuorum_UnixRefusesBeforeDialling(t *testing.T) {
+	commands := map[string]func(*cobra.Command, []string) error{
+		"begin":  runTenantBarrierQuorumBeginCommand,
+		"submit": runTenantBarrierQuorumSubmitCommand,
+	}
+	for name, run := range commands {
+		t.Run(name, func(t *testing.T) {
+			defer resetTenantBarrierFlags()
+			withTransport(t, "unix")
+			dialled := false
+			orig := tenantBarrierClientFactory
+			tenantBarrierClientFactory = func() (TenantBarrierClient, error) {
+				dialled = true
+				return &fakeTenantBarrierClient{}, nil
+			}
+			defer func() { tenantBarrierClientFactory = orig }()
+
+			resetTenantBarrierFlags()
+			tenantBarrierTenantID = "acme"
+			barrierQuorumOp = qrdbtransport.OpUnseal
+			barrierUsername = "alice"
+			barrierFactor = "mtls"
+			barrierChallengeID = "c-1"
+			barrierResponseFile = writeQuorumFile(t, "response", []byte("signed"))
+			barrierShareFile = writeQuorumFile(t, "share", []byte("share"))
+
+			err := run(&cobra.Command{}, nil)
+			var refusal *TenantQuorumUnixUnsupportedError
+			require.ErrorAs(t, err, &refusal)
+			assert.True(t, sdkerrors.IsUnimplemented(err), "the refusal carries CodeUnimplemented")
+			assert.Contains(t, err.Error(), "go-qrdb#1156")
+			assert.False(t, dialled, "the refusal comes before any dial")
+		})
+	}
+}
+
+// TestTenantBarrierQuorum_OtherTransportsAreNotRefused proves the Unix
+// refusal does not reach the other transports.
+func TestTenantBarrierQuorum_OtherTransportsAreNotRefused(t *testing.T) {
+	defer resetTenantBarrierFlags()
+	withTransport(t, "rest")
+	fc := &fakeTenantBarrierClient{}
+	defer withFakeTenantBarrier(fc)()
+
+	resetTenantBarrierFlags()
+	tenantBarrierTenantID = "acme"
+	barrierQuorumOp = qrdbtransport.OpUnseal
+	barrierUsername = "alice"
+	barrierFactor = "mtls"
+	require.NoError(t, runTenantBarrierQuorumBeginCommand(&cobra.Command{}, nil))
+	assert.NotNil(t, fc.lastBeginReq)
+}
+
 // TestTenantBarrierQuorumSubmit_RefusesWithoutAShareFile stops before dialling.
 func TestTenantBarrierQuorumSubmit_RefusesWithoutAShareFile(t *testing.T) {
+	withTransport(t, "rest")
 	defer resetTenantBarrierFlags()
 	fc := &fakeTenantBarrierClient{}
 	defer withFakeTenantBarrier(fc)()

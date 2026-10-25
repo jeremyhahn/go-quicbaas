@@ -52,6 +52,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -74,6 +75,41 @@ var (
 
 // TenantBarrierHolderSpecError is returned when an --officers or
 // --custodians value is not username=path/to/csr.pem.
+// TenantQuorumUnixUnsupportedError is returned by tenant barrier quorum begin
+// and submit over the Unix transport: the go-qrdb SDK cannot yet register
+// qrdb.v1.TenantBarrierService on the Unix listener (go-qrdb#1156). It embeds
+// a *QBError carrying CodeUnimplemented so IsUnimplemented classifies it.
+type TenantQuorumUnixUnsupportedError struct {
+	*sdkerrors.QBError
+}
+
+// newTenantQuorumUnixUnsupported constructs the refusal for one operation.
+func newTenantQuorumUnixUnsupported(op string) *TenantQuorumUnixUnsupportedError {
+	return &TenantQuorumUnixUnsupportedError{
+		QBError: sdkerrors.New(sdkerrors.CodeUnimplemented, op,
+			"tenant quorum is not served over --transport unix until go-qrdb#1156; use rest, grpc, quic or mcp"),
+	}
+}
+
+// Is reports whether target is a TenantQuorumUnixUnsupportedError.
+func (e *TenantQuorumUnixUnsupportedError) Is(target error) bool {
+	_, ok := target.(*TenantQuorumUnixUnsupportedError)
+	return ok
+}
+
+// Unwrap exposes the embedded *QBError so the code predicates classify the
+// refusal through errors.As.
+func (e *TenantQuorumUnixUnsupportedError) Unwrap() error { return e.QBError }
+
+// refuseTenantQuorumOverUnix refuses a tenant quorum operation over the Unix
+// transport before anything is dialled.
+func refuseTenantQuorumOverUnix(op string) error {
+	if selectTransport() == "unix" {
+		return newTenantQuorumUnixUnsupported(op)
+	}
+	return nil
+}
+
 type TenantBarrierHolderSpecError struct {
 	Flag string
 	Got  string
@@ -542,7 +578,8 @@ rekey, recover) completes through two steps per holder:
   quorum begin    Open a factor challenge for the holder
   quorum submit   Answer it with the factor response and the holder's share
 
-The share is the holder's opened share, read raw from --share-file.`,
+The share is the holder's opened share, read raw from --share-file.
+Over --transport unix both steps refuse until go-qrdb#1156 ships.`,
 	}
 
 	begin := &cobra.Command{
@@ -569,6 +606,9 @@ The share is the holder's opened share, read raw from --share-file.`,
 func runTenantBarrierQuorumBeginCommand(cmd *cobra.Command, _ []string) error {
 	const op = "tenant.barrier.quorum.begin"
 	if err := requireTenantID(op); err != nil {
+		return err
+	}
+	if err := refuseTenantQuorumOverUnix(op); err != nil {
 		return err
 	}
 	if err := validateQuorumHolderFlags(op); err != nil {
@@ -599,6 +639,9 @@ func runTenantBarrierQuorumBeginCommand(cmd *cobra.Command, _ []string) error {
 func runTenantBarrierQuorumSubmitCommand(cmd *cobra.Command, _ []string) error {
 	const op = "tenant.barrier.quorum.submit"
 	if err := requireTenantID(op); err != nil {
+		return err
+	}
+	if err := refuseTenantQuorumOverUnix(op); err != nil {
 		return err
 	}
 	response, share, err := readQuorumSubmission(op)
