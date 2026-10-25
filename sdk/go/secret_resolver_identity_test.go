@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -67,8 +68,9 @@ func (s *registryService) Secrets() service.SecretsService { return s.secrets }
 // context, and counts the calls that reach it.
 type tenantSecretsService struct {
 	service.SecretsService
-	byTenant map[string]map[string]string
-	calls    int
+	byTenant    map[string]map[string]string
+	calls       int
+	ensureCalls int
 }
 
 func (s *tenantSecretsService) GetSecret(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
@@ -78,6 +80,22 @@ func (s *tenantSecretsService) GetSecret(ctx context.Context, req *service.GetSe
 		return nil, &credentialNotVisibleError{name: req.SecretID}
 	}
 	return &service.GetSecretResponse{SecretID: req.SecretID, Data: []byte(value)}, nil
+}
+
+// EnsureSecret returns the tenant's secret at req.SecretID, creating it with
+// a fixed value on first use.
+func (s *tenantSecretsService) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
+	s.ensureCalls++
+	tenant := boundTenant(ctx)
+	if s.byTenant[tenant] == nil {
+		s.byTenant[tenant] = map[string]string{}
+	}
+	value, ok := s.byTenant[tenant][req.SecretID]
+	if !ok {
+		value = "generated-" + req.SecretID
+		s.byTenant[tenant][req.SecretID] = value
+	}
+	return &service.EnsureSecretResponse{SecretID: req.SecretID, Data: []byte(value), Generated: !ok}, nil
 }
 
 func newTenantSecretsService() *tenantSecretsService {
@@ -97,6 +115,13 @@ func newTenantCredentialService() *tenantCredentialService {
 
 // permCredentialRetrieve is the grant qrdb declares on CredentialRetrieve.
 const permCredentialRetrieve = "credentials:retrieve"
+
+// permSecretsRead and permSecretsWrite are the grants go-qrdb declares for
+// tenant secret material (pkg/permission/broker_scope.go).
+const (
+	permSecretsRead  = "secrets:read"
+	permSecretsWrite = "secrets:write"
+)
 
 // tenantGrant binds a delegation to tenant holding exactly grants, enforced
 // by the tenant-hosting node's own AuthMiddleware.
@@ -243,7 +268,7 @@ func TestSecretResolver_RevokedDelegationCannotResolveKMS(t *testing.T) {
 
 func TestSecretResolver_DelegationResolvesOnlyItsOwnKMSSecret(t *testing.T) {
 	kms := newTenantSecretsService()
-	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, tenantGrant(t, "tenant-a"))
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, tenantGrant(t, "tenant-a", permSecretsRead))
 
 	if got, err := resolveSecret(t, c, "kms://system/key"); err == nil {
 		t.Fatalf("Resolve(kms://system/key) for tenant-a = %q, want an error", got)
@@ -254,5 +279,88 @@ func TestSecretResolver_DelegationResolvesOnlyItsOwnKMSSecret(t *testing.T) {
 	}
 	if got != "a-secret" {
 		t.Fatalf("Resolve(kms://a/key) = %q, want a-secret", got)
+	}
+}
+
+// A delegation without secrets:read must not read a kms:// secret: the
+// secrets backend runs as the service principal, so the delegation's grants
+// are enforced before the call is dispatched.
+func TestSecretResolver_DelegationWithoutSecretsReadCannotResolveKMS(t *testing.T) {
+	kms := newTenantSecretsService()
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, tenantGrant(t, "tenant-a", permCredentialRetrieve))
+
+	if got, err := resolveSecret(t, c, "kms://a/key"); err == nil {
+		t.Fatalf("Resolve(kms://a/key) without secrets:read = %q, want an error", got)
+	}
+	if kms.calls != 0 {
+		t.Fatalf("secrets service reached %d times without secrets:read, want 0", kms.calls)
+	}
+}
+
+// ?ensure=true may create the secret, so it needs secrets:write as well as
+// secrets:read.
+func TestSecretResolver_DelegationWithoutSecretsWriteCannotEnsureKMS(t *testing.T) {
+	kms := newTenantSecretsService()
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, tenantGrant(t, "tenant-a", permSecretsRead))
+
+	if got, err := resolveSecret(t, c, "kms://a/new?ensure=true"); err == nil {
+		t.Fatalf("Resolve(kms://a/new?ensure=true) without secrets:write = %q, want an error", got)
+	}
+	if kms.ensureCalls != 0 {
+		t.Fatalf("secrets service ensured %d times without secrets:write, want 0", kms.ensureCalls)
+	}
+	if _, ok := kms.byTenant["tenant-a"]["a/new"]; ok {
+		t.Fatal("a/new was created without secrets:write")
+	}
+}
+
+func TestSecretResolver_DelegationWithSecretsGrantsResolvesAndEnsures(t *testing.T) {
+	kms := newTenantSecretsService()
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms,
+		tenantGrant(t, "tenant-a", permSecretsRead, permSecretsWrite))
+
+	got, err := resolveSecret(t, c, "kms://a/key")
+	if err != nil {
+		t.Fatalf("Resolve(kms://a/key): %v", err)
+	}
+	if got != "a-secret" {
+		t.Fatalf("Resolve(kms://a/key) = %q, want a-secret", got)
+	}
+	got, err = resolveSecret(t, c, "kms://a/new?ensure=true")
+	if err != nil {
+		t.Fatalf("Resolve(kms://a/new?ensure=true): %v", err)
+	}
+	if got != "generated-a/new" {
+		t.Fatalf("Resolve(kms://a/new?ensure=true) = %q, want generated-a/new", got)
+	}
+}
+
+// The resolver authorizes against go-qrdb's own secrets permissions; a name
+// qrdb does not register would refuse every delegation.
+func TestSecretResolver_SecretsPermissionsAreQRDBRegistered(t *testing.T) {
+	for _, perm := range []qrdbsdk.Permission{permissionSecretsRead, permissionSecretsWrite} {
+		if !qrdbsdk.IsPermissionRegistered(perm) {
+			t.Errorf("%s is not a go-qrdb registered permission", perm)
+		}
+	}
+	if qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission("secrets:unregistered")) {
+		t.Error("an unregistered secrets permission reports registered")
+	}
+}
+
+// A service-principal client authorizes nothing in the resolver: its calls
+// are not delegated.
+func TestEmbeddedIdentity_AuthorizeServicePrincipalIsNoop(t *testing.T) {
+	id := ServicePrincipalIdentity(tenantGrant(t, ""))
+	if err := id.authorize(context.Background(), permissionSecretsWrite); err != nil {
+		t.Fatalf("authorize as the service principal: %v", err)
+	}
+}
+
+// A revoked delegation fails at binding, before any permission is checked.
+func TestEmbeddedIdentity_AuthorizeRevokedDelegationFails(t *testing.T) {
+	id := DelegatedIdentity(refusedGrant(t), []*x509.Certificate{{}})
+	if err := id.authorize(context.Background(), permissionSecretsRead); err == nil {
+		t.Fatal("authorize under a revoked delegation succeeded, want an error")
 	}
 }

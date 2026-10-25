@@ -16,6 +16,7 @@ package quicbaas
 import (
 	"context"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config/secrets"
@@ -49,16 +50,29 @@ func (c *client) retrieveCredential(ctx context.Context, name string) (*qrdbsecu
 }
 
 // boundKMSSecrets serves kms:// resolution through the client's bound
-// secrets client.
+// secrets client, after authorizing a delegation's secrets grants.
 type boundKMSSecrets struct {
 	c *client
 }
+
+// The grants go-qrdb declares for tenant secret material (go-qrdb
+// pkg/permission SecretsRead and SecretsWrite). The qrdb SDK re-exports the
+// Permission type but not these names. The secrets backend runs as the
+// server's service principal, so boundKMSSecrets authorizes a delegation
+// against them before dispatch.
+const (
+	permissionSecretsRead  qrdbsdk.Permission = "secrets:read"
+	permissionSecretsWrite qrdbsdk.Permission = "secrets:write"
+)
 
 // Compile-time check that boundKMSSecrets supports kms://...?ensure=true.
 var _ secrets.SecretsEnsurer = (*boundKMSSecrets)(nil)
 
 // GetSecret returns the stored payload of the secret at secretID.
 func (b *boundKMSSecrets) GetSecret(ctx context.Context, secretID string) ([]byte, error) {
+	if err := b.c.opts.embeddedIdentity.authorize(ctx, permissionSecretsRead); err != nil {
+		return nil, err
+	}
 	var data []byte
 	err := b.c.secrets().GetWithBytes(ctx, secretID, "", func(payload []byte) error {
 		data = append([]byte(nil), payload...)
@@ -72,6 +86,10 @@ func (b *boundKMSSecrets) GetSecret(ctx context.Context, secretID string) ([]byt
 
 // EnsureSecret returns the secret at secretID, generating it on first use.
 func (b *boundKMSSecrets) EnsureSecret(ctx context.Context, secretID string, length int, encoding string) ([]byte, error) {
+	// Ensure returns the secret and may create it, so it needs both grants.
+	if err := b.c.opts.embeddedIdentity.authorize(ctx, permissionSecretsRead, permissionSecretsWrite); err != nil {
+		return nil, err
+	}
 	resp, err := b.c.secrets().Ensure(ctx, &secretsclient.EnsureSecretRequest{
 		Path:     secretID,
 		Length:   length,
