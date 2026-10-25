@@ -17,6 +17,7 @@ package server
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -253,4 +254,103 @@ func TestVectorService_UpsertWrongDimensionIsInvalidInput(t *testing.T) {
 	var refused *qberrors.QBError
 	require.ErrorAs(t, err, &refused)
 	assert.Equal(t, qberrors.ErrInvalidInput, refused.Code)
+}
+
+// newAcmeDocs creates acme's namespace holding one vector, as acme's own
+// callers holding only the create and upsert verbs.
+func newAcmeDocs(t *testing.T, svc service.VectorService) {
+	t.Helper()
+	_, err := svc.CreateNamespace(tenantVectorCaller(t, "acme", "vector:namespace_create"),
+		&service.CreateNamespaceRequest{Namespace: "acme-docs", Dimension: 3, DistanceMetric: "cosine", IndexType: "flat"})
+	require.NoError(t, err)
+	_, err = svc.UpsertVector(tenantVectorCaller(t, "acme", "vector:upsert"),
+		&service.UpsertVectorRequest{Namespace: "acme-docs", ID: 7, Vector: []float32{1, 0, 0}})
+	require.NoError(t, err)
+}
+
+// Each index and maintenance verb needs only the permission its operation
+// declares. The service makes no separate namespace-metadata read that would
+// also need vector:namespace_info; qrdb checks the namespace inside the
+// verb's own call, in the caller's tenant, so another tenant holding the
+// same verb is still refused.
+func TestVectorService_MaintenanceVerbsNeedOnlyTheirDeclaredVerb(t *testing.T) {
+	cases := []struct {
+		name  string
+		verbs []string
+		call  func(ctx context.Context, svc service.VectorService) error
+	}{
+		{name: "get index stats", verbs: []string{"vector:get_index_stats"}, call: func(ctx context.Context, svc service.VectorService) error {
+			resp, err := svc.GetIndexStats(ctx, &service.GetIndexStatsRequest{Namespace: "acme-docs"})
+			if err == nil && resp.Dimension != 3 {
+				return &unexpectedDimensionError{got: resp.Dimension}
+			}
+			return err
+		}},
+		{name: "compact namespace", verbs: []string{"vector:compact"}, call: func(ctx context.Context, svc service.VectorService) error {
+			_, err := svc.CompactNamespace(ctx, &service.CompactNamespaceRequest{Namespace: "acme-docs"})
+			return err
+		}},
+		// The service rebuilds its own index from the namespace's vectors,
+		// which it reads through qrdb's list verb.
+		{name: "rebuild index", verbs: []string{"vector:rebuild_index", "vector:list"}, call: func(ctx context.Context, svc service.VectorService) error {
+			_, err := svc.RebuildIndex(ctx, &service.RebuildIndexRequest{Namespace: "acme-docs"})
+			return err
+		}},
+		{name: "list vectors", verbs: []string{"vector:list"}, call: func(ctx context.Context, svc service.VectorService) error {
+			resp, err := svc.ListVectors(ctx, &service.ListVectorsRequest{Namespace: "acme-docs"})
+			if err == nil && len(resp.Vectors) != 1 {
+				return &unexpectedCountError{got: len(resp.Vectors)}
+			}
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStrictPrincipalServer(t)
+			newAcmeDocs(t, newNodeVectorService(t, s))
+			// A service built after the namespace holds no index for it yet,
+			// as after a restart.
+			svc := newNodeVectorService(t, s)
+
+			require.NoError(t, tc.call(tenantVectorCaller(t, "acme", tc.verbs...), svc),
+				"an own-tenant %s must not need vector:namespace_info", tc.name)
+
+			err := tc.call(tenantVectorCaller(t, "globex", tc.verbs...), svc)
+			var refused *qberrors.QBError
+			require.ErrorAs(t, err, &refused, "another tenant's namespace must stay out of reach")
+			assert.Equal(t, qberrors.ErrNotFound, refused.Code)
+		})
+	}
+}
+
+// A search on a namespace whose index this service has not built yet, as
+// after a restart, needs only vector:search_similar: it finds the tenant's
+// own vector, and another tenant holding the same verb finds nothing, which
+// is how a search answers a namespace it cannot see.
+func TestVectorService_SearchNeedsOnlyTheSearchVerb(t *testing.T) {
+	s := newStrictPrincipalServer(t)
+	newAcmeDocs(t, newNodeVectorService(t, s))
+	svc := newNodeVectorService(t, s)
+	search := &service.SearchSimilarRequest{Namespace: "acme-docs", QueryVector: []float32{1, 0, 0}, K: 1}
+
+	own, err := svc.SearchSimilar(tenantVectorCaller(t, "acme", "vector:search_similar"), search)
+	require.NoError(t, err)
+	require.Len(t, own.Results, 1, "an own-tenant search must not need vector:namespace_info")
+	assert.Equal(t, uint64(7), own.Results[0].ID)
+
+	other, err := svc.SearchSimilar(tenantVectorCaller(t, "globex", "vector:search_similar"), search)
+	require.NoError(t, err)
+	assert.Empty(t, other.Results, "another tenant's namespace must stay out of reach")
+}
+
+type unexpectedDimensionError struct{ got uint32 }
+
+func (e *unexpectedDimensionError) Error() string {
+	return "index stats reported dimension " + strconv.FormatUint(uint64(e.got), 10) + ", want 3"
+}
+
+type unexpectedCountError struct{ got int }
+
+func (e *unexpectedCountError) Error() string {
+	return "listed " + strconv.Itoa(e.got) + " vectors, want 1"
 }

@@ -40,7 +40,7 @@ type vecMockStorage struct {
 	listNamespacesFn     func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error)
 	getNamespaceInfoFn   func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error)
 	getStatsFn           func(ctx context.Context, namespace string) (*interfaces.VectorStorageStats, error)
-	compactFn            func(ctx context.Context, namespace string) error
+	compactFn            func(ctx context.Context, namespace string, async bool) error
 	closeFn              func() error
 }
 
@@ -76,6 +76,16 @@ func (m *vecMockStorage) ScanNamespace(ctx context.Context, namespace string, op
 	return nil, nil
 }
 
+// ScanNamespacePage pages over ScanNamespace, counting the page's vectors as
+// the namespace total.
+func (m *vecMockStorage) ScanNamespacePage(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+	vectors, err := m.ScanNamespace(ctx, namespace, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &interfaces.VectorScanPage{Vectors: vectors, TotalCount: uint64(len(vectors))}, nil
+}
+
 func (m *vecMockStorage) ListNamespaces(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
 	if m.listNamespacesFn != nil {
 		return m.listNamespacesFn(ctx)
@@ -97,9 +107,9 @@ func (m *vecMockStorage) GetStats(ctx context.Context, namespace string) (*inter
 	return &interfaces.VectorStorageStats{}, nil
 }
 
-func (m *vecMockStorage) Compact(ctx context.Context, namespace string) error {
+func (m *vecMockStorage) Compact(ctx context.Context, namespace string, async bool) error {
 	if m.compactFn != nil {
-		return m.compactFn(ctx, namespace)
+		return m.compactFn(ctx, namespace, async)
 	}
 	return nil
 }

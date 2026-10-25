@@ -130,12 +130,22 @@ type VectorScanOptions struct {
 type VectorStorageStats struct {
 	// VectorCount is the number of vectors.
 	VectorCount uint64
+	// Dimension is the namespace's vector dimension.
+	Dimension uint32
 	// SizeBytes is the total storage size in bytes.
 	SizeBytes uint64
 	// IndexSizeBytes is the index size in bytes.
 	IndexSizeBytes uint64
 	// MemoryUsageBytes is the memory usage in bytes.
 	MemoryUsageBytes uint64
+}
+
+// VectorScanPage is one page of a namespace scan.
+type VectorScanPage struct {
+	// Vectors are the page's vectors.
+	Vectors []*VectorValue
+	// TotalCount is the number of vectors in the whole namespace.
+	TotalCount uint64
 }
 
 // VectorStorage defines the interface for vector storage backends.
@@ -171,14 +181,19 @@ type VectorStorage interface {
 	// ScanNamespace lists vectors in a namespace with optional pagination.
 	ScanNamespace(ctx context.Context, namespace string, opts *VectorScanOptions) ([]*VectorValue, error)
 
+	// ScanNamespacePage lists one page of a namespace's vectors together with
+	// the namespace's total vector count.
+	ScanNamespacePage(ctx context.Context, namespace string, opts *VectorScanOptions) (*VectorScanPage, error)
+
 	// ScanByMultipleFilters scans vectors matching multiple metadata filters.
 	ScanByMultipleFilters(ctx context.Context, namespace string, filters []VectorMetadataFilter, opts *VectorScanOptions) ([]*VectorValue, error)
 
 	// GetStats returns storage statistics for a namespace.
 	GetStats(ctx context.Context, namespace string) (*VectorStorageStats, error)
 
-	// Compact triggers compaction for a namespace.
-	Compact(ctx context.Context, namespace string) error
+	// Compact compacts a namespace. When async is set it returns once the
+	// compaction is accepted, and the compaction runs in the background.
+	Compact(ctx context.Context, namespace string, async bool) error
 
 	// Close releases storage resources.
 	Close() error

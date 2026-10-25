@@ -1962,11 +1962,13 @@ func TestRebuildIndex_Asynchronous(t *testing.T) {
 
 func TestRebuildIndex_NamespaceNotFound(t *testing.T) {
 	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
+	storage.scanNamespaceFn = func(_ context.Context, namespace string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		return nil, &qrdbtransport.NamespaceNotFoundError{Namespace: namespace}
 	}
 	_, err := svc.RebuildIndex(tenantctx.WithSystem(context.Background()), &RebuildIndexRequest{Namespace: "nope"})
-	require.Error(t, err)
+	var qbErr *qbErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestGetRebuildProgress_ByJobID(t *testing.T) {
@@ -2097,21 +2099,45 @@ func TestCompactNamespace_Synchronous(t *testing.T) {
 }
 
 func TestCompactNamespace_Asynchronous(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	var handedOff bool
+	storage.compactFn = func(_ context.Context, _ string, async bool) error {
+		handedOff = async
+		return nil
+	}
 	resp, err := svc.CompactNamespace(tenantctx.WithSystem(context.Background()), &CompactNamespaceRequest{Namespace: "test-ns", Async: true})
 	require.NoError(t, err)
 	assert.False(t, resp.Success)
 	assert.NotEmpty(t, resp.OperationID)
+	assert.True(t, handedOff, "an async compaction runs in qrdb's background")
 }
 
+// qrdb's compact verb checks the namespace in the caller's tenant, so a
+// namespace it does not hold is not found, synchronously or not, with no
+// separate metadata read.
 func TestCompactNamespace_NamespaceNotFound(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
+	for _, async := range []bool{false, true} {
+		svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+		storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
+			return nil, &namespaceInfoReadError{}
+		}
+		storage.compactFn = func(_ context.Context, namespace string, _ bool) error {
+			return &qrdbtransport.NamespaceNotFoundError{Namespace: namespace}
+		}
+		_, err := svc.CompactNamespace(tenantctx.WithSystem(context.Background()), &CompactNamespaceRequest{Namespace: "nope", Async: async})
+		var refused *qbErrors.QBError
+		require.ErrorAs(t, err, &refused, "async=%v", async)
+		assert.Equal(t, qbErrors.ErrNotFound, refused.Code, "async=%v", async)
+		var notFound *qrdbtransport.NamespaceNotFoundError
+		assert.ErrorAs(t, err, &notFound, "async=%v: the refusal is qrdb's, not a metadata read", async)
 	}
-	_, err := svc.CompactNamespace(tenantctx.WithSystem(context.Background()), &CompactNamespaceRequest{Namespace: "nope"})
-	require.Error(t, err)
 }
+
+// namespaceInfoReadError fails a namespace-metadata read a test expects the
+// service not to make.
+type namespaceInfoReadError struct{}
+
+func (*namespaceInfoReadError) Error() string { return "unexpected namespace metadata read" }
 
 func TestCompactNamespace_ServiceClosed(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
@@ -2152,7 +2178,7 @@ func TestPerformCompaction_Success(t *testing.T) {
 
 func TestPerformCompaction_CompactError(t *testing.T) {
 	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	storage.compactFn = func(_ context.Context, _ string) error { return errors.New("fail") }
+	storage.compactFn = func(_ context.Context, _ string, _ bool) error { return errors.New("fail") }
 	job := &CompactionJobState{OperationID: "o2", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
 	svc.jobMu.Lock()
 	svc.compactionJobs["o2"] = job

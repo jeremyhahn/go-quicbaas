@@ -189,6 +189,16 @@ func (n *nodeVectorStorage) BatchDeleteVectors(ctx context.Context, namespace st
 
 // ScanNamespace lists vectors in a namespace with optional pagination via the node transport.
 func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	page, err := n.ScanNamespacePage(ctx, namespace, opts)
+	if err != nil {
+		return nil, err
+	}
+	return page.Vectors, nil
+}
+
+// ScanNamespacePage lists one page of vectors through qrdb's list verb, which
+// also reports the namespace's total vector count.
+func (n *nodeVectorStorage) ScanNamespacePage(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
 	req := &qrdbtransport.ListVectorsRequest{
 		Namespace:       namespace,
 		IncludeVectors:  true,
@@ -204,7 +214,10 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	if err != nil {
 		return nil, err
 	}
-	return nodeVectorDataToInterface(resp.Vectors), nil
+	return &interfaces.VectorScanPage{
+		Vectors:    nodeVectorDataToInterface(resp.Vectors),
+		TotalCount: resp.TotalCount,
+	}, nil
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.
@@ -241,6 +254,7 @@ func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*in
 	}
 	return &interfaces.VectorStorageStats{
 		VectorCount:      resp.VectorCount,
+		Dimension:        resp.Dimension,
 		SizeBytes:        resp.IndexSizeBytes,
 		IndexSizeBytes:   resp.IndexSizeBytes,
 		MemoryUsageBytes: resp.MemoryUsageBytes,
@@ -248,10 +262,10 @@ func (n *nodeVectorStorage) GetStats(ctx context.Context, namespace string) (*in
 }
 
 // Compact triggers compaction for a namespace via the node transport.
-func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string) error {
+func (n *nodeVectorStorage) Compact(ctx context.Context, namespace string, async bool) error {
 	_, err := n.vec.CompactNamespace(ctx, &qrdbtransport.CompactNamespaceRequest{
 		Namespace: namespace,
-		Async:     true,
+		Async:     async,
 	})
 	return err
 }

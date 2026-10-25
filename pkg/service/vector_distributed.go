@@ -265,22 +265,8 @@ func (g *GRPCShardSearcher) SearchShard(
 		)
 	}
 
-	// Build the SDK transport search request from the service-level request.
-	sdkReq := &qrdbtransport.SearchSimilarRequest{
-		Namespace:       req.Namespace,
-		QueryVector:     req.QueryVector,
-		K:               req.K,
-		EfSearch:        req.EfSearch,
-		MinScore:        req.MinScore,
-		IncludeVectors:  req.IncludeVectors,
-		IncludeMetadata: req.IncludeMetadata,
-		MetadataFilter:  req.MetadataFilter,
-		ShardID:         shard.ShardID,
-		Consistency:     uint8(req.Consistency),
-	}
-
 	// Execute the gRPC vector search via the SDK client.
-	resp, err := client.Vector().SearchSimilar(ctx, sdkReq)
+	resp, err := client.Vector().SearchSimilar(ctx, qrdbSearchRequest(req, req.Namespace, shard.ShardID))
 	if err != nil {
 		return nil, api.NewShardUnavailableError(
 			"GRPCShardSearcher.SearchShard",
@@ -290,9 +276,31 @@ func (g *GRPCShardSearcher) SearchShard(
 		)
 	}
 
-	// Convert SDK transport results to service-level results.
-	results := make([]*VectorSearchResult, len(resp.Results))
-	for i, r := range resp.Results {
+	return fromQRDBSearchResults(resp.Results), nil
+}
+
+// qrdbSearchRequest builds qrdb's search request from the service-level
+// request, against namespace on shardID.
+func qrdbSearchRequest(req *SearchSimilarRequest, namespace string, shardID uint64) *qrdbtransport.SearchSimilarRequest {
+	return &qrdbtransport.SearchSimilarRequest{
+		Namespace:       namespace,
+		QueryVector:     req.QueryVector,
+		K:               req.K,
+		EfSearch:        req.EfSearch,
+		MinScore:        req.MinScore,
+		IncludeVectors:  req.IncludeVectors,
+		IncludeMetadata: req.IncludeMetadata,
+		MetadataFilter:  req.MetadataFilter,
+		ShardID:         shardID,
+		Consistency:     uint8(req.Consistency),
+	}
+}
+
+// fromQRDBSearchResults converts qrdb's search results to service-level
+// results.
+func fromQRDBSearchResults(in []*qrdbtransport.VectorSearchResult) []*VectorSearchResult {
+	results := make([]*VectorSearchResult, len(in))
+	for i, r := range in {
 		results[i] = &VectorSearchResult{
 			ID:       r.ID,
 			Score:    r.Score,
@@ -302,6 +310,5 @@ func (g *GRPCShardSearcher) SearchShard(
 			Rank:     r.Rank,
 		}
 	}
-
-	return results, nil
+	return results
 }

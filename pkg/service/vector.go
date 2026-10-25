@@ -876,7 +876,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
 	if err != nil {
-		return nil, v.upsertError(err)
+		return nil, v.qrdbError("vector.UpsertVector", "upsert_vector", err)
 	}
 
 	// Update local vector index
@@ -908,10 +908,11 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 	}, nil
 }
 
-// upsertError classifies a refused upsert: a namespace the caller's tenant
-// does not hold is not found, a vector of the wrong dimension is invalid
-// input, and anything else is a write failure.
-func (v *vectorService) upsertError(err error) error {
+// qrdbError classifies an error from a qrdb vector verb run as the caller: a
+// namespace the caller's tenant does not hold is not found, a vector of the
+// wrong dimension is invalid input, and anything else is a storage failure.
+// It counts the error under metric.
+func (v *vectorService) qrdbError(op, metric string, err error) error {
 	code, reason := qbErrors.ErrRaft, "sdk_error"
 	var notFound *qrdbtransport.NamespaceNotFoundError
 	var mismatch *qrdbtransport.DimensionMismatchError
@@ -922,9 +923,9 @@ func (v *vectorService) upsertError(err error) error {
 		code, reason = qbErrors.ErrInvalidInput, "invalid_dimension"
 	}
 	if v.metrics != nil {
-		v.metrics.operationErrors.With("upsert_vector", reason).Inc()
+		v.metrics.operationErrors.With(metric, reason).Inc()
 	}
-	return &qbErrors.QBError{Code: code, Op: "vector.UpsertVector", Err: err}
+	return &qbErrors.QBError{Code: code, Op: op, Err: err}
 }
 
 // GetVector retrieves a vector by ID with optional metadata.
@@ -1218,17 +1219,14 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 	// Get or create HNSW index (lazily initialize if needed for replicated data)
 	index, err := v.ensureIndex(ctx, scopedNamespace)
 	if err != nil {
-		// Namespace may not have been replicated to this node yet
-		// Return empty results instead of an error to handle eventual consistency
+		// The local index cannot be built: the namespace has not replicated
+		// to this node yet, or building the index needs namespace metadata
+		// the caller is not granted. qrdb's own search verb answers instead.
 		v.logger.WithFields(map[string]interface{}{
 			"namespace": req.Namespace,
 			"error":     err,
-		}).Debug("namespace not available on this node yet, returning empty results")
-		return &SearchSimilarResponse{
-			Results:       []*VectorSearchResult{},
-			QueryDuration: 0,
-			Timestamp:     time.Now().UnixNano(),
-		}, nil
+		}).Debug("local vector index unavailable, searching through qrdb")
+		return v.searchThroughQRDB(ctx, scopedNamespace, req)
 	}
 
 	// Perform HNSW search
@@ -1294,6 +1292,41 @@ func (v *vectorService) SearchSimilar(ctx context.Context, req *SearchSimilarReq
 		Results:       searchResults,
 		Timestamp:     time.Now().UnixNano(),
 		QueryDuration: queryDuration,
+	}, nil
+}
+
+// searchThroughQRDB answers a search with qrdb's own search verb, which checks
+// the namespace inside the caller's tenant and so needs only
+// vector:search_similar. A namespace qrdb does not hold for the caller, or no
+// qrdb client at all, gives empty results, as a namespace not yet replicated
+// to this node does.
+func (v *vectorService) searchThroughQRDB(ctx context.Context, scopedNamespace string, req *SearchSimilarRequest) (*SearchSimilarResponse, error) {
+	empty := &SearchSimilarResponse{
+		Results:   []*VectorSearchResult{},
+		Timestamp: time.Now().UnixNano(),
+	}
+	vc, err := v.vectorClient()
+	if err != nil {
+		v.logger.WithFields(map[string]interface{}{
+			"namespace": req.Namespace,
+			"error":     err,
+		}).Debug("no qrdb vector client, returning empty results")
+		return empty, nil
+	}
+
+	searchStart := time.Now()
+	resp, err := vc.SearchSimilar(ctx, qrdbSearchRequest(req, scopedNamespace, v.resolveShardID(req.ShardID)))
+	if err != nil {
+		var notFound *qrdbtransport.NamespaceNotFoundError
+		if errors.As(err, &notFound) {
+			return empty, nil
+		}
+		return nil, v.qrdbError("vector.SearchSimilar", "search_similar", err)
+	}
+	return &SearchSimilarResponse{
+		Results:       fromQRDBSearchResults(resp.Results),
+		QueryDuration: time.Since(searchStart).Microseconds(),
+		Timestamp:     time.Now().UnixNano(),
 	}, nil
 }
 
@@ -1473,15 +1506,15 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	// Generate job ID
 	jobID := uuid.New().String()
 
-	// Get namespace info
-	info, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
+	// The rebuild reads the namespace's vectors through qrdb's list verb,
+	// which checks the namespace in the caller's tenant and reports its total
+	// count, so the first page replaces a separate metadata read (and its
+	// vector:namespace_info permission) and refuses an async rebuild at once.
+	firstPage, err := v.storage.ScanNamespacePage(ctx, scopedNamespace, &interfaces.VectorScanOptions{Limit: 1})
 	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.RebuildIndex",
-			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
-		}
+		return nil, v.qrdbError("vector.RebuildIndex", "rebuild_index", err)
 	}
+	totalVectors := firstPage.TotalCount
 
 	// Create rebuild job
 	job := &RebuildJobState{
@@ -1489,7 +1522,7 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 		Namespace:        scopedNamespace,
 		InProgress:       true,
 		VectorsProcessed: 0,
-		TotalVectors:     info.VectorCount,
+		TotalVectors:     totalVectors,
 		StartedAt:        time.Now(),
 	}
 
@@ -1513,7 +1546,7 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 			JobID:                  jobID,
 			Status:                 "in_progress",
 			VectorsProcessed:       0,
-			TotalVectors:           info.VectorCount,
+			TotalVectors:           totalVectors,
 			PercentComplete:        0.0,
 			EstimatedTimeRemaining: 0,
 			Timestamp:              time.Now().UnixNano(),
@@ -1538,8 +1571,8 @@ func (v *vectorService) RebuildIndex(ctx context.Context, req *RebuildIndexReque
 	return &RebuildIndexResponse{
 		JobID:                  jobID,
 		Status:                 "completed",
-		VectorsProcessed:       info.VectorCount,
-		TotalVectors:           info.VectorCount,
+		VectorsProcessed:       totalVectors,
+		TotalVectors:           totalVectors,
 		PercentComplete:        100.0,
 		EstimatedTimeRemaining: 0,
 		Timestamp:              ts,
@@ -1826,14 +1859,12 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 		}
 	}
 
-	// Get namespace info
-	info, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
+	// qrdb checks the namespace inside its own index-stats verb, in the
+	// caller's tenant, so no separate metadata read (and its
+	// vector:namespace_info permission) is needed for the dimension.
+	storageStats, err := v.storage.GetStats(ctx, scopedNamespace)
 	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.GetIndexStats",
-			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
-		}
+		return nil, v.qrdbError("vector.GetIndexStats", "get_index_stats", err)
 	}
 
 	// Get vector index stats
@@ -1893,7 +1924,7 @@ func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsReq
 		Namespace:        req.Namespace,
 		IndexType:        "HNSW",
 		VectorCount:      vectorCount,
-		Dimension:        info.Dimension,
+		Dimension:        storageStats.Dimension,
 		IndexSizeBytes:   indexSizeBytes,
 		MemoryUsageBytes: memoryUsageBytes,
 		IndexConfig:      make(map[string]string),
@@ -2269,19 +2300,6 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 	}
 	v.mu.RUnlock()
 
-	// Verify namespace exists
-	info, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
-	if err != nil {
-		if v.metrics != nil {
-			v.metrics.operationErrors.With("compact_namespace", "not_found").Inc()
-		}
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.CompactNamespace",
-			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
-		}
-	}
-
 	// Generate operation ID
 	operationID := uuid.New().String()
 
@@ -2290,7 +2308,6 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 		OperationID: operationID,
 		Namespace:   scopedNamespace,
 		InProgress:  true,
-		TotalBytes:  int64(info.StorageBytes),
 		StartedAt:   time.Now(),
 	}
 
@@ -2304,17 +2321,16 @@ func (v *vectorService) CompactNamespace(ctx context.Context, req *CompactNamesp
 		"async":        req.Async,
 	}).Info("starting namespace compaction")
 
-	// If async, start background compaction
+	// qrdb checks the namespace inside its own compact verb, in the caller's
+	// tenant, so no separate metadata read (and its vector:namespace_info
+	// permission) is needed. An async request hands the compaction to qrdb,
+	// which accepts or refuses it before the reply and runs it in the
+	// background.
 	if req.Async {
-		go func() {
-			if err := v.performCompaction(context.WithoutCancel(ctx), operationID, scopedNamespace); err != nil {
-				v.logger.WithFields(map[string]interface{}{
-					"operation_id": operationID,
-					"namespace":    req.Namespace,
-					"error":        err,
-				}).Error("background compaction failed")
-			}
-		}()
+		if _, err := v.startCompaction(ctx, job, scopedNamespace, true); err != nil {
+			return nil, err
+		}
+		v.completeCompaction(job)
 
 		return &CompactNamespaceResponse{
 			OperationID: operationID,
@@ -2362,48 +2378,58 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 		}
 	}
 
-	defer func() {
-		job.mu.Lock()
-		job.InProgress = false
-		now := time.Now()
-		job.CompletedAt = &now
-		job.mu.Unlock()
-	}()
-
-	// Get pre-compaction stats
-	preStats, _ := v.storage.GetStats(ctx, namespace)
-	var preSizeBytes int64
-	if preStats != nil {
-		preSizeBytes = conv.ClampUint64ToInt64(preStats.SizeBytes)
+	preSizeBytes, err := v.startCompaction(ctx, job, namespace, false)
+	if err != nil {
+		return err
 	}
+	v.finishCompaction(ctx, job, namespace, preSizeBytes)
+	return nil
+}
 
-	// Trigger compaction on storage
-	if err := v.storage.Compact(ctx, namespace); err != nil {
+// startCompaction records the namespace's size and runs qrdb's compact verb,
+// which checks the namespace inside the caller's tenant; with async set qrdb
+// returns once it has accepted the compaction. A refused or failed compaction
+// is recorded on the job, which is then complete.
+func (v *vectorService) startCompaction(ctx context.Context, job *CompactionJobState, namespace string, async bool) (int64, error) {
+	preSizeBytes := v.compactionSizeBytes(ctx, namespace)
+	job.mu.Lock()
+	job.TotalBytes = preSizeBytes
+	job.mu.Unlock()
+
+	if err := v.storage.Compact(ctx, namespace, async); err != nil {
 		job.mu.Lock()
 		job.Error = err
 		job.mu.Unlock()
-		return &qbErrors.QBError{
-			Code: qbErrors.ErrStorage,
+		v.completeCompaction(job)
+
+		code := qbErrors.ErrStorage
+		var notFound *qrdbtransport.NamespaceNotFoundError
+		if errors.As(err, &notFound) {
+			code = qbErrors.ErrNotFound
+		}
+		return 0, &qbErrors.QBError{
+			Code: code,
 			Op:   "vector.performCompaction",
 			Err:  &api.OperationFailedError{Operation: "compaction", Cause: err},
 		}
 	}
+	return preSizeBytes, nil
+}
 
-	// Get post-compaction stats
-	postStats, _ := v.storage.GetStats(ctx, namespace)
-	var postSizeBytes int64
-	if postStats != nil {
-		postSizeBytes = conv.ClampUint64ToInt64(postStats.SizeBytes)
-	}
+// finishCompaction records the bytes a triggered compaction reclaimed and
+// completes the job.
+func (v *vectorService) finishCompaction(ctx context.Context, job *CompactionJobState, namespace string, preSizeBytes int64) {
+	defer v.completeCompaction(job)
 
 	// Calculate bytes compacted (reclaimed)
-	bytesCompacted := preSizeBytes - postSizeBytes
+	bytesCompacted := preSizeBytes - v.compactionSizeBytes(ctx, namespace)
 	if bytesCompacted < 0 {
 		bytesCompacted = 0 // In case size increased due to other operations
 	}
 
 	job.mu.Lock()
 	job.BytesCompacted = bytesCompacted
+	operationID := job.OperationID
 	job.mu.Unlock()
 
 	v.logger.WithFields(map[string]interface{}{
@@ -2411,8 +2437,31 @@ func (v *vectorService) performCompaction(ctx context.Context, operationID, name
 		"operation_id":    operationID,
 		"bytes_compacted": bytesCompacted,
 	}).Info("compaction completed successfully")
+}
 
-	return nil
+// completeCompaction marks a compaction job finished.
+func (v *vectorService) completeCompaction(job *CompactionJobState) {
+	job.mu.Lock()
+	job.InProgress = false
+	now := time.Now()
+	job.CompletedAt = &now
+	job.mu.Unlock()
+}
+
+// compactionSizeBytes reads a namespace's size for compaction accounting.
+// The read is qrdb's index-stats verb, which a caller holding only
+// vector:compact may not be granted, so an unreadable size counts as zero
+// rather than failing the compaction.
+func (v *vectorService) compactionSizeBytes(ctx context.Context, namespace string) int64 {
+	stats, err := v.storage.GetStats(ctx, namespace)
+	if err != nil {
+		v.logger.WithFields(map[string]interface{}{
+			"namespace": namespace,
+			"error":     err,
+		}).Debug("namespace size unavailable for compaction accounting")
+		return 0
+	}
+	return conv.ClampUint64ToInt64(stats.SizeBytes)
 }
 
 // GetCompactionProgress retrieves the progress of a compaction operation.
@@ -2695,16 +2744,6 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	}
 	scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 
-	// Get namespace info to validate it exists and get vector count
-	namespaceInfo, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
-	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.ListVectors",
-			Err:  &api.OperationFailedError{Operation: "find namespace " + req.Namespace, Cause: err},
-		}
-	}
-
 	// Set default limit
 	limit := req.Limit
 	if limit <= 0 {
@@ -2727,14 +2766,14 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 		Limit:  limit + 1, // Request one extra to determine if there's a next page
 		Offset: offset,
 	}
-	vectors, err := v.storage.ScanNamespace(ctx, scopedNamespace, scanOpts)
+	// qrdb checks the namespace inside its own list verb, in the caller's
+	// tenant, and reports the total count with the page, so no separate
+	// metadata read (and its vector:namespace_info permission) is needed.
+	page, err := v.storage.ScanNamespacePage(ctx, scopedNamespace, scanOpts)
 	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrInternal,
-			Op:   "vector.ListVectors",
-			Err:  &api.OperationFailedError{Operation: "list vectors", Cause: err},
-		}
+		return nil, v.qrdbError("vector.ListVectors", "list_vectors", err)
 	}
+	vectors := page.Vectors
 
 	// Determine if there's a next page
 	var nextCursor string
@@ -2776,7 +2815,7 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	return &ListVectorsResponse{
 		Vectors:    result,
 		NextCursor: nextCursor,
-		TotalCount: namespaceInfo.VectorCount,
+		TotalCount: page.TotalCount,
 		Timestamp:  time.Now().UnixNano(),
 	}, nil
 }

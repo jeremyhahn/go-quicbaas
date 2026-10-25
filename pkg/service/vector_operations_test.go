@@ -67,6 +67,21 @@ func newVecSvcWithNamespace(t *testing.T, namespace string, dimension uint32) (V
 		return nil, errors.New("namespace not found")
 	}
 
+	// The qrdb verbs check the namespace themselves, inside the caller's
+	// tenant, so the mock refuses any other (scoped) name the same way.
+	storage.scanNamespaceFn = func(ctx context.Context, ns string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+		if ns != namespace {
+			return nil, &qrdbtransport.NamespaceNotFoundError{Namespace: ns}
+		}
+		return nil, nil
+	}
+	storage.getStatsFn = func(ctx context.Context, ns string) (*interfaces.VectorStorageStats, error) {
+		if ns != namespace {
+			return nil, &qrdbtransport.NamespaceNotFoundError{Namespace: ns}
+		}
+		return &interfaces.VectorStorageStats{Dimension: dimension}, nil
+	}
+
 	svc, err := NewVectorService(storage, logger)
 	require.NoError(t, err)
 	return svc, storage
@@ -755,7 +770,7 @@ func TestVecListVectors_Success(t *testing.T) {
 }
 
 func TestVecListVectors_NamespaceNotFound(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+	svc, _ := newVecSvcWithNamespace(t, "existing", 3)
 
 	resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
 		Namespace: "nonexistent",
@@ -853,7 +868,7 @@ func TestVecListVectors_ScanError(t *testing.T) {
 
 func TestVecListVectors_TenantForbidden(t *testing.T) {
 	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/attacker/tenant-ns" does not exist in the mock. GetNamespaceInfo
+	// "tenant/attacker/tenant-ns" does not exist in the mock. The scan
 	// returns not-found for the scoped namespace, resulting in an ErrNotFound
 	// error that prevents cross-tenant access.
 	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
@@ -1005,7 +1020,7 @@ func TestVecGetIndexStats_Success(t *testing.T) {
 }
 
 func TestVecGetIndexStats_NotFound(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+	svc, _ := newVecSvcWithNamespace(t, "existing", 3)
 
 	resp, err := svc.GetIndexStats(tenantctx.WithSystem(context.Background()), &GetIndexStatsRequest{
 		Namespace: "nonexistent",
