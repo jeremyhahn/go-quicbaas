@@ -313,28 +313,11 @@ func (v *vectorService) loadNamespaces() error {
 
 	v.logger.WithField("count", len(namespaces)).Debug("loading namespaces")
 
-	for _, ns := range namespaces {
-		// Initialize vector index for namespace using factory if available
-		if v.indexFactory != nil {
-			config := interfaces.DefaultVectorIndexConfig()
-			config.DistanceMetric = "l2"
-
-			index, err := v.indexFactory.CreateIndex(config)
-			if err != nil {
-				v.logger.WithFields(map[string]interface{}{
-					"namespace": ns.Name,
-					"error":     err,
-				}).Warn("failed to create vector index for namespace")
-				continue
-			}
-
-			v.indexMu.Lock()
-			v.indexes[ns.Name] = index
-			v.indexMu.Unlock()
-		}
-
-		// Update metrics
-		if v.metrics != nil {
+	// No index is created here: ensureIndex builds each namespace's index,
+	// loaded with its vectors, on first use. An index cached now would be
+	// empty and answer every search with no matches.
+	if v.metrics != nil {
+		for _, ns := range namespaces {
 			v.metrics.vectorCount.With(ns.Name).Set(float64(ns.VectorCount))
 		}
 	}
@@ -391,21 +374,20 @@ func (v *vectorService) ensureIndex(ctx context.Context, namespace string) (inte
 		return nil, &api.OperationFailedError{Operation: "create vector index", Cause: err}
 	}
 
-	// Load all vectors from storage into the index
+	// Load all vectors from storage into the index. A failed scan or insert
+	// returns its error and publishes nothing: a cached index that is empty
+	// or partial would answer every later search, whoever the caller, with
+	// missing matches.
 	vectors, err := v.storage.ScanNamespace(ctx, namespace, nil)
 	if err != nil {
-		v.logger.WithFields(map[string]interface{}{
-			"namespace": namespace,
-			"error":     err,
-		}).Warn("failed to scan vectors for index rebuild")
-	} else {
-		for _, vec := range vectors {
-			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
-				v.logger.WithFields(map[string]interface{}{
-					"namespace": namespace,
-					"vector_id": vec.ID,
-					"error":     err,
-				}).Warn("failed to insert vector into index")
+		return nil, err
+	}
+	for _, vec := range vectors {
+		if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
+			return nil, &qbErrors.QBError{
+				Code: qbErrors.ErrInternal,
+				Op:   "vector.ensureIndex",
+				Err:  &api.OperationFailedError{Operation: "load vector into index", Cause: err},
 			}
 		}
 	}
@@ -1791,11 +1773,15 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 
 		for _, vec := range vecs {
 			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
-				v.logger.WithFields(map[string]interface{}{
-					"namespace": namespace,
-					"id":        vec.ID,
-					"error":     err,
-				}).Warn("failed to insert vector into new index")
+				// Keep the old index rather than publish a partial one.
+				job.mu.Lock()
+				job.Error = err
+				job.mu.Unlock()
+				return &qbErrors.QBError{
+					Code: qbErrors.ErrInternal,
+					Op:   "vector.performIndexRebuild",
+					Err:  &api.OperationFailedError{Operation: "insert vector into new index", Cause: err},
+				}
 			}
 
 			job.mu.Lock()
