@@ -1034,6 +1034,12 @@ func (s *Server) initialize() error {
 		}
 	}
 
+	// The node is unsealed from here on, so its volume catalog is
+	// writable: give barrier tenants the pool they are placed on.
+	if err := s.provisionDefaultVolumePool(); err != nil {
+		return err
+	}
+
 	if err := s.startIndexes(); err != nil {
 		return err
 	}

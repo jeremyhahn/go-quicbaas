@@ -37,10 +37,6 @@ import (
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 )
 
-// defaultVolumePoolDirName is the subdirectory under the node data dir that
-// holds the single default volume pool. Its Pebble instances are assigned to
-// barrier-mode tenants by the barrier registry when RegisterTenant is called
-// without an explicit storage backend.
 // provisionClusterMTLS provides the mTLS certificate material for a multi-node
 // Raft cluster. Without -tags raft, only operator-supplied PEM files are
 // supported (buildRaftMTLSConfig). With -tags raft, qrdb_node_cluster.go
@@ -62,6 +58,10 @@ func defaultRaftMTLSProvision(s *Server, _ map[uint64]string) (*qrdbnode.RaftMTL
 	return mtls, nil, err
 }
 
+// defaultVolumePoolDirName is the subdirectory under the node data dir that
+// holds the single default volume pool. Its Pebble instances are assigned to
+// barrier-mode tenants by the barrier registry when RegisterTenant is called
+// without an explicit storage backend.
 const defaultVolumePoolDirName = "tenant-pools/default"
 
 // QRDBNodeError describes a failure in the standalone qrdb node lifecycle
@@ -112,11 +112,7 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// (the Node builder reads DataDir from cfg.Raft.DataDir for the pebble
 	// root and seal sub-store).
 	// ------------------------------------------------------------------ //
-	dataDir := cfg.Storage.DataDir
-	if dataDir == "" {
-		dataDir = cfg.Seal.BarrierDir // fall back to the barrier dir as the root
-	}
-	qcfg.Raft.DataDir = dataDir
+	qcfg.Raft.DataDir = qrdbDataDir(cfg)
 
 	// ------------------------------------------------------------------ //
 	// Storage backend: translate quicbaas StorageBackend* constants to the
@@ -189,12 +185,14 @@ func buildQRDBConfig(cfg *config.Config, clusterMode bool) (*qrdbsdk.DaemonConfi
 	// Provision a default volume pool so the barrier registry can satisfy
 	// RegisterTenant calls that do not supply an explicit storage backend.
 	// Without this the node returns ErrPoolNotConfigured for every per-tenant
-	// barrier registration. The pool is skipped for pure in-memory nodes
-	// (dataDir == "") because there is no durable path to anchor it to.
-	if dataDir != "" && len(qcfg.Storage.VolumePools) == 0 {
-		poolPath := filepath.Join(dataDir, defaultVolumePoolDirName)
+	// barrier registration. The pool is skipped for a node with no data dir
+	// because there is no durable path to anchor it to.
+	// The node only maps the pool: startup also creates its directory
+	// (createDefaultVolumePoolDir) and its catalog entry
+	// (provisionDefaultVolumePool).
+	if poolPath := defaultVolumePoolPath(cfg); poolPath != "" && len(qcfg.Storage.VolumePools) == 0 {
 		qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{
-			{Name: "default", Path: poolPath},
+			{Name: defaultVolumePoolName, Path: poolPath},
 		}
 	}
 
@@ -852,6 +850,9 @@ func (s *Server) initStandaloneQRDBNode() error {
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
 	}
+	if err := createDefaultVolumePoolDir(s.config); err != nil {
+		return err
+	}
 
 	// Build the hardware seal strategy ONCE up front (single TPM open) so its
 	// open TPM2 backend can be shared with both the embedded node's barrier
@@ -1069,6 +1070,9 @@ func (s *Server) initClusteredQRDBNode() error {
 	qcfg, qcfgErr := buildQRDBConfig(s.config, true)
 	if qcfgErr != nil {
 		return &QRDBNodeError{Stage: "build qrdb config", Cause: qcfgErr}
+	}
+	if err := createDefaultVolumePoolDir(s.config); err != nil {
+		return err
 	}
 
 	members, err := buildClusterMembers(s.config)

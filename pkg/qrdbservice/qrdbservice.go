@@ -82,6 +82,11 @@ var grantNames = []string{
 	// (go-xkms datastore ensureDatabase): a lookup, then a create when absent.
 	"databases:read",   // DatabaseClient.GetDatabase
 	"databases:create", // DatabaseClient.CreateDatabase
+	// Startup creating the default volume pool barrier tenants are placed
+	// on, in the node's replicated catalog (pkg/server
+	// provisionDefaultVolumePool).
+	"volume_pools:read",   // VolumePoolClient.GetPool
+	"volume_pools:create", // VolumePoolClient.CreatePool
 }
 
 // GrantError reports a grant name qrdb's permission registry does not know.
