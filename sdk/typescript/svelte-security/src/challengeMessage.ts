@@ -26,7 +26,11 @@ export class ChallengeMessageError extends Error {
   }
 }
 
-/** quorumChallengePurpose returns the purpose qrdb bound the challenge to. */
+/**
+ * quorumChallengePurpose returns the purpose qrdb bound the challenge to.
+ * qrdb sets a purpose on every quorum challenge (scope, key domain and
+ * operation), so a quorum challenge without one is malformed, not unbound.
+ */
 export function quorumChallengePurpose(challenge: BarrierQuorumChallenge): string {
   const purpose = challenge.method_data?.[METHOD_DATA_PURPOSE] ?? '';
   if (purpose === '') {
@@ -48,6 +52,23 @@ export function quorumChallengeMessage(challenge: BarrierQuorumChallenge): strin
   return encodeBase64(
     nulJoin([text(MTLS_CHALLENGE_CONTEXT), text(challenge.challenge_id), text(purpose), nonce]),
   );
+}
+
+/** SHARE_CLAIM_CONTEXT mirrors qrdb ceremony.ShareClaimContext. */
+export const SHARE_CLAIM_CONTEXT = 'qrdb/share-claim/v1';
+
+/** SYSTEM_CLAIM_LABEL mirrors qrdb ceremony.SystemClaimLabel. */
+export const SYSTEM_CLAIM_LABEL = 'system';
+
+/**
+ * shareClaimMessage returns, base64-encoded, the message qrdb verifies a
+ * share claim over (ceremony.ShareClaimMessage): the context, the barrier
+ * scope's claim label, the holder's username and the nonce bytes,
+ * NUL-separated. nonceHex is the hex nonce the claim began with.
+ */
+export function shareClaimMessage(label: string, username: string, nonceHex: string): string {
+  const nonce = decodeHex(nonceHex, 'nonce');
+  return encodeBase64(nulJoin([text(SHARE_CLAIM_CONTEXT), text(label), text(username), nonce]));
 }
 
 function text(s: string): Uint8Array {
@@ -77,6 +98,13 @@ function decodeBase64(b64: string, field: string): Uint8Array {
     throw new ChallengeMessageError(`challenge ${field} is not valid base64`);
   }
   return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+}
+
+function decodeHex(hex: string, field: string): Uint8Array {
+  if (hex === '' || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) {
+    throw new ChallengeMessageError(`challenge ${field} is not valid hex`);
+  }
+  return Uint8Array.from(hex.match(/../g) ?? [], (pair) => parseInt(pair, 16));
 }
 
 function encodeBase64(bytes: Uint8Array): string {

@@ -63,4 +63,7 @@ export {
   ChallengeMessageError,
   quorumChallengePurpose,
   quorumChallengeMessage,
+  SHARE_CLAIM_CONTEXT,
+  SYSTEM_CLAIM_LABEL,
+  shareClaimMessage,
 } from './challengeMessage.ts';

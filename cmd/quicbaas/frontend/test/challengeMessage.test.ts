@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ChallengeMessageError,
   quorumChallengeMessage,
+  shareClaimMessage,
+  SYSTEM_CLAIM_LABEL,
   type BarrierQuorumChallenge,
 } from '@quicbaas/svelte-security';
 
@@ -37,5 +39,19 @@ describe('quorumChallengeMessage', () => {
 
   it('refuses a nonce that is not base64', () => {
     expect(() => quorumChallengeMessage({ ...fixture, nonce: '!!not base64!!' })).toThrow(ChallengeMessageError);
+  });
+});
+
+describe('shareClaimMessage', () => {
+  it('encodes the claim exactly as qrdb ceremony.ShareClaimMessage does', () => {
+    // "qrdb/share-claim/v1" NUL "system" NUL "alice" NUL 0xbe 0xef
+    expect(shareClaimMessage(SYSTEM_CLAIM_LABEL, 'alice', 'beef')).toBe(
+      'cXJkYi9zaGFyZS1jbGFpbS92MQBzeXN0ZW0AYWxpY2UAvu8=',
+    );
+  });
+
+  it('refuses a nonce that is not hex', () => {
+    expect(() => shareClaimMessage(SYSTEM_CLAIM_LABEL, 'alice', 'xyz')).toThrow(ChallengeMessageError);
+    expect(() => shareClaimMessage(SYSTEM_CLAIM_LABEL, 'alice', '')).toThrow(/not valid hex/);
   });
 });
