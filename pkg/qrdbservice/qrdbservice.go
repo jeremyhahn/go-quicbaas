@@ -89,6 +89,36 @@ var grantNames = []string{
 	// provisionDefaultVolumePool).
 	"volume_pools:read",   // VolumePoolClient.GetPool
 	"volume_pools:create", // VolumePoolClient.CreatePool
+	// The CLI's embedded client acting as the system (cmd/quicbaas client.go
+	// ServicePrincipalIdentity): its Security() barrier, ceremony,
+	// credential and factor verbs. tenant_barrier:* is tenant-only in
+	// go-qrdb and refused to the system tenant, so it is not granted. The quorum, share-claim, enable-encryption and tenant
+	// init/unseal/status verbs are identity:gated in go-qrdb and need no
+	// grant; init-shamir is refused by the SDK before it is sent.
+	"seal:status",                  // BarrierClient.BarrierStatus: barrier status
+	"seal:bootstrap",               // BarrierClient.BarrierInitialize: barrier init
+	"seal:unseal",                  // BarrierClient.BarrierUnseal: barrier unseal
+	"seal:seal",                    // BarrierClient.BarrierSeal: barrier seal
+	"seal:generate_recovery",       // BarrierClient.BarrierGenerateRecoveryKeys: barrier recovery generate
+	"seal:rekey",                   // BarrierClient.BarrierRekeyStart: barrier rekey
+	"seal:officer_revoke",          // BarrierClient.BarrierOfficerRevoke: barrier officer-revoke
+	"seal:officer_register",        // CeremonyClient.OfficerRegister/RecoveryOfficerRegister: init officer register
+	"seal:officer_list",            // CeremonyClient.OfficerList: init officer list
+	"ceremony:status",              // CeremonyClient.CeremonyStatus: init status
+	"ceremony:initialize",          // CeremonyClient.CeremonyInitialize: init initialize
+	"ceremony:sign_csr",            // CeremonyClient.CeremonySignCSR: init sign-csr
+	"credentials:submit",           // CredentialClient.CredentialSubmit: credential submit
+	"credentials:list",             // CredentialClient.CredentialList: credential list
+	"credentials:rotate",           // CredentialClient.CredentialRotate: credential rotate
+	"credentials:retrieve_version", // CredentialClient.CredentialRetrieveVersionBuffer: credential retrieve
+	"credentials:list_versions",    // CredentialClient.CredentialListVersions: credential versions
+	"credentials:delete",           // CredentialClient.CredentialDelete: credential delete
+	"credentials:gc_expired",       // CredentialClient.CredentialGCExpired: credential gc
+	"user_authfactors:add",         // UserAuthFactorClient.AddAuthFactor: auth factor add
+	"user_authfactors:list",        // UserAuthFactorClient.ListAuthFactors: auth factor list
+	"user_authfactors:remove",      // UserAuthFactorClient.RemoveAuthFactor: auth factor remove
+	"user_authfactors:rotate",      // UserAuthFactorClient.RotateAuthFactor: auth factor rotate
+	"user_authfactors:relabel",     // UserAuthFactorClient.RelabelAuthFactor: auth factor relabel
 }
 
 // GrantError reports a grant name qrdb's permission registry does not know.
