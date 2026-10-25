@@ -162,7 +162,7 @@ describe('CeremonyView', () => {
     expect(within(bobTr).getByText('passphrase')).toBeInTheDocument();
   });
 
-  it('claims a share: begin fills the challenge, complete posts the signature', async () => {
+  it('claims a share: begin shows the message to sign, complete posts the signature', async () => {
     render(CeremonyView);
     const form = await screen.findByTestId('ceremony-claim-challenge');
 
@@ -170,8 +170,13 @@ describe('CeremonyView', () => {
     await fireEvent.click(within(form).getByRole('button', { name: /Request Challenge/i }));
 
     await waitFor(() => {
-      expect((within(form).getByLabelText(/^Challenge$/i) as HTMLInputElement).value).toBe('beef');
+      // The officer signs qrdb's canonical ceremony.ShareClaimMessage for the
+      // system barrier, never the bare nonce.
+      expect(within(form).getByTestId('ceremony-claim-message')).toHaveValue(
+        'cXJkYi9zaGFyZS1jbGFpbS92MQBzeXN0ZW0AYWxpY2UAvu8=',
+      );
     });
+    expect(within(form).queryByText(/^beef$/)).toBeNull();
     expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/officers/alice/claim/begin'))).toMatchObject({
       method: 'POST',
       body: { username: 'alice' },

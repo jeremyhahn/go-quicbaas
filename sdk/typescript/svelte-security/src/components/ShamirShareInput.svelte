@@ -13,6 +13,7 @@
 -->
 <script lang="ts">
   import type { BarrierClient, BarrierQuorumChallenge, BarrierStatus } from '../types.ts';
+  import { quorumChallengeMessage, quorumChallengePurpose } from '../challengeMessage.ts';
 
   interface Props {
     client: Pick<BarrierClient, 'quorumBegin' | 'quorumSubmit'>;
@@ -25,9 +26,12 @@
   const { client, status, label = 'Unseal', onunseal, onerror }: Props = $props();
 
   // Each key holder unseals in two steps: it requests a challenge, signs the
-  // challenge offline, then submits the signed response with its share.
+  // challenge's message offline, then submits the signed response with its
+  // share. The message is qrdb's mtls.ChallengeMessage, never the bare nonce.
   let username = $state('');
   let challenge = $state<BarrierQuorumChallenge | null>(null);
+  let purpose = $state('');
+  let signingMessage = $state('');
   let response = $state('');
   let share = $state('');
   let submitting = $state(false);
@@ -58,7 +62,10 @@
     }
     submitting = true;
     try {
-      challenge = await client.quorumBegin({ username: username.trim() });
+      const begun = await client.quorumBegin({ username: username.trim() });
+      purpose = quorumChallengePurpose(begun);
+      signingMessage = quorumChallengeMessage(begun);
+      challenge = begun;
     } catch (e) {
       fail(e);
     } finally {
@@ -146,8 +153,25 @@
     <div class="text-xs font-mono break-all space-y-1" data-testid="shamir-challenge">
       <div>Challenge: {challenge.challenge_id}</div>
       <div>Factor: {challenge.factor}</div>
-      <div>Nonce: {challenge.nonce}</div>
+      <div>Purpose: {purpose}</div>
       <div>Expires: {challenge.expires_at}</div>
+    </div>
+
+    <div class="form-control">
+      <label class="label label-text" for="shamir-signing-message">Message to sign (base64)</label>
+      <textarea
+        id="shamir-signing-message"
+        class="textarea textarea-bordered font-mono text-xs"
+        rows="3"
+        readonly
+        data-testid="shamir-signing-message"
+        value={signingMessage}
+      ></textarea>
+      <p class="text-xs text-base-content/60">
+        Base64-decode this message and sign the decoded bytes with your enrolled certificate's
+        private key. It binds the challenge, its purpose and the nonce; a signature over the
+        nonce alone is refused.
+      </p>
     </div>
 
     <div class="form-control">
@@ -156,7 +180,7 @@
         id="shamir-signed-response"
         class="textarea textarea-bordered font-mono text-xs"
         rows="2"
-        placeholder="Paste the base64 signature over the nonce..."
+        placeholder="Paste the base64 signature over the message..."
         bind:value={response}
       ></textarea>
     </div>

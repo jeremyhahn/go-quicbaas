@@ -94,8 +94,10 @@ export interface BarrierQuorumBeginRequest {
 export interface BarrierQuorumChallenge {
   challenge_id: string;
   factor: string;
-  /** nonce is the base64 nonce to sign. */
+  /** nonce is the base64 nonce qrdb binds into the signed message. */
   nonce: string;
+  /** method_data carries the purpose qrdb bound the challenge to. */
+  method_data?: Record<string, string>;
   expires_at: string;
 }
 

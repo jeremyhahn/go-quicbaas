@@ -7,25 +7,31 @@
 
 <!--
   CeremonyClaimChallenge handles the challenge-response flow for an officer
-  claiming their ceremony slot. The operator pastes the daemon's challenge
-  string and a base64 signature produced offline by the CSR private key.
+  claiming their ceremony slot. The component shows the message qrdb verifies
+  the claim over; the officer signs it offline with the certificate's private
+  key and pastes the base64 signature.
 -->
 <script lang="ts">
   import type { CeremonyClient, ClaimedShare } from '../types.ts';
+  import { shareClaimMessage, SYSTEM_CLAIM_LABEL } from '../challengeMessage.ts';
 
   interface Props {
     client: CeremonyClient;
+    /** claimLabel is the barrier scope's qrdb claim label (system by default). */
+    claimLabel?: string;
     disabled?: boolean;
     onclaimed?: (share: ClaimedShare) => void;
     onerror?: (err: Error) => void;
   }
 
-  const { client, disabled = false, onclaimed, onerror }: Props = $props();
+  const { client, claimLabel = SYSTEM_CLAIM_LABEL, disabled = false, onclaimed, onerror }: Props = $props();
 
   // An officer claims its share in two steps: it requests the claim nonce,
-  // signs the nonce offline with its key, then submits the signature.
+  // signs qrdb's ceremony.ShareClaimMessage (never the bare nonce) offline
+  // with its key, then submits the signature.
   let username = $state('');
   let challenge = $state('');
+  let signingMessage = $state('');
   let signatureB64 = $state('');
   let claimed: ClaimedShare | null = $state(null);
   let submitting = $state(false);
@@ -46,6 +52,7 @@
     submitting = true;
     try {
       const begin = await client.beginClaim(username.trim());
+      signingMessage = shareClaimMessage(claimLabel, username.trim(), begin.nonce_hex);
       challenge = begin.nonce_hex;
     } catch (e) {
       fail(e);
@@ -69,6 +76,7 @@
       });
       onclaimed?.(claimed);
       challenge = '';
+      signingMessage = '';
       signatureB64 = '';
     } catch (e) {
       fail(e);
@@ -95,6 +103,7 @@
       id="ceremony-claim-username"
       class="input input-bordered input-sm font-mono"
       type="text"
+      disabled={challenge !== ''}
       bind:value={username}
     />
   </div>
@@ -109,14 +118,21 @@
   </button>
 
   <div class="form-control">
-    <label class="label label-text" for="ceremony-claim-challenge">Challenge</label>
+    <label class="label label-text" for="ceremony-claim-message">Message to sign (base64)</label>
     <textarea
-      id="ceremony-claim-challenge"
+      id="ceremony-claim-message"
       class="textarea textarea-bordered font-mono text-xs"
-      rows="2"
-      placeholder="Request a challenge, then sign it offline..."
-      bind:value={challenge}
+      rows="3"
+      readonly
+      placeholder="Request a challenge to get the message to sign..."
+      data-testid="ceremony-claim-message"
+      value={signingMessage}
     ></textarea>
+    <p class="text-xs text-base-content/60">
+      Base64-decode this message and sign the decoded bytes with your certificate's private
+      key. It binds the barrier, your username and the nonce; a signature over the nonce
+      alone is refused.
+    </p>
   </div>
 
   <div class="form-control">

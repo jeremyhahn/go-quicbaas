@@ -56,3 +56,14 @@ export type {
   BootstrapRequest,
   BootstrapResponse,
 } from './types.ts';
+
+export {
+  MTLS_CHALLENGE_CONTEXT,
+  METHOD_DATA_PURPOSE,
+  ChallengeMessageError,
+  quorumChallengePurpose,
+  quorumChallengeMessage,
+  SHARE_CLAIM_CONTEXT,
+  SYSTEM_CLAIM_LABEL,
+  shareClaimMessage,
+} from './challengeMessage.ts';
