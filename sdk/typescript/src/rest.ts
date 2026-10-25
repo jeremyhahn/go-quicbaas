@@ -4581,6 +4581,7 @@ export class RestBarrierClient implements BarrierClient {
   async generateRecoveryKeys(
     req: BarrierGenerateRecoveryKeysRequest,
   ): Promise<BarrierRecoveryKeysResponse> {
+    requireTLSForSOPIN('rest', this.baseUrl, req.so_pin);
     return this.http.fetchJSON<BarrierRecoveryKeysResponse>('/api/v1/barrier/recovery/generate', {
       method: 'POST',
       body: JSON.stringify(req),

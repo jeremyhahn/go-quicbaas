@@ -337,23 +337,30 @@ describe('RestBarrierClient Shamir strategy', () => {
 // =============================================================================
 
 describe('RestBarrierClient operator flows', () => {
-  it('generates recovery keys', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        keys: ['rec-1', 'rec-2', 'rec-3'],
-        threshold: 2,
-        total: 3,
-      }),
-    );
+  it('generates recovery keys with the SO PIN and policy over https', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ threshold: 2, total: 3, share_count: 3 }));
 
-    const client = new RestClient('http://localhost');
-    const result = await client.barrier.generateRecoveryKeys({ threshold: 2, total: 3 });
+    const client = new RestClient('https://node.example');
+    const result = await client.barrier.generateRecoveryKeys({
+      threshold: 2,
+      policy: 'designated',
+      so_pin: 'so-pin-1234',
+    });
 
-    expect(result.keys).toHaveLength(3);
-    expect(result.total).toBe(3);
+    expect(result).toEqual({ threshold: 2, total: 3, share_count: 3 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://node.example/api/v1/barrier/recovery/generate');
+    expect(JSON.parse(init.body as string)).toEqual({ threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' });
+  });
 
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/barrier/recovery/generate');
+  it('refuses to send a recovery-generation SO PIN over plaintext http, before any request', async () => {
+    const err = await new RestClient('http://localhost')
+      .barrier.generateRecoveryKeys({ threshold: 2, so_pin: 'so-pin-1234' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('rest');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('deletes recovery keys', async () => {

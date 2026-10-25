@@ -96,11 +96,19 @@ describe('McpBarrierClient tools', () => {
     },
     {
       name: 'generateRecoveryKeys',
-      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 2, total: 4 }),
+      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' }),
       tool: 'qrdb_barrier_recovery_generate',
-      args: { threshold: 2, total: 4 },
+      args: { threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' },
       reply: { threshold: 2, total: 4, share_count: 4 },
-      want: { keys: [], threshold: 2, total: 4 },
+      want: { threshold: 2, total: 4, share_count: 4 },
+    },
+    {
+      name: 'generateRecoveryKeys without a PIN or policy',
+      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 1 }),
+      tool: 'qrdb_barrier_recovery_generate',
+      args: { threshold: 1 },
+      reply: { threshold: 1, total: 1, share_count: 1 },
+      want: { threshold: 1, total: 1, share_count: 1 },
     },
     {
       name: 'deleteRecoveryKeys',
@@ -165,6 +173,16 @@ describe('McpBarrierClient tools', () => {
     toolError();
 
     await expect(new McpClient(endpoint).barrier.status()).rejects.toBeInstanceOf(McpError);
+  });
+
+  it('generateRecoveryKeys refuses to send an SO PIN over plaintext http', async () => {
+    const err = await new McpClient(plainEndpoint)
+      .barrier.generateRecoveryKeys({ threshold: 2, so_pin: 'so-pin-1234' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
 });

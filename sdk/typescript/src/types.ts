@@ -2926,21 +2926,24 @@ export interface TenantBarrierStatusResponse {
 // BarrierGenerateRecoveryKeysRequest holds parameters for generating
 // recovery keys. Mirrors transport.BarrierGenerateRecoveryKeysRequest.
 export interface BarrierGenerateRecoveryKeysRequest {
-  /** Threshold required for recovery. */
+  /** Shares required to recover. */
   threshold: number;
-  /** Total recovery keys to generate. */
-  total: number;
+  /** Share-distribution policy; empty uses the server default. */
+  policy?: string;
+  /** SO PIN authorizing generation; sent over TLS only. */
+  so_pin?: string;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
-// Mirrors transport.BarrierRecoveryKeysResponse.
+// BarrierRecoveryKeysResponse reports the generated recovery quorum. The
+// shares go to their holders, never back to the caller. Mirrors
+// transport.BarrierRecoveryKeysResponse.
 export interface BarrierRecoveryKeysResponse {
-  /** Recovery key values for distribution. */
-  keys: string[];
-  /** Threshold required for recovery. */
+  /** Shares required to recover. */
   threshold: number;
-  /** Total recovery keys generated. */
+  /** Total shares generated. */
   total: number;
+  /** Shares distributed to holders. */
+  share_count: number;
 }
 
 
