@@ -95,6 +95,22 @@ func newTenantCredentialService() *tenantCredentialService {
 	}}
 }
 
+// permCredentialRetrieve is the grant qrdb declares on CredentialRetrieve.
+const permCredentialRetrieve = "credentials:retrieve"
+
+// tenantGrant binds a delegation to tenant holding exactly grants, enforced
+// by the tenant-hosting node's own AuthMiddleware.
+func tenantGrant(t *testing.T, tenant string, grants ...string) *grantBinder {
+	t.Helper()
+	return &grantBinder{tenant: tenant, grants: grants, mw: nodeAuthMiddleware(t)}
+}
+
+// refusedGrant is a revoked delegation: the binder refuses every call.
+func refusedGrant(t *testing.T) *grantBinder {
+	t.Helper()
+	return &grantBinder{refuse: &bindRefusedError{}, mw: nodeAuthMiddleware(t)}
+}
+
 // newDelegatedSecretClient builds an embedded client through NewClient, with
 // the server's raw registry on offer, acting under a delegation bound by
 // binder.
@@ -144,7 +160,7 @@ func resolveSecret(t *testing.T, c Client, uri string) (string, error) {
 
 func TestSecretResolver_RevokedDelegationCannotResolve(t *testing.T) {
 	creds := newTenantCredentialService()
-	c := newDelegatedSecretClient(t, creds, &tenantBinder{refuse: &bindRefusedError{}})
+	c := newDelegatedSecretClient(t, creds, refusedGrant(t))
 
 	for _, uri := range []string{"credential://system-key", "credential://a-key"} {
 		if got, err := resolveSecret(t, c, uri); err == nil {
@@ -158,7 +174,7 @@ func TestSecretResolver_RevokedDelegationCannotResolve(t *testing.T) {
 
 func TestSecretResolver_DelegationReadsOnlyItsOwnTenant(t *testing.T) {
 	creds := newTenantCredentialService()
-	c := newDelegatedSecretClient(t, creds, &tenantBinder{tenant: "tenant-a"})
+	c := newDelegatedSecretClient(t, creds, tenantGrant(t, "tenant-a", permCredentialRetrieve))
 
 	for _, uri := range []string{"credential://b-key", "credential://system-key"} {
 		if got, err := resolveSecret(t, c, uri); err == nil {
@@ -167,22 +183,55 @@ func TestSecretResolver_DelegationReadsOnlyItsOwnTenant(t *testing.T) {
 	}
 }
 
-func TestSecretResolver_DelegationResolvesItsOwnCredential(t *testing.T) {
+// A delegation holding credentials:retrieve resolves a credential through
+// the node's AuthMiddleware: the resolver reads through the authorized qrdb
+// client. qrdb's named-credential store is system-scoped (credentials:* are
+// ScopeCross), so only a system-tenant delegation can hold the grant.
+func TestSecretResolver_DelegationWithRetrieveGrantResolves(t *testing.T) {
 	creds := newTenantCredentialService()
-	c := newDelegatedSecretClient(t, creds, &tenantBinder{tenant: "tenant-a"})
+	c := newDelegatedSecretClient(t, creds, tenantGrant(t, "", permCredentialRetrieve))
 
-	got, err := resolveSecret(t, c, "credential://a-key")
+	got, err := resolveSecret(t, c, "credential://system-key")
 	if err != nil {
-		t.Fatalf("Resolve(credential://a-key): %v", err)
+		t.Fatalf("Resolve(credential://system-key): %v", err)
 	}
-	if got != "a-value" {
-		t.Fatalf("Resolve(credential://a-key) = %q, want a-value", got)
+	if got != "system-value" {
+		t.Fatalf("Resolve(credential://system-key) = %q, want system-value", got)
+	}
+}
+
+// A delegation without the credentials:retrieve grant is refused by the
+// node's middleware before the credential servicer is reached.
+func TestSecretResolver_DelegationWithoutRetrieveGrantCannotResolve(t *testing.T) {
+	creds := newTenantCredentialService()
+	c := newDelegatedSecretClient(t, creds, tenantGrant(t, "", "credentials:list"))
+
+	if got, err := resolveSecret(t, c, "credential://system-key"); err == nil {
+		t.Fatalf("Resolve(credential://system-key) without credentials:retrieve = %q, want an error", got)
+	}
+	if creds.calls != 0 {
+		t.Fatalf("credential servicer reached %d times without the grant, want 0", creds.calls)
+	}
+}
+
+// A tenant delegation cannot read credentials even with the grant: qrdb
+// confines credentials:* to the system tenant, and the middleware the
+// delegation runs under enforces that before the servicer is reached.
+func TestSecretResolver_TenantDelegationCannotReadCredentials(t *testing.T) {
+	creds := newTenantCredentialService()
+	c := newDelegatedSecretClient(t, creds, tenantGrant(t, "tenant-a", permCredentialRetrieve))
+
+	if got, err := resolveSecret(t, c, "credential://a-key"); err == nil {
+		t.Fatalf("Resolve(credential://a-key) for tenant-a = %q, want an error", got)
+	}
+	if creds.calls != 0 {
+		t.Fatalf("credential servicer reached %d times for a tenant delegation, want 0", creds.calls)
 	}
 }
 
 func TestSecretResolver_RevokedDelegationCannotResolveKMS(t *testing.T) {
 	kms := newTenantSecretsService()
-	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, &tenantBinder{refuse: &bindRefusedError{}})
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, refusedGrant(t))
 
 	if got, err := resolveSecret(t, c, "kms://system/key"); err == nil {
 		t.Fatalf("Resolve(kms://system/key) under a revoked delegation = %q, want an error", got)
@@ -194,7 +243,7 @@ func TestSecretResolver_RevokedDelegationCannotResolveKMS(t *testing.T) {
 
 func TestSecretResolver_DelegationResolvesOnlyItsOwnKMSSecret(t *testing.T) {
 	kms := newTenantSecretsService()
-	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, &tenantBinder{tenant: "tenant-a"})
+	c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, tenantGrant(t, "tenant-a"))
 
 	if got, err := resolveSecret(t, c, "kms://system/key"); err == nil {
 		t.Fatalf("Resolve(kms://system/key) for tenant-a = %q, want an error", got)
