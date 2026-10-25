@@ -66,6 +66,33 @@ func TestSubjectFromIdentity_BoundAccount(t *testing.T) {
 	}
 }
 
+// TestSubjectFromIdentity_BoundBearer projects a bearer identity after qrdb's
+// BindUser: the token marked it, then qrdb bound the account, which set
+// Subject to the decimal account id. The projection must name the bound
+// account by its username and id, never by the numeric Subject.
+func TestSubjectFromIdentity_BoundBearer(t *testing.T) {
+	cases := map[string]struct {
+		sub    string
+		userID uint64
+	}{
+		"username sub":      {sub: "alice", userID: 42},
+		"email sub":         {sub: "alice@example.com", userID: 42},
+		"token without uid": {sub: "alice", userID: 0},
+	}
+	for name, tc := range cases {
+		identity := MarkTokenSubject(&qrdbsdk.Identity{Subject: tc.sub, TenantID: "t1"}, tc.userID)
+		identity.BindUser(42, "alice")
+
+		subject := SubjectFromIdentity(identity)
+		if subject.Username != "alice" || subject.ID != "alice" || subject.IDKind != interfaces.SubjectIDUsername {
+			t.Errorf("%s: projected %+v, want the bound username alice", name, subject)
+		}
+		if subject.UserID != 42 {
+			t.Errorf("%s: UserID = %d, want the bound account id 42", name, subject.UserID)
+		}
+	}
+}
+
 // A token's sub is the ceremony's email or username; it is classified by what
 // it is, never as a user ID, and the verified uid travels separately.
 func TestSubjectFromIdentity_TokenSubject(t *testing.T) {
