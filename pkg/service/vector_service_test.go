@@ -2306,6 +2306,39 @@ func TestCompactNamespace_AsyncUpstreamFailureReachesJob(t *testing.T) {
 	assert.Equal(t, vecMockUpstreamOperationID, failed.OperationID)
 }
 
+// TestCompactNamespace_AsyncProgressErrorReachesJob pins that qrdb refusing
+// the progress read (here, a missing vector:get_compaction_progress grant)
+// is reported on the job, not swallowed while the job reads as running.
+func TestCompactNamespace_AsyncProgressErrorReachesJob(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	denied := &qbErrors.QBError{Code: qbErrors.ErrForbidden, Op: "vector.GetCompactionProgress", Err: &vectorListDeniedError{}}
+	storage.compactionProgressFn = func(_ context.Context, _, _ string) (*interfaces.VectorCompactionProgress, error) {
+		return nil, denied
+	}
+	ctx := tenantctx.WithSystem(context.Background())
+	resp, err := svc.CompactNamespace(ctx, &CompactNamespaceRequest{Namespace: "test-ns", Async: true})
+	require.NoError(t, err)
+
+	progress, err := svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{OperationID: resp.OperationID})
+	require.NoError(t, err)
+	assert.Contains(t, progress.Error, "not granted")
+
+	job := svc.compactionJobs[resp.OperationID]
+	var unavailable *CompactionProgressError
+	require.ErrorAs(t, job.Error, &unavailable)
+	assert.Equal(t, vecMockUpstreamOperationID, unavailable.OperationID)
+	assert.ErrorIs(t, job.Error, denied)
+
+	// A later read that succeeds clears the progress error.
+	storage.compactionProgressFn = func(_ context.Context, _, _ string) (*interfaces.VectorCompactionProgress, error) {
+		return &interfaces.VectorCompactionProgress{InProgress: true}, nil
+	}
+	progress, err = svc.GetCompactionProgress(ctx, &GetCompactionProgressRequest{OperationID: resp.OperationID})
+	require.NoError(t, err)
+	assert.True(t, progress.InProgress)
+	assert.Empty(t, progress.Error)
+}
+
 // The bytes qrdb reclaimed reach the job when the compaction succeeds, and
 // a progress read qrdb cannot answer leaves the job in progress.
 func TestCompactNamespace_AsyncReclaimedBytesReachJob(t *testing.T) {

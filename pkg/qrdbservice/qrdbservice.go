@@ -55,18 +55,20 @@ var grantNames = []string{
 	"vector:namespace_list", // VectorClient.ListNamespaces: the vector service's startup index load
 	// The vector service's per-verb calls. Each runs after quicbaas's own
 	// per-verb grant check on the caller, in a tenant-prefixed namespace.
-	"vector:namespace_create",   // VectorClient.CreateNamespace
-	"vector:namespace_delete",   // VectorClient.DeleteNamespace
-	"vector:namespace_info",     // VectorClient.GetNamespaceInfo
-	"vector:upsert",             // VectorClient.UpsertVector
-	"vector:get",                // VectorClient.GetVector
-	"vector:delete",             // VectorClient.DeleteVector
-	"vector:batch_upsert",       // VectorClient.BatchUpsert
-	"vector:batch_delete",       // VectorClient.BatchDeleteVectors
-	"vector:list",               // VectorClient.ListVectors: namespace scans
-	"vector:search_by_metadata", // VectorClient.SearchByMetadata: multi-filter scans
-	"vector:get_index_stats",    // VectorClient.GetIndexStats
-	"vector:compact",            // VectorClient.CompactNamespace
+	"vector:namespace_create",        // VectorClient.CreateNamespace
+	"vector:namespace_delete",        // VectorClient.DeleteNamespace
+	"vector:namespace_info",          // VectorClient.GetNamespaceInfo
+	"vector:upsert",                  // VectorClient.UpsertVector
+	"vector:get",                     // VectorClient.GetVector
+	"vector:delete",                  // VectorClient.DeleteVector
+	"vector:batch_upsert",            // VectorClient.BatchUpsert
+	"vector:batch_delete",            // VectorClient.BatchDeleteVectors
+	"vector:list",                    // VectorClient.ListVectors: namespace scans
+	"vector:search_by_metadata",      // VectorClient.SearchByMetadata: multi-filter scans
+	"vector:search_similar",          // VectorClient.SearchSimilar: the node's authorized search
+	"vector:get_index_stats",         // VectorClient.GetIndexStats
+	"vector:compact",                 // VectorClient.CompactNamespace
+	"vector:get_compaction_progress", // VectorClient.GetCompactionProgress: async compaction jobs
 	// The fleet device telemetry the server files and reads on its own
 	// behalf (pkg/server fleetTelemetrySeries); a node daemon's grant holds
 	// no time-series permission.

@@ -90,6 +90,22 @@ func (e *UpstreamCompactionError) Error() string {
 	return "compaction " + e.OperationID + " of namespace " + e.Namespace + " failed: " + e.Reason
 }
 
+// CompactionProgressError reports that qrdb refused or failed a progress
+// read for an async compaction, for example when the principal lacks
+// vector:get_compaction_progress. The job stays in progress: the
+// compaction itself may still be running.
+type CompactionProgressError struct {
+	Namespace   string
+	OperationID string
+	Err         error
+}
+
+func (e *CompactionProgressError) Error() string {
+	return "progress of compaction " + e.OperationID + " of namespace " + e.Namespace + " unavailable: " + e.Err.Error()
+}
+
+func (e *CompactionProgressError) Unwrap() error { return e.Err }
+
 // CompactionPlan describes what a compaction will do.
 type CompactionPlan struct {
 	// Namespace is the target namespace for compaction.
