@@ -591,7 +591,7 @@ func (c *restProtocolClient) Name() string { return "REST" }
 
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	c.endpoint = getRESTEndpoint()
-	c.client = helpers.NewHTTPClient(30 * time.Second)
+	c.client = helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Verify endpoint is reachable
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -815,7 +815,8 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	endpoint := endpoints[0]
 
-	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+	conn, err := helpers.SetupGRPCConnectionToEndpoint(t, ctx, endpoint,
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)))
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "failed to connect to gRPC endpoint " + endpoint, Cause: err}
 	}
@@ -933,6 +934,7 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
 	)
 	if err != nil {
