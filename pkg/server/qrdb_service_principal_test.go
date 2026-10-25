@@ -131,6 +131,23 @@ func TestDelegatedContext_NoNodeIsRefused(t *testing.T) {
 	assert.Nil(t, ctx)
 }
 
+// TestAuthMiddleware_IsTheNodes: the server hands out its node's own
+// authorization middleware, so an embedded delegation is authorized by the
+// same instance the node's network transports enforce with.
+func TestAuthMiddleware_IsTheNodes(t *testing.T) {
+	s, node := newPrincipalServer(t)
+	mw := s.AuthMiddleware()
+	require.NotNil(t, mw)
+	assert.Same(t, node.AuthMiddleware(), mw)
+}
+
+// TestAuthMiddleware_NoNodeIsNil: with no embedded node there is no
+// middleware, and an embedded delegation over the server is refused.
+func TestAuthMiddleware_NoNodeIsNil(t *testing.T) {
+	s := &Server{}
+	assert.Nil(t, s.AuthMiddleware())
+}
+
 // TestServiceKV_RemoteClientKeepsItsOwnIdentity pins that, with no embedded
 // node, the server's clients are passed through: a remote transport
 // authenticates as the server's mTLS identity, not the embedded principal.

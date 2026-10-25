@@ -17,6 +17,8 @@ import (
 	"context"
 	"crypto/x509"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
@@ -34,6 +36,9 @@ type EmbeddedIdentityBinder interface {
 // to WithEmbeddedIdentity. The zero value names no identity.
 type EmbeddedIdentity struct {
 	bind func(ctx context.Context) (context.Context, error)
+	// delegator is the binder of a delegated identity, nil for the service
+	// principal. A delegation's grants are enforced by its AuthMiddleware.
+	delegator EmbeddedIdentityBinder
 }
 
 // ServicePrincipalIdentity names the embedding server's service principal,
@@ -53,9 +58,12 @@ func DelegatedIdentity(binder EmbeddedIdentityBinder, chain []*x509.Certificate)
 	if binder == nil || len(chain) == 0 {
 		return EmbeddedIdentity{}
 	}
-	return EmbeddedIdentity{bind: func(ctx context.Context) (context.Context, error) {
-		return binder.DelegatedContext(ctx, chain)
-	}}
+	return EmbeddedIdentity{
+		bind: func(ctx context.Context) (context.Context, error) {
+			return binder.DelegatedContext(ctx, chain)
+		},
+		delegator: binder,
+	}
 }
 
 // isZero reports whether the identity names nothing.
@@ -76,4 +84,40 @@ func WithEmbeddedIdentity(id EmbeddedIdentity) Option {
 		o.embeddedIdentity = id
 		return nil
 	}
+}
+
+// EmbeddedAuthorizer is implemented by a binder that also authorizes the
+// calls it binds: the qrdb node (and the quicbaas server over it) hands out
+// the same AuthMiddleware its network transports enforce with.
+type EmbeddedAuthorizer interface {
+	AuthMiddleware() *qrdbsdk.AuthMiddleware
+}
+
+// DelegationWithoutAuthorizationError reports a delegated identity whose
+// binder supplies no authorization middleware. A delegation is a bounded
+// grant; run without the node's middleware it would be bounded by nothing,
+// so the qrdb sub-client is never built for it.
+type DelegationWithoutAuthorizationError struct{}
+
+func (*DelegationWithoutAuthorizationError) Error() string {
+	return "quicbaas: delegated identity: the binder supplies no qrdb AuthMiddleware to enforce the delegation's grants"
+}
+
+// authMiddleware returns the middleware that enforces a delegated identity's
+// grants, taken from its binder. It returns nil for the service principal,
+// and DelegationWithoutAuthorizationError for a delegation whose binder
+// supplies none.
+func (id EmbeddedIdentity) authMiddleware() (*qrdbsdk.AuthMiddleware, error) {
+	if id.delegator == nil {
+		return nil, nil
+	}
+	authorizer, ok := id.delegator.(EmbeddedAuthorizer)
+	if !ok {
+		return nil, &DelegationWithoutAuthorizationError{}
+	}
+	mw := authorizer.AuthMiddleware()
+	if mw == nil {
+		return nil, &DelegationWithoutAuthorizationError{}
+	}
+	return mw, nil
 }
