@@ -104,6 +104,25 @@ export class SOPINRequiresTLSError extends QuicBaaSError {
   }
 }
 
+/**
+ * Raised before any call when a ceremony initialize request does not select
+ * exactly one bootstrap administrator credential path: admin_csr_pem,
+ * admin_cert_pem or admin_generate. The server refuses the same request
+ * (go-qrdb NoAdminCredentialSelectedError); the client fails first so no SO
+ * PIN leaves the process for a request that cannot succeed.
+ */
+export class CeremonyAdminSelectorError extends QuicBaaSError {
+  /** The selectors the request set, in field order; empty when none. */
+  readonly selected: string[];
+
+  constructor(selected: string[]) {
+    const detail = selected.length === 0 ? 'none was set' : `got ${selected.join(', ')}`;
+    super(`ceremony initialize needs exactly one of admin_csr_pem, admin_cert_pem or admin_generate: ${detail}`);
+    this.name = 'CeremonyAdminSelectorError';
+    this.selected = selected;
+  }
+}
+
 // McpError is an MCP server's refusal: a JSON-RPC error (`code` set) or a
 // tool result flagged isError (`code` undefined). `tool` names the tool the
 // call was for, or the JSON-RPC method when the failure is the handshake.

@@ -411,6 +411,7 @@ import {
   SSHHostMismatchError,
 } from './errors.js';
 import { requireTLSForSOPIN } from './so_pin.js';
+import { requireOneAdminSelector } from './ceremony.js';
 
 // API base path for all orchestrator endpoints.
 const API_PREFIX = '/api/v1/orchestrator';
@@ -4701,9 +4702,12 @@ export class RestCeremonyClient implements CeremonyClient {
   }
 
   async initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> {
+    requireOneAdminSelector(req);
+    const { secret, ...fields } = req;
+    const body = secret && secret.length > 0 ? { ...fields, secret: bytesToBase64(secret) } : fields;
     return this.http.fetchJSON<CeremonyInitializeResponse>('/api/v1/init/initialize', {
       method: 'POST',
-      body: JSON.stringify(req),
+      body: JSON.stringify(body),
     });
   }
 

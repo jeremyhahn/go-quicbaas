@@ -182,6 +182,7 @@ import {
 } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
 import { requireTLSForSOPIN } from './so_pin.js';
+import { requireOneAdminSelector } from './ceremony.js';
 
 
 // McpNotImplementedError is thrown by all methods until the MCP protocol
@@ -989,14 +990,21 @@ export class McpCeremonyClient implements CeremonyClient {
   constructor(private readonly session: McpSession) {}
 
   async initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> {
+    requireOneAdminSelector(req);
     requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
     const args: Record<string, unknown> = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
     if (req.credential_seal_strategy) args.credential_seal_strategy = req.credential_seal_strategy;
+    if (req.policy) args.policy = req.policy;
     if (req.officers && req.officers.length > 0) {
       args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
     }
     if (req.hostname) args.hostname = req.hostname;
     if (req.sans && req.sans.length > 0) args.sans = req.sans;
+    if (req.admin_csr_pem) args.admin_csr_pem = req.admin_csr_pem;
+    if (req.admin_cert_pem) args.admin_cert_pem = req.admin_cert_pem;
+    if (req.admin_cert_pool_pem) args.admin_cert_pool_pem = req.admin_cert_pool_pem;
+    if (req.admin_generate) args.admin_generate = true;
+    if (req.secret && req.secret.length > 0) args.secret = secretArg(req.secret);
     return this.session.callTool<CeremonyInitializeResponse>('qrdb_ceremony_initialize', args);
   }
 

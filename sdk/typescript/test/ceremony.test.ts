@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
-import { APIError } from '../src/errors';
+import { APIError, CeremonyAdminSelectorError } from '../src/errors';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -51,6 +51,7 @@ describe('RestCeremonyClient.initialize', () => {
       so_pin: 'so-pin',
       user_pin: 'user-pin',
       threshold: 0,
+      admin_generate: true,
     });
 
     expect(result.spki_pin).toBe('sha256-abc');
@@ -64,7 +65,49 @@ describe('RestCeremonyClient.initialize', () => {
       so_pin: 'so-pin',
       user_pin: 'user-pin',
       threshold: 0,
+      admin_generate: true,
     });
+  });
+
+  it.each([
+    ['admin_csr_pem', { admin_csr_pem: 'ADMIN-CSR' }],
+    ['admin_cert_pem', { admin_cert_pem: 'ADMIN-CERT', admin_cert_pool_pem: 'ADMIN-POOL' }],
+    ['admin_generate', { admin_generate: true }],
+  ] as const)('sends the %s administrator selector under the server field names', async (_name, selector) => {
+    fetchMock.mockResolvedValue(jsonResponse({ state: 'complete' }));
+
+    await new RestClient('https://localhost').ceremony.initialize({
+      so_pin: 'so',
+      user_pin: 'user',
+      threshold: 2,
+      policy: 'designated',
+      ...selector,
+      secret: new TextEncoder().encode('pass'),
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      so_pin: 'so',
+      user_pin: 'user',
+      threshold: 2,
+      policy: 'designated',
+      ...selector,
+      secret: 'cGFzcw==',
+    });
+  });
+
+  it.each([
+    ['no selector', {}, []],
+    ['two selectors', { admin_cert_pem: 'CERT', admin_generate: true }, ['admin_cert_pem', 'admin_generate']],
+    ['three selectors', { admin_csr_pem: 'C', admin_cert_pem: 'P', admin_generate: true }, ['admin_csr_pem', 'admin_cert_pem', 'admin_generate']],
+  ] as const)('refuses %s before any call', async (_name, selector, selected) => {
+    const err = await new RestClient('http://localhost').ceremony
+      .initialize({ so_pin: 'so', user_pin: 'user', threshold: 0, ...selector })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CeremonyAdminSelectorError);
+    expect((err as CeremonyAdminSelectorError).selected).toEqual(selected);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('initialises the ceremony with M-of-N officers', async () => {
@@ -89,6 +132,7 @@ describe('RestCeremonyClient.initialize', () => {
       ],
       hostname: 'example.com',
       sans: ['example.com', 'www.example.com'],
+      admin_csr_pem: 'ADMIN-CSR',
     });
 
     expect(result.share_count).toBe(5);
@@ -100,7 +144,7 @@ describe('RestCeremonyClient.initialize', () => {
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.ceremony.initialize({ so_pin: 'x', user_pin: 'y', threshold: 0 }),
+      client.ceremony.initialize({ so_pin: 'x', user_pin: 'y', threshold: 0, admin_generate: true }),
     ).rejects.toBeInstanceOf(APIError);
   });
 });
@@ -214,6 +258,7 @@ describe('RestCeremonyClient restart persistence', () => {
         { username: 'bob', csr_pem: 'B' },
         { username: 'carol', csr_pem: 'C' },
       ],
+      admin_generate: true,
     });
     expect(init.state).toBe('awaiting-claims');
     expect(init.share_count).toBe(3);
