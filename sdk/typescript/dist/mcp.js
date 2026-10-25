@@ -658,11 +658,17 @@ export class McpBarrierClient {
     }
     // The recovery tool reports the quorum but never the recovery keys.
     async generateRecoveryKeys(req) {
+        requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
         const reply = await this.session.callTool('qrdb_barrier_recovery_generate', {
             threshold: req.threshold,
-            total: req.total,
+            ...(req.policy ? { policy: req.policy } : {}),
+            ...(req.so_pin ? { so_pin: req.so_pin } : {}),
         });
-        return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+        return {
+            threshold: reply.threshold ?? 0,
+            total: reply.total ?? 0,
+            share_count: reply.share_count ?? 0,
+        };
     }
     async deleteRecoveryKeys() {
         await this.session.callTool('qrdb_barrier_recovery_delete', {});

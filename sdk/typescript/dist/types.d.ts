@@ -1823,18 +1823,20 @@ export interface TenantBarrierStatusResponse {
     shamir_total: number;
 }
 export interface BarrierGenerateRecoveryKeysRequest {
-    /** Threshold required for recovery. */
+    /** Shares required to recover. */
     threshold: number;
-    /** Total recovery keys to generate. */
-    total: number;
+    /** Share-distribution policy; empty uses the server default. */
+    policy?: string;
+    /** SO PIN authorizing generation; sent over TLS only. */
+    so_pin?: string;
 }
 export interface BarrierRecoveryKeysResponse {
-    /** Recovery key values for distribution. */
-    keys: string[];
-    /** Threshold required for recovery. */
+    /** Shares required to recover. */
     threshold: number;
-    /** Total recovery keys generated. */
+    /** Total shares generated. */
     total: number;
+    /** Shares distributed to holders. */
+    share_count: number;
 }
 export interface BarrierHasRecoveryKeysResponse {
     /** True when recovery keys have been generated. */

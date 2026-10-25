@@ -3275,6 +3275,7 @@ export class RestBarrierClient {
         });
     }
     async generateRecoveryKeys(req) {
+        requireTLSForSOPIN('rest', this.baseUrl, req.so_pin);
         return this.http.fetchJSON('/api/v1/barrier/recovery/generate', {
             method: 'POST',
             body: JSON.stringify(req),
