@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -305,36 +307,65 @@ func TestVecGetNamespaceInfo_WithFullData(t *testing.T) {
 // =============================================================================
 // UpsertVector - New coverage paths
 // =============================================================================
+// newUpsertRefusingVecSvc is a vector service whose qrdb client refuses
+// every upsert with refusal, recording the namespace each upsert names.
+func newUpsertRefusingVecSvc(t *testing.T, refusal error) (VectorService, *[]string) {
+	t.Helper()
+	var namespaces []string
+	client := &vecTransport{upsertVectorFn: func(_ context.Context, req *qrdbtransport.UpsertVectorRequest) (*qrdbtransport.UpsertVectorResponse, error) {
+		namespaces = append(namespaces, req.Namespace)
+		return nil, refusal
+	}}
+	svc, err := NewVectorService(newVecMockStorage(), newVecTestLogger(), WithVectorSDKProvider(newVecSDKProvider(client)))
+	require.NoError(t, err)
+	return svc, &namespaces
+}
+
+// requireUpsertCode asserts an upsert was refused with code.
+func requireUpsertCode(t *testing.T, resp *UpsertVectorResponse, err error, code qbErrors.ErrorCode) {
+	t.Helper()
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *qbErrors.QBError
+	require.True(t, errors.As(err, &qbErr))
+	assert.Equal(t, code, qbErr.Code)
+}
+
+// qrdb checks the namespace inside the upsert; its refusal is not found.
 func TestVecUpsert_NamespaceNotFound(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+	svc, _ := newUpsertRefusingVecSvc(t, &qrdbtransport.NamespaceNotFoundError{Namespace: "nonexistent"})
 
 	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
 		Namespace: "nonexistent",
 		ID:        1,
 		Vector:    []float32{1.0, 2.0, 3.0},
 	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
+	requireUpsertCode(t, resp, err, qbErrors.ErrNotFound)
 }
 
+// Any qrdb refusal other than a missing namespace or a wrong dimension is a
+// write failure.
+func TestVecUpsert_OtherRefusalIsAWriteFailure(t *testing.T) {
+	svc, _ := newUpsertRefusingVecSvc(t, &qrdbtransport.ClosedError{})
+
+	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
+		Namespace: "vectors",
+		ID:        1,
+		Vector:    []float32{1.0, 2.0, 3.0},
+	})
+	requireUpsertCode(t, resp, err, qbErrors.ErrRaft)
+}
+
+// qrdb checks the dimension inside the upsert; its refusal is invalid input.
 func TestVecUpsert_DimensionMismatch(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
+	svc, _ := newUpsertRefusingVecSvc(t, &qrdbtransport.DimensionMismatchError{Expected: 3, Got: 2})
 
 	resp, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
 		Namespace: "vectors",
 		ID:        1,
 		Vector:    []float32{1.0, 2.0},
 	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
+	requireUpsertCode(t, resp, err, qbErrors.ErrInvalidInput)
 }
 func TestVecUpsert_ServiceClosed(t *testing.T) {
 	svc, _ := newVecSvcWithNamespace(t, "vectors", 3)
@@ -355,11 +386,10 @@ func TestVecUpsert_ServiceClosed(t *testing.T) {
 
 func TestVecUpsert_TenantForbidden(t *testing.T) {
 	// With prefix-based tenant isolation, "other-tenant" scopes the namespace
-	// to "tenant/other-tenant/tenant-ns" which does not exist in the mock
-	// storage. The service returns ErrNotFound because the scoped namespace
-	// is not found, preventing cross-tenant access without leaking namespace
-	// existence to the attacker.
-	svc, _ := newVecSvcWithNamespace(t, "tenant-ns", 3)
+	// to "tenant/other-tenant/tenant-ns", which that tenant does not hold.
+	// qrdb refuses it as not found, so cross-tenant access never leaks
+	// namespace existence to the attacker.
+	svc, namespaces := newUpsertRefusingVecSvc(t, &qrdbtransport.NamespaceNotFoundError{Namespace: "tenant/other-tenant/tenant-ns"})
 
 	ctx := tenantctx.WithTenant(context.Background(), "other-tenant")
 	resp, err := svc.UpsertVector(ctx, &UpsertVectorRequest{
@@ -367,12 +397,8 @@ func TestVecUpsert_TenantForbidden(t *testing.T) {
 		ID:        1,
 		Vector:    []float32{1.0, 2.0, 3.0},
 	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
+	requireUpsertCode(t, resp, err, qbErrors.ErrNotFound)
+	assert.Equal(t, []string{"tenant/other-tenant/tenant-ns"}, *namespaces)
 }
 
 // =============================================================================

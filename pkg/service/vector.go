@@ -17,6 +17,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -857,39 +858,16 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		}
 	}
 
-	// Verify namespace exists and get its configuration
-	nsInfo, err := v.storage.GetNamespaceInfo(ctx, scopedNamespace)
-	if err != nil {
-		if v.metrics != nil {
-			v.metrics.operationErrors.With("upsert_vector", "namespace_not_found").Inc()
-		}
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.UpsertVector",
-			Err:  &api.OperationFailedError{Operation: "find namespace", Cause: err},
-		}
-	}
-
-	// Validate vector dimension matches namespace dimension
-	// #nosec G115 -- vector dimension bounded by practical limits
-	if nsInfo.Dimension > 0 && uint32(len(req.Vector)) != nsInfo.Dimension {
-		if v.metrics != nil {
-			v.metrics.operationErrors.With("upsert_vector", "invalid_dimension").Inc()
-		}
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrInvalidInput,
-			Op:   "vector.UpsertVector",
-			Err:  &api.InvalidInputError{Message: fmt.Sprintf("vector dimension %d does not match namespace dimension %d", len(req.Vector), nsInfo.Dimension)},
-		}
-	}
-
 	// Get SDK vector client for write operation
 	vc, err := v.vectorClient()
 	if err != nil {
 		return nil, err
 	}
 
-	// Delegate to SDK which handles Raft consensus internally
+	// Delegate to SDK which handles Raft consensus internally. qrdb checks
+	// the namespace exists and the vector's dimension inside the upsert, in
+	// the caller's tenant, so no separate metadata read (and its
+	// vector:namespace_info permission) is needed here.
 	sdkResp, err := vc.UpsertVector(ctx, &qrdbtransport.UpsertVectorRequest{
 		Namespace: scopedNamespace,
 		ID:        req.ID,
@@ -898,14 +876,7 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		ShardID:   v.resolveShardID(req.ShardID),
 	})
 	if err != nil {
-		if v.metrics != nil {
-			v.metrics.operationErrors.With("upsert_vector", "sdk_error").Inc()
-		}
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrRaft,
-			Op:   "vector.UpsertVector",
-			Err:  err,
-		}
+		return nil, v.upsertError(err)
 	}
 
 	// Update local vector index
@@ -935,6 +906,25 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 		Timestamp: sdkResp.Timestamp,
 		Success:   sdkResp.Success,
 	}, nil
+}
+
+// upsertError classifies a refused upsert: a namespace the caller's tenant
+// does not hold is not found, a vector of the wrong dimension is invalid
+// input, and anything else is a write failure.
+func (v *vectorService) upsertError(err error) error {
+	code, reason := qbErrors.ErrRaft, "sdk_error"
+	var notFound *qrdbtransport.NamespaceNotFoundError
+	var mismatch *qrdbtransport.DimensionMismatchError
+	switch {
+	case errors.As(err, &notFound):
+		code, reason = qbErrors.ErrNotFound, "namespace_not_found"
+	case errors.As(err, &mismatch):
+		code, reason = qbErrors.ErrInvalidInput, "invalid_dimension"
+	}
+	if v.metrics != nil {
+		v.metrics.operationErrors.With("upsert_vector", reason).Inc()
+	}
+	return &qbErrors.QBError{Code: code, Op: "vector.UpsertVector", Err: err}
 }
 
 // GetVector retrieves a vector by ID with optional metadata.

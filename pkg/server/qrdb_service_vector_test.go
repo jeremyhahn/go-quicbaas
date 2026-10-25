@@ -25,8 +25,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -198,4 +201,56 @@ func TestServiceVector_ServerWorkRunsAsTheSystemService(t *testing.T) {
 	// for reads.
 	_, err := storage.ListNamespaces(context.Background())
 	require.NoError(t, err)
+}
+
+// newNodeVectorService builds the vector service the way startVector does,
+// over s's node, writing through the service vector provider.
+func newNodeVectorService(t *testing.T, s *Server) service.VectorService {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
+	require.NoError(t, err)
+	storage := newNodeVectorStorage(s.serviceVector(s.getQRDBNode().Client().Vector()))
+	svc, err := service.NewVectorService(storage, logger.NewAdapter(log),
+		service.WithVectorShardID(qbshards.PlatformShardID),
+		service.WithVectorIndexFactory(NewVectorIndexFactory()),
+		service.WithVectorLoadContext(mustServiceContext(t, s.getQRDBNode())),
+		service.WithVectorSDKProvider(serviceVectorProvider{server: s}))
+	require.NoError(t, err)
+	return svc
+}
+
+// An upsert needs only vector:upsert. qrdb checks the namespace and its
+// dimension inside the upsert, in the caller's tenant, so the service makes
+// no metadata read that would also need vector:namespace_info.
+func TestVectorService_UpsertNeedsOnlyTheUpsertVerb(t *testing.T) {
+	s := newStrictPrincipalServer(t)
+	svc := newNodeVectorService(t, s)
+	_, err := svc.CreateNamespace(tenantVectorCaller(t, "acme", "vector:namespace_create"),
+		&service.CreateNamespaceRequest{Namespace: "acme-docs", Dimension: 3, DistanceMetric: "cosine", IndexType: "flat"})
+	require.NoError(t, err)
+
+	upsert := &service.UpsertVectorRequest{Namespace: "acme-docs", ID: 7, Vector: []float32{1, 0, 0}}
+	_, err = svc.UpsertVector(tenantVectorCaller(t, "acme", "vector:upsert"), upsert)
+	require.NoError(t, err, "an own-tenant upsert must not need vector:namespace_info")
+
+	_, err = svc.UpsertVector(tenantVectorCaller(t, "globex", "vector:upsert"), upsert)
+	var refused *qberrors.QBError
+	require.ErrorAs(t, err, &refused, "another tenant's namespace must stay out of reach")
+	assert.Equal(t, qberrors.ErrNotFound, refused.Code)
+}
+
+// A vector whose dimension differs from the namespace's is still refused as
+// invalid input, now by qrdb's check inside the upsert.
+func TestVectorService_UpsertWrongDimensionIsInvalidInput(t *testing.T) {
+	s := newStrictPrincipalServer(t)
+	svc := newNodeVectorService(t, s)
+	_, err := svc.CreateNamespace(tenantVectorCaller(t, "acme", "vector:namespace_create"),
+		&service.CreateNamespaceRequest{Namespace: "acme-docs", Dimension: 3, DistanceMetric: "cosine", IndexType: "flat"})
+	require.NoError(t, err)
+
+	_, err = svc.UpsertVector(tenantVectorCaller(t, "acme", "vector:upsert"),
+		&service.UpsertVectorRequest{Namespace: "acme-docs", ID: 7, Vector: []float32{1, 0}})
+	var refused *qberrors.QBError
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, qberrors.ErrInvalidInput, refused.Code)
 }
