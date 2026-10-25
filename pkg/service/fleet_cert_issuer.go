@@ -25,6 +25,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -62,10 +63,9 @@ type FleetNodeCertificateSubject struct {
 	// identifier, which the server consumes as the daemon's tenant claim.
 	Organization string
 
-	// OrganizationalUnit sets the X.509 OU= value. Empty falls back to
-	// "agents" — the server rejects certificates that are not stamped with
-	// this OU (defence-in-depth against operator misuse of a client cert
-	// that was minted for another purpose).
+	// OrganizationalUnit sets the requested X.509 OU= value. Empty falls
+	// back to DefaultFleetNodeCertOU. The issuing CA replaces the first OU
+	// with the tenant (CA m779 62(a)).
 	OrganizationalUnit string
 }
 
@@ -95,19 +95,19 @@ type FleetNodeCertificateRequest struct {
 
 	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain
 	// (config iam.spiffe_trust_domain). When set, the issued certificate
-	// carries the tenant-scoped SPIFFE URI SAN
-	// spiffe://<trust-domain>/tenant/<TenantID>/svc/<CommonName>.
+	// carries the tenant's SPIFFE URI SAN spiffe://<TenantID>/svc/<CommonName>.
 	//
-	// That SAN is not decoration: go-qrdb derives an mTLS identity's TENANT
-	// from it and falls back to the first Subject OU when it is absent
-	// (go-qrdb pkg/auth MTLSAuthenticator.TenantFromCert). Every fleet node
-	// certificate carries OU=fleet nodes, so a certificate issued without the SAN
-	// authenticates into a phantom tenant literally named "agents" -- no
-	// enrollment in the real tenant can ever authorize it. A caller that needs
-	// the issued identity to hold authority MUST set this.
+	// That SAN is not decoration: go-qrdb authenticates an mTLS identity into
+	// a tenant only when the SAN's trust domain and the first Subject OU name
+	// the same tenant (sdk TenantFromClientCert). go-xkms stamps the tenant
+	// into that first OU (CA m779 62(a)); the SAN additionally names the
+	// identity kind (service), which the fleet register handler checks.
 	//
-	// Empty omits the SAN, which is correct only for a certificate used purely
-	// as a TLS credential and never as an authorization principal.
+	// Required by XKMSFleetNodeCertIssuer, which refuses an empty value with
+	// *FleetNodeCertNoTrustDomainError: the SAN's kind is the proof fleet
+	// enrolment requires of an agent (CA m779, ruling 62(a)), so a certificate
+	// without it is one enrolment refuses. SDKFleetNodeCertIssuer refuses
+	// every request with *FleetNodeCertKindUnavailableError before reading it.
 	SPIFFETrustDomain string
 }
 
@@ -169,11 +169,10 @@ type FleetNodeCertIssuer interface {
 // deploy-service UX (operators should not have to re-deploy every week).
 const DefaultFleetNodeCertValidityDays = 365
 
-// DefaultFleetNodeCertOU is the Organizational Unit stamped on fleet node certs when
-// the caller does not override it. The control plane's register handler requires
-// this OU and rejects any other value — a belt-and-braces check that the
-// certificate was minted for fleet node authentication and not repurposed from a
-// cert the same CA issued for a different role.
+// DefaultFleetNodeCertOU is the Organizational Unit a fleet node CSR requests when
+// the caller does not override it. The CA does not keep it: go-xkms v0.57
+// replaces the issued certificate's first OU with the tenant (CA m779 62(a)),
+// and the register handler identifies an agent by its SPIFFE kind instead.
 const DefaultFleetNodeCertOU = "agents"
 
 // XKMSFleetNodeCertIssuer implements FleetNodeCertIssuer on top of the server-
@@ -181,6 +180,9 @@ const DefaultFleetNodeCertOU = "agents"
 // unit tests can substitute a stub without touching disk.
 type XKMSFleetNodeCertIssuer struct {
 	ca xkmssdk.TrustedCA
+	// records remembers every certificate issued here; fleet enrollment
+	// accepts no other (stopgap until go-quicbaas#1821).
+	records FleetNodeCertRecords
 }
 
 // Compile-time interface check.
@@ -192,17 +194,27 @@ var (
 // NewXKMSFleetNodeCertIssuer wires the issuer around the provided CA instance.
 // The CA must already be initialized (Load() or Init() returned success) —
 // the issuer never calls those lifecycle methods itself.
-func NewXKMSFleetNodeCertIssuer(ca xkmssdk.TrustedCA) (*XKMSFleetNodeCertIssuer, error) {
+func NewXKMSFleetNodeCertIssuer(ca xkmssdk.TrustedCA, records FleetNodeCertRecords) (*XKMSFleetNodeCertIssuer, error) {
 	if ca == nil {
 		return nil, ErrFleetNodeCertIssuerNilCA
 	}
-	return &XKMSFleetNodeCertIssuer{ca: ca}, nil
+	if records == nil {
+		return nil, ErrFleetNodeCertRecordsRequired
+	}
+	return &XKMSFleetNodeCertIssuer{ca: ca, records: records}, nil
 }
 
 // IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate.
 func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
+	}
+	// go-xkms mints the SPIFFE SAN only when the signing names a trust domain
+	// (pkg/ca signCSR). Without the SAN the certificate carries no agent kind,
+	// and fleet enrolment refuses it, so none is issued.
+	trustDomain := strings.TrimSpace(req.SPIFFETrustDomain)
+	if trustDomain == "" {
+		return nil, &FleetNodeCertNoTrustDomainError{TenantID: req.TenantID}
 	}
 
 	cn := strings.TrimSpace(req.Subject.CommonName)
@@ -274,24 +286,21 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 	// certificate carries exactly clientAuth, which is what the control plane's
 	// register handler requires of a fleet node identity.
 	//
-	// Bind the certificate to its tenant with a SPIFFE URI SAN when the operator
-	// has declared a trust domain. The CA owns the single synthesis site
+	// Bind the certificate to its tenant with a SPIFFE URI SAN under the
+	// operator's trust domain. The CA owns the single synthesis site
 	// (go-xkms pkg/ca signCSR -> spiffe.BuildURI); we only forward the inputs,
 	// so this path and every other CSR-sign path cannot drift.
 	//
 	// The workload kind is "svc": a fleet node is a machine identity, which is
-	// exactly what go-qrdb's spiffe.KindService names. Nothing in the stack keys
-	// off the kind -- TenantFromCert accepts either -- so the choice is about
-	// what the SAN SAYS to whoever reads it.
+	// exactly what go-qrdb's spiffe.KindService names, and the kind fleet
+	// enrolment requires as the proof that the certificate is an agent's.
 	signOpts := &xkmssdk.TrustedCASignOptions{
-		ValidityDays: validity,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	if trustDomain := strings.TrimSpace(req.SPIFFETrustDomain); trustDomain != "" {
-		signOpts.SPIFFETrustDomain = trustDomain
-		signOpts.TenantID = req.TenantID
-		signOpts.SPIFFEKind = qrdbsdk.SpiffeKindService
-		signOpts.SPIFFEName = cn
+		ValidityDays:      validity,
+		ExtKeyUsage:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		TenantID:          req.TenantID,
+		SPIFFETrustDomain: trustDomain,
+		SPIFFEKind:        qrdbsdk.SpiffeKindService,
+		SPIFFEName:        cn,
 	}
 
 	cert, err := i.ca.SignCSR(ctx, csrPEM, signOpts)
@@ -300,6 +309,11 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 	}
 	if cert == nil {
 		return nil, &FleetNodeCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned nil certificate")}
+	}
+	// Stopgap until go-quicbaas#1821: enrollment accepts only a certificate
+	// recorded here, so the record is written before the certificate leaves.
+	if err := i.records.RecordFleetNodeCertificate(ctx, req.TenantID, cert); err != nil {
+		return nil, &FleetNodeCertIssueError{Op: "record agent certificate", Cause: err}
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
 
@@ -369,9 +383,11 @@ func (i *XKMSFleetNodeCertIssuer) caCertificatePEM() []byte {
 // variant is transport-agnostic — it works the same whether the SDK client
 // is speaking gRPC, REST, QUIC, Unix socket, MCP, or the embedded backend.
 //
-// Use SDKFleetNodeCertIssuer from CLI / remote fleet node-deploy workflows that only
-// have an SDK client handle (no in-process CA). Use XKMSFleetNodeCertIssuer
-// from code paths that already embed the CA (desktop/Wails GUI, platformd).
+// It serves FleetCABundle, but refuses every IssueFleetNodeCertificate with
+// *FleetNodeCertKindUnavailableError: the transport cannot request the agent
+// SPIFFE kind fleet enrolment requires. Use XKMSFleetNodeCertIssuer, from code
+// paths that embed the CA (desktop/Wails GUI, platformd), to issue agent
+// certificates.
 type SDKFleetNodeCertIssuer struct {
 	ca xkmstransport.CAService
 }
@@ -392,143 +408,26 @@ func NewSDKFleetNodeCertIssuer(ca xkmstransport.CAService) (*SDKFleetNodeCertIss
 	return &SDKFleetNodeCertIssuer{ca: ca}, nil
 }
 
-// IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate by
-// creating the fleet node's key pair at the point of custody and asking the CA
-// service to sign a CSR for it.
+// IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate
+// by refusing every request with *FleetNodeCertKindUnavailableError, before it
+// generates a key or calls the CA.
 //
-// It does NOT call CAService.IssueCertificate, and it must not: that route
-// generates inside the go-xkms keystore, where the key is a non-exportable
-// opaque handle, so its response carries no private key on any backend or
-// transport and a fleet node cannot be enrolled from it. This issuer used to call it
-// and then require IssueCertificateResponse.PrivateKeyPEM, which no served
-// implementation populates -- the same defect go-quicbaas#910 fixed in
-// XKMSFleetNodeCertIssuer, on the same interface.
+// The only signing call this transport has, CAService.SignCSR, takes a
+// SignCSRRequest with no SPIFFE kind or trust-domain field. The server folds
+// its own trust domain in, but not the agent ("svc") kind, so the certificate
+// that comes back is user-kind or carries no SPIFFE SAN, and fleet enrolment
+// refuses either. Issuing it would hand the agent a credential that cannot
+// register. The refusal stands until the CA rules on how this transport asks
+// for the agent kind; the in-process XKMSFleetNodeCertIssuer is unaffected.
 //
-// Every cryptographic step is go-xkms's: the key comes from the single audited
-// generator in pkg/xkms, the CSR from go-xkms CreateCSRWithKey, the signature
-// from the remote go-xkms CA, and the key encoding from go-xkms
-// EncodePrivateKeyPEM. The private key never crosses the network.
-//
-// req.SPIFFETrustDomain is NOT forwarded here and must not be: the transport's
-// SignCSRRequest carries no trust-domain field, because on this path the SERVER
-// owns it. The CA service adapter folds its own operator-configured trust domain
-// into the signing options for the request's TenantID (pkg/server
-// caServiceAdapter.signOptionsWithSPIFFE), so a client cannot name the trust
-// domain its certificate is bound under.
-func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
+// CAService.IssueCertificate is no alternative: it generates the key inside the
+// go-xkms keystore as a non-exportable handle, so its response carries no
+// private key (go-quicbaas#910).
+func (i *SDKFleetNodeCertIssuer) IssueFleetNodeCertificate(_ context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-
-	cn := strings.TrimSpace(req.Subject.CommonName)
-	if cn == "" {
-		cn = "agent-" + strings.TrimSpace(req.Hostname)
-	}
-
-	org := strings.TrimSpace(req.Subject.Organization)
-	if org == "" {
-		org = req.TenantID
-	}
-
-	// The OU is load-bearing, not decorative: the control plane's fleet node
-	// register handler accepts DefaultFleetNodeCertOU and nothing else. The
-	// IssueCertificate path this issuer used to take could not carry it at all
-	// -- xkmstransport.IssueCertificateRequest has no OU field -- so a
-	// certificate obtained that way was unusable even when it was issued.
-	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
-	if ou == "" {
-		ou = DefaultFleetNodeCertOU
-	}
-
-	validity := req.ValidityDays
-	if validity <= 0 {
-		validity = DefaultFleetNodeCertValidityDays
-	}
-
-	// The SANs go in the CSR, which is where the CA reads them from on this
-	// path; there is no prefixed-string list to build.
-	dns := make([]string, 0, 1+len(req.ExtraDNSNames))
-	dns = append(dns, req.Hostname)
-	for _, extra := range req.ExtraDNSNames {
-		trimmed := strings.TrimSpace(extra)
-		if trimmed == "" || trimmed == req.Hostname {
-			continue
-		}
-		dns = append(dns, trimmed)
-	}
-
-	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "generate agent keypair", Cause: err}
-	}
-
-	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{
-			CommonName:         cn,
-			Organization:       org,
-			OrganizationalUnit: ou,
-		},
-		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
-			DNS: dns,
-		},
-	}, signer)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "build agent csr", Cause: err}
-	}
-
-	resp, err := i.ca.SignCSR(ctx, &xkmstransport.SignCSRRequest{
-		CSRPEM:       csrPEM,
-		Profile:      "client",
-		ValidityDays: validity,
-		TenantID:     req.TenantID,
-	})
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "issue agent certificate", Cause: err}
-	}
-	if resp == nil {
-		return nil, &FleetNodeCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned nil response")}
-	}
-	if len(resp.CertificatePEM) == 0 {
-		return nil, &FleetNodeCertIssueError{Op: "issue agent certificate", Cause: errors.New("ca returned empty certificate PEM")}
-	}
-
-	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "encode agent private key", Cause: err}
-	}
-
-	// Move the PEM into an mlocked buffer immediately; NewBufferFromBytes wipes
-	// the source slice so the raw key never lingers on the heap.
-	keyBuf, err := secure.NewBufferFromBytes(keyPEM)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "secure private key", Cause: err}
-	}
-
-	// Resolve the CA trust bundle. Prefer the dedicated GetCABundle call
-	// (always complete chain). Fall back to the issued cert's ChainPEM
-	// when the service implementation does not expose GetCABundle.
-	caPEM, bundleErr := i.fetchCABundle(ctx, req.TenantID)
-	if bundleErr != nil || len(caPEM) == 0 {
-		caPEM = resp.ChainPEM
-	}
-	if len(caPEM) == 0 {
-		keyBuf.Destroy()
-		return nil, &FleetNodeCertIssueError{Op: "resolve ca bundle", Cause: errors.New("ca bundle is empty")}
-	}
-
-	// Parse the leaf certificate so callers can log serial/SAN details.
-	parsed, parseErr := parseLeafCertPEM(resp.CertificatePEM)
-	if parseErr != nil {
-		keyBuf.Destroy()
-		return nil, &FleetNodeCertIssueError{Op: "parse issued certificate", Cause: parseErr}
-	}
-
-	return &IssuedFleetNodeCertificate{
-		CertPEM:    append([]byte(nil), resp.CertificatePEM...),
-		PrivateKey: keyBuf,
-		CAPEM:      append([]byte(nil), caPEM...),
-		ParsedCert: parsed,
-	}, nil
+	return nil, &FleetNodeCertKindUnavailableError{TenantID: req.TenantID}
 }
 
 // FleetCABundle implements FleetCABundleSource: the tenant's CA bundle, the
@@ -599,6 +498,38 @@ func (e *FleetNodeCertRequestFieldError) Error() string {
 
 // FleetNodeCertIssueError wraps a failure from the underlying CA. The Op field
 // labels the stage for operator diagnostics; Cause carries the CA's error.
+// FleetNodeCertNoTrustDomainError reports an agent certificate request that
+// names no SPIFFE trust domain. go-xkms omits the SPIFFE SAN without one, and a
+// certificate with no SAN carries no agent kind, which fleet enrolment
+// requires (CA m779, ruling 62(a)). Configure iam.spiffe_trust_domain.
+type FleetNodeCertNoTrustDomainError struct {
+	// TenantID is the tenant the certificate was requested for.
+	TenantID string
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCertNoTrustDomainError) Error() string {
+	return "agent cert: no SPIFFE trust domain configured for tenant " + strconv.Quote(e.TenantID) +
+		": an agent certificate without a SPIFFE SAN cannot enroll (set iam.spiffe_trust_domain)"
+}
+
+// FleetNodeCertKindUnavailableError reports an agent certificate request on a
+// path whose CA transport cannot ask for the agent SPIFFE kind. go-xkms's
+// transport SignCSRRequest has no SPIFFE kind or trust-domain field, so the
+// certificate it returns is user-kind or carries no SPIFFE SAN, and fleet
+// enrolment refuses both (CA m779, ruling 62(a)). The issuer refuses before it
+// generates a key, so no certificate is issued that cannot enroll.
+type FleetNodeCertKindUnavailableError struct {
+	// TenantID is the tenant the certificate was requested for.
+	TenantID string
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCertKindUnavailableError) Error() string {
+	return "agent cert: the CA transport cannot request the agent SPIFFE kind for tenant " + strconv.Quote(e.TenantID) +
+		": a certificate signed over it cannot enroll (deploy from the server host, whose in-process CA can)"
+}
+
 type FleetNodeCertIssueError struct {
 	// Op is a short human-readable stage label ("issue fleet node certificate",
 	// "secure private key", "resolve ca bundle").

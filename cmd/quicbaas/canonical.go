@@ -26,7 +26,7 @@ import (
 // defined in cmd/quicbaas/init.go. Per Phase 12 of the
 // seal→barrier rename plan, the single-call bootstrap form has been
 // retired; the verb set now matches xkmsctl init verb-for-verb
-// (status, claim-cert, claim-share, sign-csr, enroll-external-officer).
+// (status, claim-share, sign-csr).
 //
 // The single-call bootstrap (formerly invoked as `quicbaas init
 // --so-pin … --user-pin …`) is now driven by `quicbaasd init` on the
@@ -63,29 +63,24 @@ func newCanonicalCACmd() *cobra.Command {
 func newCanonicalCeremonyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ceremony",
-		Short: "Ceremony state-machine ops (status, claim-cert, claim-share, sign-csr, enroll-external-officer)",
+		Short: "Ceremony state-machine ops (status, claim-share, sign-csr)",
 		Long: `Ceremony state-machine commands.
 
-Drives the initialisation ceremony state machine — issues officer
-certificates, distributes Shamir shares, signs operator CSRs, and
-enrols external officers. The verb set matches 'quicbaas init' (each
+Drives the initialisation ceremony state machine — releases each
+officer's sealed share envelope and signs operator CSRs. The verb set matches 'quicbaas init' (each
 verb routes to the same Security().Ceremony() SDK methods).
 
 Verbs:
   status                   Show the current ceremony state
-  claim-cert               Two-step certificate claim (begin then complete)
-  claim-share              Retrieve the officer's Shamir share
-  sign-csr                 SO-authorised CSR signing
-  enroll-external-officer  Enrol an officer whose key material is external`,
+  claim-share              Claim the officer's share envelope
+  sign-csr                 SO-authorised CSR signing`,
 	}
 	cmd.PersistentFlags().StringVar(&initOutputFmt, "output", "table",
 		"Output format (json, yaml, table)")
 
 	cmd.AddCommand(newInitStatusCommand())
-	cmd.AddCommand(newInitClaimCertCommand())
 	cmd.AddCommand(newInitClaimShareCommand())
 	cmd.AddCommand(newInitSignCSRCommand())
-	cmd.AddCommand(newInitEnrollExternalOfficerCommand())
 	return cmd
 }
 

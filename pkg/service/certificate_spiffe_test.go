@@ -80,8 +80,10 @@ func TestSignCSR_NoTenantSingleDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignCSR: %v", err)
 	}
-	if captured.TenantID != "" {
-		t.Fatalf("TenantID = %q, want empty in single-domain mode", captured.TenantID)
+	// go-xkms refuses a signing that names no tenant, so the system tenant
+	// is forwarded by name.
+	if captured.TenantID != tenantctx.SystemTenantID {
+		t.Fatalf("TenantID = %q, want the system tenant in single-domain mode", captured.TenantID)
 	}
 }
 

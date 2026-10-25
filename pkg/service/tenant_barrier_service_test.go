@@ -15,7 +15,12 @@ package service
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -102,14 +107,16 @@ type mockTenantClient struct {
 	initErr    error
 	unsealReq  *qrdbtransport.TenantBarrierUnsealRequest
 	unsealErr  error
-	shareReq   *qrdbtransport.TenantBarrierUnsealShareRequest
-	shareResp  *qrdbtransport.TenantBarrierUnsealProgress
-	shareErr   error
+	quorumReq  *qrdbtransport.TenantQuorumSubmitRequest
+	quorumResp *qrdbtransport.QuorumOutcome
+	quorumErr  error
 	sealReq    *qrdbtransport.TenantBarrierSealRequest
 	sealErr    error
 	statusReq  *qrdbtransport.TenantBarrierStatusRequest
 	statusResp *qrdbtransport.TenantBarrierStatusResponse
 	statusErr  error
+	tenantResp *qrdbtransport.GetTenantResponse
+	tenantErr  error
 }
 
 func (m *mockTenantClient) TenantBarrierInit(_ context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error) {
@@ -122,9 +129,14 @@ func (m *mockTenantClient) TenantBarrierUnseal(_ context.Context, req *qrdbtrans
 	return m.unsealErr
 }
 
-func (m *mockTenantClient) TenantBarrierUnsealShare(_ context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-	m.shareReq = req
-	return m.shareResp, m.shareErr
+func (m *mockTenantClient) TenantBarrierQuorumSubmit(_ context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+	m.quorumReq = req
+	return m.quorumResp, m.quorumErr
+}
+
+// unsealSubmit is a tenant unseal-quorum submission carrying share.
+func unsealSubmit(tenantID, share string) *qrdbtransport.TenantQuorumSubmitRequest {
+	return &qrdbtransport.TenantQuorumSubmitRequest{TenantID: tenantID, Op: qrdbtransport.OpUnseal, Share: []byte(share)}
 }
 
 func (m *mockTenantClient) TenantBarrierSeal(_ context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
@@ -144,16 +156,10 @@ func (m *mockTenantClient) TenantBarrierOfficerRegister(context.Context, *qrdbtr
 func (m *mockTenantClient) TenantBarrierOfficerList(context.Context, string) ([]*qrdbtransport.OfficerStatus, error) {
 	return nil, nil
 }
-func (m *mockTenantClient) TenantBarrierOfficerClaimStatus(context.Context, string) ([]*qrdbtransport.OfficerStatus, error) {
-	return nil, nil
-}
 func (m *mockTenantClient) TenantBarrierShareClaimBegin(context.Context, *qrdbtransport.TenantShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error) {
 	return nil, nil
 }
 func (m *mockTenantClient) TenantBarrierShareClaimComplete(context.Context, *qrdbtransport.TenantShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error) {
-	return nil, nil
-}
-func (m *mockTenantClient) TenantBarrierShamirSealVote(context.Context, *qrdbtransport.TenantShamirSealVoteRequest) (*qrdbtransport.ShamirSealVoteResponse, error) {
 	return nil, nil
 }
 
@@ -162,7 +168,7 @@ func (m *mockTenantClient) CreateTenant(context.Context, *qrdbtransport.CreateTe
 	return nil, nil
 }
 func (m *mockTenantClient) GetTenant(context.Context, string) (*qrdbtransport.GetTenantResponse, error) {
-	return nil, nil
+	return m.tenantResp, m.tenantErr
 }
 func (m *mockTenantClient) ListTenants(context.Context) (*qrdbtransport.ListTenantsResponse, error) {
 	return nil, nil
@@ -223,7 +229,7 @@ func TestTenantBarrierService_Init_DelegatesAndReturnsShares(t *testing.T) {
 	}
 	svc := NewTenantBarrierService(mock)
 
-	resp, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", []byte("pw"), 2, 3, "shamir")
+	resp, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: []byte("pw"), Threshold: 2, Shares: 3, Strategy: "shamir"})
 	if err != nil {
 		t.Fatalf("TenantBarrierInit: %v", err)
 	}
@@ -241,8 +247,148 @@ func TestTenantBarrierService_Init_DelegatesAndReturnsShares(t *testing.T) {
 func TestTenantBarrierService_Init_PropagatesError(t *testing.T) {
 	sentinel := errors.New("boom")
 	svc := NewTenantBarrierService(&mockTenantClient{initErr: sentinel})
-	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 0, 0, "none"); !errors.Is(err, sentinel) {
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 0, Shares: 0, Strategy: "none"}); !errors.Is(err, sentinel) {
 		t.Fatalf("expected sentinel error, got %v", err)
+	}
+}
+
+// raftTenant is a GetTenant reply for a raft-isolated tenant.
+func raftTenant(id string) *qrdbtransport.GetTenantResponse {
+	return &qrdbtransport.GetTenantResponse{Tenant: qrdbtransport.TenantInfo{ID: id, IsolationType: raftIsolation}}
+}
+
+// TestTenantBarrierService_Init_RaftTenantWithoutSignerRefused pins Codex
+// 6757 finding 1: a remote transport's request has no Signer, so go-qrdb
+// would init a raft-isolated tenant with no signed init statement. The
+// service refuses it typed and never calls init.
+func TestTenantBarrierService_Init_RaftTenantWithoutSignerRefused(t *testing.T) {
+	mock := &mockTenantClient{tenantResp: raftTenant("acme")}
+	svc := NewTenantBarrierService(mock)
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Strategy: "none"})
+	var unsupported *TenantBarrierInitStatementUnsupportedError
+	if !errors.As(err, &unsupported) || unsupported.TenantID != "acme" {
+		t.Fatalf("expected *TenantBarrierInitStatementUnsupportedError for acme, got %v", err)
+	}
+	if mock.initReq != nil {
+		t.Fatal("init reached go-qrdb without a signed init statement")
+	}
+	// The refusal names the path that can sign the statement.
+	if !strings.Contains(err.Error(), "quicbaas iam tenant barrier init") {
+		t.Fatalf("refusal does not name the supported path: %v", err)
+	}
+}
+
+// TestTenantBarrierService_Init_RaftTenantWithSignerDelegates confirms an
+// in-process caller that supplies the owner's key still initializes.
+func TestTenantBarrierService_Init_RaftTenantWithSignerDelegates(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	mock := &mockTenantClient{tenantResp: raftTenant("acme")}
+	svc := NewTenantBarrierService(mock)
+	req := &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Strategy: "none", Signer: key}
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), req); err != nil {
+		t.Fatalf("init with signer: %v", err)
+	}
+	if mock.initReq != req {
+		t.Fatal("init with signer did not reach go-qrdb")
+	}
+}
+
+// TestTenantBarrierService_Init_PrefixTenantWithoutSignerDelegates confirms
+// the refusal is limited to raft isolation: go-qrdb asks no statement of a
+// prefix tenant.
+func TestTenantBarrierService_Init_PrefixTenantWithoutSignerDelegates(t *testing.T) {
+	mock := &mockTenantClient{tenantResp: &qrdbtransport.GetTenantResponse{Tenant: qrdbtransport.TenantInfo{ID: "acme", IsolationType: qrdbtransport.TenantIsolationPrefix}}}
+	svc := NewTenantBarrierService(mock)
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Strategy: "none"}); err != nil {
+		t.Fatalf("prefix tenant init: %v", err)
+	}
+	if mock.initReq == nil {
+		t.Fatal("prefix tenant init did not reach go-qrdb")
+	}
+}
+
+// TestTenantBarrierService_Init_TenantLookupErrorPropagates confirms a
+// failed isolation lookup is returned and init is not attempted.
+func TestTenantBarrierService_Init_TenantLookupErrorPropagates(t *testing.T) {
+	sentinel := errors.New("lookup failed")
+	mock := &mockTenantClient{tenantErr: sentinel}
+	svc := NewTenantBarrierService(mock)
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Strategy: "none"}); !errors.Is(err, sentinel) {
+		t.Fatalf("expected lookup error, got %v", err)
+	}
+	if mock.initReq != nil {
+		t.Fatal("init attempted after a failed isolation lookup")
+	}
+}
+
+// tenantBarrierTestRoster is a two-officer inline Shamir roster in go-qrdb's
+// own request type.
+func tenantBarrierTestRoster() []qrdbtransport.OfficerRegisterRequest {
+	return []qrdbtransport.OfficerRegisterRequest{
+		{Username: "officer-1", Role: "unseal", CSRPEM: "csr-1", Factors: []qrdbtransport.HolderFactorEnrolment{{Name: "mtls"}}},
+		{Username: "officer-2", Role: "unseal", CSRPEM: "csr-2", Designated: "mtls"},
+	}
+}
+
+// A fresh Shamir tenant given an inline roster must reach go-qrdb with the
+// roster and its policy, or go-qrdb takes the pre-enrolled-holder path and
+// fails on officers that were never registered (Codex 6709 P1).
+func TestTenantBarrierService_Init_ForwardsOfficersAndPolicy(t *testing.T) {
+	mock := &mockTenantClient{}
+	svc := NewTenantBarrierService(mock)
+
+	roster := tenantBarrierTestRoster()
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{
+		TenantID:  "acme",
+		Strategy:  "shamir",
+		Threshold: 2,
+		Shares:    2,
+		Officers:  roster,
+		Policy:    "any-enrolled",
+	})
+	if err != nil {
+		t.Fatalf("TenantBarrierInit: %v", err)
+	}
+	if mock.initReq == nil {
+		t.Fatal("go-qrdb received no init request")
+	}
+	if !reflect.DeepEqual(mock.initReq.Officers, roster) {
+		t.Errorf("officers reaching go-qrdb = %+v, want %+v", mock.initReq.Officers, roster)
+	}
+	if mock.initReq.Policy != "any-enrolled" {
+		t.Errorf("policy reaching go-qrdb = %q, want any-enrolled", mock.initReq.Policy)
+	}
+}
+
+// go-qrdb's typed refusal of an invalid roster reaches the caller unchanged.
+func TestTenantBarrierService_Init_InvalidRosterErrorUnchanged(t *testing.T) {
+	refusal := &qrdbtransport.FactorTypeUnsupportedError{Type: "bogus"}
+	svc := NewTenantBarrierService(&mockTenantClient{initErr: refusal})
+
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{
+		TenantID:  "acme",
+		Strategy:  "shamir",
+		Threshold: 1,
+		Shares:    1,
+		Officers:  []qrdbtransport.OfficerRegisterRequest{{Username: "officer-1", Factors: []qrdbtransport.HolderFactorEnrolment{{Name: "bogus"}}}},
+	})
+	var got *qrdbtransport.FactorTypeUnsupportedError
+	if !errors.As(err, &got) || got != refusal {
+		t.Fatalf("expected go-qrdb's FactorTypeUnsupportedError unchanged, got %v", err)
+	}
+}
+
+func TestTenantBarrierService_Init_NilRequestRejected(t *testing.T) {
+	mock := &mockTenantClient{}
+	svc := NewTenantBarrierService(mock)
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), nil); !isInvalidInput(err) {
+		t.Fatalf("expected ErrInvalidInput for a nil request, got %v", err)
+	}
+	if mock.initReq != nil {
+		t.Error("a nil request must not reach go-qrdb")
 	}
 }
 
@@ -257,22 +403,28 @@ func TestTenantBarrierService_Unseal_Delegates(t *testing.T) {
 	}
 }
 
-func TestTenantBarrierService_UnsealShare_DelegatesAndReturnsProgress(t *testing.T) {
+func TestTenantBarrierService_QuorumSubmit_DelegatesAndReturnsOutcome(t *testing.T) {
 	mock := &mockTenantClient{
-		shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
-			TenantID: "acme", Required: 2, Submitted: 1, Complete: false, Sealed: true,
-		},
+		quorumResp: &qrdbtransport.QuorumOutcome{Op: qrdbtransport.OpUnseal, Required: 2, Submitted: 1},
 	}
 	svc := NewTenantBarrierService(mock)
-	prog, err := svc.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-1")
+	outcome, err := svc.TenantBarrierQuorumSubmit(tenantCtx("acme"), unsealSubmit("acme", "share-1"))
 	if err != nil {
-		t.Fatalf("TenantBarrierUnsealShare: %v", err)
+		t.Fatalf("TenantBarrierQuorumSubmit: %v", err)
 	}
-	if mock.shareReq == nil || mock.shareReq.TenantID != "acme" || mock.shareReq.Share != "share-1" {
-		t.Fatalf("unexpected unseal-share request: %+v", mock.shareReq)
+	if mock.quorumReq == nil || mock.quorumReq.TenantID != "acme" || string(mock.quorumReq.Share) != "share-1" {
+		t.Fatalf("unexpected quorum submission: %+v", mock.quorumReq)
 	}
-	if prog == nil || prog.Required != 2 || prog.Submitted != 1 || prog.Complete || !prog.Sealed {
-		t.Fatalf("unexpected progress: %+v", prog)
+	if outcome == nil || outcome.Required != 2 || outcome.Submitted != 1 || outcome.Complete {
+		t.Fatalf("unexpected outcome: %+v", outcome)
+	}
+}
+
+func TestTenantBarrierService_QuorumSubmit_PropagatesError(t *testing.T) {
+	want := errors.New("bad share")
+	svc := NewTenantBarrierService(&mockTenantClient{quorumErr: want})
+	if _, err := svc.TenantBarrierQuorumSubmit(tenantCtx("acme"), unsealSubmit("acme", "share-x")); !errors.Is(err, want) {
+		t.Fatalf("expected the qrdb refusal, got %v", err)
 	}
 }
 
@@ -321,14 +473,14 @@ func TestTenantBarrierService_CrossTenantDenied(t *testing.T) {
 	// Caller is "acme" but target is "beta" — every operation must be forbidden.
 	ctx := tenantCtx("acme")
 
-	if _, err := svc.TenantBarrierInit(ctx, "beta", nil, 1, 1, "none"); !isForbidden(err) {
+	if _, err := svc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{TenantID: "beta", Passphrase: nil, Threshold: 1, Shares: 1, Strategy: "none"}); !isForbidden(err) {
 		t.Errorf("Init: expected ErrForbidden for cross-tenant, got %v", err)
 	}
 	if err := svc.TenantBarrierUnseal(ctx, "beta", []byte("k")); !isForbidden(err) {
 		t.Errorf("Unseal: expected ErrForbidden for cross-tenant, got %v", err)
 	}
-	if _, err := svc.TenantBarrierUnsealShare(ctx, "beta", "share"); !isForbidden(err) {
-		t.Errorf("UnsealShare: expected ErrForbidden for cross-tenant, got %v", err)
+	if _, err := svc.TenantBarrierQuorumSubmit(ctx, unsealSubmit("beta", "share")); !isForbidden(err) {
+		t.Errorf("QuorumSubmit: expected ErrForbidden for cross-tenant, got %v", err)
 	}
 	if err := svc.TenantBarrierSeal(ctx, "beta"); !isForbidden(err) {
 		t.Errorf("Seal: expected ErrForbidden for cross-tenant, got %v", err)
@@ -338,7 +490,7 @@ func TestTenantBarrierService_CrossTenantDenied(t *testing.T) {
 	}
 
 	// The mock must not have been called — the check rejects before delegating.
-	if mock.initReq != nil || mock.unsealReq != nil || mock.shareReq != nil || mock.sealReq != nil || mock.statusReq != nil {
+	if mock.initReq != nil || mock.unsealReq != nil || mock.quorumReq != nil || mock.sealReq != nil || mock.statusReq != nil {
 		t.Error("mock was called despite cross-tenant denial; check must fire before delegation")
 	}
 }
@@ -364,21 +516,21 @@ func TestTenantBarrierService_SystemTenantWritesDenied(t *testing.T) {
 			svc := NewTenantBarrierService(mock)
 			ctx := systemCtx(tenantID)
 
-			if _, err := svc.TenantBarrierInit(ctx, "acme", nil, 1, 1, "none"); !isForbidden(err) {
+			if _, err := svc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 1, Shares: 1, Strategy: "none"}); !isForbidden(err) {
 				t.Errorf("Init: expected ErrForbidden for system-tenant caller, got %v", err)
 			}
 			if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
 				t.Errorf("Unseal: expected ErrForbidden for system-tenant caller, got %v", err)
 			}
-			if _, err := svc.TenantBarrierUnsealShare(ctx, "acme", "share"); !isForbidden(err) {
-				t.Errorf("UnsealShare: expected ErrForbidden for system-tenant caller, got %v", err)
+			if _, err := svc.TenantBarrierQuorumSubmit(ctx, unsealSubmit("acme", "share")); !isForbidden(err) {
+				t.Errorf("QuorumSubmit: expected ErrForbidden for system-tenant caller, got %v", err)
 			}
 			if err := svc.TenantBarrierSeal(ctx, "acme"); !isForbidden(err) {
 				t.Errorf("Seal: expected ErrForbidden for system-tenant caller, got %v", err)
 			}
 
 			// The mock must never see a mutating request.
-			if mock.initReq != nil || mock.unsealReq != nil || mock.shareReq != nil || mock.sealReq != nil {
+			if mock.initReq != nil || mock.unsealReq != nil || mock.quorumReq != nil || mock.sealReq != nil {
 				t.Error("mock received a mutating request despite system-tenant denial")
 			}
 		})
@@ -429,7 +581,7 @@ func TestTenantBarrierService_EmptyTenantCallerDenied(t *testing.T) {
 			if _, err := svc.TenantBarrierStatus(ctx, target); !isForbidden(err) {
 				t.Errorf("Status: expected ErrForbidden for empty-tenant caller, got %v", err)
 			}
-			if _, err := svc.TenantBarrierInit(ctx, target, nil, 1, 1, "none"); !isForbidden(err) {
+			if _, err := svc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{TenantID: target, Passphrase: nil, Threshold: 1, Shares: 1, Strategy: "none"}); !isForbidden(err) {
 				t.Errorf("Init: expected ErrForbidden for empty-tenant caller, got %v", err)
 			}
 			if err := svc.TenantBarrierUnseal(ctx, target, []byte("k")); !isForbidden(err) {
@@ -462,14 +614,14 @@ func TestTenantBarrierService_UnauthenticatedDenied(t *testing.T) {
 	svc := NewTenantBarrierService(&mockTenantClient{})
 	ctx := context.Background() // no subject injected
 
-	if _, err := svc.TenantBarrierInit(ctx, "acme", nil, 1, 1, "none"); !isForbidden(err) {
+	if _, err := svc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 1, Shares: 1, Strategy: "none"}); !isForbidden(err) {
 		t.Errorf("Init: expected ErrForbidden for unauthenticated context, got %v", err)
 	}
 	if err := svc.TenantBarrierUnseal(ctx, "acme", []byte("k")); !isForbidden(err) {
 		t.Errorf("Unseal: expected ErrForbidden for unauthenticated context, got %v", err)
 	}
-	if _, err := svc.TenantBarrierUnsealShare(ctx, "acme", "share"); !isForbidden(err) {
-		t.Errorf("UnsealShare: expected ErrForbidden for unauthenticated context, got %v", err)
+	if _, err := svc.TenantBarrierQuorumSubmit(ctx, unsealSubmit("acme", "share")); !isForbidden(err) {
+		t.Errorf("QuorumSubmit: expected ErrForbidden for unauthenticated context, got %v", err)
 	}
 	if err := svc.TenantBarrierSeal(ctx, "acme"); !isForbidden(err) {
 		t.Errorf("Seal: expected ErrForbidden for unauthenticated context, got %v", err)
@@ -488,7 +640,7 @@ func TestTenantBarrierService_UnauthenticatedDenied(t *testing.T) {
 func TestTenantBarrierService_Init_ShamirValidation_ThresholdZero(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 0, 3, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 0, Shares: 3, Strategy: "shamir"})
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for threshold=0, got %v", err)
 	}
@@ -502,7 +654,7 @@ func TestTenantBarrierService_Init_ShamirValidation_ThresholdZero(t *testing.T) 
 func TestTenantBarrierService_Init_ShamirValidation_SharesZero(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 2, 0, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 2, Shares: 0, Strategy: "shamir"})
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for shares=0, got %v", err)
 	}
@@ -516,7 +668,7 @@ func TestTenantBarrierService_Init_ShamirValidation_SharesZero(t *testing.T) {
 func TestTenantBarrierService_Init_ShamirValidation_ThresholdExceedsShares(t *testing.T) {
 	mock := &mockTenantClient{}
 	svc := NewTenantBarrierService(mock)
-	_, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 5, 3, "shamir")
+	_, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 5, Shares: 3, Strategy: "shamir"})
 	if !isInvalidInput(err) {
 		t.Fatalf("expected ErrInvalidInput for threshold(5) > shares(3), got %v", err)
 	}
@@ -530,7 +682,7 @@ func TestTenantBarrierService_Init_ShamirValidation_ThresholdExceedsShares(t *te
 func TestTenantBarrierService_Init_ShamirValidation_EqualThresholdAndShares(t *testing.T) {
 	mock := &mockTenantClient{initResp: &qrdbtransport.TenantBarrierInitResponse{TenantID: "acme", Strategy: "shamir"}}
 	svc := NewTenantBarrierService(mock)
-	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", nil, 3, 3, "shamir"); err != nil {
+	if _, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: nil, Threshold: 3, Shares: 3, Strategy: "shamir"}); err != nil {
 		t.Fatalf("threshold==shares should be valid: %v", err)
 	}
 }
@@ -544,9 +696,33 @@ func TestTenantBarrierService_Init_ShamirValidation_NotAppliedToOtherStrategies(
 			mock := &mockTenantClient{initResp: &qrdbtransport.TenantBarrierInitResponse{TenantID: "acme", Strategy: strategy}}
 			svc := NewTenantBarrierService(mock)
 			// threshold=0, shares=0 — valid for non-shamir strategies.
-			if _, err := svc.TenantBarrierInit(tenantCtx("acme"), "acme", []byte("pw"), 0, 0, strategy); err != nil {
+			if _, err := svc.TenantBarrierInit(tenantCtx("acme"), &qrdbtransport.TenantBarrierInitRequest{TenantID: "acme", Passphrase: []byte("pw"), Threshold: 0, Shares: 0, Strategy: strategy}); err != nil {
 				t.Fatalf("strategy=%s: unexpected error for zero threshold/shares: %v", strategy, err)
 			}
 		})
 	}
+}
+
+func (*mockTenantClient) AddTrustAnchors(ctx context.Context, req *qrdbtransport.AddTrustAnchorsRequest) (*qrdbtransport.TrustAnchorList, error) {
+	return nil, nil
+}
+
+func (*mockTenantClient) ListTrustAnchors(ctx context.Context, tenantID string) (*qrdbtransport.TrustAnchorList, error) {
+	return nil, nil
+}
+
+func (*mockTenantClient) RemoveTrustAnchor(ctx context.Context, tenantID, fingerprint string) error {
+	return nil
+}
+
+func (*mockTenantClient) TenantBarrierQuorumBegin(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error) {
+	return nil, nil
+}
+
+func (*mockTenantClient) TenantBarrierRekeyStart(ctx context.Context, req *qrdbtransport.TenantRekeyStartRequest) (*qrdbtransport.QuorumRound, error) {
+	return nil, nil
+}
+
+func (*mockTenantClient) TenantBarrierOfficerRevoke(ctx context.Context, req *qrdbtransport.TenantOfficerRevokeRequest) (*qrdbtransport.QuorumRound, error) {
+	return nil, nil
 }

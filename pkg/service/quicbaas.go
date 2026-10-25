@@ -1636,6 +1636,23 @@ func (b *batchService) executeShardBatch(ctx context.Context, shardID uint64, op
 	return nil
 }
 
+// batchKeyError wraps the refusal of one batch operation's key. The wrapper
+// keeps the code the keyspace gave the refusal, so a request with no tenant
+// bound stays ErrForbidden (gRPC PermissionDenied) instead of becoming
+// invalid input.
+func batchKeyError(op, entityType string, err error) error {
+	code := errors.ErrInvalidInput
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		code = qbErr.Code
+	}
+	return &errors.QBError{
+		Code: code,
+		Op:   op,
+		Err:  &api.OperationFailedError{Operation: "build key for entity type " + entityType, Cause: err},
+	}
+}
+
 func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*BatchPutResponse, error) {
 	start := time.Now()
 	if b.svc.metrics != nil {
@@ -1682,11 +1699,7 @@ func (b *batchService) BatchPut(ctx context.Context, req *BatchPutRequest) (*Bat
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchPut", "invalid").Inc()
 			}
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "service.BatchPut",
-				Err:  &api.OperationFailedError{Operation: "validate entity type " + putReq.EntityType, Cause: err},
-			}
+			return nil, batchKeyError("service.BatchPut", putReq.EntityType, err)
 		}
 		shardID := putReq.ShardID
 		if shardID == 0 {
@@ -1837,11 +1850,7 @@ func (b *batchService) BatchDelete(ctx context.Context, req *BatchDeleteRequest)
 			if b.svc.metrics != nil {
 				b.svc.metrics.requestsTotal.With("BatchDelete", "invalid").Inc()
 			}
-			return nil, &errors.QBError{
-				Code: errors.ErrInvalidInput,
-				Op:   "service.BatchDelete",
-				Err:  &api.OperationFailedError{Operation: "validate entity type " + delReq.EntityType, Cause: err},
-			}
+			return nil, batchKeyError("service.BatchDelete", delReq.EntityType, err)
 		}
 		shardID := delReq.ShardID
 		if shardID == 0 {
@@ -3827,7 +3836,7 @@ func (t *timeSeriesService) WriteBatch(ctx context.Context, req *WriteBatchReque
 	} else {
 		// Fallback to direct storage write when Raft not available
 		valuePoints := localPointsToStorageBatch(points)
-		if err := t.tsStorage.WriteBatch(valuePoints); err != nil {
+		if err := t.tsStorage.WriteBatch(ctx, valuePoints); err != nil {
 			return nil, &errors.QBError{
 				Code: errors.ErrInternal,
 				Op:   "timeSeriesService.WriteBatch",
@@ -4055,7 +4064,7 @@ func (t *timeSeriesService) GetRetentionPolicy(ctx context.Context, req *TSGetRe
 	}
 
 	// Get retention policy from storage
-	policy, err := t.tsStorage.GetRetentionPolicy(scopedMetric)
+	policy, err := t.tsStorage.GetRetentionPolicy(ctx, scopedMetric)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
@@ -4122,7 +4131,7 @@ func (t *timeSeriesService) SetRetentionPolicy(ctx context.Context, req *TSSetRe
 	storagePolicy := newTimeSeriesRetentionPolicy(req.Policy.Duration, req.Policy.Resolution, parseAggFunc(req.Policy.Aggregation))
 
 	// Set retention policy in storage
-	if err := t.tsStorage.SetRetentionPolicy(scopedMetric, storagePolicy); err != nil {
+	if err := t.tsStorage.SetRetentionPolicy(ctx, scopedMetric, storagePolicy); err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,
 			Op:   "timeSeriesService.SetRetentionPolicy",
@@ -4168,7 +4177,7 @@ func (t *timeSeriesService) ListMetrics(ctx context.Context, req *TSListMetricsR
 	scopedPrefix := tsTenantListPrefix(tenantID) + req.Prefix
 
 	// Get metrics from storage
-	metrics, err := t.tsStorage.ListMetrics(scopedPrefix, limit)
+	metrics, err := t.tsStorage.ListMetrics(ctx, scopedPrefix, limit)
 	if err != nil {
 		return nil, &errors.QBError{
 			Code: errors.ErrInternal,

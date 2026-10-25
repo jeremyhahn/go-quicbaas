@@ -81,6 +81,7 @@ var (
 type capturedRoute struct {
 	permission quicbaas.Permission
 	public     bool
+	optional   bool
 }
 
 // mountModule replays a module's RegisterHTTP through a permission-recording
@@ -98,6 +99,10 @@ func mountModule(m quicbaas.HostModule) (*chi.Mux, map[string]capturedRoute) {
 		},
 		func(method, pattern string, h http.HandlerFunc) {
 			seen[method+" "+pattern] = capturedRoute{public: true}
+			router.Method(method, pattern, h)
+		},
+		func(method, pattern string, h http.HandlerFunc) {
+			seen[method+" "+pattern] = capturedRoute{optional: true}
 			router.Method(method, pattern, h)
 		},
 	)
@@ -213,6 +218,7 @@ func TestBaseHostModule_SuppliesEveryOtherHook(t *testing.T) {
 	// The no-op hooks must be callable without a live node.
 	m.RegisterHTTP(quicbaas.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(string, string, quicbaas.Permission, http.HandlerFunc) {},
+		func(string, string, http.HandlerFunc) {},
 		func(string, string, http.HandlerFunc) {}))
 	require.NoError(t, m.Start(context.Background()))
 	require.NoError(t, m.Stop(context.Background()))

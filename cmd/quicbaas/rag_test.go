@@ -102,10 +102,6 @@ func (m *mockRAGSDKClient) Barrier() (quicbaas.QRDBBarrierClient, error)        
 func (m *mockRAGSDKClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
 func (m *mockRAGSDKClient) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }
 func (m *mockRAGSDKClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)        { return nil, nil }
-func (m *mockRAGSDKClient) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
-	return nil, nil
-}
-func (m *mockRAGSDKClient) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
 
 func (m *mockRAGSDKClient) RAG() quicbaas.RAGClient {
 	if m.ragClient != nil {

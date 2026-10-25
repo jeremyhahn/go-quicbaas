@@ -394,6 +394,14 @@ type CreateUserOptions struct {
 	// Defaults to ["webauthn"] when empty.
 	AuthMethods []string
 
+	// AnyAuthMethod leaves an empty AuthMethods unrestricted instead of
+	// defaulting it to ["webauthn"]. Only qrdb's first-boot bootstrap admin is
+	// created this way (qrdbadapter.UserAdapter): it logs in by certificate,
+	// qrdb creates it with no method restriction, and under
+	// auth.mtls_binding_policy "required" qrdb refuses to boot when the
+	// admin's methods exclude mtls.
+	AnyAuthMethod bool
+
 	// Lifecycle is the state the user starts in. Empty defaults to
 	// LifecyclePending — a user that exists but has not activated.
 	//

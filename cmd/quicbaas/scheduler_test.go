@@ -48,7 +48,7 @@ func withSchedulerCLI(t *testing.T, tenantID string) *schedulertest.Jobs {
 	t.Helper()
 	jobs := schedulertest.New()
 	svc := &schedulerCLIService{MockQuicBaaS: testutil.NewMockQuicBaaS(), jobs: jobs}
-	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc), mockSystemIdentity())
 	require.NoError(t, err)
 
 	origFactory, origTimeout, origTenant := sdkClientFactory, globalTimeout, globalTenantID

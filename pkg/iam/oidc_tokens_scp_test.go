@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/xkms"
@@ -37,6 +38,8 @@ type fakeRBACClient struct {
 	err error
 	// lastIdentity captures the identity passed to ListPermissions.
 	lastIdentity *qrdbtransport.Identity
+	// lastCtx captures the context ListPermissions ran under.
+	lastCtx context.Context
 }
 
 func (f *fakeRBACClient) Authorize(ctx context.Context, identity *qrdbtransport.Identity, resource, action string) error {
@@ -45,6 +48,7 @@ func (f *fakeRBACClient) Authorize(ctx context.Context, identity *qrdbtransport.
 
 func (f *fakeRBACClient) ListPermissions(ctx context.Context, identity *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
 	f.lastIdentity = identity
+	f.lastCtx = ctx
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -55,6 +59,15 @@ func (f *fakeRBACClient) ListPermissions(ctx context.Context, identity *qrdbtran
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeRBACClient) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	caller := qrdbsdk.IdentityFromContext(ctx)
+	if caller == nil {
+		return nil, qrdbsdk.ErrUnauthenticated
+	}
+	identity := &qrdbtransport.Identity{Subject: caller.Subject, TenantID: caller.TenantID, Roles: caller.Roles}
+	return f.ListPermissions(ctx, identity)
 }
 
 // fakePermissionResolver hands a fixed RBAC client (or nil) to the token

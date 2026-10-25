@@ -51,7 +51,6 @@ type DatabaseService interface {
 // CreateDatabaseRequest holds the parameters for creating a new database.
 type CreateDatabaseRequest struct {
 	Name    string
-	Engine  string
 	Backend string
 }
 
@@ -59,7 +58,6 @@ type CreateDatabaseRequest struct {
 type DatabaseInfo struct {
 	TenantID   string
 	Name       string
-	Engine     string
 	Backend    string
 	Status     string
 	Protocol   DatabaseProtocolConfig

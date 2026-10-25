@@ -54,9 +54,20 @@ const (
 // against that CA's chain, the returned key is the certificate's, and the
 // certificate carries everything the control plane and go-qrdb require of an
 // agent identity.
+// newTestFleetCertRecords returns a fleet node certificate record store over
+// an in-memory KV store, for tests that construct a fleet issuer.
+func newTestFleetCertRecords(t *testing.T) *KVFleetNodeCertRecords {
+	t.Helper()
+	records, err := NewKVFleetNodeCertRecords(qrdbsdk.NewMemoryKVStore())
+	if err != nil {
+		t.Fatalf("NewKVFleetNodeCertRecords: %v", err)
+	}
+	return records
+}
+
 func TestXKMSAgentCertIssuer_IssuesAVerifiableCertificate(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #910 Agent Root CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+	issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
@@ -93,14 +104,15 @@ func TestXKMSAgentCertIssuer_IssuesAVerifiableCertificate(t *testing.T) {
 
 	// The agent writes this key to disk and presents the certificate with it. A
 	// mismatch fails at the first handshake, a long way from here.
-	assertAgentKeyMatchesCertificate(t, issued.PrivateKey.Bytes(), leaf)
+	assertAgentKeyMatchesCertificate(t, bufferCopy(t, issued.PrivateKey), leaf)
 
 	if leaf.Subject.CommonName != "agent-ses-7f3a91" {
 		t.Errorf("CommonName = %q", leaf.Subject.CommonName)
 	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q: the register handler rejects any other value",
-			leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	// go-xkms v0.57 stamps the tenant over the requested OU; the register
+	// handler reads the tenant from it (CA m779 62(a)).
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != testAgentTenant {
+		t.Errorf("OU = %v, want the tenant %q", leaf.Subject.OrganizationalUnit, testAgentTenant)
 	}
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != testAgentTenant {
 		t.Errorf("O = %v, want the tenant", leaf.Subject.Organization)
@@ -127,33 +139,30 @@ func TestXKMSAgentCertIssuer_IssuesAVerifiableCertificate(t *testing.T) {
 // carries no SPIFFE SAN: a caller that names no trust domain must not get a
 // certificate silently bound under an invented one, which would bake a fake
 // pinned security identifier into it.
-func TestXKMSAgentCertIssuer_OmitsTheSPIFFESANWithoutATrustDomain(t *testing.T) {
+func TestXKMSAgentCertIssuer_RefusesToIssueWithoutATrustDomain(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #910 Agent No-SPIFFE Root CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+	issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
 
-	for i, trustDomain := range []string{"", "   "} {
+	for _, trustDomain := range []string{"", "   "} {
 		issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
-			TenantID: testAgentTenant,
-			// A distinct CN per iteration so each is its own certificate rather
-			// than a re-issue of the previous one.
-			Subject:           FleetNodeCertificateSubject{CommonName: "agent-no-spiffe-" + string(rune('a'+i))},
+			TenantID:          testAgentTenant,
+			Subject:           FleetNodeCertificateSubject{CommonName: "agent-no-spiffe"},
 			Hostname:          "agent-04",
 			ValidityDays:      1,
 			SPIFFETrustDomain: trustDomain,
 		})
-		if err != nil {
-			t.Fatalf("IssueFleetNodeCertificate(trustDomain=%q): %v", trustDomain, err)
+		var noTD *FleetNodeCertNoTrustDomainError
+		if !errors.As(err, &noTD) {
+			t.Fatalf("trustDomain=%q: error = %v, want FleetNodeCertNoTrustDomainError", trustDomain, err)
 		}
-
-		leaf := parseAgentLeaf(t, issued.CertPEM)
-		issued.PrivateKey.Destroy()
-
-		assertVerifiesAsClientCert(t, leaf, issued.CAPEM)
-		if len(leaf.URIs) != 0 {
-			t.Errorf("trustDomain=%q: certificate carries URI SANs %v, want none", trustDomain, leaf.URIs)
+		if noTD.TenantID != testAgentTenant {
+			t.Errorf("trustDomain=%q: error tenant = %q, want %q", trustDomain, noTD.TenantID, testAgentTenant)
+		}
+		if issued != nil {
+			t.Errorf("trustDomain=%q: a certificate was issued alongside the refusal", trustDomain)
 		}
 	}
 }
@@ -164,7 +173,7 @@ func TestXKMSAgentCertIssuer_OmitsTheSPIFFESANWithoutATrustDomain(t *testing.T) 
 // default.
 func TestXKMSAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #910 Agent Defaults Root CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+	issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
@@ -186,8 +195,8 @@ func TestXKMSAgentCertIssuer_AppliesDefaults(t *testing.T) {
 	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != testAgentTenant {
 		t.Errorf("O = %v, want the tenant default", leaf.Subject.Organization)
 	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
+	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != testAgentTenant {
+		t.Errorf("OU = %v, want the tenant %q", leaf.Subject.OrganizationalUnit, testAgentTenant)
 	}
 	// DefaultFleetNodeCertValidityDays, allowing a day of slack for the CA's own
 	// not-before backdating.
@@ -203,7 +212,7 @@ func TestXKMSAgentCertIssuer_AppliesDefaults(t *testing.T) {
 // give every session the same credential.
 func TestXKMSAgentCertIssuer_MintsADistinctKeyPerCall(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #910 Agent Distinct Root CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+	issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
@@ -222,7 +231,7 @@ func TestXKMSAgentCertIssuer_MintsADistinctKeyPerCall(t *testing.T) {
 		}
 		defer issued.PrivateKey.Destroy()
 		leaf := parseAgentLeaf(t, issued.CertPEM)
-		assertAgentKeyMatchesCertificate(t, issued.PrivateKey.Bytes(), leaf)
+		assertAgentKeyMatchesCertificate(t, bufferCopy(t, issued.PrivateKey), leaf)
 		return leaf
 	}
 
@@ -252,7 +261,7 @@ func TestXKMSAgentCertIssuer_Errors(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #910 Agent Errors Root CA")
 
 	t.Run("nil ca at construction", func(t *testing.T) {
-		issuer, err := NewXKMSFleetNodeCertIssuer(nil)
+		issuer, err := NewXKMSFleetNodeCertIssuer(nil, newTestFleetCertRecords(t))
 		if !errors.Is(err, ErrFleetNodeCertIssuerNilCA) {
 			t.Fatalf("error = %v, want ErrFleetNodeCertIssuerNilCA", err)
 		}
@@ -262,7 +271,7 @@ func TestXKMSAgentCertIssuer_Errors(t *testing.T) {
 	})
 
 	t.Run("nil request", func(t *testing.T) {
-		issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+		issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 		if err != nil {
 			t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 		}
@@ -276,7 +285,7 @@ func TestXKMSAgentCertIssuer_Errors(t *testing.T) {
 	})
 
 	t.Run("missing required fields", func(t *testing.T) {
-		issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+		issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 		if err != nil {
 			t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 		}
@@ -312,7 +321,7 @@ func TestXKMSAgentCertIssuer_Errors(t *testing.T) {
 		// starts the issuer only after initializeCA, so a refusal here stands for
 		// a CA that has gone away.
 		cold := xkmsca.NewUninitialized(t, "QuicBaaS #910 Cold Root CA")
-		issuer, err := NewXKMSFleetNodeCertIssuer(cold)
+		issuer, err := NewXKMSFleetNodeCertIssuer(cold, newTestFleetCertRecords(t))
 		if err != nil {
 			t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 		}
@@ -426,18 +435,18 @@ func assertHasExtKeyUsage(t *testing.T, leaf *x509.Certificate, want x509.ExtKey
 func assertSPIFFETenant(t *testing.T, leaf *x509.Certificate, wantTenant string) {
 	t.Helper()
 	if len(leaf.URIs) == 0 {
-		t.Fatal("certificate carries no SPIFFE URI SAN, so go-qrdb would fall back to OU=agents — a tenant no enrollment can reach")
+		t.Fatal("certificate carries no SPIFFE URI SAN, so go-qrdb names no tenant for it")
 	}
-	if !strings.HasPrefix(leaf.URIs[0].String(), "spiffe://"+testAgentTrustDomain) {
-		t.Fatalf("URI SAN %q is not under the requested trust domain", leaf.URIs[0])
+	if !strings.HasPrefix(leaf.URIs[0].String(), "spiffe://"+wantTenant+"/") {
+		t.Fatalf("URI SAN %q is not under the tenant's trust domain", leaf.URIs[0])
 	}
-	identity, err := qrdbsdk.TenantFromCert(leaf, "")
+	tenantID, err := qrdbsdk.TenantFromClientCert(leaf, "")
 	if err != nil {
 		t.Fatalf("go-qrdb cannot derive a tenant from the issued certificate: %v", err)
 	}
-	if identity.TenantID != wantTenant {
+	if tenantID != wantTenant {
 		t.Fatalf("go-qrdb would authenticate this certificate into tenant %q, want %q",
-			identity.TenantID, wantTenant)
+			tenantID, wantTenant)
 	}
 }
 
@@ -447,15 +456,16 @@ func assertSPIFFETenant(t *testing.T, leaf *x509.Certificate, wantTenant string)
 // having if the anchor it produces actually verifies the leaf.
 func TestXKMSAgentCertIssuer_FallsBackToTheCACertificate(t *testing.T) {
 	real := xkmsca.New(t, "QuicBaaS #910 Agent Fallback CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(xkmsca.WithoutCABundle(real, errors.New("no bundle")))
+	issuer, err := NewXKMSFleetNodeCertIssuer(xkmsca.WithoutCABundle(real, errors.New("no bundle")), newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
 
 	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
-		TenantID: testAgentTenant,
-		Hostname: "agent-04",
-		Subject:  FleetNodeCertificateSubject{OrganizationalUnit: DefaultFleetNodeCertOU},
+		TenantID:          testAgentTenant,
+		Hostname:          "agent-04",
+		Subject:           FleetNodeCertificateSubject{OrganizationalUnit: DefaultFleetNodeCertOU},
+		SPIFFETrustDomain: testAgentTrustDomain,
 	})
 	if err != nil {
 		t.Fatalf("IssueFleetNodeCertificate: %v", err)
@@ -473,14 +483,15 @@ func TestXKMSAgentCertIssuer_FallsBackToTheCACertificate(t *testing.T) {
 // The private key must not leak on that path either.
 func TestXKMSAgentCertIssuer_RefusesWithNoTrustAnchor(t *testing.T) {
 	uninitialized := xkmsca.NewUninitialized(t, "QuicBaaS #910 Agent No Anchor CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(uninitialized)
+	issuer, err := NewXKMSFleetNodeCertIssuer(uninitialized, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
 
 	_, err = issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
-		TenantID: testAgentTenant,
-		Hostname: "agent-04",
+		TenantID:          testAgentTenant,
+		Hostname:          "agent-04",
+		SPIFFETrustDomain: testAgentTrustDomain,
 	})
 	var issErr *FleetNodeCertIssueError
 	if !errors.As(err, &issErr) {

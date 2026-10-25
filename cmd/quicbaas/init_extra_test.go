@@ -12,23 +12,26 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package main provides extended coverage for init.go: every PEM block
-// type, every signing algorithm, the writeFileSecure permission contract,
-// and the enroll-external-officer ReadFile error branches.
+// type, every signing algorithm, the share-claim signer and the
+// writeFileSecure permission contract.
 package main
 
 import (
-	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -126,45 +129,103 @@ func TestParsePrivateKeyPEM_NoPEMBlock(t *testing.T) {
 }
 
 // =============================================================================
-// signNonceWithKeyFile: full signature matrix
+// signShareClaimWithKeyFile: full signature matrix
 // =============================================================================
 
 // nonceHex is a fixed hex nonce for matrix tests. Length is 64 hex chars
 // (32 bytes), well-formed for hex.DecodeString.
 const nonceHex = "deadbeefcafebabedeadbeefcafebabedeadbeefcafebabedeadbeefcafebabe"
 
-// TestSignNonceWithKeyFile_ECDSAEC signs with an EC PRIVATE KEY block.
-func TestSignNonceWithKeyFile_ECDSAEC(t *testing.T) {
-	dir := t.TempDir()
-	keyPath := filepath.Join(dir, "ec.key")
-	writeECPEM(t, keyPath)
-
-	sig, err := signNonceWithKeyFile(keyPath, nonceHex)
-	require.NoError(t, err)
-	require.NotEmpty(t, sig)
+// verifyClaimSignature reports whether signature is pub's signature over msg
+// in the format the qrdb ceremony verifier accepts: ECDSA (ASN.1 DER) and RSA
+// PKCS#1 v1.5 over SHA-256(msg), Ed25519 over msg itself.
+func verifyClaimSignature(pub crypto.PublicKey, msg, signature []byte) bool {
+	digest := sha256.Sum256(msg)
+	switch key := pub.(type) {
+	case *ecdsa.PublicKey:
+		return ecdsa.VerifyASN1(key, digest[:], signature)
+	case *rsa.PublicKey:
+		return rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], signature) == nil
+	case ed25519.PublicKey:
+		return ed25519.Verify(key, msg, signature)
+	default:
+		return false
+	}
 }
 
-// TestSignNonceWithKeyFile_Ed25519 signs with an ed25519 key. Ed25519
-// takes the message itself (no SHA256 pre-hash) — this exercises the
-// special-case branch in signNonceWithKeyFile.
-func TestSignNonceWithKeyFile_Ed25519(t *testing.T) {
+// assertShareClaimSignature verifies signature against pub over the
+// scope-bound share-claim message for label, username and the hex nonce, and
+// proves it is bound to that message: it verifies neither over the bare
+// nonce nor under the other system-barrier label.
+func assertShareClaimSignature(t *testing.T, pub crypto.PublicKey, label, username, hexNonce string, signature []byte) {
+	t.Helper()
+	nonce, err := hex.DecodeString(hexNonce)
+	require.NoError(t, err)
+
+	require.True(t, verifyClaimSignature(pub, qrdbsdk.ShareClaimMessage(label, username, nonce), signature),
+		"signature must verify over the %q share-claim message", label)
+	assert.False(t, verifyClaimSignature(pub, nonce, signature),
+		"a share-claim signature must not verify over the bare nonce")
+
+	other := qrdbsdk.SystemClaimLabel
+	if label == qrdbsdk.SystemClaimLabel {
+		other = qrdbsdk.RecoveryClaimLabel
+	}
+	assert.False(t, verifyClaimSignature(pub, qrdbsdk.ShareClaimMessage(other, username, nonce), signature),
+		"a %q claim signature must not verify under the %q label", label, other)
+}
+
+// TestVerifyClaimSignature_RefusesBareNonceSignature proves the verifier the
+// matrix relies on refuses a signature over the bare nonce, which is what the
+// CLI sent before it signed the scope-bound message.
+func TestVerifyClaimSignature_RefusesBareNonceSignature(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	nonce, err := hex.DecodeString(nonceHex)
+	require.NoError(t, err)
+	digest := sha256.Sum256(nonce)
+	bare, err := ecdsa.SignASN1(rand.Reader, priv, digest[:])
+	require.NoError(t, err)
+
+	msg := qrdbsdk.ShareClaimMessage(qrdbsdk.SystemClaimLabel, "alice", nonce)
+	assert.False(t, verifyClaimSignature(&priv.PublicKey, msg, bare))
+	assert.False(t, verifyClaimSignature("not a key", msg, bare))
+}
+
+// TestSignShareClaimWithKeyFile_ECDSAEC signs with an EC PRIVATE KEY block
+// under both system-barrier labels.
+func TestSignShareClaimWithKeyFile_ECDSAEC(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "ec.key")
+	pub := writeECPEM(t, keyPath)
+
+	for _, label := range []string{qrdbsdk.SystemClaimLabel, qrdbsdk.RecoveryClaimLabel} {
+		sig, err := signShareClaimWithKeyFile(keyPath, label, "alice", nonceHex)
+		require.NoError(t, err)
+		assertShareClaimSignature(t, pub, label, "alice", nonceHex, sig)
+	}
+}
+
+// TestSignShareClaimWithKeyFile_Ed25519 signs with an ed25519 key, which
+// signs the message itself rather than its SHA-256 digest.
+func TestSignShareClaimWithKeyFile_Ed25519(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "ed25519.key")
 
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	require.NoError(t, err)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 	require.NoError(t, os.WriteFile(keyPath, pemBytes, 0o600))
 
-	sig, err := signNonceWithKeyFile(keyPath, nonceHex)
+	sig, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.RecoveryClaimLabel, "alice", nonceHex)
 	require.NoError(t, err)
-	require.NotEmpty(t, sig)
+	assertShareClaimSignature(t, pub, qrdbsdk.RecoveryClaimLabel, "alice", nonceHex, sig)
 }
 
-// TestSignNonceWithKeyFile_RSAPKCS1 signs with an RSA PKCS1 key.
-func TestSignNonceWithKeyFile_RSAPKCS1(t *testing.T) {
+// TestSignShareClaimWithKeyFile_RSAPKCS1 signs with an RSA PKCS1 key.
+func TestSignShareClaimWithKeyFile_RSAPKCS1(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "rsa.key")
 
@@ -174,13 +235,13 @@ func TestSignNonceWithKeyFile_RSAPKCS1(t *testing.T) {
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der})
 	require.NoError(t, os.WriteFile(keyPath, pemBytes, 0o600))
 
-	sig, err := signNonceWithKeyFile(keyPath, nonceHex)
+	sig, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", nonceHex)
 	require.NoError(t, err)
-	require.NotEmpty(t, sig)
+	assertShareClaimSignature(t, &priv.PublicKey, qrdbsdk.SystemClaimLabel, "alice", nonceHex, sig)
 }
 
-// TestSignNonceWithKeyFile_RSAPKCS8 signs with an RSA PKCS8 key.
-func TestSignNonceWithKeyFile_RSAPKCS8(t *testing.T) {
+// TestSignShareClaimWithKeyFile_RSAPKCS8 signs with an RSA PKCS8 key.
+func TestSignShareClaimWithKeyFile_RSAPKCS8(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "rsa-pkcs8.key")
 
@@ -191,40 +252,54 @@ func TestSignNonceWithKeyFile_RSAPKCS8(t *testing.T) {
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 	require.NoError(t, os.WriteFile(keyPath, pemBytes, 0o600))
 
-	sig, err := signNonceWithKeyFile(keyPath, nonceHex)
+	sig, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", nonceHex)
 	require.NoError(t, err)
-	require.NotEmpty(t, sig)
+	assertShareClaimSignature(t, &priv.PublicKey, qrdbsdk.SystemClaimLabel, "alice", nonceHex, sig)
 }
 
-// TestSignNonceWithKeyFile_CorruptPEM rejects malformed PEM input with
-// the typed InitCSRKeySignError.
-func TestSignNonceWithKeyFile_CorruptPEM(t *testing.T) {
+// TestSignShareClaimWithKeyFile_EmptyNonce surfaces the SDK's refusal to sign
+// a claim over an empty nonce as the typed InitCSRKeySignError.
+func TestSignShareClaimWithKeyFile_EmptyNonce(t *testing.T) {
 	dir := t.TempDir()
-	keyPath := filepath.Join(dir, "broken.key")
-	require.NoError(t, os.WriteFile(keyPath, []byte("this is not a PEM"), 0o600))
+	keyPath := filepath.Join(dir, "ec.key")
+	writeECPEM(t, keyPath)
 
-	_, err := signNonceWithKeyFile(keyPath, nonceHex)
+	_, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", "")
 	require.Error(t, err)
 	var typed *InitCSRKeySignError
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, keyPath, typed.Path)
 }
 
-// TestSignNonceWithKeyFile_BadHexNonce rejects a malformed nonce.
-func TestSignNonceWithKeyFile_BadHexNonce(t *testing.T) {
+// TestSignShareClaimWithKeyFile_CorruptPEM rejects malformed PEM input with
+// the typed InitCSRKeySignError.
+func TestSignShareClaimWithKeyFile_CorruptPEM(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "broken.key")
+	require.NoError(t, os.WriteFile(keyPath, []byte("this is not a PEM"), 0o600))
+
+	_, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", nonceHex)
+	require.Error(t, err)
+	var typed *InitCSRKeySignError
+	require.ErrorAs(t, err, &typed)
+	assert.Equal(t, keyPath, typed.Path)
+}
+
+// TestSignShareClaimWithKeyFile_BadHexNonce rejects a malformed nonce.
+func TestSignShareClaimWithKeyFile_BadHexNonce(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "ec.key")
 	writeECPEM(t, keyPath)
 
-	_, err := signNonceWithKeyFile(keyPath, "zzznothex")
+	_, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", "zzznothex")
 	require.Error(t, err)
 	var typed *InitCSRKeySignError
 	require.ErrorAs(t, err, &typed)
 }
 
-// TestSignNonceWithKeyFile_MissingFile surfaces the OS-level read error.
-func TestSignNonceWithKeyFile_MissingFile(t *testing.T) {
-	_, err := signNonceWithKeyFile("/no/such/key.pem", nonceHex)
+// TestSignShareClaimWithKeyFile_MissingFile surfaces the OS-level read error.
+func TestSignShareClaimWithKeyFile_MissingFile(t *testing.T) {
+	_, err := signShareClaimWithKeyFile("/no/such/key.pem", qrdbsdk.SystemClaimLabel, "alice", nonceHex)
 	require.Error(t, err)
 	var typed *InitCSRKeySignError
 	require.ErrorAs(t, err, &typed)
@@ -235,7 +310,7 @@ func TestSignNonceWithKeyFile_MissingFile(t *testing.T) {
 // private key. ParsePKCS8PrivateKey returns *ecdh.PrivateKey for this
 // algorithm, which does NOT implement crypto.Signer. We use it to
 // exercise the "key does not implement crypto.Signer" branch in
-// signNonceWithKeyFile.
+// signShareClaimWithKeyFile.
 var x25519PKCS8DER = []byte{
 	0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e,
 	0x04, 0x22, 0x04, 0x20,
@@ -246,15 +321,15 @@ var x25519PKCS8DER = []byte{
 	0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
 }
 
-// TestSignNonceWithKeyFile_NonSignerKey verifies the typed error when
+// TestSignShareClaimWithKeyFile_NonSignerKey verifies the typed error when
 // the parsed key does not satisfy crypto.Signer (X25519 -> *ecdh.PrivateKey).
-func TestSignNonceWithKeyFile_NonSignerKey(t *testing.T) {
+func TestSignShareClaimWithKeyFile_NonSignerKey(t *testing.T) {
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "x25519.key")
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: x25519PKCS8DER})
 	require.NoError(t, os.WriteFile(keyPath, pemBytes, 0o600))
 
-	_, err := signNonceWithKeyFile(keyPath, nonceHex)
+	_, err := signShareClaimWithKeyFile(keyPath, qrdbsdk.SystemClaimLabel, "alice", nonceHex)
 	require.Error(t, err)
 	var typed *InitCSRKeySignError
 	require.ErrorAs(t, err, &typed)
@@ -296,109 +371,3 @@ func TestWriteFileSecure_WrapsWriteError(t *testing.T) {
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, bad, typed.Path)
 }
-
-// =============================================================================
-// runInitEnrollExternalOfficerCommand: XOR + ReadFile error paths
-// =============================================================================
-
-// TestEnrollExternalOfficer_CertReadError surfaces an OS-level read error
-// from --cert as a Wrapf-wrapped error chain.
-func TestEnrollExternalOfficer_CertReadError(t *testing.T) {
-	defer resetInitFlags()
-
-	cmd := newInitEnrollExternalOfficerCommand()
-	cmd.SetArgs([]string{
-		"--username", "alice",
-		"--cert", "/no/such/cert.pem",
-		"--share-index", "0",
-		"--auth-factor", "mtls",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "/no/such/cert.pem")
-}
-
-// TestEnrollExternalOfficer_PubKeyReadError surfaces an OS-level read
-// error from --pubkey.
-func TestEnrollExternalOfficer_PubKeyReadError(t *testing.T) {
-	defer resetInitFlags()
-
-	cmd := newInitEnrollExternalOfficerCommand()
-	cmd.SetArgs([]string{
-		"--username", "alice",
-		"--pubkey", "/no/such/pub.pem",
-		"--share-index", "0",
-		"--auth-factor", "webauthn",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "/no/such/pub.pem")
-}
-
-// TestEnrollExternalOfficer_EmptyAuthFactor rejects an unset auth factor
-// (covers the "empty" branch of the map lookup).
-func TestEnrollExternalOfficer_EmptyAuthFactor(t *testing.T) {
-	defer resetInitFlags()
-	dir := t.TempDir()
-	certPath := filepath.Join(dir, "c.pem")
-	require.NoError(t, os.WriteFile(certPath, []byte("x"), 0o600))
-
-	cmd := newInitEnrollExternalOfficerCommand()
-	cmd.SetArgs([]string{
-		"--username", "alice",
-		"--cert", certPath,
-		"--share-index", "1",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *InitInvalidAuthFactorError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, "", typed.Got)
-}
-
-// TestEnrollExternalOfficer_FactoryError surfaces a factory failure once
-// flag validation has passed (CertPath is read successfully).
-func TestEnrollExternalOfficer_FactoryError(t *testing.T) {
-	defer resetInitFlags()
-	dir := t.TempDir()
-	certPath := filepath.Join(dir, "c.pem")
-	require.NoError(t, os.WriteFile(certPath, []byte("pem-bytes"), 0o600))
-
-	orig := ceremonyClientFactory
-	defer func() { ceremonyClientFactory = orig }()
-	wantErr := assertEnrollError("factory boom")
-	ceremonyClientFactory = func() (CeremonyClient, error) { return nil, wantErr }
-
-	cmd := newInitEnrollExternalOfficerCommand()
-	cmd.SetArgs([]string{
-		"--username", "alice",
-		"--cert", certPath,
-		"--share-index", "0",
-		"--auth-factor", "mtls",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.ErrorIs(t, err, wantErr)
-}
-
-// assertEnrollError is a tiny sentinel-error helper so the typed-error
-// check in TestEnrollExternalOfficer_FactoryError stays direct.
-type assertEnrollError string
-
-func (e assertEnrollError) Error() string { return string(e) }

@@ -2216,6 +2216,65 @@ func TestBatchPut_BuildKeyError_WithMetrics(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// newNoTenantBatchService returns a batch service over the real keyspace
+// resolver, so a request with no tenant bound is refused by tenantctx.
+func newNoTenantBatchService(t *testing.T) *batchService {
+	t.Helper()
+	svc := &quicBaaS{
+		logger:           createTestLogger(t),
+		raftNode:         &mockRaftNode{},
+		config:           &ServiceConfig{},
+		keyspaceResolver: NewKeyspaceResolver(),
+	}
+	svc.batchService = &batchService{svc: svc}
+	return svc.batchService
+}
+
+// TestBatchPut_NoTenantIsForbidden proves a batch put with no tenant bound
+// keeps the keyspace's ErrForbidden, which gRPC maps to PermissionDenied,
+// instead of reporting invalid input (#1796).
+func TestBatchPut_NoTenantIsForbidden(t *testing.T) {
+	resp, err := newNoTenantBatchService(t).BatchPut(context.Background(), &BatchPutRequest{
+		Requests: []*PutRequest{{EntityType: "user", ID: 1, Data: []byte(`{}`)}},
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrForbidden, qbErr.Code)
+	var missing *tenantctx.MissingTenantError
+	assert.ErrorAs(t, err, &missing)
+}
+
+// TestBatchDelete_NoTenantIsForbidden is the batch delete half of
+// TestBatchPut_NoTenantIsForbidden.
+func TestBatchDelete_NoTenantIsForbidden(t *testing.T) {
+	resp, err := newNoTenantBatchService(t).BatchDelete(context.Background(), &BatchDeleteRequest{
+		Requests: []*DeleteRequest{{EntityType: "user", ID: 1}},
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrForbidden, qbErr.Code)
+}
+
+// TestBatchPut_ReservedEntityTypeIsInvalidInput proves a malformed entity
+// type is still invalid input once the batch keeps the keyspace's code.
+func TestBatchPut_ReservedEntityTypeIsInvalidInput(t *testing.T) {
+	resp, err := newNoTenantBatchService(t).BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{
+		Requests: []*PutRequest{{EntityType: "__reserved", ID: 1, Data: []byte(`{}`)}},
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+
+	var qbErr *errors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+}
+
 func TestBatchDelete_BuildKeyError_WithMetrics(t *testing.T) {
 	log := createTestLogger(t)
 	raftNode := &mockRaftNode{}

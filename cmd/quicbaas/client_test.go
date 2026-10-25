@@ -97,14 +97,12 @@ func (m *mockClient) Async() quicbaas.AsyncService                          { re
 func (m *mockClient) AI() quicbaas.AIService                                { return nil }
 func (m *mockClient) DataStore() (quicbaas.QRDBKVStore, error)              { return nil, nil }
 
-func (m *mockClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService       { return nil }
-func (m *mockClient) TenantMgmtService() quicbaas.TenantService                  { return nil }
-func (m *mockClient) Barrier() (quicbaas.QRDBBarrierClient, error)               { return nil, nil }
-func (m *mockClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error)      { return nil, nil }
-func (m *mockClient) SealStore() (quicbaas.QRDBSealStoreClient, error)           { return nil, nil }
-func (m *mockClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)             { return nil, nil }
-func (m *mockClient) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) { return nil, nil }
-func (m *mockClient) Share() (quicbaas.QRDBShareClient, error)                   { return nil, nil }
+func (m *mockClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService  { return nil }
+func (m *mockClient) TenantMgmtService() quicbaas.TenantService             { return nil }
+func (m *mockClient) Barrier() (quicbaas.QRDBBarrierClient, error)          { return nil, nil }
+func (m *mockClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
+func (m *mockClient) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }
+func (m *mockClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)        { return nil, nil }
 func (m *mockClient) Close() error {
 	m.closed = true
 	return nil

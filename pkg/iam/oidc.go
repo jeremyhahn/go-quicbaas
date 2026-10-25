@@ -81,6 +81,10 @@ type OIDCProvider struct {
 	// dpopReplay tracks DPoP proof jti values presented at the token endpoint
 	// so a captured proof cannot be replayed to mint multiple bound tokens.
 	dpopReplay dpop.ReplayCache
+	// issuanceReadBinder binds the context of the role reads made while
+	// issuing a token (OIDCDependencies.IssuanceReadBinder); nil uses the
+	// caller's context.
+	issuanceReadBinder func(ctx context.Context, tenantID string) (context.Context, error)
 }
 
 // NewOIDCProvider creates a new OIDC provider with the given configuration and dependencies.
@@ -113,22 +117,47 @@ func NewOIDCProvider(config *OIDCConfig, deps OIDCDependencies) (*OIDCProvider, 
 	config.SigningAlgorithm = alg
 
 	tokenService := &TokenService{
-		storage:      deps.TokenStorage,
-		keyManager:   config.SigningKeyManager,
-		tenantKeys:   config.TenantSigningKeys,
-		config:       config,
-		permResolver: deps.PermissionResolver,
+		storage:            deps.TokenStorage,
+		keyManager:         config.SigningKeyManager,
+		tenantKeys:         config.TenantSigningKeys,
+		config:             config,
+		permResolver:       deps.PermissionResolver,
+		issuanceReadBinder: deps.IssuanceReadBinder,
 	}
 
 	provider := &OIDCProvider{
-		config:        config,
-		identityStore: deps.IdentityStore,
-		appStorage:    deps.AppStorage,
-		tokenService:  tokenService,
-		dpopReplay:    dpop.NewMemoryReplayCache(nil),
+		config:             config,
+		identityStore:      deps.IdentityStore,
+		appStorage:         deps.AppStorage,
+		tokenService:       tokenService,
+		dpopReplay:         dpop.NewMemoryReplayCache(nil),
+		issuanceReadBinder: deps.IssuanceReadBinder,
 	}
 	tokenService.verifyClaims = provider.parseVerifiedAccessTokenClaims
 	return provider, nil
+}
+
+// roleNames returns user's role names for a token being issued, read under
+// the role-read binder when one is wired: issuance has no authenticated
+// caller for the embedded node to authorize the read as.
+func (p *OIDCProvider) roleNames(ctx context.Context, user *User) ([]string, error) {
+	if user == nil {
+		return nil, nil
+	}
+	ctx, err := bindIssuanceRead(ctx, p.issuanceReadBinder, user.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	return p.identityStore.RoleNames(ctx, user)
+}
+
+// bindIssuanceRead returns ctx bound by binder for tenantID, or ctx as is
+// when no binder is wired.
+func bindIssuanceRead(ctx context.Context, binder func(context.Context, string) (context.Context, error), tenantID string) (context.Context, error) {
+	if binder == nil {
+		return ctx, nil
+	}
+	return binder(ctx, tenantID)
 }
 
 // GetConfiguration returns the OIDC discovery configuration.
@@ -1434,7 +1463,7 @@ func (p *OIDCProvider) generateTokenResponse(ctx context.Context, user *User, cl
 // variant rather than an eighth positional parameter on the common path so the
 // two intents are stated at the call site instead of encoded in a bare string.
 func (p *OIDCProvider) generateTokenResponseForSession(ctx context.Context, user *User, clientID string, scopes []string, nonce string, resource string, cnf *ConfirmationClaim, session grantSession) (*TokenResponse, error) {
-	groups, err := p.identityStore.RoleNames(ctx, user)
+	groups, err := p.roleNames(ctx, user)
 	if err != nil {
 		return nil, NewOAuthError(ErrOAuthServerError, "failed to resolve role names")
 	}
@@ -1578,7 +1607,7 @@ func (p *OIDCProvider) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 	if opts.User == nil {
 		return p.tokenService.IssueHardwareTokens(ctx, opts)
 	}
-	groups, err := p.identityStore.RoleNames(ctx, opts.User)
+	groups, err := p.roleNames(ctx, opts.User)
 	if err != nil {
 		return nil, err
 	}

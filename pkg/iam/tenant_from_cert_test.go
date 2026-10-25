@@ -26,12 +26,14 @@ import (
 	"testing"
 	"time"
 
-	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // spiffeLeaf builds a self-signed leaf carrying the given SPIFFE URI SAN (or no
 // URI SAN when spiffeURI is empty).
-func spiffeLeaf(t *testing.T, spiffeURI string) *x509.Certificate {
+// spiffeLeaf issues a self-signed leaf carrying spiffeURI as its URI SAN (when
+// set) and ou as its first Subject OU (when set).
+func spiffeLeaf(t *testing.T, spiffeURI, ou string) *x509.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -42,6 +44,9 @@ func spiffeLeaf(t *testing.T, spiffeURI string) *x509.Certificate {
 		Subject:      pkix.Name{CommonName: "leaf"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(time.Hour),
+	}
+	if ou != "" {
+		tmpl.Subject.OrganizationalUnit = []string{ou}
 	}
 	if spiffeURI != "" {
 		u, err := url.Parse(spiffeURI)
@@ -86,9 +91,9 @@ func (r *stubResolver) Resolve(_ context.Context, hints RealmHints) (string, err
 	return "", &HRDNotFoundError{}
 }
 
-// A SPIFFE cert resolves to its tenant when the trust domain matches.
+// A SPIFFE cert resolves to its tenant when its trust domain and OU agree.
 func TestTenantFromPeerCert_SPIFFESAN(t *testing.T) {
-	cert := spiffeLeaf(t, "spiffe://example.com/tenant/tenant-acme/user/alice")
+	cert := spiffeLeaf(t, "spiffe://tenant-acme/user/alice", "tenant-acme")
 
 	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", nil, RealmHints{})
 	if err != nil {
@@ -101,7 +106,7 @@ func TestTenantFromPeerCert_SPIFFESAN(t *testing.T) {
 
 // A cert with no SPIFFE SAN falls through to HRD, which resolves via the host.
 func TestTenantFromPeerCert_NoSANHRDHint(t *testing.T) {
-	cert := spiffeLeaf(t, "") // no SPIFFE SAN
+	cert := spiffeLeaf(t, "", "") // no SPIFFE SAN
 	hrd := &stubResolver{byHost: map[string]string{"acme.example.com": "tenant-acme"}}
 
 	got, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{SNIHost: "acme.example.com"})
@@ -130,7 +135,7 @@ func TestTenantFromPeerCert_Unresolved(t *testing.T) {
 // A presented cert with no SAN that HRD cannot resolve surfaces the
 // ErrNoTenantSPIFFEID cause so a fail-closed caller can demand reissuance.
 func TestTenantFromPeerCert_NoSANNoHintCarriesCause(t *testing.T) {
-	cert := spiffeLeaf(t, "")
+	cert := spiffeLeaf(t, "", "")
 	hrd := &stubResolver{}
 
 	_, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{})
@@ -138,15 +143,16 @@ func TestTenantFromPeerCert_NoSANNoHintCarriesCause(t *testing.T) {
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("expected *TenantUnresolvedError, got %v", err)
 	}
-	if !errors.Is(unresolved.Cause, qrdbspiffe.ErrNoTenantSPIFFEID) {
+	if !errors.Is(unresolved.Cause, qrdbsdk.ErrSpiffeNoTenantID) {
 		t.Fatalf("cause = %v, want ErrNoTenantSPIFFEID", unresolved.Cause)
 	}
 }
 
-// A foreign trust domain fails closed immediately and does NOT fall through to
-// HRD, even when HRD could resolve a tenant.
+// A foreign trust domain presents as an OU naming a different tenant: it fails
+// closed immediately and does NOT fall through to HRD, even when HRD could
+// resolve a tenant.
 func TestTenantFromPeerCert_ForeignTrustDomain(t *testing.T) {
-	cert := spiffeLeaf(t, "spiffe://evil.example/tenant/tenant-acme/user/m")
+	cert := spiffeLeaf(t, "spiffe://evil.example/user/m", "tenant-acme")
 	hrd := &stubResolver{byHost: map[string]string{"acme.example.com": "tenant-acme"}}
 
 	_, err := TenantFromPeerCert(context.Background(), cert, "example.com", hrd, RealmHints{SNIHost: "acme.example.com"})
@@ -154,8 +160,9 @@ func TestTenantFromPeerCert_ForeignTrustDomain(t *testing.T) {
 	if !errors.As(err, &unresolved) {
 		t.Fatalf("expected *TenantUnresolvedError, got %v", err)
 	}
-	if !errors.Is(unresolved.Cause, qrdbspiffe.ErrTrustDomainMismatch) {
-		t.Fatalf("cause = %v, want ErrTrustDomainMismatch", unresolved.Cause)
+	var mismatch *qrdbsdk.ClientCertificateTenantNameMismatchError
+	if !errors.As(unresolved.Cause, &mismatch) {
+		t.Fatalf("cause = %v, want *ClientCertificateTenantNameMismatchError", unresolved.Cause)
 	}
 }
 

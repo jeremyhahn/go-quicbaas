@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // =============================================================================
@@ -135,6 +136,11 @@ func (p *GitProvisioner) SigningPublicKey(ctx context.Context, tenantID string, 
 
 // projectSigner resolves one of a project's KMS-held keys, defaulting the
 // key's owner to the project's tenant exactly as the clone path does.
+//
+// The SSH key store partitions keys by the tenant bound to ctx, and the
+// SDLC runner reaches here with only the orchestration tenant bound, so the
+// lookup runs under the project's tenant explicitly: a key minted in the
+// project's tenant is the one the project signs with.
 func (p *GitProvisioner) projectSigner(ctx context.Context, tenantID string, ref orchestration.KMSKeyRef) (ssh.Signer, error) {
 	if p.SSHSigner == nil {
 		return nil, &GitCredentialError{Ref: ref.Name, Reason: "no signer resolver is configured"}
@@ -143,7 +149,7 @@ func (p *GitProvisioner) projectSigner(ctx context.Context, tenantID string, ref
 	if keyRef.Owner == "" {
 		keyRef.Owner = tenantID
 	}
-	signer, err := p.SSHSigner.Signer(ctx, keyRef)
+	signer, err := p.SSHSigner.Signer(tenantctx.WithTenant(ctx, tenantID), keyRef)
 	if err != nil {
 		return nil, err
 	}

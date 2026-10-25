@@ -25,10 +25,9 @@ package service
 
 import (
 	"context"
-	"crypto"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -45,57 +44,40 @@ const (
 // need a certificate rather than an issuance.
 func issueLeafPEM(t *testing.T, ca *xkmsca.CAService) []byte {
 	t.Helper()
+	resp, err := ca.IssueCertificate(context.Background(), &xkmssdk.IssueCertificateRequest{
+		TenantID:     sdkIssuerTenant,
+		CommonName:   "agent-" + sdkIssuerHost,
+		ValidityDays: 1,
+	})
+	if err != nil {
+		t.Fatalf("IssueCertificate: %v", err)
+	}
+	return append([]byte(nil), resp.CertificatePEM...)
+}
+
+// assertSDKIssuerRefusesTheKind checks the SDK issuer refuses req with
+// *FleetNodeCertKindUnavailableError and never asks the CA to sign: the
+// transport cannot request the agent SPIFFE kind, so any certificate it got
+// back would be one fleet enrolment refuses.
+func assertSDKIssuerRefusesTheKind(t *testing.T, ca *xkmsca.CAService, req *FleetNodeCertificateRequest) {
+	t.Helper()
 	issuer, err := NewSDKFleetNodeCertIssuer(ca)
 	if err != nil {
 		t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
 	}
-	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
-		TenantID: sdkIssuerTenant,
-		Hostname: sdkIssuerHost,
-	})
-	if err != nil {
-		t.Fatalf("IssueFleetNodeCertificate: %v", err)
+	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), req)
+	var kindErr *FleetNodeCertKindUnavailableError
+	if !errors.As(err, &kindErr) {
+		t.Fatalf("error = %v, want FleetNodeCertKindUnavailableError", err)
 	}
-	defer issued.PrivateKey.Destroy()
-	return append([]byte(nil), issued.CertPEM...)
-}
-
-// parseSDKLeaf decodes the leaf the issuer returned.
-func parseSDKLeaf(t *testing.T, certPEM []byte) *x509.Certificate {
-	t.Helper()
-	block, _ := pem.Decode(certPEM)
-	if block == nil {
-		t.Fatal("issued certificate is not PEM")
+	if kindErr.TenantID != req.TenantID {
+		t.Errorf("TenantID = %q, want %q", kindErr.TenantID, req.TenantID)
 	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		t.Fatalf("parse issued certificate: %v", err)
+	if issued != nil {
+		t.Fatal("a certificate was returned alongside the refusal")
 	}
-	return cert
-}
-
-// assertSDKKeyMatches checks the returned private key opens the certificate it
-// came with. A mismatch fails at the first handshake, a long way from here.
-func assertSDKKeyMatches(t *testing.T, keyPEM []byte, leaf *x509.Certificate) {
-	t.Helper()
-	key, err := xkmssdk.DecodePrivateKeyPEM(keyPEM, nil)
-	if err != nil {
-		t.Fatalf("decode returned private key: %v", err)
-	}
-	signer, ok := key.(crypto.Signer)
-	if !ok {
-		t.Fatalf("returned key is not a crypto.Signer, got %T", key)
-	}
-	got, err := x509.MarshalPKIXPublicKey(signer.Public())
-	if err != nil {
-		t.Fatalf("marshal returned public key: %v", err)
-	}
-	want, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal certificate public key: %v", err)
-	}
-	if string(got) != string(want) {
-		t.Fatal("the returned private key is not the certificate's key")
+	if ca.SignCSRCalls() != 0 {
+		t.Fatalf("SignCSRCalls = %d, want 0: the refusal must precede the CA call", ca.SignCSRCalls())
 	}
 }
 
@@ -111,6 +93,7 @@ func TestSDKAgentCertIssuer_TheCAServiceCannotExportAKey(t *testing.T) {
 	ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Export CA")
 
 	resp, err := ca.IssueCertificate(context.Background(), &xkmssdk.IssueCertificateRequest{
+		TenantID:     "fixtures",
 		CommonName:   "leaf.example.test",
 		ValidityDays: 1,
 	})
@@ -126,17 +109,32 @@ func TestSDKAgentCertIssuer_TheCAServiceCannotExportAKey(t *testing.T) {
 	}
 }
 
-// The issuer must take the CSR-sign route, because it is the only route that
-// can produce a credential. If a future change sends it back to
-// IssueCertificate, SignCSRCalls goes to zero and this fails.
-func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
-	ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer CA")
-	issuer, err := NewSDKFleetNodeCertIssuer(ca)
-	if err != nil {
-		t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
+// The transport's SignCSRRequest has no SPIFFE kind or trust-domain field, so
+// the certificate it returns is user-kind or SAN-less and fleet enrolment
+// refuses it. The issuer must say so, with the tenant, before the CA is asked.
+func TestSDKAgentCertIssuer_RefusesBecauseTheTransportCannotRequestTheAgentKind(t *testing.T) {
+	ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Kind CA")
+	req := &FleetNodeCertificateRequest{
+		TenantID:          sdkIssuerTenant,
+		Hostname:          sdkIssuerHost,
+		SPIFFETrustDomain: testAgentTrustDomain,
 	}
+	assertSDKIssuerRefusesTheKind(t, ca, req)
 
-	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+	msg := (&FleetNodeCertKindUnavailableError{TenantID: sdkIssuerTenant}).Error()
+	for _, want := range []string{"cannot request the agent SPIFFE kind", strconv.Quote(sdkIssuerTenant)} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not name %q", msg, want)
+		}
+	}
+}
+
+// The issuer's only signing route is CAService.SignCSR, whose request cannot
+// name the agent SPIFFE kind. A fully specified request is refused before a key
+// is generated or the CA is called, so no certificate leaves this path that
+// fleet enrolment would refuse.
+func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
+	assertSDKIssuerRefusesTheKind(t, xkmsca.NewCAService(t, "QuicBaaS SDK Issuer CA"), &FleetNodeCertificateRequest{
 		TenantID: sdkIssuerTenant,
 		Hostname: sdkIssuerHost,
 		Subject: FleetNodeCertificateSubject{
@@ -144,169 +142,30 @@ func TestSDKAgentCertIssuer_SignsACSRAndKeepsTheMatchingKey(t *testing.T) {
 			Organization:       sdkIssuerTenant,
 			OrganizationalUnit: DefaultFleetNodeCertOU,
 		},
-		ExtraDNSNames: []string{"alias.lan"},
-		ValidityDays:  30,
+		ExtraDNSNames:     []string{"alias.lan"},
+		ValidityDays:      30,
+		SPIFFETrustDomain: testAgentTrustDomain,
 	})
-	if err != nil {
-		t.Fatalf("IssueFleetNodeCertificate: %v", err)
-	}
-	defer issued.PrivateKey.Destroy()
-
-	if ca.SignCSRCalls() != 1 {
-		t.Fatalf("SignCSRCalls = %d, want 1: the issuer must hand the CA a CSR", ca.SignCSRCalls())
-	}
-	if ca.LastSignCSR() == nil {
-		t.Fatal("no CSR was recorded")
-	}
-	if ca.LastSignCSR().Profile != "client" {
-		t.Errorf("CSR profile = %q, want %q", ca.LastSignCSR().Profile, "client")
-	}
-	if ca.LastSignCSR().TenantID != sdkIssuerTenant {
-		t.Errorf("CSR tenant = %q, want %q", ca.LastSignCSR().TenantID, sdkIssuerTenant)
-	}
-	if ca.LastSignCSR().ValidityDays != 30 {
-		t.Errorf("CSR validity = %d, want 30", ca.LastSignCSR().ValidityDays)
-	}
-
-	// The CSR must carry the agent's public key and nothing of its private one.
-	csrBlock, _ := pem.Decode(ca.LastSignCSR().CSRPEM)
-	if csrBlock == nil {
-		t.Fatal("recorded CSR is not PEM")
-	}
-	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
-	if err != nil {
-		t.Fatalf("parse recorded CSR: %v", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		t.Fatalf("the CSR is not self-signed by the agent key: %v", err)
-	}
-
-	leaf := parseSDKLeaf(t, issued.CertPEM)
-
-	// THE acceptance assertion: the certificate verifies against the CA that
-	// signed it, for the usage it was issued for.
-	if err := ca.VerifyAsClientCert(leaf); err != nil {
-		t.Fatalf("issued leaf does not verify as a client certificate: %v", err)
-	}
-	assertSDKKeyMatches(t, issued.PrivateKey.Bytes(), leaf)
-
-	if leaf.Subject.CommonName != "agent-ses-4c1d20" {
-		t.Errorf("CommonName = %q", leaf.Subject.CommonName)
-	}
-	// The OU is what the control-plane register handler matches on. The
-	// IssueCertificate route could not express it at all.
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
-	}
-	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != sdkIssuerTenant {
-		t.Errorf("O = %v, want the tenant", leaf.Subject.Organization)
-	}
-	assertSDKHasDNSName(t, leaf, sdkIssuerHost)
-	assertSDKHasDNSName(t, leaf, "alias.lan")
-
-	if len(issued.CAPEM) == 0 {
-		t.Fatal("no CA bundle returned; the agent cannot verify the endpoint")
-	}
-	if issued.ParsedCert == nil {
-		t.Fatal("ParsedCert is nil")
-	}
 }
 
-// assertSDKHasDNSName fails unless name is a DNS SAN on leaf.
-func assertSDKHasDNSName(t *testing.T, leaf *x509.Certificate, name string) {
-	t.Helper()
-	for _, got := range leaf.DNSNames {
-		if got == name {
-			return
-		}
-	}
-	t.Errorf("DNS SAN %q missing; have %v", name, leaf.DNSNames)
-}
-
-// =============================================================================
-// defaults
-// =============================================================================
-
-// A request that names no subject still yields a usable certificate: the CN is
-// derived from the hostname, the O from the tenant, and the OU from the one
-// value the register handler accepts.
+// A request that names no subject is refused the same way: defaults do not
+// give the transport a way to ask for the agent kind.
 func TestSDKAgentCertIssuer_AppliesDefaults(t *testing.T) {
-	ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Defaults CA")
-	issuer, err := NewSDKFleetNodeCertIssuer(ca)
-	if err != nil {
-		t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-	}
-
-	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
-		TenantID: sdkIssuerTenant,
-		Hostname: sdkIssuerHost,
-		// Duplicate and blank extras must be dropped rather than emitted.
+	assertSDKIssuerRefusesTheKind(t, xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Defaults CA"), &FleetNodeCertificateRequest{
+		TenantID:      sdkIssuerTenant,
+		Hostname:      sdkIssuerHost,
 		ExtraDNSNames: []string{"", sdkIssuerHost, "  ", "extra.lan"},
 	})
-	if err != nil {
-		t.Fatalf("IssueFleetNodeCertificate: %v", err)
-	}
-	defer issued.PrivateKey.Destroy()
-
-	leaf := parseSDKLeaf(t, issued.CertPEM)
-	if leaf.Subject.CommonName != "agent-"+sdkIssuerHost {
-		t.Errorf("CommonName = %q, want %q", leaf.Subject.CommonName, "agent-"+sdkIssuerHost)
-	}
-	if len(leaf.Subject.Organization) == 0 || leaf.Subject.Organization[0] != sdkIssuerTenant {
-		t.Errorf("O = %v, want the tenant as the default", leaf.Subject.Organization)
-	}
-	if len(leaf.Subject.OrganizationalUnit) == 0 || leaf.Subject.OrganizationalUnit[0] != DefaultFleetNodeCertOU {
-		t.Errorf("OU = %v, want %q as the default", leaf.Subject.OrganizationalUnit, DefaultFleetNodeCertOU)
-	}
-	if ca.LastSignCSR().ValidityDays != DefaultFleetNodeCertValidityDays {
-		t.Errorf("validity = %d, want the default %d", ca.LastSignCSR().ValidityDays, DefaultFleetNodeCertValidityDays)
-	}
-
-	var count int
-	for _, name := range leaf.DNSNames {
-		if name == sdkIssuerHost {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("hostname appears %d times in %v, want once", count, leaf.DNSNames)
-	}
-	assertSDKHasDNSName(t, leaf, "extra.lan")
 }
 
-// Two agents must never share a key, or one session's credential authenticates
-// another's.
+// Every call is refused, so no key is ever minted on this path; a second call
+// must not slip through where the first was refused.
 func TestSDKAgentCertIssuer_MintsADistinctKeyPerCall(t *testing.T) {
 	ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Distinct CA")
-	issuer, err := NewSDKFleetNodeCertIssuer(ca)
-	if err != nil {
-		t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-	}
-
 	req := &FleetNodeCertificateRequest{TenantID: sdkIssuerTenant, Hostname: sdkIssuerHost}
-
-	first, err := issuer.IssueFleetNodeCertificate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("first IssueFleetNodeCertificate: %v", err)
-	}
-	defer first.PrivateKey.Destroy()
-	second, err := issuer.IssueFleetNodeCertificate(context.Background(), req)
-	if err != nil {
-		t.Fatalf("second IssueFleetNodeCertificate: %v", err)
-	}
-	defer second.PrivateKey.Destroy()
-
-	if string(first.PrivateKey.Bytes()) == string(second.PrivateKey.Bytes()) {
-		t.Fatal("two issuances returned the same private key")
-	}
-	if string(first.CertPEM) == string(second.CertPEM) {
-		t.Fatal("two issuances returned the same certificate")
-	}
+	assertSDKIssuerRefusesTheKind(t, ca, req)
+	assertSDKIssuerRefusesTheKind(t, ca, req)
 }
-
-// =============================================================================
-// error handling
-// =============================================================================
 
 // Construction refuses a nil CA rather than deferring the failure to the first
 // enrollment, which happens during boot where the error is only logged.
@@ -337,54 +196,31 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 		}
 	})
 
-	t.Run("a refused CSR is wrapped", func(t *testing.T) {
+	// The CA conditions below used to surface as FleetNodeCertIssueError. The
+	// issuer now refuses before the CA call, so none of them is reached.
+	t.Run("a refused CSR is never requested", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Refusal CA")
 		ca.SetSignCSRErr(errors.New("ca down"))
-		issuer, err := NewSDKFleetNodeCertIssuer(ca)
-		if err != nil {
-			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-		}
-		_, err = issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+		assertSDKIssuerRefusesTheKind(t, ca, &FleetNodeCertificateRequest{
 			TenantID: sdkIssuerTenant, Hostname: sdkIssuerHost,
 		})
-		var issErr *FleetNodeCertIssueError
-		if !errors.As(err, &issErr) || issErr.Op != "issue agent certificate" {
-			t.Fatalf("error = %v, want FleetNodeCertIssueError(issue agent certificate)", err)
-		}
 	})
 
-	t.Run("an unparseable certificate is refused", func(t *testing.T) {
+	t.Run("an unparseable certificate is never requested", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Corrupt CA")
 		ca.SetCorruptCertificatePEM(true)
-		issuer, err := NewSDKFleetNodeCertIssuer(ca)
-		if err != nil {
-			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-		}
-		_, err = issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+		assertSDKIssuerRefusesTheKind(t, ca, &FleetNodeCertificateRequest{
 			TenantID: sdkIssuerTenant, Hostname: sdkIssuerHost,
 		})
-		var issErr *FleetNodeCertIssueError
-		if !errors.As(err, &issErr) || issErr.Op != "parse issued certificate" {
-			t.Fatalf("error = %v, want FleetNodeCertIssueError(parse issued certificate)", err)
-		}
 	})
 
-	t.Run("no bundle and no chain is refused", func(t *testing.T) {
+	t.Run("no bundle and no chain is never reached", func(t *testing.T) {
 		ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer No Anchor CA")
 		ca.SetBundleErr(errors.New("no bundle"))
 		ca.SetSuppressChain(true)
-		issuer, err := NewSDKFleetNodeCertIssuer(ca)
-		if err != nil {
-			t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-		}
-		_, err = issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+		assertSDKIssuerRefusesTheKind(t, ca, &FleetNodeCertificateRequest{
 			TenantID: sdkIssuerTenant, Hostname: sdkIssuerHost,
 		})
-		var issErr *FleetNodeCertIssueError
-		if !errors.As(err, &issErr) || issErr.Op != "resolve ca bundle" {
-			t.Fatalf("error = %v, want FleetNodeCertIssueError(resolve ca bundle): a "+
-				"certificate with no trust anchor cannot be used", err)
-		}
 	})
 }
 
@@ -392,9 +228,9 @@ func TestSDKAgentCertIssuer_Errors(t *testing.T) {
 // the trust-bundle fallback
 // =============================================================================
 
-// GetCABundle failing must not fail the enrollment: the chain the signing
-// response carries is an equally valid anchor, and an agent that cannot verify
-// its endpoint is no better off than one with no certificate.
+// A failing GetCABundle no longer matters to issuance, which is refused before
+// any CA call; FleetCABundle keeps its own tests
+// (TestSDKAgentCertIssuer_AgentCABundle).
 func TestSDKAgentCertIssuer_FallsBackToTheSigningChain(t *testing.T) {
 	for name, configure := range map[string]func(*xkmsca.CAService){
 		"bundle call fails":       func(ca *xkmsca.CAService) { ca.SetBundleErr(errors.New("no bundle")) },
@@ -403,34 +239,9 @@ func TestSDKAgentCertIssuer_FallsBackToTheSigningChain(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ca := xkmsca.NewCAService(t, "QuicBaaS SDK Issuer Fallback CA "+name)
 			configure(ca)
-			issuer, err := NewSDKFleetNodeCertIssuer(ca)
-			if err != nil {
-				t.Fatalf("NewSDKFleetNodeCertIssuer: %v", err)
-			}
-
-			issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+			assertSDKIssuerRefusesTheKind(t, ca, &FleetNodeCertificateRequest{
 				TenantID: sdkIssuerTenant, Hostname: sdkIssuerHost,
 			})
-			if err != nil {
-				t.Fatalf("IssueFleetNodeCertificate: %v", err)
-			}
-			defer issued.PrivateKey.Destroy()
-
-			if len(issued.CAPEM) == 0 {
-				t.Fatal("no CA bundle; the signing response's chain was not used")
-			}
-			// The fallback anchor must still verify the leaf, or it is decoration.
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(issued.CAPEM) {
-				t.Fatal("the fallback bundle is not a usable trust anchor")
-			}
-			leaf := parseSDKLeaf(t, issued.CertPEM)
-			if _, err := leaf.Verify(x509.VerifyOptions{
-				Roots:     pool,
-				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-			}); err != nil {
-				t.Fatalf("leaf does not verify against the fallback bundle: %v", err)
-			}
 		})
 	}
 }

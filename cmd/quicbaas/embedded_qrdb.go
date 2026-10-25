@@ -94,6 +94,13 @@ func buildEmbeddedQRDBServicers(es *embeddedServer) (quicbaas.QRDBEmbeddedServic
 		servicers.Tenant = tenantSvc
 	}
 
+	// Wire the node's IndexServicer so qrdb DAOs that declare secondary
+	// indexes (the WebAuthn credential store behind passkey enrollment and
+	// login) can build and query them through the embedded transport.
+	if indexSvc := es.server.GetQRDBIndexServicer(); indexSvc != nil {
+		servicers.Index = indexSvc
+	}
+
 	// Wire ceremony and credential services from the node's bootstrap
 	// ceremony stack. These are the real services backed by the qrdb node.
 	if ceremonyStack := es.server.GetCeremonyServices(); ceremonyStack != nil {
@@ -141,6 +148,7 @@ var _ interface {
 	GetQRDBAdminServicer() quicbaas.QRDBAdminServicer
 	GetQRDBUserServicer() quicbaas.QRDBUserServicer
 	GetQRDBUserAuthFactorServicer() quicbaas.QRDBUserAuthFactorServicer
+	GetQRDBIndexServicer() quicbaas.QRDBIndexServicer
 	GetCeremonyServices() *server.CeremonyServices
 	GetDataPlaneBarrierService() server.BaasBarrierService
 } = (*server.Server)(nil)

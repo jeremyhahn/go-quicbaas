@@ -21,6 +21,7 @@ import (
 
 	qrdbservice "github.com/jeremyhahn/go-qrdb/pkg/service"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
@@ -105,7 +106,11 @@ func (stubKVService) ExistsWithConsistency(context.Context, string, qrdbsdk.Read
 
 // stubAdminService is a no-op AdminServicer used purely so qrdbembedded.New
 // accepts the constructor. None of its methods are exercised by these tests.
-type stubAdminService struct{}
+// The embedded nil interface supplies the methods whose types qrdb's SDK does
+// not re-export (the compaction policy); calling one panics.
+type stubAdminService struct {
+	QRDBAdminServicer
+}
 
 func (stubAdminService) Health(context.Context) (*qrdbsdk.HealthStatus, error) {
 	return &qrdbsdk.HealthStatus{Status: "ok"}, nil
@@ -137,8 +142,12 @@ func (stubAdminService) GetTopology(context.Context) (*qrdbsdk.TopologyResponse,
 }
 
 // stubBarrierService implements service.BarrierServicer with a single
-// deterministic BarrierStatus and stub errors for every other method.
+// deterministic BarrierStatus and stub errors for the other single-secret
+// methods. The embedded nil interface supplies the quorum, officer and
+// recovery methods, whose types qrdb's SDK does not re-export; calling one
+// panics.
 type stubBarrierService struct {
+	QRDBBarrierServicer
 	status *qrdbsdk.BarrierStatusInfo
 }
 
@@ -148,53 +157,12 @@ func (s *stubBarrierService) BarrierSeal(context.Context) error               { 
 func (s *stubBarrierService) BarrierStatus(context.Context) (*qrdbsdk.BarrierStatusInfo, error) {
 	return s.status, nil
 }
-func (s *stubBarrierService) BarrierInitializeShamir(context.Context, []byte, int, int) (*qrdbsdk.ShamirInitInfo, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierUnsealWithShare(context.Context, string) (*qrdbsdk.UnsealShareProgress, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierUnsealWithShares(context.Context, []string) error { return stubErr }
-func (s *stubBarrierService) BarrierRekey(context.Context, int, int) (*qrdbsdk.ShamirInitInfo, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierGenerateRecoveryKeys(context.Context, int, int) (*qrdbsdk.RecoveryKeysInfo, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierRecoverWithKeys(context.Context, []string) error { return stubErr }
-func (s *stubBarrierService) BarrierDeleteRecoveryKeys(context.Context) error        { return stubErr }
-func (s *stubBarrierService) BarrierHasRecoveryKeys(context.Context) (bool, error) {
+func (s *stubBarrierService) BarrierInitialized(context.Context) (bool, error) {
 	return false, stubErr
 }
-func (s *stubBarrierService) BarrierGenerateRootToken(context.Context, []string) (*qrdbsdk.RootTokenInfo, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierOfficerRegister(context.Context, *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierOfficerList(context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierOfficerClaimStatus(context.Context) ([]*qrdbsdk.BarrierOfficerStatus, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierShareClaimBegin(context.Context, string, string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierShareClaimComplete(context.Context, string, string, []byte, string) (*qrdbsdk.BarrierShareClaimResult, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierShamirSealVote(context.Context, string) (*qrdbsdk.UnsealShareProgress, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierRecoveryOfficerRegister(context.Context, *qrdbsdk.BarrierOfficerRegisterRequest) (*qrdbsdk.BarrierOfficerRegisterResult, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierRecoveryShareClaimBegin(context.Context, string, string) (*qrdbsdk.BarrierShareClaimChallenge, error) {
-	return nil, stubErr
-}
-func (s *stubBarrierService) BarrierRecoveryShareClaimComplete(context.Context, string, string, []byte, string) (*qrdbsdk.BarrierShareClaimResult, error) {
-	return nil, stubErr
+func (s *stubBarrierService) BarrierDeleteRecoveryKeys(context.Context) error { return stubErr }
+func (s *stubBarrierService) BarrierHasRecoveryKeys(context.Context) (bool, error) {
+	return false, stubErr
 }
 
 // stubCeremonyService implements service.CeremonyServicer with a single
@@ -206,35 +174,11 @@ type stubCeremonyService struct {
 func (s *stubCeremonyService) CeremonyInitialize(context.Context, qrdbsdk.CeremonyCA, *qrdbservice.CeremonyInitializeOptions) (*qrdbsdk.CeremonyInitResult, error) {
 	return nil, stubErr
 }
-func (s *stubCeremonyService) CeremonyBeginClaimCert(context.Context, string) (*qrdbsdk.CeremonyChallenge, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonyCompleteClaimCert(context.Context, string, string, []byte) (*qrdbsdk.CeremonyClaimCertResult, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonyBeginClaimShare(context.Context, string, string) (*qrdbsdk.CeremonyChallenge, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonyCompleteClaimShare(context.Context, string, string, []byte, string) (*qrdbservice.CeremonyShareClaimResult, error) {
-	return nil, stubErr
-}
 func (s *stubCeremonyService) CeremonySignCSR(context.Context, string, string, string, string) (*qrdbsdk.CeremonySignCSRResult, error) {
 	return nil, stubErr
 }
 func (s *stubCeremonyService) CeremonyStatus(context.Context) (*qrdbsdk.CeremonyStatusInfo, error) {
 	return s.status, nil
-}
-func (s *stubCeremonyService) CeremonyClaimShareBegin(context.Context, string) (*qrdbsdk.CeremonyCustodianChallenge, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonyClaimShareComplete(context.Context, string, string, []byte) (*qrdbsdk.Custodian, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonySubmitUnsealShare(context.Context, string, string, []byte, []byte) (*qrdbsdk.CeremonyUnsealShareResult, error) {
-	return nil, stubErr
-}
-func (s *stubCeremonyService) CeremonyEnrollExternalOfficer(context.Context, *qrdbsdk.CeremonyEnrollExternalOfficerRequest) (*qrdbsdk.CeremonyEnrollExternalOfficerResponse, error) {
-	return nil, stubErr
 }
 
 // stubCredentialService implements service.CredentialServicer with a
@@ -246,7 +190,7 @@ type stubCredentialService struct {
 func (s *stubCredentialService) CredentialStore(context.Context, string, []byte) error {
 	return stubErr
 }
-func (s *stubCredentialService) CredentialRetrieve(context.Context, string) ([]byte, error) {
+func (s *stubCredentialService) CredentialRetrieveBuffer(context.Context, string) (*qrdbsecure.Buffer, error) {
 	return nil, stubErr
 }
 func (s *stubCredentialService) CredentialSubmit(context.Context, string, []byte) error {
@@ -260,7 +204,7 @@ func (s *stubCredentialService) CredentialList(context.Context) ([]string, error
 func (s *stubCredentialService) CredentialRotate(context.Context, string, qrdbsdk.RotateOptions) (*qrdbsdk.RotateResult, error) {
 	return nil, stubErr
 }
-func (s *stubCredentialService) CredentialRetrieveVersion(context.Context, string, uint64) ([]byte, error) {
+func (s *stubCredentialService) CredentialRetrieveVersionBuffer(context.Context, string, uint64) (*qrdbsecure.Buffer, error) {
 	return nil, stubErr
 }
 func (s *stubCredentialService) CredentialListVersions(context.Context, string) ([]qrdbsdk.CredentialVersion, error) {

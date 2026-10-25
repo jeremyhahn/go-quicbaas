@@ -55,7 +55,7 @@ func withEmbeddedMessaging(t *testing.T) {
 
 	svc := &testutil.MockQuicBaaS{}
 	svc.On("Messaging").Return(ps)
-	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc), mockSystemIdentity())
 	require.NoError(t, err)
 
 	origFactory, origTimeout := sdkClientFactory, globalTimeout

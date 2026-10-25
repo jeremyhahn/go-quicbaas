@@ -19,8 +19,12 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // inviteTestSource is an InviteActivationSource over fixed components.
@@ -92,20 +96,47 @@ func (s *fixedInviteStore) Redeem(context.Context, string, string) (*iam.InviteR
 
 var errInviteTestFailure = errors.New("injected failure")
 
-// inviteFixture is a pending user with a live invite in tenant t1.
+// inviteFixture is a pending user with a live invite in one tenant.
 type inviteFixture struct {
 	source  *inviteTestSource
 	manager *recordingWebAuthnManager
 	invites *iamtest.MemoryInviteStore
+	tenant  string
 	userID  uint64
 	token   string
 }
 
+// newInviteFixture is the fixture in tenant t1, a non-system tenant.
 func newInviteFixture(t *testing.T) *inviteFixture {
 	t.Helper()
-	identity, userID := newCredentialTestStore(t)
+	return newInviteFixtureIn(t, "t1")
+}
+
+// newSystemInviteFixture is the fixture in the system tenant, where the
+// passkey verbs run their ceremony on this release.
+func newSystemInviteFixture(t *testing.T) *inviteFixture {
+	t.Helper()
+	return newInviteFixtureIn(t, qrdbsdk.SystemTenantID)
+}
+
+// newInviteFixtureIn is the fixture in tenantID. The passkey verbs run their
+// ceremony only in the system tenant on this release (go-quicbaas #1816).
+func newInviteFixtureIn(t *testing.T, tenantID string) *inviteFixture {
+	t.Helper()
+	mem := iam.NewMemoryStorage()
+	identity := iam.NewIdentityStore(iam.IdentityStoreOptions{
+		UserStorage: mem,
+		RoleStorage: mem,
+	})
+	user, err := identity.CreateUser(context.Background(), tenantID, iam.CreateUserOptions{
+		Email:    "alice@example.com",
+		Username: "alice",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
 	invites := iamtest.NewMemoryInviteStore()
-	token, _, err := invites.Create(context.Background(), "t1", userID, time.Hour)
+	token, _, err := invites.Create(context.Background(), tenantID, user.ID, time.Hour)
 	if err != nil {
 		t.Fatalf("Create invite: %v", err)
 	}
@@ -114,8 +145,23 @@ func newInviteFixture(t *testing.T) *inviteFixture {
 		source:  &inviteTestSource{invites: invites, identity: identity, manager: manager},
 		manager: manager,
 		invites: invites,
-		userID:  userID,
+		tenant:  tenantID,
+		userID:  user.ID,
 		token:   token,
+	}
+}
+
+// requireTenantRefused fails the test unless err is the typed non-system
+// tenant refusal with its PreconditionFailed code.
+func requireTenantRefused(t *testing.T, err error) {
+	t.Helper()
+	var refused *sdkerrors.TenantLoginRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("err = %v, want TenantLoginRefusedError", err)
+	}
+	var qbErr *dberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrPreconditionFailed {
+		t.Fatalf("err = %v, want code ErrPreconditionFailed", err)
 	}
 }
 
@@ -223,9 +269,17 @@ func TestInviteActivationServiceRefusesReturnedUnusableRecord(t *testing.T) {
 // TestInviteActivationServiceFIDO2Begin addresses the ceremony by the
 // invited user's email, the key go-xkms stores the registration under.
 func TestInviteActivationServiceFIDO2Begin(t *testing.T) {
+	// A non-system tenant's passkey activation is refused until go-quicbaas
+	// #1816 re-pins go-qrdb, and the ceremony never starts.
 	f := newInviteFixture(t)
+	_, err := f.service().ActivateFIDO2Begin(context.Background(), "t1", f.token)
+	requireTenantRefused(t, err)
+	if f.manager.beginEmail != "" {
+		t.Errorf("ceremony began for a refused tenant: email %q", f.manager.beginEmail)
+	}
 
-	options, err := f.service().ActivateFIDO2Begin(context.Background(), "t1", f.token)
+	f = newSystemInviteFixture(t)
+	options, err := f.service().ActivateFIDO2Begin(context.Background(), f.tenant, f.token)
 	if err != nil {
 		t.Fatalf("ActivateFIDO2Begin: %v", err)
 	}
@@ -237,29 +291,37 @@ func TestInviteActivationServiceFIDO2Begin(t *testing.T) {
 	}
 }
 
-// TestInviteActivationServiceFIDO2BeginUnconfigured reports each missing
-// component by its own typed error.
+// TestInviteActivationServiceFIDO2BeginUnconfigured: a missing ceremony
+// manager or identity store is a typed error, not a panic.
 func TestInviteActivationServiceFIDO2BeginUnconfigured(t *testing.T) {
-	f := newInviteFixture(t)
+	f := newSystemInviteFixture(t)
 	f.source.manager = nil
-	if _, err := f.service().ActivateFIDO2Begin(context.Background(), "t1", f.token); err != ErrInviteActivationWebAuthnNotConfigured {
+	if _, err := f.service().ActivateFIDO2Begin(context.Background(), f.tenant, f.token); err != ErrInviteActivationWebAuthnNotConfigured {
 		t.Errorf("no manager: err = %v, want ErrInviteActivationWebAuthnNotConfigured", err)
 	}
 
-	f = newInviteFixture(t)
+	f = newSystemInviteFixture(t)
 	f.source.identity = nil
-	if _, err := f.service().ActivateFIDO2Begin(context.Background(), "t1", f.token); err != ErrInviteActivationUserNoEmail {
+	if _, err := f.service().ActivateFIDO2Begin(context.Background(), f.tenant, f.token); err != ErrInviteActivationUserNoEmail {
 		t.Errorf("no identity store: err = %v, want ErrInviteActivationUserNoEmail", err)
 	}
 }
 
-// TestInviteActivationServiceFIDO2Finish activates the user and spends the
-// invite, so the same link cannot activate a second authenticator.
+// TestInviteActivationServiceFIDO2Finish: the finished ceremony activates the
+// user and consumes the invite; a non-system tenant is refused first.
 func TestInviteActivationServiceFIDO2Finish(t *testing.T) {
-	f := newInviteFixture(t)
 	ctx := context.Background()
 
-	activation, err := f.service().ActivateFIDO2Finish(ctx, "t1", f.token, map[string]interface{}{"id": "x"})
+	// Refused until go-quicbaas #1816; the invite stays usable.
+	f := newInviteFixture(t)
+	_, err := f.service().ActivateFIDO2Finish(ctx, "t1", f.token, map[string]interface{}{"id": "x"})
+	requireTenantRefused(t, err)
+	if _, err := f.invites.Lookup(ctx, "t1", f.token); err != nil {
+		t.Errorf("invite consumed by a refused activation: err = %v", err)
+	}
+
+	f = newSystemInviteFixture(t)
+	activation, err := f.service().ActivateFIDO2Finish(ctx, f.tenant, f.token, map[string]interface{}{"id": "x"})
 	if err != nil {
 		t.Fatalf("ActivateFIDO2Finish: %v", err)
 	}
@@ -269,55 +331,57 @@ func TestInviteActivationServiceFIDO2Finish(t *testing.T) {
 	if f.manager.finishEmail != "alice@example.com" {
 		t.Errorf("ceremony email = %q, want alice@example.com", f.manager.finishEmail)
 	}
-	user, err := f.source.identity.GetUser(ctx, "t1", f.userID)
+	user, err := f.source.identity.GetUser(ctx, f.tenant, f.userID)
 	if err != nil || user.Lifecycle != iam.LifecycleActive {
 		t.Errorf("user lifecycle = %v (err %v), want active", user, err)
 	}
-	if _, err := f.invites.Lookup(ctx, "t1", f.token); !iam.IsInviteUnusable(err) {
+	if _, err := f.invites.Lookup(ctx, f.tenant, f.token); !iam.IsInviteUnusable(err) {
 		t.Errorf("invite still usable after activation: err = %v", err)
 	}
 }
 
-// TestInviteActivationServiceFIDO2FinishMissingCredential checks the invite
-// before the credential, so an unusable token gets the opaque answer whatever
-// the body carried, and a usable one is told what is missing.
+// TestInviteActivationServiceFIDO2FinishMissingCredential: an unknown token
+// stays opaque, even in a refused tenant, and a usable one needs a credential.
 func TestInviteActivationServiceFIDO2FinishMissingCredential(t *testing.T) {
-	f := newInviteFixture(t)
 	ctx := context.Background()
 
-	if _, err := f.service().ActivateFIDO2Finish(ctx, "t1", "no-such-token", nil); !iam.IsInviteUnusable(err) {
+	if _, err := newInviteFixture(t).service().ActivateFIDO2Finish(ctx, "t1", "no-such-token", nil); !iam.IsInviteUnusable(err) {
+		t.Errorf("unknown token in t1: err = %v, want an unusable invite", err)
+	}
+	f := newSystemInviteFixture(t)
+	if _, err := f.service().ActivateFIDO2Finish(ctx, f.tenant, "no-such-token", nil); !iam.IsInviteUnusable(err) {
 		t.Errorf("unknown token: err = %v, want an unusable invite", err)
 	}
-	if _, err := f.service().ActivateFIDO2Finish(ctx, "t1", f.token, nil); err != ErrInviteActivationCredentialRequired {
+	if _, err := f.service().ActivateFIDO2Finish(ctx, f.tenant, f.token, nil); err != ErrInviteActivationCredentialRequired {
 		t.Errorf("usable token: err = %v, want ErrInviteActivationCredentialRequired", err)
 	}
 }
 
-// TestInviteActivationServiceFIDO2FinishCeremonyFailure keeps the invite
-// when the ceremony fails, so the account stays activatable.
+// TestInviteActivationServiceFIDO2FinishCeremonyFailure: a failed ceremony
+// leaves the invite usable.
 func TestInviteActivationServiceFIDO2FinishCeremonyFailure(t *testing.T) {
-	f := newInviteFixture(t)
+	f := newSystemInviteFixture(t)
 	f.manager.finishErr = errInviteTestFailure
 	ctx := context.Background()
 
-	if _, err := f.service().ActivateFIDO2Finish(ctx, "t1", f.token, map[string]interface{}{"id": "x"}); err != errInviteTestFailure {
+	if _, err := f.service().ActivateFIDO2Finish(ctx, f.tenant, f.token, map[string]interface{}{"id": "x"}); err != errInviteTestFailure {
 		t.Fatalf("err = %v, want the ceremony failure", err)
 	}
-	if _, err := f.invites.Lookup(ctx, "t1", f.token); err != nil {
+	if _, err := f.invites.Lookup(ctx, f.tenant, f.token); err != nil {
 		t.Errorf("invite consumed by a failed ceremony: err = %v", err)
 	}
 }
 
-// TestInviteActivationServiceFIDO2FinishRedeemFailure reports a redeem that
-// failed rather than succeeding with a one-time token left redeemable.
+// TestInviteActivationServiceFIDO2FinishRedeemFailure: a failed redeem is
+// returned, not swallowed.
 func TestInviteActivationServiceFIDO2FinishRedeemFailure(t *testing.T) {
-	f := newInviteFixture(t)
+	f := newSystemInviteFixture(t)
 	f.source.invites = &fixedInviteStore{
-		record:    iam.InviteRecord{TenantID: "t1", UserID: f.userID, ExpiresAt: time.Now().Add(time.Hour)},
+		record:    iam.InviteRecord{TenantID: f.tenant, UserID: f.userID, ExpiresAt: time.Now().Add(time.Hour)},
 		redeemErr: errInviteTestFailure,
 	}
 
-	if _, err := f.service().ActivateFIDO2Finish(context.Background(), "t1", "tok", map[string]interface{}{"id": "x"}); err != errInviteTestFailure {
+	if _, err := f.service().ActivateFIDO2Finish(context.Background(), f.tenant, "tok", map[string]interface{}{"id": "x"}); err != errInviteTestFailure {
 		t.Fatalf("err = %v, want the redeem failure", err)
 	}
 }

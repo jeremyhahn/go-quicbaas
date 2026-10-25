@@ -259,7 +259,11 @@ func newPIVCertStore(t *testing.T) backend.PIVCertificateStorage {
 	if err != nil {
 		t.Fatalf("NewMemoryBackend: %v", err)
 	}
-	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{Backend: mem, PEMEnabled: true})
+	daos, err := xkmssdk.NewBackendDAOFactory(mem)
+	if err != nil {
+		t.Fatalf("NewBackendDAOFactory: %v", err)
+	}
+	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{DAOs: daos})
 	if err != nil {
 		t.Fatalf("NewPIVFileBackend: %v", err)
 	}

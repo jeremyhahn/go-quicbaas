@@ -235,39 +235,11 @@ func TestClient_TenantMgmt_PropagatesInitError(t *testing.T) {
 	}
 }
 
-func TestClient_CustodianGroup_PropagatesInitError(t *testing.T) {
-	c := newBrokenEmbeddedClient(t)
-	if _, err := c.CustodianGroup(); err == nil {
-		t.Fatal("expected error from misconfigured embedded qrdb")
-	}
-}
-
-func TestClient_Share_PropagatesInitError(t *testing.T) {
-	c := newBrokenEmbeddedClient(t)
-	if _, err := c.Share(); err == nil {
-		t.Fatal("expected error from misconfigured embedded qrdb")
-	}
-}
-
 // barrierCeremonyService Ceremony / Tenant accessors
 
 func TestBarrierCeremonyService_Ceremony_PropagatesError(t *testing.T) {
 	c := newBrokenEmbeddedClient(t)
 	if _, err := c.BarrierCeremonyMgmt().Ceremony(); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestBarrierCeremonyService_CustodianGroup_PropagatesError(t *testing.T) {
-	c := newBrokenEmbeddedClient(t)
-	if _, err := c.BarrierCeremonyMgmt().CustodianGroup(); err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-func TestBarrierCeremonyService_Share_PropagatesError(t *testing.T) {
-	c := newBrokenEmbeddedClient(t)
-	if _, err := c.BarrierCeremonyMgmt().Share(); err == nil {
 		t.Fatal("expected error")
 	}
 }

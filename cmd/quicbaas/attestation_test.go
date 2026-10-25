@@ -39,7 +39,7 @@ func withEmbeddedAttestation(t *testing.T) *attestationtest.MemoryStore {
 	store := attestationtest.NewMemoryStore()
 	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(&testutil.MockQuicBaaS{
 		AttestationSvc: service.NewAttestationService(nil, nil, service.WithAttestationStore(store)),
-	}))
+	}), mockSystemIdentity())
 	if err != nil {
 		t.Fatalf("embedded client: %v", err)
 	}

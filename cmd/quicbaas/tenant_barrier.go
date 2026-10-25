@@ -40,6 +40,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -61,9 +64,66 @@ var (
 	tenantBarrierSecret    string
 	tenantBarrierThreshold int
 	tenantBarrierShares    int
-	tenantBarrierShare     string
 	tenantBarrierOutputFmt string
+
+	// The Shamir holder roster, in go-qrdb's username=path/to/csr.pem form.
+	tenantBarrierOfficers   []string
+	tenantBarrierCustodians []string
+	tenantBarrierPolicy     string
 )
+
+// TenantBarrierHolderSpecError is returned when an --officers or
+// --custodians value is not username=path/to/csr.pem.
+type TenantBarrierHolderSpecError struct {
+	Flag string
+	Got  string
+}
+
+// Error returns a human-readable description.
+func (e *TenantBarrierHolderSpecError) Error() string {
+	return "tenant.barrier.init: " + e.Flag + " value " + e.Got +
+		" must be username=path/to/csr.pem"
+}
+
+// TenantBarrierRosterSizeError is returned when the Shamir holder roster
+// does not name one holder per share.
+type TenantBarrierRosterSizeError struct {
+	Holders int
+	Shares  int
+}
+
+// Error returns a human-readable description.
+func (e *TenantBarrierRosterSizeError) Error() string {
+	return "tenant.barrier.init: --shares " + strconv.Itoa(e.Shares) +
+		" must equal the number of --officers plus --custodians (" +
+		strconv.Itoa(e.Holders) + ")"
+}
+
+// TenantBarrierRosterRequiredError is returned when a Shamir init names no
+// roster and the tenant has fewer enrolled holders than the threshold.
+type TenantBarrierRosterRequiredError struct {
+	Enrolled  int
+	Threshold int
+}
+
+// Error returns a human-readable description.
+func (e *TenantBarrierRosterRequiredError) Error() string {
+	return "tenant.barrier.init: the tenant has " + strconv.Itoa(e.Enrolled) +
+		" enrolled share holders, fewer than --threshold " + strconv.Itoa(e.Threshold) +
+		"; name one holder per share with --officers and --custodians"
+}
+
+// TenantBarrierRosterFlagsError is returned when holder roster flags are
+// given for a strategy other than shamir.
+type TenantBarrierRosterFlagsError struct {
+	Strategy string
+}
+
+// Error returns a human-readable description.
+func (e *TenantBarrierRosterFlagsError) Error() string {
+	return "tenant.barrier.init: --officers, --custodians and --policy apply only to " +
+		"--strategy=shamir, not " + e.Strategy
+}
 
 // =============================================================================
 // Client interface and factory
@@ -75,11 +135,11 @@ var (
 type TenantBarrierClient interface {
 	TenantBarrierInit(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error)
 	TenantBarrierUnseal(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealRequest) error
-	TenantBarrierUnsealShare(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error)
 	TenantBarrierSeal(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error
 	TenantBarrierStatus(ctx context.Context, req *qrdbtransport.TenantBarrierStatusRequest) (*qrdbtransport.TenantBarrierStatusResponse, error)
 	TenantBarrierOfficerList(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
-	TenantBarrierOfficerClaimStatus(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
+	TenantBarrierQuorumBegin(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error)
+	TenantBarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error)
 }
 
 // TenantBarrierClientFactory creates TenantBarrierClient instances.
@@ -126,9 +186,9 @@ Verbs:
   status         Show the tenant barrier's state and strategy
   init           Initialize the tenant barrier with a seal strategy
   unseal         Unseal with a passphrase or key
-  unseal-share   Submit one Shamir share toward the quorum
   seal           Seal the barrier (crypto-shreds until unsealed again)
-  officer        List tenant Security Officers / claim status`,
+  quorum         Answer a holder challenge (begin | submit) for a quorum operation
+  officer        List tenant Security Officers`,
 	}
 
 	cmd.PersistentFlags().StringVar(&tenantBarrierTenantID, "tenant", "",
@@ -139,8 +199,8 @@ Verbs:
 	cmd.AddCommand(newTenantBarrierStatusCommand())
 	cmd.AddCommand(newTenantBarrierInitCommand())
 	cmd.AddCommand(newTenantBarrierUnsealCommand())
-	cmd.AddCommand(newTenantBarrierUnsealShareCommand())
 	cmd.AddCommand(newTenantBarrierSealCommand())
+	cmd.AddCommand(newTenantBarrierQuorumCommand())
 	cmd.AddCommand(newTenantBarrierOfficerCommand())
 
 	return cmd
@@ -220,7 +280,14 @@ barrier is sealed.
 Examples:
   printf '%s' "$PP" | quicbaas iam tenant barrier init --tenant acme \
       --strategy passphrase --passphrase-stdin
-  quicbaas iam tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3`,
+  quicbaas iam tenant barrier init --tenant acme --strategy shamir --threshold 2 --shares 3 \
+      --officers alice=alice.csr --officers bob=bob.csr --custodians carol=carol.csr
+
+A Shamir init names one holder per share: each --officers (Security
+Officer) or --custodians (key custodian) value is username=path/to/csr.pem.
+go-qrdb signs each holder's certificate and returns it with the roster; the
+holders then claim their shares. Without a roster go-qrdb uses the holders
+the tenant already enrolled and refuses the init if there are too few.`,
 		RunE: runTenantBarrierInitCommand,
 	}
 	cmd.Flags().StringVar(&tenantBarrierStrategy, "strategy", "",
@@ -231,6 +298,12 @@ Examples:
 		"Shamir M-of-N threshold (required for --strategy=shamir)")
 	cmd.Flags().IntVar(&tenantBarrierShares, "shares", 0,
 		"Total Shamir shares (required for --strategy=shamir)")
+	cmd.Flags().StringArrayVar(&tenantBarrierOfficers, "officers", nil,
+		"Security Officer share holder: username=path/to/csr.pem (repeatable; shamir only)")
+	cmd.Flags().StringArrayVar(&tenantBarrierCustodians, "custodians", nil,
+		"Key custodian share holder: username=path/to/csr.pem (repeatable; shamir only)")
+	cmd.Flags().StringVar(&tenantBarrierPolicy, "policy", "",
+		"Holder factor policy: designated (default) or any-enrolled (shamir only)")
 	return cmd
 }
 
@@ -265,6 +338,19 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 			return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.init",
 				"--shares must be >= --threshold")
 		}
+	} else if len(tenantBarrierOfficers)+len(tenantBarrierCustodians) > 0 || tenantBarrierPolicy != "" {
+		return formatError(&TenantBarrierRosterFlagsError{Strategy: tenantBarrierStrategy})
+	}
+	roster, err := tenantBarrierRoster()
+	if err != nil {
+		return formatError(err)
+	}
+
+	// A network transport proves the first admin holds the mTLS key, not
+	// merely its certificate, by signing the node's init nonce with it.
+	signer, err := loadClientSigner()
+	if err != nil {
+		return formatError(err)
 	}
 
 	client, err := tenantBarrierClientFactory()
@@ -275,13 +361,26 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
-		TenantID: tenantBarrierTenantID,
-		Strategy: tenantBarrierStrategy,
-		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
-		Passphrase: secret.Bytes(),
-		Threshold:  tenantBarrierThreshold,
-		Shares:     tenantBarrierShares,
+	if tenantBarrierStrategy == "shamir" && len(roster) == 0 {
+		if err := requireEnrolledHolders(ctx, client); err != nil {
+			return formatError(err)
+		}
+	}
+
+	var resp *qrdbtransport.TenantBarrierInitResponse
+	err = withPassphraseBytes(secret, func(b []byte) error {
+		var callErr error
+		resp, callErr = client.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
+			TenantID:   tenantBarrierTenantID,
+			Strategy:   tenantBarrierStrategy,
+			Passphrase: b,
+			Threshold:  tenantBarrierThreshold,
+			Shares:     tenantBarrierShares,
+			Officers:   roster,
+			Policy:     tenantBarrierPolicy,
+			Signer:     signer,
+		})
+		return callErr
 	})
 	if err != nil {
 		return formatError(err)
@@ -289,8 +388,66 @@ func runTenantBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	return formatTenantBarrierInit(resp, tenantBarrierOutputFmt, cmd.OutOrStdout())
 }
 
+// tenantBarrierRoster builds the Shamir holder roster from --officers and
+// --custodians, one holder per share. It returns an empty roster when neither
+// flag is given, leaving go-qrdb to judge the holders the tenant already
+// enrolled.
+func tenantBarrierRoster() ([]qrdbtransport.OfficerRegisterRequest, error) {
+	officers, err := parseTenantBarrierHolders("--officers", qrdbtransport.RoleSecurityOfficer, tenantBarrierOfficers)
+	if err != nil {
+		return nil, err
+	}
+	custodians, err := parseTenantBarrierHolders("--custodians", qrdbtransport.RoleCustodian, tenantBarrierCustodians)
+	if err != nil {
+		return nil, err
+	}
+	roster := make([]qrdbtransport.OfficerRegisterRequest, 0, len(officers)+len(custodians))
+	roster = append(roster, officers...)
+	roster = append(roster, custodians...)
+	if len(roster) > 0 && len(roster) != tenantBarrierShares {
+		return nil, &TenantBarrierRosterSizeError{Holders: len(roster), Shares: tenantBarrierShares}
+	}
+	return roster, nil
+}
+
+// requireEnrolledHolders refuses a roster-less Shamir init when the tenant
+// has fewer enrolled holders than --threshold, the check go-qrdb makes, so
+// a fresh tenant learns it must name a roster.
+func requireEnrolledHolders(ctx context.Context, client TenantBarrierClient) error {
+	enrolled, err := client.TenantBarrierOfficerList(ctx, tenantBarrierTenantID)
+	if err != nil {
+		return err
+	}
+	if len(enrolled) < tenantBarrierThreshold {
+		return &TenantBarrierRosterRequiredError{Enrolled: len(enrolled), Threshold: tenantBarrierThreshold}
+	}
+	return nil
+}
+
+// parseTenantBarrierHolders reads each username=path/to/csr.pem value of
+// flag into a holder of the given role.
+func parseTenantBarrierHolders(flag, role string, specs []string) ([]qrdbtransport.OfficerRegisterRequest, error) {
+	holders := make([]qrdbtransport.OfficerRegisterRequest, 0, len(specs))
+	for _, spec := range specs {
+		username, path, found := strings.Cut(spec, "=")
+		if !found || username == "" || path == "" {
+			return nil, &TenantBarrierHolderSpecError{Flag: flag, Got: spec}
+		}
+		csrPEM, err := os.ReadFile(filepath.Clean(path))
+		if err != nil {
+			return nil, &InitReadCSRError{Path: path, Err: err}
+		}
+		holders = append(holders, qrdbtransport.OfficerRegisterRequest{
+			Username: username,
+			Role:     role,
+			CSRPEM:   string(csrPEM),
+		})
+	}
+	return holders, nil
+}
+
 // =============================================================================
-// unseal / unseal-share
+// unseal
 // =============================================================================
 
 // newTenantBarrierUnsealCommand builds 'quicbaas iam tenant barrier unseal'.
@@ -300,8 +457,9 @@ func newTenantBarrierUnsealCommand() *cobra.Command {
 		Short: "Unseal the tenant barrier with a passphrase",
 		Long: `Unseal a tenant barrier.
 
-For a Shamir-sealed tenant barrier use 'unseal-share' instead: a quorum
-must each submit their own share.
+For a Shamir-sealed tenant barrier use 'quorum begin --op unseal' and
+'quorum submit --op unseal' instead: a quorum of holders must each submit
+their own share.
 
 ` + passphraseInputHelp + `
 
@@ -326,7 +484,7 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	defer secret.Destroy()
 	if secret.Size() == 0 {
 		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal",
-			"--passphrase is required (use 'unseal-share' for a Shamir barrier)"+
+			"--passphrase is required (use 'quorum begin' / 'quorum submit' for a Shamir barrier)"+
 				passphraseSourcesHint)
 	}
 
@@ -356,10 +514,11 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	// is done with the memory. Note this is an invariant of a module this
 	// repo does not own — if a transport ever becomes asynchronous or gains
 	// a replay buffer, this must go back to a wiped copy.
-	if err := client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
-		TenantID: tenantBarrierTenantID,
-		//secure:unborrowed injected-interface tenant-barrier transport request must carry bytes; the client owns the request lifetime.
-		Key: secret.Bytes(),
+	if err := secret.WithBytes(func(b []byte) error {
+		return client.TenantBarrierUnseal(ctx, &qrdbtransport.TenantBarrierUnsealRequest{
+			TenantID: tenantBarrierTenantID,
+			Key:      b,
+		})
 	}); err != nil {
 		return formatError(err)
 	}
@@ -367,35 +526,53 @@ func runTenantBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// newTenantBarrierUnsealShareCommand builds 'quicbaas iam tenant barrier unseal-share'.
-func newTenantBarrierUnsealShareCommand() *cobra.Command {
+// =============================================================================
+// quorum
+// =============================================================================
+
+// newTenantBarrierQuorumCommand builds 'quicbaas iam tenant barrier quorum'.
+func newTenantBarrierQuorumCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "unseal-share",
-		Short: "Submit one Shamir share toward the tenant quorum",
-		Long: `Submit a single Shamir share.
+		Use:   "quorum",
+		Short: "Answer a holder challenge for a tenant quorum operation",
+		Long: `Drive one tenant holder's part of a quorum operation.
 
-Each officer runs this with their own share. The response reports quorum
-progress; the barrier unseals when the threshold is met. Shares are
-accumulated in memory and discarded once the quorum completes, so a later
-unseal requires fresh submissions.
+Every M-of-N operation on a Shamir tenant barrier (unseal, seal, root-token,
+rekey, recover) completes through two steps per holder:
+  quorum begin    Open a factor challenge for the holder
+  quorum submit   Answer it with the factor response and the holder's share
 
-Example:
-  quicbaas iam tenant barrier unseal-share --tenant acme --share "$SHARE"`,
-		RunE: runTenantBarrierUnsealShareCommand,
+The share is the holder's opened share, read raw from --share-file.`,
 	}
-	cmd.Flags().StringVar(&tenantBarrierShare, "share", "",
-		"One Shamir share (required)")
+
+	begin := &cobra.Command{
+		Use:   "begin",
+		Short: "Open a factor challenge for one tenant holder",
+		RunE:  runTenantBarrierQuorumBeginCommand,
+	}
+	addQuorumHolderFlags(begin)
+	addQuorumBeginFlags(begin)
+
+	submit := &cobra.Command{
+		Use:   "submit",
+		Short: "Submit one tenant holder's share to the open quorum round",
+		RunE:  runTenantBarrierQuorumSubmitCommand,
+	}
+	addQuorumHolderFlags(submit)
+	addQuorumSubmitFlags(submit)
+
+	cmd.AddCommand(begin, submit)
 	return cmd
 }
 
-// runTenantBarrierUnsealShareCommand executes 'quicbaas iam tenant barrier unseal-share'.
-func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
-	if err := requireTenantID("tenant.barrier.unseal-share"); err != nil {
+// runTenantBarrierQuorumBeginCommand executes 'quicbaas iam tenant barrier quorum begin'.
+func runTenantBarrierQuorumBeginCommand(cmd *cobra.Command, _ []string) error {
+	const op = "tenant.barrier.quorum.begin"
+	if err := requireTenantID(op); err != nil {
 		return err
 	}
-	if tenantBarrierShare == "" {
-		return errors.Newf(errors.ErrInvalidInput, "tenant.barrier.unseal-share",
-			"--share is required")
+	if err := validateQuorumHolderFlags(op); err != nil {
+		return err
 	}
 
 	client, err := tenantBarrierClientFactory()
@@ -406,14 +583,52 @@ func runTenantBarrierUnsealShareCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	progress, err := client.TenantBarrierUnsealShare(ctx, &qrdbtransport.TenantBarrierUnsealShareRequest{
+	challenge, err := client.TenantBarrierQuorumBegin(ctx, &qrdbtransport.TenantQuorumBeginRequest{
 		TenantID: tenantBarrierTenantID,
-		Share:    tenantBarrierShare,
+		Op:       barrierQuorumOp,
+		Username: barrierUsername,
+		Factor:   barrierFactor,
 	})
 	if err != nil {
 		return formatError(err)
 	}
-	return formatTenantBarrierProgress(progress, tenantBarrierOutputFmt, cmd.OutOrStdout())
+	return formatBarrierQuorumChallenge(challenge, tenantBarrierOutputFmt, cmd.OutOrStdout())
+}
+
+// runTenantBarrierQuorumSubmitCommand executes 'quicbaas iam tenant barrier quorum submit'.
+func runTenantBarrierQuorumSubmitCommand(cmd *cobra.Command, _ []string) error {
+	const op = "tenant.barrier.quorum.submit"
+	if err := requireTenantID(op); err != nil {
+		return err
+	}
+	response, share, err := readQuorumSubmission(op)
+	if err != nil {
+		return err
+	}
+	defer clear(share)
+
+	client, err := tenantBarrierClientFactory()
+	if err != nil {
+		return formatError(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	outcome, err := client.TenantBarrierQuorumSubmit(ctx, &qrdbtransport.TenantQuorumSubmitRequest{
+		TenantID:         tenantBarrierTenantID,
+		Op:               barrierQuorumOp,
+		Username:         barrierUsername,
+		ChallengeID:      barrierChallengeID,
+		Factor:           barrierFactor,
+		Response:         response,
+		ResponseMetadata: barrierResponseMetadata,
+		Share:            share,
+	})
+	if err != nil {
+		return formatError(err)
+	}
+	return formatBarrierQuorumOutcome(outcome, tenantBarrierOutputFmt, cmd.OutOrStdout())
 }
 
 // =============================================================================
@@ -489,11 +704,6 @@ certificate thumbprint. Share bytes are never returned by any verb here.`,
 		Short: "List the tenant's enrolled Security Officers",
 		RunE:  runTenantBarrierOfficerListCommand,
 	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "Show per-officer claim status for the tenant",
-		RunE:  runTenantBarrierOfficerStatusCommand,
-	})
 	return cmd
 }
 
@@ -511,26 +721,6 @@ func runTenantBarrierOfficerListCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	officers, err := client.TenantBarrierOfficerList(ctx, tenantBarrierTenantID)
-	if err != nil {
-		return formatError(err)
-	}
-	return formatOfficerStatusList(officers, tenantBarrierOutputFmt, cmd.OutOrStdout())
-}
-
-// runTenantBarrierOfficerStatusCommand executes 'quicbaas iam tenant barrier officer status'.
-func runTenantBarrierOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
-	if err := requireTenantID("tenant.barrier.officer.status"); err != nil {
-		return err
-	}
-	client, err := tenantBarrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	officers, err := client.TenantBarrierOfficerClaimStatus(ctx, tenantBarrierTenantID)
 	if err != nil {
 		return formatError(err)
 	}
@@ -599,31 +789,18 @@ func formatTenantBarrierInit(
 	if resp.Threshold > 0 {
 		fmt.Fprintf(tw, "Shamir:\t%d-of-%d\n", resp.Threshold, resp.TotalShares)
 	}
-	return tw.Flush()
-}
-
-// formatTenantBarrierProgress renders Shamir quorum progress.
-func formatTenantBarrierProgress(
-	progress *qrdbtransport.TenantBarrierUnsealProgress,
-	format string,
-	w io.Writer,
-) error {
-	if progress == nil {
-		return errors.Newf(errors.ErrInternal, "tenant.barrier.unseal-share", "empty response")
+	for _, h := range resp.Holders {
+		fmt.Fprintf(tw, "Holder:\t%s (%s)\n", h.Username, h.Role)
 	}
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
+	if err := tw.Flush(); err != nil {
 		return err
 	}
-	if outputFormat == cli.OutputFormatJSON {
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(progress)
+	// Init issues each holder's certificate once and the holders unseal with
+	// it, so the table prints every certificate, not only the names.
+	for _, h := range resp.Holders {
+		if _, err := fmt.Fprintf(w, "\n# %s (%s)\n%s", h.Username, h.Role, h.CertPEM); err != nil {
+			return err
+		}
 	}
-
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Tenant:\t%s\n", progress.TenantID)
-	fmt.Fprintf(tw, "Shares:\t%d of %d submitted\n", progress.Submitted, progress.Required)
-	fmt.Fprintf(tw, "Complete:\t%t\n", progress.Complete)
-	return tw.Flush()
+	return nil
 }

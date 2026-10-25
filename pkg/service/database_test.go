@@ -31,6 +31,12 @@ import (
 
 // mockDBServicer implements qrdbsvc.DatabaseServicer for unit tests.
 type mockDBServicer struct {
+	// DatabaseBarrierStatus returns qrdb's service.DatabaseBarrierStatusInfo,
+	// which sdk/go does not re-export, so the mock cannot declare it. The
+	// embedded nil interface supplies the method; databaseService never
+	// calls it, so a call would be a test bug and panics.
+	qrdbsdk.DatabaseServicer
+
 	// Non-tenant methods (unused by databaseService but required by interface).
 	createFn           func(cfg qrdbsdk.DatabaseConfig) (*qrdbsdk.DatabaseInfo, error)
 	getFn              func(name string) (*qrdbsdk.DatabaseInfo, error)
@@ -127,9 +133,6 @@ func (m *mockDBServicer) SealDatabase(_ context.Context, _ string) error { retur
 func (m *mockDBServicer) UnsealDatabase(_ context.Context, _ string, _ qrdbsdk.Credentials) error {
 	return nil
 }
-func (m *mockDBServicer) DatabaseBarrierStatus(_ context.Context, _ string) (*qrdbsdk.BarrierStatus, error) {
-	return nil, nil
-}
 
 // Tenant-scoped interface methods.
 func (m *mockDBServicer) CreateForTenant(ctx context.Context, cfg qrdbsdk.DatabaseConfig) (*qrdbsdk.DatabaseInfo, error) {
@@ -138,7 +141,6 @@ func (m *mockDBServicer) CreateForTenant(ctx context.Context, cfg qrdbsdk.Databa
 	}
 	return &qrdbsdk.DatabaseInfo{
 		Name:    cfg.Name,
-		Engine:  cfg.Engine,
 		Backend: cfg.Backend,
 		Status:  qrdbsdk.StatusOpen,
 	}, nil
@@ -223,7 +225,6 @@ func TestDatabaseService_CreateDatabase(t *testing.T) {
 			return &qrdbsdk.DatabaseInfo{
 				TenantID: "tenant-1",
 				Name:     cfg.Name,
-				Engine:   cfg.Engine,
 				Backend:  cfg.Backend,
 				Status:   qrdbsdk.StatusOpen,
 			}, nil
@@ -233,7 +234,6 @@ func TestDatabaseService_CreateDatabase(t *testing.T) {
 
 	req := &CreateDatabaseRequest{
 		Name:    "mydb",
-		Engine:  "kv",
 		Backend: "memory",
 	}
 	info, err := svc.CreateDatabase(context.Background(), req)
@@ -242,11 +242,9 @@ func TestDatabaseService_CreateDatabase(t *testing.T) {
 	require.NotNil(t, info)
 	assert.Equal(t, "tenant-1", info.TenantID)
 	assert.Equal(t, "mydb", info.Name)
-	assert.Equal(t, "kv", info.Engine)
 	assert.Equal(t, "memory", info.Backend)
 	assert.Equal(t, "open", info.Status)
 	assert.Equal(t, "mydb", capturedCfg.Name)
-	assert.Equal(t, qrdbsdk.EngineKV, capturedCfg.Engine)
 	assert.Equal(t, qrdbsdk.BackendMemory, capturedCfg.Backend)
 }
 
@@ -292,7 +290,6 @@ func TestDatabaseService_GetDatabase(t *testing.T) {
 			return &qrdbsdk.DatabaseInfo{
 				TenantID: "tenant-2",
 				Name:     name,
-				Engine:   qrdbsdk.EngineKV,
 				Backend:  qrdbsdk.BackendMemory,
 				Status:   qrdbsdk.StatusOpen,
 			}, nil
@@ -306,7 +303,6 @@ func TestDatabaseService_GetDatabase(t *testing.T) {
 	require.NotNil(t, info)
 	assert.Equal(t, "tenant-2", info.TenantID)
 	assert.Equal(t, "testdb", info.Name)
-	assert.Equal(t, "kv", info.Engine)
 	assert.Equal(t, "memory", info.Backend)
 }
 
@@ -334,8 +330,8 @@ func TestDatabaseService_ListDatabases(t *testing.T) {
 	mock := &mockDBServicer{
 		listForTenantFn: func(_ context.Context) ([]qrdbsdk.DatabaseInfo, error) {
 			return []qrdbsdk.DatabaseInfo{
-				{TenantID: "t1", Name: "db1", Engine: qrdbsdk.EngineKV, Status: qrdbsdk.StatusOpen},
-				{TenantID: "t1", Name: "db2", Engine: qrdbsdk.EngineVector, Status: qrdbsdk.StatusOpen},
+				{TenantID: "t1", Name: "db1", Status: qrdbsdk.StatusOpen},
+				{TenantID: "t1", Name: "db2", Status: qrdbsdk.StatusOpen},
 			}, nil
 		},
 	}
@@ -348,7 +344,6 @@ func TestDatabaseService_ListDatabases(t *testing.T) {
 	assert.Equal(t, "db1", infos[0].Name)
 	assert.Equal(t, "db2", infos[1].Name)
 	assert.Equal(t, "t1", infos[0].TenantID)
-	assert.Equal(t, "vector", infos[1].Engine)
 }
 
 func TestDatabaseService_ListDatabases_Empty(t *testing.T) {
@@ -429,7 +424,6 @@ func TestDatabaseService_UpdateDatabaseProtocol(t *testing.T) {
 			capturedProto = p
 			return &qrdbsdk.DatabaseInfo{
 				Name:     name,
-				Engine:   qrdbsdk.EngineKV,
 				Status:   qrdbsdk.StatusOpen,
 				Protocol: p,
 			}, nil
@@ -741,7 +735,6 @@ func TestConvertDatabaseInfo_FullFields(t *testing.T) {
 	qrdbInfo := &qrdbsdk.DatabaseInfo{
 		TenantID: "tenant-1",
 		Name:     "fulldb",
-		Engine:   qrdbsdk.EngineVector,
 		Backend:  qrdbsdk.BackendPebble,
 		Status:   qrdbsdk.StatusOpen,
 		Protocol: qrdbsdk.ProtocolConfig{
@@ -772,7 +765,6 @@ func TestConvertDatabaseInfo_FullFields(t *testing.T) {
 
 	assert.Equal(t, "tenant-1", result.TenantID)
 	assert.Equal(t, "fulldb", result.Name)
-	assert.Equal(t, "vector", result.Engine)
 	assert.Equal(t, "pebble", result.Backend)
 	assert.Equal(t, "open", result.Status)
 	assert.True(t, result.Protocol.MySQL)
@@ -796,14 +788,12 @@ func TestConvertDatabaseInfo_FullFields(t *testing.T) {
 func TestConvertDatabaseInfo_MinimalFields(t *testing.T) {
 	qrdbInfo := &qrdbsdk.DatabaseInfo{
 		Name:   "simple",
-		Engine: qrdbsdk.EngineKV,
 		Status: qrdbsdk.StatusOpen,
 	}
 
 	result := convertDatabaseInfo(qrdbInfo)
 
 	assert.Equal(t, "simple", result.Name)
-	assert.Equal(t, "kv", result.Engine)
 	assert.Equal(t, "open", result.Status)
 	assert.Nil(t, result.Protocol.Etcd)
 	assert.Nil(t, result.Raft)

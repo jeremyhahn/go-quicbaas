@@ -442,7 +442,6 @@ func TestXKMSReExports_TypeAliasesCompile(t *testing.T) {
 	var _ XKMSCryptoService = (xkmstransport.CryptoService)(nil)
 	var _ XKMSCertService = (xkmstransport.CertService)(nil)
 	var _ XKMSSealService = (xkmstransport.SealService)(nil)
-	var _ XKMSBarrierService = (xkmstransport.BarrierService)(nil)
 	var _ XKMSPIVService = (xkmstransport.PIVService)(nil)
 	var _ XKMSFIDO2Service = (xkmstransport.FIDO2Service)(nil)
 	var _ TrustedCAService = (xkmstransport.CAService)(nil)

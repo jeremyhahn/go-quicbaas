@@ -21,10 +21,8 @@
 // Verbs:
 //
 //	status                   Show the current ceremony state
-//	claim-cert               Two-step certificate claim (begin then complete)
 //	claim-share              Claim the officer's Shamir share (challenge-response)
 //	sign-csr                 SO-authorised CSR signing
-//	enroll-external-officer  Enrol an officer whose key material is held externally
 //
 // All commands route through the SDK CeremonyClient
 // (sdk/go.Client.BarrierCeremony()), which speaks to the
@@ -36,9 +34,6 @@ package main
 import (
 	"context"
 	"crypto"
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -51,6 +46,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
@@ -62,22 +58,15 @@ import (
 // =============================================================================
 
 var (
-	initServer       string
-	initSPKIPin      string
-	initUsername     string
-	initCSRKeyPath   string
-	initOutputPath   string
-	initTLSCertPath  string
-	initTLSKeyPath   string
-	initSOPin        string
-	initCSRPath      string
-	initRole         string
-	initCertPath     string
-	initPubKeyPath   string
-	initShareIndex   int
-	initAuthFactor   string
-	initOutputFmt    string
-	validAuthFactors = map[string]struct{}{"mtls": {}, "webauthn": {}, "piv": {}}
+	initServer      string
+	initUsername    string
+	initOutputPath  string
+	initTLSCertPath string
+	initTLSKeyPath  string
+	initSOPin       string
+	initCSRPath     string
+	initRole        string
+	initOutputFmt   string
 )
 
 // =============================================================================
@@ -92,12 +81,7 @@ var (
 type CeremonyClient interface {
 	CeremonyInitialize(ctx context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error)
 	CeremonyStatus(ctx context.Context) (*qrdbtransport.CeremonyStatusResponse, error)
-	CeremonyClaimCertBegin(ctx context.Context, req *qrdbtransport.ClaimCertBeginRequest) (*qrdbtransport.ClaimCertBeginResponse, error)
-	CeremonyClaimCertComplete(ctx context.Context, req *qrdbtransport.ClaimCertCompleteRequest) (*qrdbtransport.ClaimCertCompleteResponse, error)
-	CeremonyBeginClaimShare(ctx context.Context, req *qrdbtransport.BeginClaimShareRequest) (*qrdbtransport.BeginClaimShareResponse, error)
-	CeremonyCompleteClaimShare(ctx context.Context, req *qrdbtransport.CompleteClaimShareRequest) (*qrdbtransport.CompleteClaimShareResponse, error)
 	CeremonySignCSR(ctx context.Context, req *qrdbtransport.SignCSRInitRequest) (*qrdbtransport.SignCSRInitResponse, error)
-	CeremonyEnrollExternalOfficer(ctx context.Context, req *qrdbtransport.EnrollExternalOfficerRequest) (*qrdbtransport.EnrollExternalOfficerResponse, error)
 }
 
 // CeremonyClientFactory creates CeremonyClient instances.
@@ -122,29 +106,8 @@ func createSDKCeremonyClient() (CeremonyClient, error) {
 // Errors
 // =============================================================================
 
-// InitMutualExclusiveCertPubKeyError is returned when both --cert and
-// --pubkey are supplied (or neither) to enroll-external-officer.
-type InitMutualExclusiveCertPubKeyError struct{}
-
-// Error returns a human-readable description.
-func (e *InitMutualExclusiveCertPubKeyError) Error() string {
-	return "init enroll-external-officer: exactly one of --cert or --pubkey is required"
-}
-
-// InitInvalidAuthFactorError is returned when --auth-factor is not one
-// of mtls / webauthn / piv.
-type InitInvalidAuthFactorError struct {
-	Got string
-}
-
-// Error returns a human-readable description.
-func (e *InitInvalidAuthFactorError) Error() string {
-	return "init enroll-external-officer: invalid --auth-factor " + e.Got +
-		" (must be one of mtls, webauthn, piv)"
-}
-
-// InitCSRKeySignError is returned when claim-cert cannot sign the
-// challenge nonce with the supplied --csr-key.
+// InitCSRKeySignError is returned when claim-share cannot sign the
+// challenge nonce with the supplied key.
 type InitCSRKeySignError struct {
 	Path string
 	Err  error
@@ -152,14 +115,14 @@ type InitCSRKeySignError struct {
 
 // Error returns a human-readable description.
 func (e *InitCSRKeySignError) Error() string {
-	return "init claim-cert: failed to sign challenge with --csr-key " +
+	return "init claim-share: failed to sign challenge with " +
 		e.Path + ": " + e.Err.Error()
 }
 
 // Unwrap returns the wrapped error.
 func (e *InitCSRKeySignError) Unwrap() error { return e.Err }
 
-// InitWriteFileError is returned when claim-cert / claim-share cannot
+// InitWriteFileError is returned when an init verb cannot
 // write its output file.
 type InitWriteFileError struct {
 	Path string
@@ -194,7 +157,7 @@ func (e *InitWriteFileError) Unwrap() error { return e.Err }
 func newInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Bootstrap-time ceremony commands (status, claim-cert, claim-share, ...)",
+		Short: "Bootstrap-time ceremony commands (status, officer, claim-share, ...)",
 		Long: `Bootstrap-time ceremony commands.
 
 These commands drive the initialization ceremony against a RUNNING daemon.
@@ -205,23 +168,19 @@ verbs from its sealed window. The order follows go-qrdb's Security Officer
 distribution model — shares are never written to disk and are released to
 each officer exactly once, live, over their own mTLS certificate:
 
-  1. officer register        Enrol each officer's CSR (returns their cert
-                             and share index, never share bytes)
-  2. initialize              Run the ceremony: split the secret and seal one
-                             share per officer into a memguard enclave
-  3. claim-cert              Each officer claims their issued certificate
-  4. claim-share             Each officer claims their share (release-once)
-  5. quicbaas barrier unseal A quorum submits shares to unseal
+  1. officer register        Enrol each officer's CSR (returns their
+                             CA-issued cert, never share bytes)
+  2. initialize              Run the ceremony: seal one share envelope
+                             per officer
+  3. claim-share             Each officer claims their share envelope
+  4. quicbaas barrier quorum A quorum submits shares to unseal
 
 Verbs:
   initialize               Run the initialization ceremony
   status                   Show the current ceremony state
-  officer register|list|status
-                           Manage Security Officer enrolment
-  claim-cert               Two-step certificate claim (begin then complete)
-  claim-share              Claim the officer's Shamir share (challenge-response)
-  sign-csr                 SO-authorised CSR signing
-  enroll-external-officer  Enrol an officer whose key material is external`,
+  officer register|list     Manage Security Officer enrolment
+  claim-share              Claim the officer's share envelope (challenge-response)
+  sign-csr                 SO-authorised CSR signing`,
 	}
 
 	cmd.PersistentFlags().StringVar(&initOutputFmt, "output", "table",
@@ -230,10 +189,8 @@ Verbs:
 	cmd.AddCommand(newInitInitializeCommand())
 	cmd.AddCommand(newInitStatusCommand())
 	cmd.AddCommand(newInitOfficerCommand())
-	cmd.AddCommand(newInitClaimCertCommand())
 	cmd.AddCommand(newInitClaimShareCommand())
 	cmd.AddCommand(newInitSignCSRCommand())
-	cmd.AddCommand(newInitEnrollExternalOfficerCommand())
 
 	return cmd
 }
@@ -278,97 +235,11 @@ func runInitStatusCommand(cmd *cobra.Command, _ []string) error {
 	return formatInitStatusResponse(resp, initOutputFmt, cmd.OutOrStdout())
 }
 
-// =============================================================================
-// claim-cert
-// =============================================================================
-
-// newInitClaimCertCommand builds 'quicbaas init claim-cert'.
-func newInitClaimCertCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "claim-cert",
-		Short: "Claim the issued certificate for an officer (challenge-response)",
-		Long: `Two-step certificate claim:
-
-1. Begin: server returns a nonce.
-2. Officer signs the nonce with their CSR private key.
-3. Complete: server verifies the signature and returns the issued cert.
-
-The signed cert is written to --output.
-
-Example:
-  quicbaas init claim-cert \
-      --server https://quicbaas.example.com:8443 \
-      --spki-pin "sha256/abcdef..." \
-      --username alice \
-      --csr-key alice.key \
-      --output alice.crt`,
-		RunE: runInitClaimCertCommand,
-	}
-	cmd.Flags().StringVar(&initServer, "server", "",
-		"Override the global --address for this call (optional)")
-	cmd.Flags().StringVar(&initSPKIPin, "spki-pin", "",
-		"SPKI pin for trust verification (optional, audit only)")
-	cmd.Flags().StringVar(&initUsername, "username", "",
-		"Officer username (required)")
-	cmd.Flags().StringVar(&initCSRKeyPath, "csr-key", "",
-		"Path to the PEM-encoded CSR private key (required)")
-	cmd.Flags().StringVar(&initOutputPath, "output", "",
-		"Path where the issued certificate should be written (required)")
-	return cmd
-}
-
-// runInitClaimCertCommand executes 'init claim-cert'.
-func runInitClaimCertCommand(_ *cobra.Command, _ []string) error {
-	if initUsername == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "--username is required")
-	}
-	if initCSRKeyPath == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "--csr-key is required")
-	}
-	if initOutputPath == "" {
-		return errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "--output is required")
-	}
-
-	client, err := ceremonyClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	begin, err := client.CeremonyClaimCertBegin(ctx, &qrdbtransport.ClaimCertBeginRequest{
-		Username: initUsername,
-	})
-	if err != nil {
-		return formatError(err)
-	}
-
-	signature, err := signNonceWithKeyFile(initCSRKeyPath, begin.NonceHex)
-	if err != nil {
-		return formatError(err)
-	}
-
-	complete, err := client.CeremonyClaimCertComplete(ctx, &qrdbtransport.ClaimCertCompleteRequest{
-		Username:  initUsername,
-		NonceHex:  begin.NonceHex,
-		Signature: hex.EncodeToString(signature),
-	})
-	if err != nil {
-		return formatError(err)
-	}
-
-	if err := writeFileSecure(initOutputPath, []byte(complete.CertPEM)); err != nil {
-		return formatError(err)
-	}
-	return nil
-}
-
-// signNonceWithKeyFile loads a PEM-encoded private key from path and
-// signs the hex-encoded nonce with the scheme the qrdb ceremony verifier
-// expects: Ed25519 signs the raw nonce, every other key signs the SHA-256
-// digest. Returns the raw signature bytes.
-func signNonceWithKeyFile(path, nonceHex string) ([]byte, error) {
+// signShareClaimWithKeyFile loads a PEM-encoded private key from path and
+// signs the share-claim message the qrdb ceremony verifier checks: the
+// domain's claim label, the holder's username and the hex-encoded nonce,
+// bound together by qrdbsdk.SignShareClaim. Returns the raw signature bytes.
+func signShareClaimWithKeyFile(path, label, username, nonceHex string) ([]byte, error) {
 	keyPEM, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &InitCSRKeySignError{Path: path, Err: err}
@@ -388,19 +259,11 @@ func signNonceWithKeyFile(path, nonceHex string) ([]byte, error) {
 	if !ok {
 		return nil, &InitCSRKeySignError{
 			Path: path,
-			Err:  errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "key does not implement crypto.Signer"),
+			Err:  errors.Newf(errors.ErrInvalidInput, "init.claim-share", "key does not implement crypto.Signer"),
 		}
 	}
 
-	digest := sha256.Sum256(nonce)
-	var sig []byte
-	switch signer.(type) {
-	case ed25519.PrivateKey:
-		// Ed25519 signs the message itself, not a digest.
-		sig, err = signer.Sign(rand.Reader, nonce, crypto.Hash(0))
-	default:
-		sig, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
-	}
+	sig, err := qrdbsdk.SignShareClaim(signer, label, username, nonce)
 	if err != nil {
 		return nil, &InitCSRKeySignError{Path: path, Err: err}
 	}
@@ -412,7 +275,7 @@ func signNonceWithKeyFile(path, nonceHex string) ([]byte, error) {
 func parsePrivateKeyPEM(data []byte) (interface{}, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {
-		return nil, errors.Newf(errors.ErrInvalidInput, "init.claim-cert", "no PEM block found")
+		return nil, errors.Newf(errors.ErrInvalidInput, "init.claim-share", "no PEM block found")
 	}
 	switch block.Type {
 	case "PRIVATE KEY":
@@ -427,7 +290,7 @@ func parsePrivateKeyPEM(data []byte) (interface{}, error) {
 			return k, nil
 		}
 		return nil, errors.Newf(errors.ErrInvalidInput,
-			"init.claim-cert", "unsupported PEM block type "+block.Type)
+			"init.claim-share", "unsupported PEM block type "+block.Type)
 	}
 }
 
@@ -445,10 +308,11 @@ func newInitClaimShareCommand() *cobra.Command {
 1. Begin: server returns a challenge nonce (identity proven via mTLS with
    the officer's issued cert + key).
 2. Officer signs the nonce with their certificate private key (--tls-key).
-3. Complete: server verifies the signature and releases the share exactly
-   once.
+3. Complete: server verifies the signature and releases the share
+   envelope, sealed to the officer's enrolled key.
 
-The share JSON is written to --output.
+The envelope is written to --output. --domain recovery claims a recovery
+share instead of an unseal share.
 
 Example:
   quicbaas init claim-share \
@@ -468,7 +332,8 @@ Example:
 	cmd.Flags().StringVar(&initUsername, "username", "",
 		"Officer username (required)")
 	cmd.Flags().StringVar(&initOutputPath, "output", "",
-		"Path where the share JSON should be written (required)")
+		"Path where the share envelope should be written (required)")
+	addBarrierDomainFlag(cmd)
 	return cmd
 }
 
@@ -486,28 +351,32 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 	if initOutputPath == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.claim-share", "--output is required")
 	}
+	if err := validateBarrierQuorumDomain("init.claim-share", barrierDomain); err != nil {
+		return err
+	}
 
-	client, err := ceremonyClientFactory()
+	client, err := barrierClientFactory()
 	if err != nil {
 		return formatError(err)
 	}
+	claim := shareClaimFor(client, barrierDomain)
 
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	begin, err := client.CeremonyBeginClaimShare(ctx, &qrdbtransport.BeginClaimShareRequest{
+	begin, err := claim.begin(ctx, &qrdbtransport.ShareClaimBeginRequest{
 		Username: initUsername,
 	})
 	if err != nil {
 		return formatError(err)
 	}
 
-	signature, err := signNonceWithKeyFile(initTLSKeyPath, begin.NonceHex)
+	signature, err := signShareClaimWithKeyFile(initTLSKeyPath, claim.label, initUsername, begin.NonceHex)
 	if err != nil {
 		return formatError(err)
 	}
 
-	complete, err := client.CeremonyCompleteClaimShare(ctx, &qrdbtransport.CompleteClaimShareRequest{
+	complete, err := claim.complete(ctx, &qrdbtransport.ShareClaimCompleteRequest{
 		Username:  initUsername,
 		NonceHex:  begin.NonceHex,
 		Signature: signature,
@@ -516,10 +385,37 @@ func runInitClaimShareCommand(_ *cobra.Command, _ []string) error {
 		return formatError(err)
 	}
 
-	if err := writeFileSecure(initOutputPath, []byte(complete.ShareJSON)); err != nil {
+	if err := writeFileSecure(initOutputPath, complete.Envelope); err != nil {
 		return formatError(err)
 	}
 	return nil
+}
+
+// shareClaim is the claim handshake of one quorum domain and the claim
+// label its signature is bound to.
+type shareClaim struct {
+	label    string
+	begin    func(context.Context, *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error)
+	complete func(context.Context, *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error)
+}
+
+// shareClaimFor returns the claim handshake for domain, which the caller has
+// already validated: the recovery domain claims through the Recovery* verbs
+// under the recovery label, the unseal domain through the plain ones under
+// the system label.
+func shareClaimFor(client BarrierClient, domain string) shareClaim {
+	if domain == qrdbtransport.DomainRecovery {
+		return shareClaim{
+			label:    qrdbsdk.RecoveryClaimLabel,
+			begin:    client.RecoveryShareClaimBegin,
+			complete: client.RecoveryShareClaimComplete,
+		}
+	}
+	return shareClaim{
+		label:    qrdbsdk.SystemClaimLabel,
+		begin:    client.ShareClaimBegin,
+		complete: client.ShareClaimComplete,
+	}
 }
 
 // =============================================================================
@@ -595,95 +491,6 @@ func runInitSignCSRCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprint(cmd.OutOrStdout(), resp.CertPEM)
-	return nil
-}
-
-// =============================================================================
-// enroll-external-officer
-// =============================================================================
-
-// newInitEnrollExternalOfficerCommand builds 'quicbaas init enroll-external-officer'.
-func newInitEnrollExternalOfficerCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "enroll-external-officer",
-		Short: "Enrol an officer whose key material is held externally",
-		Long: `Enrol an officer using key material that lives outside QuicBaaS
-(e.g. on a hardware token, a remote KMS, or a federated identity).
-
-Exactly one of --cert (PEM x509 certificate) or --pubkey (PEM public
-key) must be supplied. --auth-factor selects the authentication factor
-the officer will present (one of mtls, webauthn, piv).
-
-Example:
-  quicbaas init enroll-external-officer \
-      --server https://quicbaas.example.com:8443 \
-      --username dave \
-      --cert dave.crt \
-      --share-index 4 \
-      --auth-factor piv`,
-		RunE: runInitEnrollExternalOfficerCommand,
-	}
-	cmd.Flags().StringVar(&initServer, "server", "",
-		"Override the global --address for this call (optional)")
-	cmd.Flags().StringVar(&initUsername, "username", "",
-		"Officer username (required)")
-	cmd.Flags().StringVar(&initCertPath, "cert", "",
-		"Path to the PEM-encoded officer certificate (XOR with --pubkey)")
-	cmd.Flags().StringVar(&initPubKeyPath, "pubkey", "",
-		"Path to the PEM-encoded officer public key (XOR with --cert)")
-	cmd.Flags().IntVar(&initShareIndex, "share-index", 0,
-		"Zero-based Shamir share index assigned to this officer (required)")
-	cmd.Flags().StringVar(&initAuthFactor, "auth-factor", "",
-		"Authentication factor the officer will present: mtls, webauthn, or piv (required)")
-	return cmd
-}
-
-// runInitEnrollExternalOfficerCommand executes 'init enroll-external-officer'.
-func runInitEnrollExternalOfficerCommand(_ *cobra.Command, _ []string) error {
-	if initUsername == "" {
-		return errors.Newf(errors.ErrInvalidInput,
-			"init.enroll-external-officer", "--username is required")
-	}
-	if (initCertPath == "" && initPubKeyPath == "") || (initCertPath != "" && initPubKeyPath != "") {
-		return formatError(&InitMutualExclusiveCertPubKeyError{})
-	}
-	if _, ok := validAuthFactors[initAuthFactor]; !ok {
-		return formatError(&InitInvalidAuthFactorError{Got: initAuthFactor})
-	}
-
-	req := &qrdbtransport.EnrollExternalOfficerRequest{
-		Username:   initUsername,
-		ShareIndex: initShareIndex,
-		AuthFactor: initAuthFactor,
-	}
-	if initCertPath != "" {
-		certPEM, err := os.ReadFile(initCertPath)
-		if err != nil {
-			return formatError(errors.Wrapf(err, errors.ErrInvalidInput,
-				"init.enroll-external-officer", "failed to read --cert %s", initCertPath))
-		}
-		req.CertPEM = string(certPEM)
-	}
-	if initPubKeyPath != "" {
-		pubPEM, err := os.ReadFile(initPubKeyPath)
-		if err != nil {
-			return formatError(errors.Wrapf(err, errors.ErrInvalidInput,
-				"init.enroll-external-officer", "failed to read --pubkey %s", initPubKeyPath))
-		}
-		req.PubKeyPEM = string(pubPEM)
-	}
-
-	client, err := ceremonyClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	if _, err := client.CeremonyEnrollExternalOfficer(ctx, req); err != nil {
-		return formatError(err)
-	}
 	return nil
 }
 

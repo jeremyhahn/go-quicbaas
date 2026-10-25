@@ -16,9 +16,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -41,9 +41,20 @@ func resetInitCeremonyFlags() {
 	initUsername = ""
 	initCSRPath = ""
 	initOutputPath = ""
-	initAuthFactor = ""
-	initAuthRef = ""
+	initRole = qrdbtransport.RoleSecurityOfficer
+	initDesignated = ""
+	initFactors = nil
+	initEncKEM = ""
+	initEncKeyPath = ""
+	initAdminCSRPath = ""
+	initAdminCertPath = ""
+	initAdminCertPoolPath = ""
+	initAdminGenerate = false
+	initAdminKeyOut = ""
+	initAdminCertOut = ""
+	initSecret = ""
 	initOutputFmt = "table"
+	resetBarrierFlags()
 }
 
 // writeCSRFixture writes a placeholder CSR file and returns its path. The CLI
@@ -138,6 +149,7 @@ func TestRunInitInitialize_SendsThePlanToTheServer(t *testing.T) {
 		"alice:" + writeCSRFixture(t, dir, "alice.csr"),
 		"bob:" + writeCSRFixture(t, dir, "bob.csr"),
 	}
+	initAdminCSRPath = writeCSRFixture(t, dir, "admin.csr")
 
 	cmd := &cobra.Command{Use: "initialize"}
 	var out bytes.Buffer
@@ -151,6 +163,7 @@ func TestRunInitInitialize_SendsThePlanToTheServer(t *testing.T) {
 	assert.Equal(t, 2, req.Threshold)
 	require.Len(t, req.Officers, 2)
 	assert.Equal(t, "alice", req.Officers[0].Username)
+	assert.NotEmpty(t, req.AdminCSRPEM)
 
 	// The operator is told what happened and where the shares are — and the
 	// output must never contain share material.
@@ -158,6 +171,127 @@ func TestRunInitInitialize_SendsThePlanToTheServer(t *testing.T) {
 	assert.Contains(t, got, "enrolling")
 	assert.Contains(t, got, "3 generated")
 	assert.Contains(t, got, "claim-share")
+}
+
+// csrInitializeWithRoster selects --admin-csr with an inline two-officer
+// --so roster and answers with the issued admin and holder certificates.
+func csrInitializeWithRoster(t *testing.T, dir string) *fakeCeremonyClient {
+	t.Helper()
+	initSOPin = "so-pin"
+	initUserPin = "user-pin"
+	initThreshold = 2
+	initOfficerSpec = []string{
+		"alice:" + writeCSRFixture(t, dir, "alice.csr"),
+		"bob:" + writeCSRFixture(t, dir, "bob.csr"),
+	}
+	initAdminCSRPath = writeCSRFixture(t, dir, "admin.csr")
+	return generatedCredentialClient(&qrdbtransport.CeremonyInitializeResponse{
+		State:        "complete",
+		ShareCount:   2,
+		AdminCertPEM: testIssuedAdminCertPEM,
+		Holders: []qrdbtransport.CeremonyHolderCert{
+			{Username: "alice", Role: qrdbtransport.RoleSecurityOfficer, CertPEM: testIssuedAliceCertPEM},
+			{Username: "bob", Role: qrdbtransport.RoleSecurityOfficer, CertPEM: testIssuedBobCertPEM},
+		},
+	})
+}
+
+// Certificates the daemon issues for an --admin-csr ceremony with an inline
+// roster; the CLI must deliver every one of them.
+const (
+	testIssuedAdminCertPEM = "-----BEGIN CERTIFICATE-----\nissued-admin-cert\n-----END CERTIFICATE-----\n"
+	testIssuedAliceCertPEM = "-----BEGIN CERTIFICATE-----\nissued-alice-cert\n-----END CERTIFICATE-----\n"
+	testIssuedBobCertPEM   = "-----BEGIN CERTIFICATE-----\nissued-bob-cert\n-----END CERTIFICATE-----\n"
+)
+
+// TestRunInitInitialize_AdminCSRDeliversEveryIssuedCertificate: the
+// initialization cannot be repeated, so the default output prints the issued
+// admin certificate and each inline holder's certificate, labelled with its
+// holder, or the operator is left without the admin mTLS and officer certs.
+func TestRunInitInitialize_AdminCSRDeliversEveryIssuedCertificate(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	restore := withFakeCeremony(csrInitializeWithRoster(t, t.TempDir()))
+	defer restore()
+
+	cmd := &cobra.Command{Use: "initialize"}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	require.NoError(t, runInitInitializeCommand(cmd, nil))
+
+	got := out.String()
+	assert.Contains(t, got, "Admin Certificate:\n"+testIssuedAdminCertPEM)
+	assert.Contains(t, got, "Holder alice ("+qrdbtransport.RoleSecurityOfficer+") Certificate:\n"+testIssuedAliceCertPEM)
+	assert.Contains(t, got, "Holder bob ("+qrdbtransport.RoleSecurityOfficer+") Certificate:\n"+testIssuedBobCertPEM)
+	assert.NotContains(t, got, "PRIVATE KEY")
+}
+
+// TestRunInitInitialize_AdminCSRWritesTheCertificateOut: with --admin-cert-out
+// the issued admin certificate is saved there, named in the output and not
+// printed; the holder certificates are still printed.
+func TestRunInitInitialize_AdminCSRWritesTheCertificateOut(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	dir := t.TempDir()
+	restore := withFakeCeremony(csrInitializeWithRoster(t, dir))
+	defer restore()
+	initAdminCertOut = filepath.Join(dir, "admin.crt")
+
+	cmd := &cobra.Command{Use: "initialize"}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	require.NoError(t, runInitInitializeCommand(cmd, nil))
+
+	cert, err := os.ReadFile(initAdminCertOut)
+	require.NoError(t, err)
+	assert.Equal(t, testIssuedAdminCertPEM, string(cert))
+	got := out.String()
+	assert.Contains(t, got, initAdminCertOut)
+	assert.NotContains(t, got, "issued-admin-cert")
+	assert.Contains(t, got, testIssuedAliceCertPEM)
+	assert.Contains(t, got, testIssuedBobCertPEM)
+}
+
+// TestRunInitInitialize_AdminCSRCertificateOutMissingInResponse: a response
+// without the admin certificate is an error and leaves no empty file.
+func TestRunInitInitialize_AdminCSRCertificateOutMissingInResponse(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	dir := t.TempDir()
+	csrInitializeWithRoster(t, dir)
+	restore := withFakeCeremony(generatedCredentialClient(&qrdbtransport.CeremonyInitializeResponse{State: "complete"}))
+	defer restore()
+	initAdminCertOut = filepath.Join(dir, "admin.crt")
+
+	err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+	var missing *InitAdminCredentialMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.NoFileExists(t, initAdminCertOut)
+}
+
+// TestRunInitInitialize_AdminCSRJSONCarriesTheCertificates: the JSON output
+// stays the daemon's response verbatim, holders and admin certificate included.
+func TestRunInitInitialize_AdminCSRJSONCarriesTheCertificates(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	restore := withFakeCeremony(csrInitializeWithRoster(t, t.TempDir()))
+	defer restore()
+	initOutputFmt = "json"
+
+	cmd := &cobra.Command{Use: "initialize"}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	require.NoError(t, runInitInitializeCommand(cmd, nil))
+
+	var resp qrdbtransport.CeremonyInitializeResponse
+	require.NoError(t, json.Unmarshal(out.Bytes(), &resp))
+	assert.Equal(t, testIssuedAdminCertPEM, resp.AdminCertPEM)
+	require.Len(t, resp.Holders, 2)
+	assert.Equal(t, testIssuedBobCertPEM, resp.Holders[1].CertPEM)
 }
 
 // TestRunInitInitialize_RequiresPINs verifies both PINs are mandatory: the
@@ -225,8 +359,8 @@ func TestRunInitOfficerRegister_SubmitsTheCSRAndWritesTheCert(t *testing.T) {
 	fb := &fakeBarrierClient{
 		officerRegisterFunc: func(_ context.Context, _ *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
 			return &qrdbtransport.OfficerRegisterResponse{
-				CertPEM:    []byte("-----BEGIN CERTIFICATE-----\nalice\n-----END CERTIFICATE-----\n"),
-				ShareIndex: 1,
+				CertPEM: "-----BEGIN CERTIFICATE-----\nalice\n-----END CERTIFICATE-----\n",
+				Role:    qrdbtransport.RoleSecurityOfficer,
 			}, nil
 		},
 	}
@@ -236,6 +370,8 @@ func TestRunInitOfficerRegister_SubmitsTheCSRAndWritesTheCert(t *testing.T) {
 	initUsername = "alice"
 	initCSRPath = writeCSRFixture(t, dir, "alice.csr")
 	initOutputPath = certPath
+	initDesignated = "piv"
+	initFactors = []string{"piv", `totp={"digits":6}`}
 
 	cmd := &cobra.Command{Use: "register"}
 	var out bytes.Buffer
@@ -245,16 +381,43 @@ func TestRunInitOfficerRegister_SubmitsTheCSRAndWritesTheCert(t *testing.T) {
 	req := fb.lastOfficerRegisterReq
 	require.NotNil(t, req)
 	assert.Equal(t, "alice", req.Username)
-	assert.Contains(t, string(req.CSRPEM), "CERTIFICATE REQUEST")
+	assert.Equal(t, qrdbtransport.RoleSecurityOfficer, req.Role)
+	assert.Equal(t, "piv", req.Designated)
+	assert.Contains(t, req.CSRPEM, "CERTIFICATE REQUEST")
+	require.Len(t, req.Factors, 2)
+	assert.Equal(t, "piv", req.Factors[0].Name)
+	assert.Nil(t, req.Factors[0].Params)
+	assert.Equal(t, "totp", req.Factors[1].Name)
+	assert.Equal(t, float64(6), req.Factors[1].Params["digits"])
+	assert.Zero(t, fb.recoveryRegisters)
 
 	written, err := os.ReadFile(certPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(written), "BEGIN CERTIFICATE")
 
-	// Registration reports the share INDEX, never share bytes.
-	got := out.String()
-	assert.Contains(t, got, "alice")
-	assert.Contains(t, got, "1")
+	assert.Contains(t, out.String(), "alice")
+}
+
+// TestRunInitOfficerRegister_RecoveryDomainUsesTheRecoveryVerb verifies
+// --domain recovery enrols the holder on the recovery roster, not the
+// unseal roster.
+func TestRunInitOfficerRegister_RecoveryDomainUsesTheRecoveryVerb(t *testing.T) {
+	resetInitCeremonyFlags()
+	fb := &fakeBarrierClient{
+		officerRegisterFunc: func(_ context.Context, _ *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error) {
+			return &qrdbtransport.OfficerRegisterResponse{}, nil
+		},
+	}
+	restore := withFakeBarrier(fb)
+	defer restore()
+
+	initUsername = "alice"
+	initCSRPath = writeCSRFixture(t, t.TempDir(), "alice.csr")
+	barrierDomain = qrdbtransport.DomainRecovery
+
+	require.NoError(t, runInitOfficerRegisterCommand(&cobra.Command{Use: "register"}, nil))
+	assert.Equal(t, 1, fb.recoveryRegisters)
+	require.NotNil(t, fb.lastOfficerRegisterReq)
 }
 
 // TestRunInitOfficerRegister_RequiresUsernameAndCSR verifies both inputs are
@@ -286,23 +449,35 @@ func TestRunInitOfficerRegister_RequiresUsernameAndCSR(t *testing.T) {
 	}
 }
 
-// TestRunInitOfficerRegister_RejectsUnknownAuthFactor verifies the officer's
-// authenticator binding is validated locally against the canonical set.
-func TestRunInitOfficerRegister_RejectsUnknownAuthFactor(t *testing.T) {
-	resetInitCeremonyFlags()
+// TestRunInitOfficerRegister_RejectsBadInputBeforeDialling verifies malformed
+// factors, an unpaired encryption key and an unknown domain are refused
+// locally, with no request sent.
+func TestRunInitOfficerRegister_RejectsBadInputBeforeDialling(t *testing.T) {
 	dir := t.TempDir()
+	csr := writeCSRFixture(t, dir, "alice.csr")
+	cases := map[string]func(){
+		"factor without a name":  func() { initFactors = []string{"=x"} },
+		"factor params not json": func() { initFactors = []string{"totp={bad"} },
+		"kem without key file":   func() { initEncKEM = "ml-kem-768" },
+		"key file without kem":   func() { initEncKeyPath = filepath.Join(dir, "k.pub") },
+		"unknown domain":         func() { barrierDomain = "audit" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetInitCeremonyFlags()
+			fb := &fakeBarrierClient{}
+			restore := withFakeBarrier(fb)
+			defer restore()
 
-	fb := &fakeBarrierClient{}
-	restore := withFakeBarrier(fb)
-	defer restore()
+			initUsername = "alice"
+			initCSRPath = csr
+			mutate()
 
-	initUsername = "alice"
-	initCSRPath = writeCSRFixture(t, dir, "alice.csr")
-	initAuthFactor = "smartwatch"
-
-	err := runInitOfficerRegisterCommand(&cobra.Command{Use: "register"}, nil)
-	require.Error(t, err)
-	assert.Nil(t, fb.lastOfficerRegisterReq)
+			err := runInitOfficerRegisterCommand(&cobra.Command{Use: "register"}, nil)
+			require.Error(t, err)
+			assert.Nil(t, fb.lastOfficerRegisterReq)
+		})
+	}
 }
 
 // TestRunInitOfficerRegister_MissingCSRFileFails verifies an unreadable CSR
@@ -332,8 +507,8 @@ func TestRunInitOfficerList_RendersTheRoster(t *testing.T) {
 	fb := &fakeBarrierClient{
 		officerListFunc: func(_ context.Context) ([]*qrdbtransport.OfficerStatus, error) {
 			return []*qrdbtransport.OfficerStatus{
-				{Username: "alice", ShareIndex: 1, AuthFactor: "mtls", CertThumbprint: "aa11"},
-				{Username: "bob", ShareIndex: 2, AuthFactor: "piv", CertThumbprint: "bb22"},
+				{Username: "alice", ShareIndex: 1, Designated: "mtls", CertThumbprint: "aa11"},
+				{Username: "bob", ShareIndex: 2, Designated: "piv", CertThumbprint: "bb22"},
 			}, nil
 		},
 	}
@@ -371,31 +546,6 @@ func TestRunInitOfficerList_EmptyRosterIsNotAnError(t *testing.T) {
 	assert.Contains(t, out.String(), "No Security Officers")
 }
 
-// TestRunInitOfficerStatus_ReportsClaimStateWithoutShares is the security
-// assertion for the status verb: it reports WHO has claimed, never WHAT.
-func TestRunInitOfficerStatus_ReportsClaimStateWithoutShares(t *testing.T) {
-	resetInitCeremonyFlags()
-	fb := &fakeBarrierClient{
-		officerClaimStatusFunc: func(_ context.Context) ([]*qrdbtransport.OfficerStatus, error) {
-			return []*qrdbtransport.OfficerStatus{
-				{Username: "alice", ShareIndex: 1, AuthFactor: "mtls", CertThumbprint: "aa11"},
-			}, nil
-		},
-	}
-	restore := withFakeBarrier(fb)
-	defer restore()
-
-	cmd := &cobra.Command{Use: "status"}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	require.NoError(t, runInitOfficerStatusCommand(cmd, nil))
-
-	got := out.String()
-	assert.Contains(t, got, "alice")
-	assert.NotContains(t, strings.ToLower(got), "share_value")
-	assert.NotContains(t, strings.ToLower(got), "secret")
-}
-
 // =============================================================================
 // Command tree
 // =============================================================================
@@ -411,10 +561,7 @@ func TestInitCommandTree_ExposesTheFullCeremonyFlow(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		byName[sub.Name()] = true
 	}
-	for _, want := range []string{
-		"initialize", "status", "officer",
-		"claim-cert", "claim-share", "sign-csr", "enroll-external-officer",
-	} {
+	for _, want := range canonicalInitVerbs {
 		assert.True(t, byName[want], "init is missing the %q verb", want)
 	}
 
@@ -430,7 +577,336 @@ func TestInitCommandTree_ExposesTheFullCeremonyFlow(t *testing.T) {
 	for _, sub := range officer.Commands() {
 		officerVerbs[sub.Name()] = true
 	}
-	for _, want := range []string{"register", "list", "status"} {
+	for _, want := range canonicalInitOfficerVerbs {
 		assert.True(t, officerVerbs[want], "init officer is missing the %q verb", want)
 	}
+}
+
+// TestRunInitInitialize_SendsTheAdminSelector proves each admin credential
+// flag reaches the server request, with the file flags read as PEM.
+func TestRunInitInitialize_SendsTheAdminSelector(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	cases := []struct {
+		name  string
+		set   func(dir string)
+		check func(t *testing.T, req *qrdbtransport.CeremonyInitializeRequest)
+	}{
+		{
+			name: "admin-csr",
+			set:  func(dir string) { initAdminCSRPath = writeCSRFixture(t, dir, "admin.csr") },
+			check: func(t *testing.T, req *qrdbtransport.CeremonyInitializeRequest) {
+				assert.NotEmpty(t, req.AdminCSRPEM)
+				assert.Empty(t, req.AdminCertPEM)
+				assert.False(t, req.AdminGenerate)
+			},
+		},
+		{
+			name: "admin-cert with pool",
+			set: func(dir string) {
+				initAdminCertPath = writeCSRFixture(t, dir, "admin.crt")
+				initAdminCertPoolPath = writeCSRFixture(t, dir, "pool.pem")
+			},
+			check: func(t *testing.T, req *qrdbtransport.CeremonyInitializeRequest) {
+				assert.NotEmpty(t, req.AdminCertPEM)
+				assert.NotEmpty(t, req.AdminCertPoolPEM)
+				assert.Empty(t, req.AdminCSRPEM)
+			},
+		},
+		{
+			name: "admin-generate",
+			set: func(dir string) {
+				initAdminGenerate = true
+				initAdminKeyOut = filepath.Join(dir, "admin.key")
+				initAdminCertOut = filepath.Join(dir, "admin.crt")
+			},
+			check: func(t *testing.T, req *qrdbtransport.CeremonyInitializeRequest) {
+				assert.True(t, req.AdminGenerate)
+				assert.Empty(t, req.AdminCSRPEM)
+				assert.Empty(t, req.AdminCertPEM)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetInitCeremonyFlags()
+			fc := &fakeCeremonyClient{
+				initializeFunc: func(_ context.Context, req *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+					resp := &qrdbtransport.CeremonyInitializeResponse{State: "complete"}
+					if req.AdminGenerate {
+						resp.AdminKeyPEM = []byte(testGeneratedKeyPEM)
+						resp.AdminCertPEM = testGeneratedCertPEM
+					}
+					return resp, nil
+				},
+			}
+			restore := withFakeCeremony(fc)
+			defer restore()
+
+			initSOPin = "so-pin"
+			initUserPin = "user-pin"
+			tc.set(t.TempDir())
+
+			cmd := &cobra.Command{Use: "initialize"}
+			cmd.SetOut(&bytes.Buffer{})
+			require.NoError(t, runInitInitializeCommand(cmd, nil))
+			require.NotNil(t, fc.lastInitializeReq)
+			tc.check(t, fc.lastInitializeReq)
+		})
+	}
+}
+
+// TestRunInitInitialize_RequiresExactlyOneAdminSelector proves no request
+// is sent unless exactly one admin credential flag is set.
+func TestRunInitInitialize_RequiresExactlyOneAdminSelector(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func(dir string)
+		count int
+	}{
+		{name: "none", set: func(string) {}, count: 0},
+		{
+			name: "csr and generate",
+			set: func(dir string) {
+				initAdminCSRPath = writeCSRFixture(t, dir, "admin.csr")
+				initAdminGenerate = true
+			},
+			count: 2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetInitCeremonyFlags()
+			fc := &fakeCeremonyClient{}
+			restore := withFakeCeremony(fc)
+			defer restore()
+
+			initSOPin = "so-pin"
+			initUserPin = "user-pin"
+			tc.set(t.TempDir())
+
+			err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+			require.Error(t, err)
+			var selErr *InitAdminSelectorError
+			require.ErrorAs(t, err, &selErr)
+			assert.Equal(t, tc.count, selErr.Count)
+			assert.Nil(t, fc.lastInitializeReq, "no request may be sent without exactly one selector")
+		})
+	}
+}
+
+// TestRunInitInitialize_UnreadableAdminFile proves a missing admin file is
+// reported with its flag and never sent.
+func TestRunInitInitialize_UnreadableAdminFile(t *testing.T) {
+	resetInitCeremonyFlags()
+	fc := &fakeCeremonyClient{}
+	restore := withFakeCeremony(fc)
+	defer restore()
+
+	initSOPin = "so-pin"
+	initUserPin = "user-pin"
+	initAdminCertPath = filepath.Join(t.TempDir(), "missing.crt")
+
+	err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+	require.Error(t, err)
+	var readErr *InitReadAdminFileError
+	require.ErrorAs(t, err, &readErr)
+	assert.Equal(t, "admin-cert", readErr.Flag)
+	assert.Nil(t, fc.lastInitializeReq)
+}
+
+// TestInitInitializeCommand_RegistersAdminFlags proves the selector and
+// passphrase flags are wired onto the cobra command.
+func TestInitInitializeCommand_RegistersAdminFlags(t *testing.T) {
+	cmd := newInitInitializeCommand()
+	for _, name := range []string{"admin-csr", "admin-cert", "admin-cert-pool", "admin-generate", "admin-key-out", "admin-cert-out", passphraseFlag, passphraseStdinFlag} {
+		assert.NotNil(t, cmd.Flags().Lookup(name), "flag --%s must be registered", name)
+	}
+	require.NoError(t, cmd.Flags().Parse([]string{"--admin-generate"}))
+	assert.True(t, initAdminGenerate)
+	resetInitCeremonyFlags()
+}
+
+// testGeneratedKeyPEM and testGeneratedCertPEM stand in for the credential
+// the daemon generates for --admin-generate; the CLI only stores them.
+const (
+	testGeneratedKeyPEM  = "-----BEGIN PRIVATE KEY-----\ngenerated-admin-key\n-----END PRIVATE KEY-----\n"
+	testGeneratedCertPEM = "-----BEGIN CERTIFICATE-----\ngenerated-admin-cert\n-----END CERTIFICATE-----\n"
+)
+
+// setAdminGenerate selects --admin-generate with key and certificate files
+// in dir and returns their paths.
+func setAdminGenerate(dir string) (keyPath, certPath string) {
+	initSOPin = "so-pin"
+	initUserPin = "user-pin"
+	initAdminGenerate = true
+	initAdminKeyOut = filepath.Join(dir, "admin.key")
+	initAdminCertOut = filepath.Join(dir, "admin.crt")
+	return initAdminKeyOut, initAdminCertOut
+}
+
+// generatedCredentialClient answers --admin-generate with resp.
+func generatedCredentialClient(resp *qrdbtransport.CeremonyInitializeResponse) *fakeCeremonyClient {
+	return &fakeCeremonyClient{
+		initializeFunc: func(_ context.Context, _ *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+			return resp, nil
+		},
+	}
+}
+
+// TestRunInitInitialize_AdminGenerateWritesTheCredentialFiles: the default
+// table output keeps the generated key on disk, mode 0600, and names the
+// files without printing the key.
+func TestRunInitInitialize_AdminGenerateWritesTheCredentialFiles(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	fc := generatedCredentialClient(&qrdbtransport.CeremonyInitializeResponse{
+		State:        "complete",
+		AdminKeyPEM:  []byte(testGeneratedKeyPEM),
+		AdminCertPEM: testGeneratedCertPEM,
+	})
+	restore := withFakeCeremony(fc)
+	defer restore()
+	keyPath, certPath := setAdminGenerate(t.TempDir())
+
+	cmd := &cobra.Command{Use: "initialize"}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	require.NoError(t, runInitInitializeCommand(cmd, nil))
+
+	key, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, testGeneratedKeyPEM, string(key))
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	cert, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	assert.Equal(t, testGeneratedCertPEM, string(cert))
+
+	assert.Contains(t, out.String(), keyPath)
+	assert.Contains(t, out.String(), certPath)
+	assert.NotContains(t, out.String(), "PRIVATE KEY")
+	assert.NotContains(t, out.String(), "generated-admin-key")
+}
+
+// TestRunInitInitialize_AdminGenerateRequiresOutputFiles: without a
+// destination for the key the daemon is never called.
+func TestRunInitInitialize_AdminGenerateRequiresOutputFiles(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	cases := []struct {
+		name  string
+		unset func()
+		flag  string
+	}{
+		{name: "no key file", unset: func() { initAdminKeyOut = "" }, flag: "admin-key-out"},
+		{name: "no cert file", unset: func() { initAdminCertOut = "" }, flag: "admin-cert-out"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetInitCeremonyFlags()
+			defer resetInitCeremonyFlags()
+			fc := &fakeCeremonyClient{}
+			restore := withFakeCeremony(fc)
+			defer restore()
+			setAdminGenerate(t.TempDir())
+			tc.unset()
+
+			err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+			var reqErr *InitAdminOutputRequiredError
+			require.ErrorAs(t, err, &reqErr)
+			assert.Equal(t, tc.flag, reqErr.Flag)
+			assert.Nil(t, fc.lastInitializeReq, "the daemon must not be called without a key destination")
+		})
+	}
+}
+
+// TestRunInitInitialize_AdminGenerateRefusesExistingOutputFile: an existing
+// file is never overwritten, the daemon is never called, and a key file
+// created before the refusal is removed again.
+func TestRunInitInitialize_AdminGenerateRefusesExistingOutputFile(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	cases := []struct {
+		name     string
+		existing func(keyPath, certPath string) string
+		flag     string
+	}{
+		{name: "key exists", existing: func(k, _ string) string { return k }, flag: "admin-key-out"},
+		{name: "cert exists", existing: func(_, c string) string { return c }, flag: "admin-cert-out"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetInitCeremonyFlags()
+			defer resetInitCeremonyFlags()
+			fc := &fakeCeremonyClient{}
+			restore := withFakeCeremony(fc)
+			defer restore()
+			keyPath, certPath := setAdminGenerate(t.TempDir())
+			existing := tc.existing(keyPath, certPath)
+			require.NoError(t, os.WriteFile(existing, []byte("keep"), 0o600))
+
+			err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+			var fileErr *InitAdminOutputFileError
+			require.ErrorAs(t, err, &fileErr)
+			assert.Equal(t, tc.flag, fileErr.Flag)
+			assert.Equal(t, "create", fileErr.Op)
+			assert.Nil(t, fc.lastInitializeReq, "the daemon must not be called when a file cannot be created")
+
+			kept, err := os.ReadFile(existing)
+			require.NoError(t, err)
+			assert.Equal(t, "keep", string(kept))
+			if existing == certPath {
+				assert.NoFileExists(t, keyPath, "the key file created before the refusal must be removed")
+			}
+		})
+	}
+}
+
+// TestRunInitInitialize_AdminGenerateCallFailureRemovesTheFiles: a failed
+// ceremony leaves no empty files, so the operator can retry with the same
+// paths.
+func TestRunInitInitialize_AdminGenerateCallFailureRemovesTheFiles(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	callErr := &InitAdminSelectorError{Count: 0}
+	fc := &fakeCeremonyClient{
+		initializeFunc: func(_ context.Context, _ *qrdbtransport.CeremonyInitializeRequest) (*qrdbtransport.CeremonyInitializeResponse, error) {
+			return nil, callErr
+		},
+	}
+	restore := withFakeCeremony(fc)
+	defer restore()
+	keyPath, certPath := setAdminGenerate(t.TempDir())
+
+	err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+	require.ErrorIs(t, err, callErr)
+	assert.NoFileExists(t, keyPath)
+	assert.NoFileExists(t, certPath)
+}
+
+// TestRunInitInitialize_AdminGenerateMissingCredentialInResponse: a response
+// without the certificate is an error, and the key it did carry is still
+// written.
+func TestRunInitInitialize_AdminGenerateMissingCredentialInResponse(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	fc := generatedCredentialClient(&qrdbtransport.CeremonyInitializeResponse{
+		State:       "complete",
+		AdminKeyPEM: []byte(testGeneratedKeyPEM),
+	})
+	restore := withFakeCeremony(fc)
+	defer restore()
+	keyPath, certPath := setAdminGenerate(t.TempDir())
+
+	err := runInitInitializeCommand(&cobra.Command{Use: "initialize"}, nil)
+	var missing *InitAdminCredentialMissingError
+	require.ErrorAs(t, err, &missing)
+	assert.Equal(t, "administrator certificate", missing.Field)
+
+	key, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, testGeneratedKeyPEM, string(key))
+	assert.NoFileExists(t, certPath)
 }

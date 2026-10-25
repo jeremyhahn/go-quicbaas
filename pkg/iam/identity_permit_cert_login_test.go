@@ -33,7 +33,7 @@ func seedWebAuthnUser(t *testing.T, store *IdentityStore) *User {
 	return user
 }
 
-func TestPermitCertificateLogin_AddsMTLS(t *testing.T) {
+func TestPermitCertificateLogin_AddsMTLSAndPIV(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 	user := seedWebAuthnUser(t, store)
@@ -42,7 +42,7 @@ func TestPermitCertificateLogin_AddsMTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PermitCertificateLogin failed: %v", err)
 	}
-	want := []string{AuthMethodWebAuthn, AuthMethodMTLS}
+	want := []string{AuthMethodWebAuthn, AuthMethodMTLS, AuthMethodPIV}
 	if !slices.Equal(updated.AuthMethods, want) {
 		t.Errorf("AuthMethods = %v, want %v", updated.AuthMethods, want)
 	}
@@ -68,7 +68,7 @@ func TestPermitCertificateLogin_IsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second PermitCertificateLogin failed: %v", err)
 	}
-	want := []string{AuthMethodWebAuthn, AuthMethodMTLS}
+	want := []string{AuthMethodWebAuthn, AuthMethodMTLS, AuthMethodPIV}
 	if !slices.Equal(updated.AuthMethods, want) {
 		t.Errorf("AuthMethods = %v, want %v", updated.AuthMethods, want)
 	}

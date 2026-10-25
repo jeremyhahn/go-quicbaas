@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,12 +107,16 @@ func (f *fakeCredentialClient) CredentialRotate(ctx context.Context, req *qrdbtr
 	}, nil
 }
 
-func (f *fakeCredentialClient) CredentialRetrieveVersion(ctx context.Context, req *qrdbtransport.CredentialRetrieveVersionRequest) (*qrdbtransport.CredentialRetrieveVersionResponse, error) {
+func (f *fakeCredentialClient) CredentialRetrieveVersionBuffer(ctx context.Context, req *qrdbtransport.CredentialRetrieveVersionRequest) (*qrdbsecure.Buffer, error) {
 	f.lastRetrieveReq = req
-	if f.retrieveVersionFunc != nil {
-		return f.retrieveVersionFunc(ctx, req)
+	if f.retrieveVersionFunc == nil {
+		return qrdbsecure.NewBufferFromBytes([]byte("secret"))
 	}
-	return &qrdbtransport.CredentialRetrieveVersionResponse{Value: []byte("secret")}, nil
+	resp, err := f.retrieveVersionFunc(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return qrdbsecure.NewBufferFromBytes(resp.Value)
 }
 
 func (f *fakeCredentialClient) CredentialListVersions(ctx context.Context, req *qrdbtransport.CredentialListVersionsRequest) (*qrdbtransport.CredentialListVersionsResponse, error) {
@@ -139,12 +144,16 @@ func (f *fakeCredentialClient) CredentialStore(ctx context.Context, name string,
 	return nil
 }
 
-func (f *fakeCredentialClient) CredentialRetrieve(ctx context.Context, name string) ([]byte, error) {
+func (f *fakeCredentialClient) CredentialRetrieveBuffer(ctx context.Context, name string) (*qrdbsecure.Buffer, error) {
 	f.lastRetrieveName = name
-	if f.retrieveFunc != nil {
-		return f.retrieveFunc(ctx, name)
+	if f.retrieveFunc == nil {
+		return qrdbsecure.NewBufferFromBytes([]byte("secret"))
 	}
-	return []byte("secret"), nil
+	value, err := f.retrieveFunc(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return qrdbsecure.NewBufferFromBytes(value)
 }
 
 // withFakeCredentialFactory installs fc as the active credential factory

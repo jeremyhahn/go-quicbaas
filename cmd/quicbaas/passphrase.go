@@ -166,6 +166,17 @@ func resolvePassphrase(cmd *cobra.Command, op, flagValue string) (*secure.Buffer
 	return nil, nil
 }
 
+// withPassphraseBytes borrows a resolved passphrase for fn. A strategy that
+// takes no passphrase resolves to a nil or destroyed buffer, which go-qrdb's
+// borrow refuses; that case hands fn an empty secret instead, so the server
+// sees the same request it did when the CLI sent an empty slice.
+func withPassphraseBytes(secret *secure.Buffer, fn func([]byte) error) error {
+	if secret.Size() == 0 {
+		return fn(nil)
+	}
+	return secret.WithBytes(fn)
+}
+
 // passphraseReadTimeout is the deadline for the stdin read. It reuses the
 // command timeout the barrier verbs already give their RPCs so one budget
 // covers the whole invocation, and falls back to a fixed default when the
@@ -348,60 +359,67 @@ func readPassphraseLimited(r io.Reader, op string) (*secure.Buffer, error) {
 	}
 	defer scratch.Destroy()
 
-	//secure:unborrowed allocates-protected the terminal reader fills the scratch protected buffer one byte at a time.
-	dst := scratch.Bytes()
-	n := 0
-	for n < len(dst) {
-		m, rerr := r.Read(dst[n : n+1])
-		n += m
-		if m > 0 && dst[n-1] == '\n' {
-			break
-		}
-		// Report overflow the moment it is certain rather than blocking for
-		// input that could not rescue it. Past the cap, the only thing that
-		// can still bring the trimmed length back under it is a "\r\n" that
-		// has begun — so a byte over the cap that is not '\r' (and not '\n',
-		// which broke above) settles it. Without this, a stalled writer that
-		// has already sent too much waits for the deadline instead of
-		// getting a deterministic answer.
-		if m > 0 && n > maxPassphraseBytes && dst[n-1] != '\r' {
-			return nil, errors.Newf(errors.ErrInvalidInput, op,
-				"passphrase on stdin exceeds the %d-byte limit", maxPassphraseBytes)
-		}
-		if rerr != nil {
-			if rerr == io.EOF {
+	// The terminal reader fills the scratch protected buffer one byte at a time.
+	var buf *secure.Buffer
+	err = scratch.WithBytes(func(dst []byte) error {
+		n := 0
+		for n < len(dst) {
+			m, rerr := r.Read(dst[n : n+1])
+			n += m
+			if m > 0 && dst[n-1] == '\n' {
 				break
 			}
-			// The deadline set by readPassphrase surfaces here. Reporting
-			// it as a timeout rather than a read failure keeps the
-			// operator-facing message the same on both cancellation paths.
-			if stderrors.Is(rerr, os.ErrDeadlineExceeded) {
-				return nil, errors.Newf(errors.ErrTimeout, op,
-					"timed out waiting for the passphrase on stdin")
+			// Report overflow the moment it is certain rather than blocking for
+			// input that could not rescue it. Past the cap, the only thing that
+			// can still bring the trimmed length back under it is a "\r\n" that
+			// has begun — so a byte over the cap that is not '\r' (and not '\n',
+			// which broke above) settles it. Without this, a stalled writer that
+			// has already sent too much waits for the deadline instead of
+			// getting a deterministic answer.
+			if m > 0 && n > maxPassphraseBytes && dst[n-1] != '\r' {
+				return errors.Newf(errors.ErrInvalidInput, op,
+					"passphrase on stdin exceeds the %d-byte limit", maxPassphraseBytes)
 			}
-			return nil, errors.Wrapf(rerr, errors.ErrInvalidInput, op,
-				"failed to read the passphrase from stdin")
+			if rerr != nil {
+				if rerr == io.EOF {
+					break
+				}
+				// The deadline set by readPassphrase surfaces here. Reporting
+				// it as a timeout rather than a read failure keeps the
+				// operator-facing message the same on both cancellation paths.
+				if stderrors.Is(rerr, os.ErrDeadlineExceeded) {
+					return errors.Newf(errors.ErrTimeout, op,
+						"timed out waiting for the passphrase on stdin")
+				}
+				return errors.Wrapf(rerr, errors.ErrInvalidInput, op,
+					"failed to read the passphrase from stdin")
+			}
 		}
-	}
 
-	trimmed := trimOneTrailingNewline(dst[:n])
-	if len(trimmed) > maxPassphraseBytes {
-		return nil, errors.Newf(errors.ErrInvalidInput, op,
-			"passphrase on stdin exceeds the %d-byte limit", maxPassphraseBytes)
-	}
-	if len(trimmed) == 0 {
-		// Empty input is a missing passphrase; the caller's own "required"
-		// check names every source, so it reports this better than we can.
-		return nil, nil
-	}
+		trimmed := trimOneTrailingNewline(dst[:n])
+		if len(trimmed) > maxPassphraseBytes {
+			return errors.Newf(errors.ErrInvalidInput, op,
+				"passphrase on stdin exceeds the %d-byte limit", maxPassphraseBytes)
+		}
+		if len(trimmed) == 0 {
+			// Empty input is a missing passphrase; the caller's own "required"
+			// check names every source, so it reports this better than we can.
+			return nil
+		}
 
-	// NewBufferFromBytes copies into its own mlocked allocation and wipes
-	// the source; the source here is a window into scratch, which Destroy
-	// then wipes in full.
-	buf, err := secure.NewBufferFromBytes(trimmed)
+		// NewBufferFromBytes copies into its own mlocked allocation and wipes
+		// the source; the source here is a window into scratch, which Destroy
+		// then wipes in full.
+		moved, merr := secure.NewBufferFromBytes(trimmed)
+		if merr != nil {
+			return errors.Wrapf(merr, errors.ErrInternal, op,
+				"failed to move the passphrase into protected memory")
+		}
+		buf = moved
+		return nil
+	})
 	if err != nil {
-		return nil, errors.Wrapf(err, errors.ErrInternal, op,
-			"failed to move the passphrase into protected memory")
+		return nil, err
 	}
 	return buf, nil
 }

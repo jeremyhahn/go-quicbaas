@@ -123,7 +123,7 @@ type codedNotFoundDirectory struct {
 }
 
 func (codedNotFoundDirectory) UserByCertThumbprint(context.Context, string) (*qrdbsdk.User, error) {
-	return nil, qrdbsdk.NewError(qrdbsdk.ErrCodeNotFound, "UserByCertThumbprint", "no user bound")
+	return nil, qrdbsdk.NewError(qrdbsdk.ErrNotFound, "UserByCertThumbprint", "no user bound")
 }
 
 func TestAuthUserByCertThumbprint_CodedNotFoundIsTypedNotFound(t *testing.T) {

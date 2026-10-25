@@ -101,7 +101,7 @@ func TestHelpExamples_TenantBarrierResolves(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "quicbaas iam tenant barrier", barrier.CommandPath())
 
-	for _, verb := range []string{"status", "init", "unseal", "unseal-share", "seal"} {
+	for _, verb := range []string{"status", "init", "unseal", "seal"} {
 		cmd := findSubcommand(barrier, verb)
 		require.NotNil(t, cmd, "`iam tenant barrier %s` is missing", verb)
 

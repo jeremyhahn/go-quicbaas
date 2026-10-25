@@ -16,7 +16,7 @@
 // itself. Together with the existing claim verbs they complete go-qrdb's
 // Security Officer distribution model (docs/seal/shamir.md):
 //
-//	register -> initialize -> claim-cert -> claim-share -> quorum unseal
+//	register -> initialize -> claim-share -> quorum unseal
 //
 // None of this happens at `quicbaasd init` time. The M-of-N barrier is the
 // ceremony's job — go-qrdb's bootstrap orchestrator refuses to initialize a
@@ -24,16 +24,17 @@
 // daemon boots SEALED and serves these verbs from its sealed window until a
 // quorum unseals it.
 //
-// The security property these verbs preserve: no share is ever written to
-// disk, and no share is ever returned by registration or initialization.
-// Shares live in memguard enclaves inside the running daemon and are released
-// to each officer exactly once, over that officer's own mTLS certificate.
+// The security property these verbs preserve: no plaintext share is ever
+// written to disk or returned by registration or initialization. Each share
+// is sealed to its officer's enrolled key, and only that officer can claim
+// and open the envelope.
 
 package main
 
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -60,7 +61,18 @@ var (
 	initHostname    string
 	initSANs        []string
 	initCredSeal    string
-	initAuthRef     string
+	initDesignated  string
+	initFactors     []string
+	initEncKEM      string
+	initEncKeyPath  string
+
+	initAdminCSRPath      string
+	initAdminCertPath     string
+	initAdminCertPoolPath string
+	initAdminGenerate     bool
+	initAdminKeyOut       string
+	initAdminCertOut      string
+	initSecret            string
 )
 
 // =============================================================================
@@ -92,9 +104,246 @@ func (e *InitReadCSRError) Error() string {
 // Unwrap returns the wrapped error.
 func (e *InitReadCSRError) Unwrap() error { return e.Err }
 
+// InitAdminSelectorError is returned when 'init initialize' is not given
+// exactly one of --admin-csr, --admin-cert or --admin-generate.
+type InitAdminSelectorError struct {
+	Count int
+}
+
+// Error implements the error interface.
+func (e *InitAdminSelectorError) Error() string {
+	return fmt.Sprintf("init: exactly one of --admin-csr, --admin-cert or --admin-generate is required; %d were set", e.Count)
+}
+
+// InitReadAdminFileError is returned when an admin credential file named by
+// an 'init initialize' flag cannot be read.
+type InitReadAdminFileError struct {
+	Flag string
+	Path string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *InitReadAdminFileError) Error() string {
+	return "init: failed to read --" + e.Flag + " " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying read error.
+func (e *InitReadAdminFileError) Unwrap() error { return e.Err }
+
+// InitAdminOutputRequiredError is returned when 'init initialize
+// --admin-generate' is run without a file for the generated credential. The
+// daemon returns the generated private key once and never stores it, so the
+// command refuses to call it without a destination.
+type InitAdminOutputRequiredError struct {
+	Flag string
+}
+
+// Error implements the error interface.
+func (e *InitAdminOutputRequiredError) Error() string {
+	return "init: --admin-generate requires --" + e.Flag
+}
+
+// InitAdminOutputFileError is returned when a file for the generated
+// administrator credential cannot be created, written or removed.
+type InitAdminOutputFileError struct {
+	Flag string
+	Path string
+	Op   string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *InitAdminOutputFileError) Error() string {
+	return "init: failed to " + e.Op + " --" + e.Flag + " " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap returns the underlying file error.
+func (e *InitAdminOutputFileError) Unwrap() error { return e.Err }
+
+// InitAdminCredentialMissingError is returned when the daemon's response to
+// --admin-generate carries no administrator key or certificate.
+type InitAdminCredentialMissingError struct {
+	Field string
+}
+
+// Error implements the error interface.
+func (e *InitAdminCredentialMissingError) Error() string {
+	return "init: the daemon returned no " + e.Field + " for --admin-generate"
+}
+
 // =============================================================================
 // initialize
 // =============================================================================
+
+// readInitAdminCredential checks that exactly one admin credential selector
+// flag is set and loads the PEM files it names into req.
+func readInitAdminCredential(req *qrdbtransport.CeremonyInitializeRequest) error {
+	count := 0
+	for _, set := range []bool{initAdminCSRPath != "", initAdminCertPath != "", initAdminGenerate} {
+		if set {
+			count++
+		}
+	}
+	if count != 1 {
+		return &InitAdminSelectorError{Count: count}
+	}
+
+	files := []struct {
+		flag string
+		path string
+		dst  *string
+	}{
+		{"admin-csr", initAdminCSRPath, &req.AdminCSRPEM},
+		{"admin-cert", initAdminCertPath, &req.AdminCertPEM},
+		{"admin-cert-pool", initAdminCertPoolPath, &req.AdminCertPoolPEM},
+	}
+	for _, f := range files {
+		if f.path == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Clean(f.path))
+		if err != nil {
+			return &InitReadAdminFileError{Flag: f.flag, Path: f.path, Err: err}
+		}
+		*f.dst = string(data)
+	}
+	return nil
+}
+
+// initAdminOutputFile is one new file the generated administrator credential
+// is written to.
+type initAdminOutputFile struct {
+	flag string
+	path string
+	file *os.File
+}
+
+// initAdminOutputs holds the files --admin-generate writes the administrator
+// key and certificate to. Both are nil when --admin-generate is not set.
+type initAdminOutputs struct {
+	key  *initAdminOutputFile
+	cert *initAdminOutputFile
+}
+
+// openInitAdminOutputs creates the --admin-key-out and --admin-cert-out files
+// before the daemon is called, so a run that could not keep the generated
+// key never asks for one. Each file must not exist yet; the key file is
+// created with mode 0600.
+func openInitAdminOutputs() (initAdminOutputs, error) {
+	if !initAdminGenerate {
+		return openInitAdminCSROutput()
+	}
+	if initAdminKeyOut == "" {
+		return initAdminOutputs{}, &InitAdminOutputRequiredError{Flag: "admin-key-out"}
+	}
+	if initAdminCertOut == "" {
+		return initAdminOutputs{}, &InitAdminOutputRequiredError{Flag: "admin-cert-out"}
+	}
+
+	key, err := createInitAdminOutputFile("admin-key-out", initAdminKeyOut, 0o600)
+	if err != nil {
+		return initAdminOutputs{}, err
+	}
+	cert, err := createInitAdminOutputFile("admin-cert-out", initAdminCertOut, 0o644)
+	if err != nil {
+		return initAdminOutputs{}, stderrors.Join(err, key.discard())
+	}
+	return initAdminOutputs{key: key, cert: cert}, nil
+}
+
+// openInitAdminCSROutput creates the optional --admin-cert-out file for
+// --admin-csr, which receives the certificate the daemon issues for the CSR.
+// Without the flag the certificate is printed instead.
+func openInitAdminCSROutput() (initAdminOutputs, error) {
+	if initAdminCSRPath == "" || initAdminCertOut == "" {
+		return initAdminOutputs{}, nil
+	}
+	cert, err := createInitAdminOutputFile("admin-cert-out", initAdminCertOut, 0o644)
+	if err != nil {
+		return initAdminOutputs{}, err
+	}
+	return initAdminOutputs{cert: cert}, nil
+}
+
+// createInitAdminOutputFile creates path exclusively with the given mode.
+func createInitAdminOutputFile(flag, path string, mode os.FileMode) (*initAdminOutputFile, error) {
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return nil, &InitAdminOutputFileError{Flag: flag, Path: path, Op: "create", Err: err}
+	}
+	return &initAdminOutputFile{flag: flag, path: path, file: f}, nil
+}
+
+// write writes data to the file and closes it.
+func (o *initAdminOutputFile) write(data []byte) error {
+	if _, err := o.file.Write(data); err != nil {
+		return stderrors.Join(
+			&InitAdminOutputFileError{Flag: o.flag, Path: o.path, Op: "write", Err: err},
+			o.file.Close())
+	}
+	if err := o.file.Close(); err != nil {
+		return &InitAdminOutputFileError{Flag: o.flag, Path: o.path, Op: "write", Err: err}
+	}
+	return nil
+}
+
+// discard closes and removes a file that was created but never written.
+func (o *initAdminOutputFile) discard() error {
+	closeErr := o.file.Close()
+	if err := os.Remove(filepath.Clean(o.path)); err != nil {
+		return stderrors.Join(closeErr,
+			&InitAdminOutputFileError{Flag: o.flag, Path: o.path, Op: "remove", Err: err})
+	}
+	return closeErr
+}
+
+// discard removes the opened files after the daemon call failed, so the
+// operator can retry with the same paths. It is a no-op when none was opened.
+func (o initAdminOutputs) discard() error {
+	var errs []error
+	for _, f := range []*initAdminOutputFile{o.key, o.cert} {
+		if f != nil {
+			errs = append(errs, f.discard())
+		}
+	}
+	return stderrors.Join(errs...)
+}
+
+// paths returns the key and certificate file paths, each empty when that
+// file was not opened.
+func (o initAdminOutputs) paths() (key, cert string) {
+	if o.key != nil {
+		key = o.key.path
+	}
+	if o.cert != nil {
+		cert = o.cert.path
+	}
+	return key, cert
+}
+
+// store writes data to the file, or removes the file when the daemon
+// returned nothing for it.
+func (o *initAdminOutputFile) store(data []byte, field string) error {
+	if len(data) == 0 {
+		return stderrors.Join(&InitAdminCredentialMissingError{Field: field}, o.discard())
+	}
+	return o.write(data)
+}
+
+// write stores the administrator key and certificate in the opened files.
+// Each is written independently, so a response missing one never costs the
+// other.
+func (o initAdminOutputs) write(resp *qrdbtransport.CeremonyInitializeResponse) error {
+	var errs []error
+	if o.key != nil {
+		errs = append(errs, o.key.store(resp.AdminKeyPEM, "administrator key"))
+	}
+	if o.cert != nil {
+		errs = append(errs, o.cert.store([]byte(resp.AdminCertPEM), "administrator certificate"))
+	}
+	return stderrors.Join(errs...)
+}
 
 // newInitInitializeCommand builds 'quicbaas init initialize'.
 func newInitInitializeCommand() *cobra.Command {
@@ -107,15 +356,30 @@ With --threshold and one --so per officer this performs the M-of-N Shamir
 initialization: the barrier secret is split and ONE SHARE IS SEALED PER
 OFFICER into a memguard enclave inside the daemon. No share is returned by
 this call and no share is written to disk. Each officer then claims theirs
-live with 'quicbaas init claim-cert' followed by 'quicbaas init claim-share'.
+with 'quicbaas init claim-share'.
 
 Register each officer first so their CSR is signed and bound:
   quicbaas init officer register --username alice --csr alice.csr
+
+Exactly one admin credential selector is required: --admin-csr signs the
+admin's own CSR, --admin-cert binds an existing admin certificate (with
+--admin-cert-pool naming the CA bundle that issued it), and --admin-generate
+has the daemon generate the admin keypair and certificate. The daemon
+returns the generated private key exactly once and never stores it, so
+--admin-generate requires --admin-key-out and --admin-cert-out: both must name
+new files, which are created (the key with mode 0600) before the daemon is
+called, and the command refuses to run if either already exists. With
+--admin-csr the issued certificate is written to --admin-cert-out when given,
+otherwise printed. The certificate issued to each --so holder is printed,
+labelled with the holder, since initialization cannot be repeated. The barrier
+passphrase is read from --passphrase-stdin, QUICBAAS_BARRIER_PASSPHRASE or
+--passphrase when the barrier protection needs one.
 
 Example:
   quicbaas init initialize \
       --so-pin "$SO_PIN" \
       --user-pin "$USER_PIN" \
+      --admin-csr admin.csr \
       --threshold 2 \
       --so alice:alice.csr \
       --so bob:bob.csr \
@@ -138,6 +402,19 @@ Example:
 		"Additional DNS / IP SANs for the issued serving certificate")
 	cmd.Flags().StringVar(&initCredSeal, "credential-seal-strategy", "",
 		"Credential seal strategy (manual | barrier); empty uses the server default")
+	cmd.Flags().StringVar(&initAdminCSRPath, "admin-csr", "",
+		"Path to the admin CSR the ceremony CA signs")
+	cmd.Flags().StringVar(&initAdminCertPath, "admin-cert", "",
+		"Path to an existing admin certificate to bind")
+	cmd.Flags().StringVar(&initAdminCertPoolPath, "admin-cert-pool", "",
+		"Path to the CA bundle that issued --admin-cert")
+	cmd.Flags().BoolVar(&initAdminGenerate, "admin-generate", false,
+		"Have the daemon generate the admin keypair and certificate")
+	cmd.Flags().StringVar(&initAdminKeyOut, "admin-key-out", "",
+		"New file (mode 0600) the --admin-generate private key is written to (required with --admin-generate)")
+	cmd.Flags().StringVar(&initAdminCertOut, "admin-cert-out", "",
+		"New file the --admin-generate or --admin-csr certificate is written to (required with --admin-generate)")
+	addPassphraseFlags(cmd, &initSecret, "System barrier passphrase")
 	return cmd
 }
 
@@ -160,15 +437,7 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 			initThreshold, initThreshold, len(officers))
 	}
 
-	client, err := ceremonyClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	resp, err := client.CeremonyInitialize(ctx, &qrdbtransport.CeremonyInitializeRequest{
+	req := &qrdbtransport.CeremonyInitializeRequest{
 		SOPin:                  initSOPin,
 		UserPin:                initUserPin,
 		CredentialSealStrategy: initCredSeal,
@@ -176,12 +445,52 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 		Officers:               officers,
 		Hostname:               initHostname,
 		SANs:                   initSANs,
-	})
+		AdminGenerate:          initAdminGenerate,
+	}
+	if err := readInitAdminCredential(req); err != nil {
+		return formatError(err)
+	}
+
+	secret, err := resolvePassphrase(cmd, "init.initialize", initSecret)
+	if err != nil {
+		return formatError(err)
+	}
+	defer secret.Destroy()
+
+	outputs, err := openInitAdminOutputs()
 	if err != nil {
 		return formatError(err)
 	}
 
-	return formatCeremonyInitializeResponse(resp, initOutputFmt, cmd.OutOrStdout())
+	client, err := ceremonyClientFactory()
+	if err != nil {
+		return formatError(stderrors.Join(err, outputs.discard()))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
+	defer cancel()
+
+	var resp *qrdbtransport.CeremonyInitializeResponse
+	err = withPassphraseBytes(secret, func(b []byte) error {
+		req.Secret = b
+		var callErr error
+		resp, callErr = client.CeremonyInitialize(ctx, req)
+		return callErr
+	})
+	if err != nil {
+		return formatError(stderrors.Join(err, outputs.discard()))
+	}
+	if resp == nil {
+		return formatError(stderrors.Join(
+			errors.Newf(errors.ErrInternal, "init.initialize", "empty response"),
+			outputs.discard()))
+	}
+	if err := outputs.write(resp); err != nil {
+		return formatError(err)
+	}
+
+	keyPath, certPath := outputs.paths()
+	return formatCeremonyInitializeResponse(resp, keyPath, certPath, initOutputFmt, cmd.OutOrStdout())
 }
 
 // parseCeremonyOfficers turns each "username:/path/to/file.csr" value into a
@@ -227,11 +536,11 @@ func newInitOfficerCommand() *cobra.Command {
 Registration is step 1 of the Shamir flow: the admin submits each officer's
 CSR, the ceremony CA signs it, and the officer is bound to the SHA-256
 thumbprint of the issued certificate. The response carries the signed
-certificate and the officer's share index — never share bytes.`,
+certificate and the officer's enrolled factors — never share bytes.
+'officer list' reports each officer's enrolment and claim state.`,
 	}
 	cmd.AddCommand(newInitOfficerRegisterCommand())
 	cmd.AddCommand(newInitOfficerListCommand())
-	cmd.AddCommand(newInitOfficerStatusCommand())
 	return cmd
 }
 
@@ -247,10 +556,17 @@ or PIV smartcard, so the private key never exists as a file. This command
 submits only the CSR. The issued certificate is written to --output for
 delivery to that officer.
 
+--domain recovery enrols a recovery officer instead of an unseal officer.
+--designated names the factor fixed at enrolment under the designated policy
+(mtls when empty); --factor enrols an additional factor, as a name or
+name=<json params>. --encryption-kem and --encryption-key-file enrol a
+separate envelope key; the certificate key is used when they are empty.
+
 Example:
   quicbaas init officer register \
       --username alice \
       --csr alice.csr \
+      --designated mtls \
       --output alice.crt`,
 		RunE: runInitOfficerRegisterCommand,
 	}
@@ -262,10 +578,17 @@ Example:
 		"Path to the officer's PEM-encoded CSR (required)")
 	cmd.Flags().StringVar(&initOutputPath, "output", "",
 		"Path where the issued officer certificate should be written (optional)")
-	cmd.Flags().StringVar(&initAuthFactor, "auth-factor", "",
-		"Authenticator type binding the officer (mtls | webauthn | piv)")
-	cmd.Flags().StringVar(&initAuthRef, "auth-ref", "",
-		"Authenticator reference (e.g. the security key or PIV slot identifier)")
+	cmd.Flags().StringVar(&initRole, "role", qrdbtransport.RoleSecurityOfficer,
+		"Holder role: so or custodian")
+	cmd.Flags().StringVar(&initDesignated, "designated", "",
+		"Factor fixed at enrolment under the designated policy (default mtls)")
+	cmd.Flags().StringArrayVar(&initFactors, "factor", nil,
+		"Additional factor enrolment: name or name=<json params> (repeatable)")
+	cmd.Flags().StringVar(&initEncKEM, "encryption-kem", "",
+		"HPKE suite of a separate envelope key (requires --encryption-key-file)")
+	cmd.Flags().StringVar(&initEncKeyPath, "encryption-key-file", "",
+		"Raw public key of the separate envelope key, in the suite's encoding")
+	addBarrierDomainFlag(cmd)
 	return cmd
 }
 
@@ -277,15 +600,28 @@ func runInitOfficerRegisterCommand(cmd *cobra.Command, _ []string) error {
 	if initCSRPath == "" {
 		return errors.Newf(errors.ErrInvalidInput, "init.officer.register", "--csr is required")
 	}
-	if initAuthFactor != "" {
-		if _, ok := validAuthFactors[initAuthFactor]; !ok {
-			return formatError(&InitInvalidAuthFactorError{Got: initAuthFactor})
-		}
+	if err := validateBarrierQuorumDomain("init.officer.register", barrierDomain); err != nil {
+		return err
+	}
+	if (initEncKEM == "") != (initEncKeyPath == "") {
+		return errors.Newf(errors.ErrInvalidInput, "init.officer.register",
+			"--encryption-kem and --encryption-key-file must be supplied together")
+	}
+	factors, err := parseHolderFactors(initFactors)
+	if err != nil {
+		return err
 	}
 
 	csrPEM, err := os.ReadFile(filepath.Clean(initCSRPath))
 	if err != nil {
 		return formatError(&InitReadCSRError{Path: initCSRPath, Err: err})
+	}
+	var encKey []byte
+	if initEncKeyPath != "" {
+		encKey, err = os.ReadFile(filepath.Clean(initEncKeyPath))
+		if err != nil {
+			return formatError(&InitReadCSRError{Path: initEncKeyPath, Err: err})
+		}
 	}
 
 	client, err := barrierClientFactory()
@@ -296,23 +632,52 @@ func runInitOfficerRegisterCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.OfficerRegister(ctx, &qrdbtransport.OfficerRegisterRequest{
-		Username:          initUsername,
-		CSRPEM:            csrPEM,
-		AuthenticatorType: initAuthFactor,
-		AuthenticatorRef:  initAuthRef,
+	register := client.OfficerRegister
+	if barrierDomain == qrdbtransport.DomainRecovery {
+		register = client.RecoveryOfficerRegister
+	}
+	resp, err := register(ctx, &qrdbtransport.OfficerRegisterRequest{
+		Username:      initUsername,
+		Role:          initRole,
+		CSRPEM:        string(csrPEM),
+		EncryptionKEM: initEncKEM,
+		EncryptionKey: encKey,
+		Factors:       factors,
+		Designated:    initDesignated,
 	})
 	if err != nil {
 		return formatError(err)
 	}
 
 	if initOutputPath != "" && len(resp.CertPEM) > 0 {
-		if werr := writeFileSecure(initOutputPath, resp.CertPEM); werr != nil {
+		if werr := writeFileSecure(initOutputPath, []byte(resp.CertPEM)); werr != nil {
 			return formatError(&InitWriteFileError{Path: initOutputPath, Err: werr})
 		}
 	}
 
 	return formatOfficerRegisterResponse(resp, initUsername, initOutputPath, initOutputFmt, cmd.OutOrStdout())
+}
+
+// parseHolderFactors turns each --factor value, a factor name or
+// name=<json params>, into the enrolment go-qrdb expects.
+func parseHolderFactors(specs []string) ([]qrdbtransport.HolderFactorEnrolment, error) {
+	factors := make([]qrdbtransport.HolderFactorEnrolment, 0, len(specs))
+	for _, spec := range specs {
+		name, rawParams, hasParams := strings.Cut(spec, "=")
+		if name == "" {
+			return nil, errors.Newf(errors.ErrInvalidInput, "init.officer.register",
+				"--factor %q has no factor name", spec)
+		}
+		factor := qrdbtransport.HolderFactorEnrolment{Name: name}
+		if hasParams {
+			if err := json.Unmarshal([]byte(rawParams), &factor.Params); err != nil {
+				return nil, errors.Wrapf(err, errors.ErrInvalidInput, "init.officer.register",
+					"--factor %s params are not a JSON object", name)
+			}
+		}
+		factors = append(factors, factor)
+	}
+	return factors, nil
 }
 
 // newInitOfficerListCommand builds 'quicbaas init officer list'.
@@ -348,39 +713,6 @@ func runInitOfficerListCommand(cmd *cobra.Command, _ []string) error {
 	return formatOfficerStatusList(officers, initOutputFmt, cmd.OutOrStdout())
 }
 
-// newInitOfficerStatusCommand builds 'quicbaas init officer status'.
-func newInitOfficerStatusCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Show per-officer claim status",
-		Long: `Show per-officer enrolment and claim status.
-
-Use this to see which officers have claimed their certificate and share
-during the enrolling window. Share bytes are never reported.`,
-		RunE: runInitOfficerStatusCommand,
-	}
-	cmd.Flags().StringVar(&initServer, "server", "",
-		"Override the global --address for this call (optional)")
-	return cmd
-}
-
-// runInitOfficerStatusCommand executes 'init officer status'.
-func runInitOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
-	client, err := barrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	officers, err := client.OfficerClaimStatus(ctx)
-	if err != nil {
-		return formatError(err)
-	}
-	return formatOfficerStatusList(officers, initOutputFmt, cmd.OutOrStdout())
-}
-
 // =============================================================================
 // Output formatting
 // =============================================================================
@@ -391,7 +723,7 @@ func runInitOfficerStatusCommand(cmd *cobra.Command, _ []string) error {
 // daemon until each officer claims theirs.
 func formatCeremonyInitializeResponse(
 	resp *qrdbtransport.CeremonyInitializeResponse,
-	format string,
+	adminKeyPath, adminCertPath, format string,
 	w io.Writer,
 ) error {
 	if resp == nil {
@@ -417,14 +749,29 @@ func formatCeremonyInitializeResponse(
 	if resp.ShareCount > 0 {
 		fmt.Fprintf(tw, "Shares:\t%d generated\n", resp.ShareCount)
 	}
+	if adminKeyPath != "" {
+		fmt.Fprintf(tw, "Admin Key:\t%s\n", adminKeyPath)
+	}
+	if adminCertPath != "" {
+		fmt.Fprintf(tw, "Admin Certificate:\t%s\n", adminCertPath)
+	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	// Initialization cannot be repeated: every issued certificate that was
+	// not saved to a file is printed, or the operator never receives it.
+	if adminCertPath == "" && resp.AdminCertPEM != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Admin Certificate:\n%s", resp.AdminCertPEM)
+	}
+	for _, holder := range resp.Holders {
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "Holder %s (%s) Certificate:\n%s", holder.Username, holder.Role, holder.CertPEM)
+	}
 	if resp.ShareCount > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Shares are held in memory and released ONCE, to each officer:")
-		fmt.Fprintln(w, "  quicbaas init claim-cert   --username <name> --csr-key <key> --output <cert>")
-		fmt.Fprintln(w, "  quicbaas init claim-share  --username <name> --cert <cert> --key <key>")
+		fmt.Fprintln(w, "Each share is sealed to its officer, who claims the envelope with:")
+		fmt.Fprintln(w, "  quicbaas init claim-share --username <name> --tls-cert <cert> --tls-key <key> --output <envelope>")
 	}
 	return nil
 }
@@ -446,15 +793,24 @@ func formatOfficerRegisterResponse(
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
 		return encoder.Encode(map[string]interface{}{
-			"username":    username,
-			"share_index": resp.ShareIndex,
-			"cert_pem":    string(resp.CertPEM),
+			"username":       username,
+			"role":           resp.Role,
+			"designated":     resp.Designated,
+			"factors":        resp.Factors,
+			"encryption_kem": resp.EncryptionKEM,
+			"cert_pem":       resp.CertPEM,
 		})
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Officer:\t%s\n", username)
-	fmt.Fprintf(tw, "Share Index:\t%d\n", resp.ShareIndex)
+	fmt.Fprintf(tw, "Role:\t%s\n", resp.Role)
+	if resp.Designated != "" {
+		fmt.Fprintf(tw, "Designated Factor:\t%s\n", resp.Designated)
+	}
+	if len(resp.Factors) > 0 {
+		fmt.Fprintf(tw, "Factors:\t%s\n", strings.Join(resp.Factors, ", "))
+	}
 	if outputPath != "" {
 		fmt.Fprintf(tw, "Certificate:\t%s\n", outputPath)
 	}
@@ -463,7 +819,7 @@ func formatOfficerRegisterResponse(
 	}
 	if outputPath == "" && len(resp.CertPEM) > 0 {
 		fmt.Fprintln(w)
-		fmt.Fprint(w, string(resp.CertPEM))
+		fmt.Fprint(w, resp.CertPEM)
 	}
 	return nil
 }
@@ -488,13 +844,13 @@ func formatOfficerStatusList(
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "USERNAME\tINDEX\tFACTOR\tTHUMBPRINT\n")
+	fmt.Fprintf(tw, "USERNAME\tROLE\tINDEX\tDESIGNATED\tCLAIMED\tTHUMBPRINT\n")
 	for _, o := range officers {
 		if o == nil {
 			continue
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n",
-			o.Username, o.ShareIndex, o.AuthFactor, o.CertThumbprint)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%t\t%s\n",
+			o.Username, o.Role, o.ShareIndex, o.Designated, !o.ClaimedAt.IsZero(), o.CertThumbprint)
 	}
 	return tw.Flush()
 }

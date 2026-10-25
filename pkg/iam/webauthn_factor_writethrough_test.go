@@ -25,6 +25,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -148,6 +150,10 @@ func (f *fakeUserAuthFactorClient) RemoveAuthFactor(context.Context, *qrdbtransp
 	return nil, errors.New("RemoveAuthFactor not expected")
 }
 
+func (f *fakeUserAuthFactorClient) DeleteAuthFactor(context.Context, *qrdbtransport.AuthFactorDeleteRequest) (*qrdbtransport.AuthFactorDeleteResponse, error) {
+	return nil, errors.New("DeleteAuthFactor not expected")
+}
+
 func (f *fakeUserAuthFactorClient) RotateAuthFactor(context.Context, *qrdbtransport.AuthFactorRotateRequest) (*qrdbtransport.AuthFactorRotateResponse, error) {
 	return nil, errors.New("RotateAuthFactor not expected")
 }
@@ -246,10 +252,9 @@ func testCredential(userID uint64, credID []byte) *xkmswebauthn.Credential {
 
 // newTestWriteThrough builds the decorator over xkms's real in-memory stores so
 // the tests exercise genuine persistence semantics rather than a mock.
-func newTestWriteThrough(t *testing.T, factors qrdbtransport.UserAuthFactorClient) (*webAuthnFactorWriteThrough, *xkmswebauthn.MemoryUserStore, xkmswebauthn.CredentialStore) {
+func newTestWriteThrough(t *testing.T, factors qrdbtransport.UserAuthFactorClient) (*webAuthnFactorWriteThrough, xkmswebauthn.UserStore, xkmswebauthn.CredentialStore) {
 	t.Helper()
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
@@ -326,7 +331,7 @@ func authFactorRecordFromSDK(factor *qrdbsdk.AuthFactor) qrdbtransport.AuthFacto
 // seedUser stores a user under the given qrdb user id so the label lookup
 // resolves. MemoryUserStore.Save keys by the user's WebAuthn handle, so the
 // handle must be the big-endian qrdb id the credential carries.
-func seedUser(t *testing.T, users *xkmswebauthn.MemoryUserStore, id uint64, email, displayName string) {
+func seedUser(t *testing.T, users xkmswebauthn.UserStore, id uint64, email, displayName string) {
 	t.Helper()
 	user := xkmswebauthn.NewDefaultUser(testUserHandle(id), email, displayName)
 	if err := users.Save(context.Background(), user); err != nil {
@@ -393,12 +398,28 @@ func TestWriteThroughSave_EnrollsLoginResolvableFactor(t *testing.T) {
 	}
 }
 
+// factorTestKV adapts the routing test double to go-qrdb's AuthFactorKV
+// contract, under which a missing key reads as *qrdbsdk.KeyNotFoundError.
+// The double reports a miss as a quicbaas not_found QBError, which the factor
+// service treats as a failed read rather than an absent record, so Save would
+// roll back on its first primary-slot lookup.
+type factorTestKV struct{ *routingTestKV }
+
+func (f factorTestKV) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := f.routingTestKV.Get(ctx, key)
+	var qbErr *dberrors.QBError
+	if errors.As(err, &qbErr) && qbErr.Code == dberrors.ErrNotFound {
+		return nil, &qrdbsdk.KeyNotFoundError{Key: key}
+	}
+	return value, err
+}
+
 func TestWriteThroughSave_TenantRoutedFactorResolvesForSameTenantOnly(t *testing.T) {
 	kv := newRoutingTestKV()
 	kv.barrierTenant("tenant-a")
 	kv.barrierTenant("tenant-b")
 
-	svc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{KV: kv})
+	svc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{KV: factorTestKV{kv}})
 	if err != nil {
 		t.Fatalf("NewUserAuthFactorService: %v", err)
 	}
@@ -545,7 +566,7 @@ func TestWriteThroughSave_CompensatesOnEnrollFailure(t *testing.T) {
 	enrollErr := errors.New("qrdb unavailable")
 	factors := &fakeUserAuthFactorClient{addErr: enrollErr}
 
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	inner := newStubCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
@@ -584,7 +605,7 @@ func TestWriteThroughSave_CompensatesOnEnrollFailure(t *testing.T) {
 // before this Save, a subsequent enrollment failure leaves it in place.
 func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	inner := newStubCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
@@ -624,7 +645,7 @@ func TestWriteThroughSave_DoesNotCompensateAPreExistingCredential(t *testing.T) 
 // state the store is not in.
 func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{addErr: errors.New("qrdb unavailable")}
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	// The registrant is seeded because the assurance gate holds an
 	// UNIDENTIFIABLE registrant to hardware; this test is about compensation
 	// ordering, not about identity, so it uses a resolvable one.
@@ -654,7 +675,7 @@ func TestWriteThroughSave_ReportsFailedCompensation(t *testing.T) {
 // ordering would leave a factor pointing at a credential that does not exist.
 func TestWriteThroughSave_InnerSaveFailureSkipsEnrollment(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	seedUser(t, users, 42, "alice@example.com", "alice")
 	storeErr := errors.New("kv put failed")
 	inner := newStubCredentialStore()
@@ -726,7 +747,7 @@ func TestWriteThroughSave_EmptyCredentialIDDelegates(t *testing.T) {
 	factors := &fakeUserAuthFactorClient{}
 	inner := newStubCredentialStore()
 	wt, err := newWebAuthnFactorWriteThrough(
-		inner, xkmswebauthn.NewMemoryUserStore(), factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
+		inner, newTestWebAuthnUserStore(t), factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
 	}
@@ -748,8 +769,7 @@ func TestWriteThroughSave_EmptyCredentialIDDelegates(t *testing.T) {
 // reproduce the split-store bug (registration succeeds, login can never
 // resolve), so it must be a startup error, not a runtime no-op.
 func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	factors := &fakeUserAuthFactorClient{}
 
 	tests := []struct {
@@ -783,8 +803,8 @@ func TestNewWebAuthnFactorWriteThrough_RequiresEveryDependency(t *testing.T) {
 // tolerated (production always supplies one; tests should not have to).
 func TestNewWebAuthnFactorWriteThrough_DefaultsLogger(t *testing.T) {
 	wt, err := newWebAuthnFactorWriteThrough(
-		xkmswebauthn.NewMemoryCredentialStore(),
-		xkmswebauthn.NewMemoryUserStore(),
+		newTestWebAuthnCredentialStore(t),
+		newTestWebAuthnUserStore(t),
 		&fakeUserAuthFactorClient{},
 		recorderOf(&fakeUserAuthFactorClient{}),
 		testWriteThroughTenant,

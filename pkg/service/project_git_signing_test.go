@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/nsswrapper"
 )
 
@@ -45,10 +46,16 @@ type fakeSignerResolver struct {
 	signer ssh.Signer
 	err    error
 	asked  SSHKeyRef
+	// askedTenant is the tenant bound to the context of the last lookup:
+	// the SSH key store partitions keys by it.
+	askedTenant string
 }
 
-func (f *fakeSignerResolver) Signer(_ context.Context, ref SSHKeyRef) (ssh.Signer, error) {
+func (f *fakeSignerResolver) Signer(ctx context.Context, ref SSHKeyRef) (ssh.Signer, error) {
 	f.asked = ref
+	if tenantID, ok := tenantctx.Lookup(ctx); ok {
+		f.askedTenant = tenantID
+	}
 	return f.signer, f.err
 }
 

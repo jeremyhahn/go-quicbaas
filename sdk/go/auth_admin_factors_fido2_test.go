@@ -34,6 +34,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	qrdbembedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -514,9 +515,22 @@ type passkeyServer struct {
 
 func newPasskeyServer(t *testing.T) *passkeyServer {
 	t.Helper()
-	c, store := buildLoginFactorRoundtrip(t, newDirectory(testUser{
+	servicers, store := loginFactorServicers(t, passkeyDirectory())
+	return newPasskeyServerOver(t, buildEmbeddedQRDBClient(t, servicers), store)
+}
+
+// passkeyDirectory is the user directory holding the administrator every
+// passkey E2E enrolls.
+func passkeyDirectory() *directoryUserServicer {
+	return newDirectory(testUser{
 		id: passkeyUserID, tenantID: passkeyTenant, username: "root", email: passkeyEmail,
-	}))
+	})
+}
+
+// newPasskeyServerOver builds the passkey server side over client c and the
+// factor store the client's UserAuthFactor servicer writes to.
+func newPasskeyServerOver(t *testing.T, c *client, store qrdbsdk.UserAuthFactorServicer) *passkeyServer {
+	t.Helper()
 	qrdb, err := c.qrdbClient()
 	if err != nil {
 		t.Fatalf("qrdbClient: %v", err)
@@ -658,6 +672,25 @@ func TestAdminFactors_PasskeyWithoutHandlerRefusedOnEveryTransport(t *testing.T)
 // An administrator enrolled through AdminFactors().Enroll holds a passkey the
 // server stored as hardware-attested, and that passkey logs in through the
 // production WebAuthn factor verifier.
+// TestAdminFactors_PasskeyWithoutIndexServicerIsTyped proves that a client
+// built without QRDBEmbeddedServicers.Index refuses the passkey path with
+// go-qrdb's typed NilServiceError naming the IndexServicer, rather than
+// panicking: the WebAuthn credential store declares secondary indexes.
+func TestAdminFactors_PasskeyWithoutIndexServicerIsTyped(t *testing.T) {
+	servicers, store := loginFactorServicers(t, passkeyDirectory())
+	servicers.Index = nil
+	s := newPasskeyServerOver(t, buildEmbeddedQRDBClient(t, servicers), store)
+
+	_, err := s.factory.ServiceFor(passkeyCaller(context.Background()), passkeyTenant)
+	var nilSvc *qrdbembedded.NilServiceError
+	if !errors.As(err, &nilSvc) {
+		t.Fatalf("ServiceFor err = %v, want *embedded.NilServiceError", err)
+	}
+	if nilSvc.Service != "IndexServicer" {
+		t.Fatalf("NilServiceError.Service = %q, want IndexServicer", nilSvc.Service)
+	}
+}
+
 func TestAdminFactors_PasskeyEnrollsAndLogsIn(t *testing.T) {
 	s := newPasskeyServer(t)
 	ctx := passkeyCaller(context.Background())

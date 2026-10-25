@@ -32,7 +32,7 @@ import (
 // trusts — so it must anchor the certificates this CA issues.
 func TestXKMSAgentCertIssuer_AgentCABundleVerifiesWhatItIssues(t *testing.T) {
 	ca := xkmsca.New(t, "QuicBaaS #1022 Preflight CA")
-	issuer, err := NewXKMSFleetNodeCertIssuer(ca)
+	issuer, err := NewXKMSFleetNodeCertIssuer(ca, newTestFleetCertRecords(t))
 	if err != nil {
 		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
 	}
@@ -40,7 +40,11 @@ func TestXKMSAgentCertIssuer_AgentCABundleVerifiesWhatItIssues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FleetCABundle: %v", err)
 	}
-	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{TenantID: testAgentTenant, Hostname: "agent-01"})
+	issued, err := issuer.IssueFleetNodeCertificate(context.Background(), &FleetNodeCertificateRequest{
+		TenantID:          testAgentTenant,
+		Hostname:          "agent-01",
+		SPIFFETrustDomain: testAgentTrustDomain,
+	})
 	if err != nil {
 		t.Fatalf("IssueFleetNodeCertificate: %v", err)
 	}

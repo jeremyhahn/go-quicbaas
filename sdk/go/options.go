@@ -89,6 +89,10 @@ type clientOptions struct {
 	// (service.QuicBaaS) is checked when creating the transport.
 	embeddedService interface{}
 
+	// embeddedIdentity is the qrdb identity every embedded call runs as,
+	// set by WithEmbeddedIdentity. NewClient refuses WithEmbedded without it.
+	embeddedIdentity EmbeddedIdentity
+
 	// Embedded QRDB settings — populated by WithEmbeddedQRDB. When set
 	// alongside transportType == TransportEmbedded, the qrdb sub-client
 	// is constructed against the qrdb in-process embedded transport
@@ -317,6 +321,9 @@ func WithUnix(socketPath string) Option {
 // Security().Barrier(), Security().Ceremony(), Security().Credentials(),
 // and other qrdb-backed accessors, pair WithEmbedded with WithEmbeddedQRDB
 // and pass the qrdb servicers explicitly.
+//
+// WithEmbedded must be paired with WithEmbeddedIdentity: NewClient returns
+// an EmbeddedIdentityRequiredError when no identity is named.
 func WithEmbedded(svc interface{}) Option {
 	return func(o *clientOptions) error {
 		if svc == nil {

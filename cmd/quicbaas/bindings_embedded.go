@@ -143,10 +143,21 @@ func (b *EmbeddedServerBinding) Start(opts EmbeddedStartOptions) error {
 	if ca := srv.CA(); ca != nil {
 		installEmbeddedFleetCA(ca)
 	}
+	// The deploy's issuer records each identity it mints in the server's
+	// issued-cert store (stopgap until go-quicbaas#1821). A server with no
+	// durable store publishes none, and the deploy then refuses with
+	// deployNoCertIssuerError rather than minting an unrecorded identity.
+	if records, recordsErr := srv.FleetNodeCertRecords(); recordsErr == nil {
+		installEmbeddedFleetCertRecords(records)
+	}
 
 	// Publish the reachable MCP endpoint so the same desktop process's
 	// `quicbaas fleet deploy` can start deployed daemons with --mcp-endpoint.
 	installEmbeddedMCPEndpoint(embeddedMCPEndpoint(cfg))
+
+	// Publish the configured SPIFFE trust domain so the in-process CA mints
+	// the agent SAN fleet enrolment requires on every deployed node's cert.
+	installEmbeddedSPIFFETrustDomain(cfg.IAM.SPIFFETrustDomain)
 
 	b.logger.Infof("embedded quicbaasd started at %s", b.bindAddr)
 	return nil
@@ -178,7 +189,9 @@ func (b *EmbeddedServerBinding) Stop() error {
 	}
 
 	uninstallEmbeddedFleetCA()
+	uninstallEmbeddedFleetCertRecords()
 	uninstallEmbeddedMCPEndpoint()
+	uninstallEmbeddedSPIFFETrustDomain()
 	b.server = nil
 	b.tempDir = ""
 	b.bindAddr = ""

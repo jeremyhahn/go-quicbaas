@@ -16,7 +16,6 @@ package service_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,30 +39,21 @@ var errCeremonyBackend = &ceremonyBackendError{}
 // the request (so tests can assert mapping) and returns the configured
 // response/error.
 type mockCeremonyClient struct {
-	initReq        *transport.CeremonyInitializeRequest
-	initResp       *transport.CeremonyInitializeResponse
-	initErr        error
-	statusResp     *transport.CeremonyStatusResponse
-	statusErr      error
-	claimBeginResp *transport.ClaimCertBeginResponse
-	claimBeginErr  error
-	claimDoneResp  *transport.ClaimCertCompleteResponse
-	claimDoneErr   error
-	beginShareReq  *transport.BeginClaimShareRequest
-	beginShareResp *transport.BeginClaimShareResponse
-	beginShareErr  error
-	completeReq    *transport.CompleteClaimShareRequest
-	completeResp   *transport.CompleteClaimShareResponse
-	completeErr    error
-	signCSRResp    *transport.SignCSRInitResponse
-	signCSRErr     error
-	enrollReq      *transport.EnrollExternalOfficerRequest
-	enrollResp     *transport.EnrollExternalOfficerResponse
-	enrollErr      error
+	initReq     *transport.CeremonyInitializeRequest
+	initSecret  []byte
+	initResp    *transport.CeremonyInitializeResponse
+	initErr     error
+	statusResp  *transport.CeremonyStatusResponse
+	statusErr   error
+	signCSRResp *transport.SignCSRInitResponse
+	signCSRErr  error
 }
 
 func (m *mockCeremonyClient) CeremonyInitialize(_ context.Context, req *transport.CeremonyInitializeRequest) (*transport.CeremonyInitializeResponse, error) {
 	m.initReq = req
+	// The service opens the Secret only for the call and wipes it after,
+	// so the passphrase is copied while it is still live.
+	m.initSecret = append([]byte(nil), req.Secret...)
 	return m.initResp, m.initErr
 }
 
@@ -71,43 +61,8 @@ func (m *mockCeremonyClient) CeremonyStatus(_ context.Context) (*transport.Cerem
 	return m.statusResp, m.statusErr
 }
 
-func (m *mockCeremonyClient) CeremonyClaimCertBegin(_ context.Context, _ *transport.ClaimCertBeginRequest) (*transport.ClaimCertBeginResponse, error) {
-	return m.claimBeginResp, m.claimBeginErr
-}
-
-func (m *mockCeremonyClient) CeremonyClaimCertComplete(_ context.Context, _ *transport.ClaimCertCompleteRequest) (*transport.ClaimCertCompleteResponse, error) {
-	return m.claimDoneResp, m.claimDoneErr
-}
-
-func (m *mockCeremonyClient) CeremonyBeginClaimShare(_ context.Context, req *transport.BeginClaimShareRequest) (*transport.BeginClaimShareResponse, error) {
-	m.beginShareReq = req
-	return m.beginShareResp, m.beginShareErr
-}
-
-func (m *mockCeremonyClient) CeremonyCompleteClaimShare(_ context.Context, req *transport.CompleteClaimShareRequest) (*transport.CompleteClaimShareResponse, error) {
-	m.completeReq = req
-	return m.completeResp, m.completeErr
-}
-
 func (m *mockCeremonyClient) CeremonySignCSR(_ context.Context, _ *transport.SignCSRInitRequest) (*transport.SignCSRInitResponse, error) {
 	return m.signCSRResp, m.signCSRErr
-}
-
-func (m *mockCeremonyClient) CeremonyEnrollExternalOfficer(_ context.Context, req *transport.EnrollExternalOfficerRequest) (*transport.EnrollExternalOfficerResponse, error) {
-	m.enrollReq = req
-	return m.enrollResp, m.enrollErr
-}
-
-func (m *mockCeremonyClient) CeremonyClaimShareBegin(_ context.Context, _ *transport.CeremonyClaimShareBeginRequest) (*transport.CeremonyClaimShareBeginResponse, error) {
-	return nil, nil
-}
-
-func (m *mockCeremonyClient) CeremonyClaimShareComplete(_ context.Context, _ *transport.CeremonyClaimShareCompleteRequest) (*transport.CeremonyCustodianInfo, error) {
-	return nil, nil
-}
-
-func (m *mockCeremonyClient) CeremonySubmitUnsealShare(_ context.Context, _ *transport.CeremonySubmitUnsealShareRequest) (*transport.CeremonySubmitUnsealShareResponse, error) {
-	return nil, nil
 }
 
 var _ transport.CeremonyClient = (*mockCeremonyClient)(nil)
@@ -134,22 +89,7 @@ func TestCeremonyService_NilClient_ReturnsMissingError(t *testing.T) {
 	_, err = svc.CeremonyStatus(ctx)
 	assertMissing(err)
 
-	_, err = svc.CeremonyBeginClaimCert(ctx, "officer")
-	assertMissing(err)
-
-	_, err = svc.CeremonyCompleteClaimCert(ctx, "officer", "nonce", "sig")
-	assertMissing(err)
-
-	_, err = svc.CeremonyBeginClaimShare(ctx, "officer")
-	assertMissing(err)
-
-	_, err = svc.CeremonyCompleteClaimShare(ctx, "officer", "nonce", []byte("sig"))
-	assertMissing(err)
-
 	_, err = svc.CeremonySignCSR(ctx, "officer", "pin", "csr", "role")
-	assertMissing(err)
-
-	_, err = svc.CeremonyEnrollExternalOfficer(ctx, &service.CeremonyEnrollExternalOfficerRequest{})
 	assertMissing(err)
 }
 
@@ -177,8 +117,9 @@ func TestCeremonyService_CeremonyInitialize_Success(t *testing.T) {
 			{Username: "alice", CSRPEM: "csr-a"},
 			{Username: "bob", CSRPEM: "csr-b"},
 		},
-		Hostname: "host.example",
-		SANs:     []string{"alt.example"},
+		Hostname:      "host.example",
+		SANs:          []string{"alt.example"},
+		AdminGenerate: true,
 	}
 
 	info, err := svc.CeremonyInitialize(context.Background(), req)
@@ -201,30 +142,222 @@ func TestCeremonyService_CeremonyInitialize_Success(t *testing.T) {
 	assert.Equal(t, []string{"alt.example"}, mc.initReq.SANs)
 }
 
-func TestCeremonyService_CeremonyInitialize_NilRequestDefaulted(t *testing.T) {
+// TestCeremonyService_CeremonyInitialize_DeliversIssuedCredentials pins
+// Codex 6800 P1: qrdb returns a generated admin key exactly once, so the
+// service must hand it, the admin certificate and every holder certificate to
+// the caller.
+func TestCeremonyService_CeremonyInitialize_DeliversIssuedCredentials(t *testing.T) {
+	holders := []transport.CeremonyHolderCert{
+		{Username: "alice", Role: "so", CertPEM: "alice-cert"},
+		{Username: "carol", Role: "custodian", CertPEM: "carol-cert"},
+	}
+	mc := &mockCeremonyClient{
+		initResp: &transport.CeremonyInitializeResponse{
+			State:                 "initialized",
+			Holders:               holders,
+			AdminCertPEM:          "admin-cert",
+			AdminKeyPEM:           []byte("admin-key"),
+			AdminCredentialSource: "generated",
+		},
+	}
+	svc := service.NewCeremonyService(mc)
+
+	info, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{AdminGenerate: true})
+	require.NoError(t, err)
+	assert.Equal(t, holders, info.Holders)
+	assert.Equal(t, []byte("admin-cert"), info.AdminCertPEM)
+	assert.Equal(t, []byte("admin-key"), info.AdminKeyPEM)
+	assert.Equal(t, "generated", info.AdminCredentialSource)
+}
+
+// TestCeremonyService_CeremonyInitialize_ForwardsEveryOfficerField pins that
+// the officer roster and policy reach qrdb unchanged: a custodian must not
+// silently become a Security Officer.
+func TestCeremonyService_CeremonyInitialize_ForwardsEveryOfficerField(t *testing.T) {
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+	officer := service.CeremonyOfficer{
+		Username:      "carol",
+		Role:          "custodian",
+		CSRPEM:        "csr-c",
+		EncryptionKEM: "dhkem-x25519",
+		EncryptionKey: []byte{1, 2, 3},
+		Factors:       []transport.HolderFactorEnrolment{{Name: "totp", Params: map[string]any{"digits": float64(6)}}},
+		Designated:    "totp",
+	}
+
+	_, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{
+		Threshold:     2,
+		Policy:        "any-enrolled",
+		Officers:      []service.CeremonyOfficer{officer},
+		AdminGenerate: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, mc.initReq)
+	assert.Equal(t, "any-enrolled", mc.initReq.Policy)
+	assert.Equal(t, []transport.CeremonyOfficerRequest{officer}, mc.initReq.Officers)
+}
+
+func TestCeremonyService_CeremonyInitialize_NilRequestRefused(t *testing.T) {
 	mc := &mockCeremonyClient{
 		initResp: &transport.CeremonyInitializeResponse{State: "started"},
 	}
 	svc := service.NewCeremonyService(mc)
 
-	// A nil request must be replaced with a zero-value request rather than
-	// panicking.
+	// A nil request is defaulted rather than panicking, and the default
+	// carries no admin credential selector, so it is refused before the
+	// client is reached.
 	info, err := svc.CeremonyInitialize(context.Background(), nil)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "started", info.State)
-	require.NotNil(t, mc.initReq)
-	assert.Empty(t, mc.initReq.Officers)
+	require.Error(t, err)
+	assert.Nil(t, info)
+	var missing *service.CeremonyAdminSelectorMissingError
+	assert.ErrorAs(t, err, &missing)
+	assert.Nil(t, mc.initReq)
 }
 
 func TestCeremonyService_CeremonyInitialize_Error(t *testing.T) {
 	mc := &mockCeremonyClient{initErr: errCeremonyBackend}
 	svc := service.NewCeremonyService(mc)
 
-	info, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{})
+	info, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{AdminGenerate: true})
 	require.Error(t, err)
 	assert.Nil(t, info)
 	assert.ErrorIs(t, err, errCeremonyBackend)
+}
+
+func TestCeremonyService_CeremonyInitialize_AdminSelectorReachesClient(t *testing.T) {
+	tests := []struct {
+		name  string
+		req   service.CeremonyInitRequest
+		check func(t *testing.T, got *transport.CeremonyInitializeRequest)
+	}{
+		{
+			name: "admin CSR",
+			req:  service.CeremonyInitRequest{AdminCSRPEM: "admin-csr"},
+			check: func(t *testing.T, got *transport.CeremonyInitializeRequest) {
+				assert.Equal(t, "admin-csr", got.AdminCSRPEM)
+				assert.Empty(t, got.AdminCertPEM)
+				assert.False(t, got.AdminGenerate)
+			},
+		},
+		{
+			name: "admin certificate with pool",
+			req:  service.CeremonyInitRequest{AdminCertPEM: "admin-cert", AdminCertPoolPEM: "admin-pool"},
+			check: func(t *testing.T, got *transport.CeremonyInitializeRequest) {
+				assert.Equal(t, "admin-cert", got.AdminCertPEM)
+				assert.Equal(t, "admin-pool", got.AdminCertPoolPEM)
+				assert.Empty(t, got.AdminCSRPEM)
+				assert.False(t, got.AdminGenerate)
+			},
+		},
+		{
+			name: "admin generate",
+			req:  service.CeremonyInitRequest{AdminGenerate: true},
+			check: func(t *testing.T, got *transport.CeremonyInitializeRequest) {
+				assert.True(t, got.AdminGenerate)
+				assert.Empty(t, got.AdminCSRPEM)
+				assert.Empty(t, got.AdminCertPEM)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{State: "complete"}}
+			svc := service.NewCeremonyService(mc)
+			req := tc.req
+			secret, err := service.NewCeremonySecret(context.Background(), []byte("barrier-secret"))
+			require.NoError(t, err)
+			defer secret.Destroy()
+			req.Secret = secret
+
+			_, err = svc.CeremonyInitialize(context.Background(), &req)
+			require.NoError(t, err)
+			require.NotNil(t, mc.initReq)
+			tc.check(t, mc.initReq)
+			assert.Equal(t, []byte("barrier-secret"), mc.initSecret)
+			assert.Nil(t, mc.initReq.Secret, "the wire request must not keep the passphrase after the call")
+		})
+	}
+}
+
+func TestCeremonyService_CeremonyInitialize_NoAdminSelector(t *testing.T) {
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+
+	info, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{SOPin: "so-pin"})
+	require.Error(t, err)
+	assert.Nil(t, info)
+	var missing *service.CeremonyAdminSelectorMissingError
+	assert.ErrorAs(t, err, &missing)
+	assert.Nil(t, mc.initReq, "the client must not be reached")
+}
+
+func TestCeremonyService_CeremonyInitialize_TwoAdminSelectors(t *testing.T) {
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+
+	info, err := svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{
+		AdminCSRPEM:   "admin-csr",
+		AdminGenerate: true,
+	})
+	require.Error(t, err)
+	assert.Nil(t, info)
+	var conflict *service.CeremonyAdminSelectorConflictError
+	require.ErrorAs(t, err, &conflict)
+	assert.Equal(t, 2, conflict.Count)
+	assert.Nil(t, mc.initReq, "the client must not be reached")
+}
+
+// TestNewCeremonySecret_SealsAndWipesSource proves the passphrase is moved
+// into a *secure.Secret, the service hands exactly those bytes to qrdb, and
+// the caller's plaintext copy is zeroed.
+func TestNewCeremonySecret_SealsAndWipesSource(t *testing.T) {
+	src := []byte("barrier-secret")
+	secret, err := service.NewCeremonySecret(context.Background(), src)
+	require.NoError(t, err)
+	require.NotNil(t, secret)
+	defer secret.Destroy()
+	assert.Equal(t, make([]byte, len("barrier-secret")), src, "source bytes must be wiped")
+
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+	_, err = svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{
+		AdminGenerate: true,
+		Secret:        secret,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("barrier-secret"), mc.initSecret)
+}
+
+// TestNewCeremonySecret_EmptyMeansNoSecret proves an absent passphrase maps
+// to a nil Secret and the wire request carries no secret (strategy "none").
+func TestNewCeremonySecret_EmptyMeansNoSecret(t *testing.T) {
+	secret, err := service.NewCeremonySecret(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Nil(t, secret)
+
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+	_, err = svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{AdminGenerate: true})
+	require.NoError(t, err)
+	assert.Empty(t, mc.initSecret)
+}
+
+// TestCeremonyService_CeremonyInitialize_DestroyedSecretRefused proves a
+// Secret released before the call is refused and never reaches qrdb.
+func TestCeremonyService_CeremonyInitialize_DestroyedSecretRefused(t *testing.T) {
+	secret, err := service.NewCeremonySecret(context.Background(), []byte("barrier-secret"))
+	require.NoError(t, err)
+	secret.Destroy()
+
+	mc := &mockCeremonyClient{initResp: &transport.CeremonyInitializeResponse{}}
+	svc := service.NewCeremonyService(mc)
+	_, err = svc.CeremonyInitialize(context.Background(), &service.CeremonyInitRequest{
+		AdminGenerate: true,
+		Secret:        secret,
+	})
+	require.Error(t, err)
+	assert.Nil(t, mc.initReq, "qrdb must not be called with a destroyed secret")
 }
 
 // =============================================================================
@@ -258,168 +391,17 @@ func TestCeremonyService_CeremonyStatus_Error(t *testing.T) {
 // CeremonyBeginClaimCert
 // =============================================================================
 
-func TestCeremonyService_CeremonyBeginClaimCert_Success(t *testing.T) {
-	expires := "2026-05-29T12:00:00Z"
-	mc := &mockCeremonyClient{
-		claimBeginResp: &transport.ClaimCertBeginResponse{
-			NonceHex:  "deadbeef",
-			ExpiresAt: expires,
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimCert(context.Background(), "officer")
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-	assert.Equal(t, "deadbeef", ch.NonceHex)
-
-	want, parseErr := time.Parse(time.RFC3339, expires)
-	require.NoError(t, parseErr)
-	assert.True(t, ch.ExpiresAt.Equal(want))
-}
-
-func TestCeremonyService_CeremonyBeginClaimCert_InvalidExpiryIgnored(t *testing.T) {
-	mc := &mockCeremonyClient{
-		claimBeginResp: &transport.ClaimCertBeginResponse{
-			NonceHex:  "deadbeef",
-			ExpiresAt: "not-a-time",
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimCert(context.Background(), "officer")
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-	assert.True(t, ch.ExpiresAt.IsZero())
-}
-
-func TestCeremonyService_CeremonyBeginClaimCert_Error(t *testing.T) {
-	mc := &mockCeremonyClient{claimBeginErr: errCeremonyBackend}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimCert(context.Background(), "officer")
-	require.Error(t, err)
-	assert.Nil(t, ch)
-	assert.ErrorIs(t, err, errCeremonyBackend)
-}
-
 // =============================================================================
 // CeremonyCompleteClaimCert
 // =============================================================================
-
-func TestCeremonyService_CeremonyCompleteClaimCert_Success(t *testing.T) {
-	mc := &mockCeremonyClient{
-		claimDoneResp: &transport.ClaimCertCompleteResponse{
-			CertPEM:   "LEAF",
-			CACertPEM: "CA",
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	res, err := svc.CeremonyCompleteClaimCert(context.Background(), "officer", "nonce", "sig")
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Equal(t, []byte("LEAF"), res.CertPEM)
-	assert.Equal(t, []byte("CA"), res.CACertPEM)
-}
-
-func TestCeremonyService_CeremonyCompleteClaimCert_Error(t *testing.T) {
-	mc := &mockCeremonyClient{claimDoneErr: errCeremonyBackend}
-	svc := service.NewCeremonyService(mc)
-
-	res, err := svc.CeremonyCompleteClaimCert(context.Background(), "officer", "nonce", "sig")
-	require.Error(t, err)
-	assert.Nil(t, res)
-	assert.ErrorIs(t, err, errCeremonyBackend)
-}
 
 // =============================================================================
 // CeremonyBeginClaimShare
 // =============================================================================
 
-func TestCeremonyService_CeremonyBeginClaimShare_Success(t *testing.T) {
-	expires := "2026-08-06T12:00:00Z"
-	mc := &mockCeremonyClient{
-		beginShareResp: &transport.BeginClaimShareResponse{
-			NonceHex:  "deadbeef",
-			ExpiresAt: expires,
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-	assert.Equal(t, "deadbeef", ch.NonceHex)
-
-	want, parseErr := time.Parse(time.RFC3339, expires)
-	require.NoError(t, parseErr)
-	assert.True(t, ch.ExpiresAt.Equal(want))
-
-	require.NotNil(t, mc.beginShareReq)
-	assert.Equal(t, "officer", mc.beginShareReq.Username)
-}
-
-func TestCeremonyService_CeremonyBeginClaimShare_InvalidExpiryIgnored(t *testing.T) {
-	mc := &mockCeremonyClient{
-		beginShareResp: &transport.BeginClaimShareResponse{
-			NonceHex:  "deadbeef",
-			ExpiresAt: "not-a-time",
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-	assert.True(t, ch.ExpiresAt.IsZero())
-}
-
-func TestCeremonyService_CeremonyBeginClaimShare_Error(t *testing.T) {
-	mc := &mockCeremonyClient{beginShareErr: errCeremonyBackend}
-	svc := service.NewCeremonyService(mc)
-
-	ch, err := svc.CeremonyBeginClaimShare(context.Background(), "officer")
-	require.Error(t, err)
-	assert.Nil(t, ch)
-	assert.ErrorIs(t, err, errCeremonyBackend)
-}
-
 // =============================================================================
 // CeremonyCompleteClaimShare
 // =============================================================================
-
-func TestCeremonyService_CeremonyCompleteClaimShare_Success(t *testing.T) {
-	mc := &mockCeremonyClient{
-		completeResp: &transport.CompleteClaimShareResponse{
-			ShareIndex: 3,
-			ShareJSON:  `{"share":"value"}`,
-		},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	result, err := svc.CeremonyCompleteClaimShare(context.Background(), "officer", "deadbeef", []byte("sig"))
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, 3, result.ShareIndex)
-	assert.Equal(t, `{"share":"value"}`, result.ShareJSON)
-
-	// Verify all handshake fields were mapped onto the transport request.
-	require.NotNil(t, mc.completeReq)
-	assert.Equal(t, "officer", mc.completeReq.Username)
-	assert.Equal(t, "deadbeef", mc.completeReq.NonceHex)
-	assert.Equal(t, []byte("sig"), mc.completeReq.Signature)
-}
-
-func TestCeremonyService_CeremonyCompleteClaimShare_Error(t *testing.T) {
-	mc := &mockCeremonyClient{completeErr: errCeremonyBackend}
-	svc := service.NewCeremonyService(mc)
-
-	result, err := svc.CeremonyCompleteClaimShare(context.Background(), "officer", "deadbeef", []byte("sig"))
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.ErrorIs(t, err, errCeremonyBackend)
-}
 
 // =============================================================================
 // CeremonySignCSR
@@ -450,53 +432,3 @@ func TestCeremonyService_CeremonySignCSR_Error(t *testing.T) {
 // =============================================================================
 // CeremonyEnrollExternalOfficer
 // =============================================================================
-
-func TestCeremonyService_CeremonyEnrollExternalOfficer_Success(t *testing.T) {
-	mc := &mockCeremonyClient{
-		enrollResp: &transport.EnrollExternalOfficerResponse{SealedShare: "sealed-b64"},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	req := &service.CeremonyEnrollExternalOfficerRequest{
-		Username:   "alice",
-		PubKeyPEM:  "PUB",
-		ShareIndex: 2,
-		AuthFactor: "piv",
-		ShareBytes: []byte{0x01, 0x02},
-	}
-
-	resp, err := svc.CeremonyEnrollExternalOfficer(context.Background(), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "sealed-b64", resp.SealedShare)
-
-	require.NotNil(t, mc.enrollReq)
-	assert.Equal(t, "alice", mc.enrollReq.Username)
-	assert.Equal(t, 2, mc.enrollReq.ShareIndex)
-	assert.Equal(t, "piv", mc.enrollReq.AuthFactor)
-	assert.Equal(t, []byte{0x01, 0x02}, mc.enrollReq.ShareBytes)
-}
-
-func TestCeremonyService_CeremonyEnrollExternalOfficer_NilRequestDefaulted(t *testing.T) {
-	mc := &mockCeremonyClient{
-		enrollResp: &transport.EnrollExternalOfficerResponse{},
-	}
-	svc := service.NewCeremonyService(mc)
-
-	resp, err := svc.CeremonyEnrollExternalOfficer(context.Background(), nil)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Empty(t, resp.SealedShare)
-	require.NotNil(t, mc.enrollReq)
-	assert.Empty(t, mc.enrollReq.Username)
-}
-
-func TestCeremonyService_CeremonyEnrollExternalOfficer_Error(t *testing.T) {
-	mc := &mockCeremonyClient{enrollErr: errCeremonyBackend}
-	svc := service.NewCeremonyService(mc)
-
-	resp, err := svc.CeremonyEnrollExternalOfficer(context.Background(), &service.CeremonyEnrollExternalOfficerRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.ErrorIs(t, err, errCeremonyBackend)
-}

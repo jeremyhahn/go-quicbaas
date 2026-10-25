@@ -24,6 +24,9 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // Storage layout.
@@ -95,14 +98,36 @@ type Backend interface {
 // clientBackend adapts a qrdb SDK client to Backend.
 type clientBackend struct {
 	client *qrdbsdk.Client
+	binder qrdbservice.Binder
 }
 
-// NewClientBackend returns a Backend over a qrdb SDK client.
-func NewClientBackend(client *qrdbsdk.Client) Backend {
-	return &clientBackend{client: client}
+// NewClientBackend returns a Backend over a qrdb SDK client. The placement
+// store is quicbaasd's own system-tenant state (every key sits under the
+// system namespace, the tenant only names a sub-prefix), so every call runs
+// as the system service principal binder binds. A nil binder leaves the
+// caller's context as it is: a client with no embedded node authenticates
+// through its own transport.
+func NewClientBackend(client *qrdbsdk.Client, binder qrdbservice.Binder) Backend {
+	return &clientBackend{client: client, binder: binder}
+}
+
+// bind runs ctx as the system service principal.
+func (b *clientBackend) bind(ctx context.Context) (context.Context, error) {
+	if b.binder == nil {
+		return ctx, nil
+	}
+	// The service principal is a system identity, and qrdb's self-scope
+	// check refuses a system identity acting for another tenant, so the
+	// backend call runs as the system tenant. The caller's tenant is not
+	// lost: it is already in every placement key's prefix.
+	return b.binder.ServiceContext(tenantctx.WithSystem(ctx))
 }
 
 func (b *clientBackend) Grant(ctx context.Context, ttlSeconds int64) (int64, error) {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return 0, err
+	}
 	info, err := b.client.Lease().LeaseGrant(ctx, ttlSeconds)
 	if err != nil {
 		return 0, err
@@ -111,20 +136,36 @@ func (b *clientBackend) Grant(ctx context.Context, ttlSeconds int64) (int64, err
 }
 
 func (b *clientBackend) KeepAlive(ctx context.Context, leaseID int64) error {
-	_, err := b.client.Lease().LeaseKeepAlive(ctx, leaseID)
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = b.client.Lease().LeaseKeepAlive(ctx, leaseID)
 	return err
 }
 
 func (b *clientBackend) Revoke(ctx context.Context, leaseID int64) error {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return err
+	}
 	return b.client.Lease().LeaseRevoke(ctx, leaseID)
 }
 
 func (b *clientBackend) PutWithLease(ctx context.Context, key string, value []byte, leaseID int64) error {
-	_, err := b.client.MVCC().PutWithLease(ctx, key, value, leaseID)
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = b.client.MVCC().PutWithLease(ctx, key, value, leaseID)
 	return err
 }
 
 func (b *clientBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
 	value, err := b.client.KV().Get(ctx, key)
 	if err != nil {
 		var notFound *transport.KeyNotFoundError
@@ -137,11 +178,19 @@ func (b *clientBackend) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (b *clientBackend) Put(ctx context.Context, key string, value []byte) error {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return err
+	}
 	return b.client.KV().Put(ctx, key, value)
 }
 
 func (b *clientBackend) Delete(ctx context.Context, key string) error {
-	err := b.client.KV().Delete(ctx, key)
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return err
+	}
+	err = b.client.KV().Delete(ctx, key)
 	var notFound *transport.KeyNotFoundError
 	if stderrors.As(err, &notFound) {
 		return nil
@@ -150,10 +199,18 @@ func (b *clientBackend) Delete(ctx context.Context, key string) error {
 }
 
 func (b *clientBackend) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return b.client.KV().Scan(ctx, prefix)
 }
 
 func (b *clientBackend) Commit(ctx context.Context, req *transport.TransactionRequest) (bool, error) {
+	ctx, err := b.bind(ctx)
+	if err != nil {
+		return false, err
+	}
 	resp, err := b.client.Transaction().ExecuteTransaction(ctx, req)
 	if err != nil {
 		return false, err
@@ -247,9 +304,10 @@ func New(backend Backend) *Placer {
 	return &Placer{backend: backend, now: func() time.Time { return time.Now().UTC() }}
 }
 
-// NewFromClient returns a Placer over a qrdb SDK client.
-func NewFromClient(client *qrdbsdk.Client) *Placer {
-	return New(NewClientBackend(client))
+// NewFromClient returns a Placer over a qrdb SDK client whose calls run as
+// the system service principal binder binds (see NewClientBackend).
+func NewFromClient(client *qrdbsdk.Client, binder qrdbservice.Binder) *Placer {
+	return New(NewClientBackend(client, binder))
 }
 
 // prefix returns the tenant's record namespace.

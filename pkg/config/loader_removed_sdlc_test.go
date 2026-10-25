@@ -61,6 +61,16 @@ func TestLoad_RefusesRemovedKeysByName(t *testing.T) {
 	assert.Equal(t, []string{"forge.test"}, cfg.SDLC.RepoHosts)
 }
 
+// TestLoad_SealTPM2PCRsList pins the key that replaced seal.tpm2.pcr: the
+// PCR selection is a list, and every index in it reaches the config.
+func TestLoad_SealTPM2PCRsList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quicbaas.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("seal:\n  tpm2:\n    pcrs: [7, 11]\n"), 0o600))
+	cfg, err := NewLoader().Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, []uint{7, 11}, cfg.Seal.TPM2.PCRs)
+}
+
 // TestLoad_RefusesTheDaemonSideWorkspaceKeys pins the owner's ruling that the
 // daemon does no clone, copy or worktree for the SDLC path: the worker's
 // container clones the project and its context repositories itself, so both

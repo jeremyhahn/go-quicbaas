@@ -1191,6 +1191,26 @@ func TestVectorClient_Success(t *testing.T) {
 	assert.NotNil(t, vc)
 }
 
+// The write client comes from the provider for the service's own shard.
+func TestVectorClient_UsesTheServiceShard(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
+	provider := newVecSDKProvider(&vecTransport{})
+	svc.sdkProvider = provider
+	_, err := svc.vectorClient()
+	require.NoError(t, err)
+	assert.Equal(t, svc.shardID, provider.lastShardID.Load())
+}
+
+// A provider that cannot hand out a client fails the write before any call.
+func TestVectorClient_ProviderErrorIsRaft(t *testing.T) {
+	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
+	svc.sdkProvider = newVecSDKProvider(nil)
+	_, err := svc.vectorClient()
+	var qbErr *qbErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
+}
+
 func TestResolveShardID_NonZero(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
 	assert.Equal(t, uint64(42), svc.resolveShardID(42))

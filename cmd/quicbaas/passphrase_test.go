@@ -406,7 +406,7 @@ func TestReadPassphraseLimited_StopsAtTheFirstNewline(t *testing.T) {
 	// A test fixture, not a live secret, so reading it back is fine — and
 	// checking the bytes rather than only the length is what catches a read
 	// that returns the right number of wrong bytes.
-	assert.Equal(t, "first-line", string(buf.Bytes()))
+	assertBufferHolds(t, "first-line", buf)
 
 	rest, err := io.ReadAll(r)
 	require.NoError(t, err)
@@ -707,7 +707,7 @@ func TestReadPassphrase_DeadlineReadersWorkWithoutPollSupport(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "still-works", string(buf.Bytes()))
+	assertBufferHolds(t, "still-works", buf)
 }
 
 // TestReadPassphrase_NonBlockingReadersWorkWithoutPollSupport keeps the
@@ -720,7 +720,7 @@ func TestReadPassphrase_NonBlockingReadersWorkWithoutPollSupport(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "plain-reader", string(buf.Bytes()))
+	assertBufferHolds(t, "plain-reader", buf)
 }
 
 // TestBarrierUnseal_UnboundableStdinRefusedEndToEnd checks the operator
@@ -766,7 +766,7 @@ func TestReadPassphrase_PollPathDeliversALine(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "polled-passphrase", string(buf.Bytes()))
+	assertBufferHolds(t, "polled-passphrase", buf)
 }
 
 // TestReadPassphrase_DeliversWithABudget pins the ordinary path: given a
@@ -778,7 +778,7 @@ func TestReadPassphrase_DeliversWithABudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, buf)
 	defer buf.Destroy()
-	assert.Equal(t, "delivered-whole", string(buf.Bytes()))
+	assertBufferHolds(t, "delivered-whole", buf)
 }
 
 // TestPassphraseReadTimeout_UsesTheCommandBudget asserts the fallback rather
@@ -889,7 +889,6 @@ func TestPassphraseHelpNamesTheExposure(t *testing.T) {
 		cmd  func() *cobra.Command
 	}{
 		{"barrier init", newBarrierInitCommand},
-		{"barrier init-shamir", newBarrierInitShamirCommand},
 		{"barrier unseal", newBarrierUnsealCommand},
 		{"barrier enable-encryption", newBarrierEnableEncryptionCommand},
 		{"tenant barrier init", newTenantBarrierInitCommand},
@@ -981,25 +980,6 @@ func TestBarrierInit_NoneRejectsStdinPassphrase(t *testing.T) {
 	assert.Nil(t, fc.lastInitReq)
 }
 
-// TestBarrierInitShamir_PassphraseFromEnv seeds the Shamir split from the
-// environment.
-func TestBarrierInitShamir_PassphraseFromEnv(t *testing.T) {
-	defer resetBarrierFlags()
-	t.Setenv(barrierPassphraseEnv, "shamir-seed")
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	cmd := newBarrierInitShamirCommand()
-	cmd.SetArgs([]string{"--threshold", "2", "--total", "3"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastInitShamirReq)
-	assert.Equal(t, "shamir-seed", string(fc.lastInitShamirReq.Secret))
-}
-
 // TestBarrierEnableEncryption_PassphraseFromStdin migrates with a piped
 // passphrase.
 func TestBarrierEnableEncryption_PassphraseFromStdin(t *testing.T) {
@@ -1069,7 +1049,7 @@ func TestBarrierEnableEncryption_ShamirKeepsATypedPassphrase(t *testing.T) {
 func TestTenantBarrierInit_ShamirIgnoresAmbientEnv(t *testing.T) {
 	defer resetTenantBarrierFlags()
 	t.Setenv(barrierPassphraseEnv, "left-over")
-	fc := &fakeTenantBarrierClient{}
+	fc := enrolledTenantBarrierClient(3)
 	defer withFakeTenantBarrier(fc)()
 	tenantBarrierTenantID = "acme"
 
@@ -1175,4 +1155,50 @@ func TestTenantBarrierInit_PassphraseFromEnv(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastInitReq)
 	assert.Equal(t, "tenant-env-pp", string(fc.lastInitReq.Passphrase))
+}
+
+// assertBufferHolds compares a secure buffer's contents inside its borrow, so
+// no copy of the bytes outlives the comparison.
+func assertBufferHolds(t *testing.T, want string, buf *secure.Buffer) {
+	t.Helper()
+	require.NoError(t, buf.WithBytes(func(b []byte) error {
+		assert.Equal(t, want, string(b))
+		return nil
+	}))
+}
+
+// TestWithPassphraseBytes_AbsentSecretIsEmpty verifies a strategy with no
+// passphrase reaches the request as an empty secret, not a borrow error.
+func TestWithPassphraseBytes_AbsentSecretIsEmpty(t *testing.T) {
+	destroyed, err := secure.NewBufferFromBytes([]byte("gone"))
+	require.NoError(t, err)
+	destroyed.Destroy()
+
+	for name, buf := range map[string]*secure.Buffer{"nil": nil, "destroyed": destroyed} {
+		t.Run(name, func(t *testing.T) {
+			var got []byte
+			called := false
+			require.NoError(t, withPassphraseBytes(buf, func(b []byte) error {
+				called, got = true, b
+				return nil
+			}))
+			assert.True(t, called)
+			assert.Empty(t, got)
+		})
+	}
+}
+
+// TestWithPassphraseBytes_LendsTheSecretAndReturnsFnError verifies a real
+// passphrase is lent intact and fn's error is returned unchanged.
+func TestWithPassphraseBytes_LendsTheSecretAndReturnsFnError(t *testing.T) {
+	buf, err := secure.NewBufferFromBytes([]byte("real-passphrase"))
+	require.NoError(t, err)
+	defer buf.Destroy()
+
+	sentinel := &PINsNotAllowedError{Strategy: "none", Op: "init"}
+	err = withPassphraseBytes(buf, func(b []byte) error {
+		assert.Equal(t, "real-passphrase", string(b))
+		return sentinel
+	})
+	assert.ErrorIs(t, err, sentinel)
 }

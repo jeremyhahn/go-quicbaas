@@ -237,7 +237,7 @@ func (s *certificateService) IssueCertificate(ctx context.Context, req *IssueCer
 		return nil, ErrCertMissingCommonName
 	}
 
-	tenantID, err := prepareTenantContext(ctx)
+	tenantID, err := callerTenant(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +284,7 @@ func (s *certificateService) SignCSR(ctx context.Context, req *SignCSRRequest) (
 	// transport request to every server-side CA adapter (embedded, REST, gRPC,
 	// QUIC, MCP, Unix); the trust domain and SPIFFE kind are resolved by the
 	// adapter from its operator config and the requested profile.
-	tenantID, err := prepareTenantContext(ctx)
+	tenantID, err := callerTenant(ctx)
 	if err != nil {
 		return nil, err
 	}

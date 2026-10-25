@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
@@ -218,16 +219,18 @@ func (n *svcBoostRaftNode) StartShard(_ map[uint64]string, _ bool, _ interfaces.
 func (n *svcBoostRaftNode) StopShard(_ uint64) error { return nil }
 func (n *svcBoostRaftNode) Close() error             { return nil }
 
-// vecSDKProvider implements QRDBClientProvider
-func (p *vecSDKProvider) ForShard(shardID uint64) (*qrdbsdk.Client, error) {
+// vecSDKProvider implements VectorClientProvider
+func (p *vecSDKProvider) VectorForShard(shardID uint64) (qrdbtransport.VectorClient, error) {
 	p.lastShardID.Store(shardID)
 	if p.transport == nil {
 		return nil, fmt.Errorf("no transport")
 	}
-	return qrdbsdk.NewClient(p.transport)
+	client, err := qrdbsdk.NewClient(p.transport)
+	if err != nil {
+		return nil, err
+	}
+	return client.Vector(), nil
 }
-func (p *vecSDKProvider) Close() error     { return nil }
-func (p *vecSDKProvider) IsEmbedded() bool { return false }
 
 // covKeyspaceError implements error
 func (e *covKeyspaceError) Error() string { return e.msg }

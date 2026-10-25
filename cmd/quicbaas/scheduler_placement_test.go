@@ -46,7 +46,7 @@ func withPlacementCLI(t *testing.T) {
 		MockQuicBaaS: testutil.NewMockQuicBaaS(),
 		placement:    service.NewPlacementService(placement.New(placementtest.New())),
 	}
-	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc))
+	client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(svc), mockSystemIdentity())
 	require.NoError(t, err)
 	orig := sdkClientFactory
 	sdkClientFactory = func() (quicbaas.Client, error) { return client, nil }

@@ -143,7 +143,8 @@ if err := srv.Start(); err != nil {
     return err
 }
 
-client, err := quicbaas.NewClient("", quicbaas.WithEmbedded(srv.Service()))
+client, err := quicbaas.NewClient("embedded", quicbaas.WithEmbedded(srv.Service()),
+    quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(srv)))
 ```
 
 #### Server lifecycle

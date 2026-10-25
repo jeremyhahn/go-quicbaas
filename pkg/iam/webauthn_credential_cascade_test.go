@@ -115,10 +115,9 @@ func (f *reapableFactorClient) RemoveAuthFactor(_ context.Context, req *qrdbtran
 func newRevokingWriteThrough(
 	t *testing.T,
 	factors qrdbtransport.UserAuthFactorClient,
-) (*webAuthnFactorWriteThrough, *xkmswebauthn.MemoryUserStore, xkmswebauthn.CredentialStore) {
+) (*webAuthnFactorWriteThrough, xkmswebauthn.UserStore, xkmswebauthn.CredentialStore) {
 	t.Helper()
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
@@ -454,7 +453,7 @@ func TestManagerCredentialVerbs_RejectEmptyEmail(t *testing.T) {
 func TestWriteThroughDelete_FailsClosedOnUnreadableStore(t *testing.T) {
 	readErr := errors.New("kv unavailable")
 	factors := &reapableFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	inner := &unreadableCredentialStore{err: readErr}
 	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
@@ -1198,7 +1197,7 @@ func (s *flakyReadCredentialStore) DeleteByUserID(context.Context, []byte) error
 func TestWriteThroughSave_UnreadableStoreDoesNotDestroyExistingCredential(t *testing.T) {
 	ctx := context.Background()
 	inner := newFlakyReadCredentialStore()
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 
 	// The factor enrollment fails, so a Save that got past the snapshot would
 	// reach the compensation path.
@@ -1306,7 +1305,7 @@ func TestFlakyReadCredentialStore_DistinguishesAbsenceFromFailure(t *testing.T) 
 func TestWriteThroughSave_GenuineNotFoundStillCompensates(t *testing.T) {
 	ctx := context.Background()
 	inner := newFlakyReadCredentialStore()
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 
 	factors := &fakeUserAuthFactorClient{addErr: errors.New("qrdb unavailable")}
 	wt, err := newWebAuthnFactorWriteThrough(inner, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
@@ -1384,7 +1383,7 @@ func TestWriteThroughSave_SnapshotClassifiesBySentinelNotText(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			inner := newFlakyReadCredentialStore()
-			users := xkmswebauthn.NewMemoryUserStore()
+			users := newTestWebAuthnUserStore(t)
 			// Enrollment fails, so a Save that got past the snapshot reaches
 			// the compensation path.
 			factors := &fakeUserAuthFactorClient{addErr: errors.New("qrdb unavailable")}

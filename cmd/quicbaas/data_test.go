@@ -141,14 +141,12 @@ func (m *mockSDKClient) Async() quicbaas.AsyncService                          {
 func (m *mockSDKClient) AI() quicbaas.AIService                                { return nil }
 func (m *mockSDKClient) DataStore() (quicbaas.QRDBKVStore, error)              { return nil, nil }
 
-func (m *mockSDKClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService       { return nil }
-func (m *mockSDKClient) TenantMgmtService() quicbaas.TenantService                  { return nil }
-func (m *mockSDKClient) Barrier() (quicbaas.QRDBBarrierClient, error)               { return nil, nil }
-func (m *mockSDKClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error)      { return nil, nil }
-func (m *mockSDKClient) SealStore() (quicbaas.QRDBSealStoreClient, error)           { return nil, nil }
-func (m *mockSDKClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)             { return nil, nil }
-func (m *mockSDKClient) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) { return nil, nil }
-func (m *mockSDKClient) Share() (quicbaas.QRDBShareClient, error)                   { return nil, nil }
+func (m *mockSDKClient) BarrierCeremonyMgmt() quicbaas.BarrierCeremonyService  { return nil }
+func (m *mockSDKClient) TenantMgmtService() quicbaas.TenantService             { return nil }
+func (m *mockSDKClient) Barrier() (quicbaas.QRDBBarrierClient, error)          { return nil, nil }
+func (m *mockSDKClient) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
+func (m *mockSDKClient) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }
+func (m *mockSDKClient) TenantMgmt() (quicbaas.QRDBTenantClient, error)        { return nil, nil }
 
 func (m *mockSDKClient) Close() error {
 	if m.closeFunc != nil {

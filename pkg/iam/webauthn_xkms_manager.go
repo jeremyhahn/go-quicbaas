@@ -24,6 +24,8 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // XKMSWebAuthnManager implements the multi-tenant WebAuthn surface that
@@ -212,6 +214,10 @@ func (m *XKMSWebAuthnManager) BeginRegistration(ctx context.Context, tenantID, u
 // same (tenant, email) key BeginRegistration uses, so FinishRegistration
 // completes either ceremony.
 func (m *XKMSWebAuthnManager) BeginInviteRegistration(ctx context.Context, tenantID, email string) (map[string]interface{}, error) {
+	// The ceremony is unauthenticated, so qrdb would place the caller in the
+	// system tenant and refuse it the invitee's record. Scope it to the
+	// invite's own tenant: there is no cross-tenant client (#1619).
+	ctx = tenantctx.WithTenant(ctx, tenantID)
 	svc, err := m.factory.ServiceFor(ctx, tenantID)
 	if err != nil {
 		return nil, err
@@ -248,6 +254,8 @@ func (m *XKMSWebAuthnManager) FinishRegistration(ctx context.Context, tenantID, 
 // pending, which the ordinary FinishRegistration refuses. Activating the
 // account and redeeming the invitation stay with the caller.
 func (m *XKMSWebAuthnManager) FinishInviteRegistration(ctx context.Context, tenantID, email string, credential map[string]interface{}) error {
+	// Scoped to the invite's tenant for the reason BeginInviteRegistration is.
+	ctx = tenantctx.WithTenant(ctx, tenantID)
 	_, err := m.finishRegistration(ctx, tenantID, email, credential, func(ctx context.Context, svc *xkmssdk.WebAuthnService, sessionID string, parsed *protocol.ParsedCredentialCreationData) error {
 		_, err := svc.FinishInviteRegistration(ctx, sessionID, parsed)
 		return err

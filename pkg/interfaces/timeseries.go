@@ -118,6 +118,8 @@ type RetentionPolicy struct {
 // TimeSeriesStorage defines the interface for time series storage operations.
 // It provides methods for writing, querying, and managing time series data.
 // This interface enables dependency injection and testability for time series services.
+// Every call takes the caller's context, which carries the identity and tenant
+// the storage engine authorizes the call as.
 type TimeSeriesStorage interface {
 	// WritePoint writes a single data point to the time series storage.
 	// Returns an error if the point is invalid or the write fails.
@@ -125,7 +127,7 @@ type TimeSeriesStorage interface {
 
 	// WriteBatch writes multiple data points atomically.
 	// Returns an error if any point is invalid or the batch write fails.
-	WriteBatch(points []DataPoint) error
+	WriteBatch(ctx context.Context, points []DataPoint) error
 
 	// QueryRich performs a time range query with optional filtering and aggregation.
 	// Returns the query result containing matching data points or aggregated values.
@@ -137,13 +139,13 @@ type TimeSeriesStorage interface {
 
 	// GetRetentionPolicy retrieves the retention policy for a metric.
 	// Returns a default policy if none is explicitly configured.
-	GetRetentionPolicy(metric string) (*RetentionPolicy, error)
+	GetRetentionPolicy(ctx context.Context, metric string) (*RetentionPolicy, error)
 
 	// SetRetentionPolicy sets the retention policy for a metric.
 	// The policy defines how long data is retained and downsampling rules.
-	SetRetentionPolicy(metric string, policy *RetentionPolicy) error
+	SetRetentionPolicy(ctx context.Context, metric string, policy *RetentionPolicy) error
 
 	// ListMetrics returns metric names matching the optional prefix.
 	// Limit controls the maximum number of metrics returned.
-	ListMetrics(prefix string, limit int) ([]string, error)
+	ListMetrics(ctx context.Context, prefix string, limit int) ([]string, error)
 }

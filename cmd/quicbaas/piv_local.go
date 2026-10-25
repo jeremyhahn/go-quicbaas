@@ -160,11 +160,11 @@ func newFilePIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 	if err != nil {
 		return nil, &PIVLocalSessionError{Op: "init cert storage", Cause: err}
 	}
-	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
-		Backend:    storageBackend,
-		DEREnabled: true,
-		PEMEnabled: true,
-	})
+	daos, err := xkmssdk.NewBackendDAOFactory(storageBackend)
+	if err != nil {
+		return nil, &PIVLocalSessionError{Op: "init cert storage", Cause: err}
+	}
+	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{DAOs: daos})
 	if err != nil {
 		return nil, &PIVLocalSessionError{Op: "init cert storage", Cause: err}
 	}

@@ -65,28 +65,6 @@ func TestFormatBarrierShamirResult_JSONAndRawAndInvalid(t *testing.T) {
 	assert.Error(t, formatBarrierShamirResult(resp, "bogus", &bytes.Buffer{}))
 }
 
-func TestFormatBarrierRekeyResult_JSONAndRawAndInvalid(t *testing.T) {
-	resp := &qrdbtransport.BarrierRekeyResponse{
-		Threshold:   2,
-		TotalShares: 2,
-		ShareCount:  2,
-	}
-
-	var jsonBuf bytes.Buffer
-	require.NoError(t, formatBarrierRekeyResult(resp, "json", &jsonBuf))
-	assert.Contains(t, jsonBuf.String(), `"threshold": 2`)
-	assert.Contains(t, jsonBuf.String(), `"share_count": 2`)
-	// Share-free contract: raw shares must never appear in CLI output.
-	assert.NotContains(t, jsonBuf.String(), `"shares"`)
-
-	var rawBuf bytes.Buffer
-	require.NoError(t, formatBarrierRekeyResult(resp, "raw", &rawBuf))
-	assert.Contains(t, rawBuf.String(), "New Threshold: 2 of 2")
-	assert.Contains(t, rawBuf.String(), "Shares sealed to officers: 2")
-
-	assert.Error(t, formatBarrierRekeyResult(resp, "bogus", &bytes.Buffer{}))
-}
-
 func TestFormatBarrierRecoveryKeys_JSONAndRawAndInvalid(t *testing.T) {
 	resp := &qrdbtransport.BarrierRecoveryKeysResponse{
 		Threshold:  2,

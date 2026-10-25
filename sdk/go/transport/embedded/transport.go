@@ -31,6 +31,7 @@ type streamHandlerFunc func(ctx context.Context, svc service.QuicBaaS, req inter
 // Transport implements the transport.Transport interface for embedded in-process access.
 type Transport struct {
 	service service.QuicBaaS
+	bind    ContextBinder
 	closed  atomic.Bool
 }
 
@@ -540,14 +541,44 @@ var streamHandlers = map[string]streamHandlerFunc{
 	registryService + "/Watch":                 handleRegistryWatchStream,
 }
 
+// ContextBinder binds a call's context to the qrdb identity the call runs as,
+// for example the embedding server's service principal or a tenant
+// delegation. It runs on every call after the tenant is bound.
+type ContextBinder func(ctx context.Context) (context.Context, error)
+
+// Option configures a Transport.
+type Option func(*Transport)
+
+// WithContextBinder makes the transport bind every call's context through
+// bind before dispatch. A call whose binding fails never reaches the service.
+func WithContextBinder(bind ContextBinder) Option {
+	return func(t *Transport) {
+		t.bind = bind
+	}
+}
+
 // New creates a new embedded transport with the given service.
-func New(svc service.QuicBaaS) (*Transport, error) {
+func New(svc service.QuicBaaS, opts ...Option) (*Transport, error) {
 	if svc == nil {
 		return nil, ErrNilService
 	}
-	return &Transport{
+	t := &Transport{
 		service: svc,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	return t, nil
+}
+
+// bindCall binds ctx to the call's tenant and then, when the transport has a
+// ContextBinder, to the identity the call runs as.
+func (t *Transport) bindCall(ctx context.Context) (context.Context, error) {
+	ctx = inProcessTenant(ctx)
+	if t.bind == nil {
+		return ctx, nil
+	}
+	return t.bind(ctx)
 }
 
 // Request sends a unary request and returns the response.
@@ -567,7 +598,11 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, classifyServiceError(svcName, method, err)
 	}
 
-	resp, err := handler(inProcessTenant(ctx), t.service, req)
+	ctx, err := t.bindCall(ctx)
+	if err != nil {
+		return nil, classifyServiceError(svcName, method, err)
+	}
+	resp, err := handler(ctx, t.service, req)
 	return resp, classifyServiceError(svcName, method, err)
 }
 
@@ -602,7 +637,10 @@ func (t *Transport) RequestStream(ctx context.Context, svcName, method string, r
 		return nil, NewStreamNotSupportedError(svcName, method)
 	}
 
-	ctx = inProcessTenant(ctx)
+	ctx, err := t.bindCall(ctx)
+	if err != nil {
+		return nil, classifyServiceError(svcName, method, err)
+	}
 	s := newStream(ctx, 100)
 
 	go runStreamHandler(ctx, svcName, method, handler, t.service, req, s)

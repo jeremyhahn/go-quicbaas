@@ -59,12 +59,12 @@ func currentSecretHash(t *testing.T, secret string) string {
 // tests exercise the protected-memory contract rather than routing around it.
 func hashChosenSecret(t *testing.T, secret string) (string, error) {
 	t.Helper()
-	sec, err := secure.NewSecret([]byte(secret))
+	sec, err := secure.NewSecret(t.Context(), []byte(secret))
 	if err != nil {
 		t.Fatalf("secure.NewSecret: %v", err)
 	}
 	defer sec.Destroy()
-	return HashClientSecret(sec)
+	return HashClientSecret(t.Context(), sec)
 }
 
 // assertRotationRequired asserts a refusal that names the remedy: the record is
@@ -421,7 +421,7 @@ func TestValidateClientSecret_CostsTheSameWhateverTheStoredState(t *testing.T) {
 // checked because a nil pointer is the one empty input the type does permit.
 func TestHashClientSecret_RefusesEmpty(t *testing.T) {
 	t.Run("an empty secret cannot be constructed at all", func(t *testing.T) {
-		sec, err := secure.NewSecret([]byte(""))
+		sec, err := secure.NewSecret(t.Context(), []byte(""))
 		if err == nil {
 			sec.Destroy()
 			t.Fatal("secure.NewSecret accepted an empty secret; the provisioning guarantee this test documents is gone")
@@ -429,7 +429,7 @@ func TestHashClientSecret_RefusesEmpty(t *testing.T) {
 	})
 
 	t.Run("nil is refused", func(t *testing.T) {
-		got, err := HashClientSecret(nil)
+		got, err := HashClientSecret(t.Context(), nil)
 		if !errors.Is(err, ErrSecretEmpty) {
 			t.Fatalf("HashClientSecret(nil) error = %v, want ErrSecretEmpty", err)
 		}

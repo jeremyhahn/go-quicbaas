@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler/placement"
 )
 
@@ -115,7 +116,13 @@ func newLazyPlacementService(provider QRDBClientProvider, shardID uint64) Placem
 		if err != nil {
 			return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "PlacementService", Err: err}
 		}
-		placer = placement.NewFromClient(client)
+		// The placement store is system-tenant state: a provider backed by
+		// an embedded node binds its system service principal.
+		var binder qrdbservice.Binder
+		if b, ok := provider.(qrdbservice.Binder); ok {
+			binder = b
+		}
+		placer = placement.NewFromClient(client, binder)
 		return placer, nil
 	}}
 }

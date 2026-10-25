@@ -440,7 +440,7 @@ func (s *IdentityStore) CreateUser(ctx context.Context, tenantID string, opts Cr
 	// account created anywhere but REST could not be PIV-activated at all,
 	// and REST only worked because it issued a SECOND write afterwards to set
 	// the fields this one had thrown away.
-	if len(authMethods) == 0 {
+	if len(authMethods) == 0 && !opts.AnyAuthMethod {
 		authMethods = []string{AuthMethodWebAuthn}
 	}
 	// An explicit Lifecycle WINS over the Enabled shorthand, exactly as it does
@@ -549,10 +549,10 @@ func (s *IdentityStore) GetUserByUsername(ctx context.Context, tenantID, usernam
 	return user, nil
 }
 
-// PermitCertificateLogin adds AuthMethodMTLS to a user's permitted-method
-// policy, so a login authenticated by the user's bound client certificate is
-// accepted. go-xkms's certificate login (/api/v1/auth/login/piv) and go-qrdb's
-// MTLSAuthenticator both check the policy for exactly that method.
+// PermitCertificateLogin adds the certificate login methods (mtls and piv,
+// certificateLoginMethods) to a user's permitted-method policy, so a login
+// authenticated by the user's bound client certificate is accepted by both
+// go-qrdb's MTLSAuthenticator and go-xkms's certificate login.
 //
 // First boot calls it for the bootstrap admin whose certificate it binds:
 // CreateUser defaults a new account to webauthn, which refused the very
@@ -582,15 +582,27 @@ func (s *IdentityStore) PermitCertificateLogin(ctx context.Context, tenantID str
 	return user, nil
 }
 
-// permitCertificateLogin adds AuthMethodMTLS to the user's permitted-method
-// policy and reports whether the policy changed. An empty policy permits
-// every method and is left alone, as is one that already permits mtls.
+// certificateLoginMethods are the methods a login authenticated by the user's
+// bound certificate is checked for: go-qrdb's MTLSAuthenticator checks mtls,
+// and go-xkms v0.58's certificate login (/api/v1/auth/login/piv) checks
+// qrdbsdk.MethodPIV, which go-qrdb keeps distinct from mtls.
+var certificateLoginMethods = []string{AuthMethodMTLS, AuthMethodPIV}
+
+// permitCertificateLogin adds each certificate login method the user's
+// permitted-method policy lacks and reports whether the policy changed. An
+// empty policy permits every method and is left alone.
 func (u *User) permitCertificateLogin() bool {
-	if len(u.AuthMethods) == 0 || slices.Contains(u.AuthMethods, AuthMethodMTLS) {
+	if len(u.AuthMethods) == 0 {
 		return false
 	}
-	u.AuthMethods = append(u.AuthMethods, AuthMethodMTLS)
-	return true
+	changed := false
+	for _, method := range certificateLoginMethods {
+		if !slices.Contains(u.AuthMethods, method) {
+			u.AuthMethods = append(u.AuthMethods, method)
+			changed = true
+		}
+	}
+	return changed
 }
 
 // UpdateUser updates an existing user.

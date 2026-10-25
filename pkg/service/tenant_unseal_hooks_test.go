@@ -72,27 +72,34 @@ func TestTenantUnsealHooks_TellNoOneWhenTheBarrierStaysSealed(t *testing.T) {
 	if err := refused.TenantBarrierUnseal(tenantCtx("acme"), "acme", []byte("bad")); err == nil {
 		t.Fatal("the refusal must surface")
 	}
-	partial := NewTenantBarrierService(&mockTenantClient{shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
-		TenantID: "acme", Required: 2, Submitted: 1, Sealed: true,
+	partial := NewTenantBarrierService(&mockTenantClient{quorumResp: &qrdbtransport.QuorumOutcome{
+		Op: qrdbtransport.OpUnseal, Required: 2, Submitted: 1,
 	}}, WithTenantUnsealHooks(hooks))
-	if _, err := partial.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-1"); err != nil {
+	if _, err := partial.TenantBarrierQuorumSubmit(tenantCtx("acme"), unsealSubmit("acme", "share-1")); err != nil {
 		t.Fatal(err)
 	}
-	failed := NewTenantBarrierService(&mockTenantClient{shareErr: errors.New("bad share")}, WithTenantUnsealHooks(hooks))
-	if _, err := failed.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-x"); err == nil {
+	failed := NewTenantBarrierService(&mockTenantClient{quorumErr: errors.New("bad share")}, WithTenantUnsealHooks(hooks))
+	if _, err := failed.TenantBarrierQuorumSubmit(tenantCtx("acme"), unsealSubmit("acme", "share-x")); err == nil {
 		t.Fatal("the refusal must surface")
 	}
-	if _, err := failed.TenantBarrierUnsealShare(tenantCtx("other"), "acme", "share-x"); err == nil {
+	if _, err := failed.TenantBarrierQuorumSubmit(tenantCtx("other"), unsealSubmit("acme", "share-x")); err == nil {
 		t.Fatal("another tenant's caller is refused before anything is told")
+	}
+	rekeyed := NewTenantBarrierService(&mockTenantClient{quorumResp: &qrdbtransport.QuorumOutcome{
+		Op: qrdbtransport.OpRekey, Required: 2, Submitted: 2, Complete: true,
+	}}, WithTenantUnsealHooks(hooks))
+	rekey := &qrdbtransport.TenantQuorumSubmitRequest{TenantID: "acme", Op: qrdbtransport.OpRekey, Share: []byte("share-1")}
+	if _, err := rekeyed.TenantBarrierQuorumSubmit(tenantCtx("acme"), rekey); err != nil {
+		t.Fatal(err)
 	}
 	if len(observer.tenants) != 0 {
 		t.Fatalf("observer told %v for a barrier that stayed sealed", observer.tenants)
 	}
 
-	complete := NewTenantBarrierService(&mockTenantClient{shareResp: &qrdbtransport.TenantBarrierUnsealProgress{
-		TenantID: "acme", Required: 2, Submitted: 2, Complete: true,
+	complete := NewTenantBarrierService(&mockTenantClient{quorumResp: &qrdbtransport.QuorumOutcome{
+		Op: qrdbtransport.OpUnseal, Required: 2, Submitted: 2, Complete: true,
 	}}, WithTenantUnsealHooks(hooks))
-	if _, err := complete.TenantBarrierUnsealShare(tenantCtx("acme"), "acme", "share-2"); err != nil {
+	if _, err := complete.TenantBarrierQuorumSubmit(tenantCtx("acme"), unsealSubmit("acme", "share-2")); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(observer.tenants, []string{"acme"}) {

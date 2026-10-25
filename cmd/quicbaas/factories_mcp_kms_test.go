@@ -536,16 +536,12 @@ func (m *mockSDKClientForMCP) Barrier() (quicbaas.QRDBBarrierClient, error)     
 func (m *mockSDKClientForMCP) BarrierCeremony() (quicbaas.QRDBCeremonyClient, error) { return nil, nil }
 func (m *mockSDKClientForMCP) SealStore() (quicbaas.QRDBSealStoreClient, error)      { return nil, nil }
 func (m *mockSDKClientForMCP) TenantMgmt() (quicbaas.QRDBTenantClient, error)        { return nil, nil }
-func (m *mockSDKClientForMCP) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
-	return nil, nil
-}
-func (m *mockSDKClientForMCP) Share() (quicbaas.QRDBShareClient, error)  { return nil, nil }
-func (m *mockSDKClientForMCP) Orchestrator() quicbaas.OrchestratorClient { return nil }
-func (m *mockSDKClientForMCP) Project() quicbaas.ProjectClient           { return nil }
-func (m *mockSDKClientForMCP) SDLC() quicbaas.SDLCClient                 { return nil }
-func (m *mockSDKClientForMCP) Prompts() quicbaas.PromptsClient           { return nil }
-func (m *mockSDKClientForMCP) Agents() quicbaas.AgentsClient             { return nil }
-func (m *mockSDKClientForMCP) Account() quicbaas.AccountClient           { return nil }
+func (m *mockSDKClientForMCP) Orchestrator() quicbaas.OrchestratorClient             { return nil }
+func (m *mockSDKClientForMCP) Project() quicbaas.ProjectClient                       { return nil }
+func (m *mockSDKClientForMCP) SDLC() quicbaas.SDLCClient                             { return nil }
+func (m *mockSDKClientForMCP) Prompts() quicbaas.PromptsClient                       { return nil }
+func (m *mockSDKClientForMCP) Agents() quicbaas.AgentsClient                         { return nil }
+func (m *mockSDKClientForMCP) Account() quicbaas.AccountClient                       { return nil }
 
 var _ quicbaas.Client = (*mockSDKClientForMCP)(nil)
 

@@ -1977,13 +1977,26 @@ func (s *authServiceImpl) BeginLogin(ctx context.Context, req qrdbtransport.Begi
 func (s *authServiceImpl) FinishLogin(ctx context.Context, req qrdbtransport.FinishLoginRequest) (*FinishLoginResponse, error) {
 	resp, err := s.t.Request(ctx, authServiceName, "FinishLogin", &req)
 	if err != nil {
-		return nil, err
+		return nil, finishLoginError(err)
 	}
 	out, ok := resp.(*FinishLoginResponse)
 	if !ok {
 		return nil, sdkerrors.NewInternal("auth.FinishLogin", "invalid response type from transport")
 	}
 	return out, nil
+}
+
+// finishLoginError surfaces a failed-precondition login finish as the typed
+// tenant login refusal, whichever transport carried it: on this release the
+// server fails a verified login's precondition only to refuse a non-system
+// tenant (go-quicbaas #1816). The embedded transport already carries the
+// typed refusal and is returned as is; every other error is unchanged.
+func finishLoginError(err error) error {
+	var refused *sdkerrors.TenantLoginRefusedError
+	if errors.As(err, &refused) || sdkerrors.Code(err) != sdkerrors.CodePreconditionFailed {
+		return err
+	}
+	return sdkerrors.NewTenantLoginRefused("auth.FinishLogin")
 }
 
 // UserByCertificate computes the certificate's canonical SPKI thumbprint and

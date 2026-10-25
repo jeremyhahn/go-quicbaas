@@ -352,6 +352,26 @@ func mapQRDBRoleError(op string, err error) error {
 			Err:  err,
 		}
 	}
+	// A caller without the permission, e.g. a tenant admin running the
+	// built-in role reconcile: an ordinary refusal, not a server fault.
+	var permissionDenied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &permissionDenied) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrForbidden,
+			Op:   "iam.role.qrdb." + op,
+			Err:  err,
+		}
+	}
+	// A tenant-scoped caller naming another tenant's roles. Refused by
+	// go-qrdb before any permission is resolved.
+	var crossTenant *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &crossTenant) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrForbidden,
+			Op:   "iam.role.qrdb." + op,
+			Err:  err,
+		}
+	}
 	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,
 		Op:   "iam.role.qrdb." + op,

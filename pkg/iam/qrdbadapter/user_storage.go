@@ -249,7 +249,8 @@ func (s *QRDBUserStorage) GetUserByUsername(ctx context.Context, tenantID, usern
 	if err != nil {
 		return nil, err
 	}
-	core, err := svc.GetUserByUsername(ctx, tenantID, username)
+	tctx := qrdbsdk.ContextWithTenant(ctx, tenantID)
+	core, err := svc.GetUserByUsername(tctx, tenantID, username)
 	if err != nil {
 		return nil, mapQRDBUserError("get_by_username", err)
 	}
@@ -430,6 +431,24 @@ func mapQRDBUserError(op string, err error) error {
 	var exists *qrdbsdk.UsernameExistsError
 	if errors.As(err, &exists) {
 		return iam.ErrAlreadyExists
+	}
+	// A caller without the permission: an ordinary refusal, not a server fault.
+	var permissionDenied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &permissionDenied) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrForbidden,
+			Op:   "iam.user.qrdb." + op,
+			Err:  err,
+		}
+	}
+	// A tenant-scoped caller naming another tenant's users.
+	var crossTenant *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &crossTenant) {
+		return &dberrors.QBError{
+			Code: dberrors.ErrForbidden,
+			Op:   "iam.user.qrdb." + op,
+			Err:  err,
+		}
 	}
 	return &dberrors.QBError{
 		Code: dberrors.ErrInternal,

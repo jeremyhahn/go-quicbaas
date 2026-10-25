@@ -55,7 +55,7 @@ func (m *memoryTSStorage) WritePoint(_ context.Context, point *interfaces.DataPo
 	return nil
 }
 
-func (m *memoryTSStorage) WriteBatch(points []interfaces.DataPoint) error {
+func (m *memoryTSStorage) WriteBatch(_ context.Context, points []interfaces.DataPoint) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range points {
@@ -85,20 +85,20 @@ func (m *memoryTSStorage) DeleteSeries(_ context.Context, req *interfaces.Delete
 	return nil
 }
 
-func (m *memoryTSStorage) GetRetentionPolicy(metric string) (*interfaces.RetentionPolicy, error) {
+func (m *memoryTSStorage) GetRetentionPolicy(_ context.Context, metric string) (*interfaces.RetentionPolicy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.policies[metric], nil
 }
 
-func (m *memoryTSStorage) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
+func (m *memoryTSStorage) SetRetentionPolicy(_ context.Context, metric string, policy *interfaces.RetentionPolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.policies[metric] = policy
 	return nil
 }
 
-func (m *memoryTSStorage) ListMetrics(prefix string, _ int) ([]string, error) {
+func (m *memoryTSStorage) ListMetrics(_ context.Context, prefix string, _ int) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var names []string

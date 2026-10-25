@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/fleet/deploy"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/xkmsca"
 	orchestratorSDK "github.com/jeremyhahn/go-quicbaas/sdk/go/client/orchestrator"
 )
 
@@ -540,6 +541,61 @@ func TestDeploy_CertIssuerError(t *testing.T) {
 	}
 	if up.calls != 0 {
 		t.Fatal("a failed issuance still uploaded the binary")
+	}
+}
+
+// The trust domain configured on the deploy service is what the node
+// certificate request carries: the CA mints the agent SPIFFE SAN under it, and
+// fleet enrolment refuses a certificate without one.
+func TestDeploy_ForwardsTheConfiguredTrustDomainToTheIssuer(t *testing.T) {
+	built := NewFleetDeployService(FleetDeployServiceDeps{
+		CertIssuer:        &fakeCertIssuer{},
+		SPIFFETrustDomain: testAgentTrustDomain,
+	}).(*fleetDeployService)
+
+	issuer := &fakeCertIssuer{}
+	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
+	svc.certIssuer = issuer
+	svc.spiffeTrustDomain = built.spiffeTrustDomain
+
+	spec := validSpec()
+	spec.SkipPreflight = true
+	if _, err := svc.Deploy(acmeCtx, spec); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if issuer.seenReq == nil {
+		t.Fatal("the issuer was never asked for a node certificate")
+	}
+	if issuer.seenReq.SPIFFETrustDomain != testAgentTrustDomain {
+		t.Fatalf("request trust domain = %q, want %q", issuer.seenReq.SPIFFETrustDomain, testAgentTrustDomain)
+	}
+}
+
+// With no trust domain configured, the in-process issuer refuses, and the
+// deploy stops there: no binary, no identity and no service reach the host.
+func TestDeploy_NoTrustDomainDeploysNothing(t *testing.T) {
+	issuer, err := NewXKMSFleetNodeCertIssuer(xkmsca.New(t, "QuicBaaS Deploy No Trust Domain CA"), newTestFleetCertRecords(t))
+	if err != nil {
+		t.Fatalf("NewXKMSFleetNodeCertIssuer: %v", err)
+	}
+	up := &fakeUploader{}
+	sys := &fakeSystemd{}
+	no := &fakeNohup{}
+	svc := newTestService(&fakeDialer{}, up, sys, no, nil, time.Now())
+	svc.certIssuer = issuer
+
+	spec := validSpec()
+	spec.SkipPreflight = true
+	result, err := svc.Deploy(acmeCtx, spec)
+	var noTD *FleetNodeCertNoTrustDomainError
+	if !errors.As(err, &noTD) {
+		t.Fatalf("Deploy error = %v, want FleetNodeCertNoTrustDomainError", err)
+	}
+	if result != nil {
+		t.Errorf("Deploy returned a result alongside the refusal: %+v", result)
+	}
+	if up.calls != 0 || sys.calls != 0 || no.calls != 0 {
+		t.Fatalf("a refused issuance still deployed: uploads=%d systemd=%d nohup=%d", up.calls, sys.calls, no.calls)
 	}
 }
 
@@ -1217,9 +1273,9 @@ func TestDeploy_PrivateKeyDestroyedAfterDeploy(t *testing.T) {
 	if captured == nil {
 		t.Fatal("issuer not invoked")
 	}
-	// After Deploy returns, the Buffer must be destroyed. Bytes() on a
-	// destroyed buffer returns nil.
-	if len(captured.PrivateKey.Bytes()) != 0 {
+	// After Deploy returns, the Buffer must be destroyed. Size() on a
+	// destroyed buffer returns 0.
+	if captured.PrivateKey.Size() != 0 {
 		t.Fatal("expected private key buffer to be destroyed after Deploy returns")
 	}
 }

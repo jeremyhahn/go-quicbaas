@@ -49,6 +49,16 @@ func TestMapQRDBTenantError(t *testing.T) {
 			expectedCode: dberrors.ErrForbidden,
 		},
 		{
+			name:         "PermissionDeniedError maps to ErrForbidden",
+			input:        &qrdbsdk.PermissionDeniedError{Resource: "tenants", Action: "update", Subject: "t1-admin"},
+			expectedCode: dberrors.ErrForbidden,
+		},
+		{
+			name:         "CrossTenantDeniedError maps to ErrForbidden",
+			input:        &qrdbsdk.CrossTenantDeniedError{IdentityTenantID: "t1", RequestedTenantID: "t2", Op: "update tenant"},
+			expectedCode: dberrors.ErrForbidden,
+		},
+		{
 			name:         "ErrSharedBarrierImmutable maps to ErrForbidden",
 			input:        qrdbsdk.ErrSharedBarrierImmutable,
 			expectedCode: dberrors.ErrForbidden,

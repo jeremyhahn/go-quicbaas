@@ -62,7 +62,7 @@ func (s *unreadableUserStore) GetByID(ctx context.Context, userID []byte) (xkmsw
 }
 
 // seedUserInState stores the account for id in the given lifecycle state.
-func seedUserInState(t *testing.T, users *xkmswebauthn.MemoryUserStore, id uint64, state Lifecycle) {
+func seedUserInState(t *testing.T, users xkmswebauthn.UserStore, id uint64, state Lifecycle) {
 	t.Helper()
 	user := xkmswebauthn.NewDefaultUser(testUserHandle(id), "alice@example.com", "alice's yubikey")
 	user.SetLifecycle(state)
@@ -76,7 +76,7 @@ func seedUserInState(t *testing.T, users *xkmswebauthn.MemoryUserStore, id uint6
 func newDeletingFixture(t *testing.T, users xkmswebauthn.UserStore) (*webAuthnFactorWriteThrough, *hookedCredentialStore, *reapableFactorClient) {
 	t.Helper()
 	factors := &reapableFactorClient{}
-	creds := &hookedCredentialStore{CredentialStore: xkmswebauthn.NewMemoryCredentialStore()}
+	creds := &hookedCredentialStore{CredentialStore: newTestWebAuthnCredentialStore(t)}
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)
@@ -97,7 +97,7 @@ func assertNothingPersisted(t *testing.T, creds xkmswebauthn.CredentialStore, fa
 }
 
 func TestWriteThroughSave_RefusesAccountAlreadyDeleting(t *testing.T) {
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	seedUserInState(t, users, 42, LifecycleDeleting)
 	wt, creds, factors := newDeletingFixture(t, users)
 
@@ -118,7 +118,7 @@ func TestWriteThroughSave_RefusesAccountAlreadyDeleting(t *testing.T) {
 }
 
 func TestWriteThroughSave_RollsBackWhenDeletionStartsMidRegistration(t *testing.T) {
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	seedUserInState(t, users, 42, LifecycleActive)
 	wt, creds, factors := newDeletingFixture(t, users)
 	creds.afterSave = func() { seedUserInState(t, users, 42, LifecycleDeleting) }
@@ -137,7 +137,7 @@ func TestWriteThroughSave_RollsBackWhenDeletionStartsMidRegistration(t *testing.
 }
 
 func TestWriteThroughSave_RollsBackWhenAccountRemovedMidRegistration(t *testing.T) {
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	seedUserInState(t, users, 42, LifecycleActive)
 	wt, creds, factors := newDeletingFixture(t, users)
 	creds.afterSave = func() {
@@ -159,7 +159,7 @@ func TestWriteThroughSave_RollsBackWhenAccountRemovedMidRegistration(t *testing.
 func TestWriteThroughSave_PendingAccountStillRegisters(t *testing.T) {
 	// Invite activation enrolls the first passkey of a PENDING account; only
 	// deletion is refused here.
-	users := xkmswebauthn.NewMemoryUserStore()
+	users := newTestWebAuthnUserStore(t)
 	seedUserInState(t, users, 42, LifecyclePending)
 	wt, creds, factors := newDeletingFixture(t, users)
 
@@ -177,7 +177,7 @@ func TestWriteThroughSave_PendingAccountStillRegisters(t *testing.T) {
 
 func TestWriteThroughSave_UnreadableAccountFailsClosed(t *testing.T) {
 	readErr := errors.New("user store unavailable")
-	users := &unreadableUserStore{UserStore: xkmswebauthn.NewMemoryUserStore(), err: readErr}
+	users := &unreadableUserStore{UserStore: newTestWebAuthnUserStore(t), err: readErr}
 	wt, creds, factors := newDeletingFixture(t, users)
 
 	credID := []byte{17, 18, 19, 20}
@@ -195,7 +195,7 @@ func TestWriteThroughSave_UnreadableAccountFailsClosed(t *testing.T) {
 
 func TestWriteThroughSave_UnreadableAccountAfterWriteRollsBackNewCredential(t *testing.T) {
 	readErr := errors.New("user store unavailable")
-	inner := xkmswebauthn.NewMemoryUserStore()
+	inner := newTestWebAuthnUserStore(t)
 	seedUserInState(t, inner, 42, LifecycleActive)
 	users := &unreadableUserStore{UserStore: inner}
 	wt, creds, factors := newDeletingFixture(t, users)

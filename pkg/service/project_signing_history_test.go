@@ -197,3 +197,51 @@ func TestParseGitSigningRetirement_RefusesAHalfOrUnreadableRequest(t *testing.T)
 		})
 	}
 }
+
+// TestGitProvisioner_ProjectSigner_LooksUpUnderTheProjectTenant proves the
+// signer lookup runs under the project's tenant even when the caller, like
+// the SDLC runner, bound only the orchestration tenant: the SSH key store
+// partitions keys by the context tenant, so any other tenant misses the key
+// the project's tenant minted.
+func TestGitProvisioner_ProjectSigner_LooksUpUnderTheProjectTenant(t *testing.T) {
+	resolver := &fakeSignerResolver{signer: ed25519TestSigner(t)}
+	p := &GitProvisioner{SSHSigner: resolver}
+	ctx := orchestration.ContextWithTenant(context.Background(), "tenant-a")
+
+	signer, err := p.projectSigner(ctx, "tenant-a", orchestration.KMSKeyRef{Name: "agent-key", Scope: "service", Owner: "sdlc"})
+	if err != nil {
+		t.Fatalf("projectSigner: %v", err)
+	}
+	if signer == nil {
+		t.Fatal("projectSigner returned no signer")
+	}
+	if resolver.askedTenant != "tenant-a" {
+		t.Fatalf("lookup ran under tenant %q, want the project's tenant-a", resolver.askedTenant)
+	}
+	if resolver.asked.Owner != "sdlc" {
+		t.Fatalf("lookup owner = %q, want the key's own owner", resolver.asked.Owner)
+	}
+}
+
+// TestGitProvisioner_ProjectSigner_SurfacesTheResolverError proves a missing
+// key reaches the caller as the resolver's error, looked up in the project's
+// tenant, and a resolver answering no signer is refused.
+func TestGitProvisioner_ProjectSigner_SurfacesTheResolverError(t *testing.T) {
+	missing := &GitCredentialError{Ref: "agent-key", Reason: "key not found"}
+	resolver := &fakeSignerResolver{err: missing}
+	p := &GitProvisioner{SSHSigner: resolver}
+
+	_, err := p.projectSigner(context.Background(), "tenant-b", orchestration.KMSKeyRef{Name: "agent-key"})
+	if !errors.Is(err, missing) {
+		t.Fatalf("err = %v, want the resolver's error", err)
+	}
+	if resolver.askedTenant != "tenant-b" || resolver.asked.Owner != "tenant-b" {
+		t.Fatalf("lookup tenant %q owner %q, want tenant-b for both", resolver.askedTenant, resolver.asked.Owner)
+	}
+
+	_, err = (&GitProvisioner{SSHSigner: &fakeSignerResolver{}}).projectSigner(context.Background(), "tenant-b", orchestration.KMSKeyRef{Name: "agent-key"})
+	var credErr *GitCredentialError
+	if !errors.As(err, &credErr) {
+		t.Fatalf("err = %v, want GitCredentialError for a resolver answering no signer", err)
+	}
+}

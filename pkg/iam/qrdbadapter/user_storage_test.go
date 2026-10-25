@@ -23,6 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -754,6 +755,21 @@ func TestMapQRDBUserError(t *testing.T) {
 	}
 	if got := mapQRDBUserError("create", &qrdbsdk.UsernameExistsError{Username: "a"}); !errors.Is(got, iam.ErrAlreadyExists) {
 		t.Fatalf("got = %v, want iam.ErrAlreadyExists", got)
+	}
+	// go-qrdb's authorization refusals are forbidden, not a server fault, and
+	// the typed go-qrdb error stays in the chain.
+	for _, src := range []error{
+		&qrdbsdk.PermissionDeniedError{Resource: "users", Action: "create"},
+		&qrdbsdk.CrossTenantDeniedError{IdentityTenantID: "acme", RequestedTenantID: "globex"},
+	} {
+		got := mapQRDBUserError("create", src)
+		var qbErr *dberrors.QBError
+		if !errors.As(got, &qbErr) || qbErr.Code != dberrors.ErrForbidden {
+			t.Fatalf("mapQRDBUserError(%T) = %v, want ErrForbidden", src, got)
+		}
+		if !errors.Is(got, src) {
+			t.Fatalf("mapQRDBUserError(%T) = %v, want the go-qrdb error preserved", src, got)
+		}
 	}
 	// An error the mapper does not recognise is wrapped, never swallowed.
 	got := mapQRDBUserError("update", errInjected)

@@ -154,8 +154,6 @@ type Client interface {
 	// the single canonical SDK entry point for crypto/auth surfaces.
 	SealStore() (QRDBSealStoreClient, error)
 	TenantMgmt() (QRDBTenantClient, error)
-	CustodianGroup() (QRDBCustodianGroupClient, error)
-	Share() (QRDBShareClient, error)
 
 	// Registry returns the service registry client: lease-based
 	// service-instance endpoints (register, renew, deregister, resolve,
@@ -1776,6 +1774,12 @@ func NewClient(address string, opts ...Option) (Client, error) {
 		}
 	}
 
+	// An embedded client names its qrdb identity explicitly; nothing binds
+	// one implicitly.
+	if options.transportType == TransportEmbedded && options.embeddedIdentity.isZero() {
+		return nil, errors.NewEmbeddedIdentityRequired("NewClient")
+	}
+
 	// Embedded mode: when the caller did not inject a secret registry, adopt
 	// the one the embedded QuicBaaS service exposes. The secrets manager is a
 	// core, always-on service (the server builds its resolver registry in every
@@ -1982,7 +1986,7 @@ func createEmbeddedTransport(opts *clientOptions) (Transport, error) {
 			"embedded service must implement service.QuicBaaS interface")
 	}
 
-	return embedded.New(svc)
+	return embedded.New(svc, embedded.WithContextBinder(opts.embeddedIdentity.bind))
 }
 
 // createMCPTransport creates an MCP (Model Context Protocol) transport.

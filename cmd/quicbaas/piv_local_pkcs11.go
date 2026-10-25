@@ -57,7 +57,7 @@ func newPKCS11PIVSession(cfg *localPIVConfig) (localPIVSession, error) {
 
 	// NewSecret wipes the byte copy it seals, so only the enclave holds the
 	// PIN from here on.
-	pin, err := secure.NewSecret([]byte(cfg.PIN))
+	pin, err := secure.NewSecret(context.Background(), []byte(cfg.PIN))
 	if err != nil {
 		return nil, &PIVLocalSessionError{Op: "seal pkcs11 pin", Cause: err}
 	}

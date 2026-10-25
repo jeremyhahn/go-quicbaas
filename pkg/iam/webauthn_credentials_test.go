@@ -20,7 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -44,8 +43,7 @@ func newCredentialAdminManager(t *testing.T) (*XKMSWebAuthnManager, *webAuthnFac
 	t.Helper()
 
 	factors := &reapableFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	wt, err := newWebAuthnFactorWriteThrough(
 		creds, users, factors, recorderOf(factors), testWriteThroughTenant, permissiveTestGate(), nil)
 	if err != nil {

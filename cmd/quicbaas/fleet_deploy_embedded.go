@@ -35,12 +35,23 @@ import (
 // error telling the operator where to run the command from.
 var embeddedFleetCARef atomic.Pointer[xkmssdk.TrustedCA]
 
+// embeddedFleetCertRecordsRef holds the embedded server's issued-cert record
+// store beside its CA: every identity the deploy mints is recorded there, the
+// only certificates fleet enrollment accepts (stopgap until go-quicbaas#1821).
+var embeddedFleetCertRecordsRef atomic.Pointer[service.FleetNodeCertRecords]
+
 // embeddedMCPEndpointRef holds the embedded server's reachable MCP endpoint
 // (https://host:port/mcp), published when the server starts and cleared on
 // Stop. The agent-deploy factory reads it via the resolveDeployMCPEndpoint
 // seam so deployed daemons are started with --mcp-endpoint. Empty when the
 // embedded server has MCP disabled or no reachable host could be derived.
 var embeddedMCPEndpointRef atomic.Pointer[string]
+
+// embeddedSPIFFETrustDomainRef holds the embedded server's configured SPIFFE
+// trust domain, published when the server starts and cleared on Stop. The
+// agent-deploy factory reads it via the resolveDeploySPIFFETrustDomain seam so
+// the in-process CA mints the agent SPIFFE SAN fleet enrolment requires.
+var embeddedSPIFFETrustDomainRef atomic.Pointer[string]
 
 // init installs the embedded cert-issuer resolver so `quicbaas fleet
 // deploy` talks to the in-process CA when the desktop build is active.
@@ -49,6 +60,7 @@ var embeddedMCPEndpointRef atomic.Pointer[string]
 func init() {
 	resolveFleetNodeCertIssuer = resolveEmbeddedFleetNodeCertIssuer
 	resolveDeployMCPEndpoint = resolveEmbeddedDeployMCPEndpoint
+	resolveDeploySPIFFETrustDomain = resolveEmbeddedDeploySPIFFETrustDomain
 }
 
 // installEmbeddedFleetCA publishes the running server's CA into the
@@ -63,6 +75,18 @@ func installEmbeddedFleetCA(ca xkmssdk.TrustedCA) {
 // server that owned them.
 func uninstallEmbeddedFleetCA() {
 	embeddedFleetCARef.Store(nil)
+}
+
+// installEmbeddedFleetCertRecords publishes the embedded server's issued-cert
+// record store. Called alongside installEmbeddedFleetCA.
+func installEmbeddedFleetCertRecords(records service.FleetNodeCertRecords) {
+	embeddedFleetCertRecordsRef.Store(&records)
+}
+
+// uninstallEmbeddedFleetCertRecords clears the record store seam when the
+// embedded server stops.
+func uninstallEmbeddedFleetCertRecords() {
+	embeddedFleetCertRecordsRef.Store(nil)
 }
 
 // installEmbeddedMCPEndpoint publishes the embedded server's reachable MCP
@@ -92,6 +116,30 @@ func resolveEmbeddedDeployMCPEndpoint() string {
 	return ""
 }
 
+// installEmbeddedSPIFFETrustDomain publishes the embedded server's configured
+// SPIFFE trust domain. An empty value clears the seam.
+func installEmbeddedSPIFFETrustDomain(trustDomain string) {
+	if trustDomain == "" {
+		embeddedSPIFFETrustDomainRef.Store(nil)
+		return
+	}
+	embeddedSPIFFETrustDomainRef.Store(&trustDomain)
+}
+
+// uninstallEmbeddedSPIFFETrustDomain clears the published trust domain.
+func uninstallEmbeddedSPIFFETrustDomain() {
+	embeddedSPIFFETrustDomainRef.Store(nil)
+}
+
+// resolveEmbeddedDeploySPIFFETrustDomain returns the published trust domain,
+// or "" when no embedded server published one.
+func resolveEmbeddedDeploySPIFFETrustDomain() string {
+	if p := embeddedSPIFFETrustDomainRef.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
 // resolveEmbeddedFleetNodeCertIssuer wraps the currently-installed embedded
 // CA in an XKMSFleetNodeCertIssuer. Returns a typed error when no embedded
 // server is running so the operator sees a clear diagnostic rather
@@ -101,5 +149,9 @@ func resolveEmbeddedFleetNodeCertIssuer() (service.FleetNodeCertIssuer, error) {
 	if caPtr == nil || *caPtr == nil {
 		return nil, &deployNoCertIssuerError{}
 	}
-	return service.NewXKMSFleetNodeCertIssuer(*caPtr)
+	recordsPtr := embeddedFleetCertRecordsRef.Load()
+	if recordsPtr == nil || *recordsPtr == nil {
+		return nil, &deployNoCertIssuerError{}
+	}
+	return service.NewXKMSFleetNodeCertIssuer(*caPtr, *recordsPtr)
 }

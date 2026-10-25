@@ -2619,12 +2619,6 @@ func (m *mockSDKClientForClusterCovPlusTest) SealStore() (quicbaas.QRDBSealStore
 func (m *mockSDKClientForClusterCovPlusTest) TenantMgmt() (quicbaas.QRDBTenantClient, error) {
 	return nil, nil
 }
-func (m *mockSDKClientForClusterCovPlusTest) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
-	return nil, nil
-}
-func (m *mockSDKClientForClusterCovPlusTest) Share() (quicbaas.QRDBShareClient, error) {
-	return nil, nil
-}
 func (m *mockSDKClientForClusterCovPlusTest) Close() error {
 	if m.closeFunc != nil {
 		return m.closeFunc()

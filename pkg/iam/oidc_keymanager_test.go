@@ -63,7 +63,11 @@ func setupTestXKMS(t *testing.T) {
 
 	// Key-version records, as the server wires them: rotation creates the
 	// key's next version and records it as current.
-	keyVersions, err := xkmssdk.NewKeyVersionStore(xkmssdk.NewStorageMemory())
+	versionDAOs, err := xkmssdk.NewBackendDAOFactory(xkmssdk.NewStorageMemory())
+	if err != nil {
+		t.Fatalf("failed to create key version DAO factory: %v", err)
+	}
+	keyVersions, err := xkmssdk.NewKeyVersionStore(versionDAOs)
 	if err != nil {
 		t.Fatalf("failed to create key version store: %v", err)
 	}

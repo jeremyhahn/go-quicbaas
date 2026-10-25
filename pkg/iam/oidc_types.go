@@ -14,6 +14,7 @@
 package iam
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -795,4 +796,14 @@ type OIDCDependencies struct {
 	// falls back to the OIDC scope (today's behavior), so non-server callers and
 	// tests need not wire it.
 	PermissionResolver PermissionResolver
+
+	// IssuanceReadBinder, when set, binds the context the provider reads a
+	// user's role names and effective permissions under while it issues a
+	// token. Issuance has no authenticated caller yet (the bearer is what it
+	// produces), and the embedded qrdb node authenticates every such read, so
+	// the server binds them to the node's service principal, which holds
+	// roles:read for exactly this. tenantID is the tenant the read is for; a
+	// binder returns ctx unchanged for a tenant its principal cannot act in.
+	// Optional: when nil the caller's context is used as is.
+	IssuanceReadBinder func(ctx context.Context, tenantID string) (context.Context, error)
 }

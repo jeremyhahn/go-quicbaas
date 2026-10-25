@@ -33,9 +33,9 @@ import (
 // as "not leader", which suppresses the firing — the safe direction.
 const leaderQueryTimeout = 5 * time.Second
 
-// clusterMembership is the go-qrdb surface that answers who leads a shard.
+// ClusterMembership is the go-qrdb surface that answers who leads a shard.
 // It is satisfied by qrdbsdk.ClusterClient.
-type clusterMembership interface {
+type ClusterMembership interface {
 	Members(ctx context.Context, shardID uint64) ([]qrdbsdk.Member, error)
 }
 
@@ -49,7 +49,7 @@ type clusterMembership interface {
 // nodes at once during an election; caching would widen that window from
 // milliseconds to however long the cache lives.
 type qrdbLeaderChecker struct {
-	cluster   clusterMembership
+	cluster   ClusterMembership
 	shardID   uint64
 	replicaID uint64
 	timeout   time.Duration
@@ -61,12 +61,16 @@ type qrdbLeaderChecker struct {
 // replicaID identifies this node within the shard; it is the same Raft replica
 // ID the node was booted with, so the checker asks about itself rather than
 // about whichever replica happens to be listed first.
-func NewQRDBLeaderChecker(client *qrdbsdk.Client, shardID, replicaID uint64) *qrdbLeaderChecker {
-	if client == nil {
+//
+// cluster must carry the caller's identity on every read (the server passes
+// its service-principal-bound qrdbsdk.ClusterClient): qrdb refuses an
+// anonymous membership read, and a refusal reads as "not leader".
+func NewQRDBLeaderChecker(cluster ClusterMembership, shardID, replicaID uint64) *qrdbLeaderChecker {
+	if cluster == nil {
 		return nil
 	}
 	return &qrdbLeaderChecker{
-		cluster:   client.Cluster(),
+		cluster:   cluster,
 		shardID:   shardID,
 		replicaID: replicaID,
 		timeout:   leaderQueryTimeout,

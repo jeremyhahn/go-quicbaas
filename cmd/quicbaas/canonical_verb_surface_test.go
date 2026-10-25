@@ -29,7 +29,6 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -41,17 +40,15 @@ import (
 // of go-qrdb's Security Officer distribution model plus the ceremony
 // lifecycle, in the order an operator performs them.
 var canonicalInitVerbs = []string{
-	"initialize",              // run the ceremony (split, seal one share per officer)
-	"status",                  // ceremony state
-	"officer",                 // register / list / status
-	"claim-cert",              // officer claims their issued certificate
-	"claim-share",             // officer claims their share (release-once)
-	"sign-csr",                // SO-authorised CSR signing
-	"enroll-external-officer", // officer whose key material is external
+	"initialize",  // run the ceremony (split, seal one share per officer)
+	"status",      // ceremony state
+	"officer",     // register / list
+	"claim-share", // officer claims their sealed share envelope (release-once)
+	"sign-csr",    // SO-authorised CSR signing
 }
 
 // canonicalInitOfficerVerbs is the locked `init officer` sub-surface.
-var canonicalInitOfficerVerbs = []string{"register", "list", "status"}
+var canonicalInitOfficerVerbs = []string{"register", "list"}
 
 // canonicalBarrierVerbs is the locked `barrier` surface: the full lifecycle
 // plus the two administrative verbs quicbaas previously lacked.
@@ -60,11 +57,11 @@ var canonicalBarrierVerbs = []string{
 	"init",
 	"init-shamir",
 	"unseal",
-	"unseal-shares",
 	"seal",
+	"quorum",
 	"rekey",
+	"officer-revoke",
 	"recovery",
-	"root-token",
 	"enable-encryption",
 }
 
@@ -163,47 +160,27 @@ func TestCanonicalSurface_LoginFactors(t *testing.T) {
 	}
 }
 
-// shareQuorumVerbs are the barrier verbs that collect a QUORUM of share-class
-// secrets. Every one of them must offer both input modes.
-//
-// The list is a path from the `barrier` group, because two of the three are
-// nested. `tenant barrier unseal-share` is deliberately absent: it submits
-// exactly ONE share toward a quorum accumulated server-side, so a
-// newline-delimited file is the wrong shape for it — its argv exposure is
-// real but wants a different flag (tracked separately).
-var shareQuorumVerbs = [][]string{
-	{"unseal-shares"},
-	{"root-token"},
-	{"recovery", "recover"},
-}
-
-// TestCanonicalSurface_BarrierVerbsCarryTheirFlags pins the flags an operator
-// needs. A verb whose required input has no flag cannot be driven, so its
-// presence in the tree would be misleading.
-//
-// The share-quorum verbs are checked as a CLASS rather than one at a time
-// (#227). `barrier recovery recover` had --share and no --shares-file, so a
-// recovery quorum could be supplied only on argv — where every process on the
-// host reads it out of /proc/<pid>/cmdline — while its two siblings had
-// offered a file since #222. Nothing stated a reason for the difference; it
-// was an omission, and a per-verb assertion is exactly what let it sit. A
-// fourth quorum verb added to the list without both flags fails here.
-func TestCanonicalSurface_BarrierVerbsCarryTheirFlags(t *testing.T) {
+// TestCanonicalSurface_QuorumSubmitTakesTheShareFromAFile pins how a share
+// reaches a quorum round, on both the system and the tenant barrier. go-qrdb
+// v0.47 collects one share per holder per round, so the only share-carrying
+// verb is `quorum submit`, and it must read the share from a file: a share on
+// argv is readable by every process on the host through /proc/<pid>/cmdline.
+func TestCanonicalSurface_QuorumSubmitTakesTheShareFromAFile(t *testing.T) {
 	barrier := newBarrierCommand()
+	for name, group := range map[string]*cobra.Command{
+		"barrier":        barrier,
+		"tenant barrier": newTenantBarrierCommand(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			quorum := findSubcommand(group, "quorum")
+			require.NotNil(t, quorum, "`%s quorum` is missing", name)
+			submit := findSubcommand(quorum, "submit")
+			require.NotNil(t, submit, "`%s quorum submit` is missing", name)
 
-	for _, path := range shareQuorumVerbs {
-		t.Run(strings.Join(path, " "), func(t *testing.T) {
-			cmd := barrier
-			for _, name := range path {
-				cmd = findSubcommand(cmd, name)
-				require.NotNil(t, cmd, "`barrier %s` is missing from the tree", strings.Join(path, " "))
-			}
-			for _, flag := range []string{"share", "shares-file"} {
-				assert.NotNil(t, cmd.Flags().Lookup(flag),
-					"`barrier %s --%s` is missing; a quorum cannot be supplied without it, "+
-						"and without --shares-file it can be supplied only on argv",
-					strings.Join(path, " "), flag)
-			}
+			assert.NotNil(t, submit.Flags().Lookup("share-file"),
+				"`%s quorum submit --share-file` is missing", name)
+			assert.Nil(t, submit.Flags().Lookup("share"),
+				"`%s quorum submit --share` would put a share on argv", name)
 		})
 	}
 

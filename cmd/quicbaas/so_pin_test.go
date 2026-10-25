@@ -165,7 +165,10 @@ func TestReadSOPIN_ReadsOneLine(t *testing.T) {
 	buf, err := readSOPIN(strings.NewReader("line-pin\nrest"), "barrier.seal", time.Second)
 	require.NoError(t, err)
 	defer buf.Destroy()
-	assert.Equal(t, "line-pin", string(buf.Bytes()))
+	require.NoError(t, buf.WithBytes(func(pin []byte) error {
+		assert.Equal(t, "line-pin", string(pin))
+		return nil
+	}))
 }
 
 func TestBindSOPIN_NoPINLeavesTheContextAlone(t *testing.T) {

@@ -158,8 +158,11 @@ type TPM2SealConfig struct {
 	// Ignored when UseSimulator is true.
 	Device string `mapstructure:"device"`
 
-	// PCR is the PCR index used for platform policy. Default: 0.
-	PCR uint `mapstructure:"pcr"`
+	// PCRs is the platform policy's sealing PCR set: boot PCRs the firmware
+	// and OS measure. Unset means the go-xkms default, PCR 7 (Secure Boot
+	// policy) and PCR 11 (the unified kernel image). go-xkms refuses an
+	// index above 23, a duplicate, and the resettable PCRs 16 and 23.
+	PCRs []uint `mapstructure:"pcrs"`
 
 	// PCRBank is the PCR bank hash algorithm (e.g. "SHA256"). Default: "SHA256".
 	PCRBank string `mapstructure:"pcr_bank"`

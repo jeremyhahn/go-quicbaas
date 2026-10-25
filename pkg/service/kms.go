@@ -192,6 +192,24 @@ func dekPathInScope(scope, path string) bool {
 	return strings.HasPrefix(path, scope)
 }
 
+// safetyResultsInScope keeps the safety tracker entries the caller's tenant
+// owns and strips the tenant prefix from their IDs. The tracker is shared by
+// every tenant and stores tenant-scoped IDs, so a report built from it
+// unfiltered would name other tenants' keys and DEKs. The system scope ("")
+// sees only the unprefixed, system-owned entries, as dekPathInScope rules.
+func safetyResultsInScope(tenantID string, results []SafetyCheckResult) []SafetyCheckResult {
+	scope := tenantListPrefix(tenantID)
+	inScope := make([]SafetyCheckResult, 0, len(results))
+	for _, r := range results {
+		if !dekPathInScope(scope, r.ID) {
+			continue
+		}
+		r.ID = tenantStripKeyID(tenantID, r.ID)
+		inScope = append(inScope, r)
+	}
+	return inScope
+}
+
 // count returns the number of DEK entries.
 // kmsServiceImpl implements the KMSService interface.
 // It provides cryptographic key lifecycle management operations.
@@ -366,7 +384,11 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 		threshold = int(req.ThresholdPercent)
 	}
 
-	results := k.safetyTracker.SafetyCheck(threshold)
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsInScope(tenantID, k.safetyTracker.SafetyCheck(threshold))
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	keyCount := 0
@@ -399,7 +421,11 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 
 // SafetyReport generates a comprehensive safety report for all keys/DEKs.
 func (k *kmsServiceImpl) SafetyReport(ctx context.Context, req *SafetyReportRequest) (*SafetyReportResponse, error) {
-	results := k.safetyTracker.SafetyReport()
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsInScope(tenantID, k.safetyTracker.SafetyReport())
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	var totalOps uint64

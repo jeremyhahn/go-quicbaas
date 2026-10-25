@@ -443,11 +443,16 @@ type IAMConfig struct {
 
 	// SPIFFETrustDomain is the operator-configured SPIFFE trust domain. When
 	// set, broker-issued client certificates carry a tenant-scoped SPIFFE URI
-	// SAN (spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name>) and login
+	// SAN (spiffe://<tenantID>/<kind>/<name>) and login
 	// derives (and pins) the tenant from it. When empty, login relies solely
 	// on home-realm discovery. This value is also propagated to the embedded
 	// qrdb mTLS authenticator and the xkms CA at startup.
 	SPIFFETrustDomain string `mapstructure:"spiffe_trust_domain"`
+
+	// LoginRatePerMin caps per-client login and refresh attempts per minute
+	// on the hosted go-xkms login plane (/api/v1/auth/login/*). Zero uses
+	// go-xkms's default (10 per minute); a negative value is refused.
+	LoginRatePerMin int `mapstructure:"login_rate_per_min"`
 }
 
 // Config represents the complete QuicBaaS configuration.
@@ -1338,6 +1343,7 @@ var RemovedKeys = map[string]string{
 	"sdlc.worker_image.registry_token_file": "sdlc.worker_image.registry_token_secret and registry_token_tenant: " +
 		"the push token is a QuicBaaS tenant secret, never a plaintext file",
 	"sdlc.worktree_root": workerClonesItsOwnWorkspace,
+	"seal.tpm2.pcr":      "seal.tpm2.pcrs (a list of PCR indexes, e.g. [7])",
 }
 
 // agentReplacesTuple is where a backend/model tuple went: a reference to a

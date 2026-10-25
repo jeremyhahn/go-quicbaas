@@ -49,6 +49,16 @@ func mapQRDBTenantError(op string, err error) error {
 	if errors.As(err, &entErr) {
 		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: op, Err: err}
 	}
+	// A caller without the permission: an ordinary refusal, not a server fault.
+	var permissionDenied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &permissionDenied) {
+		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: op, Err: err}
+	}
+	// A tenant-scoped caller naming another tenant.
+	var crossTenant *qrdbsdk.CrossTenantDeniedError
+	if errors.As(err, &crossTenant) {
+		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: op, Err: err}
+	}
 	if errors.Is(err, qrdbsdk.ErrSharedBarrierImmutable) {
 		return &dberrors.QBError{Code: dberrors.ErrForbidden, Op: op, Err: err}
 	}

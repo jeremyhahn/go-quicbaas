@@ -39,11 +39,12 @@ import (
 // Raft consensus internally. Read operations use the local storage backend.
 type vectorService struct {
 	storage        interfaces.VectorStorage
-	sdkProvider    QRDBClientProvider
+	sdkProvider    VectorClientProvider
 	raftNode       interfaces.RaftNode
 	shardID        uint64
 	indexes        map[string]interfaces.VectorIndex // Map namespace -> vector index
 	indexFactory   interfaces.VectorIndexFactory     // Factory for creating vector indexes
+	loadCtx        context.Context                   // context of the startup namespace load
 	logger         interfaces.Logger
 	metrics        *vectorServiceMetrics
 	mu             sync.RWMutex
@@ -100,12 +101,18 @@ type VectorRaftNodeSetter interface {
 	SetRaftNode(raftNode interfaces.RaftNode)
 }
 
-// VectorSDKProviderSetter allows injecting an SDK client provider into a
-// VectorService after construction. This is needed because the ShardedClient
-// is created during startService, which runs after startVector in the server
-// initialization sequence.
+// VectorClientProvider provides the per-shard qrdb vector client the vector
+// service writes through. The server's provider binds each client to the
+// node's service principal; the caller's per-verb grant is checked in front
+// of the service.
+type VectorClientProvider interface {
+	VectorForShard(shardID uint64) (qrdbtransport.VectorClient, error)
+}
+
+// VectorSDKProviderSetter allows injecting the vector client provider into a
+// vector service after construction.
 type VectorSDKProviderSetter interface {
-	SetSDKProvider(provider QRDBClientProvider)
+	SetSDKProvider(provider VectorClientProvider)
 }
 
 // VectorServiceOption is a functional option for configuring the vector service.
@@ -115,6 +122,18 @@ type VectorServiceOption func(*vectorService)
 func WithVectorShardID(shardID uint64) VectorServiceOption {
 	return func(v *vectorService) {
 		v.shardID = shardID
+	}
+}
+
+// WithVectorLoadContext sets the context the startup namespace load runs
+// under. The load has no end user behind it, so a store that authenticates
+// every call (the embedded qrdb node) needs the caller's service identity
+// here. A nil ctx is ignored and the load uses context.Background().
+func WithVectorLoadContext(ctx context.Context) VectorServiceOption {
+	return func(v *vectorService) {
+		if ctx != nil {
+			v.loadCtx = ctx
+		}
 	}
 }
 
@@ -135,9 +154,9 @@ func WithVectorRaftNode(raftNode interfaces.RaftNode) VectorServiceOption {
 	}
 }
 
-// WithVectorSDKProvider sets the SDK client provider for vector write operations.
-// The SDK client handles Raft consensus internally via the qrdb transport layer.
-func WithVectorSDKProvider(provider QRDBClientProvider) VectorServiceOption {
+// WithVectorSDKProvider sets the vector client provider for vector write
+// operations. The qrdb client handles Raft consensus internally.
+func WithVectorSDKProvider(provider VectorClientProvider) VectorServiceOption {
 	return func(v *vectorService) {
 		v.sdkProvider = provider
 	}
@@ -150,10 +169,10 @@ func (v *vectorService) SetRaftNode(raftNode interfaces.RaftNode) {
 	v.raftNode = raftNode
 }
 
-// SetSDKProvider sets the SDK client provider after construction. This supports
+// SetSDKProvider sets the vector client provider after construction. This supports
 // initialization sequences where the ShardedClient is created after the vector
 // service (e.g., standalone mode where startVector runs before startService).
-func (v *vectorService) SetSDKProvider(provider QRDBClientProvider) {
+func (v *vectorService) SetSDKProvider(provider VectorClientProvider) {
 	v.sdkProvider = provider
 }
 
@@ -183,6 +202,7 @@ func NewVectorService(
 		storage:        storage,
 		shardID:        shards.PlatformShardID, // Default; override via WithVectorShardID
 		indexes:        make(map[string]interfaces.VectorIndex),
+		loadCtx:        context.Background(),
 		logger:         logger.WithField("component", "vector_service"),
 		rebuildJobs:    make(map[string]*RebuildJobState),
 		compactionJobs: make(map[string]*CompactionJobState),
@@ -285,9 +305,7 @@ func (v *vectorService) initMetrics() {
 
 // loadNamespaces loads existing namespaces and initializes vector indexes.
 func (v *vectorService) loadNamespaces() error {
-	ctx := context.Background()
-
-	namespaces, err := v.storage.ListNamespaces(ctx)
+	namespaces, err := v.storage.ListNamespaces(v.loadCtx)
 	if err != nil {
 		return err
 	}
@@ -422,7 +440,7 @@ func (v *vectorService) vectorClient() (qrdbtransport.VectorClient, error) {
 			Err:  &api.ServiceUnavailableError{Service: "SDK client provider not configured for vector writes"},
 		}
 	}
-	client, err := v.sdkProvider.ForShard(v.shardID)
+	client, err := v.sdkProvider.VectorForShard(v.shardID)
 	if err != nil {
 		return nil, &qbErrors.QBError{
 			Code: qbErrors.ErrRaft,
@@ -430,7 +448,7 @@ func (v *vectorService) vectorClient() (qrdbtransport.VectorClient, error) {
 			Err:  err,
 		}
 	}
-	return client.Vector(), nil
+	return client, nil
 }
 
 // =============================================================================

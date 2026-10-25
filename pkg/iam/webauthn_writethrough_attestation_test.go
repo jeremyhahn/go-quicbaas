@@ -52,10 +52,9 @@ func newGatedWriteThrough(
 	t *testing.T,
 	gate *WebAuthnAttestationGate,
 	factors *fakeUserAuthFactorClient,
-) (*webAuthnFactorWriteThrough, *xkmswebauthn.MemoryUserStore, xkmswebauthn.CredentialStore) {
+) (*webAuthnFactorWriteThrough, xkmswebauthn.UserStore, xkmswebauthn.CredentialStore) {
 	t.Helper()
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), testWriteThroughTenant, gate, nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)

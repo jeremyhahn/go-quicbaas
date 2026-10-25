@@ -117,12 +117,6 @@ type QRDBRebalanceClient = qrdbtransport.RebalanceClient
 // QRDBSealStoreClient is a re-export of the qrdb SealStoreClient interface.
 type QRDBSealStoreClient = qrdbtransport.SealStoreClient
 
-// QRDBCustodianGroupClient is a re-export of the qrdb CustodianGroupClient interface.
-type QRDBCustodianGroupClient = qrdbtransport.CustodianGroupClient
-
-// QRDBShareClient is a re-export of the qrdb ShareClient interface.
-type QRDBShareClient = qrdbtransport.ShareClient
-
 // QRDBTenantClient is a re-export of the qrdb TenantClient interface.
 type QRDBTenantClient = qrdbtransport.TenantClient
 
@@ -161,57 +155,9 @@ type QRDBSealStoreStatusResponse = qrdbtransport.SealStoreStatusResponse
 // QRDB Custodian Group Request/Response Re-exports
 // =============================================================================
 
-// QRDBCustodianGroupInfo is a re-export of the qrdb CustodianGroupInfo type.
-type QRDBCustodianGroupInfo = qrdbtransport.CustodianGroupInfo
-
-// QRDBCustodianMemberInfo is a re-export of the qrdb CustodianMemberInfo type.
-type QRDBCustodianMemberInfo = qrdbtransport.CustodianMemberInfo
-
-// QRDBCreateCustodianGroupRequest is a re-export of the qrdb CreateCustodianGroupRequest type.
-type QRDBCreateCustodianGroupRequest = qrdbtransport.CreateCustodianGroupRequest
-
-// QRDBCreateCustodianGroupResponse is a re-export of the qrdb CreateCustodianGroupResponse type.
-type QRDBCreateCustodianGroupResponse = qrdbtransport.CreateCustodianGroupResponse
-
-// QRDBGetCustodianGroupResponse is a re-export of the qrdb GetCustodianGroupResponse type.
-type QRDBGetCustodianGroupResponse = qrdbtransport.GetCustodianGroupResponse
-
-// QRDBListCustodianGroupsResponse is a re-export of the qrdb ListCustodianGroupsResponse type.
-type QRDBListCustodianGroupsResponse = qrdbtransport.ListCustodianGroupsResponse
-
-// QRDBAddCustodianMemberRequest is a re-export of the qrdb AddCustodianMemberRequest type.
-type QRDBAddCustodianMemberRequest = qrdbtransport.AddCustodianMemberRequest
-
-// QRDBAddCustodianMemberResponse is a re-export of the qrdb AddCustodianMemberResponse type.
-type QRDBAddCustodianMemberResponse = qrdbtransport.AddCustodianMemberResponse
-
-// QRDBRemoveCustodianMemberRequest is a re-export of the qrdb RemoveCustodianMemberRequest type.
-type QRDBRemoveCustodianMemberRequest = qrdbtransport.RemoveCustodianMemberRequest
-
-// QRDBDistributeSharesRequest is a re-export of the qrdb DistributeSharesRequest type.
-type QRDBDistributeSharesRequest = qrdbtransport.DistributeSharesRequest
-
-// QRDBDistributeSharesResponse is a re-export of the qrdb DistributeSharesResponse type.
-type QRDBDistributeSharesResponse = qrdbtransport.DistributeSharesResponse
-
 // =============================================================================
 // QRDB Share Request/Response Re-exports
 // =============================================================================
-
-// QRDBSubmitShareRequest is a re-export of the qrdb SubmitShareRequest type.
-type QRDBSubmitShareRequest = qrdbtransport.SubmitShareRequest
-
-// QRDBSubmitShareResponse is a re-export of the qrdb SubmitShareResponse type.
-type QRDBSubmitShareResponse = qrdbtransport.SubmitShareResponse
-
-// QRDBShareInfo is a re-export of the qrdb ShareInfo type.
-type QRDBShareInfo = qrdbtransport.ShareInfo
-
-// QRDBListSharesResponse is a re-export of the qrdb ListSharesResponse type.
-type QRDBListSharesResponse = qrdbtransport.ListSharesResponse
-
-// QRDBShareCollectionStatus is a re-export of the qrdb ShareCollectionStatus type.
-type QRDBShareCollectionStatus = qrdbtransport.ShareCollectionStatus
 
 // =============================================================================
 // QRDB Tenant Request/Response Re-exports
@@ -252,12 +198,6 @@ type QRDBTenantBarrierStatusResponse = qrdbtransport.TenantBarrierStatusResponse
 // exactly once, never persisted) plus the threshold/total.
 type QRDBTenantBarrierInitResponse = qrdbtransport.TenantBarrierInitResponse
 
-// QRDBTenantBarrierUnsealShareRequest is a re-export of the qrdb TenantBarrierUnsealShareRequest type.
-type QRDBTenantBarrierUnsealShareRequest = qrdbtransport.TenantBarrierUnsealShareRequest
-
-// QRDBTenantBarrierUnsealProgress is a re-export of the qrdb TenantBarrierUnsealProgress type.
-type QRDBTenantBarrierUnsealProgress = qrdbtransport.TenantBarrierUnsealProgress
-
 // =============================================================================
 // QRDB Barrier Request/Response Re-exports
 // =============================================================================
@@ -274,23 +214,8 @@ type QRDBBarrierInitializeShamirResponse = qrdbtransport.BarrierInitializeShamir
 // QRDBBarrierUnsealRequest is a re-export of the qrdb BarrierUnsealRequest type.
 type QRDBBarrierUnsealRequest = qrdbtransport.BarrierUnsealRequest
 
-// QRDBBarrierUnsealShareRequest is a re-export of the qrdb BarrierUnsealShareRequest type.
-type QRDBBarrierUnsealShareRequest = qrdbtransport.BarrierUnsealShareRequest
-
-// QRDBBarrierUnsealShareResponse is a re-export of the qrdb BarrierUnsealShareResponse type.
-type QRDBBarrierUnsealShareResponse = qrdbtransport.BarrierUnsealShareResponse
-
 // QRDBBarrierStatusResponse is a re-export of the qrdb BarrierStatusResponse type.
 type QRDBBarrierStatusResponse = qrdbtransport.BarrierStatusResponse
-
-// QRDBBarrierRekeyRequest is a re-export of the qrdb BarrierRekeyRequest type.
-type QRDBBarrierRekeyRequest = qrdbtransport.BarrierRekeyRequest
-
-// QRDBBarrierRekeyResponse is a re-export of the qrdb BarrierRekeyResponse type.
-type QRDBBarrierRekeyResponse = qrdbtransport.BarrierRekeyResponse
-
-// QRDBBarrierUnsealSharesRequest is a re-export of the qrdb BarrierUnsealSharesRequest type.
-type QRDBBarrierUnsealSharesRequest = qrdbtransport.BarrierUnsealSharesRequest
 
 // QRDBBarrierGenerateRecoveryKeysRequest is a re-export of the qrdb BarrierGenerateRecoveryKeysRequest type.
 type QRDBBarrierGenerateRecoveryKeysRequest = qrdbtransport.BarrierGenerateRecoveryKeysRequest
@@ -298,17 +223,8 @@ type QRDBBarrierGenerateRecoveryKeysRequest = qrdbtransport.BarrierGenerateRecov
 // QRDBBarrierRecoveryKeysResponse is a re-export of the qrdb BarrierRecoveryKeysResponse type.
 type QRDBBarrierRecoveryKeysResponse = qrdbtransport.BarrierRecoveryKeysResponse
 
-// QRDBBarrierRecoverWithKeysRequest is a re-export of the qrdb BarrierRecoverWithKeysRequest type.
-type QRDBBarrierRecoverWithKeysRequest = qrdbtransport.BarrierRecoverWithKeysRequest
-
 // QRDBBarrierHasRecoveryKeysResponse is a re-export of the qrdb BarrierHasRecoveryKeysResponse type.
 type QRDBBarrierHasRecoveryKeysResponse = qrdbtransport.BarrierHasRecoveryKeysResponse
-
-// QRDBBarrierGenerateRootTokenRequest is a re-export of the qrdb BarrierGenerateRootTokenRequest type.
-type QRDBBarrierGenerateRootTokenRequest = qrdbtransport.BarrierGenerateRootTokenRequest
-
-// QRDBBarrierRootTokenResponse is a re-export of the qrdb BarrierRootTokenResponse type.
-type QRDBBarrierRootTokenResponse = qrdbtransport.BarrierRootTokenResponse
 
 // QRDBBarrierEnableEncryptionRequest is a re-export of the qrdb BarrierEnableEncryptionRequest type.
 type QRDBBarrierEnableEncryptionRequest = qrdbtransport.BarrierEnableEncryptionRequest
@@ -341,12 +257,6 @@ type QRDBShareClaimCompleteRequest = qrdbtransport.ShareClaimCompleteRequest
 // QRDBShareClaimCompleteResponse is a re-export of the qrdb ShareClaimCompleteResponse type.
 type QRDBShareClaimCompleteResponse = qrdbtransport.ShareClaimCompleteResponse
 
-// QRDBShamirSealVoteRequest is a re-export of the qrdb ShamirSealVoteRequest type.
-type QRDBShamirSealVoteRequest = qrdbtransport.ShamirSealVoteRequest
-
-// QRDBShamirSealVoteResponse is a re-export of the qrdb ShamirSealVoteResponse type.
-type QRDBShamirSealVoteResponse = qrdbtransport.ShamirSealVoteResponse
-
 // =============================================================================
 // QRDB Ceremony Request/Response Re-exports
 // =============================================================================
@@ -362,34 +272,6 @@ type QRDBCeremonyInitializeResponse = qrdbtransport.CeremonyInitializeResponse
 
 // QRDBCeremonyStatusResponse is a re-export of the qrdb CeremonyStatusResponse type.
 type QRDBCeremonyStatusResponse = qrdbtransport.CeremonyStatusResponse
-
-// QRDBClaimCertBeginRequest is a re-export of the qrdb ClaimCertBeginRequest type.
-type QRDBClaimCertBeginRequest = qrdbtransport.ClaimCertBeginRequest
-
-// QRDBClaimCertBeginResponse is a re-export of the qrdb ClaimCertBeginResponse type.
-type QRDBClaimCertBeginResponse = qrdbtransport.ClaimCertBeginResponse
-
-// QRDBClaimCertCompleteRequest is a re-export of the qrdb ClaimCertCompleteRequest type.
-type QRDBClaimCertCompleteRequest = qrdbtransport.ClaimCertCompleteRequest
-
-// QRDBClaimCertCompleteResponse is a re-export of the qrdb ClaimCertCompleteResponse type.
-type QRDBClaimCertCompleteResponse = qrdbtransport.ClaimCertCompleteResponse
-
-// QRDBBeginClaimShareRequest is a re-export of the qrdb
-// BeginClaimShareRequest type.
-type QRDBBeginClaimShareRequest = qrdbtransport.BeginClaimShareRequest
-
-// QRDBBeginClaimShareResponse is a re-export of the qrdb
-// BeginClaimShareResponse type.
-type QRDBBeginClaimShareResponse = qrdbtransport.BeginClaimShareResponse
-
-// QRDBCompleteClaimShareRequest is a re-export of the qrdb
-// CompleteClaimShareRequest type.
-type QRDBCompleteClaimShareRequest = qrdbtransport.CompleteClaimShareRequest
-
-// QRDBCompleteClaimShareResponse is a re-export of the qrdb
-// CompleteClaimShareResponse type.
-type QRDBCompleteClaimShareResponse = qrdbtransport.CompleteClaimShareResponse
 
 // QRDBSignCSRInitRequest is a re-export of the qrdb SignCSRInitRequest type.
 type QRDBSignCSRInitRequest = qrdbtransport.SignCSRInitRequest
@@ -447,11 +329,11 @@ type DatabaseErrorCode = qrdbsdk.ErrorCode
 
 // Database error code constants.
 const (
-	ErrNotFound    = qrdbsdk.ErrCodeNotFound
-	ErrInternal    = qrdbsdk.ErrCodeInternal
-	ErrConflict    = qrdbsdk.ErrCodeConflict
-	ErrTimeout     = qrdbsdk.ErrCodeTimeout
-	ErrUnavailable = qrdbsdk.ErrCodeUnavailable
+	ErrNotFound    = qrdbsdk.ErrNotFound
+	ErrInternal    = qrdbsdk.ErrInternal
+	ErrConflict    = qrdbsdk.ErrConflict
+	ErrTimeout     = qrdbsdk.ErrTimeout
+	ErrUnavailable = qrdbsdk.ErrUnavailable
 )
 
 // NewDatabaseError creates a new DatabaseError with the given code and operation.
@@ -701,12 +583,6 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	if s.Tenant != nil {
 		embOpts = append(embOpts, qrdbembedded.WithTenantService(s.Tenant))
 	}
-	if s.CustodianGroup != nil {
-		embOpts = append(embOpts, qrdbembedded.WithCustodianGroupService(s.CustodianGroup))
-	}
-	if s.Share != nil {
-		embOpts = append(embOpts, qrdbembedded.WithShareService(s.Share))
-	}
 	if s.AuthFactor != nil {
 		embOpts = append(embOpts, qrdbembedded.WithAuthFactorService(s.AuthFactor))
 	}
@@ -715,6 +591,9 @@ func (c *client) buildQRDBEmbeddedClient() (*qrdbsdk.Client, error) {
 	}
 	if s.User != nil {
 		embOpts = append(embOpts, qrdbembedded.WithUserService(s.User))
+	}
+	if s.Index != nil {
+		embOpts = append(embOpts, qrdbembedded.WithIndexService(s.Index))
 	}
 
 	t, err := qrdbembedded.New(s.KV, s.Admin, embOpts...)

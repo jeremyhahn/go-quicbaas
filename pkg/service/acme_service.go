@@ -102,9 +102,10 @@ type ACMEServicer interface {
 // delegating to the embedded TrustedCA. Keeping this surface minimal keeps the
 // service layer transport-agnostic and trivially mockable.
 type ACMECA interface {
-	// SignCSRPEM signs a PEM-encoded CSR and returns the issued leaf
-	// certificate plus the CA chain, both PEM-encoded.
-	SignCSRPEM(ctx context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error)
+	// SignCSRPEM signs a PEM-encoded CSR for tenantID, the authorized
+	// issuance tenant the CA stamps into the certificate, and returns the
+	// issued leaf certificate plus the CA chain, both PEM-encoded.
+	SignCSRPEM(ctx context.Context, tenantID string, csrPEM []byte) (certPEM, chainPEM []byte, err error)
 }
 
 // ACMECertResolver is the narrow capability the Renew verb needs to confirm
@@ -343,22 +344,25 @@ type acmeService struct {
 	certResolver ACMECertResolver
 	mu           sync.Mutex
 	challenge    map[string]xkmsacme.ACMEChallengeVerifierFunc
+	attesting    map[string]xkmsacme.ACMEAttestingVerifier
 
-	// canonical is every challenge verifier this server can register, all
-	// bound to the one challenge-validation client built at construction.
+	// canonical is every plain challenge verifier this server can register,
+	// all bound to the one challenge-validation client built at construction.
 	canonical map[string]xkmsacme.ACMEChallengeVerifierFunc
+
+	// canonicalAttesting is every attestation challenge verifier this server
+	// can register, bound to the same client.
+	canonicalAttesting map[string]xkmsacme.ACMEAttestingVerifier
 }
 
 // canonicalChallengeVerifiers maps challenge names to their canonical xkms
 // verifier functions, every one bound to client: the shared, SSRF-safe
 // challenge-validation client go-xkms requires for any verifier that contacts
-// a client-named target (http-01, enroll-01). Map-based dispatch keeps
-// challenge registration O(1). The TPM attestation challenges
-// (enroll-01/endorse-01) come from the shared xkms SDK helper so quicbaas
-// enables attestation identically to xkmsd; which challenges are actually
-// offered is selected per-deployment via ACMEServiceParams.Challenges.
+// a client-named target (http-01). Map-based dispatch keeps challenge
+// registration O(1); which challenges are actually offered is selected
+// per-deployment via ACMEServiceParams.Challenges.
 func canonicalChallengeVerifiers(client *xkmsacme.ACMEChallengeClient) map[string]xkmsacme.ACMEChallengeVerifierFunc {
-	m := map[string]xkmsacme.ACMEChallengeVerifierFunc{
+	return map[string]xkmsacme.ACMEChallengeVerifierFunc{
 		xkmsacme.ACMEChallengeTypeHTTP01: func(_ *net.Resolver, _ xkmsacme.ACMECertificateAuthority,
 			authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
 			return xkmsacme.ACMEVerifyHTTP01(client, authzValue, challengePort, challengeToken, expectedKeyAuth)
@@ -368,10 +372,17 @@ func canonicalChallengeVerifiers(client *xkmsacme.ACMEChallengeClient) map[strin
 			return xkmsacme.ACMEVerifyDNS01(resolver, authzValue, challengePort, challengeToken, expectedKeyAuth)
 		},
 	}
-	for name, verifier := range xkmsacme.ACMEAttestationVerifiers(client, true, true) {
-		m[name] = verifier
-	}
-	return m
+}
+
+// canonicalAttestingVerifiers maps the TPM attestation challenges
+// (enroll-01/endorse-01) to the shared xkms SDK attesting verifiers, bound to
+// client, so quicbaas enables attestation identically to xkmsd. go-xkms v0.55
+// refuses an attestation challenge served by a plain ChallengeVerifierFunc,
+// because only an attesting verifier reports the identity the device attested
+// (go-xkms#828). device-attest-01 is not offered: it needs a trust policy over
+// the evidence, which this server is not configured with.
+func canonicalAttestingVerifiers(client *xkmsacme.ACMEChallengeClient) map[string]xkmsacme.ACMEAttestingVerifier {
+	return xkmsacme.ACMEAttestingVerifiers(client, true, true, nil)
 }
 
 // NewACMEService composes the xkms ACME RFC 8555 server from params and
@@ -389,10 +400,13 @@ func NewACMEService(params *ACMEServiceParams) (ACMEServicer, error) {
 		logger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	}
 
-	canonical := canonicalChallengeVerifiers(xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{
+	client := xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{
 		AllowPrivateTargets: params.AllowPrivateChallengeTargets,
-	}))
+	})
+	canonical := canonicalChallengeVerifiers(client)
+	canonicalAttesting := canonicalAttestingVerifiers(client)
 	challengeMap := make(map[string]xkmsacme.ACMEChallengeVerifierFunc)
+	attestingMap := make(map[string]xkmsacme.ACMEAttestingVerifier)
 	names := params.Challenges
 	if len(names) == 0 {
 		names = []string{xkmsacme.ACMEChallengeTypeHTTP01}
@@ -401,29 +415,35 @@ func NewACMEService(params *ACMEServiceParams) (ACMEServicer, error) {
 		if verifier, ok := canonical[name]; ok {
 			challengeMap[name] = verifier
 		}
+		if verifier, ok := canonicalAttesting[name]; ok {
+			attestingMap[name] = verifier
+		}
 	}
 
 	rest, err := xkmsacme.NewACMERestService(&xkmsacme.ACMERestServiceParams{
-		BaseRESTURI:       params.BaseRESTURI,
-		CA:                params.CA,
-		ChallengeMap:      challengeMap,
-		ClusterCACN:       params.ClusterCACN,
-		Logger:            logger,
-		OrderPreSignHooks: params.OrderPreSignHooks,
-		StorageFactory:    params.StorageFactory,
+		AttestingVerifiers: attestingMap,
+		BaseRESTURI:        params.BaseRESTURI,
+		CA:                 params.CA,
+		ChallengeMap:       challengeMap,
+		ClusterCACN:        params.ClusterCACN,
+		Logger:             logger,
+		OrderPreSignHooks:  params.OrderPreSignHooks,
+		StorageFactory:     params.StorageFactory,
 	})
 	if err != nil {
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "NewACMEService", Err: err}
 	}
 
 	return &acmeService{
-		rest:         rest,
-		directoryURL: params.BaseRESTURI + "/acme/directory",
-		baseURI:      params.BaseRESTURI,
-		issueCA:      params.IssueCA,
-		certResolver: params.CertResolver,
-		challenge:    challengeMap,
-		canonical:    canonical,
+		rest:               rest,
+		directoryURL:       params.BaseRESTURI + "/acme/directory",
+		baseURI:            params.BaseRESTURI,
+		issueCA:            params.IssueCA,
+		certResolver:       params.CertResolver,
+		challenge:          challengeMap,
+		attesting:          attestingMap,
+		canonical:          canonical,
+		canonicalAttesting: canonicalAttesting,
 	}, nil
 }
 
@@ -446,13 +466,18 @@ func (s *acmeService) RegisterChallenge(ctx context.Context, req *ACMERegisterCh
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.RegisterChallenge", Err: err}
 	}
 
-	verifier, ok := s.canonical[req.Name]
-	if !ok {
+	verifier, plain := s.canonical[req.Name]
+	attestingVerifier, attesting := s.canonicalAttesting[req.Name]
+	if !plain && !attesting {
 		return nil, ErrACMEUnknownChallenge
 	}
 
 	s.mu.Lock()
-	s.challenge[req.Name] = verifier
+	if plain {
+		s.challenge[req.Name] = verifier
+	} else {
+		s.attesting[req.Name] = attestingVerifier
+	}
 	s.mu.Unlock()
 
 	return &ACMERegisterChallengeResponse{Registered: true}, nil
@@ -477,7 +502,13 @@ func (s *acmeService) Issue(ctx context.Context, req *ACMEIssueRequest) (*ACMEIs
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.Issue", Err: err}
 	}
 
-	certPEM, chainPEM, err := s.issueCA.SignCSRPEM(ctx, req.CSRPEM)
+	// go-xkms stamps the issuance tenant into the certificate, so it comes
+	// from the caller's authenticated context, never from the CSR.
+	tenantID, err := callerTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	certPEM, chainPEM, err := s.issueCA.SignCSRPEM(ctx, tenantID, req.CSRPEM)
 	if err != nil {
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.Issue", Err: err}
 	}
@@ -538,7 +569,13 @@ func (s *acmeService) FinalizeOrder(ctx context.Context, req *ACMEFinalizeOrderR
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.FinalizeOrder", Err: err}
 	}
 
-	certPEM, chainPEM, err := s.issueCA.SignCSRPEM(ctx, req.CSRPEM)
+	// go-xkms stamps the issuance tenant into the certificate, so it comes
+	// from the caller's authenticated context, never from the CSR.
+	tenantID, err := callerTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	certPEM, chainPEM, err := s.issueCA.SignCSRPEM(ctx, tenantID, req.CSRPEM)
 	if err != nil {
 		return nil, &errors.QBError{Code: errors.ErrInternal, Op: "ACMEService.FinalizeOrder", Err: err}
 	}

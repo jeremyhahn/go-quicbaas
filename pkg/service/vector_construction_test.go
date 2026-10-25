@@ -174,6 +174,43 @@ func TestNewVectorService_LoadNamespacesError(t *testing.T) {
 	assert.Contains(t, err.Error(), "load namespaces failed")
 }
 
+type vecLoadCtxKey struct{}
+
+// The startup namespace load has no end user behind it, so it runs under the
+// context the caller supplies (the node's service principal in production),
+// never a bare context the embedded node refuses as unauthenticated.
+func TestNewVectorService_LoadNamespacesUsesTheLoadContext(t *testing.T) {
+	storage := newVecMockStorage()
+	var got any
+	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
+		got = ctx.Value(vecLoadCtxKey{})
+		return nil, nil
+	}
+	loadCtx := context.WithValue(context.Background(), vecLoadCtxKey{}, "service-principal")
+
+	_, err := NewVectorService(storage, newVecTestLogger(), WithVectorLoadContext(loadCtx))
+
+	require.NoError(t, err)
+	assert.Equal(t, "service-principal", got)
+}
+
+// A nil load context is ignored: the load falls back to a background context
+// rather than panicking on a nil dereference.
+func TestNewVectorService_NilLoadContextIsIgnored(t *testing.T) {
+	storage := newVecMockStorage()
+	called := false
+	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
+		called = ctx != nil
+		return nil, nil
+	}
+
+	var nilLoadCtx context.Context
+	_, err := NewVectorService(storage, newVecTestLogger(), WithVectorLoadContext(nilLoadCtx))
+
+	require.NoError(t, err)
+	assert.True(t, called, "ListNamespaces received a nil context")
+}
+
 // =============================================================================
 // Functional Options Tests
 // =============================================================================

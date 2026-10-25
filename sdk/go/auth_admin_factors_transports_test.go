@@ -38,6 +38,7 @@ import (
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/quic-go/quic-go/http3"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -347,7 +348,7 @@ func mcpAdminFactors(t *testing.T, s *adminFactorServer) transport.Transport {
 			return mcpgo.NewToolResultText(string(out)), nil
 		})
 	}
-	httpServer := mcpserver.NewTestStreamableHTTPServer(server,
+	httpServer := mcpservertest.NewTestStreamableHTTPServer(server,
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, _ *http.Request) context.Context {
 			return s.caller(ctx)
 		}),

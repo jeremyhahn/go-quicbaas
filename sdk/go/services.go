@@ -14,10 +14,14 @@
 package quicbaas
 
 import (
+	"context"
 	"sync"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -165,14 +169,6 @@ type BarrierCeremonyService interface {
 	// Ceremony returns the ceremony client for managing the initialization
 	// ceremony lifecycle.
 	Ceremony() (QRDBCeremonyClient, error)
-
-	// CustodianGroup returns the custodian group client for managing
-	// custodian groups used in Shamir secret sharing.
-	CustodianGroup() (QRDBCustodianGroupClient, error)
-
-	// Share returns the share client for submitting and tracking
-	// Shamir shares.
-	Share() (QRDBShareClient, error)
 }
 
 // TenantService provides multi-tenant management operations including
@@ -294,7 +290,20 @@ func (s *securityService) Barrier() (QRDBBarrierClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return qrdbClient.Barrier(), nil
+	return &systemBarrierClient{QRDBBarrierClient: qrdbClient.Barrier()}, nil
+}
+
+// systemBarrierClient is the qrdb barrier client behind Security().Barrier().
+// It refuses system init-shamir on every transport before anything is sent:
+// the initialization ceremony is the only bootstrap path for the system
+// Shamir barrier. Every other verb passes through unchanged.
+type systemBarrierClient struct {
+	QRDBBarrierClient
+}
+
+// BarrierInitializeShamir returns the typed ceremony refusal.
+func (c *systemBarrierClient) BarrierInitializeShamir(_ context.Context, _ *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error) {
+	return nil, sdkerrors.NewSystemShamirInitRefused("barrier.InitializeShamir")
 }
 
 // Ceremony returns the QRDB CeremonyClient. The QRDB transport is
@@ -388,14 +397,6 @@ func (s *barrierCeremonyService) Ceremony() (QRDBCeremonyClient, error) {
 		return nil, err
 	}
 	return qrdbClient.Ceremony(), nil
-}
-
-func (s *barrierCeremonyService) CustodianGroup() (QRDBCustodianGroupClient, error) {
-	return s.c.CustodianGroup()
-}
-
-func (s *barrierCeremonyService) Share() (QRDBShareClient, error) {
-	return s.c.Share()
 }
 
 // tenantService delegates TenantService methods to the underlying client.
@@ -507,27 +508,6 @@ func (c *client) TenantMgmt() (QRDBTenantClient, error) {
 	return qrdbClient.Tenants(), nil
 }
 
-// CustodianGroup returns the QRDB CustodianGroupClient for managing
-// custodian groups used in Shamir secret sharing. The QRDB client is
-// lazily initialized on first call.
-func (c *client) CustodianGroup() (QRDBCustodianGroupClient, error) {
-	qrdbClient, err := c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.CustodianGroups(), nil
-}
-
-// Share returns the QRDB ShareClient for submitting and tracking
-// Shamir shares. The QRDB client is lazily initialized on first call.
-func (c *client) Share() (QRDBShareClient, error) {
-	qrdbClient, err := c.qrdbClient()
-	if err != nil {
-		return nil, err
-	}
-	return qrdbClient.Shares(), nil
-}
-
 // =============================================================================
 // go-xkms Sub-Interface Re-exports
 // =============================================================================
@@ -551,10 +531,6 @@ type XKMSCertService = xkmstransport.CertService
 // XKMSSealService is a re-export of the go-xkms SealService interface
 // for data sealing and unsealing operations.
 type XKMSSealService = xkmstransport.SealService
-
-// XKMSBarrierService is a re-export of the go-xkms BarrierService interface
-// for cryptographic barrier management.
-type XKMSBarrierService = xkmstransport.BarrierService
 
 // XKMSPIVService is a re-export of the go-xkms PIVService interface
 // for Personal Identity Verification operations.

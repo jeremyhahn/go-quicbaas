@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"os"
@@ -157,7 +158,11 @@ func buildSDKClientOptionsWithToken(authToken string) ([]quicbaas.Option, error)
 		if err != nil {
 			return nil, err
 		}
-		opts = append(opts, quicbaas.WithEmbedded(es.service))
+		// The CLI acts as the system: its calls run as the embedded
+		// server's service principal.
+		opts = append(opts,
+			quicbaas.WithEmbedded(es.service),
+			quicbaas.WithEmbeddedIdentity(quicbaas.ServicePrincipalIdentity(es.server)))
 		// Wire the qrdb sub-client to dispatch in-process against the
 		// embedded server's per-shard baasTransport (via the BaaS KV +
 		// Admin adapters) plus the bootstrap ceremony services. Without
@@ -234,17 +239,47 @@ func buildTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS13,
 	}
 
-	// Load client certificate if both cert and key are provided (mTLS)
-	if tlsCert != "" && tlsKey != "" {
-		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
-		if err != nil {
-			return nil, errors.Wrapf(err, errors.ErrConfiguration, "buildTLSConfig",
-				"failed to load client certificate")
-		}
-		tlsCfg.Certificates = []tls.Certificate{cert}
+	cert, err := loadClientCertificate()
+	if err != nil {
+		return nil, err
+	}
+	if cert != nil {
+		tlsCfg.Certificates = []tls.Certificate{*cert}
 	}
 
 	return tlsCfg, nil
+}
+
+// loadClientCertificate loads the --tls-cert/--tls-key mTLS identity. It
+// returns nil when either flag is unset: the caller then has no client
+// certificate, as on the embedded transport.
+func loadClientCertificate() (*tls.Certificate, error) {
+	if tlsCert == "" || tlsKey == "" {
+		return nil, nil
+	}
+	cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	if err != nil {
+		return nil, errors.Wrapf(err, errors.ErrConfiguration, "loadClientCertificate",
+			"failed to load client certificate")
+	}
+	return &cert, nil
+}
+
+// loadClientSigner returns the private key of the mTLS identity as a
+// crypto.Signer, so a verb that must prove possession of the key (tenant
+// barrier init) signs with the same key the connection authenticates with.
+// It returns nil when no client certificate is configured.
+func loadClientSigner() (crypto.Signer, error) {
+	cert, err := loadClientCertificate()
+	if err != nil || cert == nil {
+		return nil, err
+	}
+	signer, ok := cert.PrivateKey.(crypto.Signer)
+	if !ok {
+		return nil, errors.New(errors.ErrConfiguration, "loadClientSigner",
+			"client key does not implement crypto.Signer")
+	}
+	return signer, nil
 }
 
 // closeSDKClient closes the singleton SDK client and resets the holder.

@@ -50,16 +50,6 @@ type QRDBCredentialServicer = qrdbsdk.ServiceCredentialServicer
 // embedded transport.
 type QRDBTenantServicer = qrdbsdk.ServiceTenantServicer
 
-// QRDBCustodianGroupServicer is a re-export of the qrdb
-// ceremony.CustodianGroupServicer interface. Required to enable custodian
-// group operations through the embedded transport.
-type QRDBCustodianGroupServicer = qrdbsdk.CustodianGroupServicer
-
-// QRDBShareServicer is a re-export of the qrdb ceremony.ShareServicer
-// interface. Required to enable Shamir share submission and tracking
-// through the embedded transport.
-type QRDBShareServicer = qrdbsdk.ShareServicer
-
 // QRDBUserAuthFactorServicer is a re-export of the qrdb
 // service.UserAuthFactorServicer interface. Required to enable per-user
 // multi-factor auth operations through the embedded transport.
@@ -74,6 +64,12 @@ type QRDBUserServicer = qrdbsdk.UserServicer
 // interface. Required to enable authentication factor enrollment and
 // verification through the embedded transport.
 type QRDBAuthFactorServicer = qrdbsdk.AuthFactorServicer
+
+// QRDBIndexServicer is a re-export of the qrdb service.IndexServicer
+// interface. Required so a qrdb DAO with secondary indexes (for example the
+// WebAuthn credential store) can create and query its indexes through the
+// embedded transport. Build one with qrdbsdk.NewIndexService.
+type QRDBIndexServicer = qrdbsdk.IndexServicer
 
 // QRDBCeremonyCA is a re-export of the qrdb ceremony.CeremonyCA interface.
 // Optional companion to QRDBCeremonyServicer that supplies the CA used by
@@ -147,13 +143,6 @@ type QRDBEmbeddedServicers struct {
 	// per-tenant barrier (init / unseal / seal / status). Optional.
 	Tenant QRDBTenantServicer
 
-	// CustodianGroup exposes the Shamir custodian-group management surface
-	// (create groups, add/remove members, distribute shares). Optional.
-	CustodianGroup QRDBCustodianGroupServicer
-
-	// Share exposes Shamir share submission and tracking. Optional.
-	Share QRDBShareServicer
-
 	// AuthFactor exposes authentication factor enrollment and verification.
 	// Optional.
 	AuthFactor QRDBAuthFactorServicer
@@ -167,4 +156,10 @@ type QRDBEmbeddedServicers struct {
 	// can resolve a subject (tenant + username) to a uint64 user id and
 	// enroll the factor for that exact user. Optional otherwise.
 	User QRDBUserServicer
+
+	// Index exposes qrdb secondary-index operations (create / query).
+	// Required by any qrdb DAO that declares indexes, such as the WebAuthn
+	// credential store behind passkey enrollment and login. Optional
+	// otherwise.
+	Index QRDBIndexServicer
 }

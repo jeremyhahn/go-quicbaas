@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/qrdbnode"
 )
 
@@ -43,7 +44,31 @@ var tenants atomic.Uint64
 func realPlacer(t *testing.T) (*Placer, string) {
 	t.Helper()
 	n := qrdbnode.Shared(t)
-	return NewFromClient(n.Node.Client()), "arb" + strconv.FormatUint(tenants.Add(1), 10)
+	return NewFromClient(n.Node.Client(), n.Node), "arb" + strconv.FormatUint(tenants.Add(1), 10)
+}
+
+// errUnbound is what refusingBinder fails every bind with.
+var errUnbound = errors.New("placement test: service principal not bound")
+
+// refusingBinder is a binder whose every bind fails, standing in for a node
+// that cannot run the call as its service principal.
+type refusingBinder struct{}
+
+func (refusingBinder) ServiceContext(context.Context) (context.Context, error) {
+	return nil, errUnbound
+}
+
+// The placement store is quicbaasd's own system-tenant state, so every call
+// runs as the system service principal; a call that cannot be bound to it
+// fails with the bind error and never reaches the node unauthenticated.
+func TestRealNode_UnboundCallIsRefused(t *testing.T) {
+	n := qrdbnode.Shared(t)
+	p := NewFromClient(n.Node.Client(), refusingBinder{})
+	tenant := "arb" + strconv.FormatUint(tenants.Add(1), 10)
+	_, err := p.RegisterNode(context.Background(), tenant, facts("only", 1, nil), time.Minute)
+	if !errors.Is(err, errUnbound) {
+		t.Fatalf("RegisterNode error = %v, want the bind error", err)
+	}
 }
 
 // TestRealNode_ConcurrentPlacementsNeverOvercommit races many placements at
@@ -168,5 +193,39 @@ func TestRealNode_LeaseRevocationRemovesTheNode(t *testing.T) {
 	pl, err := p.GetPlacement(ctx, tenant, "w")
 	if err != nil || !pl.Orphaned {
 		t.Fatalf("placement = %+v, %v; want orphaned", pl, err)
+	}
+}
+
+// TestRealNode_TenantBoundRequestKeepsTheTenantPrefix pins Codex review
+// 6492's placement finding. A request context carries its caller's tenant;
+// the service principal is a system identity, and qrdb refuses a system
+// identity acting for another tenant. The backend call runs as the system
+// tenant, while the tenant stays in the placement key prefix.
+func TestRealNode_TenantBoundRequestKeepsTheTenantPrefix(t *testing.T) {
+	n := qrdbnode.Shared(t)
+	p, tenant := realPlacer(t)
+	ctx := tenantctx.WithTenant(context.Background(), tenant)
+
+	if _, err := p.RegisterNode(ctx, tenant, facts("bound", 2, nil), time.Minute); err != nil {
+		t.Fatalf("RegisterNode with a tenant-bound context: %v", err)
+	}
+	if _, err := p.CordonNode(ctx, tenant, "bound"); err != nil {
+		t.Fatalf("CordonNode with a tenant-bound context: %v", err)
+	}
+	info, err := p.GetNode(ctx, tenant, "bound")
+	if err != nil {
+		t.Fatalf("GetNode with a tenant-bound context: %v", err)
+	}
+	if !info.Status.Unschedulable {
+		t.Fatalf("node status = %+v; the cordon write was lost", info.Status)
+	}
+
+	stored, err := n.KV.Exists(context.Background(), key(tenant, nodesDir, "bound"))
+	if err != nil || !stored {
+		t.Fatalf("node facts under the tenant prefix: exists=%v err=%v", stored, err)
+	}
+	leaked, err := n.KV.Exists(context.Background(), key("", nodesDir, "bound"))
+	if err != nil || leaked {
+		t.Fatalf("node facts under the system prefix: exists=%v err=%v", leaked, err)
 	}
 }

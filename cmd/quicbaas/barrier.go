@@ -24,20 +24,17 @@
 //	                       [--passphrase <passphrase>]
 //	                       [--so-pin <pin>]
 //	                       [--user-pin <pin>]           (requires --so-pin)
-//	barrier init-shamir    --passphrase-stdin | --passphrase <passphrase>
-//	                       --threshold N
-//	                       --total M
+//	barrier init-shamir    --threshold N --total M [--policy <designated|any-enrolled>]
 //	                       [--so-pin] [--user-pin]
 //	barrier unseal         --passphrase-stdin | --passphrase <passphrase>
 //	                                                    (strategy passphrase replay)
-//	barrier unseal-shares  --share <s1> [--share <s2> ...]   (repeatable)
-//	                       | --shares-file <path>       ('-' = stdin)
 //	barrier seal           [--so-pin-stdin] [-y|--assume-yes]
-//	barrier rekey          [--so-pin <pin>]
-//	                       [--threshold N --total M]    (paired; for Shamir rekey)
-//	barrier recovery generate   --threshold N --total M [--so-pin <pin>]
-//	barrier recovery recover    --share <s1> [--share <s2> ...]   (repeatable)
-//	                            | --shares-file <path>       ('-' = stdin)
+//	barrier rekey          [--domain <unseal|recovery>] --threshold N [--policy P] [--so-pin <pin>]
+//	barrier officer-revoke [--domain <unseal|recovery>] --username U [--threshold N] [--so-pin <pin>]
+//	barrier quorum begin   [--domain D] --op O --username U [--factor F]
+//	barrier quorum submit  [--domain D] --op O --username U --share-file <path>
+//	                       [--challenge-id C --factor F --response-file <path>]
+//	barrier recovery generate   --threshold N [--policy P] [--so-pin <pin>]
 //
 // Every verb that takes a passphrase reads it from stdin (--passphrase-stdin,
 // preferred), the QUICBAAS_BARRIER_PASSPHRASE environment variable, or
@@ -89,25 +86,19 @@ var barrierStrategyInit = map[string]struct{}{
 // =============================================================================
 
 var (
-	barrierSecret         string
-	barrierShares         []string
-	barrierSharesFile     string
-	barrierThreshold      int
-	barrierTotalShares    int
-	barrierOutputFmt      string
-	barrierAssumeYes      bool
-	barrierStrategy       string
-	barrierSOPin          string
-	barrierUserPin        string
-	barrierRecoveryShares []string
-	// barrierRecoverySharesFile is separate from barrierSharesFile on purpose:
-	// `barrier recovery recover` collects a different quorum from
-	// `unseal-shares` / `root-token`, and one shared variable would let a
-	// future verb read a path another verb parsed.
-	barrierRecoverySharesFile string
-	barrierTenantID           string
-	barrierMechanism          string
-	barrierAvailability       string
+	barrierSecret       string
+	barrierThreshold    int
+	barrierTotalShares  int
+	barrierOutputFmt    string
+	barrierAssumeYes    bool
+	barrierStrategy     string
+	barrierSOPin        string
+	barrierUserPin      string
+	barrierPolicy       string
+	barrierDomain       string
+	barrierTenantID     string
+	barrierMechanism    string
+	barrierAvailability string
 )
 
 // =============================================================================
@@ -123,16 +114,25 @@ type BarrierClient interface {
 	BarrierInitialize(ctx context.Context, req *qrdbtransport.BarrierInitializeRequest) error
 	BarrierInitializeShamir(ctx context.Context, req *qrdbtransport.BarrierInitializeShamirRequest) (*qrdbtransport.BarrierInitializeShamirResponse, error)
 	BarrierUnseal(ctx context.Context, req *qrdbtransport.BarrierUnsealRequest) error
-	BarrierUnsealWithShares(ctx context.Context, req *qrdbtransport.BarrierUnsealSharesRequest) error
 	BarrierSeal(ctx context.Context) error
-	BarrierRekey(ctx context.Context, req *qrdbtransport.BarrierRekeyRequest) (*qrdbtransport.BarrierRekeyResponse, error)
 	BarrierGenerateRecoveryKeys(ctx context.Context, req *qrdbtransport.BarrierGenerateRecoveryKeysRequest) (*qrdbtransport.BarrierRecoveryKeysResponse, error)
-	BarrierRecoverWithKeys(ctx context.Context, req *qrdbtransport.BarrierRecoverWithKeysRequest) error
 
-	// BarrierGenerateRootToken mints a root token from a Shamir quorum. The
-	// token is a break-glass credential: it is returned exactly once and is
-	// never recoverable from the server afterwards.
-	BarrierGenerateRootToken(ctx context.Context, req *qrdbtransport.BarrierGenerateRootTokenRequest) (*qrdbtransport.BarrierRootTokenResponse, error)
+	// BarrierQuorumBegin opens one holder's factor challenge for a quorum
+	// operation (unseal, seal, root-token, rekey or recover).
+	BarrierQuorumBegin(ctx context.Context, req *qrdbtransport.QuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error)
+
+	// BarrierQuorumSubmit answers a challenge with the holder's factor
+	// response and share. The outcome carries a root token exactly once,
+	// when a root-token round completes.
+	BarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.QuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error)
+
+	// BarrierRekeyStart opens a rekey round; holders then complete it
+	// through BarrierQuorumSubmit.
+	BarrierRekeyStart(ctx context.Context, req *qrdbtransport.RekeyStartRequest) (*qrdbtransport.QuorumRound, error)
+
+	// BarrierOfficerRevoke opens a round that rekeys the domain without the
+	// named holder.
+	BarrierOfficerRevoke(ctx context.Context, req *qrdbtransport.OfficerRevokeRequest) (*qrdbtransport.QuorumRound, error)
 
 	// BarrierEnableEncryption migrates a previously-unencrypted barrier to an
 	// encrypted one. It requires an UNSEALED data plane, which is why it is
@@ -146,12 +146,19 @@ type BarrierClient interface {
 	// distribution model and is reachable while the barrier is still sealed.
 	OfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
 
+	// RecoveryOfficerRegister enrols a recovery officer the same way.
+	RecoveryOfficerRegister(ctx context.Context, req *qrdbtransport.OfficerRegisterRequest) (*qrdbtransport.OfficerRegisterResponse, error)
+
 	// OfficerList lists the enrolled Security Officers (public metadata only).
 	OfficerList(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
 
-	// OfficerClaimStatus reports per-officer enrolment and claim state. It
-	// never returns share bytes.
-	OfficerClaimStatus(ctx context.Context) ([]*qrdbtransport.OfficerStatus, error)
+	// ShareClaimBegin and ShareClaimComplete run an unseal officer's
+	// challenge-response claim of their sealed share envelope; the Recovery*
+	// pair runs the same handshake for a recovery officer.
+	ShareClaimBegin(ctx context.Context, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error)
+	ShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error)
+	RecoveryShareClaimBegin(ctx context.Context, req *qrdbtransport.ShareClaimBeginRequest) (*qrdbtransport.ShareClaimBeginResponse, error)
+	RecoveryShareClaimComplete(ctx context.Context, req *qrdbtransport.ShareClaimCompleteRequest) (*qrdbtransport.ShareClaimCompleteResponse, error)
 }
 
 // BarrierClientFactory is a function type for creating BarrierClient instances.
@@ -175,48 +182,6 @@ func createSDKBarrierClient() (BarrierClient, error) {
 // =============================================================================
 // Errors
 // =============================================================================
-
-// BarrierSharesFileError is returned when --shares-file cannot be read.
-type BarrierSharesFileError struct {
-	Path string
-	// Op names the verb the operator invoked, for the same reason
-	// BarrierShareInputError carries one: three verbs now read a share file
-	// through readSharesFile, and a hard-coded name sends an operator who ran
-	// `barrier root-token` or `barrier recovery recover` off to debug
-	// `barrier unseal-shares`.
-	Op  string
-	Err error
-}
-
-// Error returns a human-readable description.
-func (e *BarrierSharesFileError) Error() string {
-	return sharesFileOp(e.Op) + ": failed to read --shares-file " + e.Path + ": " + e.Err.Error()
-}
-
-// Unwrap returns the wrapped error.
-func (e *BarrierSharesFileError) Unwrap() error { return e.Err }
-
-// BarrierSharesFileEmptyError is returned when --shares-file contained
-// no non-empty lines.
-type BarrierSharesFileEmptyError struct {
-	Path string
-	// Op names the invoking verb; see BarrierSharesFileError.Op.
-	Op string
-}
-
-// Error returns a human-readable description.
-func (e *BarrierSharesFileEmptyError) Error() string {
-	return sharesFileOp(e.Op) + ": --shares-file " + e.Path + " contains no shares"
-}
-
-// sharesFileOp supplies the historical verb name when a caller left Op unset,
-// so an error value built without it still reads as a sentence.
-func sharesFileOp(op string) string {
-	if op == "" {
-		return "barrier unseal-shares"
-	}
-	return op
-}
 
 // BarrierScopeMismatchError is returned by `barrier enable-encryption
 // --tenant` when the server reports it migrated a barrier other than that
@@ -251,25 +216,6 @@ func (e *PINsNotAllowedError) Error() string {
 	return "barrier " + e.Op + ": --so-pin/--user-pin are not allowed when --barrier-strategy=" + e.Strategy
 }
 
-// BarrierShareInputError is returned when the --share / --shares-file
-// invariants of `barrier unseal-shares` are violated.
-type BarrierShareInputError struct {
-	// Op names the verb the operator invoked. Several verbs collect a share
-	// quorum, so a hard-coded name here would send an operator who ran
-	// `barrier root-token` off to debug `barrier unseal-shares`.
-	Op     string
-	Reason string
-}
-
-// Error returns a human-readable description.
-func (e *BarrierShareInputError) Error() string {
-	op := e.Op
-	if op == "" {
-		op = "barrier unseal-shares"
-	}
-	return op + ": " + e.Reason
-}
-
 // =============================================================================
 // Command tree
 // =============================================================================
@@ -290,11 +236,12 @@ Verbs mirror qrdbctl / xkmsctl so operators have a consistent surface:
   init           Initialize with a single passphrase (or --barrier-strategy=none)
   init-shamir    Initialize with Shamir M-of-N secret sharing
   unseal         Unseal with --passphrase
-  unseal-shares  Unseal with one or more Shamir shares (--share/--shares-file)
   seal           Seal the barrier
-  rekey          Rotate the barrier master key (optionally regenerate Shamir shares)
-  recovery       Generate or use recovery keys (generate | recover)
-  root-token     Mint a break-glass root token from a Shamir quorum
+  rekey          Open a quorum round that rotates a domain's key and share set
+  officer-revoke Open a quorum round that rekeys a domain without one holder
+  quorum         Answer a holder challenge (begin | submit) for unseal, seal,
+                 root-token, rekey or recover
+  recovery       Generate recovery keys
   enable-encryption
                  Migrate an unencrypted barrier to an encrypted one`,
 	}
@@ -306,11 +253,11 @@ Verbs mirror qrdbctl / xkmsctl so operators have a consistent surface:
 	cmd.AddCommand(newBarrierInitCommand())
 	cmd.AddCommand(newBarrierInitShamirCommand())
 	cmd.AddCommand(newBarrierUnsealCommand())
-	cmd.AddCommand(newBarrierUnsealSharesCommand())
 	cmd.AddCommand(newBarrierSealCommand())
 	cmd.AddCommand(newBarrierRekeyCommand())
+	cmd.AddCommand(newBarrierOfficerRevokeCommand())
+	cmd.AddCommand(newBarrierQuorumCommand())
 	cmd.AddCommand(newBarrierRecoveryCommand())
-	cmd.AddCommand(newBarrierRootTokenCommand())
 	cmd.AddCommand(newBarrierEnableEncryptionCommand())
 
 	return cmd
@@ -440,17 +387,14 @@ func runBarrierInitCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	if err := client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret:          secret.Bytes(),
-		BarrierStrategy: barrierStrategy,
-		SOPin:           barrierSOPin,
-		UserPin:         barrierUserPin,
-	}); err != nil {
-		return formatError(err)
-	}
-
-	return nil
+	return formatError(withPassphraseBytes(secret, func(b []byte) error {
+		return client.BarrierInitialize(ctx, &qrdbtransport.BarrierInitializeRequest{
+			Secret:          b,
+			BarrierStrategy: barrierStrategy,
+			SOPin:           barrierSOPin,
+			UserPin:         barrierUserPin,
+		})
+	}))
 }
 
 // =============================================================================
@@ -464,25 +408,23 @@ func newBarrierInitShamirCommand() *cobra.Command {
 		Short: "Initialize the barrier with Shamir M-of-N secret sharing",
 		Long: `Initialize the barrier using Shamir M-of-N secret sharing.
 
-The master secret is split into --total shares of which --threshold are
-required to unseal. PIN flags are optional but follow the dual-control
-rule -- supplying --so-pin requires --user-pin.
-
-The generated shares are printed once; distribute them to custodians
-immediately and out-of-band.
-
-` + passphraseInputHelp + `
+The server generates the unseal key and seals --total shares to the
+enrolled Security Officers, of which --threshold are required to unseal.
+No secret travels on the request and no share is printed: each officer
+claims their own share. --policy selects which enrolled officers receive
+a share (designated or any-enrolled). PIN flags are optional but follow
+the dual-control rule -- supplying --so-pin requires --user-pin.
 
 Example:
-  printf '%s' "$SEED" | quicbaas barrier init-shamir --passphrase-stdin \
-                                                     --threshold 3 --total 5`,
+  quicbaas barrier init-shamir --threshold 3 --total 5 --policy designated`,
 		RunE: runBarrierInitShamirCommand,
 	}
-	addPassphraseFlags(cmd, &barrierSecret, "Master passphrase")
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"Minimum shares required to unseal (M)")
 	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
 		"Total number of shares to generate (N)")
+	cmd.Flags().StringVar(&barrierPolicy, "policy", "",
+		"Share distribution policy (designated, any-enrolled; server default when empty)")
 	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
 		"Security Officer PIN (optional; requires --user-pin)")
 	cmd.Flags().StringVar(&barrierUserPin, "user-pin", "",
@@ -492,15 +434,6 @@ Example:
 
 // runBarrierInitShamirCommand executes 'barrier init-shamir'.
 func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
-	secret, err := resolvePassphrase(cmd, "barrier.init-shamir", barrierSecret)
-	if err != nil {
-		return formatError(err)
-	}
-	defer secret.Destroy()
-	if secret.Size() == 0 {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir",
-			"--passphrase is required"+passphraseSourcesHint)
-	}
 	if barrierThreshold <= 0 {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.init-shamir", "--threshold must be > 0")
 	}
@@ -528,10 +461,9 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	resp, err := client.BarrierInitializeShamir(ctx, &qrdbtransport.BarrierInitializeShamirRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret:      secret.Bytes(),
 		Threshold:   barrierThreshold,
 		TotalShares: barrierTotalShares,
+		Policy:      barrierPolicy,
 		SOPin:       barrierSOPin,
 		UserPin:     barrierUserPin,
 	})
@@ -548,7 +480,7 @@ func runBarrierInitShamirCommand(cmd *cobra.Command, _ []string) error {
 
 // newBarrierUnsealCommand builds 'quicbaas barrier unseal'. The canonical
 // surface narrows this verb to the passphrase / single-secret strategy;
-// Shamir share submission lives on 'barrier unseal-shares'.
+// Shamir share submission lives on 'barrier quorum begin' / 'quorum submit'.
 func newBarrierUnsealCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unseal",
@@ -557,8 +489,9 @@ func newBarrierUnsealCommand() *cobra.Command {
 'barrier init' time.
 
 This verb is reserved for the passphrase / single-secret strategy. For
-Shamir M-of-N unseal use 'barrier unseal-shares' with --share or
---shares-file.
+Shamir M-of-N unseal each holder runs 'barrier quorum begin --op unseal'
+and then 'barrier quorum submit --op unseal' with their opened share in
+--share-file.
 
 ` + passphraseInputHelp + `
 
@@ -597,123 +530,9 @@ func runBarrierUnsealCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	return formatError(client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{
-		//secure:unborrowed injected-interface barrier transport request must carry bytes; the client owns the request lifetime.
-		Secret: secret.Bytes(),
+	return formatError(secret.WithBytes(func(b []byte) error {
+		return client.BarrierUnseal(ctx, &qrdbtransport.BarrierUnsealRequest{Secret: b})
 	}))
-}
-
-// =============================================================================
-// unseal-shares
-// =============================================================================
-
-// newBarrierUnsealSharesCommand builds 'quicbaas barrier unseal-shares'.
-// Operators may supply one or more `--share` flags (repeatable) or point
-// at a `--shares-file` with one share per line (`-` reads stdin). The
-// two forms are mutually exclusive.
-func newBarrierUnsealSharesCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "unseal-shares",
-		Short: "Unseal the barrier by submitting Shamir shares",
-		Long: `Unseal the barrier using one or more Shamir shares.
-
-Two input modes are supported. Exactly one must be supplied:
-
-  --share <value>           Repeatable. Supply one or more shares as flags.
-  --shares-file <path>      Newline-delimited file of shares. Use '-' for stdin.
-
-Submitting a number of shares >= the M threshold unseals the barrier in
-one call. Submitting fewer shares accumulates them toward the threshold.
-
-Examples:
-  quicbaas barrier unseal-shares --share aaa --share bbb --share ccc
-  quicbaas barrier unseal-shares --shares-file /etc/quicbaas/shares.txt
-  cat shares.txt | quicbaas barrier unseal-shares --shares-file -`,
-		RunE: runBarrierUnsealSharesCommand,
-	}
-	cmd.Flags().StringSliceVar(&barrierShares, "share", nil,
-		"Single Shamir share (repeatable: --share a --share b ...)")
-	cmd.Flags().StringVar(&barrierSharesFile, "shares-file", "",
-		"Path to a newline-delimited share file; '-' for stdin")
-	return cmd
-}
-
-// runBarrierUnsealSharesCommand executes 'barrier unseal-shares'.
-func runBarrierUnsealSharesCommand(_ *cobra.Command, _ []string) error {
-	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier unseal-shares")
-	if err != nil {
-		return formatError(err)
-	}
-
-	client, err := barrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	return formatError(client.BarrierUnsealWithShares(ctx, &qrdbtransport.BarrierUnsealSharesRequest{
-		Shares: shares,
-	}))
-}
-
-// resolveUnsealShares enforces the --share / --shares-file invariants
-// and returns the flattened share list. op names the invoking verb so the
-// error points at the command the operator actually ran.
-func resolveUnsealShares(shares []string, sharesFile, op string) ([]string, error) {
-	hasFlag := len(shares) > 0
-	hasFile := sharesFile != ""
-	if hasFlag && hasFile {
-		return nil, &BarrierShareInputError{
-			Op:     op,
-			Reason: "exactly one of --share (repeatable) or --shares-file is allowed",
-		}
-	}
-	if !hasFlag && !hasFile {
-		return nil, &BarrierShareInputError{
-			Op:     op,
-			Reason: "one of --share (repeatable) or --shares-file is required",
-		}
-	}
-	if hasFlag {
-		return shares, nil
-	}
-	return readSharesFile(sharesFile, op)
-}
-
-// readSharesFile reads one share per line from path. Blank lines and
-// '#' comments are skipped. The literal path "-" reads from stdin. op names
-// the invoking verb and rides on the returned errors.
-func readSharesFile(path, op string) ([]string, error) {
-	var src io.Reader
-	if path == "-" {
-		src = os.Stdin
-	} else {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
-		}
-		defer func() { _ = f.Close() }()
-		src = f
-	}
-
-	var shares []string
-	scanner := bufio.NewScanner(src)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		shares = append(shares, line)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, &BarrierSharesFileError{Path: path, Op: op, Err: err}
-	}
-	if len(shares) == 0 {
-		return nil, &BarrierSharesFileEmptyError{Path: path, Op: op}
-	}
-	return shares, nil
 }
 
 // =============================================================================
@@ -816,74 +635,6 @@ func runBarrierSealCommand(cmd *cobra.Command, _ []string) error {
 }
 
 // =============================================================================
-// rekey
-// =============================================================================
-
-// newBarrierRekeyCommand builds 'quicbaas barrier rekey'.
-func newBarrierRekeyCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "rekey",
-		Short: "Rotate the barrier Shamir unseal key and share set",
-		Long: `Rotate the barrier's Shamir unseal key and share set.
-
-The server generates a fresh unseal key, re-wraps the root key under it,
-and seals new shares to the enrolled Security Officers; all previously
-distributed shares are cryptographically revoked. No secret material
-travels on the request. --so-pin is required when a PINBackend is
-configured. --threshold and --total are paired and instruct the server
-to regenerate the share set with a new M/N.
-
-Examples:
-  quicbaas barrier rekey --so-pin SO123
-  quicbaas barrier rekey --threshold 3 --total 5`,
-		RunE: runBarrierRekeyCommand,
-	}
-	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
-		"Security Officer PIN (required when a PINBackend is configured)")
-	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
-		"New Shamir threshold (paired with --total)")
-	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
-		"New Shamir total share count (paired with --threshold)")
-	return cmd
-}
-
-// runBarrierRekeyCommand executes 'barrier rekey'.
-func runBarrierRekeyCommand(cmd *cobra.Command, _ []string) error {
-	// Shamir flags are paired: supplying one requires the other.
-	if (barrierThreshold > 0) != (barrierTotalShares > 0) {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
-			"--threshold and --total must be supplied together when rekeying Shamir shares")
-	}
-	if barrierThreshold > 0 && barrierThreshold < 2 {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
-			"--threshold must be >= 2")
-	}
-	if barrierTotalShares > 0 && barrierTotalShares < barrierThreshold {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.rekey",
-			"--total must be >= --threshold")
-	}
-
-	client, err := barrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	resp, err := client.BarrierRekey(ctx, &qrdbtransport.BarrierRekeyRequest{
-		SOPin:     barrierSOPin,
-		Threshold: barrierThreshold,
-		Total:     barrierTotalShares,
-	})
-	if err != nil {
-		return formatError(err)
-	}
-
-	return formatBarrierRekeyResult(resp, barrierOutputFmt, cmd.OutOrStdout())
-}
-
-// =============================================================================
 // recovery
 // =============================================================================
 
@@ -896,10 +647,11 @@ func newBarrierRecoveryCommand() *cobra.Command {
 
 Canonical surface:
   recovery generate   Generate M-of-N recovery keys
-  recovery recover    Restore the barrier from recovery keys`,
+
+Recovery is completed as a quorum round on the recovery domain:
+  quicbaas barrier quorum submit --domain recovery --op recover ...`,
 	}
 	cmd.AddCommand(newBarrierRecoveryGenerateCommand())
-	cmd.AddCommand(newBarrierRecoveryRecoverCommand())
 	return cmd
 }
 
@@ -910,18 +662,20 @@ func newBarrierRecoveryGenerateCommand() *cobra.Command {
 		Short: "Generate M-of-N recovery keys",
 		Long: `Generate fresh recovery keys.
 
-Recovery keys are independent of the barrier's unseal shares and live in
-a parallel KMS slot. Generation requires a Security Officer PIN when a
-PINBackend is configured.
+Recovery keys are independent of the barrier's unseal shares. The server
+seals one share to each enrolled recovery officer that --policy selects,
+so the share count is the enrolled officer count; no key material is
+returned. Generation requires a Security Officer PIN when a PINBackend is
+configured.
 
 Example:
-  quicbaas barrier recovery generate --threshold 3 --total 5 --so-pin SO123`,
+  quicbaas barrier recovery generate --threshold 3 --policy designated --so-pin SO123`,
 		RunE: runBarrierRecoveryGenerateCommand,
 	}
 	cmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
 		"Minimum keys required for recovery (M)")
-	cmd.Flags().IntVar(&barrierTotalShares, "total", 0,
-		"Total number of recovery keys (N)")
+	cmd.Flags().StringVar(&barrierPolicy, "policy", "",
+		"Share distribution policy (designated, any-enrolled; server default when empty)")
 	cmd.Flags().StringVar(&barrierSOPin, "so-pin", "",
 		"Security Officer PIN (required when a PINBackend is configured)")
 	return cmd
@@ -932,10 +686,6 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 	if barrierThreshold < 2 {
 		return errors.Newf(errors.ErrInvalidInput, "barrier.recovery.generate",
 			"--threshold must be >= 2")
-	}
-	if barrierTotalShares < barrierThreshold {
-		return errors.Newf(errors.ErrInvalidInput, "barrier.recovery.generate",
-			"--total must be >= --threshold")
 	}
 
 	client, err := barrierClientFactory()
@@ -948,7 +698,7 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 
 	resp, err := client.BarrierGenerateRecoveryKeys(ctx, &qrdbtransport.BarrierGenerateRecoveryKeysRequest{
 		Threshold: barrierThreshold,
-		Total:     barrierTotalShares,
+		Policy:    barrierPolicy,
 		SOPin:     barrierSOPin,
 	})
 	if err != nil {
@@ -956,56 +706,6 @@ func runBarrierRecoveryGenerateCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	return formatBarrierRecoveryKeys(resp, barrierOutputFmt, cmd.OutOrStdout())
-}
-
-// newBarrierRecoveryRecoverCommand builds 'barrier recovery recover'.
-func newBarrierRecoveryRecoverCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "recover",
-		Short: "Recover the barrier using recovery keys",
-		Long: `Recover the barrier by submitting M-of-N recovery keys.
-
-Two input modes are supported. Exactly one must be supplied:
-
-  --share <value>           Repeatable. Supply one or more keys as flags.
-  --shares-file <path>      Newline-delimited file of keys. Use '-' for stdin.
-
-A recovery key on argv is readable by every process on the host through
-/proc/<pid>/cmdline for the life of the call. Prefer --shares-file, and
---shares-file - to keep the quorum off the filesystem as well.
-
-Examples:
-  quicbaas barrier recovery recover --share key-a --share key-b --share key-c
-  quicbaas barrier recovery recover --shares-file /etc/quicbaas/recovery.txt
-  cat recovery.txt | quicbaas barrier recovery recover --shares-file -`,
-		RunE: runBarrierRecoveryRecoverCommand,
-	}
-	cmd.Flags().StringSliceVar(&barrierRecoveryShares, "share", nil,
-		"Recovery key (repeatable: --share a --share b ...)")
-	cmd.Flags().StringVar(&barrierRecoverySharesFile, "shares-file", "",
-		"Path to a newline-delimited recovery-key file; '-' for stdin")
-	return cmd
-}
-
-// runBarrierRecoveryRecoverCommand executes 'barrier recovery recover'.
-func runBarrierRecoveryRecoverCommand(_ *cobra.Command, _ []string) error {
-	keys, err := resolveUnsealShares(barrierRecoveryShares, barrierRecoverySharesFile,
-		"barrier recovery recover")
-	if err != nil {
-		return formatError(err)
-	}
-
-	client, err := barrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	return formatError(client.BarrierRecoverWithKeys(ctx, &qrdbtransport.BarrierRecoverWithKeysRequest{
-		Keys: keys,
-	}))
 }
 
 // =============================================================================
@@ -1085,40 +785,6 @@ func formatBarrierShamirResult(resp *qrdbtransport.BarrierInitializeShamirRespon
 	}
 }
 
-// formatBarrierRekeyResult renders a Rekey response. New share material is
-// never returned over the wire (qrdb share-free contract): shares are sealed
-// to enrolled Security Officers, who claim them individually via the
-// share-claim flow.
-func formatBarrierRekeyResult(resp *qrdbtransport.BarrierRekeyResponse, format string, w io.Writer) error {
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-
-	switch outputFormat {
-	case cli.OutputFormatJSON:
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(map[string]interface{}{
-			"threshold":    resp.Threshold,
-			"total_shares": resp.TotalShares,
-			"share_count":  resp.ShareCount,
-		})
-	case cli.OutputFormatTable:
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintf(tw, "\nBARRIER REKEY COMPLETE\n")
-		fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 80))
-		fmt.Fprintf(tw, "New Threshold:\t%d of %d\n", resp.Threshold, resp.TotalShares)
-		fmt.Fprintf(tw, "Shares Sealed:\t%d\n", resp.ShareCount)
-		fmt.Fprintf(tw, "\nNew shares were sealed to the enrolled Security Officers. Each officer\nclaims their share individually via the share-claim flow.\n")
-		return tw.Flush()
-	default:
-		fmt.Fprintf(w, "New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
-		fmt.Fprintf(w, "Shares sealed to officers: %d\n", resp.ShareCount)
-		return nil
-	}
-}
-
 // formatBarrierRecoveryKeys renders a recovery-key generation response.
 // Recovery key material is never returned over the wire (qrdb share-free
 // contract): recovery shares are sealed to enrolled recovery officers, who
@@ -1151,92 +817,6 @@ func formatBarrierRecoveryKeys(resp *qrdbtransport.BarrierRecoveryKeysResponse, 
 		fmt.Fprintf(w, "Keys sealed to officers: %d\n", resp.ShareCount)
 		return nil
 	}
-}
-
-// =============================================================================
-// root-token
-// =============================================================================
-
-// newBarrierRootTokenCommand builds 'quicbaas barrier root-token'.
-func newBarrierRootTokenCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "root-token",
-		Short: "Mint a break-glass root token from a Shamir quorum",
-		Long: `Mint a root token.
-
-A quorum of Security Officers each supply their share; the server
-reconstructs the secret and issues a single root token. This is a
-break-glass credential — it is returned EXACTLY ONCE and cannot be
-retrieved from the server afterwards. Capture it at the point of issue
-and store it under the same controls as the shares themselves.
-
-Example:
-  quicbaas barrier root-token --share "$SHARE_A" --share "$SHARE_B"`,
-		RunE: runBarrierRootTokenCommand,
-	}
-	cmd.Flags().StringSliceVar(&barrierShares, "share", nil,
-		"Shamir share (repeatable; a quorum is required)")
-	cmd.Flags().StringVar(&barrierSharesFile, "shares-file", "",
-		"File containing one share per line ('-' reads stdin)")
-	return cmd
-}
-
-// runBarrierRootTokenCommand executes 'barrier root-token'.
-func runBarrierRootTokenCommand(cmd *cobra.Command, _ []string) error {
-	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, "barrier root-token")
-	if err != nil {
-		return formatError(err)
-	}
-
-	client, err := barrierClientFactory()
-	if err != nil {
-		return formatError(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
-	defer cancel()
-
-	resp, err := client.BarrierGenerateRootToken(ctx, &qrdbtransport.BarrierGenerateRootTokenRequest{
-		Shares: shares,
-	})
-	if err != nil {
-		return formatError(err)
-	}
-	return formatBarrierRootToken(resp, barrierOutputFmt, cmd.OutOrStdout())
-}
-
-// formatBarrierRootToken renders the minted token.
-func formatBarrierRootToken(
-	resp *qrdbtransport.BarrierRootTokenResponse,
-	format string,
-	w io.Writer,
-) error {
-	if resp == nil {
-		return errors.Newf(errors.ErrInternal, "barrier.root-token", "empty response")
-	}
-	outputFormat, err := cli.ParseOutputFormat(format)
-	if err != nil {
-		return err
-	}
-	if outputFormat == cli.OutputFormatJSON {
-		encoder := json.NewEncoder(w)
-		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
-	}
-
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "ROOT TOKEN\n")
-	fmt.Fprintf(tw, "%s\n", strings.Repeat("=", 60))
-	fmt.Fprintf(tw, "Token:\t%s\n", resp.Token)
-	if resp.CreatedAt != "" {
-		fmt.Fprintf(tw, "Created:\t%s\n", resp.CreatedAt)
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "This token is shown ONCE and cannot be retrieved again.")
-	return nil
 }
 
 // =============================================================================
@@ -1329,15 +909,19 @@ func runBarrierEnableEncryptionCommand(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
 
-	resp, err := client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
-		TenantID:     barrierTenantID,
-		Strategy:     barrierStrategy,
-		Mechanism:    barrierMechanism,
-		Availability: barrierAvailability,
-		//secure:unborrowed injected-interface first-boot request must carry bytes; the SDK owns the request lifetime.
-		Passphrase:      secret.Bytes(),
-		ShamirThreshold: barrierThreshold,
-		ShamirTotal:     barrierTotalShares,
+	var resp *qrdbtransport.BarrierEnableEncryptionResponse
+	err = withPassphraseBytes(secret, func(b []byte) error {
+		var callErr error
+		resp, callErr = client.BarrierEnableEncryption(ctx, &qrdbtransport.BarrierEnableEncryptionRequest{
+			TenantID:        barrierTenantID,
+			Strategy:        barrierStrategy,
+			Mechanism:       barrierMechanism,
+			Availability:    barrierAvailability,
+			Passphrase:      b,
+			ShamirThreshold: barrierThreshold,
+			ShamirTotal:     barrierTotalShares,
+		})
+		return callErr
 	})
 	if err != nil {
 		return formatError(err)

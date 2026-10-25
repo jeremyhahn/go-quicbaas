@@ -37,3 +37,17 @@ func mustPasswordBuffer(t *testing.T, password string) *secure.Buffer {
 	}
 	return buf
 }
+
+// bufferCopy returns a heap copy of buf's contents for assertions. It fails
+// the test when the buffer cannot be borrowed (nil or destroyed).
+func bufferCopy(t *testing.T, buf *secure.Buffer) []byte {
+	t.Helper()
+	var out []byte
+	if err := buf.WithBytes(func(b []byte) error {
+		out = append([]byte(nil), b...)
+		return nil
+	}); err != nil {
+		t.Fatalf("bufferCopy: %v", err)
+	}
+	return out
+}

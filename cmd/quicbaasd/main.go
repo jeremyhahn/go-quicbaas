@@ -1024,7 +1024,7 @@ func run() int {
 	// No-op in production builds.
 	setupCoverageSignalHook()
 	defer func() {
-		if remaining, err := secure.WipeAll(); err != nil || remaining != 0 {
+		if remaining, err := secure.WipeAll(context.Background()); err != nil || remaining != 0 {
 			fmt.Fprintf(os.Stderr, "quicbaasd: secure.WipeAll: %d enclaves still held: %v\n", remaining, err)
 		}
 	}()

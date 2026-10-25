@@ -27,6 +27,7 @@ import (
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -43,7 +44,8 @@ var errBarrierBackend = &barrierBackendError{}
 
 // mockBarrierClient implements transport.BarrierClient. Each method returns the
 // configured response/error, allowing tests to drive both happy and error
-// paths through the facade without a live qrdb transport.
+// paths through the facade without a live qrdb transport. The quorum verbs
+// share quorumErr.
 type mockBarrierClient struct {
 	statusResp     *transport.BarrierStatusResponse
 	statusErr      error
@@ -53,19 +55,15 @@ type mockBarrierClient struct {
 	sealCalls      int
 	initShamirResp *transport.BarrierInitializeShamirResponse
 	initShamirErr  error
-	unsealShareRsp *transport.BarrierUnsealShareResponse
-	unsealShareErr error
-	unsealSharesEr error
-	rekeyResp      *transport.BarrierRekeyResponse
-	rekeyErr       error
 	recoveryResp   *transport.BarrierRecoveryKeysResponse
 	recoveryErr    error
-	recoverErr     error
 	delRecoveryErr error
 	hasRecResp     *transport.BarrierHasRecoveryKeysResponse
 	hasRecErr      error
-	rootTokenResp  *transport.BarrierRootTokenResponse
-	rootTokenErr   error
+	challenge      *transport.QuorumChallenge
+	outcome        *transport.QuorumOutcome
+	round          *transport.QuorumRound
+	quorumErr      error
 }
 
 func (m *mockBarrierClient) BarrierInitialize(_ context.Context, _ *transport.BarrierInitializeRequest) error {
@@ -85,32 +83,12 @@ func (m *mockBarrierClient) BarrierStatus(_ context.Context) (*transport.Barrier
 	return m.statusResp, m.statusErr
 }
 
-func (m *mockBarrierClient) BarrierEnableEncryption(_ context.Context, _ *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
-	return &transport.BarrierEnableEncryptionResponse{Status: "migration_started"}, nil
-}
-
 func (m *mockBarrierClient) BarrierInitializeShamir(_ context.Context, _ *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
 	return m.initShamirResp, m.initShamirErr
 }
 
-func (m *mockBarrierClient) BarrierUnsealWithShare(_ context.Context, _ *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return m.unsealShareRsp, m.unsealShareErr
-}
-
-func (m *mockBarrierClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return m.unsealSharesEr
-}
-
-func (m *mockBarrierClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
-	return m.rekeyResp, m.rekeyErr
-}
-
 func (m *mockBarrierClient) BarrierGenerateRecoveryKeys(_ context.Context, _ *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
 	return m.recoveryResp, m.recoveryErr
-}
-
-func (m *mockBarrierClient) BarrierRecoverWithKeys(_ context.Context, _ *transport.BarrierRecoverWithKeysRequest) error {
-	return m.recoverErr
 }
 
 func (m *mockBarrierClient) BarrierDeleteRecoveryKeys(_ context.Context) error {
@@ -121,50 +99,58 @@ func (m *mockBarrierClient) BarrierHasRecoveryKeys(_ context.Context) (*transpor
 	return m.hasRecResp, m.hasRecErr
 }
 
-func (m *mockBarrierClient) BarrierGenerateRootToken(_ context.Context, _ *transport.BarrierGenerateRootTokenRequest) (*transport.BarrierRootTokenResponse, error) {
-	return m.rootTokenResp, m.rootTokenErr
+func (m *mockBarrierClient) BarrierQuorumBegin(_ context.Context, _ *transport.QuorumBeginRequest) (*transport.QuorumChallenge, error) {
+	return m.challenge, m.quorumErr
 }
 
-// Officer enrollment and share-claim methods are unused by the facade; they
-// satisfy the share-free transport.BarrierClient contract.
+func (m *mockBarrierClient) BarrierQuorumSubmit(_ context.Context, _ *transport.QuorumSubmitRequest) (*transport.QuorumOutcome, error) {
+	return m.outcome, m.quorumErr
+}
 
-func (m *mockBarrierClient) OfficerRegister(_ context.Context, _ *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+func (m *mockBarrierClient) BarrierRekeyStart(_ context.Context, _ *transport.RekeyStartRequest) (*transport.QuorumRound, error) {
+	return m.round, m.quorumErr
+}
+
+func (m *mockBarrierClient) BarrierOfficerRevoke(_ context.Context, _ *transport.OfficerRevokeRequest) (*transport.QuorumRound, error) {
+	return m.round, m.quorumErr
+}
+
+func (*mockBarrierClient) BarrierClusterUnseal(ctx context.Context) (*transport.ClusterSeal, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) OfficerList(_ context.Context) ([]*transport.OfficerStatus, error) {
+func (*mockBarrierClient) BarrierEnableEncryption(ctx context.Context, req *transport.BarrierEnableEncryptionRequest) (*transport.BarrierEnableEncryptionResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) OfficerClaimStatus(_ context.Context) ([]*transport.OfficerStatus, error) {
+func (*mockBarrierClient) OfficerRegister(ctx context.Context, req *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) ShareClaimBegin(_ context.Context, _ *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+func (*mockBarrierClient) OfficerList(ctx context.Context) ([]*transport.OfficerStatus, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) ShareClaimComplete(_ context.Context, _ *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+func (*mockBarrierClient) ShareClaimBegin(ctx context.Context, req *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) ShamirSealVote(_ context.Context, _ *transport.ShamirSealVoteRequest) (*transport.ShamirSealVoteResponse, error) {
+func (*mockBarrierClient) ShareClaimComplete(ctx context.Context, req *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) RecoveryOfficerRegister(_ context.Context, _ *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
+func (*mockBarrierClient) RecoveryOfficerRegister(ctx context.Context, req *transport.OfficerRegisterRequest) (*transport.OfficerRegisterResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) RecoveryShareClaimBegin(_ context.Context, _ *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
+func (*mockBarrierClient) RecoveryShareClaimBegin(ctx context.Context, req *transport.ShareClaimBeginRequest) (*transport.ShareClaimBeginResponse, error) {
 	return nil, nil
 }
 
-func (m *mockBarrierClient) RecoveryShareClaimComplete(_ context.Context, _ *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
+func (*mockBarrierClient) RecoveryShareClaimComplete(ctx context.Context, req *transport.ShareClaimCompleteRequest) (*transport.ShareClaimCompleteResponse, error) {
 	return nil, nil
 }
 
-// Compile-time check that the mock satisfies the qrdb BarrierClient contract.
 var _ transport.BarrierClient = (*mockBarrierClient)(nil)
 
 // =============================================================================
@@ -191,27 +177,27 @@ func TestBarrierService_NilClient_ReturnsMissingError(t *testing.T) {
 	assertMissing(svc.BarrierUnseal(ctx, []byte("secret")))
 	assertMissing(svc.BarrierSeal(ctx, &service.BarrierSealRequest{}))
 
-	_, err = svc.BarrierInitializeShamir(ctx, []byte("secret"), 2, 3)
+	// BarrierInitializeShamir refuses with the ceremony guidance instead;
+	// see TestBarrierService_BarrierInitializeShamir_RefusedWithoutClient.
+
+	_, err = svc.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2})
 	assertMissing(err)
 
-	_, err = svc.BarrierUnsealWithShare(ctx, "share")
-	assertMissing(err)
-
-	assertMissing(svc.BarrierUnsealWithShares(ctx, []string{"a", "b"}))
-
-	_, err = svc.BarrierRekey(ctx, 2, 3)
-	assertMissing(err)
-
-	_, err = svc.BarrierGenerateRecoveryKeys(ctx, 2, 3)
-	assertMissing(err)
-
-	assertMissing(svc.BarrierRecoverWithKeys(ctx, []string{"k1"}))
 	assertMissing(svc.BarrierDeleteRecoveryKeys(ctx))
 
 	_, err = svc.BarrierHasRecoveryKeys(ctx)
 	assertMissing(err)
 
-	_, err = svc.BarrierGenerateRootToken(ctx, []string{"s1"})
+	_, err = svc.BarrierQuorumBegin(ctx, &transport.QuorumBeginRequest{Domain: transport.DomainUnseal})
+	assertMissing(err)
+
+	_, err = svc.BarrierQuorumSubmit(ctx, &transport.QuorumSubmitRequest{Domain: transport.DomainUnseal})
+	assertMissing(err)
+
+	_, err = svc.BarrierRekeyStart(ctx, &transport.RekeyStartRequest{Domain: transport.DomainUnseal})
+	assertMissing(err)
+
+	_, err = svc.BarrierOfficerRevoke(ctx, &transport.OfficerRevokeRequest{Domain: transport.DomainUnseal})
 	assertMissing(err)
 }
 
@@ -373,107 +359,102 @@ func TestBarrierService_SetPINBackend_NilClearsTheGate(t *testing.T) {
 }
 
 // =============================================================================
-// Shamir initialize / unseal
+// Shamir initialize
 // =============================================================================
 
-func TestBarrierService_BarrierInitializeShamir_Success(t *testing.T) {
+// assertSystemShamirInitRefused checks that err is the typed ceremony refusal
+// carried by a PreconditionFailed QBError.
+func assertSystemShamirInitRefused(t *testing.T, err error) {
+	t.Helper()
+	var refused *sdkerrors.SystemShamirInitRefusedError
+	require.ErrorAs(t, err, &refused)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrPreconditionFailed, qbErr.Code)
+	assert.Contains(t, err.Error(), "quicbaas init initialize")
+}
+
+func TestBarrierService_BarrierInitializeShamir_RefusedWithClient(t *testing.T) {
 	mc := &mockBarrierClient{
-		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Threshold:   2,
-			TotalShares: 3,
-			ShareCount:  3,
-		},
+		initShamirResp: &transport.BarrierInitializeShamirResponse{Threshold: 2, TotalShares: 3, ShareCount: 3},
 	}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, 2, info.Threshold)
-	assert.Equal(t, 3, info.TotalShares)
-	assert.Equal(t, 3, info.ShareCount)
+	info, err := svc.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
+	assert.Nil(t, info)
+	assertSystemShamirInitRefused(t, err)
 }
 
-func TestBarrierService_BarrierInitializeShamir_Error(t *testing.T) {
-	mc := &mockBarrierClient{initShamirErr: errBarrierBackend}
+func TestBarrierService_BarrierInitializeShamir_RefusedWithoutClient(t *testing.T) {
+	svc := service.NewBarrierService(nil)
+
+	info, err := svc.BarrierInitializeShamir(context.Background(), &transport.BarrierInitializeShamirRequest{Threshold: 2, TotalShares: 3})
+	assert.Nil(t, info)
+	assertSystemShamirInitRefused(t, err)
+}
+
+// =============================================================================
+// Quorum rounds: unseal, root token, rekey, recovery, holder revocation
+// =============================================================================
+
+func TestBarrierService_BarrierQuorumBegin(t *testing.T) {
+	want := &transport.QuorumChallenge{ChallengeID: "c-1", Domain: transport.DomainUnseal, Op: transport.OpUnseal}
+	mc := &mockBarrierClient{challenge: want}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierInitializeShamir(context.Background(), []byte("secret"), 2, 3)
-	require.Error(t, err)
-	assert.Nil(t, info)
+	got, err := svc.BarrierQuorumBegin(context.Background(), &transport.QuorumBeginRequest{
+		Domain: transport.DomainUnseal, Op: transport.OpUnseal, Username: "alice", Factor: "mtls",
+	})
+	require.NoError(t, err)
+	assert.Same(t, want, got)
+
+	mc.quorumErr = errBarrierBackend
+	_, err = svc.BarrierQuorumBegin(context.Background(), &transport.QuorumBeginRequest{Domain: transport.DomainUnseal})
 	assert.ErrorIs(t, err, errBarrierBackend)
 }
 
-func TestBarrierService_BarrierUnsealWithShare_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		unsealShareRsp: &transport.BarrierUnsealShareResponse{
-			Required:  3,
-			Submitted: 1,
-			Complete:  false,
-		},
-	}
+func TestBarrierService_BarrierQuorumSubmit(t *testing.T) {
+	want := &transport.QuorumOutcome{Domain: transport.DomainUnseal, Op: transport.OpRootToken, Required: 2, Submitted: 2, Complete: true, RootToken: "root-token-hex"}
+	mc := &mockBarrierClient{outcome: want}
 	svc := service.NewBarrierService(mc)
 
-	prog, err := svc.BarrierUnsealWithShare(context.Background(), "share")
+	got, err := svc.BarrierQuorumSubmit(context.Background(), &transport.QuorumSubmitRequest{
+		Domain: transport.DomainUnseal, Op: transport.OpRootToken, Username: "alice", ChallengeID: "c-1",
+	})
 	require.NoError(t, err)
-	require.NotNil(t, prog)
-	assert.Equal(t, 3, prog.Required)
-	assert.Equal(t, 1, prog.Submitted)
-	assert.False(t, prog.Complete)
+	assert.Same(t, want, got)
+
+	mc.quorumErr = errBarrierBackend
+	got, err = svc.BarrierQuorumSubmit(context.Background(), &transport.QuorumSubmitRequest{Domain: transport.DomainUnseal})
+	assert.ErrorIs(t, err, errBarrierBackend)
+	assert.Same(t, want, got, "the facade returns qrdb's answer verbatim")
 }
 
-func TestBarrierService_BarrierUnsealWithShare_Error(t *testing.T) {
-	mc := &mockBarrierClient{unsealShareErr: errBarrierBackend}
+func TestBarrierService_BarrierRekeyStart(t *testing.T) {
+	want := &transport.QuorumRound{Domain: transport.DomainUnseal, Op: transport.OpRekey, Required: 2, NewThreshold: 3}
+	mc := &mockBarrierClient{round: want}
 	svc := service.NewBarrierService(mc)
 
-	prog, err := svc.BarrierUnsealWithShare(context.Background(), "share")
-	require.Error(t, err)
-	assert.Nil(t, prog)
+	got, err := svc.BarrierRekeyStart(context.Background(), &transport.RekeyStartRequest{Domain: transport.DomainUnseal, Threshold: 3})
+	require.NoError(t, err)
+	assert.Same(t, want, got)
+
+	mc.quorumErr = errBarrierBackend
+	_, err = svc.BarrierRekeyStart(context.Background(), &transport.RekeyStartRequest{Domain: transport.DomainUnseal})
 	assert.ErrorIs(t, err, errBarrierBackend)
 }
 
-func TestBarrierService_BarrierUnsealWithShares(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"}))
-
-	mc.unsealSharesEr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierUnsealWithShares(context.Background(), []string{"a", "b"}), errBarrierBackend)
-}
-
-// =============================================================================
-// Shamir share management
-// =============================================================================
-
-// =============================================================================
-// Rekey
-// =============================================================================
-
-func TestBarrierService_BarrierRekey_Success(t *testing.T) {
-	mc := &mockBarrierClient{
-		rekeyResp: &transport.BarrierRekeyResponse{
-			Threshold:   2,
-			TotalShares: 2,
-			ShareCount:  2,
-		},
-	}
+func TestBarrierService_BarrierOfficerRevoke(t *testing.T) {
+	want := &transport.QuorumRound{Domain: transport.DomainRecovery, Op: transport.OpRekey, Remove: []string{"bob"}}
+	mc := &mockBarrierClient{round: want}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierRekey(context.Background(), 2, 2)
+	got, err := svc.BarrierOfficerRevoke(context.Background(), &transport.OfficerRevokeRequest{Domain: transport.DomainRecovery, Username: "bob"})
 	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, 2, info.Threshold)
-	assert.Equal(t, 2, info.TotalShares)
-	assert.Equal(t, 2, info.ShareCount)
-}
+	assert.Same(t, want, got)
 
-func TestBarrierService_BarrierRekey_Error(t *testing.T) {
-	mc := &mockBarrierClient{rekeyErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierRekey(context.Background(), 2, 2)
-	require.Error(t, err)
-	assert.Nil(t, info)
+	mc.quorumErr = errBarrierBackend
+	_, err = svc.BarrierOfficerRevoke(context.Background(), &transport.OfficerRevokeRequest{Domain: transport.DomainRecovery})
 	assert.ErrorIs(t, err, errBarrierBackend)
 }
 
@@ -491,7 +472,7 @@ func TestBarrierService_BarrierGenerateRecoveryKeys_Success(t *testing.T) {
 	}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
+	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2})
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	assert.Equal(t, 2, info.Threshold)
@@ -503,19 +484,10 @@ func TestBarrierService_BarrierGenerateRecoveryKeys_Error(t *testing.T) {
 	mc := &mockBarrierClient{recoveryErr: errBarrierBackend}
 	svc := service.NewBarrierService(mc)
 
-	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), 2, 3)
+	info, err := svc.BarrierGenerateRecoveryKeys(context.Background(), &transport.BarrierGenerateRecoveryKeysRequest{Threshold: 2})
 	require.Error(t, err)
 	assert.Nil(t, info)
 	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
-func TestBarrierService_BarrierRecoverWithKeys(t *testing.T) {
-	mc := &mockBarrierClient{}
-	svc := service.NewBarrierService(mc)
-	require.NoError(t, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"}))
-
-	mc.recoverErr = errBarrierBackend
-	assert.ErrorIs(t, svc.BarrierRecoverWithKeys(context.Background(), []string{"r1", "r2"}), errBarrierBackend)
 }
 
 func TestBarrierService_BarrierDeleteRecoveryKeys(t *testing.T) {
@@ -545,56 +517,6 @@ func TestBarrierService_BarrierHasRecoveryKeys_Error(t *testing.T) {
 	has, err := svc.BarrierHasRecoveryKeys(context.Background())
 	require.Error(t, err)
 	assert.False(t, has)
-	assert.ErrorIs(t, err, errBarrierBackend)
-}
-
-// =============================================================================
-// Root token
-// =============================================================================
-
-func TestBarrierService_BarrierGenerateRootToken_Success(t *testing.T) {
-	createdAt := "2026-05-29T11:30:00Z"
-	mc := &mockBarrierClient{
-		rootTokenResp: &transport.BarrierRootTokenResponse{
-			Token:     "root-token-hex",
-			CreatedAt: createdAt,
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1", "s2"})
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "root-token-hex", info.Token)
-
-	want, parseErr := time.Parse(time.RFC3339, createdAt)
-	require.NoError(t, parseErr)
-	assert.True(t, info.CreatedAt.Equal(want))
-}
-
-func TestBarrierService_BarrierGenerateRootToken_InvalidTimestampIgnored(t *testing.T) {
-	mc := &mockBarrierClient{
-		rootTokenResp: &transport.BarrierRootTokenResponse{
-			Token:     "root-token-hex",
-			CreatedAt: "garbage",
-		},
-	}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
-	require.NoError(t, err)
-	require.NotNil(t, info)
-	assert.Equal(t, "root-token-hex", info.Token)
-	assert.True(t, info.CreatedAt.IsZero())
-}
-
-func TestBarrierService_BarrierGenerateRootToken_Error(t *testing.T) {
-	mc := &mockBarrierClient{rootTokenErr: errBarrierBackend}
-	svc := service.NewBarrierService(mc)
-
-	info, err := svc.BarrierGenerateRootToken(context.Background(), []string{"s1"})
-	require.Error(t, err)
-	assert.Nil(t, info)
 	assert.ErrorIs(t, err, errBarrierBackend)
 }
 

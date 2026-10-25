@@ -96,6 +96,15 @@ func (r *tenantPartitionedRBAC) ListPermissions(ctx context.Context, identity *q
 	return out, nil
 }
 
+func (r *tenantPartitionedRBAC) ListOwnPermissions(ctx context.Context) ([]qrdbtransport.PermissionInfo, error) {
+	caller := qrdbsdk.IdentityFromContext(ctx)
+	if caller == nil {
+		return nil, qrdbsdk.ErrUnauthenticated
+	}
+	identity := &qrdbtransport.Identity{Subject: caller.Subject, TenantID: caller.TenantID, Roles: caller.Roles}
+	return r.ListPermissions(ctx, identity)
+}
+
 // roleNotFoundInTenantError mirrors go-qrdb's "role: not found: <uuid>", which
 // is what the resolver returns for a role that is real but filed under a
 // different tenant.
@@ -131,8 +140,7 @@ func registerPasskeyInTenant(t *testing.T, tenantID string, userID uint64, credI
 	t.Helper()
 
 	factors := &fakeUserAuthFactorClient{}
-	users := xkmswebauthn.NewMemoryUserStore()
-	creds := xkmswebauthn.NewMemoryCredentialStore()
+	users, creds := newTestWebAuthnStores(t)
 	wt, err := newWebAuthnFactorWriteThrough(creds, users, factors, recorderOf(factors), tenantID, permissiveTestGate(), nil)
 	if err != nil {
 		t.Fatalf("newWebAuthnFactorWriteThrough: %v", err)

@@ -301,27 +301,14 @@ func TestSDKAgentCertIssuer_IssueAgentCertificate_MissingHostname(t *testing.T) 
 }
 
 func TestSDKAgentCertIssuer_IssueAgentCertificate_HappyPathWithChain(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/xkms/ca/sign", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(&xkmsSignCSRResponse{
-			CertificatePEM: leafPEMForTest(t),
-			ChainPEM:       chainPEMForTest(t),
-		})
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	i := &sdkFleetNodeCertIssuer{baseURL: srv.URL, httpClient: srv.Client()}
-	out, err := i.IssueFleetNodeCertificate(context.Background(), &pkgservice.FleetNodeCertificateRequest{
+	// A server that would sign and ship a chain is never asked: the sign
+	// route cannot request the agent SPIFFE kind, so the issuer refuses.
+	assertDeployIssuerRefusesTheKind(t, &pkgservice.FleetNodeCertificateRequest{
 		TenantID:      "tenant",
 		Hostname:      "agent01.example.com",
 		ExtraDNSNames: []string{"alt.example.com"},
 		ValidityDays:  30,
 	})
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	assert.NotEmpty(t, out.CertPEM)
-	assert.NotNil(t, out.PrivateKey)
 }
 
 // =============================================================================
@@ -370,26 +357,4 @@ func writeSelfSignedKeyPair(t *testing.T, certPath, keyPath string) {
 	require.NoError(t, err)
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
 	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0o600))
-}
-
-// leafPEMForTest returns a minimal CERTIFICATE PEM payload for the
-// sign-csr happy-path test. We don't need to actually parse it — the
-// IssueFleetNodeCertificate code path treats it as opaque bytes.
-func leafPEMForTest(t *testing.T) []byte {
-	t.Helper()
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "leaf"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
-	require.NoError(t, err)
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-}
-
-func chainPEMForTest(t *testing.T) []byte {
-	return leafPEMForTest(t)
 }

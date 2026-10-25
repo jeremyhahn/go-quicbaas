@@ -363,3 +363,39 @@ var _ transport.KVClient = (*svcBoostMockTransport)(nil)
 var _ transport.AdminClient = (*svcBoostMockTransport)(nil)
 var _ transport.BatchClient = (*svcBoostMockTransport)(nil)
 var _ QRDBClientProvider = (*svcBoostMockQRDBProvider)(nil)
+
+func (*svcBoostMockTransport) PromoteMember(ctx context.Context, shardID, replicaID uint64) error {
+	return nil
+}
+
+func (*svcBoostMockTransport) ReplicaStates(ctx context.Context, shardID uint64) (*transport.ReplicaStatesResponse, error) {
+	return nil, nil
+}
+
+func (*svcBoostMockTransport) NodeCompaction(ctx context.Context) (*transport.DatabaseCompactionConfig, error) {
+	return nil, nil
+}
+
+func (*svcBoostMockTransport) SetNodeCompaction(ctx context.Context, policy *transport.DatabaseCompactionConfig) (*transport.DatabaseCompactionConfig, error) {
+	return nil, nil
+}
+
+func (*svcBoostMockTransport) RetireJoinIdentity(ctx context.Context, nodeID, reason string) error {
+	return nil
+}
+
+func (*svcBoostMockTransport) ImportBegin(ctx context.Context, opts transport.ImportOptions) (string, error) {
+	return "", nil
+}
+
+func (*svcBoostMockTransport) ImportAppend(ctx context.Context, sessionID string, seq uint64, chunk []byte) error {
+	return nil
+}
+
+func (*svcBoostMockTransport) ImportCommit(ctx context.Context, sessionID string) (*transport.ImportResult, error) {
+	return nil, nil
+}
+
+func (*svcBoostMockTransport) ImportAbort(ctx context.Context, sessionID string) error {
+	return nil
+}

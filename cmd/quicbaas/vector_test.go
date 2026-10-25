@@ -926,11 +926,7 @@ func (m *mockSDKClientWithVector) BarrierCeremony() (quicbaas.QRDBCeremonyClient
 }
 func (m *mockSDKClientWithVector) SealStore() (quicbaas.QRDBSealStoreClient, error) { return nil, nil }
 func (m *mockSDKClientWithVector) TenantMgmt() (quicbaas.QRDBTenantClient, error)   { return nil, nil }
-func (m *mockSDKClientWithVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
-	return nil, nil
-}
-func (m *mockSDKClientWithVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
-func (m *mockSDKClientWithVector) DataStore() (quicbaas.QRDBKVStore, error) { return nil, nil }
+func (m *mockSDKClientWithVector) DataStore() (quicbaas.QRDBKVStore, error)         { return nil, nil }
 
 func (m *mockSDKClientWithVector) Vector() quicbaas.VectorClient {
 	return nil
@@ -1310,15 +1306,11 @@ func (m *testSDKClientForVector) BarrierCeremony() (quicbaas.QRDBCeremonyClient,
 }
 func (m *testSDKClientForVector) SealStore() (quicbaas.QRDBSealStoreClient, error) { return nil, nil }
 func (m *testSDKClientForVector) TenantMgmt() (quicbaas.QRDBTenantClient, error)   { return nil, nil }
-func (m *testSDKClientForVector) CustodianGroup() (quicbaas.QRDBCustodianGroupClient, error) {
-	return nil, nil
-}
-func (m *testSDKClientForVector) Share() (quicbaas.QRDBShareClient, error) { return nil, nil }
-func (m *testSDKClientForVector) Project() quicbaas.ProjectClient          { return nil }
-func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient                { return nil }
-func (m *testSDKClientForVector) Prompts() quicbaas.PromptsClient          { return nil }
-func (m *testSDKClientForVector) Agents() quicbaas.AgentsClient            { return nil }
-func (m *testSDKClientForVector) Account() quicbaas.AccountClient          { return nil }
+func (m *testSDKClientForVector) Project() quicbaas.ProjectClient                  { return nil }
+func (m *testSDKClientForVector) SDLC() quicbaas.SDLCClient                        { return nil }
+func (m *testSDKClientForVector) Prompts() quicbaas.PromptsClient                  { return nil }
+func (m *testSDKClientForVector) Agents() quicbaas.AgentsClient                    { return nil }
+func (m *testSDKClientForVector) Account() quicbaas.AccountClient                  { return nil }
 
 func (m *testSDKClientForVector) Orchestrator() quicbaas.OrchestratorClient { return nil }
 

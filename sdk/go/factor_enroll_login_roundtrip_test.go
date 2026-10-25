@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/testutil/mvcchost"
 )
 
 // =============================================================================
@@ -272,31 +273,41 @@ func (d *directoryUserServicer) DeleteUser(context.Context, uint64) error { retu
 func (d *directoryUserServicer) ListUsers(context.Context, *qrdbsdk.ListUsersRequest) (*qrdbsdk.ListUsersResponse, error) {
 	return nil, stubErr
 }
-func (d *directoryUserServicer) EnableUser(context.Context, uint64) error  { return stubErr }
-func (d *directoryUserServicer) DisableUser(context.Context, uint64) error { return stubErr }
+func (d *directoryUserServicer) EnableUser(context.Context, uint64) error    { return stubErr }
+func (d *directoryUserServicer) DisableUser(context.Context, uint64) error   { return stubErr }
+func (d *directoryUserServicer) SuspendUser(context.Context, uint64) error   { return stubErr }
+func (d *directoryUserServicer) UnsuspendUser(context.Context, uint64) error { return stubErr }
 
-// buildLoginFactorRoundtrip wires a quicbaas SDK client over a real
-// in-memory qrdb UserAuthFactor store (the login store) plus the user
-// directory. It returns the client and the SAME factor service instance the
+// buildLoginFactorRoundtrip wires a quicbaas SDK client over a real qrdb
+// UserAuthFactor store (the login store) plus the user directory. KV and
+// Index share one real MVCC plane (go-qrdb's mvcchost), so a qrdb DAO that
+// declares secondary indexes, such as the WebAuthn credential store, finds
+// the entities it wrote through the same KV. It returns the client and the SAME factor service instance the
 // login resolver would read, so the test can call LookupByCredentialKey
 // directly on the store enrollment wrote to.
 func buildLoginFactorRoundtrip(t *testing.T, dir *directoryUserServicer) (*client, qrdbsdk.UserAuthFactorServicer) {
 	t.Helper()
-	kv := newMemKV()
-	factorSvc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{
-		KV:               kv,
-		UserStateUpdater: dir,
-	})
+	servicers, factorSvc := loginFactorServicers(t, dir)
+	return buildEmbeddedQRDBClient(t, servicers), factorSvc
+}
+
+// loginFactorServicers builds the servicer set buildLoginFactorRoundtrip
+// installs, so a test can drop one servicer before building the client.
+func loginFactorServicers(t *testing.T, dir *directoryUserServicer) (QRDBEmbeddedServicers, qrdbsdk.UserAuthFactorServicer) {
+	t.Helper()
+	host := mvcchost.New(t)
+	kv := host.KV()
+	factorSvc, err := qrdbsdk.NewUserAuthFactorService(qrdbsdk.UserAuthFactorServiceConfig{KV: kv, UserStateUpdater: dir})
 	if err != nil {
 		t.Fatalf("NewUserAuthFactorService: %v", err)
 	}
-	c := buildEmbeddedQRDBClient(t, QRDBEmbeddedServicers{
+	return QRDBEmbeddedServicers{
 		KV:             kv,
 		Admin:          stubAdminService{},
 		User:           dir,
 		UserAuthFactor: factorSvc,
-	})
-	return c, factorSvc
+		Index:          qrdbsdk.NewIndexService(host, mvcchost.ShardID),
+	}, factorSvc
 }
 
 // TestFactorEnrollment_WritesToLoginStore proves enrollment via the quicbaas

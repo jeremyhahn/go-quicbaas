@@ -129,6 +129,40 @@ func TestUserAdapter_CreateUser_HappyPath(t *testing.T) {
 	}
 }
 
+// The bootstrap admin (qrdb's System user) logs in by certificate, so it is
+// stored with no method restriction; any other user keeps the store's
+// webauthn default. A webauthn-only admin fails qrdb's mtls_binding_policy
+// "required" boot check.
+func TestUserAdapter_CreateUser_AuthMethodsFollowSystem(t *testing.T) {
+	cases := map[string]struct {
+		system bool
+		want   []string
+	}{
+		"system admin is unrestricted": {system: true, want: nil},
+		"other users default webauthn": {system: false, want: []string{iam.AuthMethodWebAuthn}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newStore()
+			a := WrapUser(store)
+			if _, err := a.CreateUser(context.Background(), &qrdbsdk.CreateUserRequest{
+				Username: "admin",
+				TenantID: "system",
+				System:   tc.system,
+			}); err != nil {
+				t.Fatalf("CreateUser: %v", err)
+			}
+			u, err := store.GetUserByUsername(context.Background(), "system", "admin")
+			if err != nil {
+				t.Fatalf("GetUserByUsername: %v", err)
+			}
+			if len(u.AuthMethods) != len(tc.want) || (len(tc.want) > 0 && u.AuthMethods[0] != tc.want[0]) {
+				t.Fatalf("AuthMethods = %v, want %v", u.AuthMethods, tc.want)
+			}
+		})
+	}
+}
+
 // TestUserAdapter_CreateUser_EmptyTenantDefaultsToSystem proves an empty
 // TenantID is defaulted to the reserved system tenant before the user is
 // created (the email is synthesized against the system tenant).
@@ -314,8 +348,15 @@ func TestUserAdapter_GetUserByUsername_ReadsBackTheAdmin(t *testing.T) {
 }
 
 func TestUserAdapter_GetUserByUsername_Errors(t *testing.T) {
-	if _, err := WrapUser(newStore()).GetUserByUsername(context.Background(), "system", "nobody"); err == nil {
-		t.Fatal("an unknown user must be an error, not an empty record")
+	// qrdb first-boot reads only its own *UserNotFoundError as "no admin
+	// yet"; any other not-found shape refuses the boot as a failed lookup.
+	_, err := WrapUser(newStore()).GetUserByUsername(context.Background(), "system", "nobody")
+	var notFound *qrdbsdk.UserNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("unknown user = %v, want *qrdbsdk.UserNotFoundError", err)
+	}
+	if notFound.Lookup != "system/nobody" {
+		t.Fatalf("Lookup = %q, want system/nobody", notFound.Lookup)
 	}
 	var nilAdapter *UserAdapter
 	var dep *NilDependencyError

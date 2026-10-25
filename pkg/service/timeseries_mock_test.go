@@ -48,7 +48,7 @@ func (m *testMockTimeSeriesStorage) WritePoint(ctx context.Context, point *inter
 	return args.Error(0)
 }
 
-func (m *testMockTimeSeriesStorage) WriteBatch(points []interfaces.DataPoint) error {
+func (m *testMockTimeSeriesStorage) WriteBatch(_ context.Context, points []interfaces.DataPoint) error {
 	args := m.Called(points)
 	return args.Error(0)
 }
@@ -66,7 +66,7 @@ func (m *testMockTimeSeriesStorage) DeleteSeries(ctx context.Context, req *inter
 	return args.Error(0)
 }
 
-func (m *testMockTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfaces.RetentionPolicy, error) {
+func (m *testMockTimeSeriesStorage) GetRetentionPolicy(_ context.Context, metric string) (*interfaces.RetentionPolicy, error) {
 	args := m.Called(metric)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -74,12 +74,12 @@ func (m *testMockTimeSeriesStorage) GetRetentionPolicy(metric string) (*interfac
 	return args.Get(0).(*interfaces.RetentionPolicy), args.Error(1)
 }
 
-func (m *testMockTimeSeriesStorage) SetRetentionPolicy(metric string, policy *interfaces.RetentionPolicy) error {
+func (m *testMockTimeSeriesStorage) SetRetentionPolicy(_ context.Context, metric string, policy *interfaces.RetentionPolicy) error {
 	args := m.Called(metric, policy)
 	return args.Error(0)
 }
 
-func (m *testMockTimeSeriesStorage) ListMetrics(prefix string, limit int) ([]string, error) {
+func (m *testMockTimeSeriesStorage) ListMetrics(_ context.Context, prefix string, limit int) ([]string, error) {
 	args := m.Called(prefix, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

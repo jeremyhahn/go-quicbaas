@@ -135,6 +135,11 @@ func createFleetDeployService() (service.FleetDeployService, error) {
 	// identity this deploy uploads.
 	deps.MCPEndpoint = resolveDeployMCPEndpoint()
 
+	// SPIFFE trust domain: the in-process CA needs it to mint the agent SAN
+	// fleet enrolment requires. The SDK-backed workstation issuer refuses
+	// every request, because its transport cannot request the agent kind.
+	deps.SPIFFETrustDomain = resolveDeploySPIFFETrustDomain()
+
 	return service.NewFleetDeployService(deps), nil
 }
 
@@ -456,15 +461,22 @@ var resolveFleetNodeCertIssuer = defaultResolveFleetNodeCertIssuer
 // overrides this seam to read the endpoint published by the embedded server.
 var resolveDeployMCPEndpoint = func() string { return "" }
 
+// resolveDeploySPIFFETrustDomain returns the control plane's configured SPIFFE
+// trust domain, which the deploy forwards on the node certificate request.
+// The default returns an empty string: the CLI-only build's issuer refuses
+// before it reads the trust domain. The desktop build overrides this seam to
+// read the trust domain published by the embedded server; with none, its
+// in-process CA refuses with *service.FleetNodeCertNoTrustDomainError.
+var resolveDeploySPIFFETrustDomain = func() string { return "" }
+
 // defaultResolveFleetNodeCertIssuer falls back to the SDK-backed issuer,
-// which calls the running daemon's /api/v1/xkms/ca/* surface over
-// whichever transport the CLI is configured to use. This is the
-// standard path for `quicbaas fleet deploy` invoked from an admin
-// workstation against a remote quicbaasd.
+// which would call the running daemon's /api/v1/xkms/ca/* surface. That
+// surface cannot request the agent SPIFFE kind fleet enrolment requires, so
+// the issuer refuses with *service.FleetNodeCertKindUnavailableError and
+// `quicbaas fleet deploy` from an admin workstation issues nothing.
 //
-// Build-tagged embedded seams (e.g. the Wails desktop binding) may
-// replace this resolver with a direct in-process CA hook for lower
-// latency, but the SDK-backed path always works.
+// Build-tagged embedded seams (e.g. the Wails desktop binding) replace this
+// resolver with the in-process CA hook, which can request the kind.
 func defaultResolveFleetNodeCertIssuer() (service.FleetNodeCertIssuer, error) {
 	return newSDKFleetNodeCertIssuer()
 }

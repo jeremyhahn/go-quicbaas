@@ -19,9 +19,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 )
 
 // =============================================================================
@@ -216,6 +219,31 @@ var _ LoginServicer = (*LoginService)(nil)
 // LoginCeremonyUnavailableError until SetLoginClient installs a live client.
 func NewLoginService(client qrdbtransport.LoginClient) *LoginService {
 	return &LoginService{client: client}
+}
+
+// RefuseTenantLogin is the one point a login for a tenant other than the
+// system tenant is refused, before its session bearer is issued. Issuing it
+// reads the tenant's roles and permissions with no authenticated caller yet,
+// which needs go-qrdb v0.54.0-alpha (go-qrdb #1084, #1089); go-quicbaas #1816
+// re-pins go-qrdb and removes this refusal. It returns a PreconditionFailed
+// QBError wrapping sdkerrors.TenantLoginRefusedError, nil for the system tenant.
+func RefuseTenantLogin(tenantID string) error {
+	return refuseNonSystemTenant("login.IssueSession", tenantID)
+}
+
+// refuseNonSystemTenant returns the PreconditionFailed QBError wrapping
+// sdkerrors.TenantLoginRefusedError for any tenant but the system tenant, and
+// nil for the system tenant. Every refusal that waits on go-quicbaas #1816
+// is built here, so each one maps to the same status on every transport.
+func refuseNonSystemTenant(op, tenantID string) error {
+	if tenantID == qrdbsdk.SystemTenantID {
+		return nil
+	}
+	return &dberrors.QBError{
+		Code: dberrors.ErrPreconditionFailed,
+		Op:   op,
+		Err:  &sdkerrors.TenantLoginRefusedError{},
+	}
 }
 
 // SetLoginClient installs (or replaces) the backing in-process LoginClient.

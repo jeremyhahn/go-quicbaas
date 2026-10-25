@@ -68,6 +68,9 @@ type TokenService struct {
 	// scope passthrough. When nil (qrdb not wired) scp falls back to the OIDC
 	// scope, preserving today's behavior.
 	permResolver PermissionResolver
+	// issuanceReadBinder binds the context permResolver's RBAC read runs
+	// under (OIDCDependencies.IssuanceReadBinder); nil uses the caller's.
+	issuanceReadBinder func(ctx context.Context, tenantID string) (context.Context, error)
 	// verifyClaims is the provider's verified access-token parse
 	// (OIDCProvider.parseVerifiedAccessTokenClaims), set by NewOIDCProvider.
 	// RevokeToken acts on a JWT's claims only through it; when nil no JWT
@@ -297,6 +300,10 @@ func (s *TokenService) resolveEffectivePermissions(ctx context.Context, claims *
 		Subject:  claims.Subject,
 		TenantID: claims.TenantID,
 		Roles:    claims.Roles,
+	}
+	ctx, err := bindIssuanceRead(ctx, s.issuanceReadBinder, claims.TenantID)
+	if err != nil {
+		return nil, err
 	}
 	return listEffectivePermissions(ctx, rbac, claims.TenantID, identity)
 }

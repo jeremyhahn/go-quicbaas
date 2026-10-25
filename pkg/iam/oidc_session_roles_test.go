@@ -47,6 +47,13 @@ const (
 // can be asserted end to end.
 func newCeremonyProvider(t *testing.T, resolver PermissionResolver) (*OIDCProvider, *MemoryStorage) {
 	t.Helper()
+	return newCeremonyProviderWithBinder(t, resolver, nil)
+}
+
+// newCeremonyProviderWithBinder is newCeremonyProvider with an issuance read
+// binder wired (OIDCDependencies.IssuanceReadBinder).
+func newCeremonyProviderWithBinder(t *testing.T, resolver PermissionResolver, binder func(context.Context, string) (context.Context, error)) (*OIDCProvider, *MemoryStorage) {
+	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -69,6 +76,7 @@ func newCeremonyProvider(t *testing.T, resolver PermissionResolver) (*OIDCProvid
 		AppStorage:         newMockAppStorage(),
 		TokenStorage:       storage,
 		PermissionResolver: resolver,
+		IssuanceReadBinder: binder,
 	})
 	if err != nil {
 		t.Fatalf("create OIDC provider: %v", err)

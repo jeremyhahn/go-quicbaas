@@ -71,9 +71,9 @@ func TestRoleAdapter_GetRoleByName_Hit(t *testing.T) {
 }
 
 // TestRoleAdapter_GetRoleByName_NotFound reports an absent role as qrdb's OWN
-// *RoleNotFoundError. The exact type is load-bearing: ResolveSystemRoleID
-// matches it with errors.As to fall back to the derived identifier, and reads
-// every other error as a failure to resolve.
+// *RoleNotFoundError. The exact type is load-bearing: qrdb matches it
+// with errors.As to read an absent role as granting nothing, and reads every
+// other error as a failure to resolve.
 func TestRoleAdapter_GetRoleByName_NotFound(t *testing.T) {
 	a := WrapRole(newStore())
 
@@ -126,10 +126,11 @@ func TestRoleAdapter_GetRoleByName_BadInput(t *testing.T) {
 	}
 }
 
-// TestRoleAdapter_ResolveSystemRoleID_UsesPersistedID is the end the whole
-// change serves: qrdb's ResolveSystemRoleID, handed this adapter, answers with
-// the identifier the role is stored under rather than the derived one.
-func TestRoleAdapter_ResolveSystemRoleID_UsesPersistedID(t *testing.T) {
+// TestRoleAdapter_ResolveSystemRole_UsesPersistedID is the end the whole
+// change serves: handed to qrdb as its RoleNameResolver, this adapter answers
+// with the identifier the role is stored under rather than the derived one, so
+// a grant check over it matches what the role store says denotes the role.
+func TestRoleAdapter_ResolveSystemRole_UsesPersistedID(t *testing.T) {
 	store := newStore()
 	a := WrapRole(store)
 	ctx := context.Background()
@@ -150,37 +151,37 @@ func TestRoleAdapter_ResolveSystemRoleID_UsesPersistedID(t *testing.T) {
 		t.Fatal("fixture is void: the derived identifier must differ from the legacy one")
 	}
 
-	resolved, err := qrdbsdk.ResolveSystemRoleID(ctx, a, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	var resolver qrdbsdk.RoleNameResolver = a
+	persisted, err := resolver.GetRoleByName(ctx, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
 	if err != nil {
-		t.Fatalf("ResolveSystemRoleID: %v", err)
+		t.Fatalf("GetRoleByName: %v", err)
 	}
-	if resolved != legacyID {
-		t.Errorf("resolved = %q, want the persisted %q (a grant against %q would confer nothing)", resolved, legacyID, derived)
+	if persisted.ID != legacyID {
+		t.Errorf("resolved = %q, want the persisted %q (a grant against %q would confer nothing)", persisted.ID, legacyID, derived)
 	}
 }
 
-// TestRoleAdapter_ResolveSystemRoleID_FallsBackWhenUnseeded keeps the other
-// half of the contract: when the tenant holds no role of that name, the derived
-// identifier is the answer — that is the FIRST run, where first-boot is about
-// to create the role under exactly that identifier.
-func TestRoleAdapter_ResolveSystemRoleID_FallsBackWhenUnseeded(t *testing.T) {
+// TestRoleAdapter_ResolveSystemRole_UnseededIsNotFound keeps the other half of
+// the contract: when the tenant holds no role of that name, the adapter says so
+// with qrdb's own *RoleNotFoundError, which qrdb reads as "grants nothing".
+func TestRoleAdapter_ResolveSystemRole_UnseededIsNotFound(t *testing.T) {
 	ctx := context.Background()
-	a := WrapRole(newStore())
+	var resolver qrdbsdk.RoleNameResolver = WrapRole(newStore())
 
-	resolved, err := qrdbsdk.ResolveSystemRoleID(ctx, a, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
-	if err != nil {
-		t.Fatalf("ResolveSystemRoleID: %v", err)
+	got, err := resolver.GetRoleByName(ctx, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	if got != nil {
+		t.Errorf("got role %+v, want nil", got)
 	}
-	want := qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
-	if resolved != want {
-		t.Errorf("resolved = %q, want the derived %q", resolved, want)
+	var notFound *qrdbsdk.RoleNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("err = %v (%T), want *qrdbsdk.RoleNotFoundError", err, err)
 	}
 }
 
-// TestRoleAdapter_ResolveSystemRoleID_FailsClosedOnStoreError proves a store
-// outage does NOT silently become the derived identifier. This is the reason
-// the adapter must not flatten every error into not-found.
-func TestRoleAdapter_ResolveSystemRoleID_FailsClosedOnStoreError(t *testing.T) {
+// TestRoleAdapter_ResolveSystemRole_FailsClosedOnStoreError proves a store
+// outage does NOT silently become an absent role. This is the reason the
+// adapter must not flatten every error into not-found.
+func TestRoleAdapter_ResolveSystemRole_FailsClosedOnStoreError(t *testing.T) {
 	ctx := context.Background()
 	outage := errors.New("shard offline")
 	mem := iam.NewMemoryStorage()
@@ -188,14 +189,18 @@ func TestRoleAdapter_ResolveSystemRoleID_FailsClosedOnStoreError(t *testing.T) {
 		UserStorage: mem,
 		RoleStorage: &lookupFailingRoleStorage{RoleStorage: mem, err: outage},
 	})
-	a := WrapRole(store)
+	var resolver qrdbsdk.RoleNameResolver = WrapRole(store)
 
-	resolved, err := qrdbsdk.ResolveSystemRoleID(ctx, a, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
+	got, err := resolver.GetRoleByName(ctx, qrdbsdk.SystemTenantID, qrdbsdk.RoleNameAdmin)
 	if err == nil {
-		t.Fatalf("ResolveSystemRoleID returned %q, want the store error", resolved)
+		t.Fatalf("GetRoleByName returned %+v, want the store error", got)
 	}
 	if !errors.Is(err, outage) {
 		t.Errorf("err = %v, want the store outage", err)
+	}
+	var notFound *qrdbsdk.RoleNotFoundError
+	if errors.As(err, &notFound) {
+		t.Errorf("store outage reported as an absent role")
 	}
 }
 

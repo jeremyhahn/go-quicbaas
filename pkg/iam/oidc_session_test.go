@@ -14,7 +14,9 @@
 package iam
 
 import (
+	"errors"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -83,6 +85,58 @@ func TestIssueSessionToken_RoundTrip(t *testing.T) {
 	}
 	if !claims.MFAVerified {
 		t.Error("expected MFAVerified = true")
+	}
+}
+
+// TestIssueSessionToken_ResolvesSubjectByUserID proves a login go-qrdb bound
+// to a user account, whose Subject is then the account's immutable id rather
+// than an email or username, resolves that account by its UserID.
+func TestIssueSessionToken_ResolvesSubjectByUserID(t *testing.T) {
+	provider, _, _, _, memStorage := createTestOIDCProvider(t)
+	user := seedCeremonyUser(t, memStorage, "tenant-a", "passkey-admin", []string{"admin"})
+
+	token, _, err := provider.IssueSessionToken(t.Context(), SessionIdentity{
+		Subject:    strconv.FormatUint(user.ID, 10),
+		UserID:     user.ID,
+		TenantID:   user.TenantID,
+		AuthMethod: "fido2",
+	})
+	if err != nil {
+		t.Fatalf("IssueSessionToken by user id: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(t.Context(), token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Errorf("UserID = %d, want %d", claims.UserID, user.ID)
+	}
+	// sub is the login name: a bound identity's decimal Subject must not
+	// become the bearer's username.
+	if claims.Subject != "passkey-admin" {
+		t.Errorf("sub = %q, want the account's username passkey-admin", claims.Subject)
+	}
+}
+
+// TestIssueSessionToken_UnknownUserIDIsUnresolved proves a UserID naming no
+// stored account is refused with the typed unresolved error, and is not
+// retried through the username index: another account whose username is that
+// id in decimal must not receive the session.
+func TestIssueSessionToken_UnknownUserIDIsUnresolved(t *testing.T) {
+	provider, _, _, _, memStorage := createTestOIDCProvider(t)
+	user := seedCeremonyUser(t, memStorage, "tenant-a", "passkey-admin", []string{"admin"})
+	unknownID := user.ID + 1000
+	seedCeremonyUser(t, memStorage, "tenant-a", strconv.FormatUint(unknownID, 10), nil)
+
+	_, _, err := provider.IssueSessionToken(t.Context(), SessionIdentity{
+		Subject:    strconv.FormatUint(unknownID, 10),
+		UserID:     unknownID,
+		TenantID:   user.TenantID,
+		AuthMethod: "fido2",
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("IssueSessionToken error = %v, want *SessionPrincipalUnresolvedError", err)
 	}
 }
 

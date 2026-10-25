@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -153,47 +152,3 @@ func TestBarrierSeal_InteractiveEOF(t *testing.T) {
 // =============================================================================
 // readSharesFile: error cases
 // =============================================================================
-
-// TestReadSharesFile_AllCommentsTreatedAsEmpty returns the typed
-// BarrierSharesFileEmptyError when the file contains only comments and
-// blank lines.
-func TestReadSharesFile_AllCommentsTreatedAsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "empty.txt")
-	body := "# top\n\n   \n# bottom\n"
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-	_, err := readSharesFile(path, "barrier unseal-shares")
-	require.Error(t, err)
-	var typed *BarrierSharesFileEmptyError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, path, typed.Path)
-}
-
-// TestReadSharesFile_TrimsAndIgnoresComments demonstrates the happy path
-// at the function level (existing barrier_test.go covers via the cobra
-// command; this test pins the helper's contract directly).
-func TestReadSharesFile_TrimsAndIgnoresComments(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shares.txt")
-	body := "  alpha\n# comment\n\nbeta  \n"
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-	shares, err := readSharesFile(path, "barrier unseal-shares")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"alpha", "beta"}, shares)
-}
-
-// TestReadSharesFile_ScannerError wraps an in-flight read error from the
-// underlying *os.File. Pointing readSharesFile at a directory succeeds
-// at os.Open but fails on the first scanner.Scan with an "is a directory"
-// errno, exercising the scanner.Err() branch.
-func TestReadSharesFile_ScannerError(t *testing.T) {
-	dir := t.TempDir()
-
-	_, err := readSharesFile(dir, "barrier unseal-shares")
-	require.Error(t, err)
-	var typed *BarrierSharesFileError
-	require.ErrorAs(t, err, &typed)
-	assert.Equal(t, dir, typed.Path)
-}

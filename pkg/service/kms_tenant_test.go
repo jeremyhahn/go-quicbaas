@@ -268,6 +268,32 @@ func TestPrepareTenantContext_InvalidTenant(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid character")
 }
 
+// TestCallerTenant_NamesTheSystemTenant proves certificate issuance sees the
+// system tenant by name: go-xkms refuses an issuance that names no tenant, so
+// the "" prepareTenantContext returns for the system cannot reach it.
+func TestCallerTenant_NamesTheSystemTenant(t *testing.T) {
+	tenantID, err := callerTenant(tenantctx.WithSystem(context.Background()))
+	require.NoError(t, err)
+	assert.Equal(t, tenantctx.SystemTenantID, tenantID)
+
+	tenantID, err = callerTenant(tenantctx.WithTenant(context.Background(), "acme"))
+	require.NoError(t, err)
+	assert.Equal(t, "acme", tenantID)
+}
+
+// TestCallerTenant_RefusesUnboundAndInvalidTenants proves naming the system
+// tenant is not a default: a context with no tenant bound is still refused,
+// and so is a malformed tenant.
+func TestCallerTenant_RefusesUnboundAndInvalidTenants(t *testing.T) {
+	_, err := callerTenant(context.Background())
+	var missing *tenantctx.MissingTenantError
+	require.ErrorAs(t, err, &missing)
+
+	_, err = callerTenant(tenantctx.WithTenant(context.Background(), "invalid/tenant"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid character")
+}
+
 // =============================================================================
 // Roundtrip tests: scope then strip
 // =============================================================================

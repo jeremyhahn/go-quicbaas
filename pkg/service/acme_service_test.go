@@ -36,19 +36,25 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkmsacme "github.com/jeremyhahn/go-xkms/sdk/go/acme"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // fakeACMECA is a configurable ACMECA used to exercise the ACME service Issue
 // verb without standing up a full certificate authority. It satisfies the
 // narrow service.ACMECA capability only.
 type fakeACMECA struct {
-	certPEM  []byte
-	chainPEM []byte
-	err      error
-	gotCSR   []byte
+	certPEM   []byte
+	chainPEM  []byte
+	err       error
+	called    bool
+	gotTenant string
+	gotCSR    []byte
 }
 
-func (f *fakeACMECA) SignCSRPEM(_ context.Context, csrPEM []byte) ([]byte, []byte, error) {
+func (f *fakeACMECA) SignCSRPEM(_ context.Context, tenantID string, csrPEM []byte) ([]byte, []byte, error) {
+	f.called = true
+	f.gotTenant = tenantID
 	f.gotCSR = csrPEM
 	if f.err != nil {
 		return nil, nil, f.err
@@ -68,6 +74,9 @@ func newTestACMEService(issueCA ACMECA) *acmeService {
 		issueCA:      issueCA,
 		challenge:    map[string]xkmsacme.ACMEChallengeVerifierFunc{},
 		canonical:    testCanonicalVerifiers(),
+		attesting:    map[string]xkmsacme.ACMEAttestingVerifier{},
+		canonicalAttesting: canonicalAttestingVerifiers(
+			xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{})),
 	}
 }
 
@@ -137,6 +146,14 @@ func TestACMEService_RegisterChallenge(t *testing.T) {
 		assert.True(t, resp.Registered)
 	})
 
+	t.Run("enroll-01 registers as an attesting verifier", func(t *testing.T) {
+		resp, err := svc.RegisterChallenge(ctx, &ACMERegisterChallengeRequest{Name: "enroll-01"})
+		require.NoError(t, err)
+		assert.True(t, resp.Registered)
+		assert.Contains(t, svc.attesting, "enroll-01")
+		assert.NotContains(t, svc.challenge, "enroll-01")
+	})
+
 	t.Run("nil request rejected", func(t *testing.T) {
 		_, err := svc.RegisterChallenge(ctx, nil)
 		assert.ErrorIs(t, err, ErrACMENilRequest)
@@ -154,7 +171,7 @@ func TestACMEService_RegisterChallenge(t *testing.T) {
 }
 
 func TestACMEService_Issue(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	serial := big.NewInt(0x4d2)
 	leaf := selfSignedLeafPEM(t, serial)
 	chain := []byte("-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----")
@@ -172,6 +189,16 @@ func TestACMEService_Issue(t *testing.T) {
 		assert.Equal(t, chain, resp.ChainPEM)
 		assert.Equal(t, serial.Text(16), resp.SerialNumber)
 		assert.Equal(t, []byte("CSR"), ca.gotCSR)
+		assert.Equal(t, "acme-corp", ca.gotTenant)
+	})
+
+	t.Run("no tenant refused before the CA", func(t *testing.T) {
+		ca := &fakeACMECA{certPEM: leaf, chainPEM: chain}
+		svc := newTestACMEService(ca)
+		_, err := svc.Issue(context.Background(), &ACMEIssueRequest{CSRPEM: []byte("CSR"), ChallengeType: "http-01"})
+		var missing *tenantctx.MissingTenantError
+		require.ErrorAs(t, err, &missing)
+		assert.False(t, ca.called, "the CA must not be called without a tenant")
 	})
 
 	t.Run("nil request rejected", func(t *testing.T) {
@@ -261,6 +288,9 @@ func newTestACMEServiceFull(issueCA ACMECA, resolver ACMECertResolver) *acmeServ
 		certResolver: resolver,
 		challenge:    map[string]xkmsacme.ACMEChallengeVerifierFunc{},
 		canonical:    testCanonicalVerifiers(),
+		attesting:    map[string]xkmsacme.ACMEAttestingVerifier{},
+		canonicalAttesting: canonicalAttestingVerifiers(
+			xkmsacme.NewACMEChallengeClient(xkmsacme.ACMEChallengeClientConfig{})),
 	}
 }
 
@@ -309,7 +339,7 @@ func TestACMEService_NewOrder(t *testing.T) {
 }
 
 func TestACMEService_FinalizeOrder(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	serial := big.NewInt(0xabc)
 	leaf := selfSignedLeafPEM(t, serial)
 	chain := []byte("-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----")
@@ -326,6 +356,16 @@ func TestACMEService_FinalizeOrder(t *testing.T) {
 		assert.Equal(t, chain, resp.ChainPEM)
 		assert.Equal(t, serial.Text(16), resp.SerialNumber)
 		assert.Equal(t, []byte("CSR"), ca.gotCSR)
+		assert.Equal(t, "acme-corp", ca.gotTenant)
+	})
+
+	t.Run("no tenant refused before the CA", func(t *testing.T) {
+		ca := &fakeACMECA{certPEM: leaf, chainPEM: chain}
+		svc := newTestACMEServiceFull(ca, nil)
+		_, err := svc.FinalizeOrder(context.Background(), &ACMEFinalizeOrderRequest{CSRPEM: []byte("CSR")})
+		var missing *tenantctx.MissingTenantError
+		require.ErrorAs(t, err, &missing)
+		assert.False(t, ca.called, "the CA must not be called without a tenant")
 	})
 
 	t.Run("nil request rejected", func(t *testing.T) {
@@ -358,7 +398,7 @@ func TestACMEService_FinalizeOrder(t *testing.T) {
 // TestACMEService_NewOrderToFinalize exercises the full broker-as-CA order ->
 // finalize flow in-process, producing a real signed leaf from a real CSR.
 func TestACMEService_NewOrderToFinalize(t *testing.T) {
-	ctx := context.Background()
+	ctx := tenantctx.WithTenant(context.Background(), "acme-corp")
 	serial := big.NewInt(0x1234)
 	leaf := selfSignedLeafPEM(t, serial)
 	ca := &fakeACMECA{certPEM: leaf, chainPEM: []byte("chain")}

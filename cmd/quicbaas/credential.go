@@ -265,19 +265,22 @@ func runCredentialRetrieve(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), globalTimeout)
 	defer cancel()
-	resp, err := client.CredentialRetrieveVersion(ctx, &qrdbtransport.CredentialRetrieveVersionRequest{
+	buf, err := client.CredentialRetrieveVersionBuffer(ctx, &qrdbtransport.CredentialRetrieveVersionRequest{
 		Name:    name,
 		Version: credentialVersion,
 	})
 	if err != nil {
 		return formatError(err)
 	}
+	defer buf.Destroy()
 	// %s, not the default []byte verb: qrdb models a credential value as raw
 	// bytes so binary material round-trips, and Fprintln would render that as
 	// a decimal byte list ("[99 117 ...]") instead of the value. The trailing
 	// newline is the documented pipeline contract (docs/cli/credential.md).
-	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", resp.Value)
-	return nil
+	return buf.WithBytes(func(value []byte) error {
+		_, werr := fmt.Fprintf(cmd.OutOrStdout(), "%s\n", value)
+		return werr
+	})
 }
 
 // =============================================================================

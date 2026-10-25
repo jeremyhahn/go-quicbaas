@@ -14,15 +14,16 @@
 package iam
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -32,8 +33,8 @@ import (
 // go-quicbaas#582 — a rename carries the user's WebAuthn credentials
 //
 // These tests run against the SAME store pair the server wires:
-// xkms's qrdb-backed WebAuthn adapter over a qrdb user client and a qrdb KV
-// client. That choice is the point of the file. xkms also ships an
+// xkms's qrdb-backed WebAuthn adapter over a qrdb user client and a qrdb DAO
+// factory. That choice is the point of the file. xkms also ships an
 // email-KEYED backend store, and reading this product's behaviour off THAT
 // one is what produced the bug: the identity store deleted a renamed user's
 // passkeys to prevent an orphan the adapter it actually uses cannot produce.
@@ -186,6 +187,14 @@ func (c *renameTestUserClient) DisableUser(_ context.Context, id uint64) error {
 	return c.setLifecycle(id, LifecycleDisabled)
 }
 
+func (c *renameTestUserClient) SuspendUser(_ context.Context, id uint64) error {
+	return c.setLifecycle(id, LifecycleSuspended)
+}
+
+func (c *renameTestUserClient) UnsuspendUser(_ context.Context, id uint64) error {
+	return c.setLifecycle(id, LifecycleActive)
+}
+
 func (c *renameTestUserClient) setLifecycle(id uint64, state Lifecycle) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -220,113 +229,112 @@ func cloneRenameTestUser(u *qrdbtransport.User) *qrdbtransport.User {
 
 var _ qrdbtransport.UserClient = (*renameTestUserClient)(nil)
 
-// renameTestKV is an in-memory qrdbtransport.KVClient. A missing key reports
-// *qrdbtransport.KeyNotFoundError, which is the typed signal xkms's adapter
-// classifies as "absent" — anything else it treats as a store failure.
-type renameTestKV struct {
-	mu   sync.Mutex
-	data map[string][]byte
+// newTestWebAuthnDAOFactory returns a DAO factory over a fresh in-process
+// qrdb KV store, which gives the credential store the atomic conditional
+// writes and secondary indexes it relies on.
+func newTestWebAuthnDAOFactory() *qrdbsdk.DAOFactory {
+	kv := qrdbsdk.NewMemoryKVStore()
+	return qrdbsdk.NewDAOFactory(func(uint64) qrdbsdk.KVStore { return kv })
 }
 
-func newRenameTestKV() *renameTestKV { return &renameTestKV{data: map[string][]byte{}} }
-
-func (k *renameTestKV) Put(_ context.Context, key string, value []byte, _ ...qrdbtransport.WriteOption) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.data[key] = append([]byte(nil), value...)
-	return nil
+// newTestWebAuthnStores returns an in-memory user store and xkms's qrdb
+// credential store over an in-memory DAO factory. xkms v0.55 dropped its
+// in-memory stores; the user double below keeps the semantics these tests
+// were written against (Save upserts the whole user, lifecycle included),
+// while credentials run on the real DAO-backed store.
+func newTestWebAuthnStores(t testing.TB) (xkmswebauthn.UserStore, xkmswebauthn.CredentialStore) {
+	t.Helper()
+	_, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
+		Users:      newRenameTestUserClient(),
+		DAOFactory: newTestWebAuthnDAOFactory(),
+		TenantID:   testWriteThroughTenant,
+	})
+	if err != nil {
+		t.Fatalf("NewWebAuthnQRDBUserStoreAdapter: %v", err)
+	}
+	return newTestWebAuthnUserStore(t), creds
 }
 
-func (k *renameTestKV) Get(_ context.Context, key string, _ ...qrdbtransport.ReadOption) ([]byte, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	value, ok := k.data[key]
+// newTestWebAuthnUserStore returns an empty in-memory user store.
+func newTestWebAuthnUserStore(t testing.TB) xkmswebauthn.UserStore {
+	t.Helper()
+	return &testWebAuthnUserStore{byID: map[string]xkmswebauthn.User{}, byEmail: map[string]string{}}
+}
+
+// testWebAuthnUserStore is an in-memory xkmswebauthn.UserStore keyed by the
+// hex WebAuthn handle, with an email index.
+type testWebAuthnUserStore struct {
+	mu      sync.Mutex
+	byID    map[string]xkmswebauthn.User
+	byEmail map[string]string
+}
+
+func (s *testWebAuthnUserStore) GetByID(_ context.Context, userID []byte) (xkmswebauthn.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.byID[hex.EncodeToString(userID)]
 	if !ok {
-		return nil, &qrdbtransport.KeyNotFoundError{Key: key}
+		return nil, xkmswebauthn.ErrUserNotFound
 	}
-	return append([]byte(nil), value...), nil
+	return user, nil
 }
 
-func (k *renameTestKV) Delete(_ context.Context, key string, _ ...qrdbtransport.WriteOption) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	delete(k.data, key)
+func (s *testWebAuthnUserStore) GetByEmail(_ context.Context, email string) (xkmswebauthn.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, ok := s.byID[s.byEmail[email]]
+	if !ok {
+		return nil, xkmswebauthn.ErrUserNotFound
+	}
+	return user, nil
+}
+
+func (s *testWebAuthnUserStore) Create(_ context.Context, email, displayName string) (xkmswebauthn.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byEmail[email]; ok {
+		return nil, xkmswebauthn.ErrUserAlreadyExists
+	}
+	user := xkmswebauthn.NewDefaultUserFromEmail(email, displayName)
+	s.storeLocked(user)
+	return user, nil
+}
+
+func (s *testWebAuthnUserStore) Save(_ context.Context, user xkmswebauthn.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.storeLocked(user)
 	return nil
 }
 
-func (k *renameTestKV) List(_ context.Context, prefix string, _ ...qrdbtransport.ReadOption) ([]string, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	keys := make([]string, 0, len(k.data))
-	for key := range k.data {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
+func (s *testWebAuthnUserStore) Delete(_ context.Context, userID []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := hex.EncodeToString(userID)
+	user, ok := s.byID[key]
+	if !ok {
+		return xkmswebauthn.ErrUserNotFound
 	}
-	sort.Strings(keys)
-	return keys, nil
+	delete(s.byID, key)
+	delete(s.byEmail, user.Email())
+	return nil
 }
 
-func (k *renameTestKV) Scan(_ context.Context, prefix string, _ ...qrdbtransport.ReadOption) (map[string][]byte, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	out := map[string][]byte{}
-	for key, value := range k.data {
-		if strings.HasPrefix(key, prefix) {
-			out[key] = append([]byte(nil), value...)
-		}
-	}
-	return out, nil
+func (s *testWebAuthnUserStore) storeLocked(user xkmswebauthn.User) {
+	key := hex.EncodeToString(user.WebAuthnID())
+	s.byID[key] = user
+	s.byEmail[user.Email()] = key
 }
 
-func (k *renameTestKV) Exists(_ context.Context, key string, _ ...qrdbtransport.ReadOption) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	_, ok := k.data[key]
-	return ok, nil
-}
+var _ xkmswebauthn.UserStore = (*testWebAuthnUserStore)(nil)
 
-// PutIfAbsent stores value only when key is unset: the guarded create the
-// go-xkms WebAuthn adapter claims a credential ID with.
-func (k *renameTestKV) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if _, ok := k.data[key]; ok {
-		return false, nil
-	}
-	k.data[key] = append([]byte(nil), value...)
-	return true, nil
+// newTestWebAuthnCredentialStore returns the credential half of a fresh
+// store pair.
+func newTestWebAuthnCredentialStore(t testing.TB) xkmswebauthn.CredentialStore {
+	t.Helper()
+	_, creds := newTestWebAuthnStores(t)
+	return creds
 }
-
-// CompareAndSwap replaces key's value only when it still equals expected:
-// the guarded update the adapter writes credential counters with.
-func (k *renameTestKV) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	current, ok := k.data[key]
-	if !ok || !bytes.Equal(current, expected) {
-		return false, nil
-	}
-	k.data[key] = append([]byte(nil), next...)
-	return true, nil
-}
-
-// CompareAndDelete removes key only when it still equals expected.
-func (k *renameTestKV) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	current, ok := k.data[key]
-	if !ok || !bytes.Equal(current, expected) {
-		return false, nil
-	}
-	delete(k.data, key)
-	return true, nil
-}
-
-var (
-	_ qrdbtransport.KVClient        = (*renameTestKV)(nil)
-	_ qrdbtransport.GuardedKVClient = (*renameTestKV)(nil)
-)
 
 // =============================================================================
 // Fixture
@@ -350,11 +358,10 @@ func newRenameFixture(t *testing.T, email, displayName string) *renameFixture {
 	t.Helper()
 
 	userClient := newRenameTestUserClient()
-	kv := newRenameTestKV()
 	users, creds, err := xkmssdk.NewWebAuthnQRDBUserStoreAdapter(xkmssdk.WebAuthnQRDBUserStoreOptions{
-		Users:    userClient,
-		KV:       kv,
-		TenantID: testWriteThroughTenant,
+		Users:      userClient,
+		DAOFactory: newTestWebAuthnDAOFactory(),
+		TenantID:   testWriteThroughTenant,
 	})
 	if err != nil {
 		t.Fatalf("NewWebAuthnQRDBUserStoreAdapter: %v", err)

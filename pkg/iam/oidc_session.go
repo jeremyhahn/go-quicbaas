@@ -30,6 +30,10 @@ import (
 type SessionIdentity struct {
 	// Subject is the authenticated principal (qrdb user subject).
 	Subject string
+	// UserID is the immutable id of the user account the login resolved to,
+	// or zero when it resolved to none. When set, the principal is looked up
+	// by it and not by Subject.
+	UserID uint64
 	// TenantID is the tenant namespace the principal authenticated into.
 	TenantID string
 	// Roles are the roles resolved for the principal.
@@ -94,7 +98,7 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		return "", time.Time{}, err
 	}
 
-	groups, err := p.identityStore.RoleNames(ctx, user)
+	groups, err := p.roleNames(ctx, user)
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -110,9 +114,16 @@ func (p *OIDCProvider) IssueSessionToken(ctx context.Context, identity SessionId
 		return "", time.Time{}, err
 	}
 
+	// sub is the login name. go-qrdb's BindUser sets a bound identity's
+	// Subject to the decimal account id, so a principal resolved by UserID
+	// carries the account's username instead; uid names the account.
+	subject := identity.Subject
+	if identity.UserID != 0 && user.Username != "" {
+		subject = user.Username
+	}
 	claims := &Claims{
 		Issuer:       p.config.Issuer,
-		Subject:      identity.Subject,
+		Subject:      subject,
 		Audience:     BuildAudience(p.config.Issuer, ""),
 		ExpiresAt:    NewUnixTime(expiresAt),
 		IssuedAt:     NewUnixTime(now),
@@ -222,6 +233,23 @@ func (p *OIDCProvider) resolveSessionPrincipal(ctx context.Context, identity Ses
 // tenant checked afterwards; scoping the lookup itself means a foreign-tenant
 // record is never read, rather than read and then discarded.
 func (p *OIDCProvider) resolveSubject(ctx context.Context, identity SessionIdentity) (*User, error) {
+	// User id: go-qrdb binds an identity that resolved to a user account by
+	// its immutable id, and its Subject is then that id in decimal. The id is
+	// authoritative, so a miss is not retried through the login keys: a
+	// decimal subject read as a username could name a different account
+	// whose handle happens to equal the id.
+	if identity.UserID != 0 {
+		byID, err := p.identityStore.GetUser(ctx, identity.TenantID, identity.UserID)
+		switch {
+		case err == nil:
+			return byID, nil
+		case isPrincipalLookupMiss(err):
+			return nil, nil
+		default:
+			return nil, err
+		}
+	}
+
 	// Email: how the ceremony keys the login. A non-email-shaped subject is a
 	// shape mismatch rather than a lookup failure, so it falls through to the
 	// username index instead of contributing an absent candidate.

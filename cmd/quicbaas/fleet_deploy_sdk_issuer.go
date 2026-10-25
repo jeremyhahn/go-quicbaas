@@ -27,11 +27,7 @@ import (
 	"os"
 	"path/filepath"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
-	xkmssecure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
-
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
-	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 )
 
 // sdkFleetNodeCertIssuer satisfies service.FleetNodeCertIssuer by composing
@@ -159,7 +155,7 @@ type xkmsCABundleResponse struct {
 // and SANs using the go-xkms CSR builder, and POSTs it to the CA for
 // signing. The server sees only the public key; the private key is
 // mlocked throughout.
-func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *service.FleetNodeCertificateRequest) (*service.IssuedFleetNodeCertificate, error) {
+func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(_ context.Context, req *service.FleetNodeCertificateRequest) (*service.IssuedFleetNodeCertificate, error) {
 	if req == nil {
 		return nil, service.ErrFleetNodeCertRequestNil
 	}
@@ -169,88 +165,11 @@ func (i *sdkFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, 
 	if req.Hostname == "" {
 		return nil, &service.FleetNodeCertRequestFieldError{Field: "hostname"}
 	}
-
-	subject := req.Subject
-	cn := subject.CommonName
-	if cn == "" {
-		cn = "agent-" + req.Hostname
-	}
-	org := subject.Organization
-	if org == "" {
-		org = req.TenantID
-	}
-	ou := subject.OrganizationalUnit
-	if ou == "" {
-		ou = "agents"
-	}
-	ttl := req.ValidityDays
-	if ttl <= 0 {
-		ttl = 365
-	}
-
-	dnsNames := make([]string, 0, 1+len(req.ExtraDNSNames))
-	dnsNames = append(dnsNames, req.Hostname)
-	dnsNames = append(dnsNames, req.ExtraDNSNames...)
-
-	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
-	if err != nil {
-		return nil, &OpError{Op: "agent deploy: generate keypair", Cause: err}
-	}
-
-	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{
-			CommonName:         cn,
-			Organization:       org,
-			OrganizationalUnit: ou,
-		},
-		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{DNS: dnsNames},
-	}, signer)
-	if err != nil {
-		return nil, &OpError{Op: "agent deploy: build CSR", Cause: err}
-	}
-
-	signedCert, chainPEM, err := i.signCSR(ctx, &xkmsSignCSRRequest{
-		CSRPEM:       csrPEM,
-		Profile:      "client",
-		ValidityDays: ttl,
-		TenantID:     req.TenantID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	caPEM := chainPEM
-	if len(caPEM) == 0 {
-		caPEM, err = i.fetchCABundle(ctx)
-		if err != nil {
-			return nil, &OpError{Op: "agent deploy: fetch CA bundle", Cause: err}
-		}
-	}
-
-	privKeyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
-	if err != nil {
-		return nil, &OpError{Op: "agent deploy: encode private key", Cause: err}
-	}
-
-	// NewBufferFromBytes wipes the source slice, so the plaintext key bytes are
-	// unreachable from the heap the moment this returns.
-	keyBuf, err := xkmssecure.NewBufferFromBytes(privKeyPEM)
-	if err != nil {
-		return nil, &OpError{Op: "agent deploy: secure private key", Cause: err}
-	}
-
-	parsed, err := x509.ParseCertificate(decodeFirstPEMBlock(signedCert))
-	if err != nil {
-		keyBuf.Destroy()
-		return nil, &OpError{Op: "agent deploy: parse issued certificate", Cause: err}
-	}
-
-	return &service.IssuedFleetNodeCertificate{
-		CertPEM:    append([]byte(nil), signedCert...),
-		PrivateKey: keyBuf,
-		CAPEM:      append([]byte(nil), caPEM...),
-		ParsedCert: parsed,
-	}, nil
+	// The sign-csr request has no SPIFFE kind field, so the certificate it
+	// returns is not an agent's and fleet enrolment refuses it. Refuse here,
+	// before a key is generated or the server is called, until the CA rules on
+	// how this transport asks for the agent kind.
+	return nil, &service.FleetNodeCertKindUnavailableError{TenantID: req.TenantID}
 }
 
 // decodeFirstPEMBlock returns the DER bytes of the first PEM block in p,

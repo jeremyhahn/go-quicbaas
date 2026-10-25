@@ -129,12 +129,27 @@ func enforceTenantAccess(tenantID, keyID, operation string) error {
 // be asked for by binding the system tenant, never produced by the absence
 // of a binding.
 func prepareTenantContext(ctx context.Context) (string, error) {
-	tenantID, err := tenantctx.FromContext(ctx, "service.tenant")
+	tenantID, err := callerTenant(ctx)
 	if err != nil {
 		return "", err
 	}
 	if tenantctx.IsSystem(tenantID) {
 		return "", nil
+	}
+	return tenantID, nil
+}
+
+// callerTenant reads and validates the request's tenant like
+// prepareTenantContext, but names the system tenant instead of mapping it to
+// "". Certificate issuance needs it: go-xkms stamps the tenant into every
+// certificate it issues and refuses a request that names none.
+func callerTenant(ctx context.Context) (string, error) {
+	tenantID, err := tenantctx.FromContext(ctx, "service.tenant")
+	if err != nil {
+		return "", err
+	}
+	if tenantctx.IsSystem(tenantID) {
+		return tenantID, nil
 	}
 	if err := validateTenantID(tenantID); err != nil {
 		return "", err

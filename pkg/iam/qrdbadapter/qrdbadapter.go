@@ -136,12 +136,11 @@ var (
 // a listing.
 //
 // The absence of a role is reported as qrdb's own *RoleNotFoundError, and that
-// exact type is load-bearing: ResolveSystemRoleID matches it with errors.As to
-// decide "the cluster holds no role of this name yet, use the derived
-// identifier", and treats every OTHER error as a failure to resolve. A
+// exact type is load-bearing: qrdb's HoldsSystemRole matches it with errors.As
+// to decide "the tenant holds no role of this name, so it grants nothing", and
+// treats every OTHER error as a failure to resolve that callers must deny on. A
 // broker-shaped not-found would therefore be read as an outage, and any error
-// reported as an absence would bind a grant to an identifier the store may not
-// use.
+// reported as an absence would turn a store outage into a silent "no".
 func (a *RoleAdapter) GetRoleByName(ctx context.Context, tenantID, name string) (*qrdbsdk.Role, error) {
 	if a == nil || a.store == nil {
 		return nil, &NilDependencyError{Name: "IdentityStore"}
@@ -453,6 +452,10 @@ func (a *UserAdapter) CreateUser(ctx context.Context, req *qrdbsdk.CreateUserReq
 		Name:      req.Username,
 		Roles:     req.RoleIDs,
 		Lifecycle: lifecycle,
+		// qrdb's System user is THE first-boot bootstrap admin. qrdb creates
+		// it with no method restriction because it logs in by certificate;
+		// the store's webauthn default would lock it out of mTLS.
+		AnyAuthMethod: req.System,
 	}
 	u, err := a.store.CreateUser(ctx, tenantID, opts)
 	if err != nil {
@@ -489,6 +492,12 @@ func (a *UserAdapter) GetUserByUsername(ctx context.Context, tenantID, username 
 	}
 	u, err := a.store.GetUserByUsername(ctx, tenantID, username)
 	if err != nil {
+		// First-boot reads only qrdb's *UserNotFoundError as "no admin yet";
+		// the broker-shaped not-found would refuse the boot as a failed
+		// lookup. Every other error stays a failure.
+		if iam.IsUserNotFound(err) {
+			return nil, &qrdbsdk.UserNotFoundError{Lookup: tenantID + "/" + username}
+		}
 		return nil, err
 	}
 	return storedUser(u)

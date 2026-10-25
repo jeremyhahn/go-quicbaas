@@ -16,8 +16,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
+	"net"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -32,14 +43,16 @@ type fakeTenantBarrierClient struct {
 	statusFunc  func(ctx context.Context, req *qrdbtransport.TenantBarrierStatusRequest) (*qrdbtransport.TenantBarrierStatusResponse, error)
 	initFunc    func(ctx context.Context, req *qrdbtransport.TenantBarrierInitRequest) (*qrdbtransport.TenantBarrierInitResponse, error)
 	unsealFunc  func(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealRequest) error
-	shareFunc   func(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error)
+	beginFunc   func(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error)
+	submitFunc  func(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error)
 	sealFunc    func(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error
 	officerFunc func(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error)
 
 	lastStatusReq *qrdbtransport.TenantBarrierStatusRequest
 	lastInitReq   *qrdbtransport.TenantBarrierInitRequest
 	lastUnsealReq *qrdbtransport.TenantBarrierUnsealRequest
-	lastShareReq  *qrdbtransport.TenantBarrierUnsealShareRequest
+	lastBeginReq  *qrdbtransport.TenantQuorumBeginRequest
+	lastSubmitReq *qrdbtransport.TenantQuorumSubmitRequest
 	lastSealReq   *qrdbtransport.TenantBarrierSealRequest
 	lastOfficerID string
 }
@@ -68,14 +81,6 @@ func (f *fakeTenantBarrierClient) TenantBarrierUnseal(ctx context.Context, req *
 	return nil
 }
 
-func (f *fakeTenantBarrierClient) TenantBarrierUnsealShare(ctx context.Context, req *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-	f.lastShareReq = req
-	if f.shareFunc != nil {
-		return f.shareFunc(ctx, req)
-	}
-	return &qrdbtransport.TenantBarrierUnsealProgress{TenantID: req.TenantID}, nil
-}
-
 func (f *fakeTenantBarrierClient) TenantBarrierSeal(ctx context.Context, req *qrdbtransport.TenantBarrierSealRequest) error {
 	f.lastSealReq = req
 	if f.sealFunc != nil {
@@ -92,12 +97,20 @@ func (f *fakeTenantBarrierClient) TenantBarrierOfficerList(ctx context.Context, 
 	return nil, nil
 }
 
-func (f *fakeTenantBarrierClient) TenantBarrierOfficerClaimStatus(ctx context.Context, tenantID string) ([]*qrdbtransport.OfficerStatus, error) {
-	f.lastOfficerID = tenantID
-	if f.officerFunc != nil {
-		return f.officerFunc(ctx, tenantID)
+func (f *fakeTenantBarrierClient) TenantBarrierQuorumBegin(ctx context.Context, req *qrdbtransport.TenantQuorumBeginRequest) (*qrdbtransport.QuorumChallenge, error) {
+	f.lastBeginReq = req
+	if f.beginFunc != nil {
+		return f.beginFunc(ctx, req)
 	}
-	return nil, nil
+	return &qrdbtransport.QuorumChallenge{Op: req.Op}, nil
+}
+
+func (f *fakeTenantBarrierClient) TenantBarrierQuorumSubmit(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+	f.lastSubmitReq = req
+	if f.submitFunc != nil {
+		return f.submitFunc(ctx, req)
+	}
+	return &qrdbtransport.QuorumOutcome{Op: req.Op}, nil
 }
 
 // withFakeTenantBarrier installs fc as the active factory and returns a
@@ -108,6 +121,20 @@ func withFakeTenantBarrier(fc *fakeTenantBarrierClient) func() {
 	return func() { tenantBarrierClientFactory = orig }
 }
 
+// enrolledTenantBarrierClient returns a fake whose tenant already enrolled n
+// share holders, so a roster-less Shamir init passes the local holder check.
+func enrolledTenantBarrierClient(n int) *fakeTenantBarrierClient {
+	holders := make([]*qrdbtransport.OfficerStatus, n)
+	for i := range holders {
+		holders[i] = &qrdbtransport.OfficerStatus{Username: "holder-" + strconv.Itoa(i)}
+	}
+	return &fakeTenantBarrierClient{
+		officerFunc: func(context.Context, string) ([]*qrdbtransport.OfficerStatus, error) {
+			return holders, nil
+		},
+	}
+}
+
 // resetTenantBarrierFlags clears package-level flag state between cases.
 func resetTenantBarrierFlags() {
 	tenantBarrierTenantID = ""
@@ -115,9 +142,12 @@ func resetTenantBarrierFlags() {
 	tenantBarrierSecret = ""
 	tenantBarrierThreshold = 0
 	tenantBarrierShares = 0
-	tenantBarrierShare = ""
 	tenantBarrierOutputFmt = "table"
+	tenantBarrierOfficers = nil
+	tenantBarrierCustodians = nil
+	tenantBarrierPolicy = ""
 	barrierAssumeYes = false
+	resetBarrierFlags()
 }
 
 // TestTenantBarrier_EveryVerbRequiresATenant is the safety property for this
@@ -126,13 +156,13 @@ func resetTenantBarrierFlags() {
 // tenant. Every verb must refuse without --tenant, and must send nothing.
 func TestTenantBarrier_EveryVerbRequiresATenant(t *testing.T) {
 	verbs := map[string]func(*cobra.Command, []string) error{
-		"status":         runTenantBarrierStatusCommand,
-		"init":           runTenantBarrierInitCommand,
-		"unseal":         runTenantBarrierUnsealCommand,
-		"unseal-share":   runTenantBarrierUnsealShareCommand,
-		"seal":           runTenantBarrierSealCommand,
-		"officer list":   runTenantBarrierOfficerListCommand,
-		"officer status": runTenantBarrierOfficerStatusCommand,
+		"status":        runTenantBarrierStatusCommand,
+		"init":          runTenantBarrierInitCommand,
+		"unseal":        runTenantBarrierUnsealCommand,
+		"quorum begin":  runTenantBarrierQuorumBeginCommand,
+		"quorum submit": runTenantBarrierQuorumSubmitCommand,
+		"seal":          runTenantBarrierSealCommand,
+		"officer list":  runTenantBarrierOfficerListCommand,
 	}
 	for name, run := range verbs {
 		t.Run(name, func(t *testing.T) {
@@ -147,7 +177,8 @@ func TestTenantBarrier_EveryVerbRequiresATenant(t *testing.T) {
 			assert.Nil(t, fc.lastStatusReq)
 			assert.Nil(t, fc.lastInitReq)
 			assert.Nil(t, fc.lastUnsealReq)
-			assert.Nil(t, fc.lastShareReq)
+			assert.Nil(t, fc.lastBeginReq)
+			assert.Nil(t, fc.lastSubmitReq)
 			assert.Nil(t, fc.lastSealReq)
 			assert.Empty(t, fc.lastOfficerID)
 		})
@@ -194,7 +225,8 @@ func TestTenantBarrierStatus_ReportsStrategyAndQuorum(t *testing.T) {
 // and its parameters reach the server unchanged.
 func TestTenantBarrierInit_SendsTheStrategy(t *testing.T) {
 	resetTenantBarrierFlags()
-	fc := &fakeTenantBarrierClient{}
+	// The tenant already enrolled its holders, so the init names no roster.
+	fc := enrolledTenantBarrierClient(3)
 	restore := withFakeTenantBarrier(fc)
 	defer restore()
 
@@ -211,6 +243,164 @@ func TestTenantBarrierInit_SendsTheStrategy(t *testing.T) {
 	assert.Equal(t, "shamir", req.Strategy)
 	assert.Equal(t, 2, req.Threshold)
 	assert.Equal(t, 3, req.Shares)
+}
+
+// TestTenantBarrierInit_SignsWithTheMTLSKey proves the init request carries
+// the admin's mTLS key as its Signer, and that the Signer answers a node's
+// init nonce over a real TLS 1.3 connection with the certificate's own key.
+// A network node refuses init/complete without it (InitSignerRequiredError).
+// No SDK test helper serves tenant barrier init/begin over a listener without
+// a full qrdb node, so the check stands at the request boundary.
+func TestTenantBarrierInit_SignsWithTheMTLSKey(t *testing.T) {
+	withClientTLSGlobals(t)
+	resetTenantBarrierFlags()
+	fc := enrolledTenantBarrierClient(3)
+	restore := withFakeTenantBarrier(fc)
+	defer restore()
+
+	dir := t.TempDir()
+	tlsCert = filepath.Join(dir, "admin.crt")
+	tlsKey = filepath.Join(dir, "admin.key")
+	writeSelfSignedKeyPair(t, tlsCert, tlsKey)
+	tenantBarrierTenantID = "acme"
+	tenantBarrierStrategy = "shamir"
+	tenantBarrierThreshold = 2
+	tenantBarrierShares = 3
+
+	require.NoError(t, runTenantBarrierInitCommand(&cobra.Command{Use: "init"}, nil))
+
+	req := fc.lastInitReq
+	require.NotNil(t, req)
+
+	pair, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+	require.NoError(t, err)
+	adminCert, err := x509.ParseCertificate(pair.Certificate[0])
+	require.NoError(t, err)
+	wantSPKI, err := x509.MarshalPKIXPublicKey(adminCert.PublicKey)
+	require.NoError(t, err)
+
+	nonce := []byte("tenant-barrier-init-nonce")
+	cs := clientTLS13ConnectionState(t)
+	// A nil Signer fails here with InitSignerRequiredError, exactly as the
+	// node's init/complete would.
+	proof, err := qrdbtransport.ProveTenantBarrierInit(req.Signer, req.TenantID, nonce, cs)
+	require.NoError(t, err, "init must carry the admin's mTLS key")
+	assert.Equal(t, nonce, proof.Nonce)
+	assert.Equal(t, wantSPKI, proof.PublicKey, "the proof must name the mTLS certificate's key")
+	assert.NotEmpty(t, proof.Signature)
+}
+
+// TestFormatTenantBarrierInit_TablePrintsEveryHolderCertificate pins Codex
+// 6985: init issues each holder's certificate once, so the default table
+// output must print every one or the holders cannot unseal.
+func TestFormatTenantBarrierInit_TablePrintsEveryHolderCertificate(t *testing.T) {
+	resp := &qrdbtransport.TenantBarrierInitResponse{
+		TenantID:    "acme",
+		Strategy:    "shamir",
+		Threshold:   2,
+		TotalShares: 2,
+		Holders: []qrdbtransport.TenantBarrierHolderCert{
+			{Username: "alice", Role: "officer", CertPEM: "-----BEGIN CERTIFICATE-----\nYWxpY2U=\n-----END CERTIFICATE-----\n"},
+			{Username: "bob", Role: "custodian", CertPEM: "-----BEGIN CERTIFICATE-----\nYm9i\n-----END CERTIFICATE-----\n"},
+		},
+	}
+	var out bytes.Buffer
+	require.NoError(t, formatTenantBarrierInit(resp, "table", &out))
+	for _, h := range resp.Holders {
+		assert.Contains(t, out.String(), h.CertPEM, "holder %s certificate missing", h.Username)
+	}
+}
+
+// TestFormatTenantBarrierInit_RejectsEmptyResponse confirms a nil response is
+// an error rather than an empty table.
+func TestFormatTenantBarrierInit_RejectsEmptyResponse(t *testing.T) {
+	var out bytes.Buffer
+	require.Error(t, formatTenantBarrierInit(nil, "table", &out))
+	assert.Empty(t, out.String())
+}
+
+// TestTenantBarrierInit_SignerErrors covers the two non-proving cases: no
+// client certificate (the embedded transport, trusted in-process) sends no
+// Signer, and an unloadable key refuses init before anything is sent.
+func TestTenantBarrierInit_SignerErrors(t *testing.T) {
+	t.Run("no client certificate sends no signer", func(t *testing.T) {
+		withClientTLSGlobals(t)
+		resetTenantBarrierFlags()
+		fc := enrolledTenantBarrierClient(3)
+		restore := withFakeTenantBarrier(fc)
+		defer restore()
+		tenantBarrierTenantID = "acme"
+		tenantBarrierStrategy = "shamir"
+		tenantBarrierThreshold = 2
+		tenantBarrierShares = 3
+
+		require.NoError(t, runTenantBarrierInitCommand(&cobra.Command{Use: "init"}, nil))
+		require.NotNil(t, fc.lastInitReq)
+		assert.Nil(t, fc.lastInitReq.Signer)
+	})
+
+	t.Run("unloadable key refuses before sending", func(t *testing.T) {
+		withClientTLSGlobals(t)
+		resetTenantBarrierFlags()
+		fc := enrolledTenantBarrierClient(3)
+		restore := withFakeTenantBarrier(fc)
+		defer restore()
+		dir := t.TempDir()
+		tlsCert = filepath.Join(dir, "missing.crt")
+		tlsKey = filepath.Join(dir, "missing.key")
+		tenantBarrierTenantID = "acme"
+		tenantBarrierStrategy = "shamir"
+		tenantBarrierThreshold = 2
+		tenantBarrierShares = 3
+
+		require.Error(t, runTenantBarrierInitCommand(&cobra.Command{Use: "init"}, nil))
+		assert.Nil(t, fc.lastInitReq, "no init may be sent without the admin's key")
+	})
+}
+
+// clientTLS13ConnectionState completes an in-process TLS 1.3 handshake over
+// net.Pipe and returns the client side's state, whose keying-material
+// exporter the init proof binds to.
+func clientTLS13ConnectionState(t *testing.T) *tls.ConnectionState {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(7),
+		Subject:      pkix.Name{CommonName: "node.tenant-barrier.test"},
+		DNSNames:     []string{"node.tenant-barrier.test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	leaf, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	roots := x509.NewCertPool()
+	roots.AddCert(leaf)
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		require.NoError(t, clientConn.Close())
+		require.NoError(t, serverConn.Close())
+	})
+	server := tls.Server(serverConn, &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS13,
+	})
+	client := tls.Client(clientConn, &tls.Config{
+		RootCAs:    roots,
+		ServerName: "node.tenant-barrier.test",
+		MinVersion: tls.VersionTLS13,
+	})
+
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.Handshake() }()
+	require.NoError(t, client.Handshake())
+	require.NoError(t, <-serverDone)
+
+	cs := client.ConnectionState()
+	return &cs
 }
 
 // TestTenantBarrierInit_ValidatesLocally verifies unusable combinations are
@@ -274,37 +464,6 @@ func TestTenantBarrierSeal_RequiresConfirmation(t *testing.T) {
 	assert.Equal(t, "acme", fc.lastSealReq.TenantID)
 }
 
-// TestTenantBarrierUnsealShare_ReportsQuorumProgress verifies each officer sees
-// how far the quorum has got without any share being echoed back.
-func TestTenantBarrierUnsealShare_ReportsQuorumProgress(t *testing.T) {
-	resetTenantBarrierFlags()
-	fc := &fakeTenantBarrierClient{
-		shareFunc: func(_ context.Context, _ *qrdbtransport.TenantBarrierUnsealShareRequest) (*qrdbtransport.TenantBarrierUnsealProgress, error) {
-			return &qrdbtransport.TenantBarrierUnsealProgress{
-				TenantID:  "acme",
-				Required:  3,
-				Submitted: 2,
-				Complete:  false,
-			}, nil
-		},
-	}
-	restore := withFakeTenantBarrier(fc)
-	defer restore()
-
-	tenantBarrierTenantID = "acme"
-	tenantBarrierShare = "share-secret-value"
-
-	cmd := &cobra.Command{Use: "unseal-share"}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	require.NoError(t, runTenantBarrierUnsealShareCommand(cmd, nil))
-
-	got := out.String()
-	assert.Contains(t, got, "2 of 3")
-	assert.NotContains(t, got, "share-secret-value",
-		"a submitted share must never be echoed back to the terminal")
-}
-
 // TestTenantBarrierUnseal_RequiresAPassphrase verifies the passphrase path
 // fails closed and points at the Shamir verb instead of sending an empty key.
 func TestTenantBarrierUnseal_RequiresAPassphrase(t *testing.T) {
@@ -317,7 +476,7 @@ func TestTenantBarrierUnseal_RequiresAPassphrase(t *testing.T) {
 
 	err := runTenantBarrierUnsealCommand(&cobra.Command{Use: "unseal"}, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unseal-share")
+	assert.Contains(t, err.Error(), "'quorum begin' / 'quorum submit'")
 	assert.Nil(t, fc.lastUnsealReq)
 }
 
@@ -326,7 +485,7 @@ func TestTenantBarrierUnseal_RequiresAPassphrase(t *testing.T) {
 func TestCanonicalSurface_TenantBarrier(t *testing.T) {
 	got := subcommandNames(newTenantBarrierCommand())
 	for _, verb := range []string{
-		"status", "init", "unseal", "unseal-share", "seal", "officer",
+		"status", "init", "unseal", "quorum", "seal", "officer",
 	} {
 		assert.True(t, got[verb], "`tenant barrier %s` is missing", verb)
 	}
@@ -334,7 +493,7 @@ func TestCanonicalSurface_TenantBarrier(t *testing.T) {
 	officer := findSubcommand(newTenantBarrierCommand(), "officer")
 	require.NotNil(t, officer)
 	officerVerbs := subcommandNames(officer)
-	for _, verb := range []string{"list", "status"} {
+	for _, verb := range []string{"list"} {
 		assert.True(t, officerVerbs[verb], "`tenant barrier officer %s` is missing", verb)
 	}
 }
@@ -408,4 +567,60 @@ func cloneTenantBarrierInitReq(req *qrdbtransport.TenantBarrierInitRequest) *qrd
 	out := *req
 	out.Passphrase = bytes.Clone(req.Passphrase)
 	return &out
+}
+
+// TestTenantBarrierQuorum_BeginAndSubmitCarryTheTenant proves both quorum
+// steps address the named tenant's barrier, never the system one.
+func TestTenantBarrierQuorum_BeginAndSubmitCarryTheTenant(t *testing.T) {
+	defer resetTenantBarrierFlags()
+	fc := &fakeTenantBarrierClient{
+		submitFunc: func(_ context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+			return &qrdbtransport.QuorumOutcome{Op: req.Op, Required: 2, Submitted: 1}, nil
+		},
+	}
+	defer withFakeTenantBarrier(fc)()
+
+	resetTenantBarrierFlags()
+	tenantBarrierTenantID = "acme"
+	barrierQuorumOp = qrdbtransport.OpUnseal
+	barrierUsername = "alice"
+	barrierFactor = "mtls"
+	require.NoError(t, runTenantBarrierQuorumBeginCommand(&cobra.Command{}, nil))
+	require.NotNil(t, fc.lastBeginReq)
+	assert.Equal(t, qrdbtransport.TenantQuorumBeginRequest{
+		TenantID: "acme", Op: qrdbtransport.OpUnseal, Username: "alice", Factor: "mtls",
+	}, *fc.lastBeginReq)
+
+	barrierChallengeID = "c-1"
+	barrierResponseFile = writeQuorumFile(t, "response", []byte("signed"))
+	barrierShareFile = writeQuorumFile(t, "share", []byte("share"))
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	require.NoError(t, runTenantBarrierQuorumSubmitCommand(cmd, nil))
+	require.NotNil(t, fc.lastSubmitReq)
+	assert.Equal(t, "acme", fc.lastSubmitReq.TenantID)
+	assert.Equal(t, "c-1", fc.lastSubmitReq.ChallengeID)
+	assert.Equal(t, []byte("signed"), fc.lastSubmitReq.Response)
+	assert.Contains(t, out.String(), "1 of 2")
+}
+
+// TestTenantBarrierQuorumSubmit_RefusesWithoutAShareFile stops before dialling.
+func TestTenantBarrierQuorumSubmit_RefusesWithoutAShareFile(t *testing.T) {
+	defer resetTenantBarrierFlags()
+	fc := &fakeTenantBarrierClient{}
+	defer withFakeTenantBarrier(fc)()
+
+	resetTenantBarrierFlags()
+	tenantBarrierTenantID = "acme"
+	barrierQuorumOp = qrdbtransport.OpUnseal
+	barrierUsername = "alice"
+	barrierFactor = "mtls"
+	barrierChallengeID = "c-1"
+	barrierResponseFile = writeQuorumFile(t, "response", []byte("signed"))
+
+	err := runTenantBarrierQuorumSubmitCommand(&cobra.Command{}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--share-file is required")
+	assert.Nil(t, fc.lastSubmitReq)
 }

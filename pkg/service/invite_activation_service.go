@@ -193,7 +193,7 @@ func (s *inviteActivationService) GetInvite(ctx context.Context, tenantID, token
 
 // ActivateFIDO2Begin implements InviteActivationService.
 func (s *inviteActivationService) ActivateFIDO2Begin(ctx context.Context, tenantID, token string) (map[string]interface{}, error) {
-	_, record, err := s.usableInvite(ctx, tenantID, token)
+	_, record, err := s.passkeyInvite(ctx, tenantID, token)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (s *inviteActivationService) ActivateFIDO2Begin(ctx context.Context, tenant
 
 // ActivateFIDO2Finish implements InviteActivationService.
 func (s *inviteActivationService) ActivateFIDO2Finish(ctx context.Context, tenantID, token string, credential map[string]interface{}) (*InviteActivation, error) {
-	inviteStore, record, err := s.usableInvite(ctx, tenantID, token)
+	inviteStore, record, err := s.passkeyInvite(ctx, tenantID, token)
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +337,25 @@ func (s *inviteActivationService) usableInvite(ctx context.Context, tenantID, to
 	}
 	if time.Now().After(record.ExpiresAt) {
 		return nil, nil, iam.ErrInviteExpired
+	}
+	return inviteStore, record, nil
+}
+
+// passkeyInvite is usableInvite for the passkey activation verbs, and the one
+// point a non-system tenant's passkey activation is refused, before any
+// account read. go-xkms reads the invited account with no caller identity,
+// which an auth-enabled qrdb node refuses for a non-system tenant until
+// go-qrdb v0.54.0-alpha (go-qrdb #1084, #1089); go-quicbaas #1816 re-pins
+// go-qrdb and removes this refusal. The invite is checked first, so an
+// unusable token keeps its opaque answer. PIV activation reads the account
+// server-side and is not refused.
+func (s *inviteActivationService) passkeyInvite(ctx context.Context, tenantID, token string) (iam.InviteStore, *iam.InviteRecord, error) {
+	inviteStore, record, err := s.usableInvite(ctx, tenantID, token)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := refuseNonSystemTenant("InviteActivationService.ActivateFIDO2", record.TenantID); err != nil {
+		return nil, nil, err
 	}
 	return inviteStore, record, nil
 }
