@@ -1888,12 +1888,30 @@ export interface CeremonyInitializeRequest {
     credential_seal_strategy?: string;
     /** Threshold for M-of-N enrollment. Zero means single-admin mode. */
     threshold: number;
+    /** Shamir custody policy for threshold >= 2: designated (default) or any-enrolled. */
+    policy?: string;
     /** Officers participating in the ceremony. */
     officers?: CeremonyOfficer[];
     /** Optional hostname for the issued TLS certificate. */
     hostname?: string;
     /** Optional Subject Alternative Names for the issued TLS certificate. */
     sans?: string[];
+    /**
+     * Bootstrap administrator CSR for the node CA to sign. Exactly one of
+     * admin_csr_pem, admin_cert_pem or admin_generate must be set.
+     */
+    admin_csr_pem?: string;
+    /** Bootstrap administrator's own certificate (bring-your-own). */
+    admin_cert_pem?: string;
+    /** CA pool that verifies admin_cert_pem. */
+    admin_cert_pool_pem?: string;
+    /** Generate the bootstrap administrator credential. Dev/test only. */
+    admin_generate?: boolean;
+    /**
+     * System barrier passphrase; required when the barrier strategy needs one.
+     * The REST client base64-encodes it; MCP sends it as text.
+     */
+    secret?: Uint8Array;
 }
 export interface CeremonyInitializeResponse {
     /** Base64-encoded SHA-256 hash of the CA certificate's SPKI. */

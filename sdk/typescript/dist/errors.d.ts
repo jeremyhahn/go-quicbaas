@@ -32,6 +32,18 @@ export declare class SOPINRequiresTLSError extends QuicBaaSError {
     readonly transport: string;
     constructor(transport: string);
 }
+/**
+ * Raised before any call when a ceremony initialize request does not select
+ * exactly one bootstrap administrator credential path: admin_csr_pem,
+ * admin_cert_pem or admin_generate. The server refuses the same request
+ * (go-qrdb NoAdminCredentialSelectedError); the client fails first so no SO
+ * PIN leaves the process for a request that cannot succeed.
+ */
+export declare class CeremonyAdminSelectorError extends QuicBaaSError {
+    /** The selectors the request set, in field order; empty when none. */
+    readonly selected: string[];
+    constructor(selected: string[]);
+}
 export declare class McpError extends QuicBaaSError {
     readonly tool: string;
     readonly code?: number;
