@@ -6,8 +6,9 @@
 -->
 
 <!--
-  ShamirShareInput drives the Shamir unseal flow. Operators paste a single
-  share or a batch (newline-separated). Each share is submitted in order and
+  ShamirShareInput drives one Shamir quorum (unseal by default; label names
+  the operation the client's quorum performs, e.g. "Seal"). Each key holder
+  requests a challenge, then submits its signed response with its share, and
   the progress meter advances toward the threshold reported by status().
 -->
 <script lang="ts">
@@ -16,11 +17,12 @@
   interface Props {
     client: Pick<BarrierClient, 'quorumBegin' | 'quorumSubmit'>;
     status: BarrierStatus;
+    label?: string;
     onunseal?: (status: BarrierStatus) => void;
     onerror?: (err: Error) => void;
   }
 
-  const { client, status, onunseal, onerror }: Props = $props();
+  const { client, status, label = 'Unseal', onunseal, onerror }: Props = $props();
 
   // Each key holder unseals in two steps: it requests a challenge, signs the
   // challenge offline, then submits the signed response with its share.
@@ -110,7 +112,7 @@
 
   <div>
     <div class="flex justify-between text-xs mb-1">
-      <span class="text-base-content/60">Unseal progress</span>
+      <span class="text-base-content/60">{label} progress</span>
       <span class="font-mono" data-testid="shamir-progress-text">
         {submitted} / {required}
       </span>
@@ -119,7 +121,7 @@
       class="progress progress-warning w-full"
       value={percent}
       max="100"
-      aria-label="Shamir unseal progress"
+      aria-label={`Shamir ${label.toLowerCase()} progress`}
       data-testid="shamir-progress-bar"
     ></progress>
   </div>

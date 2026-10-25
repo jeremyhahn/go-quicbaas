@@ -43,6 +43,7 @@
   } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
   import type {
+    BarrierQuorumOp,
     TenantBarrierClient,
     TenantBarrierStatusResponse,
     IAMTenant,
@@ -113,9 +114,12 @@
 
   // structuralClient adapts the tenant-scoped SDK calls into the structural
   // BarrierClient shape ShamirShareInput expects (quorumBegin / quorumSubmit
-  // of the tenant's unseal quorum). It is rebuilt whenever the selected tenant
+  // of the tenant's quorum for op). It is rebuilt whenever the selected tenant
   // changes so every call is bound to the active tenant.
-  function makeStructuralClient(tenantId: string): StructuralBarrierClient {
+  function makeStructuralClient(
+    tenantId: string,
+    op: BarrierQuorumOp = 'unseal',
+  ): StructuralBarrierClient {
     return {
       async status(): Promise<BarrierStatus> {
         return adaptStatus(await tb.tenantBarrierStatus(tenantId));
@@ -140,10 +144,10 @@
         };
       },
       async quorumBegin(req) {
-        return tb.tenantBarrierQuorumBegin(tenantId, { op: 'unseal', ...req });
+        return tb.tenantBarrierQuorumBegin(tenantId, { op, ...req });
       },
       async quorumSubmit(req) {
-        return tb.tenantBarrierQuorumSubmit(tenantId, { op: 'unseal', ...req });
+        return tb.tenantBarrierQuorumSubmit(tenantId, { op, ...req });
       },
     };
   }
@@ -169,6 +173,10 @@
   let revealedShares: string[] | null = $state(null);
   let revealedThreshold = $state(0);
   let sealing = $state(false);
+  // sealQuorum is the tenant's seal-quorum client while a Shamir seal is in
+  // progress: qrdb refuses a direct seal of a Shamir barrier, so its key
+  // holders seal it the way they unseal it.
+  let sealQuorum: StructuralBarrierClient | null = $state(null);
 
   async function loadTenants(): Promise<void> {
     tenantsLoading = true;
@@ -221,8 +229,9 @@
   // Reload status whenever the operator picks a different tenant.
   $effect(() => {
     void selectedTenantID;
-    // Reset transient init state when switching tenants.
+    // Reset transient init and seal state when switching tenants.
     revealedShares = null;
+    sealQuorum = null;
     void loadStatus();
   });
 
@@ -274,6 +283,10 @@
 
   async function handleSeal(): Promise<void> {
     if (selectedTenantID === '') return;
+    if (barrierStatus?.strategy === 'shamir') {
+      sealQuorum = makeStructuralClient(selectedTenantID, 'seal');
+      return;
+    }
     sealing = true;
     try {
       await tb.tenantBarrierSeal(selectedTenantID);
@@ -426,6 +439,20 @@
                   onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
                 />
               </div>
+            {:else if sealQuorum !== null}
+              <div data-testid="tenant-barrier-shamir-seal">
+                <ShamirShareInput
+                  client={sealQuorum}
+                  status={barrierStatus}
+                  label="Seal"
+                  onunseal={() => {
+                    sealQuorum = null;
+                    showToast({ message: 'Tenant barrier sealed', type: 'success' });
+                    void loadStatus();
+                  }}
+                  onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
+                />
+              </div>
             {:else}
               <div class="alert alert-success text-sm" data-testid="tenant-barrier-shamir-unsealed">
                 <span>Shamir barrier is unsealed and active.</span>
@@ -475,7 +502,7 @@
             <button
               class="btn btn-warning btn-sm"
               onclick={() => { void handleSeal(); }}
-              disabled={sealing}
+              disabled={sealing || sealQuorum !== null}
               data-testid="tenant-barrier-seal"
             >
               {sealing ? 'Sealing...' : 'Seal'}
