@@ -31,7 +31,9 @@
 //	2. Strategy passphrase   — requires volume pool. Tenant admin: init→204,
 //	                           status, seal, unseal, status.
 //	3. Strategy shamir       — requires volume pool. Tenant admin drives the
-//	                           full 3-of-5 quorum lifecycle.
+//	                           full 3-of-5 quorum lifecycle: an unseal
+//	                           quorum unseals, a direct seal is refused, and
+//	                           a seal quorum seals.
 //	4. Cross-tenant denial   — admin of tenant A is denied (403) on tenant B's
 //	                           barrier; the system admin reads both statuses (200).
 //	5. System/default tenant — mutations against the cluster's default tenant
@@ -371,7 +373,7 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 		for i := 0; i < shamirThreshold-1; i++ {
 			h := holders[i]
 			t.Run(fmt.Sprintf("share_%d_of_%d", i+1, shamirThreshold-1), func(t *testing.T) {
-				status, resp, body, err := submitTenantUnsealShare(ctx, tenantID, bearer, h)
+				status, resp, body, err := submitTenantQuorumShare(ctx, tenantID, bearer, "unseal", h)
 				require.NoErrorf(t, err, "quorum submit %d: network error", i+1)
 				require.Equalf(t, http.StatusOK, status,
 					"quorum submit %d must return 200; body=%s", i+1, body)
@@ -397,7 +399,7 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 
 	t.Run("submit_threshold_share_unseals_barrier", func(t *testing.T) {
 		// Submit the threshold-th share; this must complete the quorum.
-		status, resp, body, err := submitTenantUnsealShare(ctx, tenantID, bearer, holders[shamirThreshold-1])
+		status, resp, body, err := submitTenantQuorumShare(ctx, tenantID, bearer, "unseal", holders[shamirThreshold-1])
 		require.NoErrorf(t, err, "quorum submit (threshold): network error")
 		require.Equalf(t, http.StatusOK, status,
 			"quorum submit (threshold) must return 200; body=%s", body)
@@ -417,11 +419,35 @@ func TestTenantBarrier_Shamir(t *testing.T) {
 		)
 	})
 
-	t.Run("seal_shamir_returns_204", func(t *testing.T) {
+	t.Run("direct_seal_shamir_is_refused", func(t *testing.T) {
+		// go-qrdb v0.51 refuses a direct seal of a Shamir barrier
+		// (ErrShamirBarrierRequiresQuorum): only a seal quorum seals it.
 		status, body, err := sealTenantBarrier(ctx, tenantID, bearer)
 		require.NoErrorf(t, err, "seal shamir: network error")
-		assert.Equalf(t, http.StatusNoContent, status,
-			"seal must return 204; body=%s", body)
+		assert.NotEqualf(t, http.StatusNoContent, status,
+			"a direct seal of a shamir barrier must be refused; body=%s", body)
+		assert.Containsf(t, string(body), "requires a seal quorum",
+			"the refusal must name the seal quorum; body=%s", body)
+		assertBarrierStatus(t, ctx, tenantID, bearer,
+			false, /* still unsealed */
+			true,  /* initialized */
+			"shamir",
+		)
+	})
+
+	t.Run("seal_quorum_seals_barrier", func(t *testing.T) {
+		for i, h := range holders[:shamirThreshold] {
+			status, resp, body, err := submitTenantQuorumShare(ctx, tenantID, bearer, "seal", h)
+			require.NoErrorf(t, err, "seal quorum submit %d: network error", i+1)
+			require.Equalf(t, http.StatusOK, status,
+				"seal quorum submit %d must return 200; body=%s", i+1, body)
+			require.NotNilf(t, resp, "seal quorum submit %d response must not be nil", i+1)
+
+			assert.Equalf(t, i+1, resp.Submitted,
+				"seal quorum submit %d submitted must equal shares submitted so far", i+1)
+			assert.Equalf(t, i == shamirThreshold-1, resp.Complete,
+				"seal quorum submit %d completes only at the threshold; body=%s", i+1, body)
+		}
 	})
 
 	t.Run("status_after_seal_sealed_shamir", func(t *testing.T) {
@@ -708,7 +734,7 @@ func TestTenantBarrier_SystemAdminWritePosture_REST(t *testing.T) {
 	})
 
 	t.Run("quorum_begin_denied_403_typed", func(t *testing.T) {
-		status, _, body, err := submitTenantUnsealShare(ctx, tenantID, adminToken, newTenantBarrierHolder(t, "officer-1"))
+		status, _, body, err := submitTenantQuorumShare(ctx, tenantID, adminToken, "unseal", newTenantBarrierHolder(t, "officer-1"))
 		require.NoErrorf(t, err, "system-admin quorum begin: network error")
 		requireTypedDenial(t, "quorum begin", status, body)
 	})

@@ -353,12 +353,11 @@ func claimTenantBarrierShare(t *testing.T, ctx context.Context, tenantID, bearer
 	require.NoErrorf(t, err, "claim %s: open envelope", h.Username)
 }
 
-// submitTenantUnsealShare answers h's mtls challenge for the unseal quorum
-// (POST .../barrier/quorum/begin) and submits h's share with it (POST
-// .../barrier/quorum/submit), decoding the quorum's progress. A refused
-// begin returns its status and body without a submit.
-func submitTenantUnsealShare(ctx context.Context, tenantID, bearer string, h *tenantBarrierHolder) (int, *qrdbtransport.QuorumOutcome, []byte, error) {
-	const op = "unseal"
+// submitTenantQuorumShare answers h's mtls challenge for the op quorum
+// ("unseal" or "seal"; POST .../barrier/quorum/begin) and submits h's share
+// with it (POST .../barrier/quorum/submit), decoding the quorum's progress.
+// A refused begin returns its status and body without a submit.
+func submitTenantQuorumShare(ctx context.Context, tenantID, bearer, op string, h *tenantBarrierHolder) (int, *qrdbtransport.QuorumOutcome, []byte, error) {
 	status, body, err := doREST(ctx, http.MethodPost, barrierPath(tenantID, "quorum/begin"), bearer,
 		qrdbtransport.TenantQuorumBeginRequest{Op: op, Username: h.Username})
 	if err != nil || status != http.StatusOK {
@@ -366,12 +365,12 @@ func submitTenantUnsealShare(ctx context.Context, tenantID, bearer string, h *te
 	}
 	var challenge qrdbtransport.QuorumChallenge
 	if jerr := json.Unmarshal(body, &challenge); jerr != nil {
-		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: decode challenge: %w; raw=%s", jerr, body)
+		return status, nil, body, fmt.Errorf("submitTenantQuorumShare: decode challenge: %w; raw=%s", jerr, body)
 	}
 	response, err := qrdbsdk.SignQuorumChallenge(h.Key, challenge.ChallengeID,
 		challenge.MethodData[qrdbsdk.QuorumChallengePurposeKey], challenge.Nonce)
 	if err != nil {
-		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: sign challenge: %w", err)
+		return status, nil, body, fmt.Errorf("submitTenantQuorumShare: sign challenge: %w", err)
 	}
 
 	status, body, err = doREST(ctx, http.MethodPost, barrierPath(tenantID, "quorum/submit"), bearer,
@@ -384,7 +383,7 @@ func submitTenantUnsealShare(ctx context.Context, tenantID, bearer string, h *te
 	}
 	var outcome qrdbtransport.QuorumOutcome
 	if jerr := json.Unmarshal(body, &outcome); jerr != nil {
-		return status, nil, body, fmt.Errorf("submitTenantUnsealShare: decode outcome: %w; raw=%s", jerr, body)
+		return status, nil, body, fmt.Errorf("submitTenantQuorumShare: decode outcome: %w; raw=%s", jerr, body)
 	}
 	return status, &outcome, body, nil
 }
