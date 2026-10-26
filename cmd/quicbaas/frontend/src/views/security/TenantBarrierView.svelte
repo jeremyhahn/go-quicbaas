@@ -492,8 +492,10 @@
               <div class="alert alert-success text-sm" data-testid="tenant-barrier-shamir-unsealed">
                 <span>Shamir barrier is unsealed and active.</span>
               </div>
-              {@render holderClaim(selectedTenantID)}
             {/if}
+            <!-- Holders claim their sealed shares whether or not the barrier is
+                 sealed: a fresh barrier cannot unseal until they have. -->
+            {@render holderClaim(selectedTenantID)}
 
           {:else}
             <div class="alert alert-success text-sm" data-testid="tenant-barrier-auto">

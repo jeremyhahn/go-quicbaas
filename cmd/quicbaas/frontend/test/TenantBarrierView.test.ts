@@ -94,12 +94,12 @@ describe('TenantBarrierView seal and unseal routes', () => {
     const panel = await screen.findByTestId('tenant-barrier-shamir-seal');
     expect(panel).toHaveTextContent(/Seal progress/);
 
-    await fireEvent.input(screen.getByLabelText(/Officer username/i), { target: { value: 'alice' } });
-    await fireEvent.click(screen.getByRole('button', { name: /Request challenge/i }));
-    await screen.findByTestId('shamir-challenge');
-    await fireEvent.input(screen.getByLabelText(/Signed response/i), { target: { value: 'sig' } });
-    await fireEvent.input(screen.getByLabelText(/^Share$/i), { target: { value: 'share-1' } });
-    await fireEvent.click(screen.getByRole('button', { name: /Submit share/i }));
+    await fireEvent.input(within(panel).getByLabelText(/Officer username/i), { target: { value: 'alice' } });
+    await fireEvent.click(within(panel).getByRole('button', { name: /Request challenge/i }));
+    await within(panel).findByTestId('shamir-challenge');
+    await fireEvent.input(within(panel).getByLabelText(/Signed response/i), { target: { value: 'sig' } });
+    await fireEvent.input(within(panel).getByLabelText(/^Share$/i), { target: { value: 'share-1' } });
+    await fireEvent.click(within(panel).getByRole('button', { name: /Submit share/i }));
 
     await waitFor(() => {
       expect(posts(calls, '/quorum/submit')).toHaveLength(1);
@@ -239,6 +239,17 @@ describe('TenantBarrierView seal and unseal routes', () => {
 
     const claim = await screen.findByTestId('tenant-barrier-claim');
     expect(claim).toContainElement(screen.getByTestId('ceremony-claim-challenge'));
+  });
+
+  it('offers the holder claim on a freshly initialized, still sealed Shamir tenant barrier', async () => {
+    // Holders claim their shares before anyone can unseal, so the claim must
+    // be reachable while the barrier is sealed, beside the unseal input.
+    stubFetch({ strategy: 'shamir', sealed: true, initialized: true, shamir_threshold: 2, shamir_total: 3 });
+    render(TenantBarrierView);
+
+    const claim = await screen.findByTestId('tenant-barrier-claim');
+    expect(claim).toContainElement(screen.getByTestId('ceremony-claim-challenge'));
+    expect(screen.getByTestId('tenant-barrier-shamir-unseal')).toBeInTheDocument();
   });
 
   it('lets a listed holder claim their share under the tenant claim label', async () => {
