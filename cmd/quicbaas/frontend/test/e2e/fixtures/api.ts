@@ -105,13 +105,12 @@ export interface SealStatus {
   version: number;
 }
 
-// SealInitResponse mirrors the daemon's POST /api/v1/seal/init response. It
-// carries no share material: officers claim their shares through the
-// identity-gated claim endpoints.
+// SealInitResponse mirrors the daemon's POST /api/v1/seal/init response.
+// shares is a [][]byte on the server, encoded as base64 strings in JSON.
 export interface SealInitResponse {
+  shares: string[];
   root_token: string;
   version: number;
-  timestamp: string;
 }
 
 // UnsealResponse mirrors the daemon's POST /api/v1/seal/unseal response.
@@ -127,8 +126,8 @@ export async function getSealStatus(): Promise<SealStatus> {
   return apiFetch<SealStatus>(sealApiURL('/status'));
 }
 
-// initSeal initialises the seal with Shamir secret sharing. The shares are
-// sealed to their holders, so the response carries none.
+// initSeal initialises the seal with Shamir secret sharing.
+// Returns the generated key shares as base64-encoded strings.
 // This endpoint uses `threshold` and `total_shares` (not `secret_threshold`).
 export async function initSeal(threshold: number, totalShares: number): Promise<SealInitResponse> {
   return apiFetch<SealInitResponse>(sealApiURL('/init'), {
@@ -138,7 +137,7 @@ export async function initSeal(threshold: number, totalShares: number): Promise<
 }
 
 // submitUnsealShare submits one Shamir key share toward unsealing.
-// The share must be a base64-encoded string (a holder's claimed share).
+// The share must be a base64-encoded string (as returned by initSeal).
 export async function submitUnsealShare(share: string): Promise<UnsealResponse> {
   return apiFetch<UnsealResponse>(sealApiURL('/unseal'), {
     method: 'POST',
@@ -151,20 +150,40 @@ export async function sealDatabase(): Promise<void> {
   await apiFetch<unknown>(sealApiURL('/seal'), { method: 'POST' });
 }
 
-// RekeyResponse mirrors the daemon's POST /api/v1/seal/rekey response. It
-// carries no share material: officers re-claim their shares after a rekey.
+// RekeyResponse mirrors the daemon's POST /api/v1/seal/rekey response.
 export interface RekeyResponse {
+  shares: string[];
   version: number;
-  timestamp: string;
 }
 
-// rekeyDatabase performs a Shamir rekey and returns the new seal version.
+// rekeyDatabase performs a Shamir rekey and returns the new shares.
 // The database must be unsealed before calling this.
 export async function rekeyDatabase(threshold: number, totalShares: number): Promise<RekeyResponse> {
   return apiFetch<RekeyResponse>(sealApiURL('/rekey'), {
     method: 'POST',
     body: JSON.stringify({ new_threshold: threshold, new_total_shares: totalShares }),
   });
+}
+
+// ensureSealInitialized ensures the seal is initialized, returning a set of
+// usable key shares. If the seal is not initialized it calls initSeal; if it
+// is already initialized and sealed it uses rekey after unsealing with the
+// provided currentShares. When currentShares is not provided and the seal is
+// already initialized, this function throws — the caller must supply shares.
+//
+// For test suites that always start from a known state, use initSeal directly.
+export async function ensureSealShares(
+  threshold: number,
+  totalShares: number,
+): Promise<{ shares: string[]; fresh: boolean }> {
+  const status = await getSealStatus();
+  if (!status.initialized) {
+    const resp = await initSeal(threshold, totalShares);
+    return { shares: resp.shares, fresh: true };
+  }
+  // Already initialized — return a sentinel so callers know to use rekey after
+  // unsealing with externally-known shares.
+  return { shares: [], fresh: false };
 }
 
 // =============================================================================

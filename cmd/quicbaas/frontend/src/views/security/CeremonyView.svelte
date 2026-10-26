@@ -16,25 +16,22 @@
 <!--
   CeremonyView orchestrates the multi-officer key ceremony. It surfaces:
 
-    1. The barrier's key holders with claim status, share index, and factors.
-    2. A share-claim flow: the officer requests a nonce, signs it offline
-       with its key, and receives its share sealed to that key.
-    3. An officer enrollment form (username + CSR) that shows the issued
-       officer certificate with a download control.
+    1. The pending-officer list with claim status, share index, and auth factor.
+    2. A claim-certificate flow (challenge-response with the officer's CSR).
+    3. A claim-share flow for officers delivering Shamir share contributions.
+    4. An enroll-external-officer form (cert/pubkey + auth factor + share index).
 
-  All HTTP traffic flows through the typed @quicbaas/sdk BarrierClient, which
-  maps every method to the barrier holder routes the server serves:
-  GET/POST /api/v1/barrier/officers and
-  /api/v1/barrier/officers/{username}/claim/{begin,complete}. The legacy
-  /api/v1/ceremony paths are gone; this view never references them.
+  All HTTP traffic flows through the typed @quicbaas/sdk CeremonyClient
+  (RestCeremonyClient) which maps every method to the canonical
+  /api/v1/init/* surface defined in go-qrdb. The legacy /api/v1/ceremony
+  paths are gone; this view never references them.
 -->
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
-  import { downloadText } from '../../lib/download.ts';
   import { Users } from 'lucide-svelte';
-  import { APIError, createBarrierClient, isWailsRuntime } from '@quicbaas/sdk';
-  import type { BarrierOfficer } from '@quicbaas/sdk';
+  import { createCeremonyClient, isWailsRuntime } from '@quicbaas/sdk';
+  import type { CeremonyClient as SDKCeremonyClient } from '@quicbaas/sdk';
   import {
     CeremonyOfficerList,
     CeremonyClaimChallenge,
@@ -42,15 +39,18 @@
   import type {
     CeremonyClient,
     CeremonyOfficer,
+    OfficerKind,
   } from '@quicbaas/svelte-security';
 
   // ---------------------------------------------------------------------------
   // SDK -> structural CeremonyClient adapter
   //
   // The svelte-security components consume a structurally-typed CeremonyClient
-  // (listOfficers / beginClaim / claimShare / enrollOfficer). The SDK serves
-  // these as the BarrierClient key-holder verbs (officers / shareClaimBegin /
-  // shareClaimComplete / registerOfficer). We adapt one to the other so:
+  // (listOfficers / claimCertificate / claimShare / enrollOfficer). The SDK
+  // CeremonyClient surface is shaped around the canonical /api/v1/init routes
+  // (claimCertBegin / claimCertComplete / claimShareBegin / claimShareComplete /
+  // enrollExternalOfficer).
+  // We adapt one to the other so:
   //
   //   * URL routing flows through the SDK (drift-proof).
   //   * Components stay presentational (no transport knowledge).
@@ -61,42 +61,109 @@
     return isWailsRuntime() ? 'wails' : 'rest';
   }
 
-  // toCeremonyOfficer maps a barrier key holder onto the officer row the
-  // list renders. Every holder authenticates with its issued certificate.
-  function toCeremonyOfficer(o: BarrierOfficer): CeremonyOfficer {
-    return {
-      username: o.username,
-      kind: 'cert',
-      claim_status: o.share_pending ? 'enrolled' : 'claimed',
-      share_index: o.share_index,
-      auth_factor: (o.factors ?? []).join(', '),
-    };
+  // listOfficersURL builds the /api/v1/init/officers URL. The SDK does not
+  // expose listOfficers because the route is QuicBaaS-frontend-specific
+  // (other consumers have their own roster). Routing through this helper
+  // ensures the path stays under /api/v1/init/* alongside the other
+  // ceremony endpoints.
+  function listOfficersURL(): string {
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${base}/api/v1/init/officers`;
+  }
+
+  // ServiceUnavailableError is thrown when the daemon returns a 503 typed
+  // envelope ({error: "...not available"}). Callers convert this into an
+  // informational empty-state instead of a destructive error banner — the
+  // ceremony service simply isn't active yet.
+  class ServiceUnavailableError extends Error {
+    readonly status = 503;
+    constructor(message: string) {
+      super(message);
+      this.name = 'ServiceUnavailableError';
+    }
+  }
+
+  async function fetchOfficers(): Promise<CeremonyOfficer[]> {
+    const resp = await fetch(listOfficersURL(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+      let msg = resp.statusText;
+      try {
+        const body = (await resp.json()) as { error?: string; message?: string };
+        msg = body.error ?? body.message ?? msg;
+      } catch { /* keep statusText */ }
+      // 503 with a typed envelope means the ceremony subsystem isn't
+      // active yet — surface it as a typed error so the view renders an
+      // informational empty state, not a destructive banner.
+      if (resp.status === 503) {
+        throw new ServiceUnavailableError(msg);
+      }
+      throw new Error(`${resp.status} ${msg}`);
+    }
+    const data = (await resp.json()) as { officers?: CeremonyOfficer[] };
+    return data.officers ?? [];
   }
 
   // makeClient builds the structural CeremonyClient that the svelte-security
-  // components consume by adapting the typed SDK BarrierClient.
+  // components consume by adapting the typed SDK CeremonyClient.
   async function makeClient(): Promise<CeremonyClient> {
     const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
-    const sdk = await createBarrierClient(resolveTransport(), { baseURL });
+    const sdk: SDKCeremonyClient = await createCeremonyClient(resolveTransport(), { baseURL });
 
     return {
       async listOfficers() {
-        const holders = await sdk.officers();
-        return holders.map(toCeremonyOfficer);
+        return fetchOfficers();
       },
-      async beginClaim(username) {
-        return sdk.shareClaimBegin(username);
-      },
-      async claimShare(req) {
-        return sdk.shareClaimComplete({
+      async claimCertificate(req) {
+        // The structural claimCertificate ships the daemon-issued challenge
+        // plus a base64 signature over it. The SDK exposes this as
+        // claimCertComplete which maps to POST /api/v1/init/claim-cert/complete.
+        const resp = await sdk.claimCertComplete({
           username: req.username,
-          nonce_hex: req.nonce_hex,
+          nonce_hex: req.challenge,
           signature: req.signature_b64,
         });
+        return {
+          username: req.username,
+          // The SDK returns the issued certificate; the structural ClaimResponse
+          // only carries the username + status. "claimed" reflects the success
+          // path; failures throw.
+          status: resp.cert_pem ? 'claimed' : 'enrolled',
+        };
+      },
+      async claimShare(req) {
+        // The structural claimShare ships the daemon-issued challenge plus a
+        // base64 signature over it. The SDK exposes this as claimShareComplete
+        // which maps to POST /api/v1/init/officer-share/complete.
+        const resp = await sdk.claimShareComplete({
+          username: req.username,
+          nonce_hex: req.challenge,
+          signature: req.signature_b64,
+        });
+        return {
+          username: req.username,
+          status: resp.share_json ? 'claimed' : 'enrolled',
+        };
       },
       async enrollOfficer(req) {
-        const resp = await sdk.registerOfficer({ username: req.username, csr_pem: req.csr_pem });
-        return { cert_pem: resp.cert_pem, role: resp.role };
+        const certPem = req.kind === 'cert' ? req.material : undefined;
+        const pubkeyPem = req.kind === 'pubkey' ? req.material : undefined;
+        await sdk.enrollExternalOfficer({
+          username: req.username,
+          cert_pem: certPem,
+          pubkey_pem: pubkeyPem,
+          share_index: req.share_index,
+          auth_factor: req.auth_factor,
+        });
+        return {
+          username: req.username,
+          kind: req.kind,
+          claim_status: 'enrolled',
+          share_index: req.share_index,
+          auth_factor: req.auth_factor,
+        };
       },
     };
   }
@@ -109,10 +176,9 @@
   let officers: CeremonyOfficer[] = $state([]);
   let loading = $state(false);
   let listError: string | null = $state(null);
-  // serviceUnavailable is set when the daemon's GET /api/v1/barrier/officers
-  // returns a 503 typed envelope: the ceremony subsystem isn't active yet. It
-  // triggers an informational empty state instead of a destructive error
-  // banner.
+  // serviceUnavailable is set when the daemon's GET /api/v1/init/officers
+  // returns a 503 typed envelope. It triggers an informational empty state
+  // instead of a destructive error banner.
   let serviceUnavailable = $state(false);
 
   async function reload(): Promise<void> {
@@ -125,7 +191,7 @@
       }
       officers = await client.listOfficers();
     } catch (e) {
-      if (e instanceof APIError && e.status === 503) {
+      if (e instanceof ServiceUnavailableError) {
         serviceUnavailable = true;
         officers = [];
       } else {
@@ -141,29 +207,73 @@
   });
 
   // ---------------------------------------------------------------------------
-  // Enroll officer
+  // Claim share flow
+  // ---------------------------------------------------------------------------
+
+  let shareUsername = $state('');
+  let shareChallenge = $state('');
+  let shareSignatureB64 = $state('');
+  let shareSubmitting = $state(false);
+  let shareError: string | null = $state(null);
+
+  async function submitClaimShare(): Promise<void> {
+    shareError = null;
+    if (!shareUsername.trim() || !shareChallenge.trim() || !shareSignatureB64.trim()) {
+      shareError = 'username, challenge, and signature are required';
+      return;
+    }
+    if (client === null) {
+      shareError = 'ceremony client not ready';
+      return;
+    }
+    shareSubmitting = true;
+    try {
+      const resp = await client.claimShare({
+        username: shareUsername.trim(),
+        challenge: shareChallenge.trim(),
+        signature_b64: shareSignatureB64.trim(),
+      });
+      showToast({ message: `Share claimed for ${resp.username}`, type: 'success' });
+      shareUsername = '';
+      shareChallenge = '';
+      shareSignatureB64 = '';
+      void reload();
+    } catch (e) {
+      shareError = e instanceof Error ? e.message : 'Claim share failed';
+    } finally {
+      shareSubmitting = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enroll external officer
   // ---------------------------------------------------------------------------
 
   let enrollUsername = $state('');
-  let enrollCSR = $state('');
+  let enrollKind: OfficerKind = $state('cert');
+  let enrollMaterial = $state('');
+  let enrollShareIndex = $state(1);
+  let enrollAuthFactor = $state('');
   let enrolling = $state(false);
   let enrollError: string | null = $state(null);
-  // enrolledCert holds the certificate issued to the last enrolled officer.
-  // The officer needs it for mTLS to claim its share, and the officer list
-  // never returns it, so it stays shown until the next enrollment.
-  let enrolledCert: { username: string; cert_pem: string } | null = $state(null);
 
   async function onEnrollFile(e: Event): Promise<void> {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (file === undefined) return;
-    enrollCSR = await file.text();
+    const text = await file.text();
+    enrollMaterial = text;
   }
 
   async function submitEnroll(): Promise<void> {
     enrollError = null;
-    if (!enrollUsername.trim() || !enrollCSR.trim()) {
-      enrollError = 'username and CSR are required';
+    if (
+      !enrollUsername.trim() ||
+      !enrollMaterial.trim() ||
+      !enrollAuthFactor.trim() ||
+      enrollShareIndex < 1
+    ) {
+      enrollError = 'all fields are required';
       return;
     }
     if (client === null) {
@@ -171,14 +281,19 @@
       return;
     }
     enrolling = true;
-    enrolledCert = null;
     try {
-      const username = enrollUsername.trim();
-      const enrolled = await client.enrollOfficer({ username, csr_pem: enrollCSR });
-      enrolledCert = { username, cert_pem: enrolled.cert_pem };
-      showToast({ message: `Officer ${username} enrolled`, type: 'success' });
+      const officer = await client.enrollOfficer({
+        username: enrollUsername.trim(),
+        kind: enrollKind,
+        material: enrollMaterial,
+        share_index: enrollShareIndex,
+        auth_factor: enrollAuthFactor.trim(),
+      });
+      showToast({ message: `Officer ${officer.username} enrolled`, type: 'success' });
       enrollUsername = '';
-      enrollCSR = '';
+      enrollMaterial = '';
+      enrollAuthFactor = '';
+      enrollShareIndex = 1;
       void reload();
     } catch (e) {
       enrollError = e instanceof Error ? e.message : 'Enrollment failed';
@@ -201,7 +316,7 @@
   <div class="card bg-base-200 rounded-box">
     <div class="card-body p-6 gap-4">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold">Officers</h2>
+        <h2 class="text-lg font-semibold">Pending Officers</h2>
         <button
           class="btn btn-ghost btn-xs"
           onclick={() => { void reload(); }}
@@ -235,7 +350,7 @@
   </div>
 
   <!-- ===========================================================================
-       CLAIM SHARE
+       CLAIM CERTIFICATE
        =========================================================================== -->
   <div class="card bg-base-200 rounded-box">
     <div class="card-body p-6 gap-4">
@@ -243,8 +358,8 @@
         <CeremonyClaimChallenge
           client={client}
           disabled={serviceUnavailable}
-          onclaimed={(share) => {
-            showToast({ message: `Share ${share.share_index} claimed`, type: 'success' });
+          onclaimed={(resp) => {
+            showToast({ message: `${resp.username}: ${resp.status}`, type: 'success' });
             void reload();
           }}
           onerror={(err) => {
@@ -256,80 +371,153 @@
   </div>
 
   <!-- ===========================================================================
-       ENROLL OFFICER
+       CLAIM SHARE
        =========================================================================== -->
   <div class="card bg-base-200 rounded-box">
     <div class="card-body p-6 gap-4">
-      <h3 class="text-sm font-semibold">Enroll Officer</h3>
+      <h3 class="text-sm font-semibold">Claim Share</h3>
+
+      {#if shareError !== null}
+        <div class="alert alert-error text-sm" role="alert">{shareError}</div>
+      {/if}
+
+      <form
+        class="space-y-3"
+        data-testid="ceremony-claim-share"
+        onsubmit={(e) => { e.preventDefault(); void submitClaimShare(); }}
+      >
+        <div class="form-control">
+          <label class="label label-text" for="ceremony-share-username">Username</label>
+          <input
+            id="ceremony-share-username"
+            class="input input-bordered input-sm font-mono"
+            type="text"
+            bind:value={shareUsername}
+          />
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="ceremony-share-challenge">Challenge</label>
+          <textarea
+            id="ceremony-share-challenge"
+            class="textarea textarea-bordered font-mono text-xs"
+            rows="2"
+            placeholder="Paste daemon-issued challenge..."
+            bind:value={shareChallenge}
+          ></textarea>
+        </div>
+        <div class="form-control">
+          <label class="label label-text" for="ceremony-share-signature">Signature (base64)</label>
+          <textarea
+            id="ceremony-share-signature"
+            class="textarea textarea-bordered font-mono text-xs"
+            rows="2"
+            placeholder="Paste base64 signature..."
+            bind:value={shareSignatureB64}
+          ></textarea>
+        </div>
+        <button
+          class="btn btn-primary btn-sm"
+          type="submit"
+          disabled={shareSubmitting || serviceUnavailable}
+          title={serviceUnavailable ? 'Ceremony service is not active. Run `quicbaasd init` first.' : undefined}
+        >
+          {shareSubmitting ? 'Submitting...' : 'Submit Share'}
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===========================================================================
+       ENROLL EXTERNAL OFFICER
+       =========================================================================== -->
+  <div class="card bg-base-200 rounded-box">
+    <div class="card-body p-6 gap-4">
+      <h3 class="text-sm font-semibold">Enroll External Officer</h3>
+
+      {#if enrollError !== null}
+        <div class="alert alert-error text-sm" role="alert">{enrollError}</div>
+      {/if}
 
       <form
         class="space-y-3"
         data-testid="ceremony-enroll-form"
         onsubmit={(e) => { e.preventDefault(); void submitEnroll(); }}
       >
-        {#if enrollError !== null}
-          <div class="alert alert-error text-sm" role="alert">{enrollError}</div>
-        {/if}
-
-        <div class="form-control">
-          <label class="label label-text" for="ceremony-enroll-username">Username</label>
-          <input
-            id="ceremony-enroll-username"
-            class="input input-bordered input-sm font-mono"
-            type="text"
-            bind:value={enrollUsername}
-          />
+        <div class="grid grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label label-text" for="ceremony-enroll-username">Username</label>
+            <input
+              id="ceremony-enroll-username"
+              class="input input-bordered input-sm font-mono"
+              type="text"
+              bind:value={enrollUsername}
+            />
+          </div>
+          <div class="form-control">
+            <label class="label label-text" for="ceremony-enroll-kind">Kind</label>
+            <select
+              id="ceremony-enroll-kind"
+              class="select select-bordered select-sm"
+              bind:value={enrollKind}
+            >
+              <option value="cert">cert</option>
+              <option value="pubkey">pubkey</option>
+            </select>
+          </div>
+          <div class="form-control">
+            <label class="label label-text" for="ceremony-enroll-share">Share index</label>
+            <input
+              id="ceremony-enroll-share"
+              class="input input-bordered input-sm"
+              type="number"
+              min="1"
+              bind:value={enrollShareIndex}
+            />
+          </div>
+          <div class="form-control">
+            <label class="label label-text" for="ceremony-enroll-factor">Auth factor</label>
+            <input
+              id="ceremony-enroll-factor"
+              class="input input-bordered input-sm"
+              type="text"
+              placeholder="yubikey, passphrase..."
+              bind:value={enrollAuthFactor}
+            />
+          </div>
         </div>
 
         <div class="form-control">
-          <label class="label label-text" for="ceremony-enroll-file">Upload CSR</label>
+          <label class="label label-text" for="ceremony-enroll-file">Upload material</label>
           <input
             id="ceremony-enroll-file"
             class="file-input file-input-bordered file-input-sm"
             type="file"
-            accept=".pem,.csr,.txt"
+            accept=".pem,.crt,.cer,.pub,.txt"
             onchange={onEnrollFile}
           />
         </div>
 
         <div class="form-control">
-          <label class="label label-text" for="ceremony-enroll-csr">CSR (PEM)</label>
+          <label class="label label-text" for="ceremony-enroll-material">
+            Material (PEM cert or SSH/SPKI pubkey)
+          </label>
           <textarea
-            id="ceremony-enroll-csr"
+            id="ceremony-enroll-material"
             class="textarea textarea-bordered font-mono text-xs"
             rows="4"
-            placeholder="Paste or upload the officer's PEM CSR..."
-            bind:value={enrollCSR}
+            placeholder="Paste or upload PEM/pubkey material..."
+            bind:value={enrollMaterial}
           ></textarea>
         </div>
 
         <button
           class="btn btn-primary btn-sm"
           type="submit"
-          disabled={enrolling || serviceUnavailable}
-          title={serviceUnavailable ? 'Ceremony service is not active. Run `quicbaasd init` first.' : undefined}
+          disabled={enrolling}
         >
           {enrolling ? 'Enrolling...' : 'Enroll Officer'}
         </button>
       </form>
-
-      {#if enrolledCert !== null}
-        {@const issued = enrolledCert}
-        <div class="space-y-2" data-testid="ceremony-enrolled-cert">
-          <p class="text-sm">
-            Certificate issued to <span class="font-mono">{issued.username}</span>. Give it to
-            the officer: it authenticates the share claim over mTLS and is not shown again.
-          </p>
-          <pre class="bg-base-300 rounded p-3 font-mono text-xs overflow-x-auto">{issued.cert_pem}</pre>
-          <button
-            class="btn btn-outline btn-sm"
-            type="button"
-            onclick={() => downloadText(`${issued.username}.crt.pem`, issued.cert_pem)}
-          >
-            Download certificate
-          </button>
-        </div>
-      {/if}
     </div>
   </div>
 </div>

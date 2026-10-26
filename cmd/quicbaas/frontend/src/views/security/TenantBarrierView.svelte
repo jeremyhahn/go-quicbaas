@@ -26,9 +26,9 @@
     shamir      → Shamir unseal flow with quorum progress (when sealed)
 
   Before initialization the BarrierStrategyPicker lets the admin provision any
-  of the three strategies. A shamir init returns no share material: the shares
-  are sealed to their holders, who each claim their own. The view lists the
-  certificates issued to an inline roster's holders and the sealed share count.
+  of the three strategies. A shamir init reveals the minted shares behind a
+  save-acknowledgement gate (ShamirSharesReveal) — the shares are the only copy
+  of the unseal material and are returned exactly once.
 
   All barrier traffic flows through the typed @quicbaas/sdk TenantBarrierClient
   (RestTenantBarrierClient under the hood); the view never builds raw URLs.
@@ -38,28 +38,27 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Lock } from 'lucide-svelte';
-  import { barrierCredentialBytes, toInitRequest } from '../../lib/barrierCredential.ts';
+  import {
+    encodeBarrierCredential,
+    encodeInitParams,
+  } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
   import type {
-    BarrierQuorumOp,
     TenantBarrierClient,
-    TenantBarrierInitResponse,
     TenantBarrierStatusResponse,
     IAMTenant,
   } from '@quicbaas/sdk';
   import {
     BarrierStatusBadge,
     BarrierStrategyPicker,
-    CeremonyClaimChallenge,
+    ShamirSharesReveal,
     ShamirShareInput,
     BarrierUnsealForm,
-    tenantClaimLabel,
   } from '@quicbaas/svelte-security';
   import type {
     BarrierClient as StructuralBarrierClient,
     BarrierStatus,
     BarrierStrategy,
-    ShareClaimClient,
     TenantBarrierInitParams,
   } from '@quicbaas/svelte-security';
 
@@ -114,13 +113,10 @@
   }
 
   // structuralClient adapts the tenant-scoped SDK calls into the structural
-  // BarrierClient shape ShamirShareInput expects (quorumBegin / quorumSubmit
-  // of the tenant's quorum for op). It is rebuilt whenever the selected tenant
-  // changes so every call is bound to the active tenant.
-  function makeStructuralClient(
-    tenantId: string,
-    op: BarrierQuorumOp = 'unseal',
-  ): StructuralBarrierClient {
+  // BarrierClient shape ShamirShareInput expects (unseal({share}) →
+  // {sealed, shares_provided, threshold}). It is rebuilt whenever the selected
+  // tenant changes so every call is bound to the active tenant.
+  function makeStructuralClient(tenantId: string): StructuralBarrierClient {
     return {
       async status(): Promise<BarrierStatus> {
         return adaptStatus(await tb.tenantBarrierStatus(tenantId));
@@ -133,43 +129,15 @@
           threshold: req.threshold,
           shares: req.total_shares,
         });
-        return {
-          threshold: resp?.threshold ?? 0,
-          total_shares: resp?.total_shares ?? 0,
-          share_count: resp?.share_count ?? 0,
-        };
+        return { shares: resp?.shares ?? [] };
       },
       async unseal(req) {
-        await tb.tenantBarrierUnseal(tenantId, barrierCredentialBytes(req.passphrase));
-        const next = await tb.tenantBarrierStatus(tenantId);
+        const resp = await tb.tenantBarrierUnsealShare(tenantId, req.share);
         return {
-          sealed: next.sealed,
-          shares_provided: 0,
-          threshold: next.shamir_threshold,
+          sealed: resp.sealed,
+          shares_provided: resp.submitted,
+          threshold: resp.required,
         };
-      },
-      async quorumBegin(req) {
-        return tb.tenantBarrierQuorumBegin(tenantId, { op, ...req });
-      },
-      async quorumSubmit(req) {
-        return tb.tenantBarrierQuorumSubmit(tenantId, { op, ...req });
-      },
-    };
-  }
-
-  // makeClaimClient adapts the tenant share-claim verbs into the structural
-  // ShareClaimClient CeremonyClaimChallenge drives, bound to one tenant.
-  function makeClaimClient(tenantId: string): ShareClaimClient {
-    return {
-      async beginClaim(username) {
-        return tb.tenantBarrierShareClaimBegin(tenantId, username);
-      },
-      async claimShare(req) {
-        return tb.tenantBarrierShareClaimComplete(tenantId, {
-          username: req.username,
-          nonce_hex: req.nonce_hex,
-          signature: req.signature_b64,
-        });
       },
     };
   }
@@ -189,15 +157,12 @@
   let loading = $state(false);
   let statusError: string | null = $state(null);
 
-  // Init state — a Shamir init's share-free result is held here so the
-  // operator sees the holder certificates before the view moves on to status.
+  // Init state — the freshly minted shares are held here until the operator
+  // acknowledges saving them via ShamirSharesReveal.
   let initing = $state(false);
-  let initResult: TenantBarrierInitResponse | null = $state(null);
+  let revealedShares: string[] | null = $state(null);
+  let revealedThreshold = $state(0);
   let sealing = $state(false);
-  // sealQuorum is the tenant's seal-quorum client while a Shamir seal is in
-  // progress: qrdb refuses a direct seal of a Shamir barrier, so its key
-  // holders seal it the way they unseal it.
-  let sealQuorum: StructuralBarrierClient | null = $state(null);
 
   async function loadTenants(): Promise<void> {
     tenantsLoading = true;
@@ -250,9 +215,8 @@
   // Reload status whenever the operator picks a different tenant.
   $effect(() => {
     void selectedTenantID;
-    // Reset transient init and seal state when switching tenants.
-    initResult = null;
-    sealQuorum = null;
+    // Reset transient init state when switching tenants.
+    revealedShares = null;
     void loadStatus();
   });
 
@@ -264,17 +228,24 @@
     if (selectedTenantID === '') return;
     initing = true;
     try {
-      // The SDK takes the passphrase as bytes and base64-encodes it once;
-      // init and unseal both hand it the same UTF-8 bytes, so a barrier
-      // initialized through this view unseals through it (go-quicbaas#988).
-      const resp = await tb.tenantBarrierInit(selectedTenantID, toInitRequest(params));
+      // Encode here, not in the picker: a barrier credential is base64 BYTES
+      // on the wire, and unseal below has always encoded. Forwarding the
+      // picker's plaintext meant a barrier initialized through this view could
+      // not be unsealed through it — and worse, a passphrase that happens to
+      // be valid base64 initialized silently with different bytes
+      // (go-quicbaas#988). Both paths now go through the one encoder.
+      const resp = await tb.tenantBarrierInit(
+        selectedTenantID,
+        encodeInitParams(params),
+      );
       if (params.strategy === 'shamir' && resp !== undefined) {
-        // Shamir returns share-free metadata: the shares are sealed to their
-        // holders, who each claim their own.
-        initResult = resp;
+        // Shamir returns the shares exactly once — reveal them behind the
+        // save-acknowledgement gate before refreshing status.
+        revealedShares = resp.shares;
+        revealedThreshold = resp.threshold;
         showToast({
-          message: 'Tenant barrier initialized — each holder now claims their share',
-          type: 'success',
+          message: 'Tenant barrier initialized — store the Shamir shares securely!',
+          type: 'warning',
         });
       } else {
         showToast({ message: 'Tenant barrier initialized', type: 'success' });
@@ -290,17 +261,18 @@
     }
   }
 
-  async function dismissInitResult(): Promise<void> {
-    initResult = null;
+  async function dismissShares(): Promise<void> {
+    revealedShares = null;
     await loadStatus();
+  }
+
+  async function handlePassphraseUnseal(passphrase: string): Promise<void> {
+    if (selectedTenantID === '') return;
+    await tb.tenantBarrierUnseal(selectedTenantID, encodeBarrierCredential(passphrase));
   }
 
   async function handleSeal(): Promise<void> {
     if (selectedTenantID === '') return;
-    if (barrierStatus?.strategy === 'shamir') {
-      sealQuorum = makeStructuralClient(selectedTenantID, 'seal');
-      return;
-    }
     sealing = true;
     try {
       await tb.tenantBarrierSeal(selectedTenantID);
@@ -316,17 +288,6 @@
     }
   }
 </script>
-
-{#snippet holderClaim(tenantId: string)}
-  <div class="border-t border-base-300 pt-4" data-testid="tenant-barrier-claim">
-    <CeremonyClaimChallenge
-      client={makeClaimClient(tenantId)}
-      claimLabel={tenantClaimLabel(tenantId)}
-      onclaimed={(share) => { showToast({ message: `Share ${share.share_index} claimed`, type: 'success' }); }}
-      onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
-    />
-  </div>
-{/snippet}
 
 <div class="p-6 space-y-6">
   <PageHeader
@@ -398,23 +359,13 @@
                Not initialized → strategy picker
                ================================================================= -->
           {#if !status.initialized}
-            {#if initResult !== null}
-              <div class="space-y-3" data-testid="tenant-barrier-holders">
-                <div class="alert alert-info text-sm" role="alert">
-                  <span>
-                    Shamir barrier initialized: any {initResult.threshold} of {initResult.total_shares}
-                    shares unseal it. {initResult.share_count} shares sealed to their holders; each
-                    holder claims their own share.
-                  </span>
-                </div>
-                {#each initResult.holders ?? [] as holder (holder.username)}
-                  <div class="space-y-1" data-testid="tenant-barrier-holder">
-                    <p class="text-sm font-semibold">{holder.username} <span class="text-xs text-base-content/60">({holder.role})</span></p>
-                    <pre class="text-xs font-mono whitespace-pre-wrap break-all bg-base-200 p-2 rounded">{holder.cert_pem}</pre>
-                  </div>
-                {/each}
-                {@render holderClaim(selectedTenantID)}
-                <button class="btn btn-sm btn-primary" onclick={() => { void dismissInitResult(); }}>Continue</button>
+            {#if revealedShares !== null}
+              <div data-testid="tenant-barrier-shares-reveal">
+                <ShamirSharesReveal
+                  shares={revealedShares}
+                  threshold={revealedThreshold}
+                  ondismiss={() => { void dismissShares(); }}
+                />
               </div>
             {:else}
               <div class="space-y-3" data-testid="tenant-barrier-init">
@@ -438,10 +389,22 @@
             </div>
 
           {:else if barrierStatus.strategy === 'software'}
-            {#if status.sealed && structural !== null}
+            {#if status.sealed}
               <div data-testid="tenant-barrier-passphrase-unseal">
                 <BarrierUnsealForm
-                  client={structural}
+                  client={{
+                    status: async () => barrierStatus!,
+                    init: async () => ({ shares: [] }),
+                    unseal: async (req) => {
+                      await handlePassphraseUnseal(req.share);
+                      const next = await tb.tenantBarrierStatus(selectedTenantID);
+                      return {
+                        sealed: next.sealed,
+                        shares_provided: 0,
+                        threshold: next.shamir_threshold,
+                      };
+                    },
+                  }}
                   label="Unseal passphrase"
                   placeholder="Enter the tenant passphrase..."
                   onunseal={(resp) => {
@@ -474,25 +437,10 @@
                   onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
                 />
               </div>
-            {:else if sealQuorum !== null}
-              <div data-testid="tenant-barrier-shamir-seal">
-                <ShamirShareInput
-                  client={sealQuorum}
-                  status={barrierStatus}
-                  label="Seal"
-                  onunseal={() => {
-                    sealQuorum = null;
-                    showToast({ message: 'Tenant barrier sealed', type: 'success' });
-                    void loadStatus();
-                  }}
-                  onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
-                />
-              </div>
             {:else}
               <div class="alert alert-success text-sm" data-testid="tenant-barrier-shamir-unsealed">
                 <span>Shamir barrier is unsealed and active.</span>
               </div>
-              {@render holderClaim(selectedTenantID)}
             {/if}
 
           {:else}
@@ -538,7 +486,7 @@
             <button
               class="btn btn-warning btn-sm"
               onclick={() => { void handleSeal(); }}
-              disabled={sealing || sealQuorum !== null}
+              disabled={sealing}
               data-testid="tenant-barrier-seal"
             >
               {sealing ? 'Sealing...' : 'Seal'}

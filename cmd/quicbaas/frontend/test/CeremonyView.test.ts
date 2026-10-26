@@ -1,12 +1,9 @@
 /**
  * CeremonyView.test.ts
  *
- * Verifies that CeremonyView renders the officer list, the share-claim flow
- * and the officer enrollment form AND that every HTTP call lands on the
- * barrier holder routes the server serves: GET/POST /api/v1/barrier/officers
- * and /api/v1/barrier/officers/{username}/claim/{begin,complete}. It never
- * hits /api/v1/ceremony/* or the removed /api/v1/init/claim-cert,
- * /api/v1/init/officer-share and /api/v1/init/enroll-external-officer routes.
+ * Verifies that CeremonyView renders the officer-list, claim-cert, claim-share,
+ * and enroll-external-officer surfaces AND that every HTTP call lands on
+ * /api/v1/init/* (never /api/v1/ceremony/*).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,19 +20,6 @@ interface FetchSpy {
   mock: ReturnType<typeof vi.fn>;
 }
 
-const removedRoutes = ['/api/v1/ceremony/', '/api/v1/seal/', '/api/v1/init/claim-cert', '/api/v1/init/officer-share', '/api/v1/init/enroll-external-officer'];
-
-function reply(status: number, data: unknown) {
-  return Promise.resolve({
-    ok: status < 400,
-    status,
-    statusText: status < 400 ? 'OK' : 'Service Unavailable',
-    headers: new Headers({ 'Content-Type': 'application/json' }),
-    text: () => Promise.resolve(JSON.stringify(data ?? {})),
-    json: () => Promise.resolve(data ?? {}),
-  });
-}
-
 function makeFetchSpy(
   responses: Record<string, (call: FetchCall) => unknown>,
 ): FetchSpy {
@@ -50,46 +34,37 @@ function makeFetchSpy(
     const call: FetchCall = { url, method, body };
     calls.push(call);
 
-    for (const route of removedRoutes) {
-      if (url.includes(route)) {
-        throw new Error(`removed route hit: ${url}`);
-      }
+    if (url.includes('/api/v1/ceremony/')) {
+      throw new Error(`forbidden legacy URL hit: ${url}`);
+    }
+    if (url.includes('/api/v1/seal/')) {
+      throw new Error(`forbidden legacy URL hit: ${url}`);
     }
 
     const keys = Object.keys(responses).sort((a, b) => b.length - a.length);
     for (const key of keys) {
       if (url.includes(key)) {
-        return reply(200, responses[key](call));
+        const data = responses[key](call);
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify(data ?? {})),
+          json: () => Promise.resolve(data ?? {}),
+        });
       }
     }
-    return reply(200, {});
+
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve('{}'),
+      json: () => Promise.resolve({}),
+    });
   });
 
   return { calls, mock };
-}
-
-// unavailableSpy answers the officer list with the daemon's 503 envelope.
-function unavailableSpy(): FetchSpy {
-  const spy = makeFetchSpy({});
-  const answer = spy.mock.getMockImplementation()!;
-  spy.mock.mockImplementation((url: string, init?: RequestInit) => {
-    if (url.endsWith('/api/v1/barrier/officers') && (init?.method ?? 'GET') === 'GET') {
-      spy.calls.push({ url, method: 'GET', body: undefined });
-      return reply(503, { error: 'ceremony service not available' });
-    }
-    return answer(url, init);
-  });
-  return spy;
-}
-
-// readBlob reads a Blob as text; jsdom's Blob has no text() method.
-function readBlob(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(blob);
-  });
 }
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
@@ -101,24 +76,19 @@ import CeremonyView from '../src/views/security/CeremonyView.svelte';
 const mockOfficers = [
   {
     username: 'alice',
-    role: 'officer',
+    kind: 'cert',
+    claim_status: 'pending',
     share_index: 1,
-    factors: ['yubikey'],
-    enrolled_at: '2026-10-25T00:00:00Z',
-    share_pending: true,
+    auth_factor: 'yubikey',
   },
   {
     username: 'bob',
-    role: 'officer',
+    kind: 'pubkey',
+    claim_status: 'enrolled',
     share_index: 2,
-    factors: ['passphrase'],
-    enrolled_at: '2026-10-25T00:00:00Z',
-    claimed_at: '2026-10-25T00:01:00Z',
-    share_pending: false,
+    auth_factor: 'passphrase',
   },
 ];
-
-const csr = '-----BEGIN CERTIFICATE REQUEST-----\nABC\n-----END CERTIFICATE REQUEST-----';
 
 describe('CeremonyView', () => {
   let spy: FetchSpy;
@@ -126,10 +96,10 @@ describe('CeremonyView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     spy = makeFetchSpy({
-      '/api/v1/barrier/officers': (call) =>
-        call.method === 'GET' ? { officers: mockOfficers } : { cert_pem: 'CERT', role: 'officer' },
-      '/api/v1/barrier/officers/alice/claim/begin': () => ({ nonce_hex: 'beef', expires_at: '2026-10-25T00:05:00Z' }),
-      '/api/v1/barrier/officers/alice/claim/complete': () => ({ share_index: 1, envelope: 'ZW52ZWxvcGU=' }),
+      '/api/v1/init/officers': () => ({ officers: mockOfficers }),
+      '/api/v1/init/claim-cert/complete': () => ({ cert_pem: 'PEM', ca_cert_pem: 'CA' }),
+      '/api/v1/init/officer-share/complete': () => ({ share_index: 1, share_json: '{"index":1}' }),
+      '/api/v1/init/enroll-external-officer': () => ({ sealed_share: '' }),
     });
     vi.stubGlobal('fetch', spy.mock);
   });
@@ -141,121 +111,164 @@ describe('CeremonyView', () => {
     });
   });
 
-  it('lists the officers from GET /api/v1/barrier/officers', async () => {
+  it('hits /api/v1/init/officers (never /api/v1/ceremony/officers)', async () => {
     render(CeremonyView);
     await waitFor(() => {
-      expect(spy.calls.some((c) => c.url.endsWith('/api/v1/barrier/officers') && c.method === 'GET')).toBe(true);
+      expect(spy.calls.some((c) => c.url.endsWith('/api/v1/init/officers'))).toBe(true);
     });
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/ceremony/'))).toBe(true);
   });
 
-  it('renders each officer with its claim state, share index, factors and kind', async () => {
+  it('renders the officer list with each row showing username, status, share index, auth factor', async () => {
     render(CeremonyView);
-
-    const aliceTr = (await screen.findByText('alice')).closest('tr')!;
-    expect(within(aliceTr).getByText('enrolled')).toBeInTheDocument();
-    expect(within(aliceTr).getByText('1')).toBeInTheDocument();
-    expect(within(aliceTr).getByText('yubikey')).toBeInTheDocument();
-    expect(within(aliceTr).getByText('cert')).toBeInTheDocument();
-
-    const bobTr = screen.getByText('bob').closest('tr')!;
-    expect(within(bobTr).getByText('claimed')).toBeInTheDocument();
-    expect(within(bobTr).getByText('passphrase')).toBeInTheDocument();
-  });
-
-  it('claims a share: begin shows the message to sign, complete posts the signature', async () => {
-    render(CeremonyView);
-    const form = await screen.findByTestId('ceremony-claim-challenge');
-
-    await fireEvent.input(within(form).getByLabelText(/^Username$/i), { target: { value: 'alice' } });
-    await fireEvent.click(within(form).getByRole('button', { name: /Request Challenge/i }));
-
     await waitFor(() => {
-      // The officer signs qrdb's canonical ceremony.ShareClaimMessage for the
-      // system barrier, never the bare nonce.
-      expect(within(form).getByTestId('ceremony-claim-message')).toHaveValue(
-        'cXJkYi9zaGFyZS1jbGFpbS92MQBzeXN0ZW0AYWxpY2UAvu8=',
-      );
-    });
-    expect(within(form).queryByText(/^beef$/)).toBeNull();
-    expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/officers/alice/claim/begin'))).toMatchObject({
-      method: 'POST',
-      body: { username: 'alice' },
+      expect(screen.getByTestId('ceremony-officer-list')).toBeInTheDocument();
     });
 
-    await fireEvent.input(within(form).getByLabelText(/Signature \(base64\)/i), { target: { value: 'c2lnbg==' } });
+    const aliceRow = await screen.findByText('alice');
+    expect(aliceRow).toBeInTheDocument();
+
+    const aliceTr = aliceRow.closest('tr')!;
+    const aliceWithin = within(aliceTr);
+    expect(aliceWithin.getByText('pending')).toBeInTheDocument();
+    expect(aliceWithin.getByText('1')).toBeInTheDocument();
+    expect(aliceWithin.getByText('yubikey')).toBeInTheDocument();
+    expect(aliceWithin.getByText('cert')).toBeInTheDocument();
+
+    const bobRow = screen.getByText('bob').closest('tr')!;
+    const bobWithin = within(bobRow);
+    expect(bobWithin.getByText('enrolled')).toBeInTheDocument();
+    expect(bobWithin.getByText('passphrase')).toBeInTheDocument();
+    expect(bobWithin.getByText('pubkey')).toBeInTheDocument();
+  });
+
+  it('renders the Claim Certificate form with username/challenge/signature inputs', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-challenge')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('ceremony-claim-challenge');
+    expect(within(form).getByLabelText(/Username$/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/^Challenge$/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/Signature \(base64\)/i)).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: /Submit Claim/i })).toBeInTheDocument();
+  });
+
+  it('claim-cert submission posts to /api/v1/init/claim-cert/complete', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-challenge')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('ceremony-claim-challenge');
+    const usernameInput = within(form).getByLabelText(/^Username$/i);
+    const challengeInput = within(form).getByLabelText(/^Challenge$/i);
+    const signatureInput = within(form).getByLabelText(/Signature \(base64\)/i);
+
+    await fireEvent.input(usernameInput, { target: { value: 'alice' } });
+    await fireEvent.input(challengeInput, { target: { value: 'deadbeef' } });
+    await fireEvent.input(signatureInput, { target: { value: 'c2lnbg==' } });
     await fireEvent.click(within(form).getByRole('button', { name: /Submit Claim/i }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('ceremony-claim-envelope')).toHaveTextContent('ZW52ZWxvcGU=');
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/init/claim-cert/complete'));
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0].method).toBe('POST');
     });
-    expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/officers/alice/claim/complete'))).toMatchObject({
-      method: 'POST',
-      body: { username: 'alice', nonce_hex: 'beef', signature: 'c2lnbg==' },
-    });
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/ceremony/'))).toBe(true);
   });
 
-  it('enrolls an officer with POST /api/v1/barrier/officers', async () => {
+  it('renders the Claim Share form', async () => {
     render(CeremonyView);
-    const form = (await screen.findByTestId('ceremony-enroll-form')) as HTMLFormElement;
-    expect(within(form).getByLabelText(/Upload CSR/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-share')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /Submit Share/i })).toBeInTheDocument();
+  });
 
-    await fireEvent.input(within(form).getByLabelText(/^Username$/i), { target: { value: 'carol' } });
-    await fireEvent.input(within(form).getByLabelText(/^CSR \(PEM\)$/i), { target: { value: csr } });
+  it('claim-share submission posts to /api/v1/init/officer-share/complete', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-share')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('ceremony-claim-share');
+    const usernameInput = within(form).getByLabelText(/^Username$/i);
+    const challengeInput = within(form).getByLabelText(/^Challenge$/i);
+    const signatureInput = within(form).getByLabelText(/Signature \(base64\)/i);
+
+    await fireEvent.input(usernameInput, { target: { value: 'alice' } });
+    await fireEvent.input(challengeInput, { target: { value: 'deadbeef' } });
+    await fireEvent.input(signatureInput, { target: { value: 'c2lnbg==' } });
+    await fireEvent.click(within(form).getByRole('button', { name: /Submit Share/i }));
+
+    await waitFor(() => {
+      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/init/officer-share/complete'));
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0].method).toBe('POST');
+    });
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/ceremony/'))).toBe(true);
+  });
+
+  it('renders the Enroll External Officer form with KIND selector + file upload + share index + auth factor', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-enroll-form')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('ceremony-enroll-form');
+    expect(within(form).getByLabelText(/^Kind$/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/Share index/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/Auth factor/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/Upload material/i)).toBeInTheDocument();
+    expect(within(form).getByLabelText(/^Material \(/i)).toBeInTheDocument();
+    expect(within(form).getByRole('button', { name: /Enroll Officer/i })).toBeInTheDocument();
+  });
+
+  it('enroll submission posts to /api/v1/init/enroll-external-officer', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-enroll-form')).toBeInTheDocument();
+    });
+    const form = screen.getByTestId('ceremony-enroll-form') as HTMLFormElement;
+    await fireEvent.input(within(form).getByLabelText(/Username/i), {
+      target: { value: 'carol' },
+    });
+    // Share-index defaults to 1 already; setting it via fireEvent.input
+    // triggers a jsdom Decimal/step-validation bug, so we leave the default.
+    await fireEvent.input(within(form).getByLabelText(/Auth factor/i), {
+      target: { value: 'mtls' },
+    });
+    await fireEvent.input(within(form).getByLabelText(/^Material \(/i), {
+      target: { value: '-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----' },
+    });
+    // Submit via the form's submit event to avoid jsdom's requestSubmit path
+    // which crashes on numeric step validation when the share-index input
+    // is touched (jsdom 25 lacks a Decimal constructor in some builds).
     await fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/officers') && c.method === 'POST')).toMatchObject({
-        body: { username: 'carol', csr_pem: csr },
-      });
+      const hits = spy.calls.filter((c) =>
+        c.url.endsWith('/api/v1/init/enroll-external-officer'),
+      );
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0].method).toBe('POST');
     });
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/ceremony/'))).toBe(true);
   });
 
-  it('delivers the enrolled officer certificate: shown and downloadable after the form clears', async () => {
-    const certPEM = '-----BEGIN CERTIFICATE-----\nCAROL\n-----END CERTIFICATE-----';
-    spy = makeFetchSpy({
-      '/api/v1/barrier/officers': (call) =>
-        call.method === 'GET' ? { officers: mockOfficers } : { cert_pem: certPEM, role: 'officer' },
-    });
-    vi.stubGlobal('fetch', spy.mock);
-    const blobs: Blob[] = [];
-    URL.createObjectURL = vi.fn((blob: Blob) => { blobs.push(blob); return 'blob:officer-cert'; });
-    URL.revokeObjectURL = vi.fn();
-    const downloads: string[] = [];
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      downloads.push(this.download);
-    });
-
+  it('Kind selector exposes both cert and pubkey options', async () => {
     render(CeremonyView);
-    const form = (await screen.findByTestId('ceremony-enroll-form')) as HTMLFormElement;
-    await fireEvent.input(within(form).getByLabelText(/^Username$/i), { target: { value: 'carol' } });
-    await fireEvent.input(within(form).getByLabelText(/^CSR \(PEM\)$/i), { target: { value: csr } });
-    await fireEvent.submit(form);
-
-    const issued = await screen.findByTestId('ceremony-enrolled-cert');
-    expect(issued).toHaveTextContent('CAROL');
-    expect((within(form).getByLabelText(/^Username$/i) as HTMLInputElement).value).toBe('');
-
-    await fireEvent.click(within(issued).getByRole('button', { name: /Download certificate/i }));
-    expect(downloads).toEqual(['carol.crt.pem']);
-    expect(blobs).toHaveLength(1);
-    expect(await readBlob(blobs[0])).toBe(certPEM);
-    click.mockRestore();
-  });
-
-  it('refuses to enroll without a CSR and sends nothing', async () => {
-    render(CeremonyView);
-    const form = (await screen.findByTestId('ceremony-enroll-form')) as HTMLFormElement;
-
-    await fireEvent.input(within(form).getByLabelText(/^Username$/i), { target: { value: 'carol' } });
-    await fireEvent.submit(form);
-
-    expect(await within(form).findByRole('alert')).toHaveTextContent(/CSR/);
-    expect(spy.calls.some((c) => c.method === 'POST')).toBe(false);
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-enroll-form')).toBeInTheDocument();
+    });
+    const select = screen.getByLabelText(/^Kind$/i) as HTMLSelectElement;
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual(expect.arrayContaining(['cert', 'pubkey']));
   });
 
   it('refresh button reissues the officers fetch', async () => {
     render(CeremonyView);
-    await screen.findByText('alice');
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument();
+    });
     const initialCalls = spy.calls.length;
 
     await fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
@@ -264,41 +277,160 @@ describe('CeremonyView', () => {
     });
   });
 
-  it('renders an informational empty state, not a destructive banner, when the officer list returns 503', async () => {
-    vi.stubGlobal('fetch', unavailableSpy().mock);
+  it('regression: never calls /api/v1/ceremony/* on any operation', async () => {
+    render(CeremonyView);
+    await waitFor(() => {
+      expect(spy.calls.length).toBeGreaterThan(0);
+    });
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/ceremony/'))).toBe(true);
+    expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
+  });
+
+  /**
+   * Regression: when the daemon returns 503 with the typed envelope
+   * {"error": "ceremony service not available"}, the previous behaviour
+   * rendered a destructive red banner. That misleads operators — the
+   * subsystem isn't broken, it just hasn't been bootstrapped yet. The
+   * fix renders an informational empty state pointing at the next step.
+   */
+  it('renders an informational empty state (not a destructive banner) when /api/v1/init/officers returns 503', async () => {
+    const calls: FetchCall[] = [];
+    const mock503 = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      calls.push({ url, method, body: undefined });
+      if (url.includes('/api/v1/init/officers')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({ error: 'ceremony service not available' }),
+            ),
+          json: () =>
+            Promise.resolve({ error: 'ceremony service not available' }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: () => Promise.resolve('{}'),
+        json: () => Promise.resolve({}),
+      });
+    });
+    vi.stubGlobal('fetch', mock503);
 
     render(CeremonyView);
 
+    // The informational empty-state element must appear.
     const emptyState = await screen.findByTestId('ceremony-service-unavailable');
+    expect(emptyState).toBeInTheDocument();
     expect(emptyState.className).toMatch(/alert-info/);
+    // It must NOT carry the destructive class.
     expect(emptyState.className).not.toMatch(/alert-error/);
+
+    // The empty state must actively guide the operator to the next step.
     expect(emptyState.textContent ?? '').toMatch(/quicbaasd init/);
-    for (const card of Array.from(document.querySelectorAll('.alert-error'))) {
+
+    // A red destructive error banner anywhere in the document would be
+    // a regression. We tolerate alert-error inside other unrelated
+    // forms (claim share / enroll), but the Pending Officers card itself
+    // must be clear.
+    const officerCards = document.querySelectorAll('.alert-error');
+    for (const card of Array.from(officerCards)) {
       expect(card.textContent ?? '').not.toMatch(/ceremony service not available/);
     }
   });
 
-  it('disables the claim and enroll buttons when the ceremony service is inactive (#82)', async () => {
-    vi.stubGlobal('fetch', unavailableSpy().mock);
+  /**
+   * Regression: when the daemon's GET /api/v1/init/officers handler was
+   * missing the request returned 404 and the view rendered a red error
+   * banner ("404 Not Found") inside the Pending Officers card. With the
+   * handler wired and returning `{"officers": []}` the page must NOT
+   * render any alert-error envelope inside the Pending Officers card.
+   */
+  // ---------------------------------------------------------------------------
+  // Issue #82: submit buttons must be disabled when ceremony service is inactive
+  // ---------------------------------------------------------------------------
+
+  it('"Submit Claim" button is disabled when ceremony service is inactive (#82)', async () => {
+    const mock503 = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v1/init/officers')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          text: () => Promise.resolve(JSON.stringify({ error: 'ceremony service not available' })),
+          json: () => Promise.resolve({ error: 'ceremony service not available' }),
+        });
+      }
+      return Promise.resolve({
+        ok: true, status: 200, statusText: 'OK',
+        text: () => Promise.resolve('{}'),
+        json: () => Promise.resolve({}),
+      });
+    });
+    vi.stubGlobal('fetch', mock503);
 
     render(CeremonyView);
+
     await screen.findByTestId('ceremony-service-unavailable');
 
-    expect(screen.getByRole('button', { name: /Submit Claim/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Enroll Officer/i })).toBeDisabled();
+    const submitClaimBtn = screen.getByRole('button', { name: /Submit Claim/i });
+    expect(submitClaimBtn).toBeDisabled();
   });
 
-  it('does not render an error banner when the officer list is empty', async () => {
-    spy = makeFetchSpy({ '/api/v1/barrier/officers': () => ({ officers: [] }) });
+  it('"Submit Share" button is disabled when ceremony service is inactive (#82)', async () => {
+    const mock503 = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v1/init/officers')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          text: () => Promise.resolve(JSON.stringify({ error: 'ceremony service not available' })),
+          json: () => Promise.resolve({ error: 'ceremony service not available' }),
+        });
+      }
+      return Promise.resolve({
+        ok: true, status: 200, statusText: 'OK',
+        text: () => Promise.resolve('{}'),
+        json: () => Promise.resolve({}),
+      });
+    });
+    vi.stubGlobal('fetch', mock503);
+
+    render(CeremonyView);
+
+    await screen.findByTestId('ceremony-service-unavailable');
+
+    const submitShareBtn = screen.getByRole('button', { name: /Submit Share/i });
+    expect(submitShareBtn).toBeDisabled();
+  });
+
+  it('does not render a 404 error banner when officers list is empty', async () => {
+    spy = makeFetchSpy({
+      // Empty roster — matches the canonical empty-state envelope.
+      '/api/v1/init/officers': () => ({ officers: [] }),
+    });
     vi.stubGlobal('fetch', spy.mock);
 
     render(CeremonyView);
 
-    const officerCard = (await screen.findByTestId('ceremony-officer-list')).closest('.card');
+    // Wait for the officers fetch to settle.
     await waitFor(() => {
-      expect(spy.calls.some((c) => c.url.endsWith('/api/v1/barrier/officers'))).toBe(true);
+      expect(spy.calls.some((c) => c.url.endsWith('/api/v1/init/officers'))).toBe(true);
     });
+
+    // The Pending Officers card must not contain any alert-error envelope.
+    const officerList = await screen.findByTestId('ceremony-officer-list');
+    const officerCard = officerList.closest('.card');
     expect(officerCard).not.toBeNull();
-    expect(officerCard!.querySelector('.alert-error')).toBeNull();
+
+    const alertErrorWithin = officerCard!.querySelector('.alert-error');
+    expect(alertErrorWithin).toBeNull();
+
+    // No "404" string should appear in the officer card either.
+    expect(officerCard!.textContent ?? '').not.toMatch(/\b404\b/);
   });
 });
