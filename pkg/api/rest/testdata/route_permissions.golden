@@ -410,6 +410,7 @@ POST /api/v1/embedding/batch permission embedding:embed
 POST /api/v1/embedding/generate permission embedding:embed
 POST /api/v1/entities/{type}/ permission kv:put
 POST /api/v1/fleet permission orchestrator:agent_register
+POST /api/v1/fleet/certificates permission orchestrator:agent_register
 POST /api/v1/fleet/enroll public -:-
 POST /api/v1/fleet/{nodeID}/disable permission orchestrator:agent_remove
 POST /api/v1/fleet/{nodeID}/enable permission orchestrator:agent_register

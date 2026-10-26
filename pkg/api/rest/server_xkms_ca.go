@@ -57,6 +57,7 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.fleetCA = ca
 	if ca == nil {
 		s.xkmsCAHandlers = nil
 		return
@@ -70,6 +71,14 @@ func (s *Server) SetCertificateAuthority(ca xkmssdk.TrustedCA) {
 	// nil logger → CAHandlers falls back to slog.Default(), which is
 	// already configured by the server process.
 	s.xkmsCAHandlers = xkmssdk.NewCAHandlers(servicer, nil)
+}
+
+// fleetCertificateAuthority returns the installed TrustedCA, or nil before
+// SetCertificateAuthority.
+func (s *Server) fleetCertificateAuthority() xkmssdk.TrustedCA {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fleetCA
 }
 
 // caHandlers returns the currently installed CA handler set, or nil if

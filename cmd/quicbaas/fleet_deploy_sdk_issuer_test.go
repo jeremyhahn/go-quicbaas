@@ -194,50 +194,8 @@ func TestDecodeFirstPEMBlock_DecodesFirstBlock(t *testing.T) {
 }
 
 // =============================================================================
-// signCSR / fetchCABundle / IssueFleetNodeCertificate via httptest
+// fetchCABundle / IssueFleetNodeCertificate via httptest
 // =============================================================================
-
-func TestSDKAgentCertIssuer_SignCSR_Happy(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/xkms/ca/sign", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(&xkmsSignCSRResponse{
-			CertificatePEM: []byte("LEAF-PEM"),
-			ChainPEM:       []byte("CHAIN-PEM"),
-		})
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	i := &sdkFleetNodeCertIssuer{baseURL: srv.URL, httpClient: srv.Client()}
-	cert, chain, err := i.signCSR(context.Background(), &xkmsSignCSRRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, []byte("LEAF-PEM"), cert)
-	assert.Equal(t, []byte("CHAIN-PEM"), chain)
-}
-
-func TestSDKAgentCertIssuer_SignCSR_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "denied", http.StatusForbidden)
-	}))
-	defer srv.Close()
-
-	i := &sdkFleetNodeCertIssuer{baseURL: srv.URL, httpClient: srv.Client()}
-	_, _, err := i.signCSR(context.Background(), &xkmsSignCSRRequest{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP 403")
-}
-
-func TestSDKAgentCertIssuer_SignCSR_BadJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("{not json"))
-	}))
-	defer srv.Close()
-
-	i := &sdkFleetNodeCertIssuer{baseURL: srv.URL, httpClient: srv.Client()}
-	_, _, err := i.signCSR(context.Background(), &xkmsSignCSRRequest{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "decode sign-csr response")
-}
 
 func TestSDKAgentCertIssuer_FetchCABundle_Happy(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,17 +256,6 @@ func TestSDKAgentCertIssuer_IssueAgentCertificate_MissingHostname(t *testing.T) 
 	var typed *pkgservice.FleetNodeCertRequestFieldError
 	require.ErrorAs(t, err, &typed)
 	assert.Equal(t, "hostname", typed.Field)
-}
-
-func TestSDKAgentCertIssuer_IssueAgentCertificate_HappyPathWithChain(t *testing.T) {
-	// A server that would sign and ship a chain is never asked: the sign
-	// route cannot request the agent SPIFFE kind, so the issuer refuses.
-	assertDeployIssuerRefusesTheKind(t, &pkgservice.FleetNodeCertificateRequest{
-		TenantID:      "tenant",
-		Hostname:      "agent01.example.com",
-		ExtraDNSNames: []string{"alt.example.com"},
-		ValidityDays:  30,
-	})
 }
 
 // =============================================================================

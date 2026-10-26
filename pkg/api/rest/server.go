@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/metrics"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Config holds REST API server configuration.
@@ -412,6 +413,10 @@ type Server struct {
 	// they return 503 Service Unavailable. Typed as an interface so
 	// server.go does not import the go-xkms rest package directly.
 	xkmsCAHandlers caHandlerSet
+
+	// fleetCA is the TrustedCA SetCertificateAuthority installed, which
+	// signs fleet node CSRs at POST /api/v1/fleet/certificates.
+	fleetCA xkmssdk.TrustedCA
 
 	// iamHandler holds the *IAMHandler created during route registration under
 	// the rest build tag. Typed as interface{} so server.go does not need to

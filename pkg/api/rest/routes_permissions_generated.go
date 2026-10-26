@@ -483,6 +483,7 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/ollama/embed":                                                        {auth: RouteAuthPermission, resource: "ollama", action: "embed"},
 	"POST /api/v1/ollama/embed/batch":                                                  {auth: RouteAuthPermission, resource: "ollama", action: "embed"},
 	"POST /api/v1/fleet":                                                               {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_register"},
+	"POST /api/v1/fleet/certificates":                                                  {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_register"},
 	"POST /api/v1/fleet/{nodeID}/disable":                                              {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_remove"},
 	"POST /api/v1/fleet/{nodeID}/enable":                                               {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_register"},
 	"POST /api/v1/fleet/{nodeID}/heartbeat":                                            {auth: RouteAuthPermission, resource: "orchestrator", action: "agent_heartbeat"},

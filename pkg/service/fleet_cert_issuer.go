@@ -21,6 +21,7 @@ package service
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -106,8 +107,8 @@ type FleetNodeCertificateRequest struct {
 	// Required by XKMSFleetNodeCertIssuer, which refuses an empty value with
 	// *FleetNodeCertNoTrustDomainError: the SAN's kind is the proof fleet
 	// enrolment requires of an agent (CA m779, ruling 62(a)), so a certificate
-	// without it is one enrolment refuses. SDKFleetNodeCertIssuer refuses
-	// every request with *FleetNodeCertKindUnavailableError before reading it.
+	// without it is one enrolment refuses. A remote issuer leaves it unset:
+	// the server signs under its own configured trust domain.
 	SPIFFETrustDomain string
 }
 
@@ -205,6 +206,106 @@ func NewXKMSFleetNodeCertIssuer(ca xkmssdk.TrustedCA, records FleetNodeCertRecor
 }
 
 // IssueFleetNodeCertificate implements FleetNodeCertIssuer.IssueFleetNodeCertificate.
+// FleetNodeKey is a fresh fleet node key pair and the CSR that names it,
+// built where the key will be held. The CA only ever sees CSRPEM.
+type FleetNodeKey struct {
+	// CSRPEM is the PEM-encoded PKCS#10 request.
+	CSRPEM []byte
+
+	// CommonName is the CSR's subject CN, the agent identity's username.
+	CommonName string
+
+	signer    crypto.Signer
+	algorithm x509.PublicKeyAlgorithm
+}
+
+// NewFleetNodeKey generates the agent key pair and its CSR, applying the
+// request's subject defaults: CN "agent-<hostname>", O the tenant, OU
+// DefaultFleetNodeCertOU, and DNS SANs of the hostname plus any extras.
+//
+// The fleet node's key pair is the AGENT's credential, not platform key
+// material, so it is created at the point of custody and the CA only ever sees
+// the CSR -- go-xkms's own rule for this shape of issuance (pkg/init
+// firstboot_adapter.go GenerateAdminCert). TrustedCA.IssueCertificate keeps
+// the key it generates inside the keystore as a non-exportable handle, so it
+// cannot serve here (go-quicbaas#910).
+//
+// Every crypto step is go-xkms's: the key comes from the single audited
+// generator in pkg/xkms (go-xkms FIPS RNG) and the CSR from go-xkms
+// CreateCSRWithKey.
+func NewFleetNodeKey(req *FleetNodeCertificateRequest) (*FleetNodeKey, error) {
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	hostname := strings.TrimSpace(req.Hostname)
+
+	cn := strings.TrimSpace(req.Subject.CommonName)
+	if cn == "" {
+		cn = "agent-" + hostname
+	}
+	org := strings.TrimSpace(req.Subject.Organization)
+	if org == "" {
+		org = req.TenantID
+	}
+	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
+	if ou == "" {
+		ou = DefaultFleetNodeCertOU
+	}
+
+	// The hostname always, plus any extras the caller supplied (e.g. a short
+	// alias or a LAN FQDN).
+	dns := []string{hostname}
+	for _, extra := range req.ExtraDNSNames {
+		trimmed := strings.TrimSpace(extra)
+		if trimmed == "" || trimmed == hostname {
+			continue
+		}
+		dns = append(dns, trimmed)
+	}
+
+	signer, algorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
+	if err != nil {
+		return nil, &FleetNodeCertIssueError{Op: "generate agent keypair", Cause: err}
+	}
+	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
+		Subject: xkmssdk.TrustedCASubject{
+			CommonName:         cn,
+			Organization:       org,
+			OrganizationalUnit: ou,
+		},
+		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{DNS: dns},
+	}, signer)
+	if err != nil {
+		return nil, &FleetNodeCertIssueError{Op: "build agent csr", Cause: err}
+	}
+	return &FleetNodeKey{CSRPEM: csrPEM, CommonName: cn, signer: signer, algorithm: algorithm}, nil
+}
+
+// PrivateKeyPEM encodes the private key with go-xkms EncodePrivateKeyPEM and
+// moves it straight into an mlocked buffer; NewBufferFromBytes wipes the
+// source slice so the raw key never lingers on the heap. The caller MUST
+// Destroy the buffer once the key is at its destination.
+func (k *FleetNodeKey) PrivateKeyPEM() (*secure.Buffer, error) {
+	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(k.signer, k.algorithm, nil)
+	if err != nil {
+		return nil, &FleetNodeCertIssueError{Op: "encode agent private key", Cause: err}
+	}
+	keyBuf, err := secure.NewBufferFromBytes(keyPEM)
+	if err != nil {
+		return nil, &FleetNodeCertIssueError{Op: "secure private key", Cause: err}
+	}
+	return keyBuf, nil
+}
+
+// fleetNodeValidityDays applies the default lifetime to a zero or negative
+// request.
+func fleetNodeValidityDays(days int) int {
+	if days <= 0 {
+		return DefaultFleetNodeCertValidityDays
+	}
+	return days
+}
+
 func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *FleetNodeCertificateRequest) (*IssuedFleetNodeCertificate, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -217,87 +318,149 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 		return nil, &FleetNodeCertNoTrustDomainError{TenantID: req.TenantID}
 	}
 
-	cn := strings.TrimSpace(req.Subject.CommonName)
+	key, err := NewFleetNodeKey(req)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := i.signAndRecord(ctx, req.TenantID, trustDomain, key.CommonName, fleetNodeValidityDays(req.ValidityDays), key.CSRPEM)
+	if err != nil {
+		return nil, err
+	}
+	keyBuf, err := key.PrivateKeyPEM()
+	if err != nil {
+		return nil, err
+	}
+
+	// The CA bundle the daemon must trust.
+	caPEM, err := i.FleetCABundle(ctx, req.TenantID)
+	if err != nil {
+		keyBuf.Destroy()
+		return nil, err
+	}
+
+	return &IssuedFleetNodeCertificate{
+		CertPEM:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
+		PrivateKey: keyBuf,
+		CAPEM:      append([]byte(nil), caPEM...),
+		ParsedCert: cert,
+	}, nil
+}
+
+// FleetNodeCSRRequest asks the fleet CA to sign a CSR for a fleet node whose
+// key was generated off the server host — by `quicbaas fleet deploy` on an
+// admin workstation — so the private key never reaches the server.
+type FleetNodeCSRRequest struct {
+	// TenantID is the tenant the daemon serves. Required.
+	TenantID string
+
+	// CSRPEM is the PEM-encoded PKCS#10 request. Required. Its subject
+	// CommonName becomes the agent identity's username.
+	CSRPEM []byte
+
+	// ValidityDays bounds the certificate lifetime. Zero falls back to the
+	// default (365 days).
+	ValidityDays int
+
+	// SPIFFETrustDomain is the operator-configured trust domain the agent
+	// SPIFFE SAN is minted under. Required, as for IssueFleetNodeCertificate.
+	SPIFFETrustDomain string
+}
+
+// SignedFleetNodeCertificate is the output of SignFleetNodeCSR. It carries
+// only public material; the key stays with whoever built the CSR.
+type SignedFleetNodeCertificate struct {
+	// CertPEM is the PEM-encoded leaf certificate.
+	CertPEM []byte
+
+	// CAPEM is the CA bundle the daemon must trust.
+	CAPEM []byte
+
+	// ParsedCert is the parsed leaf.
+	ParsedCert *x509.Certificate
+}
+
+// SignFleetNodeCSR signs a fleet node's own CSR exactly as
+// IssueFleetNodeCertificate signs the one it builds: the agent SPIFFE kind
+// under the tenant, clientAuth only, and an issued-cert record so fleet
+// enrolment accepts it. The CSR's signature must prove possession of the key
+// it names.
+func (i *XKMSFleetNodeCertIssuer) SignFleetNodeCSR(ctx context.Context, req *FleetNodeCSRRequest) (*SignedFleetNodeCertificate, error) {
+	if req == nil {
+		return nil, ErrFleetNodeCertRequestNil
+	}
+	if strings.TrimSpace(req.TenantID) == "" {
+		return nil, &FleetNodeCertRequestFieldError{Field: "tenant_id"}
+	}
+	if len(req.CSRPEM) == 0 {
+		return nil, &FleetNodeCertRequestFieldError{Field: "csr_pem"}
+	}
+	trustDomain := strings.TrimSpace(req.SPIFFETrustDomain)
+	if trustDomain == "" {
+		return nil, &FleetNodeCertNoTrustDomainError{TenantID: req.TenantID}
+	}
+
+	csr, err := parseFleetNodeCSR(req.CSRPEM)
+	if err != nil {
+		return nil, err
+	}
+	cn := strings.TrimSpace(csr.Subject.CommonName)
 	if cn == "" {
-		cn = "agent-" + strings.TrimSpace(req.Hostname)
+		return nil, &FleetNodeCertRequestFieldError{Field: "csr_pem common_name"}
 	}
 
-	org := strings.TrimSpace(req.Subject.Organization)
-	if org == "" {
-		org = req.TenantID
-	}
-
-	ou := strings.TrimSpace(req.Subject.OrganizationalUnit)
-	if ou == "" {
-		ou = DefaultFleetNodeCertOU
-	}
-
-	validity := req.ValidityDays
-	if validity <= 0 {
-		validity = DefaultFleetNodeCertValidityDays
-	}
-
-	// Build the DNS SAN list: the hostname always, plus any extras the
-	// caller supplied (e.g. a short alias or a LAN FQDN).
-	dns := []string{req.Hostname}
-	for _, extra := range req.ExtraDNSNames {
-		trimmed := strings.TrimSpace(extra)
-		if trimmed == "" || trimmed == req.Hostname {
-			continue
-		}
-		dns = append(dns, trimmed)
-	}
-
-	// The fleet node's key pair is the AGENT's credential, not platform key material,
-	// so it is created at the point of custody and the CA only ever sees the CSR
-	// -- go-xkms's own rule for this shape of issuance (pkg/init
-	// firstboot_adapter.go GenerateAdminCert), and the only shape that can work:
-	// TrustedCA.IssueCertificate keeps the key it generates inside the keystore
-	// as a non-exportable opaque handle and returns IssuedCertificate
-	// .PrivateKeyPEM as nil on every backend. This issuer previously called it
-	// and then required that field, so it failed on every invocation against a
-	// real CA -- silently, because its only caller logs and continues
-	// (go-quicbaas#910).
-	//
-	// Every crypto step is go-xkms's: the key comes from the single audited
-	// generator in pkg/xkms (go-xkms FIPS RNG), the CSR from go-xkms
-	// CreateCSRWithKey, the signature from the go-xkms CA, and the key encoding
-	// from go-xkms EncodePrivateKeyPEM.
-	signer, keyAlgorithm, err := dbxkms.GenerateRequesterKey(dbxkms.KeyAlgorithmECDSAP256)
+	cert, err := i.signAndRecord(ctx, req.TenantID, trustDomain, cn, fleetNodeValidityDays(req.ValidityDays), req.CSRPEM)
 	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "generate agent keypair", Cause: err}
+		return nil, err
 	}
-
-	csrPEM, err := xkmssdk.CreateCSRWithKey(&xkmssdk.TrustedCACertificateRequest{
-		Subject: xkmssdk.TrustedCASubject{
-			CommonName:         cn,
-			Organization:       org,
-			OrganizationalUnit: ou,
-		},
-		SANS: &xkmssdk.TrustedCASubjectAlternativeNames{
-			DNS: dns,
-		},
-	}, signer)
+	caPEM, err := i.FleetCABundle(ctx, req.TenantID)
 	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "build agent csr", Cause: err}
+		return nil, err
 	}
+	return &SignedFleetNodeCertificate{
+		CertPEM:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
+		CAPEM:      append([]byte(nil), caPEM...),
+		ParsedCert: cert,
+	}, nil
+}
 
-	// ExtKeyUsage is set explicitly rather than by naming a profile so the issued
-	// certificate carries exactly clientAuth, which is what the control plane's
-	// register handler requires of a fleet node identity.
-	//
-	// Bind the certificate to its tenant with a SPIFFE URI SAN under the
-	// operator's trust domain. The CA owns the single synthesis site
-	// (go-xkms pkg/ca signCSR -> spiffe.BuildURI); we only forward the inputs,
-	// so this path and every other CSR-sign path cannot drift.
-	//
-	// The workload kind is "svc": a fleet node is a machine identity, which is
-	// exactly what go-qrdb's spiffe.KindService names, and the kind fleet
-	// enrolment requires as the proof that the certificate is an agent's.
+// parseFleetNodeCSR decodes a PEM CSR and checks its self-signature.
+func parseFleetNodeCSR(csrPEM []byte) (*x509.CertificateRequest, error) {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		return nil, &FleetNodeCertRequestFieldError{Field: "csr_pem"}
+	}
+	if block.Type != "CERTIFICATE REQUEST" {
+		return nil, &FleetNodeCSRInvalidError{Reason: "parse", Cause: &UnexpectedPEMTypeError{PEMType: block.Type}}
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, &FleetNodeCSRInvalidError{Reason: "parse", Cause: err}
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, &FleetNodeCSRInvalidError{Reason: "verify signature", Cause: err}
+	}
+	return csr, nil
+}
+
+// signAndRecord signs an agent CSR and records the certificate for tenantID.
+//
+// ExtKeyUsage is set explicitly rather than by naming a profile so the issued
+// certificate carries exactly clientAuth, which is what the control plane's
+// register handler requires of a fleet node identity.
+//
+// The certificate is bound to its tenant with a SPIFFE URI SAN under the
+// operator's trust domain. The CA owns the single synthesis site (go-xkms
+// pkg/ca signCSR -> spiffe.BuildURI); this only forwards the inputs, so this
+// path and every other CSR-sign path cannot drift.
+//
+// The workload kind is "svc": a fleet node is a machine identity, which is
+// exactly what go-qrdb's spiffe.KindService names, and the kind fleet
+// enrolment requires as the proof that the certificate is an agent's.
+func (i *XKMSFleetNodeCertIssuer) signAndRecord(ctx context.Context, tenantID, trustDomain, cn string, validity int, csrPEM []byte) (*x509.Certificate, error) {
 	signOpts := &xkmssdk.TrustedCASignOptions{
 		ValidityDays:      validity,
 		ExtKeyUsage:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		TenantID:          req.TenantID,
+		TenantID:          tenantID,
 		SPIFFETrustDomain: trustDomain,
 		SPIFFEKind:        qrdbsdk.SpiffeKindService,
 		SPIFFEName:        cn,
@@ -312,42 +475,10 @@ func (i *XKMSFleetNodeCertIssuer) IssueFleetNodeCertificate(ctx context.Context,
 	}
 	// Stopgap until go-quicbaas#1821: enrollment accepts only a certificate
 	// recorded here, so the record is written before the certificate leaves.
-	if err := i.records.RecordFleetNodeCertificate(ctx, req.TenantID, cert); err != nil {
+	if err := i.records.RecordFleetNodeCertificate(ctx, tenantID, cert); err != nil {
 		return nil, &FleetNodeCertIssueError{Op: "record agent certificate", Cause: err}
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-
-	keyPEM, err := xkmssdk.EncodePrivateKeyPEM(signer, keyAlgorithm, nil)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "encode agent private key", Cause: err}
-	}
-
-	// Move the PEM into an mlocked buffer immediately; NewBufferFromBytes wipes
-	// the source slice so the raw key never lingers on the heap.
-	keyBuf, err := secure.NewBufferFromBytes(keyPEM)
-	if err != nil {
-		return nil, &FleetNodeCertIssueError{Op: "secure private key", Cause: err}
-	}
-
-	// Assemble the CA bundle the daemon must trust. The CA's CABundle() returns
-	// the full chain (root + intermediates); fall back to the CA's own
-	// certificate when it cannot produce a bundle (e.g. single-identity test
-	// CAs).
-	caPEM, bundleErr := i.ca.CABundle()
-	if bundleErr != nil || len(caPEM) == 0 {
-		caPEM = i.caCertificatePEM()
-	}
-	if len(caPEM) == 0 {
-		keyBuf.Destroy()
-		return nil, &FleetNodeCertIssueError{Op: "resolve ca bundle", Cause: errors.New("ca bundle is empty")}
-	}
-
-	return &IssuedFleetNodeCertificate{
-		CertPEM:    certPEM,
-		PrivateKey: keyBuf,
-		CAPEM:      append([]byte(nil), caPEM...),
-		ParsedCert: cert,
-	}, nil
+	return cert, nil
 }
 
 // FleetCABundle implements FleetCABundleSource: the same bundle
@@ -546,6 +677,24 @@ func (e *FleetNodeCertIssueError) Error() string {
 
 // Unwrap exposes the underlying cause for errors.Is / errors.As.
 func (e *FleetNodeCertIssueError) Unwrap() error {
+	return e.Cause
+}
+
+// FleetNodeCSRInvalidError reports a fleet node CSR that cannot be signed: it
+// is not a PKCS#10 request, or its signature does not prove possession of the
+// key it names. Reason is the failed stage; Cause the parser's error.
+type FleetNodeCSRInvalidError struct {
+	Reason string
+	Cause  error
+}
+
+// Error implements the error interface.
+func (e *FleetNodeCSRInvalidError) Error() string {
+	return fmt.Sprintf("agent cert issuer: invalid csr: %s: %v", e.Reason, e.Cause)
+}
+
+// Unwrap exposes the underlying cause for errors.Is / errors.As.
+func (e *FleetNodeCSRInvalidError) Unwrap() error {
 	return e.Cause
 }
 

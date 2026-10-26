@@ -463,20 +463,18 @@ var resolveDeployMCPEndpoint = func() string { return "" }
 
 // resolveDeploySPIFFETrustDomain returns the control plane's configured SPIFFE
 // trust domain, which the deploy forwards on the node certificate request.
-// The default returns an empty string: the CLI-only build's issuer refuses
-// before it reads the trust domain. The desktop build overrides this seam to
+// The default returns an empty string: the CLI-only build's issuer has the
+// server sign under its own trust domain. The desktop build overrides this seam to
 // read the trust domain published by the embedded server; with none, its
 // in-process CA refuses with *service.FleetNodeCertNoTrustDomainError.
 var resolveDeploySPIFFETrustDomain = func() string { return "" }
 
-// defaultResolveFleetNodeCertIssuer falls back to the SDK-backed issuer,
-// which would call the running daemon's /api/v1/xkms/ca/* surface. That
-// surface cannot request the agent SPIFFE kind fleet enrolment requires, so
-// the issuer refuses with *service.FleetNodeCertKindUnavailableError and
-// `quicbaas fleet deploy` from an admin workstation issues nothing.
+// defaultResolveFleetNodeCertIssuer returns the workstation issuer, which
+// builds the agent key and CSR locally and has the running daemon sign it at
+// POST /api/v1/fleet/certificates as an enrollable agent certificate.
 //
 // Build-tagged embedded seams (e.g. the Wails desktop binding) replace this
-// resolver with the in-process CA hook, which can request the kind.
+// resolver with the in-process CA hook.
 func defaultResolveFleetNodeCertIssuer() (service.FleetNodeCertIssuer, error) {
 	return newSDKFleetNodeCertIssuer()
 }

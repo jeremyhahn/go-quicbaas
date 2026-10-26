@@ -156,7 +156,9 @@ import (
 // and prompts:write.
 // PLUS 11 net for go-qrdb v0.47's barrier holder verbs (go-quicbaas#1389):
 // 32 holder routes added, 21 share-submission and ceremony-claim routes removed.
-const baseRouteTableSize = 683
+// PLUS 1 for fleet node CSR signing (POST /api/v1/fleet/certificates,
+// go-quicbaas#1814) under orchestrator:agent_register.
+const baseRouteTableSize = 684
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder

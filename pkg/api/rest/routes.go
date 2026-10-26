@@ -484,6 +484,7 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "GET", Pattern: "/api/v1/ollama/models/{model}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleOllamaModelInfo }},
 		{Method: "GET", Pattern: "/api/v1/fleet", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListFleetNodes }},
 		{Method: "POST", Pattern: "/api/v1/fleet", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRegisterFleetNode }},
+		{Method: "POST", Pattern: "/api/v1/fleet/certificates", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleSignFleetNodeCSR }},
 		{Method: "DELETE", Pattern: "/api/v1/fleet/{nodeID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleRemoveFleetNode }},
 		{Method: "GET", Pattern: "/api/v1/fleet/{nodeID}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGetFleetNode }},
 		{Method: "GET", Pattern: "/api/v1/fleet/{nodeID}/backends/{backendName}/models", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListFleetNodeBackendModels }},

@@ -421,6 +421,7 @@ POST /api/v1/embedding/batch
 POST /api/v1/embedding/generate
 POST /api/v1/entities/{type}/
 POST /api/v1/fleet
+POST /api/v1/fleet/certificates
 POST /api/v1/fleet/enroll
 POST /api/v1/fleet/{nodeID}/disable
 POST /api/v1/fleet/{nodeID}/enable
