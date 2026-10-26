@@ -756,7 +756,7 @@ export class McpCeremonyClient {
         if (req.policy)
             args.policy = req.policy;
         if (req.officers && req.officers.length > 0) {
-            args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
+            args.officers = req.officers;
         }
         if (req.hostname)
             args.hostname = req.hostname;

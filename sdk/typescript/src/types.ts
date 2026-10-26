@@ -3035,8 +3035,18 @@ export interface BarrierEnableEncryptionResponse {
 export interface CeremonyOfficer {
   /** Unique username for the officer. */
   username: string;
+  /** Role bound to the issued certificate. The server defaults it. */
+  role?: string;
   /** PEM-encoded CSR submitted by the officer. */
   csr_pem: string;
+  /** KEM that seals the officer's share envelope. */
+  encryption_kem?: string;
+  /** Base64-encoded public key for encryption_kem. */
+  encryption_key?: string;
+  /** Factors the officer answers quorum challenges with. */
+  factors?: BarrierHolderFactor[];
+  /** Designated holder the officer stands in for. */
+  designated?: string;
 }
 
 // CeremonyInitializeRequest holds the parameters for initializing the

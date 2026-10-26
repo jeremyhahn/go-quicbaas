@@ -288,6 +288,47 @@ describe('McpCeremonyClient tools', () => {
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
     },
     {
+      name: 'initialize forwards every officer field',
+      call: (c) =>
+        c.ceremony.initialize({
+          so_pin: 'so-pin-1234',
+          user_pin: 'user-pin-1234',
+          threshold: 1,
+          admin_generate: true,
+          officers: [
+            {
+              username: 'officer-1',
+              role: 'security-officer',
+              csr_pem: 'CSR-1',
+              encryption_kem: 'dhkem-p256',
+              encryption_key: 'S0VZ',
+              factors: [{ name: 'mtls' }, { name: 'totp', params: { digits: 6 } }],
+              designated: 'holder-1',
+            },
+          ],
+        }),
+      tool: 'qrdb_ceremony_initialize',
+      args: {
+        so_pin: 'so-pin-1234',
+        user_pin: 'user-pin-1234',
+        threshold: 1,
+        admin_generate: true,
+        officers: [
+          {
+            username: 'officer-1',
+            role: 'security-officer',
+            csr_pem: 'CSR-1',
+            encryption_kem: 'dhkem-p256',
+            encryption_key: 'S0VZ',
+            factors: [{ name: 'mtls' }, { name: 'totp', params: { digits: 6 } }],
+            designated: 'holder-1',
+          },
+        ],
+      },
+      reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
+      want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
+    },
+    {
       name: 'status',
       call: (c) => c.ceremony.status(),
       tool: 'qrdb_ceremony_status',
