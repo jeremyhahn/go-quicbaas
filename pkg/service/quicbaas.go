@@ -922,11 +922,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Put",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Put", err)
 	}
 
 	// Get leader ID via SDK
@@ -1060,11 +1056,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Get",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Get", err)
 	}
 
 	// Parse result
@@ -1156,11 +1148,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Delete",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Delete", err)
 	}
 
 	// Invalidate cache (use the same tenant-aware key)
