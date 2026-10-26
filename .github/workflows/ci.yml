@@ -389,10 +389,10 @@ on:
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
                                         # created (see v1.3 correction above)
-  # v1.23 adds `schedule:` here for main's nightly full tier. CUSTOMIZE:
-  # go-quicbaas drops it (owner ruling 2026-10-11): no workflow schedules
-  # itself, and the coordinator dispatches the nightly full tier, soak
-  # included, through workflow_dispatch on main.
+  # v1.23: main's full tier nightly as well as after every merge. Scheduled
+  # runs are on the default branch. CUSTOMIZE: the hour, off nightly.yml's.
+  schedule:
+    - cron: '0 4 * * *'
 
 # v1.26.2: on main the group is the workflow, the event and the commit sha,
 # so each main run is its own group and a merge never cancels the main run in

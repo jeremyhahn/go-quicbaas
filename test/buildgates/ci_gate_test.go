@@ -653,18 +653,69 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 	}
 }
 
-// TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
-// coordinator dispatches the nightly full tier, no workflow schedules itself.
+// templateNightlyTrigger is ci-template v1.27.0's nightly full-tier trigger,
+// verbatim. Ruling 135 sanctions it as the one scheduler (ruling 214 (2)).
+const templateNightlyTrigger = "  schedule:\n    - cron: '0 4 * * *'\n"
+
+var (
+	scheduleRe = regexp.MustCompile(`(?m)^  schedule:`)
+	cronRe     = regexp.MustCompile(`(?m)^\s*-\s*cron:`)
+)
+
+// scheduleViolation reports why a workflow's schedule triggers break the
+// rule, or "" when they keep it. Only ci.yml may carry a schedule, and only
+// the template's nightly trigger, once.
+func scheduleViolation(name, workflow string) string {
+	if name == "ci.yml" {
+		workflow = strings.Replace(workflow, templateNightlyTrigger, "", 1)
+	}
+	if scheduleRe.MatchString(workflow) || cronRe.MatchString(workflow) {
+		return "carries a `schedule:` trigger other than the ci-template nightly trigger in ci.yml"
+	}
+	return ""
+}
+
+// TestOnlyTheTemplateNightlyTriggerSchedulesAWorkflow pins ruling 214 (2):
+// ci.yml keeps the template's nightly trigger, and no other workflow, nor
+// any other cron, schedules itself; the coordinator dispatches the rest.
 // automerge.yml is under owner hold and keeps its sweep.
-func TestNoWorkflowRunsOnASchedule(t *testing.T) {
-	scheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
+func TestOnlyTheTemplateNightlyTriggerSchedulesAWorkflow(t *testing.T) {
 	for _, path := range workflowFiles(t) {
-		if filepath.Base(path) == "automerge.yml" {
+		name := filepath.Base(path)
+		if name == "automerge.yml" {
 			continue
 		}
-		if scheduleRe.MatchString(readFile(t, path)) {
-			t.Errorf("%s carries a `schedule:` trigger; dispatch it instead", path)
+		if why := scheduleViolation(name, readFile(t, path)); why != "" {
+			t.Errorf("%s %s", path, why)
 		}
+	}
+}
+
+// TestScheduleViolationCatchesEveryOtherTrigger proves the rule above both
+// allows the template trigger and fails each schedule it must refuse.
+func TestScheduleViolationCatchesEveryOtherTrigger(t *testing.T) {
+	const on = "on:\n  push:\n    branches: [main]\n"
+	cases := []struct {
+		name     string
+		file     string
+		workflow string
+		wantFail bool
+	}{
+		{"template trigger in ci.yml", "ci.yml", on + templateNightlyTrigger, false},
+		{"no schedule in ci.yml", "ci.yml", on, false},
+		{"different cron in ci.yml", "ci.yml", on + "  schedule:\n    - cron: '0 5 * * *'\n", true},
+		{"extra cron in ci.yml", "ci.yml", on + templateNightlyTrigger + "    - cron: '0 16 * * *'\n", true},
+		{"template trigger twice in ci.yml", "ci.yml", on + templateNightlyTrigger + templateNightlyTrigger, true},
+		{"template trigger in another workflow", "nightly.yml", on + templateNightlyTrigger, true},
+		{"other schedule in another workflow", "batch.yml", on + "  schedule:\n    - cron: '30 2 * * 1'\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scheduleViolation(tc.file, tc.workflow) != ""
+			if got != tc.wantFail {
+				t.Errorf("scheduleViolation(%s) failed = %v, want %v", tc.file, got, tc.wantFail)
+			}
+		})
 	}
 }
 
