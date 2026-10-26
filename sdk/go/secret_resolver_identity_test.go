@@ -16,6 +16,8 @@ package quicbaas
 import (
 	"context"
 	"crypto/x509"
+	"errors"
+	"slices"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -339,32 +341,124 @@ func TestSecretResolver_DelegationWithSecretsGrantsResolvesAndEnsures(t *testing
 	}
 }
 
+// checkRefusedError is what a refusing countingChecker returns.
+type checkRefusedError struct {
+	perm qrdbsdk.Permission
+}
+
+func (e *checkRefusedError) Error() string {
+	return "counting checker refused " + string(e.perm)
+}
+
+// countingChecker is a tenant-a delegation that checks its own permissions
+// in memory, in place of the node's AuthMiddleware: it records every check
+// and the tenant it was made against, and refuses each one when refuse is
+// set.
+type countingChecker struct {
+	grantBinder
+	refuse  bool
+	checks  []qrdbsdk.Permission
+	tenants []string
+}
+
+func newCountingChecker(refuse bool) *countingChecker {
+	return &countingChecker{grantBinder: grantBinder{tenant: "tenant-a"}, refuse: refuse}
+}
+
+func (c *countingChecker) AuthorizeTenant(_ context.Context, targetTenantID string, perm qrdbsdk.Permission) error {
+	c.checks = append(c.checks, perm)
+	c.tenants = append(c.tenants, targetTenantID)
+	if c.refuse {
+		return &checkRefusedError{perm: perm}
+	}
+	return nil
+}
+
+// One kms:// resolution is one logical request: a get makes exactly one
+// secrets:read check and an ensure exactly one check per grant it needs,
+// each against the delegation's own tenant, so a request spends each of
+// its rate-limit tokens once (Codex review 7395 P1 4 on #1841).
+func TestSecretResolver_DelegationChecksEachPermissionOncePerRequest(t *testing.T) {
+	tests := []struct {
+		name  string
+		uri   string
+		want  string
+		perms []qrdbsdk.Permission
+	}{
+		{name: "get", uri: "kms://a/key", want: "a-secret",
+			perms: []qrdbsdk.Permission{permSecretsRead}},
+		{name: "ensure", uri: "kms://a/new?ensure=true", want: "generated-a/new",
+			perms: []qrdbsdk.Permission{permSecretsRead, permSecretsWrite}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := newCountingChecker(false)
+			c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), newTenantSecretsService(), checker)
+
+			got, err := resolveSecret(t, c, tt.uri)
+			if err != nil {
+				t.Fatalf("Resolve(%s): %v", tt.uri, err)
+			}
+			if got != tt.want {
+				t.Fatalf("Resolve(%s) = %q, want %q", tt.uri, got, tt.want)
+			}
+			if !slices.Equal(checker.checks, tt.perms) {
+				t.Fatalf("Resolve(%s) made %d checks %v, want %v once each", tt.uri, len(checker.checks), checker.checks, tt.perms)
+			}
+			for _, tenant := range checker.tenants {
+				if tenant != "tenant-a" {
+					t.Fatalf("Resolve(%s) checked against tenant %q, want tenant-a", tt.uri, tenant)
+				}
+			}
+		})
+	}
+}
+
+// A refused check stops the kms:// adapter's request with the checker's
+// typed error before the secrets service is reached. The adapter is called
+// directly: the resolver above it reports any failure as its own.
+func TestSecretResolver_RefusedCheckNeverReachesSecretsService(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(b *boundKMSSecrets) ([]byte, error)
+	}{
+		{name: "get", call: func(b *boundKMSSecrets) ([]byte, error) {
+			return b.GetSecret(context.Background(), "a/key")
+		}},
+		{name: "ensure", call: func(b *boundKMSSecrets) ([]byte, error) {
+			return b.EnsureSecret(context.Background(), "a/new", 32, "hex")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kms := newTenantSecretsService()
+			c := newDelegatedSecretClientWithSecrets(t, newTenantCredentialService(), kms, newCountingChecker(true))
+			inner, ok := c.(*client)
+			if !ok {
+				t.Fatalf("NewClient returned %T, want *client", c)
+			}
+
+			got, err := tt.call(&boundKMSSecrets{c: inner})
+			var refused *checkRefusedError
+			if !errors.As(err, &refused) {
+				t.Fatalf("%s = %q, %v, want *checkRefusedError", tt.name, got, err)
+			}
+			if kms.calls != 0 || kms.ensureCalls != 0 {
+				t.Fatalf("secrets service reached (get %d, ensure %d) after a refused check, want 0", kms.calls, kms.ensureCalls)
+			}
+		})
+	}
+}
+
 // The resolver authorizes against go-qrdb's own secrets permissions; a name
 // qrdb does not register would refuse every delegation.
 func TestSecretResolver_SecretsPermissionsAreQRDBRegistered(t *testing.T) {
-	for _, perm := range []qrdbsdk.Permission{permissionSecretsRead, permissionSecretsWrite} {
+	for _, perm := range []qrdbsdk.Permission{permSecretsRead, permSecretsWrite} {
 		if !qrdbsdk.IsPermissionRegistered(perm) {
 			t.Errorf("%s is not a go-qrdb registered permission", perm)
 		}
 	}
 	if qrdbsdk.IsPermissionRegistered(qrdbsdk.Permission("secrets:unregistered")) {
 		t.Error("an unregistered secrets permission reports registered")
-	}
-}
-
-// A service-principal client authorizes nothing in the resolver: its calls
-// are not delegated.
-func TestEmbeddedIdentity_AuthorizeServicePrincipalIsNoop(t *testing.T) {
-	id := ServicePrincipalIdentity(tenantGrant(t, ""))
-	if err := id.authorize(context.Background(), permissionSecretsWrite); err != nil {
-		t.Fatalf("authorize as the service principal: %v", err)
-	}
-}
-
-// A revoked delegation fails at binding, before any permission is checked.
-func TestEmbeddedIdentity_AuthorizeRevokedDelegationFails(t *testing.T) {
-	id := DelegatedIdentity(refusedGrant(t), []*x509.Certificate{{}})
-	if err := id.authorize(context.Background(), permissionSecretsRead); err == nil {
-		t.Fatal("authorize under a revoked delegation succeeded, want an error")
 	}
 }
