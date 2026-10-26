@@ -50,13 +50,16 @@
   import {
     BarrierStatusBadge,
     BarrierStrategyPicker,
+    CeremonyClaimChallenge,
     ShamirShareInput,
     BarrierUnsealForm,
+    tenantClaimLabel,
   } from '@quicbaas/svelte-security';
   import type {
     BarrierClient as StructuralBarrierClient,
     BarrierStatus,
     BarrierStrategy,
+    ShareClaimClient,
     TenantBarrierInitParams,
   } from '@quicbaas/svelte-security';
 
@@ -150,6 +153,23 @@
       },
       async quorumSubmit(req) {
         return tb.tenantBarrierQuorumSubmit(tenantId, { op, ...req });
+      },
+    };
+  }
+
+  // makeClaimClient adapts the tenant share-claim verbs into the structural
+  // ShareClaimClient CeremonyClaimChallenge drives, bound to one tenant.
+  function makeClaimClient(tenantId: string): ShareClaimClient {
+    return {
+      async beginClaim(username) {
+        return tb.tenantBarrierShareClaimBegin(tenantId, username);
+      },
+      async claimShare(req) {
+        return tb.tenantBarrierShareClaimComplete(tenantId, {
+          username: req.username,
+          nonce_hex: req.nonce_hex,
+          signature: req.signature_b64,
+        });
       },
     };
   }
@@ -297,6 +317,17 @@
   }
 </script>
 
+{#snippet holderClaim(tenantId: string)}
+  <div class="border-t border-base-300 pt-4" data-testid="tenant-barrier-claim">
+    <CeremonyClaimChallenge
+      client={makeClaimClient(tenantId)}
+      claimLabel={tenantClaimLabel(tenantId)}
+      onclaimed={(share) => { showToast({ message: `Share ${share.share_index} claimed`, type: 'success' }); }}
+      onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
+    />
+  </div>
+{/snippet}
+
 <div class="p-6 space-y-6">
   <PageHeader
     title="Tenant Barrier"
@@ -382,6 +413,7 @@
                     <pre class="text-xs font-mono whitespace-pre-wrap break-all bg-base-200 p-2 rounded">{holder.cert_pem}</pre>
                   </div>
                 {/each}
+                {@render holderClaim(selectedTenantID)}
                 <button class="btn btn-sm btn-primary" onclick={() => { void dismissInitResult(); }}>Continue</button>
               </div>
             {:else}
@@ -460,6 +492,7 @@
               <div class="alert alert-success text-sm" data-testid="tenant-barrier-shamir-unsealed">
                 <span>Shamir barrier is unsealed and active.</span>
               </div>
+              {@render holderClaim(selectedTenantID)}
             {/if}
 
           {:else}

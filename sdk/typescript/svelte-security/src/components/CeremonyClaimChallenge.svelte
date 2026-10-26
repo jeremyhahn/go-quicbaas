@@ -12,11 +12,11 @@
   key and pastes the base64 signature.
 -->
 <script lang="ts">
-  import type { CeremonyClient, ClaimedShare } from '../types.ts';
+  import type { ClaimedShare, ShareClaimClient } from '../types.ts';
   import { shareClaimMessage, SYSTEM_CLAIM_LABEL } from '../challengeMessage.ts';
 
   interface Props {
-    client: CeremonyClient;
+    client: ShareClaimClient;
     /** claimLabel is the barrier scope's qrdb claim label (system by default). */
     claimLabel?: string;
     disabled?: boolean;

@@ -4670,6 +4670,23 @@ export class RestTenantBarrierClient implements TenantBarrierClient {
     });
   }
 
+  async tenantBarrierShareClaimBegin(tenantId: string, username: string): Promise<BarrierShareClaimBeginResponse> {
+    return this.http.fetchJSON<BarrierShareClaimBeginResponse>(
+      `${this.base(tenantId)}/officers/${encodeURIComponent(username)}/claim/begin`,
+      { method: 'POST', body: JSON.stringify({ username }) },
+    );
+  }
+
+  async tenantBarrierShareClaimComplete(
+    tenantId: string,
+    req: BarrierShareClaimCompleteRequest,
+  ): Promise<BarrierShareClaimCompleteResponse> {
+    return this.http.fetchJSON<BarrierShareClaimCompleteResponse>(
+      `${this.base(tenantId)}/officers/${encodeURIComponent(req.username)}/claim/complete`,
+      { method: 'POST', body: JSON.stringify(req) },
+    );
+  }
+
   async tenantBarrierQuorumSubmit(
     tenantId: string,
     req: TenantBarrierQuorumSubmitRequest,

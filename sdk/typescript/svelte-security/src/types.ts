@@ -232,6 +232,12 @@ export interface CeremonyClient {
   enrollOfficer(req: EnrollOfficerRequest): Promise<EnrolledOfficer>;
 }
 
+/**
+ * ShareClaimClient is the claim half of CeremonyClient: all a holder needs to
+ * claim its share, at system or tenant scope.
+ */
+export type ShareClaimClient = Pick<CeremonyClient, 'beginClaim' | 'claimShare'>;
+
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------

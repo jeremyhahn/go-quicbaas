@@ -1099,8 +1099,9 @@ export interface BarrierClient {
 // to the broker's /api/v1/tenants/{id}/barrier/* REST surface.
 export interface TenantBarrierClient {
   // tenantBarrierInit initializes the tenant's barrier with the chosen
-  // strategy. The "shamir" strategy returns the minted shares; the "none" and
-  // "passphrase" strategies return 204 No Content (undefined).
+  // strategy. The "shamir" strategy returns share-free metadata and the inline
+  // roster's holder certificates; each holder then claims its own share. The
+  // "none" and "passphrase" strategies return 204 No Content (undefined).
   // Maps to POST /api/v1/tenants/{id}/barrier/init.
   tenantBarrierInit(
     tenantId: string,
@@ -1120,6 +1121,19 @@ export interface TenantBarrierClient {
     tenantId: string,
     req: TenantBarrierQuorumBeginRequest,
   ): Promise<BarrierQuorumChallenge>;
+
+  // tenantBarrierShareClaimBegin returns the nonce a tenant share holder signs
+  // to claim its sealed share.
+  // Maps to POST /api/v1/tenants/{id}/barrier/officers/{username}/claim/begin.
+  tenantBarrierShareClaimBegin(tenantId: string, username: string): Promise<BarrierShareClaimBeginResponse>;
+
+  // tenantBarrierShareClaimComplete proves the holder's key over the nonce and
+  // returns its share envelope, sealed to the holder.
+  // Maps to POST /api/v1/tenants/{id}/barrier/officers/{username}/claim/complete.
+  tenantBarrierShareClaimComplete(
+    tenantId: string,
+    req: BarrierShareClaimCompleteRequest,
+  ): Promise<BarrierShareClaimCompleteResponse>;
 
   // tenantBarrierQuorumSubmit answers a tenant quorum challenge with the
   // holder's share. Maps to POST /api/v1/tenants/{id}/barrier/quorum/submit.

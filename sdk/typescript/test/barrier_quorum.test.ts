@@ -194,6 +194,47 @@ describe('RestTenantBarrierClient quorum verbs', () => {
   });
 });
 
+describe('RestTenantBarrierClient share claim', () => {
+  it('begins and completes a holder claim under the tenant officer path', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ nonce_hex: 'beef', expires_at: '2026-10-25T00:05:00Z' }))
+      .mockResolvedValueOnce(jsonResponse({ share_index: 2, envelope: 'ZW52' }));
+    const client = new RestTenantBarrierClient(base);
+
+    const begun = await client.tenantBarrierShareClaimBegin('tenant a', 'officer 1');
+    const claimed = await client.tenantBarrierShareClaimComplete('tenant a', {
+      username: 'officer 1',
+      nonce_hex: 'beef',
+      signature: 'c2ln',
+    });
+
+    expect(begun).toEqual({ nonce_hex: 'beef', expires_at: '2026-10-25T00:05:00Z' });
+    expect(claimed).toEqual({ share_index: 2, envelope: 'ZW52' });
+    expect(sent(0)).toEqual({
+      url: `${base}/api/v1/tenants/tenant%20a/barrier/officers/officer%201/claim/begin`,
+      method: 'POST',
+      body: { username: 'officer 1' },
+    });
+    expect(sent(1)).toEqual({
+      url: `${base}/api/v1/tenants/tenant%20a/barrier/officers/officer%201/claim/complete`,
+      method: 'POST',
+      body: { username: 'officer 1', nonce_hex: 'beef', signature: 'c2ln' },
+    });
+  });
+
+  it('surfaces a refused tenant claim as APIError', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'not a holder' }, 403));
+
+    await expect(
+      new RestTenantBarrierClient(base).tenantBarrierShareClaimComplete('tenant-a', {
+        username: 'officer-1',
+        nonce_hex: 'beef',
+        signature: 'c2ln',
+      }),
+    ).rejects.toBeInstanceOf(APIError);
+  });
+});
+
 describe('McpBarrierClient quorum tools', () => {
   const endpoint = 'https://node.example:8081/mcp';
 

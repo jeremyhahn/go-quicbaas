@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
+import { shareClaimMessage } from '@quicbaas/svelte-security';
 
 vi.mock('../src/stores/sdkClient.ts', () => ({ getSDKClient: vi.fn() }));
 vi.mock('../src/stores/toast.svelte.ts', () => ({ showToast: vi.fn() }));
@@ -230,6 +231,43 @@ describe('TenantBarrierView seal and unseal routes', () => {
     expect(panel).toHaveTextContent('officer-2');
     expect(panel).toHaveTextContent('cert-pem-1');
     expect(screen.queryByTestId('tenant-barrier-shares-reveal')).toBeNull();
+  });
+
+  it('offers the holder claim on an initialized Shamir tenant barrier', async () => {
+    stubFetch({ strategy: 'shamir', sealed: false, initialized: true, shamir_threshold: 2, shamir_total: 3 });
+    render(TenantBarrierView);
+
+    const claim = await screen.findByTestId('tenant-barrier-claim');
+    expect(claim).toContainElement(screen.getByTestId('ceremony-claim-challenge'));
+  });
+
+  it('lets a listed holder claim their share under the tenant claim label', async () => {
+    const calls = stubFetch(
+      { strategy: 'shamir', sealed: false, initialized: true, shamir_threshold: 2, shamir_total: 3 },
+      {
+        [`${BASE}/officers/officer-1/claim/begin`]: { nonce_hex: 'beef', expires_at: '2030-01-01T00:00:00Z' },
+        [`${BASE}/officers/officer-1/claim/complete`]: { share_index: 1, envelope: 'ZW52' },
+      },
+    );
+    render(TenantBarrierView);
+
+    const claim = await screen.findByTestId('tenant-barrier-claim');
+    await fireEvent.input(within(claim).getByLabelText('Username'), { target: { value: 'officer-1' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Request Challenge/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-message')).toHaveValue(
+        shareClaimMessage(`tenant:${TENANT}`, 'officer-1', 'beef'),
+      );
+    });
+    await fireEvent.input(within(claim).getByLabelText('Signature (base64)'), { target: { value: 'c2ln' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Submit Claim/i }));
+
+    expect(await screen.findByTestId('ceremony-claim-envelope')).toHaveTextContent('ZW52');
+    expect(posts(calls, '/officers/officer-1/claim/begin')[0]?.body).toEqual({ username: 'officer-1' });
+    expect(posts(calls, '/officers/officer-1/claim/complete')[0]?.body).toEqual({
+      username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln',
+    });
   });
 
   it('reports the sealed share count when the holders were registered before init', async () => {

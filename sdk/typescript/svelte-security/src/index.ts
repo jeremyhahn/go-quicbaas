@@ -48,6 +48,7 @@ export type {
   ShareClaimChallenge,
   ClaimShareRequest,
   ClaimedShare,
+  ShareClaimClient,
   EnrollOfficerRequest,
   EnrolledOfficer,
   CeremonyClient,
@@ -64,5 +65,6 @@ export {
   quorumChallengeMessage,
   SHARE_CLAIM_CONTEXT,
   SYSTEM_CLAIM_LABEL,
+  tenantClaimLabel,
   shareClaimMessage,
 } from './challengeMessage.ts';
