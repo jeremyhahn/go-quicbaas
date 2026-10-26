@@ -12,9 +12,8 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 import { McpSession } from './mcp_rpc.js';
 import { adoptPage, wholeSetPage, } from './page.js';
-import { QuicBaaSError, DeployNotSupportedError, McpError, McpSecretNotTextError, TransportNotSupportedError, } from './errors.js';
-import { requireTLSForSecret, requireTLSForSOPIN } from './so_pin.js';
-import { requireOneAdminSelector } from './ceremony.js';
+import { QuicBaaSError, DeployNotSupportedError, McpError, TransportNotSupportedError } from './errors.js';
+import { requireTLSForSOPIN } from './so_pin.js';
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
 export class McpNotImplementedError extends QuicBaaSError {
@@ -601,20 +600,8 @@ class McpAuthClient {
 // secretArg renders a barrier credential as the plaintext string an MCP tool
 // argument has to be, as the Go MCP transport's secretArg does: JSON carries
 // no bytes, and the server reads the argument as the credential itself.
-//
-// The conversion is lossless or refused: every valid UTF-8 byte is kept, a
-// leading BOM included (ignoreBOM), and bytes that are not valid UTF-8 throw
-// McpSecretNotTextError for field (fatal) instead of being replaced. A
-// credential altered here would initialize a barrier that the caller's real
-// bytes could never unseal.
-const secretDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
-function secretArg(field, secret) {
-    try {
-        return secretDecoder.decode(secret);
-    }
-    catch {
-        throw new McpSecretNotTextError(field);
-    }
+function secretArg(secret) {
+    return new TextDecoder().decode(secret);
 }
 // McpBarrierClient calls the qrdb_barrier_* MCP tools, with the tool names
 // and argument keys of the Go SDK's MCP transport.
@@ -627,12 +614,10 @@ export class McpBarrierClient {
         return this.session.callTool('qrdb_barrier_status', {});
     }
     async initialize(req) {
-        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
-        await this.session.callTool('qrdb_barrier_initialize', { secret: secretArg('secret', req.secret) });
+        await this.session.callTool('qrdb_barrier_initialize', { secret: secretArg(req.secret) });
     }
     async unseal(req) {
-        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
-        await this.session.callTool('qrdb_barrier_unseal', { secret: secretArg('secret', req.secret) });
+        await this.session.callTool('qrdb_barrier_unseal', { secret: secretArg(req.secret) });
     }
     async seal(req) {
         requireTLSForSOPIN('mcp', this.session.endpoint, req?.so_pin);
@@ -641,57 +626,37 @@ export class McpBarrierClient {
     // The MCP tool never returns share material (officers claim shares through
     // the qrdb share-claim flow), so shares is empty unless the server sends it.
     async initializeShamir(req) {
-        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
         const reply = await this.session.callTool('qrdb_barrier_shamir_initialize', {
-            secret: secretArg('secret', req.secret),
+            secret: secretArg(req.secret),
             threshold: req.threshold,
             total_shares: req.total_shares,
         });
-        return {
-            threshold: reply.threshold ?? 0,
-            total_shares: reply.total_shares ?? 0,
-            share_count: reply.share_count ?? 0,
-        };
+        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
     }
-    async officers() {
-        const reply = await this.session.callTool('qrdb_barrier_officer_list', {});
-        return reply.officers ?? [];
+    async unsealWithShare(req) {
+        return this.session.callTool('qrdb_barrier_shamir_unseal_share', { share: req.share });
     }
-    async registerOfficer(req, domain = 'unseal') {
-        return this.session.callTool(holderTools[domain].register, { ...req });
+    async unsealWithShares(req) {
+        await this.session.callTool('qrdb_barrier_shamir_unseal_shares', { shares: req.shares });
     }
-    async shareClaimBegin(username, domain = 'unseal') {
-        return this.session.callTool(holderTools[domain].claimBegin, { username });
-    }
-    async shareClaimComplete(req, domain = 'unseal') {
-        return this.session.callTool(holderTools[domain].claimComplete, { ...req });
-    }
-    async quorumBegin(req) {
-        return this.session.callTool('qrdb_barrier_quorum_begin', { ...req });
-    }
-    // The share is the holder's decrypted Shamir share, so a submission that
-    // carries one is refused before it is sent to a plaintext endpoint.
-    async quorumSubmit(req) {
-        requireTLSForSecret('mcp', this.session.endpoint, Boolean(req.share));
-        return this.session.callTool('qrdb_barrier_quorum_submit', { ...req });
-    }
-    async rekeyStart(req) {
-        requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
-        return this.session.callTool('qrdb_barrier_rekey_start', { ...req });
+    // Like initializeShamir, the rekey tool reports the new quorum but no shares.
+    async rekey(req) {
+        const reply = await this.session.callTool('qrdb_barrier_rekey', {
+            threshold: req.threshold,
+            total: req.total,
+        });
+        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
     }
     // The recovery tool reports the quorum but never the recovery keys.
     async generateRecoveryKeys(req) {
-        requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
         const reply = await this.session.callTool('qrdb_barrier_recovery_generate', {
             threshold: req.threshold,
-            ...(req.policy ? { policy: req.policy } : {}),
-            ...(req.so_pin ? { so_pin: req.so_pin } : {}),
+            total: req.total,
         });
-        return {
-            threshold: reply.threshold ?? 0,
-            total: reply.total ?? 0,
-            share_count: reply.share_count ?? 0,
-        };
+        return { keys: reply.keys ?? [], threshold: reply.threshold ?? 0, total: reply.total ?? 0 };
+    }
+    async recoverWithKeys(req) {
+        await this.session.callTool('qrdb_barrier_recovery_recover', { keys: req.keys });
     }
     async deleteRecoveryKeys() {
         await this.session.callTool('qrdb_barrier_recovery_delete', {});
@@ -701,16 +666,19 @@ export class McpBarrierClient {
         const reply = await this.session.callTool('qrdb_barrier_recovery_status', {});
         return { has_keys: reply.has_recovery_keys === true };
     }
+    async generateRootToken(req) {
+        const reply = await this.session.callTool('qrdb_barrier_root_token', { shares: req.shares });
+        return { token: reply.token ?? '', created_at: reply.created_at ?? '' };
+    }
     // A tenant request goes to the tenant tool: the system tool ignores
     // tenant_id and would migrate the system barrier. The tools do not report
     // the scope, so it is the scope of the tool that was called.
     async enableEncryption(req) {
-        requireTLSForSecret('mcp', this.session.endpoint, (req.passphrase?.length ?? 0) > 0);
         const args = {
             target_strategy: req.strategy,
             mechanism: req.mechanism ?? '',
             availability: req.availability ?? '',
-            passphrase: req.passphrase === undefined ? '' : secretArg('passphrase', req.passphrase),
+            passphrase: req.passphrase === undefined ? '' : secretArg(req.passphrase),
             shamir_threshold: req.shamir_threshold ?? 0,
             shamir_total: req.shamir_total ?? 0,
         };
@@ -725,36 +693,34 @@ export class McpBarrierClient {
         return { status: reply.status ?? '', scope };
     }
 }
-// holderTools names the key-holder tools of each barrier domain
-// (pkg/api/mcp/tools_barrier_holders.go). The tools decode their arguments as
-// the wire request, so a request passes through unchanged.
-const holderTools = {
-    unseal: {
-        register: 'qrdb_barrier_officer_register',
-        claimBegin: 'qrdb_barrier_share_claim_begin',
-        claimComplete: 'qrdb_barrier_share_claim_complete',
-    },
-    recovery: {
-        register: 'qrdb_barrier_recovery_officer_register',
-        claimBegin: 'qrdb_barrier_recovery_share_claim_begin',
-        claimComplete: 'qrdb_barrier_recovery_share_claim_complete',
-    },
-};
+// decodeBase64Text decodes a base64 tool field into UTF-8 text, refusing
+// malformed base64 as an McpError naming the tool.
+function decodeBase64Text(tool, b64) {
+    let binary;
+    try {
+        binary = atob(b64);
+    }
+    catch {
+        throw new McpError(tool, 'share is not valid base64');
+    }
+    return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
+}
 // McpCeremonyClient calls the qrdb_ceremony_* MCP tools, with the tool names
-// and argument keys of the Go SDK's MCP transport.
+// and argument keys of the Go SDK's MCP transport. claimShareBegin and
+// claimShareComplete call the qrdb_ceremony_begin_claim_share /
+// qrdb_ceremony_complete_claim_share pair (pkg/api/mcp/tools_ceremony.go): the
+// officer signs the begin nonce, and the server binds both calls to the
+// session's mTLS certificate thumbprint, which never travels in the arguments.
 export class McpCeremonyClient {
     session;
     constructor(session) {
         this.session = session;
     }
     async initialize(req) {
-        requireOneAdminSelector(req);
-        requireTLSForSecret('mcp', this.session.endpoint, Boolean(req.so_pin) || Boolean(req.user_pin) || (req.secret?.length ?? 0) > 0);
+        requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
         const args = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
         if (req.credential_seal_strategy)
             args.credential_seal_strategy = req.credential_seal_strategy;
-        if (req.policy)
-            args.policy = req.policy;
         if (req.officers && req.officers.length > 0) {
             args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
         }
@@ -762,20 +728,36 @@ export class McpCeremonyClient {
             args.hostname = req.hostname;
         if (req.sans && req.sans.length > 0)
             args.sans = req.sans;
-        if (req.admin_csr_pem)
-            args.admin_csr_pem = req.admin_csr_pem;
-        if (req.admin_cert_pem)
-            args.admin_cert_pem = req.admin_cert_pem;
-        if (req.admin_cert_pool_pem)
-            args.admin_cert_pool_pem = req.admin_cert_pool_pem;
-        if (req.admin_generate)
-            args.admin_generate = true;
-        if (req.secret && req.secret.length > 0)
-            args.secret = secretArg('secret', req.secret);
         return this.session.callTool('qrdb_ceremony_initialize', args);
     }
     async status() {
         return this.session.callTool('qrdb_ceremony_status', {});
+    }
+    async claimCertBegin(req) {
+        const reply = await this.session.callTool('qrdb_ceremony_claim_cert_begin', { username: req.username });
+        return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
+    }
+    async claimCertComplete(req) {
+        return this.session.callTool('qrdb_ceremony_claim_cert_complete', {
+            username: req.username,
+            nonce_hex: req.nonce_hex,
+            signature: req.signature,
+        });
+    }
+    async claimShareBegin(req) {
+        const reply = await this.session.callTool('qrdb_ceremony_begin_claim_share', { username: req.username });
+        return { nonce_hex: reply.nonce_hex ?? '', expires_at: reply.expires_at ?? '' };
+    }
+    // claimShareComplete sends the base64 signature as the tool's signature
+    // argument and decodes the tool's base64 share back into share_json.
+    async claimShareComplete(req) {
+        const tool = 'qrdb_ceremony_complete_claim_share';
+        const reply = await this.session.callTool(tool, {
+            username: req.username,
+            nonce_hex: req.nonce_hex,
+            signature: req.signature,
+        });
+        return { share_index: reply.share_index ?? 0, share_json: decodeBase64Text(tool, reply.share ?? '') };
     }
     async signCSR(req) {
         requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
@@ -785,6 +767,20 @@ export class McpCeremonyClient {
             csr_pem: req.csr_pem,
             role: req.role,
         });
+    }
+    async enrollExternalOfficer(req) {
+        const args = {
+            username: req.username,
+            share_index: req.share_index,
+            auth_factor: req.auth_factor,
+        };
+        if (req.cert_pem)
+            args.cert_pem = req.cert_pem;
+        if (req.pubkey_pem)
+            args.pubkey_pem = req.pubkey_pem;
+        if (req.share_bytes)
+            args.share_bytes = req.share_bytes;
+        return this.session.callTool('qrdb_ceremony_enroll_external_officer', args);
     }
 }
 // McpAccountsClient carries the accounts family over the quicbaas_agent_account_*

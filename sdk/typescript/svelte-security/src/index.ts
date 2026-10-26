@@ -24,6 +24,7 @@ export { default as BarrierStatusBadge } from './components/BarrierStatusBadge.s
 export { default as BarrierUnsealForm } from './components/BarrierUnsealForm.svelte';
 export { default as ShamirShareInput } from './components/ShamirShareInput.svelte';
 export { default as BarrierStrategyPicker } from './components/BarrierStrategyPicker.svelte';
+export { default as ShamirSharesReveal } from './components/ShamirSharesReveal.svelte';
 export { default as CeremonyOfficerList } from './components/CeremonyOfficerList.svelte';
 export { default as CeremonyClaimChallenge } from './components/CeremonyClaimChallenge.svelte';
 export { default as BootstrapMethodPicker } from './components/BootstrapMethodPicker.svelte';
@@ -35,37 +36,18 @@ export type {
   BarrierInitResponse,
   BarrierUnsealRequest,
   BarrierUnsealResponse,
-  BarrierQuorumBeginRequest,
-  BarrierQuorumChallenge,
-  BarrierQuorumSubmitRequest,
-  BarrierQuorumProgress,
   BarrierClient,
   TenantBarrierStrategy,
   TenantBarrierInitParams,
-  BarrierHolderParams,
   OfficerKind,
   OfficerClaimStatus,
   CeremonyOfficer,
-  ShareClaimChallenge,
+  ClaimCertificateRequest,
   ClaimShareRequest,
-  ClaimedShare,
-  ShareClaimClient,
+  ClaimResponse,
   EnrollOfficerRequest,
-  EnrolledOfficer,
   CeremonyClient,
   BootstrapMethod,
   BootstrapRequest,
   BootstrapResponse,
 } from './types.ts';
-
-export {
-  MTLS_CHALLENGE_CONTEXT,
-  METHOD_DATA_PURPOSE,
-  ChallengeMessageError,
-  quorumChallengePurpose,
-  quorumChallengeMessage,
-  SHARE_CLAIM_CONTEXT,
-  SYSTEM_CLAIM_LABEL,
-  tenantClaimLabel,
-  shareClaimMessage,
-} from './challengeMessage.ts';

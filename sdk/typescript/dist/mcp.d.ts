@@ -1,5 +1,5 @@
 import type { AuthClient, BarrierClient, CeremonyClient, Client, ConnectionClient, OrchestratorClient } from './interfaces.js';
-import type { BarrierGenerateRecoveryKeysRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoveryKeysResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierDomain, BarrierOfficer, BarrierOfficerRegisterRequest, BarrierOfficerRegisterResponse, BarrierShareClaimBeginResponse, BarrierShareClaimCompleteRequest, BarrierShareClaimCompleteResponse, BarrierQuorumBeginRequest, BarrierQuorumChallenge, BarrierQuorumSubmitRequest, BarrierQuorumOutcome, BarrierRekeyStartRequest, BarrierQuorumRound, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
+import type { BarrierGenerateRecoveryKeysRequest, BarrierGenerateRootTokenRequest, BarrierEnableEncryptionRequest, BarrierEnableEncryptionResponse, BarrierHasRecoveryKeysResponse, BarrierInitRequest, BarrierRecoverWithKeysRequest, BarrierRecoveryKeysResponse, BarrierRekeyRequest, BarrierRekeyResponse, BarrierRootTokenResponse, BarrierShamirInitRequest, BarrierShamirInitResponse, BarrierStatusResponse, BarrierUnsealRequest, BarrierSealRequest, BarrierUnsealShareRequest, BarrierUnsealShareResponse, BarrierUnsealSharesRequest, CeremonyClaimCertBeginRequest, CeremonyClaimCertBeginResponse, CeremonyClaimCertCompleteRequest, CeremonyClaimCertCompleteResponse, CeremonyClaimShareBeginRequest, CeremonyClaimShareBeginResponse, CeremonyClaimShareCompleteRequest, CeremonyClaimShareCompleteResponse, CeremonyEnrollExternalOfficerRequest, CeremonyEnrollExternalOfficerResponse, CeremonyInitializeRequest, CeremonyInitializeResponse, CeremonySignCSRRequest, CeremonySignCSRResponse, CeremonyStatusResponse, ClientConfig } from './types.js';
 import type { Account, AccountsClient, CreateAccountRequest, CreateAccountResponse, DeleteAccountResponse, GetAccountResponse, GetAccountUsageResponse, ListAccountsRequest, ListAccountsResponse, RevokeAccountRequest, RevokeAccountResponse, RotateAccountCredentialRequest, RotateAccountCredentialResponse, SetDefaultAccountResponse, UpdateAccountRequest, UpdateAccountResponse } from './accounts.js';
 import type { CreateProjectRequest, CreateProjectResponse, DeleteProjectResponse, GetProjectResponse, GrantFleetNodeRoleRequest, GrantFleetNodeRoleResponse, ListProjectsResponse, Project, ProjectsClient, RevokeFleetNodeRoleRequest, RevokeFleetNodeRoleResponse, UpdateProjectRequest, UpdateProjectResponse } from './projects.js';
 import type { SdlcClient, ProjectBinding, Delivery, OnboardingReport, ConformanceReport, OpenWork, ReviewerSelection, FileIssueRequest, ForgeIssue, CollaboratorsResponse, AdoptIssueRequest, Adoption } from './sdlc.js';
@@ -17,16 +17,14 @@ export declare class McpBarrierClient implements BarrierClient {
     unseal(req: BarrierUnsealRequest): Promise<void>;
     seal(req?: BarrierSealRequest): Promise<void>;
     initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse>;
-    officers(): Promise<BarrierOfficer[]>;
-    registerOfficer(req: BarrierOfficerRegisterRequest, domain?: BarrierDomain): Promise<BarrierOfficerRegisterResponse>;
-    shareClaimBegin(username: string, domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse>;
-    shareClaimComplete(req: BarrierShareClaimCompleteRequest, domain?: BarrierDomain): Promise<BarrierShareClaimCompleteResponse>;
-    quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
-    quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome>;
-    rekeyStart(req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound>;
+    unsealWithShare(req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse>;
+    unsealWithShares(req: BarrierUnsealSharesRequest): Promise<void>;
+    rekey(req: BarrierRekeyRequest): Promise<BarrierRekeyResponse>;
     generateRecoveryKeys(req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse>;
+    recoverWithKeys(req: BarrierRecoverWithKeysRequest): Promise<void>;
     deleteRecoveryKeys(): Promise<void>;
     recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse>;
+    generateRootToken(req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse>;
     enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse>;
 }
 export declare class McpCeremonyClient implements CeremonyClient {
@@ -34,7 +32,12 @@ export declare class McpCeremonyClient implements CeremonyClient {
     constructor(session: McpSession);
     initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse>;
     status(): Promise<CeremonyStatusResponse>;
+    claimCertBegin(req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse>;
+    claimCertComplete(req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse>;
+    claimShareBegin(req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse>;
+    claimShareComplete(req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse>;
     signCSR(req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse>;
+    enrollExternalOfficer(req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse>;
 }
 export declare class McpProjectsClient implements ProjectsClient {
     private readonly session;

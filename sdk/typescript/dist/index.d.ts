@@ -24,7 +24,7 @@ export { SandboxMode } from './types.js';
 export { SPEND_UNATTRIBUTED } from './types.js';
 export type { PageParams, PageResult, PageFacets, JobPageParams, TaskPageParams, SessionPageParams, FleetNodePageParams, WorkflowPageParams, ProjectPageParams, AccountPageParams, } from './page.js';
 export { adoptPage, adoptFacets, appendPageParams, appendListParam, appendCSVParam, wholeSetPage, MalformedPageError, } from './page.js';
-export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, McpSecretNotTextError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
+export { QuicBaaSError, SOPINRequiresTLSError, ConnectionError, NotConnectedError, APIError, DeployNotSupportedError, TransportNotSupportedError, McpError, SSHError, SSHNotFoundError, SSHDuplicateError, SSHInvalidError, SSHUnavailableError, SSHServerError, SSHHostMismatchError, } from './errors.js';
 export { RestSSHKeysClient, RestKnownHostsClient, RestAuthorizedKeysClient } from './rest.js';
 export { RestBarrierClient, RestTenantBarrierClient, RestCeremonyClient, RestBootstrapClient, RestClusterClient, } from './rest.js';
 export { RestCAClient, RestTrustClient, RestCryptoClient } from './rest.js';

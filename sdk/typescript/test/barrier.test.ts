@@ -304,9 +304,9 @@ describe('RestBarrierClient Shamir strategy', () => {
   it('initialises the barrier with Shamir secret sharing', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
+        shares: ['share-1', 'share-2', 'share-3'],
         threshold: 2,
         total_shares: 3,
-        share_count: 3,
       }),
     );
 
@@ -317,10 +317,9 @@ describe('RestBarrierClient Shamir strategy', () => {
       total_shares: 3,
     });
 
-    expect(result).not.toHaveProperty('shares');
+    expect(result.shares).toHaveLength(3);
     expect(result.threshold).toBe(2);
     expect(result.total_shares).toBe(3);
-    expect(result.share_count).toBe(3);
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/shamir/initialize');
@@ -331,6 +330,36 @@ describe('RestBarrierClient Shamir strategy', () => {
     });
   });
 
+  it('submits one share toward the unseal quorum', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        required: 3,
+        submitted: 1,
+        complete: false,
+      }),
+    );
+
+    const client = new RestClient('http://localhost');
+    const progress = await client.barrier.unsealWithShare({ share: 'share-A' });
+
+    expect(progress.complete).toBe(false);
+    expect(progress.submitted).toBe(1);
+    expect(progress.required).toBe(3);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/shamir/unseal-share');
+  });
+
+  it('submits multiple shares in a single request', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.barrier.unsealWithShares({ shares: ['a', 'b', 'c'] });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/shamir/unseal-shares');
+    expect(JSON.parse(init.body as string)).toEqual({ shares: ['a', 'b', 'c'] });
+  });
 });
 
 // =============================================================================
@@ -338,30 +367,52 @@ describe('RestBarrierClient Shamir strategy', () => {
 // =============================================================================
 
 describe('RestBarrierClient operator flows', () => {
-  it('generates recovery keys with the SO PIN and policy over https', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ threshold: 2, total: 3, share_count: 3 }));
+  it('rekeys the barrier', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        shares: ['new-1', 'new-2'],
+        threshold: 1,
+        total_shares: 2,
+      }),
+    );
 
-    const client = new RestClient('https://node.example');
-    const result = await client.barrier.generateRecoveryKeys({
-      threshold: 2,
-      policy: 'designated',
-      so_pin: 'so-pin-1234',
-    });
+    const client = new RestClient('http://localhost');
+    const result = await client.barrier.rekey({ threshold: 1, total: 2 });
 
-    expect(result).toEqual({ threshold: 2, total: 3, share_count: 3 });
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://node.example/api/v1/barrier/recovery/generate');
-    expect(JSON.parse(init.body as string)).toEqual({ threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' });
+    expect(result.threshold).toBe(1);
+    expect(result.total_shares).toBe(2);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/rekey');
   });
 
-  it('refuses to send a recovery-generation SO PIN over plaintext http, before any request', async () => {
-    const err = await new RestClient('http://localhost')
-      .barrier.generateRecoveryKeys({ threshold: 2, so_pin: 'so-pin-1234' })
-      .catch((e: unknown) => e);
+  it('generates recovery keys', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        keys: ['rec-1', 'rec-2', 'rec-3'],
+        threshold: 2,
+        total: 3,
+      }),
+    );
 
-    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
-    expect((err as SOPINRequiresTLSError).transport).toBe('rest');
-    expect(fetchMock).not.toHaveBeenCalled();
+    const client = new RestClient('http://localhost');
+    const result = await client.barrier.generateRecoveryKeys({ threshold: 2, total: 3 });
+
+    expect(result.keys).toHaveLength(3);
+    expect(result.total).toBe(3);
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/recovery/generate');
+  });
+
+  it('recovers the barrier with recovery keys', async () => {
+    fetchMock.mockResolvedValue(noContentResponse());
+
+    const client = new RestClient('http://localhost');
+    await client.barrier.recoverWithKeys({ keys: ['k1', 'k2'] });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/recovery/recover');
   });
 
   it('deletes recovery keys', async () => {
@@ -387,6 +438,23 @@ describe('RestBarrierClient operator flows', () => {
     expect(url).toBe('http://localhost/api/v1/barrier/recovery/status');
   });
 
+  it('generates a root token from Shamir shares', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        token: 'root-deadbeef',
+        created_at: '2026-04-30T12:00:00Z',
+      }),
+    );
+
+    const client = new RestClient('http://localhost');
+    const token = await client.barrier.generateRootToken({ shares: ['s1', 's2'] });
+
+    expect(token.token).toBe('root-deadbeef');
+    expect(token.created_at).toBe('2026-04-30T12:00:00Z');
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://localhost/api/v1/barrier/root-token');
+  });
 });
 
 // =============================================================================

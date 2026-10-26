@@ -171,16 +171,14 @@ export class QuicBarrierClient {
     async unseal(_req) { return frameOnly('barrier', 'unseal'); }
     async seal(_req) { return frameOnly('barrier', 'seal'); }
     async initializeShamir(_req) { return frameOnly('barrier', 'initializeShamir'); }
-    async officers() { return frameOnly('barrier', 'officers'); }
-    async registerOfficer(_req, _domain) { return frameOnly('barrier', 'registerOfficer'); }
-    async shareClaimBegin(_username, _domain) { return frameOnly('barrier', 'shareClaimBegin'); }
-    async shareClaimComplete(_req, _domain) { return frameOnly('barrier', 'shareClaimComplete'); }
-    async quorumBegin(_req) { return frameOnly('barrier', 'quorumBegin'); }
-    async quorumSubmit(_req) { return frameOnly('barrier', 'quorumSubmit'); }
-    async rekeyStart(_req) { return frameOnly('barrier', 'rekeyStart'); }
+    async unsealWithShare(_req) { return frameOnly('barrier', 'unsealWithShare'); }
+    async unsealWithShares(_req) { return frameOnly('barrier', 'unsealWithShares'); }
+    async rekey(_req) { return frameOnly('barrier', 'rekey'); }
     async generateRecoveryKeys(_req) { return frameOnly('barrier', 'generateRecoveryKeys'); }
+    async recoverWithKeys(_req) { return frameOnly('barrier', 'recoverWithKeys'); }
     async deleteRecoveryKeys() { return frameOnly('barrier', 'deleteRecoveryKeys'); }
     async recoveryStatus() { return frameOnly('barrier', 'recoveryStatus'); }
+    async generateRootToken(_req) { return frameOnly('barrier', 'generateRootToken'); }
     async enableEncryption(_req) { return frameOnly('barrier', 'enableEncryption'); }
 }
 // QuicCeremonyClient refuses every verb: go-qrdb serves ceremony.* on the QUIC
@@ -188,7 +186,12 @@ export class QuicBarrierClient {
 export class QuicCeremonyClient {
     async initialize(_req) { return frameOnly('ceremony', 'initialize'); }
     async status() { return frameOnly('ceremony', 'status'); }
+    async claimCertBegin(_req) { return frameOnly('ceremony', 'claimCertBegin'); }
+    async claimCertComplete(_req) { return frameOnly('ceremony', 'claimCertComplete'); }
+    async claimShareBegin(_req) { return frameOnly('ceremony', 'claimShareBegin'); }
+    async claimShareComplete(_req) { return frameOnly('ceremony', 'claimShareComplete'); }
     async signCSR(_req) { return frameOnly('ceremony', 'signCSR'); }
+    async enrollExternalOfficer(_req) { return frameOnly('ceremony', 'enrollExternalOfficer'); }
 }
 // QuicClient is the entry point for the QUIC transport. It sends nothing: every
 // verb refuses with a typed reason (see quicUnsupported).

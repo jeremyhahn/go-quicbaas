@@ -25,7 +25,6 @@
   import type {
     TenantBarrierStrategy,
     TenantBarrierInitParams,
-    BarrierHolderParams,
   } from '../types.ts';
 
   interface Props {
@@ -42,8 +41,6 @@
   let confirmPassphrase = $state('');
   let threshold = $state(2);
   let total = $state(3);
-  // holders is the optional inline roster registered with a Shamir init.
-  let holders: BarrierHolderParams[] = $state([]);
 
   interface StrategyMeta {
     label: string;
@@ -64,7 +61,7 @@
     shamir: {
       label: 'Shamir (M-of-N)',
       description:
-        'The master key is split into N shares; any M of them reconstruct it. Each share is sealed to a separate holder, who claims it individually.',
+        'The master key is split into N shares; any M of them reconstruct it. Shares are returned exactly once and must be distributed to separate custodians.',
     },
   };
 
@@ -78,28 +75,14 @@
     if (strategy === 'passphrase') {
       return passphrase.trim().length > 0 && passphrase === confirmPassphrase;
     }
-    // shamir: an inline roster is optional, but when given it names one
-    // complete holder per share.
+    // shamir
     return (
       Number.isInteger(threshold) &&
       Number.isInteger(total) &&
       threshold >= 1 &&
-      total >= threshold &&
-      (holders.length === 0 || (holders.length === total && holders.every(holderComplete)))
+      total >= threshold
     );
   });
-
-  function holderComplete(h: BarrierHolderParams): boolean {
-    return h.username.trim().length > 0 && h.csr_pem.trim().length > 0;
-  }
-
-  function addHolder(): void {
-    holders.push({ username: '', csr_pem: '' });
-  }
-
-  function removeHolder(index: number): void {
-    holders.splice(index, 1);
-  }
 
   function emit(): void {
     if (oninit === undefined || !valid) return;
@@ -111,12 +94,7 @@
       oninit({ strategy: 'passphrase', passphrase: passphrase.trim() });
       return;
     }
-    if (holders.length === 0) {
-      oninit({ strategy: 'shamir', threshold, shares: total });
-      return;
-    }
-    const officers = holders.map((h) => ({ username: h.username.trim(), csr_pem: h.csr_pem.trim() }));
-    oninit({ strategy: 'shamir', threshold, shares: total, officers });
+    oninit({ strategy: 'shamir', threshold, shares: total });
   }
 </script>
 
@@ -200,40 +178,6 @@
           Total shares must be greater than or equal to the threshold.
         </p>
       {/if}
-    </div>
-    <div class="space-y-2" data-testid="barrier-strategy-roster">
-      <p class="text-xs text-base-content/60">
-        Optionally name the holders now, one per share, or register them before initializing.
-        {#if holders.length > 0}{holders.length} of {total} holders.{/if}
-      </p>
-      {#each holders as holder, i (i)}
-        <div class="grid grid-cols-2 gap-2">
-          <div class="form-control">
-            <label class="label label-text" for="barrier-init-holder-{i}-username">Holder {i + 1} username</label>
-            <input
-              id="barrier-init-holder-{i}-username"
-              class="input input-bordered input-sm font-mono"
-              type="text"
-              bind:value={holder.username}
-            />
-          </div>
-          <div class="form-control">
-            <label class="label label-text" for="barrier-init-holder-{i}-csr">Holder {i + 1} CSR (PEM)</label>
-            <textarea
-              id="barrier-init-holder-{i}-csr"
-              class="textarea textarea-bordered font-mono text-xs"
-              rows="2"
-              bind:value={holder.csr_pem}
-            ></textarea>
-          </div>
-          <button class="btn btn-ghost btn-xs col-span-2 justify-self-end" type="button" onclick={() => removeHolder(i)}>
-            Remove holder {i + 1}
-          </button>
-        </div>
-      {/each}
-      <button class="btn btn-outline btn-xs" type="button" onclick={addHolder} data-testid="barrier-strategy-add-holder">
-        Add holder
-      </button>
     </div>
   {/if}
 

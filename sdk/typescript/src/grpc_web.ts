@@ -42,29 +42,34 @@ import type {
   AgentBackendInfo,
   JobRunnerInfo,
   BarrierGenerateRecoveryKeysRequest,
+  BarrierGenerateRootTokenRequest,
   BarrierEnableEncryptionRequest,
   BarrierEnableEncryptionResponse,
   BarrierHasRecoveryKeysResponse,
   BarrierInitRequest,
+  BarrierRecoverWithKeysRequest,
   BarrierRecoveryKeysResponse,
+  BarrierRekeyRequest,
+  BarrierRekeyResponse,
+  BarrierRootTokenResponse,
   BarrierShamirInitRequest,
   BarrierShamirInitResponse,
-  BarrierDomain,
-  BarrierOfficer,
-  BarrierOfficerRegisterRequest,
-  BarrierOfficerRegisterResponse,
-  BarrierShareClaimBeginResponse,
-  BarrierShareClaimCompleteRequest,
-  BarrierShareClaimCompleteResponse,
-  BarrierQuorumBeginRequest,
-  BarrierQuorumChallenge,
-  BarrierQuorumSubmitRequest,
-  BarrierQuorumOutcome,
-  BarrierRekeyStartRequest,
-  BarrierQuorumRound,
   BarrierStatusResponse,
   BarrierUnsealRequest,
   BarrierSealRequest,
+  BarrierUnsealShareRequest,
+  BarrierUnsealShareResponse,
+  BarrierUnsealSharesRequest,
+  CeremonyClaimCertBeginRequest,
+  CeremonyClaimCertBeginResponse,
+  CeremonyClaimCertCompleteRequest,
+  CeremonyClaimCertCompleteResponse,
+  CeremonyClaimShareBeginRequest,
+  CeremonyClaimShareBeginResponse,
+  CeremonyClaimShareCompleteRequest,
+  CeremonyClaimShareCompleteResponse,
+  CeremonyEnrollExternalOfficerRequest,
+  CeremonyEnrollExternalOfficerResponse,
   CeremonyInitializeRequest,
   CeremonyInitializeResponse,
   CeremonySignCSRRequest,
@@ -306,16 +311,14 @@ export class GrpcWebBarrierClient implements BarrierClient {
   async unseal(_req: BarrierUnsealRequest): Promise<void> { return notImpl('barrier.unseal'); }
   async seal(_req?: BarrierSealRequest): Promise<void> { return notImpl('barrier.seal'); }
   async initializeShamir(_req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> { return notImpl('barrier.initializeShamir'); }
-  async officers(): Promise<BarrierOfficer[]> { return notImpl('barrier.officers'); }
-  async registerOfficer(_req: BarrierOfficerRegisterRequest, _domain?: BarrierDomain): Promise<BarrierOfficerRegisterResponse> { return notImpl('barrier.registerOfficer'); }
-  async shareClaimBegin(_username: string, _domain?: BarrierDomain): Promise<BarrierShareClaimBeginResponse> { return notImpl('barrier.shareClaimBegin'); }
-  async shareClaimComplete(_req: BarrierShareClaimCompleteRequest, _domain?: BarrierDomain): Promise<BarrierShareClaimCompleteResponse> { return notImpl('barrier.shareClaimComplete'); }
-  async quorumBegin(_req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge> { return notImpl('barrier.quorumBegin'); }
-  async quorumSubmit(_req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome> { return notImpl('barrier.quorumSubmit'); }
-  async rekeyStart(_req: BarrierRekeyStartRequest): Promise<BarrierQuorumRound> { return notImpl('barrier.rekeyStart'); }
+  async unsealWithShare(_req: BarrierUnsealShareRequest): Promise<BarrierUnsealShareResponse> { return notImpl('barrier.unsealWithShare'); }
+  async unsealWithShares(_req: BarrierUnsealSharesRequest): Promise<void> { return notImpl('barrier.unsealWithShares'); }
+  async rekey(_req: BarrierRekeyRequest): Promise<BarrierRekeyResponse> { return notImpl('barrier.rekey'); }
   async generateRecoveryKeys(_req: BarrierGenerateRecoveryKeysRequest): Promise<BarrierRecoveryKeysResponse> { return notImpl('barrier.generateRecoveryKeys'); }
+  async recoverWithKeys(_req: BarrierRecoverWithKeysRequest): Promise<void> { return notImpl('barrier.recoverWithKeys'); }
   async deleteRecoveryKeys(): Promise<void> { return notImpl('barrier.deleteRecoveryKeys'); }
   async recoveryStatus(): Promise<BarrierHasRecoveryKeysResponse> { return notImpl('barrier.recoveryStatus'); }
+  async generateRootToken(_req: BarrierGenerateRootTokenRequest): Promise<BarrierRootTokenResponse> { return notImpl('barrier.generateRootToken'); }
   async enableEncryption(_req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> { return notImpl('barrier.enableEncryption'); }
 }
 
@@ -324,7 +327,12 @@ export class GrpcWebBarrierClient implements BarrierClient {
 export class GrpcWebCeremonyClient implements CeremonyClient {
   async initialize(_req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> { return notImpl('ceremony.initialize'); }
   async status(): Promise<CeremonyStatusResponse> { return notImpl('ceremony.status'); }
+  async claimCertBegin(_req: CeremonyClaimCertBeginRequest): Promise<CeremonyClaimCertBeginResponse> { return notImpl('ceremony.claimCertBegin'); }
+  async claimCertComplete(_req: CeremonyClaimCertCompleteRequest): Promise<CeremonyClaimCertCompleteResponse> { return notImpl('ceremony.claimCertComplete'); }
+  async claimShareBegin(_req: CeremonyClaimShareBeginRequest): Promise<CeremonyClaimShareBeginResponse> { return notImpl('ceremony.claimShareBegin'); }
+  async claimShareComplete(_req: CeremonyClaimShareCompleteRequest): Promise<CeremonyClaimShareCompleteResponse> { return notImpl('ceremony.claimShareComplete'); }
   async signCSR(_req: CeremonySignCSRRequest): Promise<CeremonySignCSRResponse> { return notImpl('ceremony.signCSR'); }
+  async enrollExternalOfficer(_req: CeremonyEnrollExternalOfficerRequest): Promise<CeremonyEnrollExternalOfficerResponse> { return notImpl('ceremony.enrollExternalOfficer'); }
 }
 
 // GrpcWebClient is the stub entry point for the gRPC-Web transport.

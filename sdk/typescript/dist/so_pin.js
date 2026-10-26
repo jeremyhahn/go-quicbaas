@@ -19,18 +19,7 @@ import { SOPINRequiresTLSError } from './errors.js';
  * is never refused.
  */
 export function requireTLSForSOPIN(transport, endpoint, soPIN) {
-    requireTLSForSecret(transport, endpoint, Boolean(soPIN));
-}
-/**
- * requireTLSForSecret throws SOPINRequiresTLSError when hasSecret is true and
- * endpoint is not https://. It is the Go MCP transport's requireTLSForSecret:
- * a verb that carries any barrier secret (an SO or user PIN, an initialize or
- * unseal secret, a passphrase or a decrypted key share) calls it before the
- * request is built, so the secret never crosses a plaintext connection. The
- * error never contains the secret.
- */
-export function requireTLSForSecret(transport, endpoint, hasSecret) {
-    if (hasSecret && !endpoint.startsWith('https://')) {
+    if (soPIN && !endpoint.startsWith('https://')) {
         throw new SOPINRequiresTLSError(transport);
     }
 }
