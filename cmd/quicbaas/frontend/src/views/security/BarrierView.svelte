@@ -121,7 +121,9 @@
       return {
         strategy,
         sealed: Boolean(raw.sealed),
-        initialized: Boolean(raw.initialized ?? raw.initialized_at !== undefined),
+        // The explicit flag, never initialized_at: qrdb leaves the timestamp
+        // empty while an initialized system barrier is sealed (#1916).
+        initialized: Boolean(raw.initialized),
         threshold,
         total_shares: totalShares,
         shares_provided: sharesProvided,

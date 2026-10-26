@@ -186,6 +186,33 @@ func TestHandleBarrierStatus_ZeroTimeOmitsInitializedAt(t *testing.T) {
 	}
 }
 
+// TestHandleBarrierStatus_InitializedFlag checks the explicit initialized
+// flag is on the wire whatever initialized_at holds: a sealed, initialized
+// barrier has a zero timestamp (#1916).
+func TestHandleBarrierStatus_InitializedFlag(t *testing.T) {
+	for _, initialized := range []bool{true, false} {
+		svc := &fakeBarrierService{
+			statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
+				return &service.BarrierStatusInfo{Sealed: true, Initialized: initialized, Strategy: "shamir"}, nil
+			},
+		}
+		w := doBarrierReq(t, barrierServer(t, svc), http.MethodGet, "/api/v1/barrier/status", "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var body map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if got, ok := body["initialized"].(bool); !ok || got != initialized {
+			t.Fatalf("initialized = %v, want %v: %s", body["initialized"], initialized, w.Body.String())
+		}
+		if _, ok := body["initialized_at"]; ok {
+			t.Fatalf("zero InitializedAt should be omitted: %s", w.Body.String())
+		}
+	}
+}
+
 func TestHandleBarrierStatus_ServiceError(t *testing.T) {
 	svc := &fakeBarrierService{
 		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {

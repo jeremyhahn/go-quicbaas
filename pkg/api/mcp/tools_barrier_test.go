@@ -677,3 +677,21 @@ func TestBarrierStatusWiredMapsCleanly(t *testing.T) {
 	require.Truef(t, ok, "expected map result, got %T", out)
 	assert.Equal(t, "shamir", result["strategy"])
 }
+
+// TestBarrierStatusCarriesInitializedFlag checks the explicit initialized
+// flag survives a zero initialized_at, as qrdb reports a sealed barrier (#1916).
+func TestBarrierStatusCarriesInitializedFlag(t *testing.T) {
+	for _, initialized := range []bool{true, false} {
+		server, _ := newTestServer(t)
+		server.SetBarrierService(&fakeBarrierService{status: &service.BarrierStatusInfo{
+			Sealed: true, Initialized: initialized, Strategy: "shamir",
+		}})
+
+		out, err := server.tools.ExecuteTool(context.Background(), "qrdb_barrier_status", nil)
+		require.NoError(t, err)
+		result, ok := out.(map[string]interface{})
+		require.Truef(t, ok, "expected map result, got %T", out)
+		assert.Equal(t, initialized, result["initialized"])
+		assert.NotContains(t, result, "initialized_at")
+	}
+}

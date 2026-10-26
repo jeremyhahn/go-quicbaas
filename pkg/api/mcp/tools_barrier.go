@@ -793,6 +793,7 @@ const barrierTimeFormat = time.RFC3339Nano
 func barrierStatusToMap(info *service.BarrierStatusInfo) map[string]interface{} {
 	resp := map[string]interface{}{
 		"sealed":          info.Sealed,
+		"initialized":     info.Initialized,
 		"strategy":        info.Strategy,
 		"hardware_backed": info.HardwareBacked,
 	}

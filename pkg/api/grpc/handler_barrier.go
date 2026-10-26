@@ -192,6 +192,7 @@ func (s *BarrierServer) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*p
 		Strategy:       info.Strategy,
 		HardwareBacked: info.HardwareBacked,
 		InitializedAt:  formatTime(info.InitializedAt),
+		Initialized:    info.Initialized,
 	}, nil
 }
 

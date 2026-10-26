@@ -195,7 +195,7 @@ describe('BarrierView strategy-aware rendering', () => {
       '/api/v1/barrier/status': () => ({
         sealed: true,
         strategy: 'shamir',
-        // Omit initialized_at to flag the daemon as uninitialized.
+        initialized: false,
       }),
     });
     vi.stubGlobal('fetch', spy.mock);
@@ -332,6 +332,33 @@ describe('BarrierView strategy-aware rendering', () => {
     expect(screen.getByTestId('shamir-share-input')).toBeInTheDocument();
     expect(screen.getByTestId('shamir-progress-bar')).toBeInTheDocument();
     expect(screen.getByTestId('shamir-progress-text')).toHaveTextContent('1 / 3');
+  });
+
+  // A sealed system barrier reports initialized with no initialized_at
+  // (go-quicbaas#1916): the explicit flag alone selects quorum unseal.
+  it('shamir strategy (sealed, initialized, no initialized_at) shows quorum unseal', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ initialized_at: undefined }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-strategy-shamir-unseal')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('barrier-strategy-shamir-init')).not.toBeInTheDocument();
+  });
+
+  it('never infers initialized from initialized_at', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ initialized: undefined }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await waitFor(() => {
+      expect(screen.getByTestId('barrier-strategy-shamir-init')).toBeInTheDocument();
+    });
   });
 
   it('shamir unseal answers a quorum challenge per holder', async () => {

@@ -2565,7 +2565,12 @@ export interface BarrierStatusResponse {
   strategy: string;
   /** True when the active strategy uses dedicated cryptographic hardware. */
   hardware_backed: boolean;
-  /** RFC3339 timestamp recorded when the barrier was first initialized. */
+  /** True once the barrier holds a root key, sealed or not. */
+  initialized: boolean;
+  /**
+   * RFC3339 timestamp recorded when the barrier was first initialized.
+   * Absent while a system barrier is sealed; read `initialized` instead.
+   */
   initialized_at?: string;
 }
 

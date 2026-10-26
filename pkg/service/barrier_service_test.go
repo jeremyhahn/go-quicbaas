@@ -229,6 +229,37 @@ func TestBarrierService_BarrierStatus_Success(t *testing.T) {
 	assert.True(t, info.InitializedAt.Equal(want))
 }
 
+// TestBarrierService_BarrierStatus_SealedKeepsInitialized covers qrdb's
+// sealed system-barrier status: it reports sealed and initialized with no
+// initialized_at, so the service must carry the explicit flag (#1916).
+func TestBarrierService_BarrierStatus_SealedKeepsInitialized(t *testing.T) {
+	mc := &mockBarrierClient{
+		statusResp: &transport.BarrierStatusResponse{
+			Sealed:      true,
+			Initialized: true,
+			Strategy:    "shamir",
+		},
+	}
+	svc := service.NewBarrierService(mc)
+
+	info, err := svc.BarrierStatus(context.Background())
+	require.NoError(t, err)
+	assert.True(t, info.Sealed)
+	assert.True(t, info.Initialized)
+	assert.True(t, info.InitializedAt.IsZero())
+}
+
+func TestBarrierService_BarrierStatus_Uninitialized(t *testing.T) {
+	mc := &mockBarrierClient{
+		statusResp: &transport.BarrierStatusResponse{Sealed: true, Strategy: "shamir"},
+	}
+	svc := service.NewBarrierService(mc)
+
+	info, err := svc.BarrierStatus(context.Background())
+	require.NoError(t, err)
+	assert.False(t, info.Initialized)
+}
+
 func TestBarrierService_BarrierStatus_InvalidTimestampIgnored(t *testing.T) {
 	mc := &mockBarrierClient{
 		statusResp: &transport.BarrierStatusResponse{

@@ -111,8 +111,11 @@ message BarrierStatusResponse {
   bool sealed = 1;
   string strategy = 2;
   bool hardware_backed = 3;
-  // initialized_at is RFC3339 (UTC) or empty when never initialised.
+  // initialized_at is RFC3339 (UTC) or empty when never initialised. qrdb
+  // leaves it empty while a system barrier is sealed; read initialized.
   string initialized_at = 4;
+  // initialized is true once the barrier holds a root key, sealed or not.
+  bool initialized = 5;
 }
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret

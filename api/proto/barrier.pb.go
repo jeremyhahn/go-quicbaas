@@ -180,8 +180,11 @@ type BarrierStatusResponse struct {
 	Sealed         bool                   `protobuf:"varint,1,opt,name=sealed,proto3" json:"sealed,omitempty"`
 	Strategy       string                 `protobuf:"bytes,2,opt,name=strategy,proto3" json:"strategy,omitempty"`
 	HardwareBacked bool                   `protobuf:"varint,3,opt,name=hardware_backed,json=hardwareBacked,proto3" json:"hardware_backed,omitempty"`
-	// initialized_at is RFC3339 (UTC) or empty when never initialised.
+	// initialized_at is RFC3339 (UTC) or empty when never initialised. qrdb
+	// leaves it empty while a system barrier is sealed; read initialized.
 	InitializedAt string `protobuf:"bytes,4,opt,name=initialized_at,json=initializedAt,proto3" json:"initialized_at,omitempty"`
+	// initialized is true once the barrier holds a root key, sealed or not.
+	Initialized   bool `protobuf:"varint,5,opt,name=initialized,proto3" json:"initialized,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -242,6 +245,13 @@ func (x *BarrierStatusResponse) GetInitializedAt() string {
 		return x.InitializedAt
 	}
 	return ""
+}
+
+func (x *BarrierStatusResponse) GetInitialized() bool {
+	if x != nil {
+		return x.Initialized
+	}
+	return false
 }
 
 // BarrierShamirInitializeRequest initialises the barrier with Shamir secret
@@ -662,12 +672,13 @@ const file_api_proto_barrier_proto_rawDesc = "" +
 	"\x14BarrierUnsealRequest\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\fR\x06secret\"+\n" +
 	"\x12BarrierSealRequest\x12\x15\n" +
-	"\x06so_pin\x18\x01 \x01(\tR\x05soPin\"\x9b\x01\n" +
+	"\x06so_pin\x18\x01 \x01(\tR\x05soPin\"\xbd\x01\n" +
 	"\x15BarrierStatusResponse\x12\x16\n" +
 	"\x06sealed\x18\x01 \x01(\bR\x06sealed\x12\x1a\n" +
 	"\bstrategy\x18\x02 \x01(\tR\bstrategy\x12'\n" +
 	"\x0fhardware_backed\x18\x03 \x01(\bR\x0ehardwareBacked\x12%\n" +
-	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\"\xab\x01\n" +
+	"\x0einitialized_at\x18\x04 \x01(\tR\rinitializedAt\x12 \n" +
+	"\vinitialized\x18\x05 \x01(\bR\vinitialized\"\xab\x01\n" +
 	"\x1eBarrierShamirInitializeRequest\x12\x1c\n" +
 	"\tthreshold\x18\x01 \x01(\x05R\tthreshold\x12!\n" +
 	"\ftotal_shares\x18\x02 \x01(\x05R\vtotalShares\x12\x16\n" +

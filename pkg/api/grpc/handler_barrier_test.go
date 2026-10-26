@@ -234,6 +234,28 @@ func TestBarrierStatus_Success(t *testing.T) {
 	}
 }
 
+// TestBarrierStatus_InitializedFlag checks the explicit initialized flag
+// survives a zero initialized_at, as qrdb reports a sealed barrier (#1916).
+func TestBarrierStatus_InitializedFlag(t *testing.T) {
+	for _, initialized := range []bool{true, false} {
+		mock := &mockBarrierService{
+			statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {
+				return &service.BarrierStatusInfo{Sealed: true, Initialized: initialized, Strategy: "shamir"}, nil
+			},
+		}
+		resp, err := newTestBarrierServer(mock).BarrierStatus(context.Background(), &emptypb.Empty{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if resp.GetInitialized() != initialized {
+			t.Fatalf("initialized = %v, want %v", resp.GetInitialized(), initialized)
+		}
+		if resp.GetInitializedAt() != "" {
+			t.Fatalf("zero InitializedAt should be empty, got %q", resp.GetInitializedAt())
+		}
+	}
+}
+
 func TestBarrierStatus_FacadeErrorBubblesUp(t *testing.T) {
 	mock := &mockBarrierService{
 		statusFn: func(ctx context.Context) (*service.BarrierStatusInfo, error) {

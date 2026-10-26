@@ -139,6 +139,11 @@ type BarrierStatusInfo struct {
 	// cryptographic hardware.
 	HardwareBacked bool
 
+	// Initialized is true once the barrier holds a root key. It is
+	// reported explicitly because qrdb leaves InitializedAt zero while a
+	// system barrier is sealed.
+	Initialized bool
+
 	// InitializedAt records when the barrier was first initialised.
 	InitializedAt time.Time
 }
@@ -206,6 +211,7 @@ func (s *BarrierService) BarrierStatus(ctx context.Context) (*BarrierStatusInfo,
 	}
 	info := &BarrierStatusInfo{
 		Sealed:         resp.Sealed,
+		Initialized:    resp.Initialized,
 		Strategy:       resp.Strategy,
 		HardwareBacked: resp.HardwareBacked,
 	}
