@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
+import { shareClaimMessage } from '@quicbaas/svelte-security';
 
 vi.mock('../src/stores/sdkClient.ts', () => ({ getSDKClient: vi.fn() }));
 vi.mock('../src/stores/toast.svelte.ts', () => ({ showToast: vi.fn() }));
@@ -196,5 +197,152 @@ describe('TenantBarrierView seal and unseal routes', () => {
     await fireEvent.click(screen.getByRole('button', { name: /^Unseal$/ }));
 
     expect(posts(calls, '/unseal')).toHaveLength(0);
+  });
+
+  it('shows the issued holder certificates after a share-free Shamir init', async () => {
+    // The body go-qrdb's TenantBarrierInitResponse marshals to: share
+    // metadata and holder certificates, never the shares themselves.
+    const calls = stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT,
+          strategy: 'shamir',
+          threshold: 2,
+          total_shares: 3,
+          share_count: 3,
+          holders: [
+            { username: 'officer-1', role: 'unseal', cert_pem: 'cert-pem-1' },
+            { username: 'officer-2', role: 'unseal', cert_pem: 'cert-pem-2' },
+          ],
+        },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    const panel = await screen.findByTestId('tenant-barrier-holders');
+    expect(posts(calls, '/init')[0]?.body).toMatchObject({ strategy: 'shamir', threshold: 2 });
+    expect(panel).toHaveTextContent(/2 of 3/);
+    expect(panel).toHaveTextContent('officer-1');
+    expect(panel).toHaveTextContent('officer-2');
+    expect(panel).toHaveTextContent('cert-pem-1');
+    expect(screen.queryByTestId('tenant-barrier-shares-reveal')).toBeNull();
+  });
+
+  it('offers the holder claim on an initialized Shamir tenant barrier', async () => {
+    stubFetch({ strategy: 'shamir', sealed: false, initialized: true, shamir_threshold: 2, shamir_total: 3 });
+    render(TenantBarrierView);
+
+    const claim = await screen.findByTestId('tenant-barrier-claim');
+    expect(claim).toContainElement(screen.getByTestId('ceremony-claim-challenge'));
+  });
+
+  it('lets a listed holder claim their share under the tenant claim label', async () => {
+    const calls = stubFetch(
+      { strategy: 'shamir', sealed: false, initialized: true, shamir_threshold: 2, shamir_total: 3 },
+      {
+        [`${BASE}/officers/officer-1/claim/begin`]: { nonce_hex: 'beef', expires_at: '2030-01-01T00:00:00Z' },
+        [`${BASE}/officers/officer-1/claim/complete`]: { share_index: 1, envelope: 'ZW52' },
+      },
+    );
+    render(TenantBarrierView);
+
+    const claim = await screen.findByTestId('tenant-barrier-claim');
+    await fireEvent.input(within(claim).getByLabelText('Username'), { target: { value: 'officer-1' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Request Challenge/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ceremony-claim-message')).toHaveValue(
+        shareClaimMessage(`tenant:${TENANT}`, 'officer-1', 'beef'),
+      );
+    });
+    await fireEvent.input(within(claim).getByLabelText('Signature (base64)'), { target: { value: 'c2ln' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Submit Claim/i }));
+
+    expect(await screen.findByTestId('ceremony-claim-envelope')).toHaveTextContent('ZW52');
+    expect(posts(calls, '/officers/officer-1/claim/begin')[0]?.body).toEqual({ username: 'officer-1' });
+    expect(posts(calls, '/officers/officer-1/claim/complete')[0]?.body).toEqual({
+      username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln',
+    });
+  });
+
+  it('sends the inline holder roster with a Shamir init', async () => {
+    const calls = stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT, strategy: 'shamir', threshold: 1, total_shares: 2, share_count: 2,
+          holders: [
+            { username: 'officer-1', role: 'unseal', cert_pem: 'cert-pem-1' },
+            { username: 'officer-2', role: 'unseal', cert_pem: 'cert-pem-2' },
+          ],
+        },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.input(screen.getByLabelText('Threshold (M)'), { target: { value: '1' } });
+    await fireEvent.input(screen.getByLabelText('Total shares (N)'), { target: { value: '2' } });
+    for (const n of [1, 2]) {
+      await fireEvent.click(screen.getByTestId('barrier-strategy-add-holder'));
+      await fireEvent.input(screen.getByLabelText(`Holder ${n} username`), { target: { value: `officer-${n}` } });
+      await fireEvent.input(screen.getByLabelText(`Holder ${n} CSR (PEM)`), { target: { value: `csr-${n}` } });
+    }
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    await screen.findByTestId('tenant-barrier-holders');
+    expect(posts(calls, '/init')[0]?.body).toEqual({
+      strategy: 'shamir',
+      threshold: 1,
+      shares: 2,
+      officers: [
+        { username: 'officer-1', csr_pem: 'csr-1' },
+        { username: 'officer-2', csr_pem: 'csr-2' },
+      ],
+    });
+  });
+
+  it('refuses a Shamir init whose roster does not cover every share', async () => {
+    const calls = stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-add-holder'));
+    await fireEvent.input(screen.getByLabelText('Holder 1 username'), { target: { value: 'officer-1' } });
+    await fireEvent.input(screen.getByLabelText('Holder 1 CSR (PEM)'), { target: { value: 'csr-1' } });
+
+    expect(screen.getByTestId('barrier-strategy-submit')).toBeDisabled();
+    expect(screen.getByTestId('barrier-strategy-roster')).toHaveTextContent(/1 of 3 holders/);
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+    expect(posts(calls, '/init')).toHaveLength(0);
+  });
+
+  it('reports the sealed share count when the holders were registered before init', async () => {
+    stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT, strategy: 'shamir', threshold: 2, total_shares: 3, share_count: 3,
+        },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    const panel = await screen.findByTestId('tenant-barrier-holders');
+    expect(panel).toHaveTextContent(/3 shares sealed/);
+    expect(screen.queryByTestId('tenant-barrier-holder')).toBeNull();
   });
 });

@@ -304,9 +304,9 @@ describe('RestBarrierClient Shamir strategy', () => {
   it('initialises the barrier with Shamir secret sharing', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        shares: ['share-1', 'share-2', 'share-3'],
         threshold: 2,
         total_shares: 3,
+        share_count: 3,
       }),
     );
 
@@ -317,9 +317,10 @@ describe('RestBarrierClient Shamir strategy', () => {
       total_shares: 3,
     });
 
-    expect(result.shares).toHaveLength(3);
+    expect(result).not.toHaveProperty('shares');
     expect(result.threshold).toBe(2);
     expect(result.total_shares).toBe(3);
+    expect(result.share_count).toBe(3);
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/barrier/shamir/initialize');

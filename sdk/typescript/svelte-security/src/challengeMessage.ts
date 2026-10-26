@@ -60,6 +60,11 @@ export const SHARE_CLAIM_CONTEXT = 'qrdb/share-claim/v1';
 /** SYSTEM_CLAIM_LABEL mirrors qrdb ceremony.SystemClaimLabel. */
 export const SYSTEM_CLAIM_LABEL = 'system';
 
+/** tenantClaimLabel mirrors qrdb ceremony.TenantClaimLabel: a tenant barrier's claim label. */
+export function tenantClaimLabel(tenantId: string): string {
+  return `tenant:${tenantId}`;
+}
+
 /**
  * shareClaimMessage returns, base64-encoded, the message qrdb verifies a
  * share claim over (ceremony.ShareClaimMessage): the context, the barrier

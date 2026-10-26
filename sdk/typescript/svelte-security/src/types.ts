@@ -66,9 +66,14 @@ export interface BarrierInitRequest {
   total_shares: number;
 }
 
-/** BarrierInitResponse contains the freshly minted Shamir shares. */
+/**
+ * BarrierInitResponse is the share-free result of a Shamir init: the shares
+ * are sealed to their holders, who each claim their own.
+ */
 export interface BarrierInitResponse {
-  shares: string[];
+  threshold: number;
+  total_shares: number;
+  share_count: number;
 }
 
 /** BarrierUnsealRequest unseals a passphrase barrier. */
@@ -152,7 +157,17 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export type TenantBarrierInitParams =
   | { strategy: 'none' }
   | { strategy: 'passphrase'; passphrase: string }
-  | { strategy: 'shamir'; threshold: number; shares: number };
+  | { strategy: 'shamir'; threshold: number; shares: number; officers?: BarrierHolderParams[] };
+
+/**
+ * BarrierHolderParams is one entry of the inline Shamir holder roster: the
+ * holder's username and the PEM CSR its certificate is issued from. The
+ * roster registers with initialization, one holder per share.
+ */
+export interface BarrierHolderParams {
+  username: string;
+  csr_pem: string;
+}
 
 // ---------------------------------------------------------------------------
 // Ceremony
@@ -226,6 +241,12 @@ export interface CeremonyClient {
   claimShare(req: ClaimShareRequest): Promise<ClaimedShare>;
   enrollOfficer(req: EnrollOfficerRequest): Promise<EnrolledOfficer>;
 }
+
+/**
+ * ShareClaimClient is the claim half of CeremonyClient: all a holder needs to
+ * claim its share, at system or tenant scope.
+ */
+export type ShareClaimClient = Pick<CeremonyClient, 'beginClaim' | 'claimShare'>;
 
 // ---------------------------------------------------------------------------
 // Bootstrap

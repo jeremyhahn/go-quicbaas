@@ -92,7 +92,7 @@ describe('McpBarrierClient tools', () => {
       tool: 'qrdb_barrier_shamir_initialize',
       args: { secret: 'pw', threshold: 2, total_shares: 3 },
       reply: { threshold: 2, total_shares: 3, share_count: 3 },
-      want: { shares: [], threshold: 2, total_shares: 3 },
+      want: { threshold: 2, total_shares: 3, share_count: 3 },
     },
     {
       name: 'generateRecoveryKeys',
