@@ -2599,14 +2599,14 @@ func TestUpdateMetadata_ZeroID(t *testing.T) {
 }
 
 func TestUpdateMetadata_VectorNotFound(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	storage.getVectorFn = func(_ context.Context, _ string, _ uint64) (*interfaces.VectorValue, error) {
-		return nil, errors.New("not found")
-	}
+	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	vt.updateMetadataErr = vecNotFoundError()
 	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
 		Namespace: "test-ns", ID: 1, Metadata: map[string]interface{}{"k": "v"},
 	})
-	require.Error(t, err)
+	var qbErr *qbErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestUpdateMetadata_ReplaceMetadata(t *testing.T) {
@@ -2650,12 +2650,12 @@ func TestSearchByID_ZeroK(t *testing.T) {
 }
 
 func TestSearchByID_VectorNotFound(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	storage.getVectorFn = func(_ context.Context, _ string, _ uint64) (*interfaces.VectorValue, error) {
-		return nil, errors.New("not found")
-	}
+	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	vt.searchByIDErr = vecNotFoundError()
 	_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{Namespace: "test-ns", ID: 99, K: 5})
-	require.Error(t, err)
+	var qbErr *qbErrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, qbErrors.ErrNotFound, qbErr.Code)
 }
 
 func TestSearchByID_Success(t *testing.T) {
