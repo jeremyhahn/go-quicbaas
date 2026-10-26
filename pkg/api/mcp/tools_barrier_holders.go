@@ -88,6 +88,8 @@ func decodeHolderArgs(args map[string]interface{}, req interface{}) error {
 	if err != nil {
 		return holderArgsError("", err)
 	}
+	// The re-encoded arguments hold the base64 text of any share they carry.
+	defer secure.Wipe(raw)
 	if err := json.Unmarshal(raw, req); err != nil {
 		return holderArgsError("", err)
 	}
@@ -107,14 +109,30 @@ func holderArgsError(field string, err error) error {
 // holderVerb decodes args onto a Req and passes it to call.
 func holderVerb[Req any, Resp any](ctx context.Context, args map[string]interface{}, call func(context.Context, *Req) (Resp, error)) (interface{}, error) {
 	var req Req
-	if err := decodeHolderArgs(args, &req); err != nil {
+	return holderVerbInto(ctx, args, &req, call)
+}
+
+// holderVerbInto is holderVerb over a caller-owned request, so a verb whose
+// request carries key material registers its wipe before the decode: a
+// decode that fails part-way has already populated the earlier fields.
+func holderVerbInto[Req any, Resp any](ctx context.Context, args map[string]interface{}, req *Req, call func(context.Context, *Req) (Resp, error)) (interface{}, error) {
+	if err := decodeHolderArgs(args, req); err != nil {
 		return nil, err
 	}
-	resp, err := call(ctx, &req)
+	resp, err := call(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// wipeQuorumSubmission zeroes a quorum submission's share and factor
+// response. It reads the fields through pointers so a deferred call wipes
+// the slices the decode produced, not the nil slices that existed when the
+// defer was registered.
+func wipeQuorumSubmission(share, response *[]byte) {
+	secure.Wipe(*share)
+	secure.Wipe(*response)
 }
 
 // HolderClaimCertRequiredError reports a holder share-claim tool call whose
@@ -315,11 +333,9 @@ var barrierHolderTools = map[string]holderTool[service.BarrierServicer]{
 		description: "Submit one authenticated holder's share toward the open round. Each holder counts once. Reachable while sealed.",
 		args:        withArgs([]holderArg{argHolderDomain}, holderQuorumSubmitArgs),
 		exec: func(ctx context.Context, svc service.BarrierServicer, args map[string]interface{}) (interface{}, error) {
-			return holderVerb(ctx, args, func(ctx context.Context, req *qrdbtransport.QuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
-				defer secure.Wipe(req.Share)
-				defer secure.Wipe(req.Response)
-				return svc.BarrierQuorumSubmit(ctx, req)
-			})
+			var req qrdbtransport.QuorumSubmitRequest
+			defer wipeQuorumSubmission(&req.Share, &req.Response)
+			return holderVerbInto(ctx, args, &req, svc.BarrierQuorumSubmit)
 		},
 	},
 	"qrdb_barrier_rekey_start": {
@@ -387,11 +403,9 @@ var tenantBarrierHolderTools = map[string]holderTool[service.TenantBarrierServic
 		description: "Submit one authenticated tenant holder's share toward the open round.",
 		args:        withArgs([]holderArg{argHolderTenantID}, holderQuorumSubmitArgs),
 		exec: func(ctx context.Context, svc service.TenantBarrierServicer, args map[string]interface{}) (interface{}, error) {
-			return holderVerb(ctx, args, func(ctx context.Context, req *qrdbtransport.TenantQuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
-				defer secure.Wipe(req.Share)
-				defer secure.Wipe(req.Response)
-				return svc.TenantBarrierQuorumSubmit(ctx, req)
-			})
+			var req qrdbtransport.TenantQuorumSubmitRequest
+			defer wipeQuorumSubmission(&req.Share, &req.Response)
+			return holderVerbInto(ctx, args, &req, svc.TenantBarrierQuorumSubmit)
 		},
 	},
 	"qrdb_tenant_barrier_rekey_start": {

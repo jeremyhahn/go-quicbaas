@@ -369,6 +369,47 @@ func TestTenantBarrierRPCs_InitMalformedFactorParamsRefused(t *testing.T) {
 	}
 }
 
+// TestTenantBarrierRPCs_InitMalformedFactorParamsWipesPassphrase proves the
+// passphrase is wiped even when the roster conversion refuses the request.
+func TestTenantBarrierRPCs_InitMalformedFactorParamsWipesPassphrase(t *testing.T) {
+	srv := NewTenantBarrierGRPCServer(&fakeTenantBarrierServicer{}, nil)
+	passphrase := []byte("hunter2")
+
+	_, err := srv.Init(context.Background(), &pb.TenantBarrierInitRequest{
+		TenantId:   "t1",
+		Strategy:   "passphrase",
+		Passphrase: passphrase,
+		Officers: []*pb.TenantBarrierOfficer{{
+			Username: "alice",
+			Factors:  []*pb.TenantBarrierHolderFactor{{Name: "piv", ParamsJson: []byte(`[1]`)}},
+		}},
+	})
+	requireGRPCCode(t, err, codes.InvalidArgument)
+	for i, b := range passphrase {
+		if b != 0 {
+			t.Fatalf("passphrase byte %d not wiped after a refused roster", i)
+		}
+	}
+}
+
+// TestTenantBarrierRPCs_EnableEncryptionRefusedWipesPassphrase proves the
+// passphrase is wiped when the RPC is refused before any migration runs.
+func TestTenantBarrierRPCs_EnableEncryptionRefusedWipesPassphrase(t *testing.T) {
+	srv := NewTenantBarrierGRPCServer(&fakeTenantBarrierServicer{}, nil)
+	passphrase := []byte("hunter2")
+
+	_, err := srv.EnableEncryption(context.Background(), &pb.TenantBarrierEnableEncryptionRequest{
+		TenantId:   "t1",
+		Passphrase: passphrase,
+	})
+	requireGRPCCode(t, err, codes.Unavailable)
+	for i, b := range passphrase {
+		if b != 0 {
+			t.Fatalf("passphrase byte %d not wiped after a refused migration", i)
+		}
+	}
+}
+
 // TestTenantBarrierRPCs_InitInvalidRosterErrorUnchanged proves go-qrdb's typed
 // roster error reaches the caller through the standard error mapping, not a
 // handler-specific rewrite.

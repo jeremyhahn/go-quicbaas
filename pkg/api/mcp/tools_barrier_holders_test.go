@@ -131,6 +131,29 @@ func TestBarrierHolderTool_QuorumSubmitPassesServiceError(t *testing.T) {
 	assert.Equal(t, make([]byte, 1), fake.submitted.Share, "the share is wiped on failure too")
 }
 
+// TestHolderVerbInto_PartialDecodeLeavesShareForTheWipe pins Codex 7395 P2:
+// a submission whose share decodes and whose username does not is refused
+// with the share already populated, so the submit tools register
+// wipeQuorumSubmission before the decode, and it zeroes what the decode left.
+func TestHolderVerbInto_PartialDecodeLeavesShareForTheWipe(t *testing.T) {
+	called := false
+	submit := func(context.Context, *qrdbtransport.QuorumSubmitRequest) (*qrdbtransport.QuorumOutcome, error) {
+		called = true
+		return &qrdbtransport.QuorumOutcome{}, nil
+	}
+	var req qrdbtransport.QuorumSubmitRequest
+	_, err := holderVerbInto(context.Background(), map[string]interface{}{
+		"share":    base64.StdEncoding.EncodeToString([]byte("hunter2")),
+		"username": 42,
+	}, &req, submit)
+	require.Error(t, err)
+	require.False(t, called, "the service must not see an undecodable submission")
+	require.Equal(t, []byte("hunter2"), req.Share, "precondition: a partial decode populates the share")
+
+	wipeQuorumSubmission(&req.Share, &req.Response)
+	assert.Equal(t, make([]byte, len("hunter2")), req.Share)
+}
+
 func TestBarrierHolderTool_OfficerRegisterParsesFactors(t *testing.T) {
 	fake := &fakeHolderBarrierService{}
 	out, err := runBarrierHolderTool(t, fake, "qrdb_barrier_officer_register", map[string]interface{}{

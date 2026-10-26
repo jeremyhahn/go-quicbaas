@@ -119,6 +119,7 @@ func (s *Server) HandleCeremonyInitialize(w http.ResponseWriter, r *http.Request
 	// The payload is go-qrdb's own request type, so every officer and policy
 	// field reaches qrdb without narrowing.
 	var req transport.CeremonyInitializeRequest
+	defer wipeCredential(&req.Secret)()
 	if !readBarrierJSON(w, r, &req) {
 		return
 	}

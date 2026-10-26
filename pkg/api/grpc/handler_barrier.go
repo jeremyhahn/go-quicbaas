@@ -135,14 +135,14 @@ func formatTime(t time.Time) string {
 // passphrase. Returns FailedPrecondition when the barrier is already
 // initialised, propagated from the facade.
 func (s *BarrierServer) BarrierInitialize(ctx context.Context, req *pb.BarrierInitializeRequest) (*emptypb.Empty, error) {
+	secret := req.GetSecret()
+	defer secure.Wipe(secret)
 	if err := s.requireBarrierService(); err != nil {
 		return nil, err
 	}
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	secret := req.GetSecret()
-	defer secure.Wipe(secret)
 	if err := s.barrierSvc.BarrierInitialize(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
 	}
@@ -151,14 +151,14 @@ func (s *BarrierServer) BarrierInitialize(ctx context.Context, req *pb.BarrierIn
 
 // BarrierUnseal unseals the barrier with a passphrase.
 func (s *BarrierServer) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealRequest) (*emptypb.Empty, error) {
+	secret := req.GetSecret()
+	defer secure.Wipe(secret)
 	if err := s.requireBarrierService(); err != nil {
 		return nil, err
 	}
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
-	secret := req.GetSecret()
-	defer secure.Wipe(secret)
 	if err := s.barrierSvc.BarrierUnseal(ctx, secret); err != nil {
 		return nil, mapBarrierError(err)
 	}
@@ -289,6 +289,8 @@ func (s *BarrierServer) BarrierRecoveryStatus(ctx context.Context, _ *emptypb.Em
 // the embedded qrdb node is present (the migrator has been injected via
 // SetMigrator); otherwise codes.Unavailable is returned.
 func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.BarrierEnableEncryptionRequest) (*emptypb.Empty, error) {
+	passphrase := req.GetPassphrase()
+	defer secure.Wipe(passphrase)
 	if err := s.requireBarrierService(); err != nil {
 		return nil, err
 	}
@@ -315,8 +317,7 @@ func (s *BarrierServer) BarrierEnableEncryption(ctx context.Context, req *pb.Bar
 		ShamirThreshold: int(req.GetShamirThreshold()),
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
-	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
-		defer secure.Wipe(passphrase)
+	if len(passphrase) > 0 {
 		creds, credErr := qrdbsdk.CredentialsFor(ctx, passphrase)
 		if credErr != nil {
 			return nil, status.Error(codes.Internal, credErr.Error())

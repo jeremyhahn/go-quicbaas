@@ -112,17 +112,19 @@ func (s *CeremonyServer) CeremonyInitialize(ctx context.Context, req *pb.Ceremon
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
-	officers, err := ceremonyOfficersFromPB(req.GetOfficers())
-	if err != nil {
-		return nil, err
-	}
-
+	// The secret moves to protected memory, and its request bytes are wiped,
+	// before the roster conversion can return.
 	secret, err := service.NewCeremonySecret(ctx, req.GetSecret())
 	if err != nil {
 		return nil, mapCeremonyError(err)
 	}
 	if secret != nil {
 		defer secret.Destroy()
+	}
+
+	officers, err := ceremonyOfficersFromPB(req.GetOfficers())
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := s.ceremonySvc.CeremonyInitialize(ctx, &service.CeremonyInitRequest{
