@@ -43,7 +43,7 @@ var grantNames = []string{
 	"kv:exists",             // KVClient.Exists
 	"kv:range",              // KVClient.Scan
 	"transaction:execute",   // TransactionClient.ExecuteTransaction (CAS, claims)
-	"batch:execute",         // BatchClient.ExecuteBatch: the entity service's BatchPut and BatchDelete
+	"batch:execute",         // BatchClient.ExecuteBatch: the entity service's BatchPut, BatchGet and BatchDelete
 	"lease:grant",           // LeaseClient.LeaseGrant: placement node leases
 	"lease:keepalive",       // LeaseClient.LeaseKeepAlive: placement node renewal
 	"lease:revoke",          // LeaseClient.LeaseRevoke: placement deregistration

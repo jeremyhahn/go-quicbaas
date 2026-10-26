@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -2138,6 +2139,12 @@ func (s *objectStorageService) BatchGetObjects(ctx context.Context, req *BatchGe
 
 		resp, err := s.GetObject(ctx, getReq)
 		if err != nil {
+			// Only an absent object is a per-key result; a refusal or a
+			// storage failure fails the batch.
+			var qbErr *dberrors.QBError
+			if !stderrors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
+				return nil, err
+			}
 			notFoundCount++
 			results = append(results, &BatchGetResult{
 				Key:   key,

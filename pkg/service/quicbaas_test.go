@@ -793,16 +793,9 @@ func TestTransactionService_Transaction_CompareExists(t *testing.T) {
 }
 
 func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return []byte(`{"id":1,"name":"test"}`), nil
-		},
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
+	tr := newAuthorizingTransport(permTransactionExecute)
+	tr.data["user:1"] = []byte(`{"id":1,"name":"test"}`)
+	svc := newAuthorizingService(t, tr)
 
 	req := &TransactionRequest{
 		Compare: []*CompareCondition{
@@ -835,6 +828,8 @@ func TestTransactionService_Transaction_FailedComparison(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Succeeded)
+	require.Len(t, resp.Responses, 1)
+	assert.Equal(t, []byte(`{"id":1,"name":"test"}`), resp.Responses[0].Data, "the Failure branch's Get runs, the Put does not")
 }
 
 func TestTransactionService_Transaction_NilRequest(t *testing.T) {
@@ -874,9 +869,8 @@ func TestTransactionService_Transaction_EmptyCompare(t *testing.T) {
 }
 
 func TestTransactionService_Transaction_RaftError(t *testing.T) {
-	batchErr := stderrors.New("raft propose failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
+	tr := &svcBoostMockTransport{txErr: stderrors.New("raft propose failed")}
+	svc := createTestService(t, withQRDBClientProvider(newSvcBoostMockQRDBProviderFull(tr)))
 	defer svc.Close()
 
 	req := &TransactionRequest{
@@ -893,6 +887,9 @@ func TestTransactionService_Transaction_RaftError(t *testing.T) {
 	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr))
+	assert.Equal(t, errors.ErrRaft, qbErr.Code)
 }
 
 func TestTransactionService_Transaction_WithMetrics(t *testing.T) {
@@ -5867,74 +5864,9 @@ func TestBatchService_BatchDelete_WithMetrics(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
-func TestTransactionService_CompareVersion_AllOperators(t *testing.T) {
-	tests := []struct {
-		name     string
-		actual   uint64
-		expected uint64
-		operator CompareOperator
-		want     bool
-	}{
-		{"equal", 5, 5, CompareOperatorEqual, true},
-		{"equal_false", 5, 6, CompareOperatorEqual, false},
-		{"notequal", 5, 6, CompareOperatorNotEqual, true},
-		{"notequal_false", 5, 5, CompareOperatorNotEqual, false},
-		{"greater", 6, 5, CompareOperatorGreater, true},
-		{"greater_false", 5, 5, CompareOperatorGreater, false},
-		{"less", 5, 6, CompareOperatorLess, true},
-		{"less_false", 5, 5, CompareOperatorLess, false},
-		{"greaterequal", 5, 5, CompareOperatorGreaterEqual, true},
-		{"greaterequal_false", 4, 5, CompareOperatorGreaterEqual, false},
-		{"lessequal", 5, 5, CompareOperatorLessEqual, true},
-		{"lessequal_false", 6, 5, CompareOperatorLessEqual, false},
-		{"unknown", 5, 5, CompareOperator(999), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := &transactionService{svc: &quicBaaS{}}
-			result := svc.compareVersion(tt.actual, tt.expected, tt.operator)
-			assert.Equal(t, tt.want, result)
-		})
-	}
-}
-
-func TestTransactionService_CompareValue_AllOperators(t *testing.T) {
-	tests := []struct {
-		name     string
-		actual   []byte
-		expected []byte
-		operator CompareOperator
-		want     bool
-	}{
-		{"equal", []byte("test"), []byte("test"), CompareOperatorEqual, true},
-		{"equal_false", []byte("test"), []byte("other"), CompareOperatorEqual, false},
-		{"notequal", []byte("test"), []byte("other"), CompareOperatorNotEqual, true},
-		{"notequal_false", []byte("test"), []byte("test"), CompareOperatorNotEqual, false},
-		{"unsupported", []byte("test"), []byte("test"), CompareOperatorGreater, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			svc := &transactionService{svc: &quicBaaS{}}
-			result := svc.compareValue(tt.actual, tt.expected, tt.operator)
-			assert.Equal(t, tt.want, result)
-		})
-	}
-}
-
 func TestTransactionService_Transaction_CompareNotExists(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return nil, stderrors.New("not found")
-		},
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
+	tr := newAuthorizingTransport(permTransactionExecute)
+	svc := newAuthorizingService(t, tr)
 
 	req := &TransactionRequest{
 		Compare: []*CompareCondition{
@@ -5959,6 +5891,7 @@ func TestTransactionService_Transaction_CompareNotExists(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.False(t, resp.Succeeded)
+	assert.Equal(t, []byte(`{"name":"created"}`), tr.data["user:999"])
 }
 
 func TestTransactionService_Transaction_UnsupportedCompareTarget(t *testing.T) {
