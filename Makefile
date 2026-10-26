@@ -634,7 +634,7 @@ secure-analyzer-build: ## Build go-qrdb's secure analyzer from the pinned module
 # secure-analyzer-integration. Measured per pass in that run: maximal 124 s,
 # standard 128 s, lean 138 s, minimal 104 s, desktop 46 s, integration 75 s.
 # `secure-analyzer` is their composition, in the same order with the same exit
-# codes, so `make lint-pre` and `make lint` run exactly the checks they ran.
+# codes, so `make lint-gates` runs exactly the checks it ran.
 SECURE_ANALYZER_TAGS_maximal = $(TEST_TAGS)
 SECURE_ANALYZER_TAGS_standard = $(STANDARD_TEST_TAGS)
 SECURE_ANALYZER_TAGS_lean = $(LEAN_TEST_TAGS)
@@ -3323,16 +3323,12 @@ vet-integration: ## Typecheck every integration- and hardware-tagged package (th
 	cd sdk/go && $(GOCMD) vet -tags integration ./test/...
 
 .PHONY: lint
-# vet-integration first: `make test` never compiles test/integration (it runs
+# vet-integration: `make test` never compiles test/integration (it runs
 # ./pkg/... ./cmd/... ./scripts/... without the tag), so a call site there that
 # an API change broke surfaced only in CI's `make vet` (go-quicbaas#572, the
-# stage-4 validator registry). A lane that runs `make lint` now typechecks it.
-#
-# verify-naming after it: the gate is a text scan of the tracked files
-# (milliseconds, no build, no network), so a naming regression reports before
-# the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
-# job needs no separate step for the gate. check-nolint is the same kind of
-# text scan and runs early for the same reason.
+# stage-4 validator registry). It, verify-naming, check-nolint,
+# secure-analyzer and actionlint are `make lint-gates` (ci-template v1.27),
+# which CI runs in its own job beside `make lint`; a lane runs both.
 #
 # The gate is split in two (#1416) so each half fits inside one bounded call
 # on a loaded node: `lint-pre` runs the prerequisites, `lint-go` runs
@@ -3349,7 +3345,15 @@ lint: lint-pre ## Run linters (naming gate + golangci-lint)
 # 2026-10-16 (load average 70-217): vet-integration 153 s, verify-naming and
 # check-nolint about 1 s each, secure-analyzer-self-test 89 s. secure-analyzer
 # took 616 s, so it is split per tag set; see the times above its targets.
-lint-pre: fmt-check vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint ## Run the lint prerequisites (fmt-check, vet-integration, naming, nolint, secure-analyzer, actionlint)
+lint-pre: fmt-check ## Run the lint prerequisites (fmt-check)
+
+.PHONY: lint-gates
+# The slow repository gates (ci-template v1.27, ci-standard.md §10 (g)). CI runs
+# them as `make -k lint-gates` in the lint-gates job, in parallel with the
+# image job's `make lint`, so none of them is a prerequisite of lint and none
+# runs twice. Times above lint-pre: vet-integration 153 s, secure-analyzer
+# 616 s, its self-test 89 s.
+lint-gates: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint ## Run the repository's lint gates (vet-integration, naming, nolint, secure-analyzer and its self-test, actionlint)
 
 .PHONY: actionlint
 # actionlint with shellcheck over the workflows (ci-template v1.21 make lint;
@@ -5627,15 +5631,37 @@ DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)'
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
 	@echo "$(TOOLCHAIN_IMAGE)"
 
+# The integration image's tag in CI (ci-template v1.23, ci-standard.md §9):
+# <repo>-ci-it:<hash>, keyed by its content, so every job on a runner names
+# the same image for the same tree and builds it once. The hash covers the
+# build arguments that change the image and the whole build context: the
+# commit's tree, and on a dirty checkout the diff and every untracked file
+# .gitignore does not exclude. The reaper (reap-stale-ci-stacks.sh) removes a
+# stale tag under the <repo>-ci- prefix.
+CI_REPO_NAME ?= go-quicbaas
+IT_IMAGE_HASH = $(shell { printf '%s\n' '$(TOOLCHAIN_IMAGE)' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(strip $(INTEGRATION_BUILD_TAGS))'; \
+	git rev-parse 'HEAD^{tree}'; git diff HEAD; \
+	git ls-files -o --exclude-standard -z | xargs -0r sha256sum; } | sha256sum | cut -c1-16)
+
+.PHONY: it-image
+it-image: ## Print the CI integration image tag, hashed from its build context
+	@echo "$(CI_REPO_NAME)-ci-it:$(IT_IMAGE_HASH)"
+
+# A tag is its content (ci-standard.md §9), so a build target builds nothing
+# when the Docker daemon already holds every image it would build.
 .PHONY: docker-build
 docker-build: ## Build both devcontainer images, toolchain and integration
-	@$(DEVCONTAINER_BUILD) toolchain integration
+	@if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' '$(INTEGRATION_IMAGE)' >/dev/null 2>&1; then \
+		echo "docker-build: $(TOOLCHAIN_IMAGE) and $(INTEGRATION_IMAGE) are present"; \
+	else $(DEVCONTAINER_BUILD) toolchain integration; fi
 
 # A docs-only pull request's CI runs lint alone, in the toolchain image
-# (DS-3161).
+# (DS-3161), and the lint-gates job needs only this image.
 .PHONY: docker-build-toolchain-image
 docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
-	@$(DEVCONTAINER_BUILD) toolchain
+	@if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
+		echo "docker-build-toolchain-image: $(TOOLCHAIN_IMAGE) is present"; \
+	else $(DEVCONTAINER_BUILD) toolchain; fi
 
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
