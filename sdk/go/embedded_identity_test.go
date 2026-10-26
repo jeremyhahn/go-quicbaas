@@ -106,8 +106,12 @@ func TestWithEmbeddedIdentity_DelegationBindsItsChain(t *testing.T) {
 	chain := []*x509.Certificate{{}}
 	c := newIdentityClient(t, WithEmbeddedIdentity(DelegatedIdentity(binder, chain)))
 
-	if _, err := c.Security().Attestation().ListReferenceValues(context.Background()); err != nil {
-		t.Fatalf("ListReferenceValues: %v", err)
+	// The binder supplies no AuthMiddleware, so the bound delegation cannot
+	// be authorized and the operation is refused after binding.
+	_, err := c.Security().Attestation().ListReferenceValues(context.Background())
+	var noAuthz *DelegationWithoutAuthorizationError
+	if !stderrors.As(err, &noAuthz) {
+		t.Fatalf("ListReferenceValues = %v, want DelegationWithoutAuthorizationError", err)
 	}
 	if len(binder.delegated) != 1 || binder.delegated[0] != chain[0] {
 		t.Fatalf("delegation bound chain %v, want %v", binder.delegated, chain)

@@ -149,8 +149,46 @@ func (id EmbeddedIdentity) authorize(ctx context.Context, perms ...qrdbsdk.Permi
 	if err != nil {
 		return err
 	}
-	// An unbound tenant is the system scope, as for qrdb's own embedded
-	// transport.
+	return authorizeBound(bound, mw, perms)
+}
+
+// DelegatedOperationUndeclaredError refuses a delegated call to an embedded
+// operation that declares no qrdb permission: no grant can admit it, so a
+// delegation is never widened to it.
+type DelegatedOperationUndeclaredError struct {
+	Operation string
+}
+
+func (e *DelegatedOperationUndeclaredError) Error() string {
+	return "quicbaas: delegated identity: embedded operation " + e.Operation + " declares no permission a delegation can be granted"
+}
+
+// authorizeOperation admits a delegated identity to the embedded operation
+// only when it holds every permission the operation declares; ctx is already
+// bound to the identity. The embedded transport asks it before each
+// dispatch. The service principal is not narrowed here.
+func (id EmbeddedIdentity) authorizeOperation(ctx context.Context, operation string, perms []string) error {
+	if id.delegator == nil {
+		return nil
+	}
+	if len(perms) == 0 {
+		return &DelegatedOperationUndeclaredError{Operation: operation}
+	}
+	mw, err := id.authMiddleware()
+	if err != nil {
+		return err
+	}
+	required := make([]qrdbsdk.Permission, len(perms))
+	for i, perm := range perms {
+		required[i] = qrdbsdk.Permission(perm)
+	}
+	return authorizeBound(ctx, mw, required)
+}
+
+// authorizeBound enforces perms through mw against the tenant bound into
+// ctx. An unbound tenant is the system scope, as for qrdb's own embedded
+// transport.
+func authorizeBound(bound context.Context, mw *qrdbsdk.AuthMiddleware, perms []qrdbsdk.Permission) error {
 	tenantID, _ := qrdbsdk.TenantFromContext(bound)
 	for _, perm := range perms {
 		if err := mw.AuthorizeTenant(bound, tenantID, perm); err != nil {
