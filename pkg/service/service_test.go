@@ -2761,6 +2761,8 @@ type vecTransport struct {
 	rebuildIndexFn       func(ctx context.Context, req *qrdbtransport.RebuildIndexRequest) (*qrdbtransport.RebuildIndexResponse, error)
 	getRebuildProgressFn func(ctx context.Context, req *qrdbtransport.GetRebuildProgressRequest) (*qrdbtransport.GetRebuildProgressResponse, error)
 	getIndexStatsFn      func(ctx context.Context, req *qrdbtransport.GetIndexStatsRequest) (*qrdbtransport.GetIndexStatsResponse, error)
+	updateMetadataErr    error
+	searchByIDErr        error
 }
 
 func (v *vecTransport) CreateNamespace(ctx context.Context, req *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
@@ -2827,7 +2829,15 @@ func (v *vecTransport) ListVectors(_ context.Context, _ *qrdbtransport.ListVecto
 	return &qrdbtransport.ListVectorsResponse{}, nil
 }
 
+// vecNotFoundError is qrdb's typed answer for a vector ID it cannot find.
+func vecNotFoundError() error {
+	return &qrdbtransport.VectorNotFoundError{Namespace: "test-ns", ID: "99"}
+}
+
 func (v *vecTransport) UpdateMetadata(_ context.Context, req *qrdbtransport.UpdateVectorMetadataRequest) (*qrdbtransport.UpdateVectorMetadataResponse, error) {
+	if v.updateMetadataErr != nil {
+		return nil, v.updateMetadataErr
+	}
 	return &qrdbtransport.UpdateVectorMetadataResponse{ID: req.ID, Version: 1, Success: true}, nil
 }
 
@@ -2847,6 +2857,9 @@ func (v *vecTransport) HybridSearch(_ context.Context, _ *qrdbtransport.HybridSe
 }
 
 func (v *vecTransport) SearchByID(_ context.Context, _ *qrdbtransport.SearchByIDRequest) (*qrdbtransport.SearchByIDResponse, error) {
+	if v.searchByIDErr != nil {
+		return nil, v.searchByIDErr
+	}
 	return &qrdbtransport.SearchByIDResponse{}, nil
 }
 

@@ -900,10 +900,13 @@ func (v *vectorService) UpsertVector(ctx context.Context, req *UpsertVectorReque
 func (v *vectorService) qrdbError(op, metric string, err error) error {
 	code, reason := qbErrors.ErrRaft, "sdk_error"
 	var notFound *qrdbtransport.NamespaceNotFoundError
+	var vectorNotFound *qrdbtransport.VectorNotFoundError
 	var mismatch *qrdbtransport.DimensionMismatchError
 	switch {
 	case errors.As(err, &notFound):
 		code, reason = qbErrors.ErrNotFound, "namespace_not_found"
+	case errors.As(err, &vectorNotFound):
+		code, reason = qbErrors.ErrNotFound, "vector_not_found"
 	case errors.As(err, &mismatch):
 		code, reason = qbErrors.ErrInvalidInput, "invalid_dimension"
 	}
@@ -1319,6 +1322,74 @@ func (v *vectorService) searchThroughQRDB(ctx context.Context, vc qrdbtransport.
 	}, nil
 }
 
+// hybridSearchThroughQRDB answers a hybrid search with qrdb's own hybrid
+// search verb, under the caller's identity. A namespace qrdb cannot find for
+// the caller answers with no results, as a similarity search does.
+func (v *vectorService) hybridSearchThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, scopedNamespace string, req *HybridSearchRequest) (*HybridSearchResponse, error) {
+	resp, err := vc.HybridSearch(ctx, &qrdbtransport.HybridSearchRequest{
+		Namespace:          scopedNamespace,
+		QueryVector:        req.QueryVector,
+		K:                  req.K,
+		EfSearch:           req.EfSearch,
+		MinScore:           req.MinScore,
+		MetadataFilter:     req.MetadataFilter,
+		FilterOperator:     req.FilterOperator,
+		RerankingAlgorithm: req.RerankingAlgorithm,
+		IncludeVectors:     req.IncludeVectors,
+		IncludeMetadata:    req.IncludeMetadata,
+		ShardID:            v.resolveShardID(req.ShardID),
+		Consistency:        uint8(req.Consistency),
+	})
+	if err != nil {
+		var notFound *qrdbtransport.NamespaceNotFoundError
+		if errors.As(err, &notFound) {
+			return &HybridSearchResponse{
+				Results:   []*VectorSearchResult{},
+				Timestamp: time.Now().UnixNano(),
+			}, nil
+		}
+		return nil, v.qrdbError("vector.HybridSearch", "hybrid_search", err)
+	}
+	return &HybridSearchResponse{
+		Results:         fromQRDBSearchResults(resp.Results),
+		TotalCandidates: resp.TotalCandidates,
+		TotalFiltered:   resp.TotalFiltered,
+		Timestamp:       resp.Timestamp,
+		QueryDuration:   resp.QueryDuration,
+	}, nil
+}
+
+// searchByIDThroughQRDB answers a search by vector ID with qrdb's own
+// search-by-ID verb, under the caller's identity. qrdb reads the source
+// vector and excludes it when asked.
+func (v *vectorService) searchByIDThroughQRDB(ctx context.Context, vc qrdbtransport.VectorClient, scopedNamespace string, req *SearchByIDRequest, start time.Time) (*SearchByIDResponse, error) {
+	resp, err := vc.SearchByID(ctx, &qrdbtransport.SearchByIDRequest{
+		Namespace:       scopedNamespace,
+		ID:              req.ID,
+		K:               req.K,
+		EfSearch:        req.EfSearch,
+		MinScore:        req.MinScore,
+		IncludeVectors:  req.IncludeVectors,
+		IncludeMetadata: req.IncludeMetadata,
+		MetadataFilter:  req.MetadataFilter,
+		ExcludeSelf:     req.ExcludeSelf,
+		ShardID:         v.resolveShardID(req.ShardID),
+		Consistency:     uint8(req.Consistency),
+	})
+	if err != nil {
+		return nil, v.qrdbError("vector.SearchByID", "search_by_id", err)
+	}
+	if v.metrics != nil {
+		v.metrics.operationDuration.With("search_by_id").Observe(time.Since(start).Seconds())
+	}
+	return &SearchByIDResponse{
+		SourceID:      req.ID,
+		Results:       fromQRDBSearchResults(resp.Results),
+		Timestamp:     resp.Timestamp,
+		QueryDuration: resp.QueryDuration,
+	}, nil
+}
+
 // SearchByMetadata performs metadata-based vector search.
 func (v *vectorService) SearchByMetadata(ctx context.Context, req *SearchByMetadataRequest) (*SearchByMetadataResponse, error) {
 	start := time.Now()
@@ -1426,7 +1497,19 @@ func (v *vectorService) HybridSearch(ctx context.Context, req *HybridSearchReque
 		}
 	}()
 
-	// Perform similarity search first
+	// qrdb's hybrid search verb authorizes the caller for
+	// vector:hybrid_search alone; the composite below would also demand
+	// vector:search_similar.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if vc, err := v.vectorClient(); err == nil {
+		return v.hybridSearchThroughQRDB(ctx, vc, vectorTenantScopedNamespace(tenantID, req.Namespace), req)
+	}
+
+	// Without a qrdb client the local index answers: a similarity search
+	// first, then the metadata filter.
 	similarReq := &SearchSimilarRequest{
 		Namespace:       req.Namespace,
 		QueryVector:     req.QueryVector,
@@ -2989,54 +3072,23 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 	}
 	scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 
-	// Get existing vector
-	existingVector, err := v.storage.GetVector(ctx, scopedNamespace, req.ID)
+	// qrdb's update-metadata verb merges or replaces the metadata itself and
+	// authorizes the caller for vector:update_metadata alone; a read and an
+	// upsert would also demand vector:get and vector:upsert.
+	vc, err := v.vectorClient()
 	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrNotFound,
-			Op:   "vector.UpdateMetadata",
-			Err:  &api.OperationFailedError{Operation: fmt.Sprintf("find vector %d in namespace %s", req.ID, req.Namespace), Cause: err},
-		}
+		return nil, err
 	}
-
-	// Prepare new metadata (convert interface{} to string for storage)
-	var newMetadata map[string]interface{}
-	if req.MergeMetadata {
-		// Merge with existing metadata
-		newMetadata = make(map[string]interface{})
-		if existingVector.Metadata != nil {
-			for k, val := range existingVector.Metadata {
-				newMetadata[k] = val
-			}
-		}
-		for k, val := range req.Metadata {
-			newMetadata[k] = val
-		}
-		// Delete specified keys
-		for _, key := range req.DeleteKeys {
-			delete(newMetadata, key)
-		}
-	} else {
-		// Replace entire metadata
-		newMetadata = req.Metadata
-	}
-
-	// Update vector using upsert with existing embedding values
-	upsertReq := &UpsertVectorRequest{
-		Namespace: scopedNamespace,
-		ID:        req.ID,
-		Vector:    existingVector.Embedding,
-		Metadata:  newMetadata,
-		ShardID:   v.resolveShardID(req.ShardID),
-	}
-
-	resp, err := v.UpsertVector(ctx, upsertReq)
+	resp, err := vc.UpdateMetadata(ctx, &qrdbtransport.UpdateVectorMetadataRequest{
+		Namespace:     scopedNamespace,
+		ID:            req.ID,
+		Metadata:      req.Metadata,
+		MergeMetadata: req.MergeMetadata,
+		DeleteKeys:    req.DeleteKeys,
+		ShardID:       v.resolveShardID(req.ShardID),
+	})
 	if err != nil {
-		return nil, &qbErrors.QBError{
-			Code: qbErrors.ErrInternal,
-			Op:   "vector.UpdateMetadata",
-			Err:  &api.OperationFailedError{Operation: "update metadata", Cause: err},
-		}
+		return nil, v.qrdbError("vector.UpdateMetadata", "update_metadata", err)
 	}
 
 	if v.metrics != nil {
@@ -3047,7 +3099,7 @@ func (v *vectorService) UpdateMetadata(ctx context.Context, req *UpdateVectorMet
 		ID:        req.ID,
 		Version:   resp.Version,
 		Timestamp: resp.Timestamp,
-		Success:   true,
+		Success:   resp.Success,
 	}, nil
 }
 
@@ -3092,7 +3144,15 @@ func (v *vectorService) SearchByID(ctx context.Context, req *SearchByIDRequest) 
 	}
 	scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 
-	// Get the source vector
+	// qrdb's search-by-ID verb authorizes the caller for
+	// vector:search_by_id alone; the composite below would also demand
+	// vector:get and vector:search_similar.
+	if vc, err := v.vectorClient(); err == nil {
+		return v.searchByIDThroughQRDB(ctx, vc, scopedNamespace, req, start)
+	}
+
+	// Without a qrdb client, read the source vector and search the local
+	// index with its embedding.
 	sourceVector, err := v.storage.GetVector(ctx, scopedNamespace, req.ID)
 	if err != nil {
 		return nil, &qbErrors.QBError{
