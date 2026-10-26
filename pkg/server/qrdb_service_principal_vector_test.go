@@ -118,3 +118,20 @@ func TestServiceVector_PrincipalWithoutRebuildGrantsIsRefused(t *testing.T) {
 	_, err = vec.GetRebuildProgress(ctx, &transport.GetRebuildProgressRequest{Namespace: "principal-ns", JobID: "no-such-job"})
 	require.ErrorAs(t, err, &denied, "the node served rebuild progress to a principal without vector:get_rebuild_progress")
 }
+
+// The server hands pkg/service the principal's whole vector client, so a
+// native metadata update or hybrid / by-ID search runs as the principal.
+func TestServiceVector_PrincipalUpdatesMetadataAndSearches(t *testing.T) {
+	s, _ := newPrincipalServer(t)
+	vec := seedPrincipalNamespace(t, s)
+	ctx := context.Background()
+
+	_, err := vec.UpdateMetadata(ctx, &transport.UpdateVectorMetadataRequest{
+		Namespace: "principal-ns", ID: 1, Metadata: map[string]interface{}{"kind": "seed"},
+	})
+	require.NoError(t, err)
+	_, err = vec.HybridSearch(ctx, &transport.HybridSearchRequest{Namespace: "principal-ns", QueryVector: []float32{1, 0}, K: 1})
+	require.NoError(t, err)
+	_, err = vec.SearchByID(ctx, &transport.SearchByIDRequest{Namespace: "principal-ns", ID: 1, K: 1})
+	require.NoError(t, err)
+}

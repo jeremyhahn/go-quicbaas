@@ -64,6 +64,7 @@ var grantNames = []string{
 	"vector:batch_upsert",            // VectorClient.BatchUpsert
 	"vector:batch_delete",            // VectorClient.BatchDeleteVectors
 	"vector:list",                    // VectorClient.ListVectors: namespace scans
+	"vector:update_metadata",         // VectorClient.UpdateMetadata: a native metadata update
 	"vector:search_by_metadata",      // VectorClient.SearchByMetadata: multi-filter scans
 	"vector:search_similar",          // VectorClient.SearchSimilar: the node's authorized search
 	"vector:get_index_stats",         // VectorClient.GetIndexStats
