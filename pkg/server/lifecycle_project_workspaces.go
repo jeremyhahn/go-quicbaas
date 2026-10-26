@@ -39,12 +39,13 @@ func (s *Server) wireProjectWorkspaces(projectStore orchestration.ProjectStore, 
 
 		// Compose git-over-SSH auth from xkms: the signer resolver keeps
 		// private key material inside the xkms store, and first-contact
-		// host-key pins persist in the barrier-sealed SSH keyspace so later
-		// clones verify against them. A node with no barrier gets no pin
-		// store, and SSH clones fail closed.
+		// host-key pins persist beside the keys — on the remote xkmsd when
+		// one holds them, otherwise in the barrier-sealed SSH keyspace — so
+		// later clones verify against them. A local-key node with no barrier
+		// gets no pin store, and SSH clones fail closed.
 		if sshClient := s.quicBaaSService.SSHClient(); sshClient != nil {
 			git.SSHSigner = &service.XKMSSSHSignerResolver{Client: sshClient}
-			hostKeys, err := s.sshHostKeyStore()
+			hostKeys, err := s.gitHostKeyStore(sshClient)
 			var notSealed *SSHStoreNotSealedError
 			switch {
 			case errors.As(err, &notSealed):
