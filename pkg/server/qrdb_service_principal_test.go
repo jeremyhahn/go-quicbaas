@@ -25,28 +25,45 @@ import (
 // reach its store.
 func newPrincipalNode(t *testing.T, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
 	t.Helper()
+	return startPrincipalNode(t, principalNodeConfig(t), nil, nodeOpts...)
+}
+
+// principalNodeConfig is the in-memory node configuration every principal
+// test node starts from.
+func principalNodeConfig(t *testing.T) *qrdbsdk.DaemonConfig {
+	t.Helper()
 	cfg := &qrdbsdk.DaemonConfig{}
 	cfg.Raft.DataDir = t.TempDir() // vector storage requires a data dir
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{
 		{Name: "default", Backend: "memory"},
 	}
+	return cfg
+}
+
+// startPrincipalNode boots cfg as a standalone node running as the
+// production service principal.
+func startPrincipalNode(t *testing.T, cfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts ...qrdbnode.NodeOption) *qrdbnode.Node {
+	t.Helper()
 	principal, err := qrdbservice.NodeOption()
 	require.NoError(t, err)
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, append(nodeOpts, principal)...)
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, serverOpts, append(nodeOpts, principal)...)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = node.Close() })
 	return node
 }
 
-// newPrincipalServer returns a Server whose embedded node and shard client
-// are a principal node.
 func newPrincipalServer(t *testing.T) (*Server, *qrdbnode.Node) {
 	t.Helper()
 	node := newPrincipalNode(t)
+	return serverOverNode(node), node
+}
+
+// serverOverNode is a Server whose embedded qrdb node is node.
+func serverOverNode(node *qrdbnode.Node) *Server {
 	s := &Server{}
 	s.setQRDBNode(node)
 	s.qrdbClient = newNodeBackedShardedClient(node)
-	return s, node
+	return s
 }
 
 // The store GetKVStore hands to internal components runs as the service
