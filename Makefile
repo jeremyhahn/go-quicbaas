@@ -3411,15 +3411,27 @@ RACE_TIMEOUT := 30m
 # threshold (see the Coverage Gate below). It runs the same TEST_CHECKS
 # validations as `make test` first, so replacing `make test` with it in CI
 # keeps every check.
-.PHONY: coverage
-coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
-	@printf "$(BLUE)Generating coverage report...$(NC)\n"
+# COVER_STAGES are the make targets the CI test stage runs after the coverage
+# pass: the Go SDK, the minimal/standard/lean tag passes and the tooling tests.
+COVER_STAGES := test-sdk-go test-minimal test-standard test-lean test-tooling
+
+# coverage_profile is a recipe fragment for $(call coverage_profile,PACKAGES,
+# PROFILE): the -race unit tests of PACKAGES, proto packages dropped, writing
+# the raw coverage profile PROFILE. `coverage` and every coverage shard run
+# it, so a shard runs exactly the flags the one-command run does.
+define coverage_profile
 	@mkdir -p $(COVERAGE_DIR)
-	@$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),/proto$$); \
-	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(COVERAGE_DIR)/coverage-raw.out $$pkgs
+	@$(call go_packages,-tags '$(TEST_TAGS)' $(1),/proto$$); \
+	GOTOOLCHAIN=go$(GO_VERSION) GONOSUMCHECK='*' CGO_ENABLED=1 $(GOTEST) -race -p 2 -timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=$(2) $$pkgs
+endef
+
+# coverage_gate is a recipe fragment for $(call coverage_gate,RAW): it drops
+# non-production code from the raw profile RAW into coverage.out, writes the
+# HTML report and fails when the total is below COVER_MIN.
+define coverage_gate
 	@printf "$(BLUE)Filtering out non-production code (generated, mocks, stubs, test helpers)...$(NC)\n"
-	@head -1 $(COVERAGE_DIR)/coverage-raw.out > $(COVERAGE_DIR)/coverage.out
-	@grep -v '\.pb\.go:' $(COVERAGE_DIR)/coverage-raw.out | \
+	@head -1 $(1) > $(COVERAGE_DIR)/coverage.out
+	@grep -v '\.pb\.go:' $(1) | \
 		grep -v '_grpc\.pb\.go:' | \
 		grep -v '/proto/' | \
 		grep -v '/mocks/' | \
@@ -3446,7 +3458,68 @@ coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverag
 		exit 1; \
 	fi; \
 	printf "$(GREEN)Coverage gate passed (%s%% >= %s%%)$(NC)\n" "$$TOTAL" "$(COVER_MIN)"
-	@$(MAKE) --no-print-directory test-sdk-go test-minimal test-standard test-lean test-tooling
+endef
+
+.PHONY: coverage
+coverage: $(TEST_CHECKS) ## The CI test stage: unit tests with -race and coverage (fail below COVER_MIN, generated code excluded), then the Go SDK, the minimal/standard/lean tag passes and the tooling tests
+	@printf "$(BLUE)Generating coverage report...$(NC)\n"
+	$(call coverage_profile,$(COVER_PKGS),$(COVERAGE_DIR)/coverage-raw.out)
+	$(call coverage_gate,$(COVERAGE_DIR)/coverage-raw.out)
+	@$(MAKE) --no-print-directory $(COVER_STAGES)
+
+# The coverage shards (#1912) split `coverage` across CI jobs so no PR-tier
+# job runs past 20 minutes. COVER_SHARD_<n> is shard n's package patterns and
+# COVER_SHARD_<n>_STAGES the COVER_STAGES it runs after them. Together the
+# shards hold every package of COVER_PKGS and every stage exactly once:
+# test/buildgates/coverage_shards_test.go fails otherwise, and when ci.yml's
+# unit-shard-<n> jobs differ from COVER_SHARDS. The lists are balanced by the
+# per-package times of a measured `make coverage` run.
+COVER_SHARDS := 1 2 3 4 5 6
+COVER_SHARD_1 := ./pkg/api/...
+COVER_SHARD_1_STAGES :=
+COVER_SHARD_2 := ./pkg/iam/... ./cmd/...
+COVER_SHARD_2_STAGES := test-sdk-go
+COVER_SHARD_3 := ./pkg/server/... ./pkg/security/... ./pkg/ollama/... ./pkg/rag/... \
+	./pkg/sdlc/... ./pkg/service/... ./pkg/orchestration/...
+COVER_SHARD_3_STAGES := test-tooling
+COVER_SHARD_4 := ./pkg/util/... ./pkg/labstrings/...
+COVER_SHARD_4_STAGES := test-lean
+COVER_SHARD_5 := ./pkg/storage/... ./pkg/testutil/... ./pkg/catalog/... ./pkg/ha/... ./pkg/cache/...
+COVER_SHARD_5_STAGES := test-standard
+COVER_SHARD_6 := ./pkg/apimodule/... ./pkg/auth/... ./pkg/backup/... ./pkg/barrier/... \
+	./pkg/cas/... ./pkg/certstore/... ./pkg/cifault/... ./pkg/cli/... ./pkg/cluster/... \
+	./pkg/codec/... ./pkg/common/... ./pkg/config/... ./pkg/containerruntime/... \
+	./pkg/credentials/... ./pkg/crypto/... ./pkg/database/... ./pkg/embedding/... \
+	./pkg/errors/... ./pkg/fips/... ./pkg/fleet/... ./pkg/initmarker/... ./pkg/interfaces/... \
+	./pkg/kms/... ./pkg/kvstore/... ./pkg/lease/... ./pkg/logger/... ./pkg/messaging/... \
+	./pkg/metrics/... ./pkg/models/... ./pkg/permission/... ./pkg/registry/... \
+	./pkg/routing/... ./pkg/scheduler/... ./pkg/seal/... ./pkg/secrets/... ./pkg/shards/... \
+	./pkg/signal/... ./pkg/signalbridge/... ./pkg/sshstore/... ./pkg/tenantctx/... \
+	./pkg/tracing/... ./pkg/uicontract/... ./pkg/vector/... ./pkg/version/... ./pkg/watch/... \
+	./pkg/watchbridge/... ./pkg/webauthnrp/... ./pkg/xkms/...
+COVER_SHARD_6_STAGES := test-minimal
+COVER_SHARD_TARGETS := $(addprefix coverage-shard-,$(COVER_SHARDS))
+
+# coverage-shard-<n> runs shard n's packages under coverage into
+# coverage/shard-<n>.out, then shard n's stages.
+.PHONY: $(COVER_SHARD_TARGETS)
+$(COVER_SHARD_TARGETS): coverage-shard-%: ## Run one coverage shard (e.g. make coverage-shard-1): its packages with -race and coverage, then its stages
+	@printf "$(BLUE)Coverage shard $*: $(COVER_SHARD_$*)$(NC)\n"
+	$(call coverage_profile,$(COVER_SHARD_$*),$(COVERAGE_DIR)/shard-$*.out)
+	$(if $(strip $(COVER_SHARD_$*_STAGES)),@$(MAKE) --no-print-directory $(COVER_SHARD_$*_STAGES))
+
+# coverage-merge joins every shard's profile and applies the gate `coverage`
+# applies, so the shards plus the merge give the one-command run's result. It
+# runs the TEST_CHECKS validations `coverage` runs first.
+.PHONY: coverage-merge
+coverage-merge: $(TEST_CHECKS) ## Merge the coverage shard profiles and fail below COVER_MIN
+	@for n in $(COVER_SHARDS); do \
+		[ -s $(COVERAGE_DIR)/shard-$$n.out ] || { printf "$(RED)coverage-merge: $(COVERAGE_DIR)/shard-$$n.out is missing; run make coverage-shard-$$n$(NC)\n"; exit 1; }; \
+		head -1 $(COVERAGE_DIR)/shard-$$n.out | grep -q '^mode: ' || { printf "$(RED)coverage-merge: $(COVERAGE_DIR)/shard-$$n.out is not a coverage profile$(NC)\n"; exit 1; }; \
+	done
+	@head -1 $(COVERAGE_DIR)/shard-$(firstword $(COVER_SHARDS)).out > $(COVERAGE_DIR)/coverage-raw.out
+	@for n in $(COVER_SHARDS); do tail -n +2 $(COVERAGE_DIR)/shard-$$n.out; done >> $(COVERAGE_DIR)/coverage-raw.out
+	$(call coverage_gate,$(COVERAGE_DIR)/coverage-raw.out)
 
 # ==============================================================================
 # Coverage Gate (hard threshold — mirrors go-qrdb's COVER_MIN / check-coverage)

@@ -424,15 +424,6 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make build GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
-      # The test stage (m601 (c)): make coverage runs the whole unit suite with
-      # -race (make test's flags) and fails when total coverage is below
-      # COVERAGE_THRESHOLD (testing-guidelines.md), so the suite runs once.
-      # Tags matter here too: without them tag-gated packages are neither
-      # tested nor counted. The integration stage is its own job below.
-      - name: make coverage (unit tests and the threshold)
-        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && env.DOCS_ONLY != 'true' }}
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
-
       # CUSTOMIZE: the TypeScript SDK, frontend and JavaScript SDK unit tests
       # (make test-sdk-ts, test-frontend, test-sdk-js) are a gate: make build
       # only compiles them, and the web job that ran them is gone (Codex
@@ -539,6 +530,444 @@ jobs:
           IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
           docker image rm "$IT_IMAGE" || true
 
+  # The test stage (m601 (c)), sharded (#1912): `make coverage` took 83
+  # minutes in one job on a 6-CPU node, so each unit-shard-<n> runs `make coverage-shard-<n>`
+  # (its packages with -race and coverage, then its tag passes) and
+  # coverage-merge joins the profiles and fails below COVERAGE_THRESHOLD. The
+  # shard lists live in the Makefile (COVER_SHARDS);
+  # test/buildgates/coverage_shards_test.go fails when these jobs differ from
+  # them. in-toolchain-image.sh copies the tree into the container and nothing
+  # back, so the stage sends make's output to stderr and the profile to
+  # stdout, which the step writes to the file the artifact carries. Each shard
+  # measured 8 to 12 minutes on that node; timeout-minutes leaves room for a
+  # slower runner and the toolchain image build.
+  unit-shard-1:
+    name: Unit tests and coverage [shard 1]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-1
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-1 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-1.out" > coverage/shard-1.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-1
+          path: coverage/shard-1.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-1
+          path: coverage/shard-1.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  unit-shard-2:
+    name: Unit tests and coverage [shard 2]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-2
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-2 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-2.out" > coverage/shard-2.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-2
+          path: coverage/shard-2.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-2
+          path: coverage/shard-2.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  unit-shard-3:
+    name: Unit tests and coverage [shard 3]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-3
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-3 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-3.out" > coverage/shard-3.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-3
+          path: coverage/shard-3.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-3
+          path: coverage/shard-3.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  unit-shard-4:
+    name: Unit tests and coverage [shard 4]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-4
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-4 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-4.out" > coverage/shard-4.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-4
+          path: coverage/shard-4.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-4
+          path: coverage/shard-4.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  unit-shard-5:
+    name: Unit tests and coverage [shard 5]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-5
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-5 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-5.out" > coverage/shard-5.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-5
+          path: coverage/shard-5.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-5
+          path: coverage/shard-5.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  unit-shard-6:
+    name: Unit tests and coverage [shard 6]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 40
+    needs: [changes]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-shard-6
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-shard-6 GO_BUILD_TAGS='$GO_BUILD_TAGS' >&2 && cat coverage/shard-6.out" > coverage/shard-6.out
+
+      - name: Upload the shard profile (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/upload-artifact@c6a366c94c3e0affe28c06c8df20a878f24da3cf # v3.2.2
+        with:
+          name: coverage-shard-6
+          path: coverage/shard-6.out
+          retention-days: 1
+
+      - name: Upload the shard profile (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-shard-6
+          path: coverage/shard-6.out
+          retention-days: 1
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # Joins the shard profiles and applies the coverage floor exactly as
+  # `make coverage` does, after the TEST_CHECKS validations.
+  coverage-merge:
+    name: Coverage gate [merged shard profiles]
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    timeout-minutes: 20
+    needs: [changes, unit-shard-1, unit-shard-2, unit-shard-3, unit-shard-4, unit-shard-5, unit-shard-6]
+    env:
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'push' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      - name: Download the shard profiles (Gitea)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url != 'https://github.com' }}
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        with:
+          path: coverage-shards
+
+      - name: Download the shard profiles (GitHub)
+        if: ${{ env.DOCS_ONLY != 'true' && github.server_url == 'https://github.com' }}
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          pattern: coverage-shard-*
+          path: coverage-shards
+
+      - name: Build the toolchain image
+        if: ${{ env.DOCS_ONLY != 'true' }}
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          make docker-build-toolchain-image MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make coverage-merge
+        if: ${{ env.DOCS_ONLY != 'true' && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          mkdir -p coverage
+          cp coverage-shards/coverage-shard-*/shard-*.out coverage/
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage-merge GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
   # CUSTOMIZE: further stages run in the image job as steps of the same
   # shape (one `make` target in the toolchain image, `if: !cancelled()`). A
   # suite that needs its own runner or stack (tagged suites, cross-arch,
@@ -591,7 +1020,7 @@ jobs:
     # Integration still runs on every PR but does not gate until row #1700
     # closes (CA m787). Restore it then in needs and as a pr check line, and
     # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
-    needs: [changes, image, arch-gates]
+    needs: [changes, image, unit-shard-1, unit-shard-2, unit-shard-3, unit-shard-4, unit-shard-5, unit-shard-6, coverage-merge, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -618,5 +1047,12 @@ jobs:
           # full tier by its `if:` is marked full; every other job is pr.
           check changes     "${{ needs.changes.result }}" pr
           check image       "${{ needs.image.result }}" pr
+          check unit-shard-1 "${{ needs.unit-shard-1.result }}" pr
+          check unit-shard-2 "${{ needs.unit-shard-2.result }}" pr
+          check unit-shard-3 "${{ needs.unit-shard-3.result }}" pr
+          check unit-shard-4 "${{ needs.unit-shard-4.result }}" pr
+          check unit-shard-5 "${{ needs.unit-shard-5.result }}" pr
+          check unit-shard-6 "${{ needs.unit-shard-6.result }}" pr
+          check coverage-merge "${{ needs.coverage-merge.result }}" pr
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD

@@ -568,7 +568,7 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 		from   string
 		to     string
 	}{
-		{target: "coverage", role: "package discovery go list", from: "$(call go_packages,-tags '$(TEST_TAGS)' $(COVER_PKGS),", to: "$(call go_packages,$(COVER_PKGS),"},
+		{target: "coverage", role: "package discovery go list", from: "$(call go_packages,-tags '$(TEST_TAGS)' $(1),", to: "$(call go_packages,$(1),"},
 		{target: "coverage", role: "coverage go test", from: "-timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=", to: "-timeout=$(RACE_TIMEOUT) -coverprofile="},
 		{target: "coverage", role: "tag-pass go test", from: "-p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m", to: "-p 2 -timeout=10m"},
 		{target: "coverage", role: "tooling go test", from: "-p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/...", to: "-p 2 -timeout=10m ./scripts/..."},
