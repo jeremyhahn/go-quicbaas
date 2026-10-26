@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -788,6 +789,64 @@ func TestRunInitInitialize_AdminGenerateWritesTheCredentialFiles(t *testing.T) {
 	assert.Contains(t, out.String(), certPath)
 	assert.NotContains(t, out.String(), "PRIVATE KEY")
 	assert.NotContains(t, out.String(), "generated-admin-key")
+}
+
+// TestRunInitInitialize_AdminGenerateJSONOmitsThePrivateKey pins that the
+// JSON summary of an --admin-generate run never carries the generated
+// private key: it is written to --admin-key-out only, and the response's key
+// bytes are wiped once the command returns.
+func TestRunInitInitialize_AdminGenerateJSONOmitsThePrivateKey(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	resp := &qrdbtransport.CeremonyInitializeResponse{
+		State:        "complete",
+		AdminKeyPEM:  []byte(testGeneratedKeyPEM),
+		AdminCertPEM: testGeneratedCertPEM,
+	}
+	restore := withFakeCeremony(generatedCredentialClient(resp))
+	defer restore()
+	keyPath, _ := setAdminGenerate(t.TempDir())
+	initOutputFmt = "json"
+
+	cmd := &cobra.Command{Use: "initialize"}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	require.NoError(t, runInitInitializeCommand(cmd, nil))
+
+	key, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, testGeneratedKeyPEM, string(key))
+
+	var summary map[string]any
+	require.NoError(t, json.Unmarshal(out.Bytes(), &summary))
+	assert.NotContains(t, summary, "admin_key_pem")
+	assert.Equal(t, testGeneratedCertPEM, summary["admin_cert_pem"])
+	assert.NotContains(t, out.String(), base64.StdEncoding.EncodeToString([]byte(testGeneratedKeyPEM)))
+	assert.Equal(t, make([]byte, len(testGeneratedKeyPEM)), resp.AdminKeyPEM,
+		"the response's key bytes must be wiped")
+}
+
+// TestRunInitInitialize_AdminGenerateWipesTheKeyOnWriteFailure pins that the
+// generated key is wiped even when the command fails after the daemon call.
+func TestRunInitInitialize_AdminGenerateWipesTheKeyOnWriteFailure(t *testing.T) {
+	t.Setenv(barrierPassphraseEnv, "")
+	resetInitCeremonyFlags()
+	defer resetInitCeremonyFlags()
+	resp := &qrdbtransport.CeremonyInitializeResponse{
+		State:       "complete",
+		AdminKeyPEM: []byte(testGeneratedKeyPEM),
+	}
+	restore := withFakeCeremony(generatedCredentialClient(resp))
+	defer restore()
+	setAdminGenerate(t.TempDir())
+
+	cmd := &cobra.Command{Use: "initialize"}
+	cmd.SetOut(&bytes.Buffer{})
+	err := runInitInitializeCommand(cmd, nil)
+	require.Error(t, err)
+	assert.Equal(t, make([]byte, len(testGeneratedKeyPEM)), resp.AdminKeyPEM,
+		"the response's key bytes must be wiped")
 }
 
 // TestRunInitInitialize_AdminGenerateRequiresOutputFiles: without a

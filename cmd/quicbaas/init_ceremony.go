@@ -477,6 +477,11 @@ func runInitInitializeCommand(cmd *cobra.Command, _ []string) error {
 		resp, callErr = client.CeremonyInitialize(ctx, req)
 		return callErr
 	})
+	if resp != nil {
+		// The generated private key leaves this process only through the
+		// --admin-key-out file; wipe it on every exit.
+		defer clear(resp.AdminKeyPEM)
+	}
 	if err != nil {
 		return formatError(stderrors.Join(err, outputs.discard()))
 	}
@@ -736,7 +741,11 @@ func formatCeremonyInitializeResponse(
 	if outputFormat == cli.OutputFormatJSON {
 		encoder := json.NewEncoder(w)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(resp)
+		// The summary is public: the generated private key is stored only
+		// in the --admin-key-out file and never printed.
+		summary := *resp
+		summary.AdminKeyPEM = nil
+		return encoder.Encode(&summary)
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
