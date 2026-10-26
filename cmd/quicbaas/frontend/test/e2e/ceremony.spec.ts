@@ -9,12 +9,16 @@
  *   5. URL contract: page hits /api/v1/barrier/officers and never
  *      /api/v1/ceremony/*.
  *   6. Enroll-officer form submits to POST /api/v1/barrier/officers.
+ *   6b. Enrolment is disabled while the holder service is unavailable.
  *   7. Listing officers never renders a 404 banner.
  */
 
 import { test, expect, type Page, type Request } from '@playwright/test';
 
 test.use({ ignoreHTTPSErrors: true });
+
+const E2E_CSR_PEM = '-----BEGIN CERTIFICATE REQUEST-----\nE2E\n-----END CERTIFICATE REQUEST-----';
+const E2E_CERT_PEM = '-----BEGIN CERTIFICATE-----\nE2E\n-----END CERTIFICATE-----';
 
 async function gotoCeremony(page: Page): Promise<void> {
   await page.goto('./', { waitUntil: 'networkidle' });
@@ -111,31 +115,58 @@ test.describe('Security > Ceremony', () => {
   });
 
   test('6. enroll-officer form submits to POST /api/v1/barrier/officers', async ({ page }) => {
-    const submitted: string[] = [];
+    // A ready holder service: the officer list answers 200 and enrolment
+    // answers with the issued certificate.
+    const submitted: Array<Record<string, unknown>> = [];
     await page.route('**/api/v1/barrier/officers', async (route) => {
-      if (route.request().method() === 'POST') {
-        submitted.push(route.request().url());
+      const request = route.request();
+      if (request.method() === 'POST') {
+        submitted.push(request.postDataJSON() as Record<string, unknown>);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ cert_pem: E2E_CERT_PEM, role: 'officer' }),
+        });
+        return;
       }
-      await route.continue();
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ officers: [] }) });
     });
     await installLegacyURLGuard(page);
 
     await gotoCeremony(page);
-    await page.waitForLoadState('networkidle');
 
     const form = page.getByTestId('ceremony-enroll-form');
     await expect(form).toBeVisible();
     await form.getByLabel(/Username/i).fill('e2e-officer');
-    await form
-      .getByLabel(/^CSR \(PEM\)/i)
-      .fill('-----BEGIN CERTIFICATE REQUEST-----\nE2E\n-----END CERTIFICATE REQUEST-----');
+    await form.getByLabel(/^CSR \(PEM\)/i).fill(E2E_CSR_PEM);
     const enroll = form.getByRole('button', { name: /Enroll Officer/i });
-    // The button is disabled while the holder service is unavailable; the
-    // submission contract only applies when it is live.
-    if (await enroll.isEnabled()) {
-      await enroll.click();
-      await page.waitForLoadState('networkidle');
-      expect(submitted.length).toBeGreaterThan(0);
-    }
+    await expect(enroll).toBeEnabled();
+    await enroll.click();
+
+    await expect.poll(() => submitted.length).toBe(1);
+    expect(submitted[0]).toMatchObject({ username: 'e2e-officer', csr_pem: E2E_CSR_PEM });
+    await expect(page.getByTestId('ceremony-enrolled-cert')).toContainText('e2e-officer');
+  });
+
+  test('6b. enrolment is disabled while the holder service is unavailable', async ({ page }) => {
+    let posted = 0;
+    await page.route('**/api/v1/barrier/officers', async (route) => {
+      if (route.request().method() === 'POST') {
+        posted++;
+      }
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'temporarily_unavailable', message: 'barrier holders not available' }),
+      });
+    });
+    await installLegacyURLGuard(page);
+
+    await gotoCeremony(page);
+
+    await expect(page.getByTestId('ceremony-service-unavailable')).toBeVisible();
+    const form = page.getByTestId('ceremony-enroll-form');
+    await expect(form.getByRole('button', { name: /Enroll Officer/i })).toBeDisabled();
+    expect(posted).toBe(0);
   });
 });
