@@ -857,6 +857,20 @@ func (s *Server) initializeIAMComponents() (service.IAMComponents, error) {
 		s.logger.WithError(err).Warn("Canonical admin role not reconciled; admin authorization may be unavailable until first-boot completes")
 	}
 
+	// Converge the persisted built-ins onto this build's permission set. The
+	// principal holds roles:create, the verb qrdb checks for it. Non-fatal:
+	// the roles keep their stored grants and the next boot retries.
+	if reconcileCtx != nil {
+		if report, err := reconcileBuiltInRoles(reconcileCtx, identityStore); err != nil {
+			s.logger.WithError(err).Warn("Built-in roles not reconciled; they keep the permissions they were seeded with until the next boot")
+		} else {
+			for _, role := range report.Roles {
+				s.logger.Info("Built-in role reconciled", "tenant", report.TenantID, "role", role.Name,
+					"created", role.Created, "added", role.Added, "removed", role.Removed)
+			}
+		}
+	}
+
 	// Converge the prompt sets: the system set onto this build's defaults, and
 	// every tenant seeded with the prompts it lacks. Non-fatal: a tenant left
 	// unseeded still resolves through to the system set, and the next boot
@@ -2137,6 +2151,33 @@ func reconcileAdminRole(ctx context.Context, identityStore *iam.IdentityStore) e
 	// surface it verbatim so the caller does not mistake it for a
 	// reconciliation gap.
 	return err
+}
+
+// reconcileBuiltInRoles converges the system tenant's persisted built-in roles
+// onto the permission set this build registers. A data dir seeded before a
+// permission was renamed or added keeps built-ins that grant the old names, and
+// every ordinary write path refuses a built-in, so without this pass an
+// upgraded node authorizes its own administrators against a stale role.
+//
+// Only the system tenant is converged here: the node's service principal acts
+// in its own tenant only. Another tenant's security officer converges that
+// tenant through the IAM ReconcileBuiltInRoles verb.
+//
+// A role storage that is not qrdb's carries no qrdb built-ins, so it reports
+// no change rather than an error.
+func reconcileBuiltInRoles(ctx context.Context, identityStore *iam.IdentityStore) (*iam.RoleReconcileReport, error) {
+	unchanged := &iam.RoleReconcileReport{TenantID: qrdbsdk.SystemTenantID}
+	if identityStore == nil {
+		return unchanged, nil
+	}
+	report, err := identityStore.ReconcileBuiltInRoles(ctx, qrdbsdk.SystemTenantID)
+	if err == iam.ErrRoleReconcileUnsupported {
+		return unchanged, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return report, nil
 }
 
 // wireTenantRoleSeeder seeds every new tenant's built-in roles through the
