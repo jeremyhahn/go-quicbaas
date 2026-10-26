@@ -229,6 +229,40 @@ func TestHandleCeremonyInitialize_BadJSON(t *testing.T) {
 	}
 }
 
+// TestHandleCeremonyInitialize_PartialDecodeWipesSecret pins Codex 7395 P2: a
+// body whose secret decodes and whose threshold does not is refused, and the
+// cleanup the handler registers before the decode zeroes the secret the
+// partial decode produced.
+func TestHandleCeremonyInitialize_PartialDecodeWipesSecret(t *testing.T) {
+	const body = `{"secret":"aHVudGVyMg==","threshold":"two"}`
+	called := false
+	svc := &fakeCeremonyService{
+		initFn: func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {
+			called = true
+			return &service.CeremonyInitInfo{}, nil
+		},
+	}
+	w := doCeremonyReq(t, ceremonyServer(t, svc), http.MethodPost, "/api/v1/init/initialize", body)
+	if w.Code != http.StatusBadRequest || called {
+		t.Fatalf("expected 400 without a service call, got %d (called=%v)", w.Code, called)
+	}
+
+	var req transport.CeremonyInitializeRequest
+	cleanup := wipeCredential(&req.Secret)
+	if err := json.Unmarshal([]byte(body), &req); err == nil {
+		t.Fatal("precondition: this body must fail to decode")
+	}
+	if string(req.Secret) != "hunter2" {
+		t.Fatalf("precondition: a partial decode must populate the secret, got %q", req.Secret)
+	}
+	cleanup()
+	for i, b := range req.Secret {
+		if b != 0 {
+			t.Fatalf("secret byte %d survived the cleanup", i)
+		}
+	}
+}
+
 func TestHandleCeremonyInitialize_ServiceError(t *testing.T) {
 	svc := &fakeCeremonyService{
 		initFn: func(ctx context.Context, req *service.CeremonyInitRequest) (*service.CeremonyInitInfo, error) {

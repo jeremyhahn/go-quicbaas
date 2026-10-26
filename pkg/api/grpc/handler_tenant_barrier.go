@@ -172,6 +172,9 @@ func requireTenantID(tenantID string) error {
 
 // Init initializes the per-tenant barrier with the selected strategy.
 func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrierInitRequest) (*pb.TenantBarrierInitResponse, error) {
+	// The wipe is registered before any validation can return.
+	passphrase := req.GetPassphrase()
+	defer secure.Wipe(passphrase)
 	if err := s.requireTenantBarrierService(); err != nil {
 		return nil, err
 	}
@@ -186,8 +189,6 @@ func (s *TenantBarrierGRPCServer) Init(ctx context.Context, req *pb.TenantBarrie
 	if err != nil {
 		return nil, err
 	}
-	passphrase := req.GetPassphrase()
-	defer secure.Wipe(passphrase)
 	result, err := s.tenantBarrierSvc.TenantBarrierInit(ctx, &qrdbtransport.TenantBarrierInitRequest{
 		TenantID:   req.GetTenantId(),
 		Passphrase: passphrase,
@@ -286,6 +287,8 @@ func tenantBarrierHoldersToPB(in []qrdbtransport.TenantBarrierHolderCert) []*pb.
 
 // Unseal unseals the per-tenant barrier with a single key (passphrase strategy).
 func (s *TenantBarrierGRPCServer) Unseal(ctx context.Context, req *pb.TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
+	key := req.GetKey()
+	defer secure.Wipe(key)
 	if err := s.requireTenantBarrierService(); err != nil {
 		return nil, err
 	}
@@ -296,8 +299,6 @@ func (s *TenantBarrierGRPCServer) Unseal(ctx context.Context, req *pb.TenantBarr
 		return nil, err
 	}
 
-	key := req.GetKey()
-	defer secure.Wipe(key)
 	if err := s.tenantBarrierSvc.TenantBarrierUnseal(ctx, req.GetTenantId(), key); err != nil {
 		return nil, mapTenantBarrierError(err)
 	}
@@ -362,6 +363,8 @@ func (s *TenantBarrierGRPCServer) Status(ctx context.Context, req *pb.TenantBarr
 // node's EncryptionMigrator drives the migration (injected via
 // SetBarrierService / buildBarrierCeremonyServices).
 func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.TenantBarrierEnableEncryptionRequest) (*emptypb.Empty, error) {
+	passphrase := req.GetPassphrase()
+	defer secure.Wipe(passphrase)
 	if s.barrierSvc == nil {
 		return nil, tenantBarrierServiceUnavailableError()
 	}
@@ -391,8 +394,7 @@ func (s *TenantBarrierGRPCServer) EnableEncryption(ctx context.Context, req *pb.
 		ShamirThreshold: int(req.GetShamirThreshold()),
 		ShamirTotal:     int(req.GetShamirTotal()),
 	}
-	if passphrase := req.GetPassphrase(); len(passphrase) > 0 {
-		defer secure.Wipe(passphrase)
+	if len(passphrase) > 0 {
 		creds, credErr := qrdbsdk.CredentialsFor(ctx, passphrase)
 		if credErr != nil {
 			return nil, status.Error(codes.Internal, credErr.Error())

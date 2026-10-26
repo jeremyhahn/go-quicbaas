@@ -289,6 +289,28 @@ func TestCeremonyInitialize_RefusesNonObjectFactorParams(t *testing.T) {
 	}
 }
 
+// TestCeremonyInitialize_NonObjectFactorParamsWipesSecret proves the ceremony
+// secret is wiped even when the roster conversion refuses the request.
+func TestCeremonyInitialize_NonObjectFactorParamsWipesSecret(t *testing.T) {
+	secret := []byte("hunter2")
+	_, err := newTestCeremonyServer(&mockCeremonyService{}).CeremonyInitialize(context.Background(), &pb.CeremonyInitializeRequest{
+		AdminGenerate: true,
+		Secret:        secret,
+		Officers: []*pb.CeremonyOfficer{{
+			Username: "carol",
+			Factors:  []*pb.CeremonyHolderFactor{{Name: "totp", ParamsJson: []byte(`[1]`)}},
+		}},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+	for i, b := range secret {
+		if b != 0 {
+			t.Fatalf("secret byte %d not wiped after a refused roster", i)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CeremonyStatus
 // ---------------------------------------------------------------------------
