@@ -138,6 +138,15 @@ func TestITImageHashCoversTheInputsTheDefaultTagOmits(t *testing.T) {
 	if tags := hash("INTEGRATION_BUILD_TAGS=integration buildgatesprobe"); tags == base {
 		t.Errorf("IT_IMAGE_HASH did not change with INTEGRATION_BUILD_TAGS (%s)", base)
 	}
+	// COVER=1 builds a coverage-instrumented daemon (Codex 7582), so a
+	// coverage run must not reuse the ordinary image.
+	cover := hash("COVER=1")
+	if cover == base {
+		t.Errorf("IT_IMAGE_HASH did not change with COVER=1 (%s)", base)
+	}
+	if again := hash("COVER=1"); again != cover {
+		t.Errorf("IT_IMAGE_HASH with COVER=1 is not stable: %q then %q", cover, again)
+	}
 	writeRepoFile(t, repo, "untracked.go", "package untracked // edited\n")
 	if edited := hash(); edited == base {
 		t.Errorf("IT_IMAGE_HASH did not change with an untracked file's contents (%s)", base)

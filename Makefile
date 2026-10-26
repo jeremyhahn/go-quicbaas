@@ -5637,12 +5637,14 @@ toolchain-image: ## Print the toolchain image tag, hashed from the files it is b
 # The integration image's tag in CI (ci-template v1.23, ci-standard.md §9):
 # <repo>-ci-it:<hash>, keyed by its content, so every job on a runner names
 # the same image for the same tree and builds it once. The hash covers the
-# build arguments that change the image and the whole build context: the
+# build arguments that change the image (the tag set, and COVER, which
+# instruments the daemon; the module proxy arguments do not change the binary)
+# and the whole build context: the
 # commit's tree, and on a dirty checkout the diff and every untracked file
 # .gitignore does not exclude. The reaper (reap-stale-ci-stacks.sh) removes a
 # stale tag under the <repo>-ci- prefix.
 CI_REPO_NAME ?= go-quicbaas
-IT_IMAGE_HASH = $(shell { printf '%s\n' '$(TOOLCHAIN_IMAGE)' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(strip $(INTEGRATION_BUILD_TAGS))'; \
+IT_IMAGE_HASH = $(shell { printf '%s\n' '$(TOOLCHAIN_IMAGE)' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(strip $(INTEGRATION_BUILD_TAGS))' '$(strip $(COVER))'; \
 	git rev-parse 'HEAD^{tree}'; git diff HEAD; \
 	git ls-files -o --exclude-standard -z | xargs -0r sha256sum; } | sha256sum | cut -c1-16)
 
