@@ -105,6 +105,11 @@
         });
       }
     } catch (e) {
+      // qrdb consumes the challenge on every submission, a refused one
+      // included, so drop it: the holder requests a fresh challenge and signs
+      // that one. The share and username stay for the retry.
+      challenge = null;
+      response = '';
       fail(e);
     } finally {
       submitting = false;
