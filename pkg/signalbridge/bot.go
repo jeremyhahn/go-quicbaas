@@ -83,7 +83,8 @@ type OrchestratorBot struct {
 	running atomic.Bool
 
 	// onRunning, when set, is called by Run as soon as the bot counts as
-	// running. Tests use it to land a Stop at that instant.
+	// running and before its cancel func is stored. Tests use it to land
+	// a Stop in that window.
 	onRunning func()
 }
 
@@ -141,12 +142,12 @@ func (b *OrchestratorBot) Run(ctx context.Context) error {
 		b.cancelMu.Unlock()
 		return newError(op, ErrKindConflict, "bot already running")
 	}
-	b.cancel = cancel
-	b.cancelMu.Unlock()
-	defer b.running.Store(false)
 	if b.onRunning != nil {
 		b.onRunning()
 	}
+	b.cancel = cancel
+	b.cancelMu.Unlock()
+	defer b.running.Store(false)
 
 	// Resume subscriptions for any session persisted as attached.
 	for _, sid := range b.manager.AttachedSessions() {

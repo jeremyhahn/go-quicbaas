@@ -417,21 +417,36 @@ func TestBot_StopAsSoonAsRunning(t *testing.T) {
 	bot, signal, _, _ := newTestBot(t)
 	defer close(signal.in)
 	stopErr := make(chan error, 1)
-	bot.onRunning = func() { stopErr <- bot.Stop() }
+	// The hook fires once the bot counts as running and before Run has
+	// stored its cancel func, and issues a concurrent Stop there. While
+	// Run still holds cancelMu the Stop must wait for the lock, so the
+	// hook returns and lets Run store the cancel func first. If the lock
+	// is free, the window is open to Stop: the hook holds Run back until
+	// Stop has returned, so a Stop that finds no cancel func is lost.
+	bot.onRunning = func() {
+		go func() { stopErr <- bot.Stop() }()
+		if bot.cancelMu.TryLock() {
+			bot.cancelMu.Unlock()
+			if err := <-stopErr; err != nil {
+				t.Errorf("stop: %v", err)
+			}
+			stopErr <- nil
+		}
+	}
 
 	runErr := make(chan error, 1)
 	go func() { runErr <- bot.Run(context.Background()) }()
 
-	if err := <-stopErr; err != nil {
-		t.Fatalf("stop: %v", err)
-	}
 	select {
 	case err := <-runErr:
 		if err != nil {
 			t.Fatalf("run: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after Stop landed as the bot started running")
+		t.Fatal("Run did not return after a Stop landed between running and the cancel func")
+	}
+	if err := <-stopErr; err != nil {
+		t.Fatalf("stop: %v", err)
 	}
 }
 
