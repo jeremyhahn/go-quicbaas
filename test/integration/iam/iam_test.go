@@ -94,6 +94,9 @@ func TestMain(m *testing.M) {
 func waitForClusterReady() bool {
 	endpoint := getRESTEndpoint()
 	client := helpers.NewHTTPClient(5 * time.Second)
+	// GET /api/v1/tenants requires tenants:list, so the IAM readiness probe
+	// runs as the system admin; the health probe stays anonymous.
+	admin := &http.Client{Timeout: client.Timeout, Transport: helpers.SystemAdminTransport(client.Transport)}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -104,7 +107,7 @@ func waitForClusterReady() bool {
 			if resp.StatusCode == http.StatusOK {
 				fmt.Println("Cluster is ready")
 				// Now wait for IAM shard to be ready
-				if waitForIAMReady(ctx, client, endpoint) {
+				if waitForIAMReady(ctx, admin, endpoint) {
 					return true
 				}
 			}
