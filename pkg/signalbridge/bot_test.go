@@ -410,6 +410,31 @@ func TestBot_DoubleRun(t *testing.T) {
 	close(signal.in)
 }
 
+// TestBot_StopAsSoonAsRunning lands a Stop at the instant Run marks the
+// bot running, with a parent context that is never cancelled: Run must
+// still return.
+func TestBot_StopAsSoonAsRunning(t *testing.T) {
+	bot, signal, _, _ := newTestBot(t)
+	defer close(signal.in)
+	stopErr := make(chan error, 1)
+	bot.onRunning = func() { stopErr <- bot.Stop() }
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- bot.Run(context.Background()) }()
+
+	if err := <-stopErr; err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after Stop landed as the bot started running")
+	}
+}
+
 // contains is a tiny substring helper.
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
