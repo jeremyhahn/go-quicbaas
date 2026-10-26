@@ -257,6 +257,52 @@ type QRDBShareClaimCompleteRequest = qrdbtransport.ShareClaimCompleteRequest
 // QRDBShareClaimCompleteResponse is a re-export of the qrdb ShareClaimCompleteResponse type.
 type QRDBShareClaimCompleteResponse = qrdbtransport.ShareClaimCompleteResponse
 
+// QRDBTenantOfficerRegisterRequest is a re-export of the qrdb TenantOfficerRegisterRequest type.
+type QRDBTenantOfficerRegisterRequest = qrdbtransport.TenantOfficerRegisterRequest
+
+// QRDBTenantShareClaimBeginRequest is a re-export of the qrdb TenantShareClaimBeginRequest type.
+type QRDBTenantShareClaimBeginRequest = qrdbtransport.TenantShareClaimBeginRequest
+
+// QRDBTenantShareClaimCompleteRequest is a re-export of the qrdb TenantShareClaimCompleteRequest type.
+type QRDBTenantShareClaimCompleteRequest = qrdbtransport.TenantShareClaimCompleteRequest
+
+// =============================================================================
+// QRDB Barrier Quorum / Rekey / Officer Revocation Re-exports
+// =============================================================================
+
+// QRDBQuorumBeginRequest is a re-export of the qrdb QuorumBeginRequest type.
+type QRDBQuorumBeginRequest = qrdbtransport.QuorumBeginRequest
+
+// QRDBQuorumSubmitRequest is a re-export of the qrdb QuorumSubmitRequest type.
+type QRDBQuorumSubmitRequest = qrdbtransport.QuorumSubmitRequest
+
+// QRDBRekeyStartRequest is a re-export of the qrdb RekeyStartRequest type.
+type QRDBRekeyStartRequest = qrdbtransport.RekeyStartRequest
+
+// QRDBOfficerRevokeRequest is a re-export of the qrdb OfficerRevokeRequest type.
+type QRDBOfficerRevokeRequest = qrdbtransport.OfficerRevokeRequest
+
+// QRDBTenantQuorumBeginRequest is a re-export of the qrdb TenantQuorumBeginRequest type.
+type QRDBTenantQuorumBeginRequest = qrdbtransport.TenantQuorumBeginRequest
+
+// QRDBTenantQuorumSubmitRequest is a re-export of the qrdb TenantQuorumSubmitRequest type.
+type QRDBTenantQuorumSubmitRequest = qrdbtransport.TenantQuorumSubmitRequest
+
+// QRDBTenantRekeyStartRequest is a re-export of the qrdb TenantRekeyStartRequest type.
+type QRDBTenantRekeyStartRequest = qrdbtransport.TenantRekeyStartRequest
+
+// QRDBTenantOfficerRevokeRequest is a re-export of the qrdb TenantOfficerRevokeRequest type.
+type QRDBTenantOfficerRevokeRequest = qrdbtransport.TenantOfficerRevokeRequest
+
+// QRDBQuorumChallenge is a re-export of the qrdb QuorumChallenge type.
+type QRDBQuorumChallenge = qrdbtransport.QuorumChallenge
+
+// QRDBQuorumOutcome is a re-export of the qrdb QuorumOutcome type.
+type QRDBQuorumOutcome = qrdbtransport.QuorumOutcome
+
+// QRDBQuorumRound is a re-export of the qrdb QuorumRound type.
+type QRDBQuorumRound = qrdbtransport.QuorumRound
+
 // =============================================================================
 // QRDB Ceremony Request/Response Re-exports
 // =============================================================================
