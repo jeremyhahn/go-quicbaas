@@ -30,9 +30,10 @@ type streamHandlerFunc func(ctx context.Context, svc service.QuicBaaS, req inter
 
 // Transport implements the transport.Transport interface for embedded in-process access.
 type Transport struct {
-	service service.QuicBaaS
-	bind    ContextBinder
-	closed  atomic.Bool
+	service   service.QuicBaaS
+	bind      ContextBinder
+	authorize OperationAuthorizer
+	closed    atomic.Bool
 }
 
 // unaryHandlers maps service/method to handler functions for O(1) dispatch.
@@ -572,13 +573,24 @@ func New(svc service.QuicBaaS, opts ...Option) (*Transport, error) {
 }
 
 // bindCall binds ctx to the call's tenant and then, when the transport has a
-// ContextBinder, to the identity the call runs as.
-func (t *Transport) bindCall(ctx context.Context) (context.Context, error) {
+// ContextBinder, to the identity the call runs as. When the transport has an
+// OperationAuthorizer, that identity must then be admitted to operation
+// before the call is dispatched.
+func (t *Transport) bindCall(ctx context.Context, operation string) (context.Context, error) {
 	ctx = inProcessTenant(ctx)
-	if t.bind == nil {
-		return ctx, nil
+	if t.bind != nil {
+		bound, err := t.bind(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ctx = bound
 	}
-	return t.bind(ctx)
+	if t.authorize != nil {
+		if err := t.authorize(ctx, operation, operationPermissions[operation]); err != nil {
+			return nil, err
+		}
+	}
+	return ctx, nil
 }
 
 // Request sends a unary request and returns the response.
@@ -598,7 +610,7 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, classifyServiceError(svcName, method, err)
 	}
 
-	ctx, err := t.bindCall(ctx)
+	ctx, err := t.bindCall(ctx, key)
 	if err != nil {
 		return nil, classifyServiceError(svcName, method, err)
 	}
@@ -637,7 +649,7 @@ func (t *Transport) RequestStream(ctx context.Context, svcName, method string, r
 		return nil, NewStreamNotSupportedError(svcName, method)
 	}
 
-	ctx, err := t.bindCall(ctx)
+	ctx, err := t.bindCall(ctx, key)
 	if err != nil {
 		return nil, classifyServiceError(svcName, method, err)
 	}

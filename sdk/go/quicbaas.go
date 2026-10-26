@@ -1983,7 +1983,9 @@ func createEmbeddedTransport(opts *clientOptions) (Transport, error) {
 			"embedded service must implement service.QuicBaaS interface")
 	}
 
-	return embedded.New(svc, embedded.WithContextBinder(opts.embeddedIdentity.bind))
+	return embedded.New(svc,
+		embedded.WithContextBinder(opts.embeddedIdentity.bind),
+		embedded.WithOperationAuthorizer(opts.embeddedIdentity.authorizeOperation))
 }
 
 // createMCPTransport creates an MCP (Model Context Protocol) transport.
