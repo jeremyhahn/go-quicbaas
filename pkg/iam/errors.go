@@ -356,7 +356,7 @@ var (
 	ErrRoleReconcileUnsupported = &dberrors.QBError{
 		Code: dberrors.ErrConfiguration,
 		Op:   "iam.role.reconcile",
-		Err:  &IAMMessageError{Message: "role storage does not support built-in role reconciliation"},
+		Err:  &RoleReconcileUnsupportedError{},
 	}
 
 	// ErrRoleNotFound is returned when a role is not found.

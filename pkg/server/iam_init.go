@@ -2171,7 +2171,7 @@ func reconcileBuiltInRoles(ctx context.Context, identityStore *iam.IdentityStore
 		return unchanged, nil
 	}
 	report, err := identityStore.ReconcileBuiltInRoles(ctx, qrdbsdk.SystemTenantID)
-	if errors.Is(err, iam.ErrRoleReconcileUnsupported) {
+	if iam.IsRoleReconcileUnsupported(err) {
 		return unchanged, nil
 	}
 	if err != nil {

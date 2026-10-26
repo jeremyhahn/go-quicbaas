@@ -239,3 +239,22 @@ func IsReservedRoleName(err error) bool {
 	var target *ReservedRoleNameError
 	return errors.As(err, &target)
 }
+
+// RoleReconcileUnsupportedError reports that the role storage cannot
+// reconcile built-in roles. It is the inner error of
+// ErrRoleReconcileUnsupported.
+type RoleReconcileUnsupportedError struct{}
+
+// Error implements the error interface.
+func (e *RoleReconcileUnsupportedError) Error() string {
+	return "role storage does not support built-in role reconciliation"
+}
+
+// IsRoleReconcileUnsupported reports whether err is (or wraps)
+// ErrRoleReconcileUnsupported, as opposed to any other configuration error
+// the reconcile can raise, which is a real failure rather than a storage with
+// no built-ins to converge.
+func IsRoleReconcileUnsupported(err error) bool {
+	var target *RoleReconcileUnsupportedError
+	return errors.As(err, &target)
+}

@@ -110,6 +110,7 @@ func TestIAMConditionPredicatesMatchTheirOwnSentinel(t *testing.T) {
 		{"role id taken", ErrRoleIDAlreadyExists, IsRoleIDAlreadyExists},
 		{"system role immutable", ErrSystemRoleImmutable, IsSystemRoleImmutable},
 		{"reserved role name", ErrReservedRoleName, IsReservedRoleName},
+		{"role reconcile unsupported", ErrRoleReconcileUnsupported, IsRoleReconcileUnsupported},
 	}
 
 	for _, tc := range tests {

@@ -22,6 +22,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
@@ -94,4 +95,33 @@ func TestReconcileBuiltInRoles_NoQRDBRolesIsANoOp(t *testing.T) {
 	report, err = reconcileBuiltInRoles(context.Background(), nil)
 	require.NoError(t, err)
 	assert.False(t, report.Changed())
+}
+
+// TestReconcileBuiltInRoles_WrappedUnsupportedIsANoOp proves an unsupported
+// reconcile reports no change even when a layer wrapped it on the way up.
+func TestReconcileBuiltInRoles_WrappedUnsupportedIsANoOp(t *testing.T) {
+	wrapped := &iam.IAMContextError{Message: "reconcile", Cause: iam.ErrRoleReconcileUnsupported}
+	roles := &reconcilingRoleStorage{RoleStorage: iam.NewMemoryStorage(), err: wrapped}
+
+	report, err := reconcileBuiltInRoles(context.Background(), reconcilingStore(roles))
+
+	require.NoError(t, err)
+	assert.False(t, report.Changed())
+}
+
+// TestReconcileBuiltInRoles_SurfacesOtherConfigurationErrors proves only the
+// unsupported condition is a no-op: another error carrying the same
+// configuration code is a real failure and must reach the boot log.
+func TestReconcileBuiltInRoles_SurfacesOtherConfigurationErrors(t *testing.T) {
+	misconfigured := &dberrors.QBError{
+		Code: dberrors.ErrConfiguration,
+		Op:   "iam.role.reconcile",
+		Err:  &iam.IAMMessageError{Message: "role store has no tenant keyspace"},
+	}
+	roles := &reconcilingRoleStorage{RoleStorage: iam.NewMemoryStorage(), err: misconfigured}
+
+	_, err := reconcileBuiltInRoles(context.Background(), reconcilingStore(roles))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, misconfigured)
 }
