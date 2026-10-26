@@ -48,6 +48,39 @@ func TestSubjectFromIdentity_UnmarkedIsUsername(t *testing.T) {
 
 // A token's sub is the ceremony's email or username; it is classified by what
 // it is, never as a user ID, and the verified uid travels separately.
+// qrdb's BindUser sets a resolved account's Subject to the decimal user ID,
+// so a bound identity projects by its UserID and AccountName, never by
+// reading Subject as a username. Account 7 is named "42" while account 42 is
+// "alice": reading Subject or the username as an ID would name the wrong one.
+func TestSubjectFromIdentity_BoundUserProjectsAccount(t *testing.T) {
+	identity := &qrdbsdk.Identity{TenantID: "t1", Roles: []string{"reader"}}
+	identity.BindUser(7, "42")
+
+	subject := SubjectFromIdentity(identity)
+	if subject.UserID != 7 {
+		t.Fatalf("UserID = %d, want 7 (Subject %q)", subject.UserID, identity.Subject)
+	}
+	if subject.ID != "42" || subject.Username != "42" || subject.IDKind != interfaces.SubjectIDUsername {
+		t.Fatalf("projected %+v, want the account name 42 as a username", subject)
+	}
+	if subject.TenantID != "t1" || !subject.Authenticated || len(subject.Roles) != 1 {
+		t.Fatalf("projected %+v", subject)
+	}
+}
+
+// A bound identity that a quicbaas token also marked keeps the account qrdb
+// resolved: the bound UserID wins over the token's uid mark.
+func TestSubjectFromIdentity_BoundUserWinsOverTokenMark(t *testing.T) {
+	identity := &qrdbsdk.Identity{TenantID: "t1"}
+	identity.BindUser(7, "carol")
+	MarkTokenSubject(identity, 99)
+
+	subject := SubjectFromIdentity(identity)
+	if subject.UserID != 7 || subject.Username != "carol" {
+		t.Fatalf("projected %+v, want account 7 named carol", subject)
+	}
+}
+
 func TestSubjectFromIdentity_TokenSubject(t *testing.T) {
 	cases := map[string]struct {
 		sub      string

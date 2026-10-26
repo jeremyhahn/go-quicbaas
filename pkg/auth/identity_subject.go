@@ -79,9 +79,10 @@ func SubjectIDKindOf(sub string) interfaces.SubjectIDKind {
 // SubjectFromIdentity projects a verified qrdb identity onto the authenticated
 // Subject the service layer reads. The identity came from
 // qrdbsdk.IdentityFromContext, so qrdb has already verified it and the subject
-// is authenticated. For an identity marked by MarkTokenSubject, IDKind
-// classifies the sub by SubjectIDKindOf and UserID is the recorded uid; every
-// other identity is qrdb's own and its Subject is a username.
+// is authenticated. An identity qrdb bound to an account (BindUser) projects
+// by its UserID and AccountName. For an identity marked by MarkTokenSubject,
+// IDKind classifies the sub by SubjectIDKindOf and UserID is the recorded uid;
+// every other identity is qrdb's own and its Subject is a username.
 func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 	subject := interfaces.Subject{
 		ID:            identity.Subject,
@@ -90,6 +91,15 @@ func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 		Roles:         identity.Roles,
 		Authenticated: true,
 		IDKind:        interfaces.SubjectIDUsername,
+	}
+	// qrdb's BindUser resolved this identity to an account and set its
+	// Subject to the decimal user ID, so Subject is not a login name here:
+	// the account is UserID and its name is AccountName.
+	if identity.UserID != 0 {
+		subject.ID = identity.AccountName()
+		subject.Username = identity.AccountName()
+		subject.UserID = identity.UserID
+		return subject
 	}
 	if mark, fromToken := identity.Metadata[identityUserIDKey]; fromToken {
 		subject.IDKind = SubjectIDKindOf(identity.Subject)
