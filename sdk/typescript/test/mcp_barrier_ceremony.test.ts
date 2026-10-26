@@ -185,6 +185,43 @@ describe('McpBarrierClient tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['initialize', (c: McpClient) => c.barrier.initialize({ secret: new TextEncoder().encode('pass-1') })],
+    ['unseal', (c: McpClient) => c.barrier.unseal({ secret: new TextEncoder().encode('pass-1') })],
+    [
+      'initializeShamir',
+      (c: McpClient) =>
+        c.barrier.initializeShamir({ secret: new TextEncoder().encode('pass-1'), threshold: 2, total_shares: 3 }),
+    ],
+    [
+      'enableEncryption',
+      (c: McpClient) =>
+        c.barrier.enableEncryption({ strategy: 'passphrase', passphrase: new TextEncoder().encode('pass-1') }),
+    ],
+    [
+      'ceremony initialize with a user PIN',
+      (c: McpClient) => c.ceremony.initialize({ so_pin: '', user_pin: 'user-pin-1', threshold: 0, admin_generate: true }),
+    ],
+    [
+      'ceremony initialize with a secret',
+      (c: McpClient) =>
+        c.ceremony.initialize({
+          so_pin: '',
+          user_pin: '',
+          threshold: 0,
+          admin_generate: true,
+          secret: new TextEncoder().encode('pass-1'),
+        }),
+    ],
+  ] as const)('%s refuses to send a secret over plaintext http', async (_name, call) => {
+    const err = await call(new McpClient(plainEndpoint)).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    expect(String((err as Error).message)).not.toContain('pass-1');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('McpCeremonyClient tools', () => {
