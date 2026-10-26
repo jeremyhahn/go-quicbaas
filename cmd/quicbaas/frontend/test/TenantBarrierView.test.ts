@@ -143,6 +143,49 @@ describe('TenantBarrierView seal and unseal routes', () => {
     expect(posts(calls, '/unseal')[0]?.body).toEqual({ key: 'aHVudGVyMg==' });
   });
 
+  it('initializes, seals and unseals a passphrase barrier with the same passphrase bytes', async () => {
+    // One status object, mutated as the barrier moves through its lifecycle;
+    // stubFetch serves whatever it holds at the time of each status call.
+    const status: RawTenantStatus = {
+      strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0,
+    };
+    const calls = stubFetch(status);
+    const { container } = render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-passphrase'));
+    const passphrase = container.querySelector('#barrier-init-passphrase') as HTMLInputElement;
+    const confirm = container.querySelector('#barrier-init-passphrase-confirm') as HTMLInputElement;
+    await fireEvent.input(passphrase, { target: { value: 'hunter2' } });
+    await fireEvent.input(confirm, { target: { value: 'hunter2' } });
+    Object.assign(status, { strategy: 'passphrase', initialized: true });
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    await waitFor(() => {
+      expect(posts(calls, '/init')).toHaveLength(1);
+    });
+
+    const sealButton = await screen.findByTestId('tenant-barrier-seal');
+    Object.assign(status, { sealed: true });
+    await fireEvent.click(sealButton);
+    await waitFor(() => {
+      expect(posts(calls, '/seal')).toHaveLength(1);
+    });
+
+    await screen.findByTestId('tenant-barrier-passphrase-unseal');
+    const unsealInput = container.querySelector('#barrier-unseal-input') as HTMLInputElement;
+    await fireEvent.input(unsealInput, { target: { value: 'hunter2' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Unseal$/ }));
+    await waitFor(() => {
+      expect(posts(calls, '/unseal')).toHaveLength(1);
+    });
+
+    // base64("hunter2") on both routes: the barrier initialized through this
+    // view is unlocked by the same typed passphrase.
+    expect(posts(calls, '/init')[0]?.body).toEqual({ strategy: 'passphrase', passphrase: 'aHVudGVyMg==' });
+    expect(posts(calls, '/unseal')[0]?.body).toEqual({ key: 'aHVudGVyMg==' });
+  });
+
   it('rejects an empty passphrase without calling the unseal route', async () => {
     const calls = stubFetch(
       { strategy: 'passphrase', sealed: true, initialized: true, shamir_threshold: 0, shamir_total: 0 },

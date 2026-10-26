@@ -38,9 +38,7 @@
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { Lock } from 'lucide-svelte';
-  import {
-    encodeInitParams,
-  } from '../../lib/barrierCredential.ts';
+  import { barrierCredentialBytes, toInitRequest } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
   import type {
     BarrierQuorumOp,
@@ -135,7 +133,7 @@
         return { shares: resp?.shares ?? [] };
       },
       async unseal(req) {
-        await tb.tenantBarrierUnseal(tenantId, new TextEncoder().encode(req.passphrase));
+        await tb.tenantBarrierUnseal(tenantId, barrierCredentialBytes(req.passphrase));
         const next = await tb.tenantBarrierStatus(tenantId);
         return {
           sealed: next.sealed,
@@ -243,16 +241,10 @@
     if (selectedTenantID === '') return;
     initing = true;
     try {
-      // Encode here, not in the picker: a barrier credential is base64 BYTES
-      // on the wire, and unseal below has always encoded. Forwarding the
-      // picker's plaintext meant a barrier initialized through this view could
-      // not be unsealed through it — and worse, a passphrase that happens to
-      // be valid base64 initialized silently with different bytes
-      // (go-quicbaas#988). Both paths now go through the one encoder.
-      const resp = await tb.tenantBarrierInit(
-        selectedTenantID,
-        encodeInitParams(params),
-      );
+      // The SDK takes the passphrase as bytes and base64-encodes it once;
+      // init and unseal both hand it the same UTF-8 bytes, so a barrier
+      // initialized through this view unseals through it (go-quicbaas#988).
+      const resp = await tb.tenantBarrierInit(selectedTenantID, toInitRequest(params));
       if (params.strategy === 'shamir' && resp !== undefined) {
         // Shamir returns the shares exactly once — reveal them behind the
         // save-acknowledgement gate before refreshing status.
