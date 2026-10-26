@@ -114,6 +114,11 @@ args=(
   --user "$uid:$uid"
   --workdir /src
   --env HOME=/tmp
+  # CUSTOMIZE: go-quicbaas keeps this. The go command's work directory
+  # (compile output, linked test binaries) outgrows the 3 GB /tmp in
+  # `make coverage`; /var/tmp is in the writable layer, on the daemon's
+  # disk, and goes with the container.
+  --env GOTMPDIR=/var/tmp
   --env CI="${CI:-}"
 )
 modcache=/tmp/gomodcache
