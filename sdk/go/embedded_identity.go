@@ -129,27 +129,26 @@ func (id EmbeddedIdentity) authMiddleware() (*qrdbsdk.AuthMiddleware, error) {
 	return mw, nil
 }
 
-// authorize enforces perms for a delegated identity through the node's own
-// AuthMiddleware, against the tenant the delegation binds to. It guards
-// calls whose backend runs as the service principal, where node
-// authorization would otherwise never see the delegation's grants. The
-// service principal authorizes nothing here: its calls are not delegated.
-func (id EmbeddedIdentity) authorize(ctx context.Context, perms ...qrdbsdk.Permission) error {
-	if id.delegator == nil {
-		return nil
+// tenantPermissionChecker checks one permission of the identity bound into
+// ctx against a tenant. *qrdbsdk.AuthMiddleware is one. Every permission
+// check of a delegated call goes through this interface, so each check is
+// made, and counted, at one seam.
+type tenantPermissionChecker interface {
+	AuthorizeTenant(ctx context.Context, targetTenantID string, perm qrdbsdk.Permission) error
+}
+
+// permissionChecker returns what checks a delegation's permissions: its
+// binder, when the binder checks them itself, otherwise the binder's
+// AuthMiddleware (see authMiddleware for the refusals).
+func (id EmbeddedIdentity) permissionChecker() (tenantPermissionChecker, error) {
+	if checker, ok := id.delegator.(tenantPermissionChecker); ok {
+		return checker, nil
 	}
 	mw, err := id.authMiddleware()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if mw == nil {
-		return nil
-	}
-	bound, err := id.bind(ctx)
-	if err != nil {
-		return err
-	}
-	return authorizeBound(bound, mw, perms)
+	return mw, nil
 }
 
 // DelegatedOperationUndeclaredError refuses a delegated call to an embedded
@@ -174,7 +173,7 @@ func (id EmbeddedIdentity) authorizeOperation(ctx context.Context, operation str
 	if len(perms) == 0 {
 		return &DelegatedOperationUndeclaredError{Operation: operation}
 	}
-	mw, err := id.authMiddleware()
+	checker, err := id.permissionChecker()
 	if err != nil {
 		return err
 	}
@@ -182,16 +181,16 @@ func (id EmbeddedIdentity) authorizeOperation(ctx context.Context, operation str
 	for i, perm := range perms {
 		required[i] = qrdbsdk.Permission(perm)
 	}
-	return authorizeBound(ctx, mw, required)
+	return authorizeBound(ctx, checker, required)
 }
 
-// authorizeBound enforces perms through mw against the tenant bound into
-// ctx. An unbound tenant is the system scope, as for qrdb's own embedded
-// transport.
-func authorizeBound(bound context.Context, mw *qrdbsdk.AuthMiddleware, perms []qrdbsdk.Permission) error {
+// authorizeBound enforces perms through checker against the tenant bound
+// into ctx, one check per permission. An unbound tenant is the system scope,
+// as for qrdb's own embedded transport.
+func authorizeBound(bound context.Context, checker tenantPermissionChecker, perms []qrdbsdk.Permission) error {
 	tenantID, _ := qrdbsdk.TenantFromContext(bound)
 	for _, perm := range perms {
-		if err := mw.AuthorizeTenant(bound, tenantID, perm); err != nil {
+		if err := checker.AuthorizeTenant(bound, tenantID, perm); err != nil {
 			return err
 		}
 	}
