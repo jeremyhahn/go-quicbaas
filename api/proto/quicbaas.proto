@@ -39,13 +39,13 @@ service QuicBaaS {
   // List returns all entities of a given type with pagination support.
   // Uses server-side streaming for efficient memory usage with large datasets.
   rpc List(ListRequest) returns (stream ListResponse) {
-      option (qrdb.v1.permission) = "kv:list";
+      option (qrdb.v1.permission) = "kv:range";
   }
 
   // ListEntityTypes returns all unique entity types stored in the database.
   // Useful for discovering available data types in multi-tenant environments.
   rpc ListEntityTypes(ListEntityTypesRequest) returns (ListEntityTypesResponse) {
-      option (qrdb.v1.permission) = "admin:status";
+      option (qrdb.v1.permission) = "kv:range";
   }
 
   // Watch Operations
@@ -75,13 +75,13 @@ service QuicBaaS {
   // ClusterStatus returns the current state of all cluster nodes.
   // Includes information about leaders, followers, and health status.
   rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse) {
-      option (qrdb.v1.permission) = "admin:status";
+      option (qrdb.v1.permission) = "admin:topology";
   }
 
   // GetLeader returns the current leader for a specific shard.
   // Useful for directing write operations to the appropriate node.
   rpc GetLeader(GetLeaderRequest) returns (GetLeaderResponse) {
-      option (qrdb.v1.permission) = "admin:status";
+      option (qrdb.v1.permission) = "admin:shard_state";
   }
 
   // AddNode adds a new node to a Raft shard.
@@ -104,13 +104,13 @@ service QuicBaaS {
   // Aggregate performs time-series aggregation functions over a time range.
   // Supports common aggregations: AVG, SUM, MIN, MAX, COUNT.
   rpc Aggregate(AggregateRequest) returns (AggregateResponse) {
-      option (qrdb.v1.permission) = "timeseries:aggregate";
+      option (qrdb.v1.permission) = "kv:range";
   }
 
   // TimeSeriesQuery retrieves time-series data points within a time range.
   // Returns data via streaming for large result sets.
   rpc TimeSeriesQuery(TimeSeriesQueryRequest) returns (stream TimeSeriesQueryResponse) {
-      option (qrdb.v1.permission) = "timeseries:query";
+      option (qrdb.v1.permission) = "kv:range";
   }
 
   // TSWritePoint writes a single data point to time series storage.

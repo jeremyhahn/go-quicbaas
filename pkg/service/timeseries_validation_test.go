@@ -338,9 +338,10 @@ func TestTimeSeriesServiceImpl_Aggregate_Success(t *testing.T) {
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{data1, data2}), nil)
 
 	svc := &quicBaaS{
-		qrdbClient: qrdbProvider,
-		config:     &ServiceConfig{EnableAuth: false},
-		logger:     testLoggerCoverage(t),
+		qrdbClient:       qrdbProvider,
+		config:           &ServiceConfig{EnableAuth: false},
+		keyspaceResolver: NewKeyspaceResolver(),
+		logger:           testLoggerCoverage(t),
 	}
 
 	tsSvc := &timeSeriesService{svc: svc}

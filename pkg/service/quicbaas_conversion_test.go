@@ -160,7 +160,11 @@ func TestTimeSeriesQuery_LimitBatching(t *testing.T) {
 				require.NoError(t, err)
 				entries = append(entries, j)
 			}
-			svc := &quicBaaS{logger: createTestLogger(t), qrdbClient: newSvcBoostMockQRDBProvider(sliceToCannedScanResult(entries), nil)}
+			svc := &quicBaaS{
+				logger:           createTestLogger(t),
+				qrdbClient:       newSvcBoostMockQRDBProvider(sliceToCannedScanResult(entries), nil),
+				keyspaceResolver: NewKeyspaceResolver(),
+			}
 			tsSvc := &timeSeriesService{svc: svc}
 
 			stream := make(chan *TimeSeriesQueryResponse, 10)

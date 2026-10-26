@@ -922,11 +922,7 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 			k.svc.metrics.requestsTotal.With("Put", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Put",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Put", err)
 	}
 
 	// Get leader ID via SDK
@@ -1060,11 +1056,7 @@ func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, err
 			k.svc.metrics.requestsTotal.With("Get", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Get",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Get", err)
 	}
 
 	// Parse result
@@ -1156,11 +1148,7 @@ func (k *kvService) Delete(ctx context.Context, req *DeleteRequest) (*DeleteResp
 			k.svc.metrics.requestsTotal.With("Delete", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Delete",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Delete", err)
 	}
 
 	// Invalidate cache (use the same tenant-aware key)
@@ -1234,11 +1222,7 @@ func (k *kvService) List(ctx context.Context, req *ListRequest, stream chan<- *L
 			k.svc.metrics.requestsTotal.With("List", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.List",
-			Err:  err,
-		}
+		return qrdbFailure("service.List", err)
 	}
 
 	// Parse results from scan
@@ -1517,11 +1501,7 @@ func (k *kvService) ListEntityTypes(ctx context.Context, req *ListEntityTypesReq
 			k.svc.metrics.requestsTotal.With("ListEntityTypes", "error").Inc()
 			k.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.ListEntityTypes",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.ListEntityTypes", err)
 	}
 
 	// Extract unique entity types from keys
@@ -2384,11 +2364,7 @@ func (c *clusterService) ClusterStatus(ctx context.Context, req *ClusterStatusRe
 	}
 	topology, err := client.Admin().GetTopology(ctx)
 	if err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.ClusterStatus",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.ClusterStatus", err)
 	}
 
 	if topology != nil {
@@ -2452,11 +2428,7 @@ func (c *clusterService) GetLeader(ctx context.Context, req *GetLeaderRequest) (
 	}
 	state, err := client.Admin().GetShardState(ctx, req.ShardID)
 	if err != nil {
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.GetLeader",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.GetLeader", err)
 	}
 	return &GetLeaderResponse{
 		ShardID:  req.ShardID,
@@ -3440,17 +3412,18 @@ func (t *timeSeriesService) Aggregate(ctx context.Context, req *AggregateRequest
 		}
 	}
 
-	entities, err := client.KV().Scan(ctx, req.EntityType)
+	// Scope the scan to the caller's tenant, as Put/Get/Delete do.
+	prefix, err := t.svc.keyspaceResolver.BuildPrefix(ctx, req.EntityType)
+	if err != nil {
+		return nil, err
+	}
+	entities, err := client.KV().Scan(ctx, string(prefix))
 	if err != nil {
 		if t.svc.metrics != nil {
 			t.svc.metrics.requestsTotal.With("Aggregate", "error").Inc()
 			t.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return nil, &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.Aggregate",
-			Err:  err,
-		}
+		return nil, qrdbFailure("service.Aggregate", err)
 	}
 
 	// Parse entities and extract time-series data
@@ -3602,17 +3575,18 @@ func (t *timeSeriesService) TimeSeriesQuery(ctx context.Context, req *TimeSeries
 		}
 	}
 
-	entities, err := client.KV().Scan(ctx, req.EntityType)
+	// Scope the scan to the caller's tenant, as Put/Get/Delete do.
+	prefix, err := t.svc.keyspaceResolver.BuildPrefix(ctx, req.EntityType)
+	if err != nil {
+		return err
+	}
+	entities, err := client.KV().Scan(ctx, string(prefix))
 	if err != nil {
 		if t.svc.metrics != nil {
 			t.svc.metrics.requestsTotal.With("TimeSeriesQuery", "error").Inc()
 			t.svc.metrics.errorsByType.With("raft_error").Inc()
 		}
-		return &errors.QBError{
-			Code: errors.ErrRaft,
-			Op:   "service.TimeSeriesQuery",
-			Err:  err,
-		}
+		return qrdbFailure("service.TimeSeriesQuery", err)
 	}
 
 	// Parse entities and extract time-series data points

@@ -56,6 +56,27 @@ func TestMethodPermission_UndeclaredIsEmpty(t *testing.T) {
 	assert.Empty(t, methodPermission(svc.Methods().ByName("Check")))
 }
 
+// Each QuicBaaS read RPC declares the permission of the go-qrdb verb that
+// serves it (ruling 161), so a caller holding the declared grant is not
+// refused one layer down. None of these RPCs has a go-qrdb verb that both
+// carries its old declaration and returns what the RPC returns.
+func TestMethodPermission_ReadRPCsDeclareTheServingVerb(t *testing.T) {
+	svc := serviceDescriptor(t, &pb.QuicBaaS_ServiceDesc)
+	served := map[string]string{
+		"List":            "kv:range",          // KVClient.Scan: List returns values, KVClient.List only keys
+		"ListEntityTypes": "kv:range",          // KVClient.Scan: no go-qrdb verb lists entity types
+		"ClusterStatus":   "admin:topology",    // AdminClient.GetTopology: Status carries no per-shard membership
+		"GetLeader":       "admin:shard_state", // AdminClient.GetShardState: Status names no shard's leader
+		"Aggregate":       "kv:range",          // KVClient.Scan: aggregates entity fields, not time-series points
+		"TimeSeriesQuery": "kv:range",          // KVClient.Scan: returns entity data, not time-series points
+	}
+	for name, want := range served {
+		method := svc.Methods().ByName(protoreflect.Name(name))
+		require.NotNil(t, method, "QuicBaaS.%s is not declared", name)
+		assert.Equal(t, want, methodPermission(method), "QuicBaaS.%s", name)
+	}
+}
+
 // TestModule_RegisterQUIC_RegistersTheGRPCSurface pins RegisterQUIC to the
 // same registration path as RegisterGRPC: every service, every method.
 func TestModule_RegisterQUIC_RegistersTheGRPCSurface(t *testing.T) {

@@ -190,7 +190,7 @@ var qrdbIdentityGatedMethods = map[string]bool{
 var grpcMethodPermissions = map[string]methodPermission{
 	// ---- quicbaas.v1.QuicBaaS: KV ----
 	"/quicbaas.v1.QuicBaaS/Get":            {"kv", "get"},
-	"/quicbaas.v1.QuicBaaS/List":           {"kv", "list"},
+	"/quicbaas.v1.QuicBaaS/List":           {"kv", "range"},
 	"/quicbaas.v1.QuicBaaS/Query":          {"kv", "range"},
 	"/quicbaas.v1.QuicBaaS/ScanIndex":      {"index", "scan"},
 	"/quicbaas.v1.QuicBaaS/Put":            {"kv", "put"},
@@ -203,9 +203,9 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/Watch":          {"watch", "watch"},
 
 	// ---- quicbaas.v1.QuicBaaS: cluster admin ----
-	"/quicbaas.v1.QuicBaaS/ClusterStatus":        {"admin", "status"},
-	"/quicbaas.v1.QuicBaaS/GetLeader":            {"admin", "status"},
-	"/quicbaas.v1.QuicBaaS/ListEntityTypes":      {"admin", "status"},
+	"/quicbaas.v1.QuicBaaS/ClusterStatus":        {"admin", "topology"},
+	"/quicbaas.v1.QuicBaaS/GetLeader":            {"admin", "shard_state"},
+	"/quicbaas.v1.QuicBaaS/ListEntityTypes":      {"kv", "range"},
 	"/quicbaas.v1.QuicBaaS/AddNode":              {"admin", "add_member"},
 	"/quicbaas.v1.QuicBaaS/RemoveNode":           {"admin", "remove_member"},
 	"/quicbaas.v1.QuicBaaS/CreateShard":          {"admin", "start_shard"},
@@ -344,8 +344,8 @@ var grpcMethodPermissions = map[string]methodPermission{
 	"/quicbaas.v1.QuicBaaS/SealStatus": {"seal", "status"},
 
 	// ---- quicbaas.v1.QuicBaaS: time-series ----
-	"/quicbaas.v1.QuicBaaS/Aggregate":            {"timeseries", "aggregate"},
-	"/quicbaas.v1.QuicBaaS/TimeSeriesQuery":      {"timeseries", "query"},
+	"/quicbaas.v1.QuicBaaS/Aggregate":            {"kv", "range"},
+	"/quicbaas.v1.QuicBaaS/TimeSeriesQuery":      {"kv", "range"},
 	"/quicbaas.v1.QuicBaaS/TSQuery":              {"timeseries", "query"},
 	"/quicbaas.v1.QuicBaaS/TSGetRetentionPolicy": {"timeseries", "get_retention"},
 	"/quicbaas.v1.QuicBaaS/TSListMetrics":        {"timeseries", "list_metrics"},

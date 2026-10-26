@@ -576,7 +576,7 @@ func New(svc service.QuicBaaS, opts ...Option) (*Transport, error) {
 // ContextBinder, to the identity the call runs as. When the transport has an
 // OperationAuthorizer, that identity must then be admitted to operation
 // before the call is dispatched.
-func (t *Transport) bindCall(ctx context.Context, operation string) (context.Context, error) {
+func (t *Transport) bindCall(ctx context.Context, operation string, perms []string) (context.Context, error) {
 	ctx = inProcessTenant(ctx)
 	if t.bind != nil {
 		bound, err := t.bind(ctx)
@@ -586,7 +586,7 @@ func (t *Transport) bindCall(ctx context.Context, operation string) (context.Con
 		ctx = bound
 	}
 	if t.authorize != nil {
-		if err := t.authorize(ctx, operation, operationPermissions[operation]); err != nil {
+		if err := t.authorize(ctx, operation, perms); err != nil {
 			return nil, err
 		}
 	}
@@ -610,7 +610,7 @@ func (t *Transport) Request(ctx context.Context, svcName, method string, req int
 		return nil, classifyServiceError(svcName, method, err)
 	}
 
-	ctx, err := t.bindCall(ctx, key)
+	ctx, err := t.bindCall(ctx, key, operationPermissions[key])
 	if err != nil {
 		return nil, classifyServiceError(svcName, method, err)
 	}
@@ -649,7 +649,7 @@ func (t *Transport) RequestStream(ctx context.Context, svcName, method string, r
 		return nil, NewStreamNotSupportedError(svcName, method)
 	}
 
-	ctx, err := t.bindCall(ctx, key)
+	ctx, err := t.bindCall(ctx, key, streamPermissions(key))
 	if err != nil {
 		return nil, classifyServiceError(svcName, method, err)
 	}

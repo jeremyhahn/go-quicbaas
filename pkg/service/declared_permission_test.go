@@ -371,3 +371,39 @@ func TestBatchDelete_WithoutDeclaredGrantIsForbidden(t *testing.T) {
 	assert.Nil(t, resp)
 	assert.Equal(t, []byte("one"), tr.data["user:1"])
 }
+
+func TestKV_RefusalIsForbiddenNotRaftOrNotFound(t *testing.T) {
+	refusal := &qrdbsdk.PermissionDeniedError{Resource: "kv", Action: "execute", Subject: "caller"}
+	ctx := tenantctx.WithSystem(context.Background())
+
+	t.Run("put", func(t *testing.T) {
+		tr := newAuthorizingTransport()
+		tr.putErr = refusal
+		svc := newAuthorizingService(t, tr)
+
+		resp, err := svc.Put(ctx, &PutRequest{EntityType: "user", ID: 1, Data: []byte("one")})
+		requirePermissionRefusal(t, err)
+		assert.Nil(t, resp)
+	})
+
+	t.Run("get", func(t *testing.T) {
+		// The caller lacks kv:get, so the store refuses before it looks.
+		tr := newAuthorizingTransport()
+		tr.data["user:1"] = []byte("one")
+		svc := newAuthorizingService(t, tr)
+
+		resp, err := svc.Get(ctx, &GetRequest{EntityType: "user", ID: 1})
+		requirePermissionRefusal(t, err)
+		assert.Nil(t, resp, "a refusal must never be reported as absence")
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		tr := newAuthorizingTransport()
+		tr.deleteErr = refusal
+		svc := newAuthorizingService(t, tr)
+
+		resp, err := svc.Delete(ctx, &DeleteRequest{EntityType: "user", ID: 1})
+		requirePermissionRefusal(t, err)
+		assert.Nil(t, resp)
+	})
+}
