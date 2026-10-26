@@ -48,6 +48,7 @@
   } from '@quicbaas/svelte-security';
   import type {
     BarrierClient,
+    BarrierInitResponse,
     BarrierStatus,
     BarrierStrategy,
   } from '@quicbaas/svelte-security';
@@ -56,10 +57,10 @@
   // SDK -> structural BarrierClient adapter
   //
   // The svelte-security components consume a structurally-typed BarrierClient
-  // (init({threshold, total_shares}), unseal({share}), status() →
-  // BarrierStatus). The SDK BarrierClient surface is richer (initializeShamir,
-  // unsealWithShare, etc.) so we adapt the SDK calls into the shape the
-  // components expect. Crucially, all URL routing flows through the SDK so
+  // (init({threshold, total_shares}), unseal({passphrase}), quorumBegin,
+  // quorumSubmit, status() → BarrierStatus). The SDK BarrierClient surface is
+  // richer (initializeShamir, the quorum domains and ops, etc.) so we adapt the
+  // SDK calls into the shape the components expect. Crucially, all URL routing flows through the SDK so
   // future server-side path changes propagate automatically.
   // ---------------------------------------------------------------------------
 
@@ -140,21 +141,34 @@
         const resp = await sdk.initializeShamir({
           // The SDK initializeShamir requires a master-key secret; for the
           // strategy-aware UI the daemon's barrier strategy already carries
-          // the protector, so we send an empty string and rely on the daemon
-          // to derive the master key from the active strategy.
-          secret: '',
+          // the protector, so we send an empty secret and rely on the daemon
+          // to derive the master key from the active strategy. The secret is
+          // bytes; the SDK encodes it.
+          secret: new Uint8Array(0),
           threshold: req.threshold,
           total_shares: req.total_shares,
         });
-        return { shares: resp.shares };
+        return {
+          threshold: resp.threshold,
+          total_shares: resp.total_shares,
+          share_count: resp.share_count,
+        };
       },
       async unseal(req) {
-        const resp = await sdk.unsealWithShare({ share: req.share });
+        await sdk.unseal({ secret: new TextEncoder().encode(req.passphrase) });
+        const after = await adaptStatus(await sdk.status());
         return {
-          sealed: !resp.complete,
-          shares_provided: resp.submitted,
-          threshold: resp.required,
+          sealed: after.sealed,
+          shares_provided: after.shares_provided,
+          threshold: after.threshold,
         };
+      },
+      // A Shamir barrier unseals through a quorum round in the unseal domain.
+      async quorumBegin(req) {
+        return sdk.quorumBegin({ domain: 'unseal', op: 'unseal', ...req });
+      },
+      async quorumSubmit(req) {
+        return sdk.quorumSubmit({ domain: 'unseal', op: 'unseal', ...req });
       },
     };
 
@@ -175,7 +189,7 @@
   let initThreshold = $state(2);
   let initTotal = $state(3);
   let initing = $state(false);
-  let initShares: string[] | null = $state(null);
+  let initResult: BarrierInitResponse | null = $state(null);
   let initError: string | null = $state(null);
 
   async function loadStatus(): Promise<void> {
@@ -218,10 +232,12 @@
         threshold: initThreshold,
         total_shares: initTotal,
       });
-      initShares = resp.shares;
+      // Share-free: the shares are sealed to their holders, who each claim
+      // their own.
+      initResult = resp;
       showToast({
-        message: 'Barrier initialized — store your Shamir shares securely!',
-        type: 'warning',
+        message: 'Barrier initialized — each holder now claims their share',
+        type: 'success',
       });
       void loadStatus();
     } catch (e) {
@@ -327,23 +343,19 @@
             <div class="space-y-3" data-testid="barrier-strategy-shamir-init">
               <p class="text-sm text-base-content/70">
                 Initialize the Shamir barrier. Choose how many shares to mint and
-                the threshold required to unseal. Shares are returned exactly once.
+                the threshold required to unseal. Each share is sealed to its holder,
+                who claims it individually.
               </p>
               {#if initError !== null}
                 <div class="alert alert-error text-sm" role="alert">{initError}</div>
               {/if}
-              {#if initShares !== null}
-                <div class="alert alert-warning text-sm" role="alert">
-                  <div>
-                    <div class="font-semibold mb-2">New shares — store securely!</div>
-                    <div class="space-y-1">
-                      {#each initShares as share, i}
-                        <div class="font-mono text-xs break-all" data-testid="shamir-share-result">
-                          <span class="text-base-content/50">#{i + 1}</span> {share}
-                        </div>
-                      {/each}
-                    </div>
-                  </div>
+              {#if initResult !== null}
+                <div class="alert alert-success text-sm" role="alert" data-testid="barrier-shamir-init-result">
+                  <span>
+                    Barrier initialized: any {initResult.threshold} of {initResult.total_shares}
+                    shares unseal it. {initResult.share_count} shares sealed to their holders;
+                    each holder claims their own share.
+                  </span>
                 </div>
               {:else}
                 <div class="grid grid-cols-2 gap-3">

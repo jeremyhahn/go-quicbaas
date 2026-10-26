@@ -12,51 +12,50 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 /**
- * A barrier credential is base64 BYTES on the wire (docs/barrier/api.md), and
- * the server rejects malformed base64 and nothing else — so a call site that
- * forgets to encode is not reliably told off. TenantBarrierView had one of
- * each: unseal encoded the typed passphrase, init forwarded the picker's
- * plaintext. A tenant barrier initialized through the UI therefore could not
- * be unsealed through it, and a passphrase that happens to be valid base64
- * initialized silently with bytes nobody typed (go-quicbaas#988).
+ * A barrier credential is bytes (docs/barrier/api.md). The SDK's
+ * TenantBarrierClient takes them as a Uint8Array and base64-encodes them once
+ * for the wire, so the UI must hand it raw UTF-8 bytes on both init and unseal.
+ * TenantBarrierView once pre-encoded the init passphrase to a base64 string,
+ * which the SDK then coerced to different bytes, so a tenant barrier
+ * initialized through the UI could not be unsealed through it
+ * (go-quicbaas#988).
  *
- * These tests hold the two paths to one encoding.
+ * These tests hold the two paths to the same bytes.
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  encodeBarrierCredential,
-  encodeInitParams,
-} from '../src/lib/barrierCredential.ts';
+import { barrierCredentialBytes, toInitRequest } from '../src/lib/barrierCredential.ts';
 
-describe('encodeBarrierCredential', () => {
-  it('renders the typed text as the bytes the wire carries', () => {
-    expect(encodeBarrierCredential('hunter2')).toBe('aHVudGVyMg==');
-    expect(atob(encodeBarrierCredential('hunter2'))).toBe('hunter2');
+describe('barrierCredentialBytes', () => {
+  it('returns the UTF-8 bytes of the typed text', () => {
+    expect(barrierCredentialBytes('hunter2')).toEqual(new TextEncoder().encode('hunter2'));
   });
 
   it('encodes a multi-byte passphrase by its UTF-8 bytes, not its characters', () => {
-    // btoa() alone throws on a code point above U+00FF; the TextEncoder step
-    // is what makes a non-ASCII passphrase usable at all.
-    const encoded = encodeBarrierCredential('pässwörd–ü');
-    const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
+    const bytes = barrierCredentialBytes('pässwörd–ü');
+    expect(bytes.length).toBeGreaterThan('pässwörd–ü'.length);
     expect(new TextDecoder().decode(bytes)).toBe('pässwörd–ü');
   });
 
-  it('encodes the empty passphrase to the empty credential', () => {
-    expect(encodeBarrierCredential('')).toBe('');
+  it('returns no bytes for the empty passphrase', () => {
+    expect(barrierCredentialBytes('')).toHaveLength(0);
   });
 });
 
-describe('encodeInitParams', () => {
-  it('encodes the passphrase strategy', () => {
-    const out = encodeInitParams({ strategy: 'passphrase', passphrase: 'hunter2' });
-    expect(out).toEqual({ strategy: 'passphrase', passphrase: 'aHVudGVyMg==' });
+describe('toInitRequest', () => {
+  it('carries the passphrase strategy as bytes, never a pre-encoded string', () => {
+    const out = toInitRequest({ strategy: 'passphrase', passphrase: 'hunter2' });
+    expect(out.strategy).toBe('passphrase');
+    // jsdom's TextEncoder returns another realm's Uint8Array, so check the
+    // shape rather than instanceof.
+    expect(typeof out.passphrase).not.toBe('string');
+    expect(ArrayBuffer.isView(out.passphrase)).toBe(true);
+    expect(new TextDecoder().decode(out.passphrase)).toBe('hunter2');
   });
 
   it('leaves the credential-free strategies untouched', () => {
-    expect(encodeInitParams({ strategy: 'none' })).toEqual({ strategy: 'none' });
-    expect(encodeInitParams({ strategy: 'shamir', threshold: 2, shares: 3 })).toEqual({
+    expect(toInitRequest({ strategy: 'none' })).toEqual({ strategy: 'none' });
+    expect(toInitRequest({ strategy: 'shamir', threshold: 2, shares: 3 })).toEqual({
       strategy: 'shamir',
       threshold: 2,
       shares: 3,
@@ -65,38 +64,30 @@ describe('encodeInitParams', () => {
 
   it('does not mutate the params the picker emitted', () => {
     const params = { strategy: 'passphrase', passphrase: 'hunter2' } as const;
-    encodeInitParams(params);
+    toInitRequest(params);
     expect(params.passphrase).toBe('hunter2');
   });
 });
 
 describe('init and unseal agree on the credential', () => {
-  // The regression itself: whatever the operator types, the bytes init sends
-  // must be the bytes unseal sends, or the barrier cannot be reopened through
-  // the UI that created it.
+  // The regression itself: whatever the operator types, the bytes init hands
+  // the SDK must be the bytes unseal hands it, or the barrier cannot be
+  // reopened through the UI that created it.
   const typed = [
     'hunter2',
     '',
     'pässwörd–ü',
     'a passphrase with spaces and $ymbo!s',
-    // The hazard case. "password" is eight characters of the base64 alphabet,
-    // so it is well-formed base64: sent raw it is ACCEPTED and decodes to six
-    // bytes nobody typed. Nothing rejects it — only encoding both sides does.
+    // "password" is well-formed base64, so a stray decode or encode step on
+    // one side would go unnoticed by the server.
     'password',
   ];
 
   for (const passphrase of typed) {
-    it(`encodesTheSameForInitAndUnseal: ${JSON.stringify(passphrase)}`, () => {
-      const onInit = encodeInitParams({ strategy: 'passphrase', passphrase });
-      expect(onInit.strategy).toBe('passphrase');
-      const initCredential =
-        onInit.strategy === 'passphrase' ? onInit.passphrase : undefined;
-
-      // What handlePassphraseUnseal sends for the same typed text.
-      const unsealCredential = encodeBarrierCredential(passphrase);
-
-      expect(initCredential).toBe(unsealCredential);
-      expect(initCredential).not.toBe(passphrase === '' ? 'x' : passphrase);
+    it(`passes the same bytes to init and unseal: ${JSON.stringify(passphrase)}`, () => {
+      const initBytes = toInitRequest({ strategy: 'passphrase', passphrase }).passphrase;
+      const unsealBytes = barrierCredentialBytes(passphrase);
+      expect(initBytes).toEqual(unsealBytes);
     });
   }
 });
