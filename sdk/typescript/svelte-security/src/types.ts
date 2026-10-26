@@ -157,7 +157,17 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export type TenantBarrierInitParams =
   | { strategy: 'none' }
   | { strategy: 'passphrase'; passphrase: string }
-  | { strategy: 'shamir'; threshold: number; shares: number };
+  | { strategy: 'shamir'; threshold: number; shares: number; officers?: BarrierHolderParams[] };
+
+/**
+ * BarrierHolderParams is one entry of the inline Shamir holder roster: the
+ * holder's username and the PEM CSR its certificate is issued from. The
+ * roster registers with initialization, one holder per share.
+ */
+export interface BarrierHolderParams {
+  username: string;
+  csr_pem: string;
+}
 
 // ---------------------------------------------------------------------------
 // Ceremony

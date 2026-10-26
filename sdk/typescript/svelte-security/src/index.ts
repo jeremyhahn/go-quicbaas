@@ -42,6 +42,7 @@ export type {
   BarrierClient,
   TenantBarrierStrategy,
   TenantBarrierInitParams,
+  BarrierHolderParams,
   OfficerKind,
   OfficerClaimStatus,
   CeremonyOfficer,
