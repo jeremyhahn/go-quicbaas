@@ -1,4 +1,28 @@
 # ci-template: v1.27.0 (customized)
+# go-quicbaas keeps these customizations beyond the template's own CUSTOMIZE
+# values; each is marked again at its step:
+# CUSTOMIZE: the changes job classifies a pull request with
+#   scripts/docs-only.sh, not DOCS_ONLY_PATTERN, because a *.md file outside
+#   docs/, changelog.d/, the top level and README.md can be a go:embed input
+#   (pkg/sdlc/prompts/triage.md) and is code (DS-3161).
+# CUSTOMIZE: the image, lint-gates, integration and soak jobs each run
+#   .github/scripts/ci-merge-base.sh after the reap step, because Gitea
+#   publishes no refs/pull/<n>/merge, so the job builds the merge result
+#   against the base its event pinned, not the head alone (#436).
+# CUSTOMIZE: on a docs-only pull request the image job builds only the
+#   toolchain image (make docker-build-toolchain-image) and takes no lease on
+#   the integration image, because lint and the releasability test, all it
+#   runs there, need only the toolchain image (DS-3161).
+# CUSTOMIZE: the image job runs make test-sdk-ts test-frontend test-sdk-js on
+#   the full tier, because make build only compiles the TypeScript SDK,
+#   frontend and JavaScript SDK and their unit tests run nowhere else
+#   (Codex 5785, ruling 212 (1)).
+# CUSTOMIZE: timeout-minutes is 180 for the image job (template 90), because
+#   it builds both images and runs lint and make coverage, and on the full
+#   tier security, deps-check, trivy image and the TypeScript tests as well;
+#   and 120 for the integration job (template 60), because the job builds
+#   the integration image itself when the image job's is gone, before the
+#   suite runs.
 # v1.27.0 (Company Agent m1192 (6), item 27, 2026-10-25): a new `lint-gates`
 # job runs a repository's `make -k lint-gates` in the toolchain image in
 # parallel with the image job's `make lint`, not in series after it, so Lint's
@@ -1215,11 +1239,7 @@ jobs:
     if: always()
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    # go-quicbaas: integration runs on the full tier but does not gate until
-    # row #1700 closes (CA m787). Restore it then in needs and as a full
-    # check line, and drop it from nonGatingJobs in
-    # test/buildgates/ci_gate_test.go.
-    needs: [changes, image, lint-gates, soak, arch-gates]
+    needs: [changes, image, lint-gates, integration, soak, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -1258,6 +1278,7 @@ jobs:
           check changes     "${{ needs.changes.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" pr
+          check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD

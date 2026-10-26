@@ -59,16 +59,6 @@ var (
 	jobIfRe     = regexp.MustCompile(`(?m)^    if: (.*?)(?:\s+#.*)?$`)
 )
 
-// nonGatingJobs are the ci.yml jobs that run but deliberately do not gate
-// CI Gate: they are in neither its needs nor a check line.
-//
-// Integration still runs on every PR but does not gate until row #1700
-// closes (CA m787). Remove it from this set when the row closes, and restore
-// it in ci-gate's needs and as a pr check line.
-var nonGatingJobs = map[string]bool{
-	"integration": true,
-}
-
 // gateNeeds returns the jobs listed in the gate job's `needs: [...]` line.
 func gateNeeds(t *testing.T, gate string) []string {
 	t.Helper()
@@ -176,7 +166,7 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 
 	var substantive []string
 	for _, j := range order {
-		if j != gateJobName && !nonGatingJobs[j] {
+		if j != gateJobName {
 			substantive = append(substantive, j)
 		}
 	}
@@ -209,35 +199,6 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 		t.Errorf("jobs have a `check` line but are NOT in %s's needs: %v\n\n"+
 			"`needs.<job>.result` is empty for a job that is not a dependency, so the "+
 			"check never matches `success` and fails the gate permanently.", gateJobName, diff)
-	}
-}
-
-// TestNonGatingJobsCannotHideAJob proves nonGatingJobs exempts only real,
-// deliberately ungated jobs: a stale or misspelled entry would silently exempt
-// nothing, and an entry still in the gate's needs or checks contradicts itself.
-func TestNonGatingJobsCannotHideAJob(t *testing.T) {
-	_, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
-	gate, ok := bodies[gateJobName]
-	if !ok {
-		t.Fatalf("ci.yml has no %q job", gateJobName)
-	}
-	needs := gateNeeds(t, gate)
-	checks := gateChecks(gate)
-
-	for j := range nonGatingJobs {
-		if j == gateJobName {
-			t.Errorf("%s itself cannot be non-gating", gateJobName)
-		}
-		if _, ok := bodies[j]; !ok {
-			t.Errorf("non-gating job %q does not exist in ci.yml; remove the stale entry", j)
-		}
-		if slices.Contains(needs, j) {
-			t.Errorf("job %q is non-gating but is in %s's needs; remove it from "+
-				"nonGatingJobs now that it gates", j, gateJobName)
-		}
-		if _, ok := checks[j]; ok {
-			t.Errorf("job %q is non-gating but has a check line in %s", j, gateJobName)
-		}
 	}
 }
 
@@ -296,7 +257,7 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 
 	tiers := gateChecks(gate)
 	for _, j := range order {
-		if j == gateJobName || nonGatingJobs[j] {
+		if j == gateJobName {
 			continue
 		}
 		jobIf := jobIfRe.FindStringSubmatch(bodies[j])
