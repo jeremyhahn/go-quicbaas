@@ -2295,9 +2295,10 @@ func TestAggregate_WithMetrics_RaftError(t *testing.T) {
 	log := createTestLogger(t)
 	provider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
 	svc := &quicBaaS{
-		logger:     log,
-		qrdbClient: provider,
-		config:     &ServiceConfig{},
+		logger:           log,
+		qrdbClient:       provider,
+		config:           &ServiceConfig{},
+		keyspaceResolver: NewKeyspaceResolver(),
 	}
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
@@ -2339,9 +2340,10 @@ func TestAggregate_WithMetrics_Success(t *testing.T) {
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
 	svc := &quicBaaS{
-		logger:     log,
-		qrdbClient: qrdbProvider,
-		config:     &ServiceConfig{},
+		logger:           log,
+		qrdbClient:       qrdbProvider,
+		config:           &ServiceConfig{},
+		keyspaceResolver: NewKeyspaceResolver(),
 	}
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
@@ -2361,9 +2363,10 @@ func TestTimeSeriesQuery_WithMetrics_RaftError(t *testing.T) {
 	log := createTestLogger(t)
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
 	svc := &quicBaaS{
-		logger:     log,
-		qrdbClient: qrdbProvider,
-		config:     &ServiceConfig{},
+		logger:           log,
+		qrdbClient:       qrdbProvider,
+		config:           &ServiceConfig{},
+		keyspaceResolver: NewKeyspaceResolver(),
 	}
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
@@ -2403,9 +2406,10 @@ func TestTimeSeriesQuery_WithMetrics_Success(t *testing.T) {
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
 	svc := &quicBaaS{
-		logger:     log,
-		qrdbClient: qrdbProvider,
-		config:     &ServiceConfig{},
+		logger:           log,
+		qrdbClient:       qrdbProvider,
+		config:           &ServiceConfig{},
+		keyspaceResolver: NewKeyspaceResolver(),
 	}
 	svc.initMetrics()
 	tsSvc := &timeSeriesService{svc: svc}
@@ -3822,7 +3826,7 @@ func TestAggregate_NilRaftNode(t *testing.T) {
 func TestAggregate_RaftReadError(t *testing.T) {
 	log := createTestLogger(t)
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3848,7 +3852,7 @@ func TestAggregate_SuccessSum(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3872,7 +3876,7 @@ func TestAggregate_SuccessAvg(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3896,7 +3900,7 @@ func TestAggregate_SuccessMin(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3920,7 +3924,7 @@ func TestAggregate_SuccessMax(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3944,7 +3948,7 @@ func TestAggregate_SuccessCount(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -3974,7 +3978,7 @@ func TestAggregate_TimeRangeFiltering(t *testing.T) {
 	json3, _ := json.Marshal(data3)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2, json3}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -4001,7 +4005,7 @@ func TestAggregate_AlternativeTimestampFields(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -4026,7 +4030,7 @@ func TestAggregate_CustomFieldName(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -4050,7 +4054,7 @@ func TestAggregate_SkipInvalidJSON(t *testing.T) {
 	json1, _ := json.Marshal(data1)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{invalidJSON, json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -4069,7 +4073,7 @@ func TestAggregate_EmptyResult(t *testing.T) {
 	log := createTestLogger(t)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &AggregateRequest{
@@ -4196,7 +4200,7 @@ func TestTimeSeriesQuery_NilRaftNode(t *testing.T) {
 func TestTimeSeriesQuery_RaftReadError(t *testing.T) {
 	log := createTestLogger(t)
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, stderrors.New("raft read failed"))
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4231,7 +4235,7 @@ func TestTimeSeriesQuery_Success(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4269,7 +4273,7 @@ func TestTimeSeriesQuery_TimeRangeFiltering(t *testing.T) {
 	json3, _ := json.Marshal(data3)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2, json3}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4304,7 +4308,7 @@ func TestTimeSeriesQuery_AlternativeTimestampFields(t *testing.T) {
 	json2, _ := json.Marshal(data2)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1, json2}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4342,7 +4346,7 @@ func TestTimeSeriesQuery_SkipInvalidEntries(t *testing.T) {
 	json4, _ := json.Marshal(data4)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{invalidJSON, json2, json3, json4}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4368,7 +4372,7 @@ func TestTimeSeriesQuery_EmptyResult(t *testing.T) {
 	log := createTestLogger(t)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{
@@ -4399,7 +4403,7 @@ func TestTimeSeriesQuery_MetadataExtraction(t *testing.T) {
 	json1, _ := json.Marshal(data1)
 
 	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
+	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider, keyspaceResolver: NewKeyspaceResolver()}
 	tsSvc := &timeSeriesService{svc: svc}
 
 	req := &TimeSeriesQueryRequest{

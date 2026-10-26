@@ -10794,27 +10794,27 @@ const file_api_proto_quicbaas_proto_rawDesc = "" +
 	"\x15SEAL_MODE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10SEAL_MODE_MANUAL\x10\x01\x12\x12\n" +
 	"\x0eSEAL_MODE_AUTO\x10\x02\x12\x14\n" +
-	"\x10SEAL_MODE_CRYPTO\x10\x032\xe3.\n" +
+	"\x10SEAL_MODE_CRYPTO\x10\x032\xd3.\n" +
 	"\bQuicBaaS\x12D\n" +
 	"\x03Put\x12\x17.quicbaas.v1.PutRequest\x1a\x18.quicbaas.v1.PutResponse\"\n" +
 	"\xc2\xf3\x18\x06kv:put\x12D\n" +
 	"\x03Get\x12\x17.quicbaas.v1.GetRequest\x1a\x18.quicbaas.v1.GetResponse\"\n" +
 	"\xc2\xf3\x18\x06kv:get\x12P\n" +
-	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\"\r\xc2\xf3\x18\tkv:delete\x12J\n" +
-	"\x04List\x12\x18.quicbaas.v1.ListRequest\x1a\x19.quicbaas.v1.ListResponse\"\v\xc2\xf3\x18\akv:list0\x01\x12n\n" +
-	"\x0fListEntityTypes\x12#.quicbaas.v1.ListEntityTypesRequest\x1a$.quicbaas.v1.ListEntityTypesResponse\"\x10\xc2\xf3\x18\fadmin:status\x12Q\n" +
+	"\x06Delete\x12\x1a.quicbaas.v1.DeleteRequest\x1a\x1b.quicbaas.v1.DeleteResponse\"\r\xc2\xf3\x18\tkv:delete\x12K\n" +
+	"\x04List\x12\x18.quicbaas.v1.ListRequest\x1a\x19.quicbaas.v1.ListResponse\"\f\xc2\xf3\x18\bkv:range0\x01\x12j\n" +
+	"\x0fListEntityTypes\x12#.quicbaas.v1.ListEntityTypesRequest\x1a$.quicbaas.v1.ListEntityTypesResponse\"\f\xc2\xf3\x18\bkv:range\x12Q\n" +
 	"\x05Watch\x12\x19.quicbaas.v1.WatchRequest\x1a\x1a.quicbaas.v1.WatchResponse\"\x0f\xc2\xf3\x18\vwatch:watch0\x01\x12N\n" +
 	"\x05Query\x12\x19.quicbaas.v1.QueryRequest\x1a\x1a.quicbaas.v1.QueryResponse\"\f\xc2\xf3\x18\bkv:range0\x01\x12R\n" +
 	"\tScanIndex\x12\x18.quicbaas.v1.ScanRequest\x1a\x19.quicbaas.v1.ScanResponse\"\x0e\xc2\xf3\x18\n" +
-	"index:scan0\x01\x12h\n" +
-	"\rClusterStatus\x12!.quicbaas.v1.ClusterStatusRequest\x1a\".quicbaas.v1.ClusterStatusResponse\"\x10\xc2\xf3\x18\fadmin:status\x12\\\n" +
-	"\tGetLeader\x12\x1d.quicbaas.v1.GetLeaderRequest\x1a\x1e.quicbaas.v1.GetLeaderResponse\"\x10\xc2\xf3\x18\fadmin:status\x12Z\n" +
+	"index:scan0\x01\x12j\n" +
+	"\rClusterStatus\x12!.quicbaas.v1.ClusterStatusRequest\x1a\".quicbaas.v1.ClusterStatusResponse\"\x12\xc2\xf3\x18\x0eadmin:topology\x12a\n" +
+	"\tGetLeader\x12\x1d.quicbaas.v1.GetLeaderRequest\x1a\x1e.quicbaas.v1.GetLeaderResponse\"\x15\xc2\xf3\x18\x11admin:shard_state\x12Z\n" +
 	"\aAddNode\x12\x1b.quicbaas.v1.AddNodeRequest\x1a\x1c.quicbaas.v1.AddNodeResponse\"\x14\xc2\xf3\x18\x10admin:add_member\x12f\n" +
 	"\n" +
 	"RemoveNode\x12\x1e.quicbaas.v1.RemoveNodeRequest\x1a\x1f.quicbaas.v1.RemoveNodeResponse\"\x17\xc2\xf3\x18\x13admin:remove_member\x12g\n" +
-	"\vCreateShard\x12\x1f.quicbaas.v1.CreateShardRequest\x1a .quicbaas.v1.CreateShardResponse\"\x15\xc2\xf3\x18\x11admin:start_shard\x12d\n" +
-	"\tAggregate\x12\x1d.quicbaas.v1.AggregateRequest\x1a\x1e.quicbaas.v1.AggregateResponse\"\x18\xc2\xf3\x18\x14timeseries:aggregate\x12t\n" +
-	"\x0fTimeSeriesQuery\x12#.quicbaas.v1.TimeSeriesQueryRequest\x1a$.quicbaas.v1.TimeSeriesQueryResponse\"\x14\xc2\xf3\x18\x10timeseries:query0\x01\x12o\n" +
+	"\vCreateShard\x12\x1f.quicbaas.v1.CreateShardRequest\x1a .quicbaas.v1.CreateShardResponse\"\x15\xc2\xf3\x18\x11admin:start_shard\x12X\n" +
+	"\tAggregate\x12\x1d.quicbaas.v1.AggregateRequest\x1a\x1e.quicbaas.v1.AggregateResponse\"\f\xc2\xf3\x18\bkv:range\x12l\n" +
+	"\x0fTimeSeriesQuery\x12#.quicbaas.v1.TimeSeriesQueryRequest\x1a$.quicbaas.v1.TimeSeriesQueryResponse\"\f\xc2\xf3\x18\bkv:range0\x01\x12o\n" +
 	"\fTSWritePoint\x12 .quicbaas.v1.TSWritePointRequest\x1a!.quicbaas.v1.TSWritePointResponse\"\x1a\xc2\xf3\x18\x16timeseries:write_point\x12o\n" +
 	"\fTSWriteBatch\x12 .quicbaas.v1.TSWriteBatchRequest\x1a!.quicbaas.v1.TSWriteBatchResponse\"\x1a\xc2\xf3\x18\x16timeseries:write_batch\x12Z\n" +
 	"\aTSQuery\x12\x1b.quicbaas.v1.TSQueryRequest\x1a\x1c.quicbaas.v1.TSQueryResponse\"\x14\xc2\xf3\x18\x10timeseries:query\x12w\n" +
