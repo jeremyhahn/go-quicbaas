@@ -5648,11 +5648,17 @@ it-image: ## Print the CI integration image tag, hashed from its build context
 	@echo "$(CI_REPO_NAME)-ci-it:$(IT_IMAGE_HASH)"
 
 # A tag is its content (ci-standard.md §9), so a build target builds nothing
-# when the Docker daemon already holds every image it would build.
+# when the Docker daemon already holds every image it would build. The
+# integration image's tag is its content only when it is IT_IMAGE (CI sets it
+# from `make -s it-image`): the default tag hashes the commit and the dirty
+# file list, not INTEGRATION_BUILD_TAGS or an untracked file's contents, so
+# without IT_IMAGE docker-build always runs the build and compose checks the
+# inputs (Codex 7525).
 .PHONY: docker-build
 docker-build: ## Build both devcontainer images, toolchain and integration
-	@if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' '$(INTEGRATION_IMAGE)' >/dev/null 2>&1; then \
-		echo "docker-build: $(TOOLCHAIN_IMAGE) and $(INTEGRATION_IMAGE) are present"; \
+	@if [ -n '$(strip $(IT_IMAGE))' ] && \
+		$(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' '$(IT_IMAGE)' >/dev/null 2>&1; then \
+		echo "docker-build: $(TOOLCHAIN_IMAGE) and $(IT_IMAGE) are present"; \
 	else $(DEVCONTAINER_BUILD) toolchain integration; fi
 
 # A docs-only pull request's CI runs lint alone, in the toolchain image
