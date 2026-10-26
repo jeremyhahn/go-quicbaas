@@ -1528,7 +1528,6 @@ export interface RekeyRequest {
     new_total_shares: number;
 }
 export interface RekeyResponse {
-    shares: string[];
     version: number;
     timestamp: string;
 }
@@ -1551,8 +1550,9 @@ export interface SealInitRequest {
     secret_threshold: number;
 }
 export interface SealInitResponse {
-    keys: string[];
     root_token: string;
+    version: number;
+    timestamp: string;
 }
 export interface UnsealRequest {
     key: string;
@@ -1593,12 +1593,12 @@ export interface BarrierShamirInitRequest {
     total_shares: number;
 }
 export interface BarrierShamirInitResponse {
-    /** Shamir shares for distribution. */
-    shares: string[];
     /** Threshold required for reconstruction. */
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
+    /** Shares sealed to their holders. */
+    share_count: number;
 }
 /** BarrierDomain names a barrier's key-holder set: its unseal officers or its recovery officers. */
 export type BarrierDomain = 'unseal' | 'recovery';
@@ -1793,18 +1793,36 @@ export interface TenantBarrierInitRequest {
     threshold?: number;
     /** Total shares to generate (shamir strategy). */
     shares?: number;
+    /**
+     * Inline share-holder roster registered atomically with initialization
+     * (shamir strategy). Its length must equal shares. Omit it when the holders
+     * were registered before initialization.
+     */
+    officers?: BarrierOfficerRegisterRequest[];
+    /** Factor policy the officers enrol under: "designated" (default) or "any-enrolled". */
+    policy?: string;
+}
+export interface TenantBarrierHolderCert {
+    /** Officer username. */
+    username: string;
+    /** Role bound to the certificate. */
+    role: string;
+    /** PEM-encoded officer certificate. */
+    cert_pem: string;
 }
 export interface TenantBarrierInitResponse {
     /** Tenant whose barrier was initialized. */
     tenant_id: string;
     /** Sealing strategy that was provisioned. */
     strategy: TenantBarrierStrategy;
-    /** Shamir shares for distribution — returned exactly once. */
-    shares: string[];
     /** Threshold required for reconstruction. */
     threshold: number;
     /** Total shares generated. */
     total_shares: number;
+    /** Shares sealed to their holders, awaiting each holder's claim. */
+    share_count: number;
+    /** Certificates issued to the inline roster officers, in roster order; absent without a roster. */
+    holders?: TenantBarrierHolderCert[];
 }
 export interface TenantBarrierStatusResponse {
     /** Tenant the status describes. */

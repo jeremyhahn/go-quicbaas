@@ -647,7 +647,11 @@ export class McpBarrierClient {
             threshold: req.threshold,
             total_shares: req.total_shares,
         });
-        return { shares: reply.shares ?? [], threshold: reply.threshold ?? 0, total_shares: reply.total_shares ?? 0 };
+        return {
+            threshold: reply.threshold ?? 0,
+            total_shares: reply.total_shares ?? 0,
+            share_count: reply.share_count ?? 0,
+        };
     }
     async officers() {
         const reply = await this.session.callTool('qrdb_barrier_officer_list', {});

@@ -159,6 +159,8 @@ export declare class RestTenantBarrierClient implements TenantBarrierClient {
     tenantBarrierInit(tenantId: string, req: TenantBarrierInitRequest): Promise<TenantBarrierInitResponse | undefined>;
     tenantBarrierUnseal(tenantId: string, key: Uint8Array): Promise<void>;
     tenantBarrierQuorumBegin(tenantId: string, req: TenantBarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
+    tenantBarrierShareClaimBegin(tenantId: string, username: string): Promise<BarrierShareClaimBeginResponse>;
+    tenantBarrierShareClaimComplete(tenantId: string, req: BarrierShareClaimCompleteRequest): Promise<BarrierShareClaimCompleteResponse>;
     tenantBarrierQuorumSubmit(tenantId: string, req: TenantBarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome>;
     tenantBarrierSeal(tenantId: string): Promise<void>;
     tenantBarrierStatus(tenantId: string): Promise<TenantBarrierStatusResponse>;

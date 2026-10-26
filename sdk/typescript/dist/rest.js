@@ -3319,8 +3319,9 @@ export class RestTenantBarrierClient {
     async tenantBarrierInit(tenantId, req) {
         const { passphrase, ...rest } = req;
         const body = passphrase === undefined ? rest : { ...rest, passphrase: bytesToBase64(passphrase) };
-        // The shamir strategy returns 200 with the minted shares; the none and
-        // passphrase strategies return 204 No Content. fetchJSON yields undefined
+        // The shamir strategy returns 200 with share-free metadata and the inline
+        // roster's holder certificates; the none and passphrase strategies return
+        // 204 No Content. fetchJSON yields undefined
         // on a 204, so the union return type already covers both cases.
         return this.http.fetchJSON(`${this.base(tenantId)}/init`, {
             method: 'POST',
@@ -3338,6 +3339,12 @@ export class RestTenantBarrierClient {
             method: 'POST',
             body: JSON.stringify(req),
         });
+    }
+    async tenantBarrierShareClaimBegin(tenantId, username) {
+        return this.http.fetchJSON(`${this.base(tenantId)}/officers/${encodeURIComponent(username)}/claim/begin`, { method: 'POST', body: JSON.stringify({ username }) });
+    }
+    async tenantBarrierShareClaimComplete(tenantId, req) {
+        return this.http.fetchJSON(`${this.base(tenantId)}/officers/${encodeURIComponent(req.username)}/claim/complete`, { method: 'POST', body: JSON.stringify(req) });
     }
     async tenantBarrierQuorumSubmit(tenantId, req) {
         return this.http.fetchJSON(`${this.base(tenantId)}/quorum/submit`, {
