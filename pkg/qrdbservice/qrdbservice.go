@@ -21,6 +21,7 @@ import (
 	sdknode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/permission"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -130,6 +131,60 @@ var grantNames = []string{
 	"user_authfactors:remove",      // UserAuthFactorClient.RemoveAuthFactor: auth factor remove
 	"user_authfactors:rotate",      // UserAuthFactorClient.RotateAuthFactor: auth factor rotate
 	"user_authfactors:relabel",     // UserAuthFactorClient.RelabelAuthFactor: auth factor relabel
+	// The embedded SDK's Security() operations (sdk/go/transport/embedded
+	// operationPermissions). A delegated embedded call runs with the
+	// delegation's scope intersected with these grants, so a Security
+	// permission absent here is refused to every delegation. The embedded
+	// package's TestSecurityOperationPermissions_WithinPrincipalGrants keeps
+	// this list covering that map.
+	"user_authfactors:login",       // Auth session verbs, FIDO2 authentication
+	"roles:create",                 // RBAC.CreateRole
+	"roles:delete",                 // RBAC.DeleteRole
+	"roles:list",                   // RBAC.ListRoles
+	"roles:assign",                 // RBAC.AssignRole
+	"roles:unassign",               // RBAC.RevokeRole
+	"secrets:list",                 // Secrets.List
+	"secrets:delete",               // Secrets.Delete
+	"keys:create",                  // KMS/DEK/SSH key creation
+	"keys:import",                  // KMS/SSH key import
+	"keys:get",                     // KMS/DEK/SSH key reads
+	"keys:list",                    // KMS/DEK/SSH key listing
+	"keys:rotate",                  // KMS/DEK key rotation and policy
+	"keys:delete",                  // KMS/DEK/SSH key deletion
+	"keys:export",                  // KMS.ExportKey
+	"keys:unwrap",                  // KMS.UnwrapKey, Crypto.Rewrap
+	"keys:wrap",                    // Crypto.GenerateWrappedDataKey
+	"keys:encrypt",                 // Crypto.Encrypt
+	"keys:decrypt",                 // Crypto.Decrypt
+	"keys:derive",                  // Crypto.GenerateDataKey/GenerateRandom
+	"keys:sign",                    // Crypto/SSH signing, HMAC, hashing
+	"keys:verify",                  // Crypto verification
+	"backends:read",                // KMS.BackendStatus/BackendTest
+	"certs:issue",                  // Certificate issuance and CSR signing
+	"certs:revoke",                 // Certificate revocation and CRLs
+	"certs:read",                   // Certificate and CA reads
+	"certs:list",                   // Certificate.ListCertificates
+	"certs:enroll",                 // Certificate.Chain
+	"ca:read",                      // Certificate.CAInfo
+	"ca:create",                    // Certificate.CrossSign
+	"attestation:verify",           // Attestation verification and reads
+	"attestation:attest",           // Attestation.AttestContainer
+	"attestation:provision",        // Attestation endorsements and reference values
+	"dynamic_secrets:role_create",  // DynamicSecrets.CreateRole
+	"dynamic_secrets:role_read",    // DynamicSecrets.GetRole
+	"dynamic_secrets:role_list",    // DynamicSecrets.ListRoles
+	"dynamic_secrets:role_delete",  // DynamicSecrets.DeleteRole
+	"dynamic_secrets:generate",     // DynamicSecrets.GenerateCredential
+	"dynamic_secrets:lease_renew",  // DynamicSecrets.RenewLease
+	"dynamic_secrets:lease_revoke", // DynamicSecrets.RevokeLease
+	"dynamic_secrets:lease_list",   // DynamicSecrets.ListLeases
+	"trust:read",                   // Trust.CrossSignedRootPool
+	"trust:write",                  // Trust.AutoImportAIA/PublishDANE
+	"piv:read",                     // PIV slot and certificate reads
+	"piv:write",                    // PIV certificate and key writes
+	"piv:delete",                   // PIV.DeletePIVCertificate
+	"piv:use",                      // PIV.GeneratePIVCSR
+	"acme:write",                   // ACME orders, issuance and renewal
 }
 
 // GrantError reports a grant name qrdb's permission registry does not know.
@@ -153,6 +208,9 @@ func (UnregisteredPermissionError) Error() string { return "not registered" }
 // Grants returns the principal's permissions, resolved against qrdb's
 // registry.
 func Grants() ([]qrdbsdk.Permission, error) {
+	// The Security grants name permissions quicbaas contributes, so its
+	// vocabulary is registered before the grants are checked against it.
+	permission.Register()
 	return parseGrants(grantNames)
 }
 

@@ -15,11 +15,14 @@ package embedded
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/qrdbservice"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
 
@@ -154,6 +157,40 @@ func TestStreamOperationPermissions_KeysAreStreamHandlers(t *testing.T) {
 		assert.True(t, ok, "%s declares %v but has no stream handler", key, perms)
 		assert.NotEmpty(t, perms, "%s declares an empty permission list", key)
 	}
+}
+
+// securityServices are the embedded services the SDK's Security() surface
+// dispatches to.
+var securityServices = []string{
+	"quicbaas.Auth", "quicbaas.FIDO2", "quicbaas.PIV", "quicbaas.KMS",
+	"quicbaas.DEK", "quicbaas.Secrets", "quicbaas.Crypto", "quicbaas.Certificate",
+	"quicbaas.DynamicSecrets", "quicbaas.RBAC", "quicbaas.ACME", "quicbaas.Trust",
+	"quicbaas.Attestation", "quicbaas.SSH",
+}
+
+// TestSecurityOperationPermissions_WithinPrincipalGrants guards the embedded
+// principal's grant ceiling: go-qrdb intersects a delegation's scope with the
+// principal's grants, so a Security permission the ceiling lacks is refused
+// to every delegation, whatever its scope grants.
+func TestSecurityOperationPermissions_WithinPrincipalGrants(t *testing.T) {
+	grants, err := qrdbservice.Grants()
+	require.NoError(t, err)
+	granted := make(map[string]bool, len(grants))
+	for _, p := range grants {
+		granted[p.String()] = true
+	}
+	checked := 0
+	for key, perms := range operationPermissions {
+		service, _, _ := strings.Cut(key, "/")
+		if !slices.Contains(securityServices, service) {
+			continue
+		}
+		for _, perm := range perms {
+			checked++
+			assert.True(t, granted[perm], "%s needs %s, which the embedded principal is not granted", key, perm)
+		}
+	}
+	require.NotZero(t, checked, "no Security operation was checked")
 }
 
 func TestRequest_UnknownMethodNeverAuthorized(t *testing.T) {

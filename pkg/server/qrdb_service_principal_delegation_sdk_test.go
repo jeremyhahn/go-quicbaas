@@ -42,6 +42,15 @@ func (d *delegationSecrets) EnsureSecret(ctx context.Context, req *service.Ensur
 	return &service.EnsureSecretResponse{SecretID: req.SecretID, Data: []byte("generated-" + req.SecretID), Generated: true}, nil
 }
 
+func (d *delegationSecrets) ListSecrets(ctx context.Context, _ *service.ListSecretsRequest) (*service.ListSecretsResponse, error) {
+	d.calls++
+	tenantID, _ := qrdbsdk.TenantFromContext(ctx)
+	if tenantID != server.DelegatingTenantID {
+		return nil, &delegationSecretNotFoundError{tenantID: tenantID}
+	}
+	return &service.ListSecretsResponse{Secrets: []*service.Secret{{SecretID: "app/key"}}, TotalCount: 1}, nil
+}
+
 // delegationSecretNotFoundError is the backend's answer for any secret other
 // than the delegating tenant's one.
 type delegationSecretNotFoundError struct{ tenantID, secretID string }
@@ -133,4 +142,33 @@ func TestDelegatedKMS_EnsureWithoutSecretsWriteIsRefused(t *testing.T) {
 	_, err := resolveDelegatedKMS(t, c, "kms://app/new?ensure=true")
 	require.Error(t, err, "a delegation without secrets:write ensured kms://")
 	require.Zero(t, secrets.ensureCalls, "the secrets backend was reached without secrets:write")
+}
+
+// A delegated Security call reaches its backend under the node's real
+// DelegatedContext: the principal's grant ceiling covers every permission the
+// embedded Security operation map declares, so a delegation granting
+// secrets:list holds it after go-qrdb intersects scope with the grants.
+func TestDelegatedSecurity_SecretsListDelegationIsServed(t *testing.T) {
+	s := server.NewDelegatingServer(t)
+	leaf := server.IssueTestDelegation(t, s, "secrets:list")
+	secrets := &delegationSecrets{}
+	c := newDelegatedSDKClient(t, s, leaf, secrets)
+
+	got, err := c.Security().Secrets().List(context.Background(), "app/")
+	require.NoError(t, err)
+	require.Equal(t, 1, secrets.calls)
+	require.Len(t, got.Paths, 1)
+}
+
+// The intersection stays: a delegation that does not grant secrets:list is
+// refused before the backend, whatever the principal's ceiling holds.
+func TestDelegatedSecurity_SecretsListWithoutScopeIsRefused(t *testing.T) {
+	s := server.NewDelegatingServer(t)
+	leaf := server.IssueTestDelegation(t, s, "secrets:read")
+	secrets := &delegationSecrets{}
+	c := newDelegatedSDKClient(t, s, leaf, secrets)
+
+	_, err := c.Security().Secrets().List(context.Background(), "app/")
+	require.Error(t, err, "a delegation without secrets:list listed secrets")
+	require.Zero(t, secrets.calls, "the secrets backend was reached without secrets:list")
 }
