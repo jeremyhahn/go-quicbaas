@@ -64,11 +64,21 @@ var grantNames = []string{
 	"vector:batch_upsert",            // VectorClient.BatchUpsert
 	"vector:batch_delete",            // VectorClient.BatchDeleteVectors
 	"vector:list",                    // VectorClient.ListVectors: namespace scans
+	"vector:update_metadata",         // VectorClient.UpdateMetadata: a native metadata update
 	"vector:search_by_metadata",      // VectorClient.SearchByMetadata: multi-filter scans
 	"vector:search_similar",          // VectorClient.SearchSimilar: the node's authorized search
 	"vector:get_index_stats",         // VectorClient.GetIndexStats
 	"vector:compact",                 // VectorClient.CompactNamespace
 	"vector:get_compaction_progress", // VectorClient.GetCompactionProgress: async compaction jobs
+	"vector:rebuild_index",           // VectorClient.RebuildIndex: a rebuild of the node index searches read
+	"vector:get_rebuild_progress",    // VectorClient.GetRebuildProgress: the node's rebuild job
+	"vector:hybrid_search",           // VectorClient.HybridSearch
+	"vector:search_by_id",            // VectorClient.SearchByID
+	// The bound kms:// resolver's secret reads and ensures. go-qrdb
+	// intersects a delegation's scope with these grants, so a delegation
+	// granting secrets:read or secrets:write holds it only if listed here.
+	"secrets:read",  // a delegated kms:// resolve
+	"secrets:write", // a delegated kms:// ?ensure=true create
 	// The fleet device telemetry the server files and reads on its own
 	// behalf (pkg/server fleetTelemetrySeries); a node daemon's grant holds
 	// no time-series permission.

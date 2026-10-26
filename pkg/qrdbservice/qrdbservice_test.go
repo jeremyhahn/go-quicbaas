@@ -546,6 +546,12 @@ func TestGrants_HoldEveryVectorVerbTheServerCalls(t *testing.T) {
 		{"pkg/server nodeVectorStorage GetCompactionProgress", "vector:get_compaction_progress"},
 		{"pkg/service vectorService SearchSimilar", "vector:search_similar"},
 		{"pkg/service distributed SearchSimilar", "vector:search_similar"},
+		{"pkg/service vectorService RebuildIndex", "vector:rebuild_index"},
+		{"pkg/service vectorService GetRebuildProgress", "vector:get_rebuild_progress"},
+		// serviceVector hands pkg/service the principal's whole client.
+		{"pkg/qrdbservice serviceVector UpdateMetadata", "vector:update_metadata"},
+		{"pkg/qrdbservice serviceVector HybridSearch", "vector:hybrid_search"},
+		{"pkg/qrdbservice serviceVector SearchByID", "vector:search_by_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.site, func(t *testing.T) {

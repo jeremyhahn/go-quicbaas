@@ -27,11 +27,16 @@ func newUngrantedPrincipalServer(t *testing.T) *Server {
 	t.Helper()
 	perms, err := qrdbservice.Grants()
 	require.NoError(t, err)
-	search, err := qrdbsdk.ParsePermission("vector:search_similar")
-	require.NoError(t, err)
-	progress, err := qrdbsdk.ParsePermission("vector:get_compaction_progress")
-	require.NoError(t, err)
-	perms = slices.DeleteFunc(perms, func(p qrdbsdk.Permission) bool { return p == search || p == progress })
+	var withheld []qrdbsdk.Permission
+	for _, name := range []string{
+		"vector:search_similar", "vector:get_compaction_progress",
+		"vector:rebuild_index", "vector:get_rebuild_progress",
+	} {
+		p, err := qrdbsdk.ParsePermission(name)
+		require.NoError(t, err)
+		withheld = append(withheld, p)
+	}
+	perms = slices.DeleteFunc(perms, func(p qrdbsdk.Permission) bool { return slices.Contains(withheld, p) })
 	qrdbsdk.RegisterPermissionRoleGrant(ungrantedPrincipal, perms...)
 
 	cfg := &qrdbsdk.DaemonConfig{}
@@ -40,11 +45,7 @@ func newUngrantedPrincipalServer(t *testing.T) *Server {
 	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, qrdbnode.WithServicePrincipal(ungrantedPrincipal))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = node.Close() })
-
-	s := &Server{}
-	s.setQRDBNode(node)
-	s.qrdbClient = newNodeBackedShardedClient(node)
-	return s
+	return serverOverNode(node)
 }
 
 // seedPrincipalNamespace creates a namespace with one vector as the
@@ -90,4 +91,47 @@ func TestServiceVector_UngrantedPrincipalIsRefused(t *testing.T) {
 	_, err = vec.GetCompactionProgress(ctx, &transport.GetCompactionProgressRequest{Namespace: "principal-ns", OperationID: compact.OperationID})
 	require.Error(t, err, "the node served a verb the principal does not hold")
 	require.NotErrorIs(t, err, qrdbsdk.ErrUnauthenticated, "the principal was not bound")
+}
+
+func TestServiceVector_PrincipalRebuildsAndReadsRebuildProgress(t *testing.T) {
+	s, _ := newPrincipalServer(t)
+	vec := seedPrincipalNamespace(t, s)
+	ctx := context.Background()
+
+	rebuild, err := vec.RebuildIndex(ctx, &transport.RebuildIndexRequest{Namespace: "principal-ns"})
+	require.NoError(t, err)
+	require.NotNil(t, rebuild)
+	_, err = vec.GetRebuildProgress(ctx, &transport.GetRebuildProgressRequest{JobID: rebuild.JobID, Namespace: "principal-ns"})
+	require.NoError(t, err)
+}
+
+func TestServiceVector_PrincipalWithoutRebuildGrantsIsRefused(t *testing.T) {
+	s := newUngrantedPrincipalServer(t)
+	vec := seedPrincipalNamespace(t, s)
+	ctx := context.Background()
+
+	var denied *qrdbsdk.PermissionDeniedError
+	_, err := vec.RebuildIndex(ctx, &transport.RebuildIndexRequest{Namespace: "principal-ns"})
+	require.ErrorAs(t, err, &denied, "the node rebuilt for a principal without vector:rebuild_index")
+
+	// The grant is checked before the job is looked up, so no job is needed.
+	_, err = vec.GetRebuildProgress(ctx, &transport.GetRebuildProgressRequest{Namespace: "principal-ns", JobID: "no-such-job"})
+	require.ErrorAs(t, err, &denied, "the node served rebuild progress to a principal without vector:get_rebuild_progress")
+}
+
+// The server hands pkg/service the principal's whole vector client, so a
+// native metadata update or hybrid / by-ID search runs as the principal.
+func TestServiceVector_PrincipalUpdatesMetadataAndSearches(t *testing.T) {
+	s, _ := newPrincipalServer(t)
+	vec := seedPrincipalNamespace(t, s)
+	ctx := context.Background()
+
+	_, err := vec.UpdateMetadata(ctx, &transport.UpdateVectorMetadataRequest{
+		Namespace: "principal-ns", ID: 1, Metadata: map[string]interface{}{"kind": "seed"},
+	})
+	require.NoError(t, err)
+	_, err = vec.HybridSearch(ctx, &transport.HybridSearchRequest{Namespace: "principal-ns", QueryVector: []float32{1, 0}, K: 1})
+	require.NoError(t, err)
+	_, err = vec.SearchByID(ctx, &transport.SearchByIDRequest{Namespace: "principal-ns", ID: 1, K: 1})
+	require.NoError(t, err)
 }
