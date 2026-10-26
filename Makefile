@@ -710,8 +710,9 @@ build-git-sign: ## Build the worker git signing helper (quicbaas-git-sign, git's
 # cmd/quicbaas/frontend, sdk/ as a symlink to the checkout's sdk/ -- so the
 # tracked lock's file:../../../sdk/typescript entries resolve and npm ci can
 # install it unchanged. The suffix hashes $(CURDIR), so every checkout gets
-# its own build root and concurrent worktrees never share one.
-FE_BUILD_ROOT ?= /tmp/fe-build-$(shell whoami)-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
+# its own build root and concurrent worktrees never share one. It keys on the
+# uid, not whoami, which fails for a uid with no passwd entry (the CI container).
+FE_BUILD_ROOT ?= /tmp/fe-build-$(shell id -u)-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 FE_BUILD_DIR := $(FE_BUILD_ROOT)/cmd/quicbaas/frontend
 
 .PHONY: _build-sdk-typescript

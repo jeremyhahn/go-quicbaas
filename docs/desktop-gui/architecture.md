@@ -40,7 +40,7 @@ The daemon exposes the UI at `GET /ui/` once REST is enabled.
 `make build-frontend` installs dependencies with `npm ci` from the tracked
 `cmd/quicbaas/frontend/package-lock.json`, which it never rewrites. It builds
 outside the checkout, because Node.js worker threads hit EPERM on NFS, in
-`/tmp/fe-build-<user>-<hash of the checkout path>` (override with
+`/tmp/fe-build-<uid>-<hash of the checkout path>` (override with
 `FE_BUILD_ROOT`). That root mirrors the repository layout, with `sdk/` linked
 to the checkout's `sdk/`, so the lock's `file:../../../sdk/typescript`
 dependencies resolve. Each checkout gets its own build root. The bundle is

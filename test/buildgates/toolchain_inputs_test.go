@@ -14,11 +14,13 @@
 package buildgates
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -97,15 +99,42 @@ func uncoveredCopySources(dockerfile, target string, inputs []string) []string {
 }
 
 // devcontainerInputs returns DEVCONTAINER_INPUTS as make expands it.
-func devcontainerInputs(t *testing.T) []string {
+func devcontainerInputs(t *testing.T, env []string) []string {
 	t.Helper()
-	const goal = "print-devcontainer-inputs"
-	out, err := exec.Command("make", "-s", "--no-print-directory", "-C", repoRoot,
-		"--eval", goal+": ; @echo $(DEVCONTAINER_INPUTS)", goal).CombinedOutput()
+	return strings.Fields(makeVariable(t, "DEVCONTAINER_INPUTS", env))
+}
+
+// makeVariable returns the value the repository Makefile gives name, run
+// with env (nil inherits the test's environment).
+func makeVariable(t *testing.T, name string, env []string) string {
+	t.Helper()
+	goal := "print-" + name
+	cmd := exec.Command("make", "-s", "--no-print-directory", "-C", repoRoot,
+		"--eval", goal+": ; @echo $("+name+")", goal)
+	cmd.Env = env
+	// Stdout alone: a $(shell) command's stderr is not part of the value.
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("make %s: %v\n%s", goal, err, out)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			t.Fatalf("make %s: %v\n%s", goal, err, exitErr.Stderr)
+		}
+		t.Fatalf("make %s: %v", goal, err)
 	}
-	return strings.Fields(string(out))
+	return strings.TrimSpace(string(out))
+}
+
+// namelessUserEnv returns the test's environment with a whoami first on PATH
+// that fails the way it does for a uid with no passwd entry, as in the CI
+// container (uid 10001).
+func namelessUserEnv(t *testing.T) []string {
+	t.Helper()
+	bin := t.TempDir()
+	stub := "#!/bin/sh\necho \"whoami: cannot find name for user ID $(id -u)\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "whoami"), []byte(stub), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestToolchainImageHashCoversEveryFileTheImageCopies(t *testing.T) {
@@ -113,7 +142,7 @@ func TestToolchainImageHashCoversEveryFileTheImageCopies(t *testing.T) {
 	if len(contextCopySources(dockerfile, "toolchain")) == 0 {
 		t.Fatalf("%s: the toolchain stage copies nothing from the build context", devcontainerDockerfilePath)
 	}
-	inputs := devcontainerInputs(t)
+	inputs := devcontainerInputs(t, nil)
 	for _, input := range inputs {
 		if _, err := os.Stat(filepath.Join(repoRoot, input)); err != nil {
 			t.Errorf("DEVCONTAINER_INPUTS lists %s, which does not exist: %v", input, err)
@@ -122,6 +151,22 @@ func TestToolchainImageHashCoversEveryFileTheImageCopies(t *testing.T) {
 	if uncovered := uncoveredCopySources(dockerfile, "toolchain", inputs); len(uncovered) > 0 {
 		t.Errorf("the toolchain image copies %v, which DEVCONTAINER_INPUTS does not hash: "+
 			"a change to them would not change TOOLCHAIN_IMAGE", uncovered)
+	}
+}
+
+// A user with no passwd entry makes whoami fail on stderr (CI 67922). The
+// input list is make's stdout alone, and FE_BUILD_ROOT keys on the uid, which
+// such a user still has.
+func TestMakeVariablesHoldForAUserWithNoName(t *testing.T) {
+	env := namelessUserEnv(t)
+	for _, input := range devcontainerInputs(t, env) {
+		if _, err := os.Stat(filepath.Join(repoRoot, input)); err != nil {
+			t.Errorf("DEVCONTAINER_INPUTS lists %s, which does not exist: %v", input, err)
+		}
+	}
+	root := makeVariable(t, "FE_BUILD_ROOT", env)
+	if want := "/tmp/fe-build-" + strconv.Itoa(os.Getuid()) + "-"; !strings.HasPrefix(root, want) {
+		t.Errorf("FE_BUILD_ROOT = %q, want the prefix %q", root, want)
 	}
 }
 
