@@ -29,6 +29,8 @@
   of the three strategies. A shamir init returns no share material: the shares
   are sealed to their holders, who each claim their own. The view lists the
   certificates issued to an inline roster's holders and the sealed share count.
+  A claimed share envelope is delivered once, so the view keeps it until the
+  holder downloads it and holds the init result open until every one is saved.
 
   All barrier traffic flows through the typed @quicbaas/sdk TenantBarrierClient
   (RestTenantBarrierClient under the hood); the view never builds raw URLs.
@@ -37,6 +39,7 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
+  import { downloadText } from '../../lib/download.ts';
   import { Lock } from 'lucide-svelte';
   import { barrierCredentialBytes, toInitRequest } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
@@ -165,11 +168,19 @@
         return tb.tenantBarrierShareClaimBegin(tenantId, username);
       },
       async claimShare(req) {
-        return tb.tenantBarrierShareClaimComplete(tenantId, {
+        const share = await tb.tenantBarrierShareClaimComplete(tenantId, {
           username: req.username,
           nonce_hex: req.nonce_hex,
           signature: req.signature_b64,
         });
+        claimedEnvelopes.push({
+          tenantId,
+          username: req.username,
+          share_index: share.share_index,
+          envelope: share.envelope,
+          saved: false,
+        });
+        return share;
       },
     };
   }
@@ -198,6 +209,25 @@
   // progress: qrdb refuses a direct seal of a Shamir barrier, so its key
   // holders seal it the way they unseal it.
   let sealQuorum: StructuralBarrierClient | null = $state(null);
+
+  // A claimed share envelope is delivered exactly once: qrdb destroys its
+  // copy during the claim. The view keeps every envelope until its holder
+  // downloads it, and the init result cannot be dismissed before then.
+  interface ClaimedEnvelope {
+    tenantId: string;
+    username: string;
+    share_index: number;
+    envelope: string;
+    saved: boolean;
+  }
+  let claimedEnvelopes: ClaimedEnvelope[] = $state([]);
+  const tenantEnvelopes = $derived(claimedEnvelopes.filter((e) => e.tenantId === selectedTenantID));
+  const unsavedEnvelopes = $derived(tenantEnvelopes.filter((e) => !e.saved).length);
+
+  function saveEnvelope(e: ClaimedEnvelope): void {
+    downloadText(`${e.tenantId}-${e.username}-share-${e.share_index}.envelope`, e.envelope, 'application/octet-stream');
+    e.saved = true;
+  }
 
   async function loadTenants(): Promise<void> {
     tenantsLoading = true;
@@ -291,6 +321,7 @@
   }
 
   async function dismissInitResult(): Promise<void> {
+    if (unsavedEnvelopes > 0) return;
     initResult = null;
     await loadStatus();
   }
@@ -325,6 +356,25 @@
       onclaimed={(share) => { showToast({ message: `Share ${share.share_index} claimed`, type: 'success' }); }}
       onerror={(err) => { showToast({ message: err.message, type: 'error' }); }}
     />
+    {#if tenantEnvelopes.length > 0}
+      <div class="alert alert-warning text-sm mt-3" role="alert">
+        <span>
+          Each claimed envelope is delivered once: the server destroyed its copy during the
+          claim. Download every envelope now; it cannot be fetched again.
+        </span>
+      </div>
+      {#each tenantEnvelopes as e (`${e.username}-${e.share_index}`)}
+        <div class="flex items-center gap-2 mt-2 text-sm" data-testid="tenant-barrier-envelope">
+          <span class="font-semibold">{e.username}</span>
+          <span>share {e.share_index}</span>
+          <code class="font-mono text-xs break-all flex-1">{e.envelope}</code>
+          <button class="btn btn-xs btn-outline" type="button" onclick={() => { saveEnvelope(e); }}>
+            Download envelope
+          </button>
+          {#if e.saved}<span class="badge badge-success badge-sm">saved</span>{/if}
+        </div>
+      {/each}
+    {/if}
   </div>
 {/snippet}
 
@@ -414,7 +464,12 @@
                   </div>
                 {/each}
                 {@render holderClaim(selectedTenantID)}
-                <button class="btn btn-sm btn-primary" onclick={() => { void dismissInitResult(); }}>Continue</button>
+                <button
+                  class="btn btn-sm btn-primary"
+                  disabled={unsavedEnvelopes > 0}
+                  title={unsavedEnvelopes > 0 ? 'Download every claimed envelope first' : undefined}
+                  onclick={() => { void dismissInitResult(); }}
+                >Continue</button>
               </div>
             {:else}
               <div class="space-y-3" data-testid="tenant-barrier-init">

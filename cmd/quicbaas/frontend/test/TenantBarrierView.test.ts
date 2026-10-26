@@ -16,8 +16,10 @@ import { shareClaimMessage } from '@quicbaas/svelte-security';
 
 vi.mock('../src/stores/sdkClient.ts', () => ({ getSDKClient: vi.fn() }));
 vi.mock('../src/stores/toast.svelte.ts', () => ({ showToast: vi.fn() }));
+vi.mock('../src/lib/download.ts', () => ({ downloadText: vi.fn() }));
 
 import { getSDKClient } from '../src/stores/sdkClient.ts';
+import { downloadText } from '../src/lib/download.ts';
 import TenantBarrierView from '../src/views/security/TenantBarrierView.svelte';
 
 const TENANT = 'acme';
@@ -239,6 +241,53 @@ describe('TenantBarrierView seal and unseal routes', () => {
 
     const claim = await screen.findByTestId('tenant-barrier-claim');
     expect(claim).toContainElement(screen.getByTestId('ceremony-claim-challenge'));
+  });
+
+  it('keeps a claimed envelope after init until the holder saves it', async () => {
+    // qrdb destroys its copy of the envelope during the claim, so the view is
+    // the only holder of it: Continue stays disabled until it is downloaded.
+    stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT,
+          strategy: 'shamir',
+          threshold: 2,
+          total_shares: 3,
+          share_count: 3,
+          holders: [{ username: 'officer-1', role: 'unseal', cert_pem: 'cert-pem-1' }],
+        },
+        [`${BASE}/officers/officer-1/claim/begin`]: { nonce_hex: 'beef', expires_at: '2030-01-01T00:00:00Z' },
+        [`${BASE}/officers/officer-1/claim/complete`]: { share_index: 1, envelope: 'ZW52' },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+    const panel = await screen.findByTestId('tenant-barrier-holders');
+
+    const claim = within(panel).getByTestId('tenant-barrier-claim');
+    await fireEvent.input(within(claim).getByLabelText('Username'), { target: { value: 'officer-1' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Request Challenge/i }));
+    await waitFor(() => {
+      expect(within(claim).getByTestId('ceremony-claim-message')).not.toHaveValue('');
+    });
+    await fireEvent.input(within(claim).getByLabelText('Signature (base64)'), { target: { value: 'c2ln' } });
+    await fireEvent.click(within(claim).getByRole('button', { name: /Submit Claim/i }));
+
+    const saved = await within(panel).findByTestId('tenant-barrier-envelope');
+    expect(saved).toHaveTextContent('officer-1');
+    expect(saved).toHaveTextContent('ZW52');
+    const cont = within(panel).getByRole('button', { name: /Continue/i });
+    expect(cont).toBeDisabled();
+
+    await fireEvent.click(within(saved).getByRole('button', { name: /Download envelope/i }));
+    expect(downloadText).toHaveBeenCalledWith(
+      `${TENANT}-officer-1-share-1.envelope`, 'ZW52', 'application/octet-stream',
+    );
+    expect(cont).toBeEnabled();
   });
 
   it('offers the holder claim on a freshly initialized, still sealed Shamir tenant barrier', async () => {
