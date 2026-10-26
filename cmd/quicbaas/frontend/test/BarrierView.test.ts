@@ -112,6 +112,28 @@ vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
 
+// The real barrier client, wrapped to record the secret the view hands
+// initializeShamir: the wire cannot tell an empty string from empty bytes,
+// so the view's argument is checked before the SDK encodes it.
+const recorded = vi.hoisted(() => ({ shamirInitSecrets: [] as unknown[] }));
+vi.mock('@quicbaas/sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@quicbaas/sdk')>();
+  return {
+    ...actual,
+    createBarrierClient: async (
+      ...args: Parameters<typeof actual.createBarrierClient>
+    ): Promise<Awaited<ReturnType<typeof actual.createBarrierClient>>> => {
+      const client = await actual.createBarrierClient(...args);
+      const initializeShamir = client.initializeShamir.bind(client);
+      client.initializeShamir = (req) => {
+        recorded.shamirInitSecrets.push(req.secret);
+        return initializeShamir(req);
+      };
+      return client;
+    },
+  };
+});
+
 import BarrierView from '../src/views/security/BarrierView.svelte';
 
 describe('BarrierView strategy-aware rendering', () => {
@@ -214,6 +236,34 @@ describe('BarrierView strategy-aware rendering', () => {
       expect(hits[0].method).toBe('POST');
     });
     expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
+  });
+
+  it('shamir init hands the SDK an empty byte secret, not a string', async () => {
+    recorded.shamirInitSecrets.length = 0;
+    spy = makeFetchSpy({
+      '/api/v1/barrier/shamir/initialize': () => ({
+        shares: ['s1', 's2', 's3'],
+        threshold: 2,
+        total_shares: 3,
+      }),
+      '/api/v1/barrier/status': () => ({
+        sealed: true,
+        strategy: 'shamir',
+      }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await fireEvent.click(await screen.findByRole('button', { name: /Initialize Shamir barrier/i }));
+
+    await waitFor(() => {
+      expect(recorded.shamirInitSecrets).toHaveLength(1);
+    });
+    const secret = recorded.shamirInitSecrets[0];
+    expect(typeof secret).not.toBe('string');
+    // jsdom's Uint8Array is another realm's, so check the shape, not instanceof.
+    expect(ArrayBuffer.isView(secret)).toBe(true);
+    expect((secret as Uint8Array).length).toBe(0);
   });
 
   it('software unseal posts to /api/v1/barrier/unseal', async () => {

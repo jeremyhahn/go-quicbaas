@@ -140,9 +140,10 @@
         const resp = await sdk.initializeShamir({
           // The SDK initializeShamir requires a master-key secret; for the
           // strategy-aware UI the daemon's barrier strategy already carries
-          // the protector, so we send an empty string and rely on the daemon
-          // to derive the master key from the active strategy.
-          secret: '',
+          // the protector, so we send an empty secret and rely on the daemon
+          // to derive the master key from the active strategy. The secret is
+          // bytes; the SDK encodes it.
+          secret: new Uint8Array(0),
           threshold: req.threshold,
           total_shares: req.total_shares,
         });
