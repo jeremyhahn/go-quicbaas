@@ -344,3 +344,30 @@ func TestBatchGet_WithoutDeclaredGrantIsRefusedNotNotFound(t *testing.T) {
 	requirePermissionRefusal(t, err)
 	assert.Nil(t, resp, "a refusal must never be reported as Found:false")
 }
+
+func TestBatchPut_WithoutDeclaredGrantIsForbidden(t *testing.T) {
+	// The caller holds kv:put but not the entry point's batch:execute.
+	tr := newAuthorizingTransport("kv:put")
+	svc := newAuthorizingService(t, tr)
+
+	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), &BatchPutRequest{
+		Requests: []*PutRequest{{EntityType: "user", ID: 1, Data: []byte("one")}},
+	})
+	requirePermissionRefusal(t, err)
+	assert.Nil(t, resp)
+	assert.Empty(t, tr.data)
+}
+
+func TestBatchDelete_WithoutDeclaredGrantIsForbidden(t *testing.T) {
+	// The caller holds kv:delete but not the entry point's batch:execute.
+	tr := newAuthorizingTransport("kv:delete")
+	tr.data["user:1"] = []byte("one")
+	svc := newAuthorizingService(t, tr)
+
+	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), &BatchDeleteRequest{
+		Requests: []*DeleteRequest{{EntityType: "user", ID: 1}},
+	})
+	requirePermissionRefusal(t, err)
+	assert.Nil(t, resp)
+	assert.Equal(t, []byte("one"), tr.data["user:1"])
+}

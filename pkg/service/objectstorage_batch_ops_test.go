@@ -14,12 +14,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	stderrors "errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
+	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -183,6 +187,31 @@ func TestBatchGetObjects_MixedFoundAndNotFound(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, 1, resp.FoundCount)
 	assert.Equal(t, 1, resp.NotFoundCount)
+}
+
+func TestBatchGetObjects_CrossTenantRefusalIsReturnedNotNotFound(t *testing.T) {
+	svc, catalogMgr, _, storage := createObjstoreTestService(t)
+	ctx := tenantctx.WithSystem(context.Background())
+
+	testData := []byte("tenant1 data")
+	require.NoError(t, storage.PutWithContext(ctx, "bget-tenant1-ref", bytes.NewReader(testData)))
+	entry := catalog.NewCatalogEntry("bget:tenant1", int64(len(testData)), nil)
+	entry.TenantID = "tenant1"
+	entry.PrimaryStore = catalog.StoreLocation{
+		Store:     "local",
+		ObjectRef: "bget-tenant1-ref",
+		Status:    catalog.LocationStatusActive,
+	}
+	require.NoError(t, catalogMgr.Put(ctx, entry))
+
+	resp, err := svc.BatchGetObjects(tenantctx.WithTenant(context.Background(), "tenant2"), &BatchGetObjectsRequest{
+		Keys: []string{"bget:not-there", "bget:tenant1"},
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp, "a refusal must never be reported as Found:false")
+	var qbErr *dberrors.QBError
+	require.True(t, stderrors.As(err, &qbErr))
+	assert.Equal(t, dberrors.ErrForbidden, qbErr.Code)
 }
 
 func TestBatchGetObjects_NilRequest(t *testing.T) {
