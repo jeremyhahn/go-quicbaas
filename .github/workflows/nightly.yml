@@ -1,5 +1,11 @@
-# nightly-template: v1.0 (customized) -- the known-red and long-horizon jobs,
+# nightly-template: v1.8 (customized) -- the known-red and long-horizon jobs,
 # off the push path.
+# Taken: v1.3 security-events permission (job-level here), v1.4 trivy-action
+# commit pin and advisory misconfig scan on both servers, v1.5 strict trivy
+# version parse, v1.7 actions pinned by commit, v1.8 GO_VERSION 1.27.3.
+# CUSTOMIZE: the trivy pin is TRIVY_VERSION in pkg/version/toolchain.mk and
+# Gitea installs it with `make install-trivy`, in place of the template's
+# .trivy-version and scripts/install-trivy.sh; no `schedule:` (below).
 #
 # Owner ruling 2026-08-20 (fail-fast pipeline for iteration speed): jobs that
 # are known-red with tracked issues, or that verify a slow-moving property, do
@@ -39,9 +45,9 @@ jobs:
       GOFIPS140: latest
       GODEBUG: fips140=only
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
 
@@ -64,17 +70,33 @@ jobs:
       security-events: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # nightly-template v1.5 reads the pin from .trivy-version. CUSTOMIZE:
+      # go-quicbaas declares it once as TRIVY_VERSION in
+      # pkg/version/toolchain.mk, beside its checksums, and `make install-trivy`
+      # installs that build. Read as ONE bare token; fail on a malformed line.
+      - name: Resolve pinned trivy version
+        id: trivy_version
+        run: |
+          version=$(awk '$1 == "TRIVY_VERSION" && $2 == ":=" && NF == 3 {print $3}' pkg/version/toolchain.mk)
+          if [ -z "$version" ]; then
+            echo "::error::TRIVY_VERSION in pkg/version/toolchain.mk is missing or malformed"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       # Two paths for one gate. trivy-action's setup step cannot authenticate
       # to github.com from a Gitea runner and upload-sarif has no
       # GHES-compatible endpoint there, so the action path is guarded on the
       # server URL and Gitea gates with the trivy CLI below. Both run the same
       # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      # trivy-action is pinned to a full commit sha (nightly-template v1.4).
       - name: Trivy scan (SARIF for code scanning)
         if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
+          version: ${{ steps.trivy_version.outputs.version }}
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
@@ -87,15 +109,16 @@ jobs:
 
       - name: Upload Trivy SARIF
         if: always() && github.server_url == 'https://github.com'
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b # v3.38.3
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
 
       - name: Trivy gate (fail on CRITICAL/HIGH)
         if: github.server_url == 'https://github.com'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
+          version: ${{ steps.trivy_version.outputs.version }}
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
@@ -106,9 +129,20 @@ jobs:
           skip-files: pkg/server/certs/*.key
           trivyignores: .trivyignore
 
-      - name: Install Trivy CLI (Gitea)
+      # nightly-template v1.4 replaced `curl .../install.sh | sh` with a
+      # pinned, checksum-verified install. CUSTOMIZE: go-quicbaas's is
+      # `make install-trivy` (the same one a developer runs), which needs Go.
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         if: github.server_url != 'https://github.com'
-        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Trivy (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: |
+          make install-trivy
+          gobin=$(go env GOBIN)
+          echo "${gobin:-$(go env GOPATH)/bin}" >> "$GITHUB_PATH"
 
       - name: Trivy gate (Gitea)
         if: github.server_url != 'https://github.com'
@@ -116,6 +150,28 @@ jobs:
           trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
             --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
             --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
+
+      # Misconfiguration scan, advisory (nightly-template v1.4): on both
+      # servers, same pin, exit code 0, so findings surface without gating.
+      - name: Trivy misconfiguration scan (advisory, GitHub)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          version: ${{ steps.trivy_version.outputs.version }}
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig
+          exit-code: 0
+          format: table
+          skip-dirs: test,examples,bin,build,data
+          trivyignores: .trivyignore
+
+      - name: Trivy misconfiguration scan (advisory, Gitea)
+        if: github.server_url != 'https://github.com'
+        run: |
+          trivy fs --scanners misconfig --exit-code 0 --format table \
+            --skip-dirs test --skip-dirs examples --skip-dirs bin --skip-dirs build --skip-dirs data \
+            --ignorefile .trivyignore .
 
   # Every worker-image toolchain pin at its upstream's latest release
   # (devops.md: track the latest). The pins move by hand, so this is what
@@ -126,7 +182,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Check every worker-image pin against upstream
         run: make check-worker-toolchain-currency
@@ -142,9 +198,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: ${{ env.GO_VERSION }}
 

@@ -250,11 +250,13 @@ func TestChangesJobRunsTheDocsOnlyScript(t *testing.T) {
 		t.Fatalf("%s has no changes job. Every docs-only skip reads its output.", ciWorkflowPath)
 	}
 	for _, want := range []string{
-		"docs_only: ${{ steps.filter.outputs.docs_only }}",
-		"id: filter",
+		"docs_only: ${{ steps.diff.outputs.docs_only }}",
+		"id: diff",
 		"EVENT: ${{ github.event_name }}",
 		"BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-		`run: scripts/docs-only.sh >> "$GITHUB_OUTPUT"`,
+		// ci-template v1.23: the full tier (ci:full) is never docs-only.
+		"if [ \"$CI_FULL_TIER\" = true ]; then\n            echo \"docs_only=false\" >> \"$GITHUB_OUTPUT\"\n",
+		`scripts/docs-only.sh >> "$GITHUB_OUTPUT"`,
 	} {
 		if !strings.Contains(changes, want) {
 			t.Errorf("changes job lacks %q. The classification is tested in "+
@@ -271,7 +273,15 @@ func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 		t.Errorf("image job does not set DOCS_ONLY from the changes job; every " +
 			"stage guard below would compare an empty value and never skip")
 	}
-	const guard = "env.DOCS_ONLY != 'true'"
+	// ci-template v1.23 guards a PR-tier stage on the changes job's output. A
+	// full-tier stage needs no guard: the changes job never reports a
+	// full-tier run docs-only. The releasability test is the one stage that
+	// runs only for a docs-only pull request; `make coverage` runs it otherwise.
+	const (
+		guard         = "needs.changes.outputs.docs_only != 'true'"
+		fullTier      = "env.CI_FULL_TIER == 'true'"
+		docsOnlyGuard = "needs.changes.outputs.docs_only == 'true'"
+	)
 	stages := 0
 	for _, step := range ciSteps(image) {
 		if !strings.Contains(step, "scripts/in-toolchain-image.sh") {
@@ -280,16 +290,19 @@ func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 		stages++
 		name, cond := stepName(step), stepIf(step)
 		if name == "make lint" {
-			if strings.Contains(cond, "DOCS_ONLY") {
-				t.Errorf("make lint is guarded by DOCS_ONLY (if: %s). Lint is the "+
+			if strings.Contains(cond, "docs_only") || strings.Contains(cond, "DOCS_ONLY") {
+				t.Errorf("make lint is guarded by docs_only (if: %s). Lint is the "+
 					"one stage a docs-only pull request still runs.", cond)
 			}
 			continue
 		}
-		if !strings.Contains(cond, guard) {
-			t.Errorf("step %q runs in the toolchain image without %q in its if: "+
+		if strings.Contains(cond, docsOnlyGuard) && strings.Contains(step, "RELEASABILITY_TEST") {
+			continue
+		}
+		if !strings.Contains(cond, guard) && !strings.Contains(cond, fullTier) {
+			t.Errorf("step %q runs in the toolchain image without %q or %q in its if: "+
 				"(if: %s). A docs-only pull request builds only the toolchain "+
-				"image, so the stage would fail, or run for nothing.", name, guard, cond)
+				"image, so the stage would fail, or run for nothing.", name, guard, fullTier, cond)
 		}
 	}
 	if stages < 2 {
@@ -322,12 +335,15 @@ func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
 	}
 }
 
-func TestIntegrationSkipsOnlyForADocsOnlyPullRequest(t *testing.T) {
+// TestIntegrationNeverRunsForADocsOnlyPullRequest: since ci-template v1.23
+// integration is full tier, and the changes job never reports a full-tier run
+// docs-only, so a docs-only pull request never runs it.
+func TestIntegrationNeverRunsForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' }}"
-	if !strings.Contains(jobs["integration"], "\n    "+cond+"\n") {
-		t.Errorf("integration job lacks %q. It must skip for a docs-only pull "+
-			"request and run for every other change.", cond)
+	jobIf := jobIfRe.FindStringSubmatch(jobs["integration"])
+	if jobIf == nil || !strings.Contains(jobIf[1], "("+fullTierIf+")") {
+		t.Errorf("integration job's `if:` lacks the full-tier condition (%s); "+
+			"a docs-only pull request would run it", fullTierIf)
 	}
 	needs := gateNeeds(t, jobs[gateJobName])
 	if missing([]string{"changes"}, needs) != nil {

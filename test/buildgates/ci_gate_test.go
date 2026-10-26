@@ -39,25 +39,25 @@ var (
 const gateJobName = "ci-gate"
 
 // fullTierIf is the condition every full-tier job carries, and the
-// expression ci-gate evaluates into FULL_TIER (#1272).
-const fullTierIf = `github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')`
+// expression ci.yml evaluates into CI_FULL_TIER for ci-gate (#1272). Since
+// ci-template v1.23 every event but a pull request runs the full tier.
+const fullTierIf = `github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')`
+
+// nightlyIf is the condition a nightly-tier job carries and ci-gate evaluates
+// into NIGHTLY (ci-template v1.23). go-quicbaas has no schedule trigger, so
+// only workflow_dispatch selects it.
+const nightlyIf = `github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'`
+
+// draftSkipIf is the job-level `if:` ci-template v1.26 gives every PR-tier
+// job: a draft PR runs no CI, and ci-gate fails a draft outright.
+const draftSkipIf = `${{ !github.event.pull_request.draft }}`
 
 var (
 	jobHeaderRe = regexp.MustCompile(`^  ([a-z0-9][a-z0-9-]*):\s*$`)
 	gateNeedsRe = regexp.MustCompile(`(?m)^    needs: \[([^\]]*)\]\s*$`)
 	checkLineRe = regexp.MustCompile(`(?m)^\s+check\s+(\S+)\s+"[^"]*"\s*(\S*)\s*$`)
-	jobIfRe     = regexp.MustCompile(`(?m)^    if:`)
+	jobIfRe     = regexp.MustCompile(`(?m)^    if: (.*?)(?:\s+#.*)?$`)
 )
-
-// nonGatingJobs are the ci.yml jobs that run but deliberately do not gate
-// CI Gate: they are in neither its needs nor a check line.
-//
-// Integration still runs on every PR but does not gate until row #1700
-// closes (CA m787). Remove it from this set when the row closes, and restore
-// it in ci-gate's needs and as a pr check line.
-var nonGatingJobs = map[string]bool{
-	"integration": true,
-}
 
 // gateNeeds returns the jobs listed in the gate job's `needs: [...]` line.
 func gateNeeds(t *testing.T, gate string) []string {
@@ -166,7 +166,7 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 
 	var substantive []string
 	for _, j := range order {
-		if j != gateJobName && !nonGatingJobs[j] {
+		if j != gateJobName {
 			substantive = append(substantive, j)
 		}
 	}
@@ -202,35 +202,6 @@ func TestCIGateDependsOnEveryJobAndChecksEveryDependency(t *testing.T) {
 	}
 }
 
-// TestNonGatingJobsCannotHideAJob proves nonGatingJobs exempts only real,
-// deliberately ungated jobs: a stale or misspelled entry would silently exempt
-// nothing, and an entry still in the gate's needs or checks contradicts itself.
-func TestNonGatingJobsCannotHideAJob(t *testing.T) {
-	_, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
-	gate, ok := bodies[gateJobName]
-	if !ok {
-		t.Fatalf("ci.yml has no %q job", gateJobName)
-	}
-	needs := gateNeeds(t, gate)
-	checks := gateChecks(gate)
-
-	for j := range nonGatingJobs {
-		if j == gateJobName {
-			t.Errorf("%s itself cannot be non-gating", gateJobName)
-		}
-		if _, ok := bodies[j]; !ok {
-			t.Errorf("non-gating job %q does not exist in ci.yml; remove the stale entry", j)
-		}
-		if slices.Contains(needs, j) {
-			t.Errorf("job %q is non-gating but is in %s's needs; remove it from "+
-				"nonGatingJobs now that it gates", j, gateJobName)
-		}
-		if _, ok := checks[j]; ok {
-			t.Errorf("job %q is non-gating but has a check line in %s", j, gateJobName)
-		}
-	}
-}
-
 // TestCIGateRunsEvenWhenADependencyFails pins `if: always()` and the
 // fail-closed comparison.
 //
@@ -261,39 +232,52 @@ func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 	}
 }
 
-// TestCIGateTiersMatchTheJobs pins the two tiers to the gate.
+// TestCIGateTiersMatchTheJobs pins the tiers to the gate.
 //
 // ci-gate passes a skipped job only when its check line tags it `full` and the
-// run did not select the full tier. Two drifts would break that: a job tagged
-// `full` whose `if:` differs from FULL_TIER, so the gate excuses a skip in a
-// run that should have executed it; and a PR-tier job that gains an `if:`, so
-// it skips on some event and fails the gate there.
+// run did not select the full tier, or `nightly` and the run is not a nightly
+// one. Two drifts would break that: a job tagged `full` or `nightly` whose
+// `if:` differs from the gate's condition, so the gate excuses a skip in a
+// run that should have executed it; and a PR-tier job that gains an `if:`
+// beyond the draft skip, so it skips on some event and fails the gate there.
 func TestCIGateTiersMatchTheJobs(t *testing.T) {
-	order, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
+	body := readFile(t, ciWorkflowPath)
+	order, bodies := ciJobs(t, body)
 	gate := bodies[gateJobName]
 
-	if !strings.Contains(gate, "FULL_TIER: ${{ "+fullTierIf+" }}") {
-		t.Errorf("%s's FULL_TIER is not the full-tier condition %q", gateJobName, fullTierIf)
+	if !strings.Contains(body, "\n  CI_FULL_TIER: ${{ "+fullTierIf+" }}\n") {
+		t.Errorf("ci.yml's CI_FULL_TIER is not the full-tier condition %q", fullTierIf)
+	}
+	if !strings.Contains(gate, "FULL_TIER: ${{ env.CI_FULL_TIER }}") {
+		t.Errorf("%s's FULL_TIER is not ${{ env.CI_FULL_TIER }}", gateJobName)
+	}
+	if !strings.Contains(gate, "NIGHTLY: ${{ "+nightlyIf+" }}") {
+		t.Errorf("%s's NIGHTLY is not the nightly condition %q", gateJobName, nightlyIf)
 	}
 
 	tiers := gateChecks(gate)
 	for _, j := range order {
-		if j == gateJobName || nonGatingJobs[j] {
+		if j == gateJobName {
 			continue
 		}
-		job := bodies[j]
+		jobIf := jobIfRe.FindStringSubmatch(bodies[j])
 		switch tiers[j] {
 		case "full":
-			if !strings.Contains(job, "\n    if: "+fullTierIf+"\n") {
-				t.Errorf("job %q is tagged full in %s but lacks `if: %s`", j, gateJobName, fullTierIf)
+			if jobIf == nil || !strings.Contains(jobIf[1], "("+fullTierIf+")") {
+				t.Errorf("job %q is tagged full in %s but its `if:` lacks (%s)", j, gateJobName, fullTierIf)
+			}
+		case "nightly":
+			if jobIf == nil || jobIf[1] != "${{ "+nightlyIf+" }}" {
+				t.Errorf("job %q is tagged nightly in %s but lacks `if: ${{ %s }}`", j, gateJobName, nightlyIf)
 			}
 		case "pr":
-			if jobIfRe.MatchString(job) {
-				t.Errorf("job %q is PR tier but carries a job-level `if:`; a PR-tier job "+
-					"must run on every event, and %s fails it when skipped", j, gateJobName)
+			if jobIf != nil && jobIf[1] != draftSkipIf {
+				t.Errorf("job %q is PR tier but its job-level `if:` is %q; a PR-tier job "+
+					"must run on every event but a draft PR, and %s fails it when skipped",
+					j, jobIf[1], gateJobName)
 			}
 		default:
-			t.Errorf("job %q's check line in %s has tier %q; want `pr` or `full`",
+			t.Errorf("job %q's check line in %s has tier %q; want `pr`, `full` or `nightly`",
 				j, gateJobName, tiers[j])
 		}
 	}
@@ -305,13 +289,13 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 // PR's run in flight.
 func TestCIIgnoresLabelChanges(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
-	// The ci-template's pull_request trigger carries no types list, so it runs
-	// on the default opened, synchronize and reopened, never on a label change.
-	const trigger = "\n  pull_request:\n    branches: [main]\n  workflow_dispatch:"
-	if !strings.Contains(body, trigger) {
-		t.Errorf("ci.yml's pull_request trigger is not the ci-template's:%s", trigger)
+	// ci-template v1.25.4 lists the types: opened, synchronize and reopened,
+	// never a label change.
+	const types = "\n    types: [opened, synchronize, reopened]\n  workflow_dispatch:"
+	if !strings.Contains(body, "\n  pull_request:\n    branches: [main]\n") || !strings.Contains(body, types) {
+		t.Errorf("ci.yml's pull_request trigger is not the ci-template's:%s", types)
 	}
-	if strings.Contains(body, "labeled") {
+	if regexp.MustCompile(`(?m)^\s*types:.*labeled`).MatchString(body) {
 		t.Errorf("ci.yml's triggers carry `labeled`; a label change must not start CI")
 	}
 }
@@ -325,27 +309,44 @@ func TestCIIgnoresLabelChanges(t *testing.T) {
 // in-progress runs.
 var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
 
-// mainRunKey is the group-key term that gives each main commit its own group,
-// so a literal cancel-in-progress never cancels a main run.
-const mainRunKey = "github.ref == 'refs/heads/main' && github.sha"
+// mainRunKeys are the group-key terms that give each main commit its own
+// group, so a literal cancel-in-progress never cancels a main run: the DS-3161
+// term, and ci-template v1.26.2's, which also keys on the event.
+var mainRunKeys = []string{
+	"github.ref == 'refs/heads/main' && github.sha",
+	"github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha)",
+}
+
+// concurrencyBlocks are the accepted blocks. Gitea does not evaluate an
+// expression in cancel-in-progress, so it is a literal true. A PR ref shares
+// one group, so its newer run cancels the older; a main commit has a group of
+// its own. ci.yml carries ci-template v1.26.2's; the other workflows keep the
+// DS-3161 block.
+var concurrencyBlocks = []string{
+	"concurrency:\n" +
+		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKeys[0] + " || 'latest' }}\n" +
+		"  cancel-in-progress: true\n",
+	"concurrency:\n" +
+		"  group: ${{ github.workflow }}-${{ " + mainRunKeys[1] + " || github.ref }}\n" +
+		"  cancel-in-progress: true\n",
+}
+
+// containsAny reports whether body contains any of subs.
+func containsAny(body string, subs []string) bool {
+	return slices.ContainsFunc(subs, func(s string) bool { return strings.Contains(body, s) })
+}
 
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
-	// The DS-3161 block: Gitea does not evaluate an expression in
-	// cancel-in-progress, so it is a literal true. A PR ref shares one group,
-	// so its newer run cancels the older; a main commit has a group of its own.
-	const want = "concurrency:\n" +
-		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
-		"  cancel-in-progress: true\n"
 	for _, path := range workflowFiles(t) {
 		body := readFile(t, path)
-		if strings.Contains(body, "\n  push:\n") && cancelsInProgress.MatchString(body) && !strings.Contains(body, mainRunKey) {
+		if strings.Contains(body, "\n  push:\n") && cancelsInProgress.MatchString(body) && !containsAny(body, mainRunKeys) {
 			t.Errorf("%s runs on push and sets `cancel-in-progress: true` without a per-commit main group, which cancels main runs", path)
 		}
 		if !strings.Contains(body, "\n  pull_request:\n") {
 			continue
 		}
-		if !strings.Contains(body, "\n"+want) {
-			t.Errorf("%s runs on pull_request but lacks the concurrency block:\n%s", path, want)
+		if !strings.Contains(body, "\n"+concurrencyBlocks[0]) && !strings.Contains(body, "\n"+concurrencyBlocks[1]) {
+			t.Errorf("%s runs on pull_request but lacks a concurrency block:\n%s", path, strings.Join(concurrencyBlocks, "\n"))
 		}
 	}
 }
@@ -445,6 +446,11 @@ var stageInvocations = []struct {
 		{role: "tooling go test", count: 1, cmd: regexp.MustCompile(`^go test -p 2 .*\./scripts/\.\.\. \./test/buildgates/\.\.\.$`), tags: singleQuotedTags},
 	}},
 	{target: "lint", invocations: []stageInvocation{
+		{role: "golangci-lint run", count: 1, cmd: regexp.MustCompile(`golangci-lint run `), tags: golangciTags},
+	}},
+	// ci-template v1.27 moves the slow gates out of `make lint` into the
+	// parallel lint-gates job.
+	{target: "lint-gates", invocations: []stageInvocation{
 		{role: "go vet integration tree", count: 1, cmd: regexp.MustCompile(`^go vet .*\./test/\.\.\.$`), tags: singleQuotedTags},
 		{role: "go vet integration-tagged", count: 1, cmd: regexp.MustCompile(`^go vet .*\$scope$`), tags: singleQuotedTags},
 		{role: "go vet hardware unit", count: 1, cmd: regexp.MustCompile(`^go vet .*\$unit `), tags: singleQuotedTags},
@@ -459,7 +465,6 @@ var stageInvocations = []struct {
 		{role: "secure-analyzer hardware-unit", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh hardware-unit `), tags: secureTags},
 		{role: "secure-analyzer hardware-integration", count: 1, cmd: regexp.MustCompile(`secure-analyzer\.sh hardware-integration `), tags: secureTags},
 		{role: "secure-analyzer self-test", count: 1, cmd: regexp.MustCompile(`scripts/secure-analyzer_test\.sh `), tags: selfTestTags},
-		{role: "golangci-lint run", count: 1, cmd: regexp.MustCompile(`golangci-lint run `), tags: golangciTags},
 	}},
 	{target: "gosec", invocations: []stageInvocation{
 		{role: "gosec scan", count: 1, cmd: regexp.MustCompile(`^\$GOSEC_BIN `), tags: gosecTags},
@@ -572,16 +577,16 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 		{target: "coverage", role: "coverage go test", from: "-timeout=$(RACE_TIMEOUT) -tags '$(TEST_TAGS)' -coverprofile=", to: "-timeout=$(RACE_TIMEOUT) -coverprofile="},
 		{target: "coverage", role: "tag-pass go test", from: "-p 2 -tags '$(MINIMAL_TEST_TAGS)' -timeout=10m", to: "-p 2 -timeout=10m"},
 		{target: "coverage", role: "tooling go test", from: "-p 2 -tags '$(TEST_TAGS)' -timeout=10m ./scripts/...", to: "-p 2 -timeout=10m ./scripts/..."},
-		{target: "lint", role: "go vet integration tree", from: "vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...", to: "vet ./test/..."},
-		{target: "lint", role: "go vet integration-tagged", from: "vet -tags '$(INTEGRATION_VET_TAGS)' $$scope", to: "vet $$scope"},
-		{target: "lint", role: "go vet hardware unit", from: "vet -tags '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $$unit", to: "vet $$unit"},
-		{target: "lint", role: "go vet hardware integration", from: "vet -tags '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' $$integ", to: "vet $$integ"},
-		{target: "lint", role: "secure-analyzer maximal", from: "secure-analyzer.sh $* '$(SECURE_ANALYZER_TAGS_$*)' ", to: "secure-analyzer.sh $* "},
-		{target: "lint", role: "secure-analyzer integration-test", from: "secure-analyzer.sh integration-test '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-test "},
-		{target: "lint", role: "secure-analyzer integration-tagged", from: "secure-analyzer.sh integration-tagged '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-tagged "},
-		{target: "lint", role: "secure-analyzer hardware-unit", from: "secure-analyzer.sh hardware-unit '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-unit "},
-		{target: "lint", role: "secure-analyzer hardware-integration", from: "secure-analyzer.sh hardware-integration '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-integration "},
-		{target: "lint", role: "secure-analyzer self-test", from: "SECURE_ANALYZER_SELFTEST_TAGS='$(TEST_TAGS)' ", to: ""},
+		{target: "lint-gates", role: "go vet integration tree", from: "vet -tags '$(INTEGRATION_VET_TAGS)' ./test/...", to: "vet ./test/..."},
+		{target: "lint-gates", role: "go vet integration-tagged", from: "vet -tags '$(INTEGRATION_VET_TAGS)' $$scope", to: "vet $$scope"},
+		{target: "lint-gates", role: "go vet hardware unit", from: "vet -tags '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' $$unit", to: "vet $$unit"},
+		{target: "lint-gates", role: "go vet hardware integration", from: "vet -tags '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' $$integ", to: "vet $$integ"},
+		{target: "lint-gates", role: "secure-analyzer maximal", from: "secure-analyzer.sh $* '$(SECURE_ANALYZER_TAGS_$*)' ", to: "secure-analyzer.sh $* "},
+		{target: "lint-gates", role: "secure-analyzer integration-test", from: "secure-analyzer.sh integration-test '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-test "},
+		{target: "lint-gates", role: "secure-analyzer integration-tagged", from: "secure-analyzer.sh integration-tagged '$(INTEGRATION_VET_TAGS)' ", to: "secure-analyzer.sh integration-tagged "},
+		{target: "lint-gates", role: "secure-analyzer hardware-unit", from: "secure-analyzer.sh hardware-unit '$(TEST_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-unit "},
+		{target: "lint-gates", role: "secure-analyzer hardware-integration", from: "secure-analyzer.sh hardware-integration '$(INTEGRATION_VET_TAGS) $(HARDWARE_VET_TAGS)' ", to: "secure-analyzer.sh hardware-integration "},
+		{target: "lint-gates", role: "secure-analyzer self-test", from: "SECURE_ANALYZER_SELFTEST_TAGS='$(TEST_TAGS)' ", to: ""},
 		{target: "lint", role: "golangci-lint run", from: "--build-tags '$(LINT_BUILD_TAGS)' ", to: ""},
 		{target: "gosec", role: "gosec scan", from: "-tags \"$$(echo '$(LINT_BUILD_TAGS)' | tr ' ' ',')\" ", to: ""},
 	}
@@ -609,18 +614,69 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 	}
 }
 
-// TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
-// coordinator dispatches the nightly full tier, no workflow schedules itself.
+// templateNightlyTrigger is ci-template v1.27.0's nightly full-tier trigger,
+// verbatim. Ruling 135 sanctions it as the one scheduler (ruling 214 (2)).
+const templateNightlyTrigger = "  schedule:\n    - cron: '0 4 * * *'\n"
+
+var (
+	scheduleRe = regexp.MustCompile(`(?m)^  schedule:`)
+	cronRe     = regexp.MustCompile(`(?m)^\s*-\s*cron:`)
+)
+
+// scheduleViolation reports why a workflow's schedule triggers break the
+// rule, or "" when they keep it. Only ci.yml may carry a schedule, and only
+// the template's nightly trigger, once.
+func scheduleViolation(name, workflow string) string {
+	if name == "ci.yml" {
+		workflow = strings.Replace(workflow, templateNightlyTrigger, "", 1)
+	}
+	if scheduleRe.MatchString(workflow) || cronRe.MatchString(workflow) {
+		return "carries a `schedule:` trigger other than the ci-template nightly trigger in ci.yml"
+	}
+	return ""
+}
+
+// TestOnlyTheTemplateNightlyTriggerSchedulesAWorkflow pins ruling 214 (2):
+// ci.yml keeps the template's nightly trigger, and no other workflow, nor
+// any other cron, schedules itself; the coordinator dispatches the rest.
 // automerge.yml is under owner hold and keeps its sweep.
-func TestNoWorkflowRunsOnASchedule(t *testing.T) {
-	scheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
+func TestOnlyTheTemplateNightlyTriggerSchedulesAWorkflow(t *testing.T) {
 	for _, path := range workflowFiles(t) {
-		if filepath.Base(path) == "automerge.yml" {
+		name := filepath.Base(path)
+		if name == "automerge.yml" {
 			continue
 		}
-		if scheduleRe.MatchString(readFile(t, path)) {
-			t.Errorf("%s carries a `schedule:` trigger; dispatch it instead", path)
+		if why := scheduleViolation(name, readFile(t, path)); why != "" {
+			t.Errorf("%s %s", path, why)
 		}
+	}
+}
+
+// TestScheduleViolationCatchesEveryOtherTrigger proves the rule above both
+// allows the template trigger and fails each schedule it must refuse.
+func TestScheduleViolationCatchesEveryOtherTrigger(t *testing.T) {
+	const on = "on:\n  push:\n    branches: [main]\n"
+	cases := []struct {
+		name     string
+		file     string
+		workflow string
+		wantFail bool
+	}{
+		{"template trigger in ci.yml", "ci.yml", on + templateNightlyTrigger, false},
+		{"no schedule in ci.yml", "ci.yml", on, false},
+		{"different cron in ci.yml", "ci.yml", on + "  schedule:\n    - cron: '0 5 * * *'\n", true},
+		{"extra cron in ci.yml", "ci.yml", on + templateNightlyTrigger + "    - cron: '0 16 * * *'\n", true},
+		{"template trigger twice in ci.yml", "ci.yml", on + templateNightlyTrigger + templateNightlyTrigger, true},
+		{"template trigger in another workflow", "nightly.yml", on + templateNightlyTrigger, true},
+		{"other schedule in another workflow", "batch.yml", on + "  schedule:\n    - cron: '30 2 * * 1'\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scheduleViolation(tc.file, tc.workflow) != ""
+			if got != tc.wantFail {
+				t.Errorf("scheduleViolation(%s) failed = %v, want %v", tc.file, got, tc.wantFail)
+			}
+		})
 	}
 }
 
