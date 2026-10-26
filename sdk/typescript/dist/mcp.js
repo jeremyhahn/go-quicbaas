@@ -13,7 +13,7 @@
 import { McpSession } from './mcp_rpc.js';
 import { adoptPage, wholeSetPage, } from './page.js';
 import { QuicBaaSError, DeployNotSupportedError, McpError, McpSecretNotTextError, TransportNotSupportedError, } from './errors.js';
-import { requireTLSForSOPIN } from './so_pin.js';
+import { requireTLSForSecret, requireTLSForSOPIN } from './so_pin.js';
 import { requireOneAdminSelector } from './ceremony.js';
 // McpNotImplementedError is thrown by all methods until the MCP protocol
 // client is wired into this file.
@@ -627,9 +627,11 @@ export class McpBarrierClient {
         return this.session.callTool('qrdb_barrier_status', {});
     }
     async initialize(req) {
+        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
         await this.session.callTool('qrdb_barrier_initialize', { secret: secretArg('secret', req.secret) });
     }
     async unseal(req) {
+        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
         await this.session.callTool('qrdb_barrier_unseal', { secret: secretArg('secret', req.secret) });
     }
     async seal(req) {
@@ -639,6 +641,7 @@ export class McpBarrierClient {
     // The MCP tool never returns share material (officers claim shares through
     // the qrdb share-claim flow), so shares is empty unless the server sends it.
     async initializeShamir(req) {
+        requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
         const reply = await this.session.callTool('qrdb_barrier_shamir_initialize', {
             secret: secretArg('secret', req.secret),
             threshold: req.threshold,
@@ -662,7 +665,10 @@ export class McpBarrierClient {
     async quorumBegin(req) {
         return this.session.callTool('qrdb_barrier_quorum_begin', { ...req });
     }
+    // The share is the holder's decrypted Shamir share, so a submission that
+    // carries one is refused before it is sent to a plaintext endpoint.
     async quorumSubmit(req) {
+        requireTLSForSecret('mcp', this.session.endpoint, Boolean(req.share));
         return this.session.callTool('qrdb_barrier_quorum_submit', { ...req });
     }
     async rekeyStart(req) {
@@ -695,6 +701,7 @@ export class McpBarrierClient {
     // tenant_id and would migrate the system barrier. The tools do not report
     // the scope, so it is the scope of the tool that was called.
     async enableEncryption(req) {
+        requireTLSForSecret('mcp', this.session.endpoint, (req.passphrase?.length ?? 0) > 0);
         const args = {
             target_strategy: req.strategy,
             mechanism: req.mechanism ?? '',
@@ -738,7 +745,7 @@ export class McpCeremonyClient {
     }
     async initialize(req) {
         requireOneAdminSelector(req);
-        requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
+        requireTLSForSecret('mcp', this.session.endpoint, Boolean(req.so_pin) || Boolean(req.user_pin) || (req.secret?.length ?? 0) > 0);
         const args = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
         if (req.credential_seal_strategy)
             args.credential_seal_strategy = req.credential_seal_strategy;
