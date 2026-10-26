@@ -187,7 +187,7 @@ import {
   McpSecretNotTextError,
   TransportNotSupportedError,
 } from './errors.js';
-import { requireTLSForSOPIN } from './so_pin.js';
+import { requireTLSForSecret, requireTLSForSOPIN } from './so_pin.js';
 import { requireOneAdminSelector } from './ceremony.js';
 
 
@@ -878,10 +878,12 @@ export class McpBarrierClient implements BarrierClient {
   }
 
   async initialize(req: BarrierInitRequest): Promise<void> {
+    requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
     await this.session.callTool<Record<string, unknown>>('qrdb_barrier_initialize', { secret: secretArg('secret', req.secret) });
   }
 
   async unseal(req: BarrierUnsealRequest): Promise<void> {
+    requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
     await this.session.callTool<Record<string, unknown>>('qrdb_barrier_unseal', { secret: secretArg('secret', req.secret) });
   }
 
@@ -893,6 +895,7 @@ export class McpBarrierClient implements BarrierClient {
   // The MCP tool never returns share material (officers claim shares through
   // the qrdb share-claim flow), so shares is empty unless the server sends it.
   async initializeShamir(req: BarrierShamirInitRequest): Promise<BarrierShamirInitResponse> {
+    requireTLSForSecret('mcp', this.session.endpoint, req.secret.length > 0);
     const reply = await this.session.callTool<Partial<BarrierShamirInitResponse>>('qrdb_barrier_shamir_initialize', {
       secret: secretArg('secret', req.secret),
       threshold: req.threshold,
@@ -928,7 +931,10 @@ export class McpBarrierClient implements BarrierClient {
     return this.session.callTool<BarrierQuorumChallenge>('qrdb_barrier_quorum_begin', { ...req });
   }
 
+  // The share is the holder's decrypted Shamir share, so a submission that
+  // carries one is refused before it is sent to a plaintext endpoint.
   async quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumOutcome> {
+    requireTLSForSecret('mcp', this.session.endpoint, Boolean(req.share));
     return this.session.callTool<BarrierQuorumOutcome>('qrdb_barrier_quorum_submit', { ...req });
   }
 
@@ -966,6 +972,7 @@ export class McpBarrierClient implements BarrierClient {
   // tenant_id and would migrate the system barrier. The tools do not report
   // the scope, so it is the scope of the tool that was called.
   async enableEncryption(req: BarrierEnableEncryptionRequest): Promise<BarrierEnableEncryptionResponse> {
+    requireTLSForSecret('mcp', this.session.endpoint, (req.passphrase?.length ?? 0) > 0);
     const args: Record<string, unknown> = {
       target_strategy: req.strategy,
       mechanism: req.mechanism ?? '',
@@ -1009,7 +1016,11 @@ export class McpCeremonyClient implements CeremonyClient {
 
   async initialize(req: CeremonyInitializeRequest): Promise<CeremonyInitializeResponse> {
     requireOneAdminSelector(req);
-    requireTLSForSOPIN('mcp', this.session.endpoint, req.so_pin);
+    requireTLSForSecret(
+      'mcp',
+      this.session.endpoint,
+      Boolean(req.so_pin) || Boolean(req.user_pin) || (req.secret?.length ?? 0) > 0,
+    );
     const args: Record<string, unknown> = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
     if (req.credential_seal_strategy) args.credential_seal_strategy = req.credential_seal_strategy;
     if (req.policy) args.policy = req.policy;
