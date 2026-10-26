@@ -137,7 +137,8 @@ var grantNames = []string{
 	// permission absent here is refused to every delegation. The embedded
 	// package's TestSecurityOperationPermissions_WithinPrincipalGrants keeps
 	// this list covering that map.
-	"user_authfactors:login",       // Auth session verbs, FIDO2 authentication
+	"user_authfactors:login",       // Auth token and own-session verbs, FIDO2 authentication
+	"tenants:read",                 // Auth.ListProviders/GetProvider
 	"roles:create",                 // RBAC.CreateRole
 	"roles:delete",                 // RBAC.DeleteRole
 	"roles:list",                   // RBAC.ListRoles

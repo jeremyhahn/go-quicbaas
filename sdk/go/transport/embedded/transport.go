@@ -585,7 +585,7 @@ func (t *Transport) bindCall(ctx context.Context, operation string, perms []stri
 		}
 		ctx = bound
 	}
-	if t.authorize != nil {
+	if _, public := publicOperations[operation]; !public && t.authorize != nil {
 		if err := t.authorize(ctx, operation, perms); err != nil {
 			return nil, err
 		}

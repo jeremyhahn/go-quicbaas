@@ -88,11 +88,54 @@ func TestRequest_UndeclaredOperationPassesNoPermissions(t *testing.T) {
 	var calls []recordedCall
 	tr := newAuthorizedTransport(t, &calls)
 
-	_, err := tr.Request(context.Background(), "quicbaas.Auth", "Login", nil)
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Policy", "Create", nil)
 
 	assert.ErrorIs(t, err, operationRefusedError{})
 	require.Len(t, calls, 1)
 	assert.Empty(t, calls[0].perms)
+}
+
+// A public operation is served without asking the authorizer, so a caller
+// holding no grant reads the OIDC discovery documents.
+func TestRequest_PublicOperationSkipsTheAuthorizer(t *testing.T) {
+	var calls []recordedCall
+	tr, err := New(&authTestService{oidc: newTestOIDCProvider(t)},
+		WithOperationAuthorizer(recordingAuthorizer(&calls)))
+	require.NoError(t, err)
+
+	jwks, err := tr.Request(context.Background(), "quicbaas.Auth", "GetJWKS", nil)
+	require.NoError(t, err)
+	assert.NotEmpty(t, jwks.(*service.JWKS).Keys)
+
+	cfg, err := tr.Request(context.Background(), "quicbaas.Auth", "GetOpenIDConfiguration", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "https://issuer.example.com", cfg.(*service.OpenIDConfiguration).Issuer)
+
+	assert.Empty(t, calls, "a public operation reached the authorizer")
+}
+
+// Every Auth verb is classified: public, or declaring the permission the
+// authorizer checks. An unclassified verb would fall to default deny.
+func TestAuthOperations_PublicOrDeclared(t *testing.T) {
+	for key := range unaryHandlers {
+		if !strings.HasPrefix(key, "quicbaas.Auth/") {
+			continue
+		}
+		_, public := publicOperations[key]
+		_, declared := operationPermissions[key]
+		assert.True(t, public != declared, "%s: public=%v declared=%v, want exactly one", key, public, declared)
+	}
+}
+
+// Every public operation is a served unary verb that declares no permission,
+// so the public set cannot shadow a declared grant.
+func TestPublicOperations_AreUndeclaredHandlers(t *testing.T) {
+	for key := range publicOperations {
+		_, ok := unaryHandlers[key]
+		assert.True(t, ok, "%s is public but has no handler", key)
+		_, declared := operationPermissions[key]
+		assert.False(t, declared, "%s is public and declares a permission", key)
+	}
 }
 
 func TestRequestStream_AuthorizerRefusalStopsDispatch(t *testing.T) {

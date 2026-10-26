@@ -136,13 +136,44 @@ func TestEmbeddedTransport_DelegationRefusedOnStream(t *testing.T) {
 // so no grant set widens a delegation to it.
 func TestEmbeddedTransport_DelegationRefusedUndeclaredOperation(t *testing.T) {
 	tr := newDelegatedTransport(t, tenantGrant(t, "tenant-a", permSecretsRead, permSecretsWrite))
-	_, err := tr.Request(context.Background(), "quicbaas.Auth", "Login", nil)
+	_, err := tr.Request(context.Background(), "quicbaas.IAM.Policy", "Create", nil)
 	var undeclared *DelegatedOperationUndeclaredError
 	if !stderrors.As(err, &undeclared) {
-		t.Fatalf("Request(Auth/Login) = %v, want DelegatedOperationUndeclaredError", err)
+		t.Fatalf("Request(IAM.Policy/Create) = %v, want DelegatedOperationUndeclaredError", err)
 	}
-	if undeclared.Operation != "quicbaas.Auth/Login" {
-		t.Errorf("refused operation = %q, want quicbaas.Auth/Login", undeclared.Operation)
+	if undeclared.Operation != "quicbaas.IAM.Policy/Create" {
+		t.Errorf("refused operation = %q, want quicbaas.IAM.Policy/Create", undeclared.Operation)
+	}
+}
+
+// The OIDC discovery documents are public: a delegation holding no grant
+// for them reaches the handler instead of being refused as undeclared. The
+// unreachable facade serves no OIDC provider, so the handler answers that
+// the service is not configured, which only a dispatched call can return.
+func TestEmbeddedTransport_DelegationReachesPublicDiscovery(t *testing.T) {
+	tr := newDelegatedTransport(t, tenantGrant(t, "tenant-a", permSecretsRead))
+	for _, method := range []string{"GetJWKS", "GetOpenIDConfiguration"} {
+		t.Run(method, func(t *testing.T) {
+			_, err := tr.Request(context.Background(), "quicbaas.Auth", method, nil)
+			var notConfigured *embedded.ServiceNotConfiguredError
+			if !stderrors.As(err, &notConfigured) {
+				t.Fatalf("Request(Auth/%s) = %v, want the dispatched ServiceNotConfiguredError", method, err)
+			}
+		})
+	}
+}
+
+// A session verb is protected: a delegation without user_authfactors:login
+// is refused on a grant, not waved through as public.
+func TestEmbeddedTransport_DelegationRefusedSessionRead(t *testing.T) {
+	tr := newDelegatedTransport(t, tenantGrant(t, "tenant-a", permSecretsRead))
+	_, err := tr.Request(context.Background(), "quicbaas.Auth", "ListSessions", nil)
+	if err == nil {
+		t.Fatal("Request(Auth/ListSessions) without user_authfactors:login succeeded, want a refusal")
+	}
+	var undeclared *DelegatedOperationUndeclaredError
+	if stderrors.As(err, &undeclared) {
+		t.Fatalf("Request(Auth/ListSessions) refused as undeclared, want a grant refusal: %v", err)
 	}
 }
 

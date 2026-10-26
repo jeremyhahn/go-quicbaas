@@ -30,6 +30,27 @@ func WithOperationAuthorizer(authorize OperationAuthorizer) Option {
 	}
 }
 
+// publicOperations are the dispatch keys every caller may reach without a
+// grant: the login ceremonies that establish an identity and the OIDC
+// discovery documents, the operations pkg/api/grpc serves as public methods.
+// The transport does not ask the OperationAuthorizer about them.
+var publicOperations = map[string]struct{}{
+	"quicbaas.Auth/Login":                   {},
+	"quicbaas.Auth/BeginLogin":              {},
+	"quicbaas.Auth/FinishLogin":             {},
+	"quicbaas.Auth/BeginFederatedLogin":     {},
+	"quicbaas.Auth/HandleFederatedCallback": {},
+	"quicbaas.Auth/GetJWKS":                 {},
+	"quicbaas.Auth/GetOpenIDConfiguration":  {},
+
+	// An invite is redeemed by the person it was issued to, who holds the
+	// one-time token and no identity yet.
+	"quicbaas.IAM.Invite/GetInvite":           {},
+	"quicbaas.IAM.Invite/ActivateFIDO2Begin":  {},
+	"quicbaas.IAM.Invite/ActivateFIDO2Finish": {},
+	"quicbaas.IAM.Invite/ActivatePIV":         {},
+}
+
 // operationPermissions maps each dispatch key to the qrdb permissions the
 // same RPC declares on the gRPC transport (pkg/api/grpc authz_mapping.go).
 // An operation absent from this map declares no permission.
@@ -65,6 +86,17 @@ var operationPermissions = map[string][]string{
 	"quicbaas.Auth/RefreshToken":    {"user_authfactors:login"},
 	"quicbaas.Auth/IntrospectToken": {"user_authfactors:login"},
 	"quicbaas.Auth/ValidateToken":   {"user_authfactors:login"},
+
+	// The session verbs act only on the caller's own sessions, as Logout
+	// does, so they declare Logout's permission; the IAM.Session verbs
+	// below administer other users' sessions. The provider reads declare
+	// what the gRPC FederationService declares.
+	"quicbaas.Auth/GetSession":        {"user_authfactors:login"},
+	"quicbaas.Auth/ListSessions":      {"user_authfactors:login"},
+	"quicbaas.Auth/RevokeSession":     {"user_authfactors:login"},
+	"quicbaas.Auth/RevokeAllSessions": {"user_authfactors:login"},
+	"quicbaas.Auth/ListProviders":     {"tenants:read"},
+	"quicbaas.Auth/GetProvider":       {"tenants:read"},
 
 	"quicbaas.RBAC/CreateRole": {"roles:create"},
 	"quicbaas.RBAC/DeleteRole": {"roles:delete"},
