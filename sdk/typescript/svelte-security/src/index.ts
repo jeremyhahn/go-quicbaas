@@ -24,7 +24,6 @@ export { default as BarrierStatusBadge } from './components/BarrierStatusBadge.s
 export { default as BarrierUnsealForm } from './components/BarrierUnsealForm.svelte';
 export { default as ShamirShareInput } from './components/ShamirShareInput.svelte';
 export { default as BarrierStrategyPicker } from './components/BarrierStrategyPicker.svelte';
-export { default as ShamirSharesReveal } from './components/ShamirSharesReveal.svelte';
 export { default as CeremonyOfficerList } from './components/CeremonyOfficerList.svelte';
 export { default as CeremonyClaimChallenge } from './components/CeremonyClaimChallenge.svelte';
 export { default as BootstrapMethodPicker } from './components/BootstrapMethodPicker.svelte';

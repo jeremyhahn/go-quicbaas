@@ -66,9 +66,14 @@ export interface BarrierInitRequest {
   total_shares: number;
 }
 
-/** BarrierInitResponse contains the freshly minted Shamir shares. */
+/**
+ * BarrierInitResponse is the share-free result of a Shamir init: the shares
+ * are sealed to their holders, who each claim their own.
+ */
 export interface BarrierInitResponse {
-  shares: string[];
+  threshold: number;
+  total_shares: number;
+  share_count: number;
 }
 
 /** BarrierUnsealRequest unseals a passphrase barrier. */

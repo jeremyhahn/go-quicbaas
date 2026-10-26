@@ -2612,15 +2612,16 @@ export interface BarrierShamirInitRequest {
   total_shares: number;
 }
 
-// BarrierShamirInitResponse contains the generated Shamir shares.
+// BarrierShamirInitResponse is the share-free result of a Shamir init: the
+// shares are sealed to their holders, who each claim their own.
 // Mirrors transport.BarrierInitializeShamirResponse.
 export interface BarrierShamirInitResponse {
-  /** Shamir shares for distribution. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Shares sealed to their holders. */
+  share_count: number;
 }
 
 /** BarrierDomain names a barrier's key-holder set: its unseal officers or its recovery officers. */

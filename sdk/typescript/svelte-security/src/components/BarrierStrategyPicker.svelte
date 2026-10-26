@@ -61,7 +61,7 @@
     shamir: {
       label: 'Shamir (M-of-N)',
       description:
-        'The master key is split into N shares; any M of them reconstruct it. Shares are returned exactly once and must be distributed to separate custodians.',
+        'The master key is split into N shares; any M of them reconstruct it. Each share is sealed to a separate holder, who claims it individually.',
     },
   };
 
