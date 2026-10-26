@@ -615,25 +615,6 @@ func (v *Validator) validateIAM(cfg *IAMConfig) {
 	v.addSectionError(cfg.WebAuthn.Validate(), "iam.webauthn")
 	v.addSectionError(cfg.SelfServiceRegistration.Validate(), "iam.self_service_registration")
 	v.addSectionError(cfg.DynamicClientRegistration.Validate(), "iam.dynamic_client_registration")
-	if cfg.LoginRatePerMin < 0 {
-		err := &LoginRatePerMinError{Value: cfg.LoginRatePerMin}
-		v.errors = append(v.errors, ValidationError{
-			Field:   "iam.login_rate_per_min",
-			Message: err.Error(),
-			Cause:   err,
-		})
-	}
-}
-
-// LoginRatePerMinError reports a negative iam.login_rate_per_min.
-type LoginRatePerMinError struct {
-	// Value is the configured iam.login_rate_per_min.
-	Value int
-}
-
-// Error implements error.
-func (e *LoginRatePerMinError) Error() string {
-	return fmt.Sprintf("iam.login_rate_per_min must be 0 (go-xkms default) or positive, got %d", e.Value)
 }
 
 // addSectionError records err from a section's own Validate method. A
