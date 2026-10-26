@@ -546,6 +546,8 @@ func TestGrants_HoldEveryVectorVerbTheServerCalls(t *testing.T) {
 		{"pkg/server nodeVectorStorage GetCompactionProgress", "vector:get_compaction_progress"},
 		{"pkg/service vectorService SearchSimilar", "vector:search_similar"},
 		{"pkg/service distributed SearchSimilar", "vector:search_similar"},
+		{"pkg/service vectorService RebuildIndex", "vector:rebuild_index"},
+		{"pkg/service vectorService GetRebuildProgress", "vector:get_rebuild_progress"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.site, func(t *testing.T) {
