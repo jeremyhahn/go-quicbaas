@@ -339,22 +339,7 @@ func handleAuthRevokeAllSessions(ctx context.Context, svc service.QuicBaaS, _ in
 // authSessionToSDK maps a stored session onto the SDK shape. The token and
 // refresh hashes are never copied.
 func authSessionToSDK(s *iam.SessionExt) *service.AuthSession {
-	out := &service.AuthSession{
-		ID:          s.ID,
-		UserID:      strconv.FormatUint(s.UserID, 10),
-		TenantID:    s.TenantID,
-		CreatedAt:   s.Created,
-		LastActive:  s.LastActive,
-		ExpiresAt:   s.ExpiresAt,
-		MFAVerified: s.MFAVerified,
-		IPAddress:   s.IPAddress,
-		UserAgent:   s.UserAgent,
-		AuthMethod:  s.Metadata["auth_method"],
-	}
-	if s.DeviceInfo != nil {
-		out.DeviceInfo = s.DeviceInfo.Name
-	}
-	return out
+	return service.NewAuthSession(s.View())
 }
 
 func handleAuthGetJWKS(ctx context.Context, svc service.QuicBaaS, _ interface{}) (interface{}, error) {
