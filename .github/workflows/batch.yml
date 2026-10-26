@@ -1,5 +1,7 @@
-# batch-template: v1.1 — token-free CPU work on the batch runners: fuzz,
+# batch-template: v1.2 — token-free CPU work on the batch runners: fuzz,
 # race-full, soak, bench. Dispatch only; never in a merge gate.
+# v1.2 (2026-10-21): GO_VERSION 1.27.1 -> 1.27.3 for GO-2026-6809 (crypto/x509,
+# fixed in go1.27.3), with the portfolio-wide toolchain bump.
 #
 # Owner order 2026-10-12 10:43 EDT (relayed by the Company Agent 17:24Z):
 # "the fleet is still not working hard. [one host] is 21%, [two servers] are
