@@ -49,21 +49,6 @@ type WebAuthnFactoryConfig struct {
 	ResidentKeyRequirement  string
 	AuthenticatorAttachment string
 	Debug                   bool
-
-	// AllowPublicRegistration lets a registration ceremony CREATE an account
-	// for an email the store has never seen. It carries the operator's
-	// iam.self_service_registration.enabled decision, because that is the
-	// surface that registers an unknown email
-	// (pkg/api/rest/iam_register_self.go: BeginRegistration is called for an
-	// email the identity store only creates at the FINISH step).
-	//
-	// go-xkms v0.9.2-alpha made this closed by default — v0.9.1 created the
-	// account implicitly, and its own config test asserted "a nil Config must
-	// read as open". Leaving it unmapped would therefore have silently
-	// disabled self-service registration on a node that has it switched on.
-	// An account that already exists still enrols its first passkey through
-	// the same entry point either way; only implicit creation is withheld.
-	AllowPublicRegistration bool
 }
 
 // WebAuthnFactoryParams contains the dependencies required to build a
@@ -396,13 +381,24 @@ func (f *WebAuthnServiceFactory) resolveConfig(ctx context.Context, tenantID str
 	return cfg, nil
 }
 
+// publicRegistrationClosed is go-xkms's AllowPublicRegistration as quicbaas
+// always sets it: false, written explicitly rather than left nil. A ceremony
+// never creates an account. Self-service registration is the BROKER's: the
+// identity store creates the pending account and the ceremony only binds a
+// credential to it (ruling 189, #482). When this was open, go-xkms created the
+// account itself with the email as its username, and the broker's own create
+// then collided on the email.
+func publicRegistrationClosed() *bool {
+	closed := false
+	return &closed
+}
+
 // xkmsWebAuthnConfig projects the resolved per-tenant factory config onto the
 // go-xkms relying-party config. It is the one place the projection happens,
 // kept separate from buildService so the field-for-field mapping — including
 // AllowPublicRegistration, which go-xkms reads as closed when left nil — can
 // be asserted without a live qrdb transport.
 func xkmsWebAuthnConfig(resolved WebAuthnFactoryConfig) *xkmssdk.WebAuthnConfig {
-	allowPublicRegistration := resolved.AllowPublicRegistration
 	return &xkmssdk.WebAuthnConfig{
 		RPID:                    resolved.RPID,
 		RPDisplayName:           resolved.RPDisplayName,
@@ -413,7 +409,7 @@ func xkmsWebAuthnConfig(resolved WebAuthnFactoryConfig) *xkmssdk.WebAuthnConfig 
 		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
 		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
 		Debug:                   resolved.Debug,
-		AllowPublicRegistration: &allowPublicRegistration,
+		AllowPublicRegistration: publicRegistrationClosed(),
 	}
 }
 
@@ -454,7 +450,7 @@ func (f *WebAuthnServiceFactory) buildService(ctx context.Context, tenantID stri
 		ResidentKeyRequirement:  resolved.ResidentKeyRequirement,
 		AuthenticatorAttachment: resolved.AuthenticatorAttachment,
 		Debug:                   resolved.Debug,
-		AllowPublicRegistration: &resolved.AllowPublicRegistration,
+		AllowPublicRegistration: publicRegistrationClosed(),
 	}
 	users, creds, err := f.tenantStores(tenantID)
 	if err != nil {

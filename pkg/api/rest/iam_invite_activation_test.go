@@ -80,9 +80,9 @@ func (s *stubWebAuthn) FinishRegistration(context.Context, string, string, map[s
 	return nil, s.finishErr
 }
 
-func (s *stubWebAuthn) FinishInviteRegistration(context.Context, string, string, map[string]interface{}) error {
+func (s *stubWebAuthn) FinishInviteRegistration(context.Context, string, string, map[string]interface{}) (*iam.AttestationResult, error) {
 	s.finishCalls++
-	return s.finishErr
+	return nil, s.finishErr
 }
 
 func (s *stubWebAuthn) BeginLogin(context.Context, string, string) (map[string]interface{}, error) {

@@ -685,8 +685,7 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		// (pkg/api/rest NewHostServer) around the resolved XKMSService when
 		// these options are supplied instead.
 		xkmssdk.WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return s.GetQRDBNodeClient() }),
-		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
-			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
+		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(s.config.IAM.WebAuthn)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
 		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
@@ -801,15 +800,15 @@ func (s *Server) newQuicBaaSModule() (*apimodule.Module, error) {
 // operator supplies none (see webauthnFactoryConfigFromOperator), but the
 // composed xkms module's separate surface is mounted only on an explicit
 // opt-in.
-func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig, allowPublicRegistration bool) *xkmssdk.ServiceModuleWebAuthnConfig {
+func quicbaasWebAuthnConfigToXKMS(c config.IAMWebAuthnConfig) *xkmssdk.ServiceModuleWebAuthnConfig {
+	closed := false
 	return &xkmssdk.ServiceModuleWebAuthnConfig{
 		Enabled: c.RPID != "",
-		// ONE decision drives both relying parties. Without this the module's
-		// ceremony routes would refuse an unknown email on a node whose
-		// operator has switched self-service registration on, while
-		// quicbaas's own surface accepted it — the two registration lanes
-		// disagreeing again, which is the class of defect this PR closes.
-		AllowPublicRegistration: &allowPublicRegistration,
+		// The module's ceremony never creates an account, exactly as quicbaas's
+		// own relying party never does: accounts are the broker's, and a
+		// ceremony only binds a credential to one (ruling 189, #482). Written
+		// explicitly rather than left to go-xkms's nil default.
+		AllowPublicRegistration: &closed,
 		RPID:                    c.RPID,
 		RPOrigins:               c.RPOrigins,
 		RPDisplayName:           c.RPDisplayName,
