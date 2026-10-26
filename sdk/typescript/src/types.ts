@@ -2492,10 +2492,10 @@ export interface RekeyRequest {
   new_total_shares: number;
 }
 
-// RekeyResponse contains the new Shamir shares after a rekey.
+// RekeyResponse confirms a share rotation. New share material is never
+// returned (qrdb share-free contract): officers re-claim their shares through
+// the identity-gated claim endpoints after a rekey.
 export interface RekeyResponse {
-  // shares are base64-encoded Shamir share bytes.
-  shares: string[];
   version: number;
   timestamp: string;
 }
@@ -2528,10 +2528,13 @@ export interface SealInitRequest {
   secret_threshold: number;
 }
 
-// SealInitResponse contains the generated key shares and root token.
+// SealInitResponse returns the initialization result. Share material is never
+// returned (qrdb share-free contract): officers claim their shares through the
+// identity-gated claim endpoints.
 export interface SealInitResponse {
-  keys: string[];
   root_token: string;
+  version: number;
+  timestamp: string;
 }
 
 // UnsealRequest submits one key share toward unsealing.
