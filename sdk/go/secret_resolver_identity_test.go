@@ -42,7 +42,10 @@ type tenantCredentialService struct {
 	calls    int
 }
 
-func (s *tenantCredentialService) CredentialRetrieveBuffer(ctx context.Context, name string) (*qrdbsecure.Buffer, error) {
+func (s *tenantCredentialService) CredentialRetrieveVersionBuffer(ctx context.Context, name string, version uint64) (*qrdbsecure.Buffer, error) {
+	if version != 0 {
+		return nil, &credentialNotVisibleError{name: name}
+	}
 	s.calls++
 	value, ok := s.byTenant[boundTenant(ctx)][name]
 	if !ok {
@@ -113,8 +116,9 @@ func newTenantCredentialService() *tenantCredentialService {
 	}}
 }
 
-// permCredentialRetrieve is the grant qrdb declares on CredentialRetrieve.
-const permCredentialRetrieve = "credentials:retrieve"
+// permCredentialRetrieve is the grant qrdb declares on
+// CredentialRetrieveVersion, the verb the credential resolver calls.
+const permCredentialRetrieve = "credentials:retrieve_version"
 
 // permSecretsRead and permSecretsWrite are the grants go-qrdb declares for
 // tenant secret material (pkg/permission/broker_scope.go).
