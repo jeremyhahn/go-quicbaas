@@ -91,3 +91,15 @@ func TestServiceVector_UngrantedPrincipalIsRefused(t *testing.T) {
 	require.Error(t, err, "the node served a verb the principal does not hold")
 	require.NotErrorIs(t, err, qrdbsdk.ErrUnauthenticated, "the principal was not bound")
 }
+
+func TestServiceVector_PrincipalRebuildsAndReadsRebuildProgress(t *testing.T) {
+	s, _ := newPrincipalServer(t)
+	vec := seedPrincipalNamespace(t, s)
+	ctx := context.Background()
+
+	rebuild, err := vec.RebuildIndex(ctx, &transport.RebuildIndexRequest{Namespace: "principal-ns"})
+	require.NoError(t, err)
+	require.NotNil(t, rebuild)
+	_, err = vec.GetRebuildProgress(ctx, &transport.GetRebuildProgressRequest{JobID: rebuild.JobID, Namespace: "principal-ns"})
+	require.NoError(t, err)
+}
