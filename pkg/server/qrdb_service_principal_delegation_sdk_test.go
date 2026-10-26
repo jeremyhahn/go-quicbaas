@@ -16,10 +16,12 @@ import (
 )
 
 // delegationSecrets is the secrets backend under the kms:// resolver: it
-// answers the delegating tenant's one secret and counts the reads.
+// answers the delegating tenant's one secret, generates any secret an ensure
+// names, and counts both.
 type delegationSecrets struct {
 	service.SecretsService
-	calls int
+	calls       int
+	ensureCalls int
 }
 
 func (d *delegationSecrets) GetSecret(ctx context.Context, req *service.GetSecretRequest) (*service.GetSecretResponse, error) {
@@ -29,6 +31,15 @@ func (d *delegationSecrets) GetSecret(ctx context.Context, req *service.GetSecre
 		return nil, &delegationSecretNotFoundError{tenantID: tenantID, secretID: req.SecretID}
 	}
 	return &service.GetSecretResponse{SecretID: req.SecretID, Data: []byte("tenant-value")}, nil
+}
+
+func (d *delegationSecrets) EnsureSecret(ctx context.Context, req *service.EnsureSecretRequest) (*service.EnsureSecretResponse, error) {
+	d.ensureCalls++
+	tenantID, _ := qrdbsdk.TenantFromContext(ctx)
+	if tenantID != server.DelegatingTenantID {
+		return nil, &delegationSecretNotFoundError{tenantID: tenantID, secretID: req.SecretID}
+	}
+	return &service.EnsureSecretResponse{SecretID: req.SecretID, Data: []byte("generated-" + req.SecretID), Generated: true}, nil
 }
 
 // delegationSecretNotFoundError is the backend's answer for any secret other
@@ -100,4 +111,26 @@ func TestDelegatedKMS_DelegationWithoutSecretsReadIsRefused(t *testing.T) {
 	_, err := resolveDelegatedKMS(t, c, "kms://app/key")
 	require.Error(t, err, "a delegation without secrets:read resolved kms://")
 	require.Zero(t, secrets.calls, "the secrets backend was reached without secrets:read")
+}
+
+func TestDelegatedKMS_SecretsWriteDelegationEnsures(t *testing.T) {
+	s := server.NewDelegatingServer(t)
+	leaf := server.IssueTestDelegation(t, s, "secrets:read", "secrets:write")
+	secrets := &delegationSecrets{}
+	c := newDelegatedSDKClient(t, s, leaf, secrets)
+
+	got, err := resolveDelegatedKMS(t, c, "kms://app/new?ensure=true")
+	require.NoError(t, err)
+	require.Equal(t, "generated-app/new", got)
+}
+
+func TestDelegatedKMS_EnsureWithoutSecretsWriteIsRefused(t *testing.T) {
+	s := server.NewDelegatingServer(t)
+	leaf := server.IssueTestDelegation(t, s, "secrets:read")
+	secrets := &delegationSecrets{}
+	c := newDelegatedSDKClient(t, s, leaf, secrets)
+
+	_, err := resolveDelegatedKMS(t, c, "kms://app/new?ensure=true")
+	require.Error(t, err, "a delegation without secrets:write ensured kms://")
+	require.Zero(t, secrets.ensureCalls, "the secrets backend was reached without secrets:write")
 }
