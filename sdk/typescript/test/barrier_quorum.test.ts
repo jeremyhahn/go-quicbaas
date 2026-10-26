@@ -285,6 +285,37 @@ describe('McpBarrierClient quorum tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('refuses to send a share over plaintext http', async () => {
+    const err = await new McpClient('http://node.example:8081/mcp')
+      .barrier.quorumSubmit(submit)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    expect(String((err as Error).message)).not.toContain(submit.share);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends a share over https', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, outcome)));
+
+    await new McpClient(endpoint).barrier.quorumSubmit(submit);
+
+    const calls = toolCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params?.arguments?.share).toBe(submit.share);
+  });
+
+  it('sends a factor-only submission over plaintext http', async () => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, outcome)));
+
+    await new McpClient('http://node.example:8081/mcp').barrier.quorumSubmit({ ...submit, share: '' });
+
+    const calls = toolCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params?.arguments?.share).toBe('');
+  });
+
   it('surfaces a refused submission as McpError', async () => {
     scriptServer(fetchMock, (msg) =>
       jsonReply({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text: 'challenge expired' }] } }),
