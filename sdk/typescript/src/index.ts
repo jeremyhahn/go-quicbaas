@@ -357,6 +357,7 @@ export {
   DeployNotSupportedError,
   TransportNotSupportedError,
   McpError,
+  McpSecretNotTextError,
   SSHError,
   SSHNotFoundError,
   SSHDuplicateError,

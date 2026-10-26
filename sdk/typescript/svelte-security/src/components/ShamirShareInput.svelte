@@ -6,73 +6,111 @@
 -->
 
 <!--
-  ShamirShareInput drives the Shamir unseal flow. Operators paste a single
-  share or a batch (newline-separated). Each share is submitted in order and
+  ShamirShareInput drives one Shamir quorum (unseal by default; label names
+  the operation the client's quorum performs, e.g. "Seal"). Each key holder
+  requests a challenge, then submits its signed response with its share, and
   the progress meter advances toward the threshold reported by status().
 -->
 <script lang="ts">
-  import type { BarrierClient, BarrierStatus } from '../types.ts';
+  import type { BarrierClient, BarrierQuorumChallenge, BarrierStatus } from '../types.ts';
+  import { quorumChallengeMessage, quorumChallengePurpose } from '../challengeMessage.ts';
 
   interface Props {
-    client: BarrierClient;
+    client: Pick<BarrierClient, 'quorumBegin' | 'quorumSubmit'>;
     status: BarrierStatus;
+    label?: string;
     onunseal?: (status: BarrierStatus) => void;
     onerror?: (err: Error) => void;
   }
 
-  const { client, status, onunseal, onerror }: Props = $props();
+  const { client, status, label = 'Unseal', onunseal, onerror }: Props = $props();
 
-  let pasted = $state('');
+  // Each key holder unseals in two steps: it requests a challenge, signs the
+  // challenge's message offline, then submits the signed response with its
+  // share. The message is qrdb's mtls.ChallengeMessage, never the bare nonce.
+  let username = $state('');
+  let challenge = $state<BarrierQuorumChallenge | null>(null);
+  let purpose = $state('');
+  let signingMessage = $state('');
+  let response = $state('');
+  let share = $state('');
   let submitting = $state(false);
   let errorMsg: string | null = $state(null);
 
-  // localShares overrides the prop's shares_provided once the user starts
-  // submitting shares from inside the form. Until then we read straight from
-  // the parent-supplied status so the progress meter mirrors the daemon.
-  let localShares: number | null = $state(null);
+  // progress overrides the prop's counters once a share has been submitted
+  // from this form. Until then the meter mirrors the daemon's status.
+  let progress = $state<{ submitted: number; required: number } | null>(null);
 
-  const sharesProvided = $derived(localShares ?? status.shares_provided);
+  const submitted = $derived(progress?.submitted ?? status.shares_provided);
+  const required = $derived(progress?.required ?? status.threshold);
 
   const percent = $derived(
-    status.threshold > 0
-      ? Math.min(100, Math.round((sharesProvided / status.threshold) * 100))
-      : 0,
+    required > 0 ? Math.min(100, Math.round((submitted / required) * 100)) : 0,
   );
 
-  async function submit(): Promise<void> {
+  function fail(e: unknown): void {
+    const err = e instanceof Error ? e : new Error(String(e));
+    errorMsg = err.message;
+    onerror?.(err);
+  }
+
+  async function requestChallenge(): Promise<void> {
     errorMsg = null;
-    const lines = pasted
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (lines.length === 0) {
-      errorMsg = 'Paste at least one share';
+    if (!username.trim()) {
+      errorMsg = 'Officer username is required';
       return;
     }
     submitting = true;
     try {
-      let lastResp: BarrierStatus | null = null;
-      for (const share of lines) {
-        const resp = await client.unseal({ share });
-        localShares = resp.shares_provided;
-        lastResp = {
+      const begun = await client.quorumBegin({ username: username.trim() });
+      purpose = quorumChallengePurpose(begun);
+      signingMessage = quorumChallengeMessage(begun);
+      challenge = begun;
+    } catch (e) {
+      fail(e);
+    } finally {
+      submitting = false;
+    }
+  }
+
+  async function submitShare(): Promise<void> {
+    errorMsg = null;
+    if (challenge === null) {
+      return;
+    }
+    if (!share.trim() || !response.trim()) {
+      errorMsg = 'Share and signed response are required';
+      return;
+    }
+    submitting = true;
+    try {
+      const outcome = await client.quorumSubmit({
+        username: username.trim(),
+        challenge_id: challenge.challenge_id,
+        factor: challenge.factor,
+        response: response.trim(),
+        share: share.trim(),
+      });
+      progress = { submitted: outcome.submitted, required: outcome.required };
+      challenge = null;
+      username = '';
+      response = '';
+      share = '';
+      if (outcome.complete) {
+        onunseal?.({
           ...status,
-          sealed: resp.sealed,
-          shares_provided: resp.shares_provided,
-          threshold: resp.threshold,
-        };
-        if (!resp.sealed) {
-          break;
-        }
-      }
-      pasted = '';
-      if (lastResp !== null) {
-        onunseal?.(lastResp);
+          sealed: false,
+          shares_provided: outcome.submitted,
+          threshold: outcome.required,
+        });
       }
     } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      errorMsg = err.message;
-      onerror?.(err);
+      // qrdb consumes the challenge on every submission, a refused one
+      // included, so drop it: the holder requests a fresh challenge and signs
+      // that one. The share and username stay for the retry.
+      challenge = null;
+      response = '';
+      fail(e);
     } finally {
       submitting = false;
     }
@@ -86,38 +124,85 @@
 
   <div>
     <div class="flex justify-between text-xs mb-1">
-      <span class="text-base-content/60">Unseal progress</span>
+      <span class="text-base-content/60">{label} progress</span>
       <span class="font-mono" data-testid="shamir-progress-text">
-        {sharesProvided} / {status.threshold}
+        {submitted} / {required}
       </span>
     </div>
     <progress
       class="progress progress-warning w-full"
       value={percent}
       max="100"
-      aria-label="Shamir unseal progress"
+      aria-label={`Shamir ${label.toLowerCase()} progress`}
       data-testid="shamir-progress-bar"
     ></progress>
   </div>
 
   <div class="form-control">
-    <label class="label label-text" for="shamir-share-textarea">
-      Recovery Key Share(s) — one per line
-    </label>
-    <textarea
-      id="shamir-share-textarea"
-      class="textarea textarea-bordered font-mono text-xs"
-      rows="4"
-      placeholder="Paste one share per line..."
-      bind:value={pasted}
-    ></textarea>
+    <label class="label label-text" for="shamir-officer-username">Officer username</label>
+    <input
+      id="shamir-officer-username"
+      class="input input-bordered input-sm font-mono"
+      type="text"
+      autocomplete="off"
+      disabled={challenge !== null}
+      bind:value={username}
+    />
   </div>
 
-  <button
-    class="btn btn-primary btn-sm"
-    disabled={submitting}
-    onclick={submit}
-  >
-    {submitting ? 'Submitting...' : 'Submit'}
-  </button>
+  {#if challenge === null}
+    <button class="btn btn-primary btn-sm" disabled={submitting} onclick={requestChallenge}>
+      {submitting ? 'Requesting...' : 'Request challenge'}
+    </button>
+  {:else}
+    <div class="text-xs font-mono break-all space-y-1" data-testid="shamir-challenge">
+      <div>Challenge: {challenge.challenge_id}</div>
+      <div>Factor: {challenge.factor}</div>
+      <div>Purpose: {purpose}</div>
+      <div>Expires: {challenge.expires_at}</div>
+    </div>
+
+    <div class="form-control">
+      <label class="label label-text" for="shamir-signing-message">Message to sign (base64)</label>
+      <textarea
+        id="shamir-signing-message"
+        class="textarea textarea-bordered font-mono text-xs"
+        rows="3"
+        readonly
+        data-testid="shamir-signing-message"
+        value={signingMessage}
+      ></textarea>
+      <p class="text-xs text-base-content/60">
+        Base64-decode this message and sign the decoded bytes with your enrolled certificate's
+        private key. It binds the challenge, its purpose and the nonce; a signature over the
+        nonce alone is refused.
+      </p>
+    </div>
+
+    <div class="form-control">
+      <label class="label label-text" for="shamir-signed-response">Signed response</label>
+      <textarea
+        id="shamir-signed-response"
+        class="textarea textarea-bordered font-mono text-xs"
+        rows="2"
+        placeholder="Paste the base64 signature over the message..."
+        bind:value={response}
+      ></textarea>
+    </div>
+
+    <div class="form-control">
+      <label class="label label-text" for="shamir-share-textarea">Share</label>
+      <textarea
+        id="shamir-share-textarea"
+        class="textarea textarea-bordered font-mono text-xs"
+        rows="2"
+        placeholder="Paste your base64 share..."
+        bind:value={share}
+      ></textarea>
+    </div>
+
+    <button class="btn btn-primary btn-sm" disabled={submitting} onclick={submitShare}>
+      {submitting ? 'Submitting...' : 'Submit share'}
+    </button>
+  {/if}
 </div>

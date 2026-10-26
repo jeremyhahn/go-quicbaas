@@ -2492,10 +2492,10 @@ export interface RekeyRequest {
   new_total_shares: number;
 }
 
-// RekeyResponse contains the new Shamir shares after a rekey.
+// RekeyResponse confirms a share rotation. New share material is never
+// returned (qrdb share-free contract): officers re-claim their shares through
+// the identity-gated claim endpoints after a rekey.
 export interface RekeyResponse {
-  // shares are base64-encoded Shamir share bytes.
-  shares: string[];
   version: number;
   timestamp: string;
 }
@@ -2528,10 +2528,13 @@ export interface SealInitRequest {
   secret_threshold: number;
 }
 
-// SealInitResponse contains the generated key shares and root token.
+// SealInitResponse returns the initialization result. Share material is never
+// returned (qrdb share-free contract): officers claim their shares through the
+// identity-gated claim endpoints.
 export interface SealInitResponse {
-  keys: string[];
   root_token: string;
+  version: number;
+  timestamp: string;
 }
 
 // UnsealRequest submits one key share toward unsealing.
@@ -2612,61 +2615,252 @@ export interface BarrierShamirInitRequest {
   total_shares: number;
 }
 
-// BarrierShamirInitResponse contains the generated Shamir shares.
+// BarrierShamirInitResponse is the share-free result of a Shamir init: the
+// shares are sealed to their holders, who each claim their own.
 // Mirrors transport.BarrierInitializeShamirResponse.
 export interface BarrierShamirInitResponse {
-  /** Shamir shares for distribution. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Shares sealed to their holders. */
+  share_count: number;
 }
 
-// BarrierUnsealShareRequest submits a single Shamir share toward the unseal
-// quorum. Mirrors transport.BarrierUnsealShareRequest.
-export interface BarrierUnsealShareRequest {
-  /** Single Shamir share. */
+/** BarrierDomain names a barrier's key-holder set: its unseal officers or its recovery officers. */
+export type BarrierDomain = 'unseal' | 'recovery';
+
+/**
+ * BarrierQuorumOp names the operation a quorum round authorises. unseal, seal
+ * and root-token run in the unseal domain, recover in the recovery domain and
+ * rekey in either.
+ */
+export type BarrierQuorumOp = 'unseal' | 'seal' | 'rekey' | 'recover' | 'root-token';
+
+// BarrierHolderFactor names an authentication factor enrolled for a key
+// holder. Mirrors transport.HolderFactorEnrolment.
+export interface BarrierHolderFactor {
+  /** Factor name, e.g. "mtls". */
+  name: string;
+  /** Factor-specific enrolment parameters. */
+  params?: Record<string, unknown>;
+}
+
+// BarrierOfficerRegisterRequest registers a key holder from its CSR.
+// Mirrors transport.OfficerRegisterRequest.
+export interface BarrierOfficerRegisterRequest {
+  /** Officer username. */
+  username: string;
+  /** Role bound to the issued certificate. The server defaults it. */
+  role?: string;
+  /** PEM-encoded CSR the officer's certificate is issued from. */
+  csr_pem: string;
+  /** KEM that seals the officer's share envelope. */
+  encryption_kem?: string;
+  /** Base64-encoded public key for encryption_kem. */
+  encryption_key?: string;
+  /** Factors the officer answers quorum challenges with. */
+  factors?: BarrierHolderFactor[];
+  /** Designated holder the officer stands in for. */
+  designated?: string;
+}
+
+// BarrierOfficerRegisterResponse returns the officer's issued certificate.
+// Mirrors transport.OfficerRegisterResponse.
+export interface BarrierOfficerRegisterResponse {
+  /** PEM-encoded officer certificate. */
+  cert_pem: string;
+  /** Role bound to the certificate. */
+  role: string;
+  /** Designated holder the officer stands in for. */
+  designated?: string;
+  /** KEM that seals the officer's share envelope. */
+  encryption_kem?: string;
+  /** Names of the enrolled factors. */
+  factors?: string[];
+}
+
+// BarrierOfficer describes one registered key holder.
+// Mirrors transport.OfficerStatus.
+export interface BarrierOfficer {
+  /** Officer username. */
+  username: string;
+  /** Role bound to the officer's certificate. */
+  role: string;
+  /** SPKI SHA-256 thumbprint of the officer's certificate. */
+  cert_thumbprint?: string;
+  /** One-based index of the officer's share. */
+  share_index: number;
+  /** Designated holder the officer stands in for. */
+  designated?: string;
+  /** Names of the enrolled factors. */
+  factors?: string[];
+  /** KEM that seals the officer's share envelope. */
+  encryption_kem?: string;
+  /** RFC3339 enrolment time. */
+  enrolled_at: string;
+  /** RFC3339 time the officer claimed its share. */
+  claimed_at?: string;
+  /** True while the officer's share awaits its claim. */
+  share_pending: boolean;
+}
+
+// BarrierShareClaimBeginResponse carries the nonce the officer signs to claim
+// its share. Mirrors transport.ShareClaimBeginResponse.
+export interface BarrierShareClaimBeginResponse {
+  /** Hex-encoded nonce to sign. */
+  nonce_hex: string;
+  /** RFC3339 expiration of the nonce. */
+  expires_at: string;
+}
+
+// BarrierShareClaimCompleteRequest proves the officer's key over the nonce.
+// Mirrors transport.ShareClaimCompleteRequest.
+export interface BarrierShareClaimCompleteRequest {
+  /** Officer username. */
+  username: string;
+  /** Hex-encoded nonce from shareClaimBegin. */
+  nonce_hex: string;
+  /** Base64-encoded signature over the nonce. */
+  signature: string;
+}
+
+// BarrierShareClaimCompleteResponse returns the officer's sealed share.
+// Mirrors transport.ShareClaimCompleteResponse.
+export interface BarrierShareClaimCompleteResponse {
+  /** One-based index of the share. */
+  share_index: number;
+  /** Base64-encoded share envelope sealed to the officer. */
+  envelope: string;
+}
+
+// BarrierQuorumBeginRequest asks for a holder's challenge in a quorum round.
+// Mirrors transport.QuorumBeginRequest.
+export interface BarrierQuorumBeginRequest {
+  /** Holder set the round runs in. */
+  domain: BarrierDomain;
+  /** Operation the round authorises. */
+  op: BarrierQuorumOp;
+  /** Holder answering the challenge. */
+  username: string;
+  /** Factor to answer with. The server picks the holder's default. */
+  factor?: string;
+}
+
+// BarrierQuorumChallenge is the challenge a holder signs offline.
+// Mirrors transport.QuorumChallenge.
+export interface BarrierQuorumChallenge {
+  /** Challenge identifier echoed on submit. */
+  challenge_id: string;
+  /** Holder set the round runs in. */
+  domain: string;
+  /** Operation the round authorises. */
+  op: string;
+  /** Holder the challenge is for. */
+  username: string;
+  /** Factor the challenge must be answered with. */
+  factor: string;
+  /** Base64-encoded nonce to sign. */
+  nonce: string;
+  /** Factor-specific challenge data. */
+  method_data?: Record<string, string>;
+  /** RFC3339 expiration of the challenge. */
+  expires_at: string;
+}
+
+// BarrierQuorumSubmitRequest answers a challenge and contributes the holder's
+// share. Mirrors transport.QuorumSubmitRequest.
+export interface BarrierQuorumSubmitRequest {
+  /** Holder set the round runs in. */
+  domain: BarrierDomain;
+  /** Operation the round authorises. */
+  op: BarrierQuorumOp;
+  /** Holder answering the challenge. */
+  username: string;
+  /** Challenge identifier from quorumBegin. */
+  challenge_id: string;
+  /** Factor the response was made with. */
+  factor: string;
+  /** Base64-encoded signed challenge response. */
+  response: string;
+  /** Factor-specific response data. */
+  response_metadata?: Record<string, string>;
+  /** Base64-encoded share the holder contributes. */
   share: string;
 }
 
-// BarrierUnsealShareResponse reports progress toward the unseal threshold.
-// Mirrors transport.BarrierUnsealShareResponse.
-export interface BarrierUnsealShareResponse {
-  /** Number of shares required to unseal. */
+// BarrierQuorumOutcome reports a round's progress after a submission.
+// Mirrors transport.QuorumOutcome.
+export interface BarrierQuorumOutcome {
+  /** Holder set the round runs in. */
+  domain: string;
+  /** Operation the round authorises. */
+  op: string;
+  /** Shares the round needs. */
   required: number;
-  /** Number of shares submitted so far. */
+  /** Shares submitted so far. */
   submitted: number;
-  /** True when the quorum threshold has been met. */
+  /** True once the operation has run. */
   complete: boolean;
+  /** Root token minted by a completed root-token round. */
+  root_token?: string;
+  /** RFC3339 time the root token was minted. */
+  root_token_created_at?: string;
+  /** New threshold set by a completed rekey round. */
+  threshold?: number;
+  /** New share total set by a completed rekey round. */
+  total_shares?: number;
+  /** Shares minted by a completed rekey round. */
+  share_count?: number;
 }
 
-// BarrierUnsealSharesRequest submits multiple shares in a single call.
-// Mirrors transport.BarrierUnsealSharesRequest.
-export interface BarrierUnsealSharesRequest {
-  /** Complete set of Shamir shares. */
-  shares: string[];
-}
-
-// BarrierRekeyRequest holds parameters for rekeying the Shamir shares.
-// Mirrors transport.BarrierRekeyRequest.
-export interface BarrierRekeyRequest {
-  /** New threshold value. */
+// BarrierRekeyStartRequest opens a rekey round.
+// Mirrors transport.RekeyStartRequest.
+export interface BarrierRekeyStartRequest {
+  /** Holder set to rekey. */
+  domain: BarrierDomain;
+  /** Threshold of the new split. */
   threshold: number;
-  /** New total share count. */
-  total: number;
+  /** Quorum policy of the new split. */
+  policy?: string;
+  /** Security Officer PIN, when the server requires one. */
+  so_pin?: string;
 }
 
-// BarrierRekeyResponse returns the new key shares after a rekey operation.
-// Mirrors transport.BarrierRekeyResponse.
-export interface BarrierRekeyResponse {
-  /** New Shamir shares. */
-  shares: string[];
-  /** New threshold value. */
-  threshold: number;
-  /** New total share count. */
-  total_shares: number;
+// BarrierQuorumRound describes an open quorum round.
+// Mirrors transport.QuorumRound.
+export interface BarrierQuorumRound {
+  /** Holder set the round runs in. */
+  domain: string;
+  /** Operation the round authorises. */
+  op: string;
+  /** Shares the round needs. */
+  required: number;
+  /** Shares submitted so far. */
+  submitted: number;
+  /** RFC3339 expiration of the round. */
+  expires_at: string;
+  /** Threshold of the new split, for a rekey round. */
+  new_threshold?: number;
+  /** Quorum policy of the new split, for a rekey round. */
+  policy?: string;
+  /** Holders a rekey round removes. */
+  remove?: string[];
 }
+
+// TenantBarrierQuorumBeginRequest asks for a holder's challenge in a tenant
+// quorum round; the tenant comes from the route. Mirrors
+// transport.TenantQuorumBeginRequest.
+export type TenantBarrierQuorumBeginRequest = Omit<BarrierQuorumBeginRequest, 'domain'>;
+
+// TenantBarrierQuorumSubmitRequest answers a tenant quorum challenge; the
+// tenant comes from the route. Mirrors transport.TenantQuorumSubmitRequest.
+export type TenantBarrierQuorumSubmitRequest = Omit<BarrierQuorumSubmitRequest, 'domain'>;
+
+
+
+
+
 
 // ---------------------------------------------------------------------------
 // Per-tenant barrier
@@ -2686,6 +2880,7 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 // TenantBarrierInitRequest initializes a tenant's barrier with the chosen
 // strategy. passphrase is required for the "passphrase" strategy; threshold
 // and shares are required for the "shamir" strategy and ignored otherwise.
+// Mirrors transport.TenantBarrierInitRequest.
 export interface TenantBarrierInitRequest {
   /** Sealing strategy to provision for the tenant. */
   strategy: TenantBarrierStrategy;
@@ -2695,38 +2890,47 @@ export interface TenantBarrierInitRequest {
   threshold?: number;
   /** Total shares to generate (shamir strategy). */
   shares?: number;
+  /**
+   * Inline share-holder roster registered atomically with initialization
+   * (shamir strategy). Its length must equal shares. Omit it when the holders
+   * were registered before initialization.
+   */
+  officers?: BarrierOfficerRegisterRequest[];
+  /** Factor policy the officers enrol under: "designated" (default) or "any-enrolled". */
+  policy?: string;
+}
+
+// TenantBarrierHolderCert is the certificate issued to one inline roster
+// officer. Mirrors transport.TenantBarrierHolderCert.
+export interface TenantBarrierHolderCert {
+  /** Officer username. */
+  username: string;
+  /** Role bound to the certificate. */
+  role: string;
+  /** PEM-encoded officer certificate. */
+  cert_pem: string;
 }
 
 // TenantBarrierInitResponse is returned for the shamir strategy and carries
-// the freshly minted shares. The "none" and "passphrase" strategies return
-// 204 No Content, so callers receive undefined for those.
+// share-free metadata: the shares are sealed to their holders, who each claim
+// their own. The "none" and "passphrase" strategies return 204 No Content, so
+// callers receive undefined for those. Mirrors
+// transport.TenantBarrierInitResponse.
 export interface TenantBarrierInitResponse {
   /** Tenant whose barrier was initialized. */
   tenant_id: string;
   /** Sealing strategy that was provisioned. */
   strategy: TenantBarrierStrategy;
-  /** Shamir shares for distribution — returned exactly once. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Shares sealed to their holders, awaiting each holder's claim. */
+  share_count: number;
+  /** Certificates issued to the inline roster officers, in roster order; absent without a roster. */
+  holders?: TenantBarrierHolderCert[];
 }
 
-// TenantBarrierUnsealShareResponse reports progress toward the tenant's unseal
-// quorum after submitting a single Shamir share.
-export interface TenantBarrierUnsealShareResponse {
-  /** Tenant whose barrier received the share. */
-  tenant_id: string;
-  /** Number of shares required to unseal. */
-  required: number;
-  /** Number of shares submitted so far. */
-  submitted: number;
-  /** True when the quorum threshold has been met. */
-  complete: boolean;
-  /** True while the tenant barrier remains sealed. */
-  sealed: boolean;
-}
 
 // TenantBarrierStatusResponse describes the current state of a tenant's
 // dedicated barrier.
@@ -2750,29 +2954,26 @@ export interface TenantBarrierStatusResponse {
 // BarrierGenerateRecoveryKeysRequest holds parameters for generating
 // recovery keys. Mirrors transport.BarrierGenerateRecoveryKeysRequest.
 export interface BarrierGenerateRecoveryKeysRequest {
-  /** Threshold required for recovery. */
+  /** Shares required to recover. */
   threshold: number;
-  /** Total recovery keys to generate. */
-  total: number;
+  /** Share-distribution policy; empty uses the server default. */
+  policy?: string;
+  /** SO PIN authorizing generation; sent over TLS only. */
+  so_pin?: string;
 }
 
-// BarrierRecoveryKeysResponse returns generated recovery keys.
-// Mirrors transport.BarrierRecoveryKeysResponse.
+// BarrierRecoveryKeysResponse reports the generated recovery quorum. The
+// shares go to their holders, never back to the caller. Mirrors
+// transport.BarrierRecoveryKeysResponse.
 export interface BarrierRecoveryKeysResponse {
-  /** Recovery key values for distribution. */
-  keys: string[];
-  /** Threshold required for recovery. */
+  /** Shares required to recover. */
   threshold: number;
-  /** Total recovery keys generated. */
+  /** Total shares generated. */
   total: number;
+  /** Shares distributed to holders. */
+  share_count: number;
 }
 
-// BarrierRecoverWithKeysRequest holds recovery keys for disaster recovery.
-// Mirrors transport.BarrierRecoverWithKeysRequest.
-export interface BarrierRecoverWithKeysRequest {
-  /** Recovery keys used to unseal. */
-  keys: string[];
-}
 
 // BarrierHasRecoveryKeysResponse indicates whether recovery keys exist.
 // Mirrors transport.BarrierHasRecoveryKeysResponse, whose field is tagged
@@ -2784,21 +2985,7 @@ export interface BarrierHasRecoveryKeysResponse {
   has_keys: boolean;
 }
 
-// BarrierGenerateRootTokenRequest holds Shamir shares used to authorise a
-// new root token. Mirrors transport.BarrierGenerateRootTokenRequest.
-export interface BarrierGenerateRootTokenRequest {
-  /** Shamir shares proving knowledge of the master key. */
-  shares: string[];
-}
 
-// BarrierRootTokenResponse returns a newly generated root token.
-// Mirrors transport.BarrierRootTokenResponse.
-export interface BarrierRootTokenResponse {
-  /** Hex-encoded root token. */
-  token: string;
-  /** RFC3339 timestamp when the token was generated. */
-  created_at: string;
-}
 
 /**
  * BarrierEnableEncryptionRequest migrates a previously unencrypted barrier to a
@@ -2858,12 +3045,30 @@ export interface CeremonyInitializeRequest {
   credential_seal_strategy?: string;
   /** Threshold for M-of-N enrollment. Zero means single-admin mode. */
   threshold: number;
+  /** Shamir custody policy for threshold >= 2: designated (default) or any-enrolled. */
+  policy?: string;
   /** Officers participating in the ceremony. */
   officers?: CeremonyOfficer[];
   /** Optional hostname for the issued TLS certificate. */
   hostname?: string;
   /** Optional Subject Alternative Names for the issued TLS certificate. */
   sans?: string[];
+  /**
+   * Bootstrap administrator CSR for the node CA to sign. Exactly one of
+   * admin_csr_pem, admin_cert_pem or admin_generate must be set.
+   */
+  admin_csr_pem?: string;
+  /** Bootstrap administrator's own certificate (bring-your-own). */
+  admin_cert_pem?: string;
+  /** CA pool that verifies admin_cert_pem. */
+  admin_cert_pool_pem?: string;
+  /** Generate the bootstrap administrator credential. Dev/test only. */
+  admin_generate?: boolean;
+  /**
+   * System barrier passphrase; required when the barrier strategy needs one.
+   * The REST client base64-encodes it; MCP sends it as text.
+   */
+  secret?: Uint8Array;
 }
 
 // CeremonyInitializeResponse returns the result of a successful ceremony
@@ -2890,78 +3095,13 @@ export interface CeremonyStatusResponse {
   spki_pin?: string;
 }
 
-// CeremonyClaimCertBeginRequest initiates a certificate claim challenge.
-// Mirrors transport.ClaimCertBeginRequest.
-export interface CeremonyClaimCertBeginRequest {
-  /** Officer username. */
-  username: string;
-}
 
-// CeremonyClaimCertBeginResponse returns the challenge nonce.
-// Mirrors transport.ClaimCertBeginResponse.
-export interface CeremonyClaimCertBeginResponse {
-  /** Hex-encoded random nonce the officer must sign. */
-  nonce_hex: string;
-  /** RFC3339 expiration timestamp for the nonce. */
-  expires_at: string;
-}
 
-// CeremonyClaimCertCompleteRequest completes the certificate claim.
-// Mirrors transport.ClaimCertCompleteRequest.
-export interface CeremonyClaimCertCompleteRequest {
-  /** Officer username. */
-  username: string;
-  /** Hex-encoded nonce from CeremonyClaimCertBegin. */
-  nonce_hex: string;
-  /** Base64-encoded signature over the nonce. */
-  signature: string;
-}
 
-// CeremonyClaimCertCompleteResponse returns the issued certificate.
-// Mirrors transport.ClaimCertCompleteResponse.
-export interface CeremonyClaimCertCompleteResponse {
-  /** PEM-encoded officer certificate. */
-  cert_pem: string;
-  /** PEM-encoded CA certificate for trust chain verification. */
-  ca_cert_pem: string;
-}
 
-// CeremonyClaimShareBeginRequest starts the Shamir share claim handshake.
-// Mirrors transport.BeginClaimShareRequest. The caller's certificate
-// thumbprint is bound server-side from the mTLS peer; it never travels here.
-export interface CeremonyClaimShareBeginRequest {
-  /** Officer username. */
-  username: string;
-}
 
-// CeremonyClaimShareBeginResponse carries the nonce the officer must sign.
-// Mirrors transport.BeginClaimShareResponse.
-export interface CeremonyClaimShareBeginResponse {
-  /** Hex-encoded random nonce the officer must sign. */
-  nonce_hex: string;
-  /** RFC3339 expiration timestamp for the nonce. */
-  expires_at: string;
-}
 
-// CeremonyClaimShareCompleteRequest proves the officer's key over the nonce.
-// Mirrors transport.CompleteClaimShareRequest.
-export interface CeremonyClaimShareCompleteRequest {
-  /** Officer username. */
-  username: string;
-  /** Hex-encoded nonce from claimShareBegin. */
-  nonce_hex: string;
-  /** Base64-encoded signature over the nonce. */
-  signature: string;
-}
 
-// CeremonyClaimShareCompleteResponse returns the officer's Shamir share.
-// Mirrors transport.CompleteClaimShareResponse.
-export interface CeremonyClaimShareCompleteResponse {
-  /** Index of the officer's share in the M-of-N split. */
-  share_index: number;
-  /** The officer's Shamir share, JSON-encoded. */
-  share_json: string;
-}
 
 // CeremonySignCSRRequest submits a CSR for signing during the ceremony.
 // Mirrors transport.SignCSRInitRequest.
@@ -2983,30 +3123,7 @@ export interface CeremonySignCSRResponse {
   cert_pem: string;
 }
 
-// CeremonyEnrollExternalOfficerRequest enrols an officer whose key material
-// lives outside the daemon. Exactly one of cert_pem and pubkey_pem must be
-// supplied. Mirrors transport.EnrollExternalOfficerRequest.
-export interface CeremonyEnrollExternalOfficerRequest {
-  /** Officer username. */
-  username: string;
-  /** PEM-encoded X.509 certificate. Mutually exclusive with pubkey_pem. */
-  cert_pem?: string;
-  /** PEM-encoded SPKI public key. Mutually exclusive with cert_pem. */
-  pubkey_pem?: string;
-  /** One-based Shamir share index assigned to this officer. */
-  share_index: number;
-  /** Auth factor identifier: "mtls", "webauthn", or "piv". */
-  auth_factor: string;
-  /** Optional plaintext share to seal to the officer's public key. */
-  share_bytes?: string;
-}
 
-// CeremonyEnrollExternalOfficerResponse returns the sealed share envelope.
-// Mirrors transport.EnrollExternalOfficerResponse.
-export interface CeremonyEnrollExternalOfficerResponse {
-  /** Base64-encoded sealed share envelope. Empty when no share was sealed. */
-  sealed_share?: string;
-}
 
 // =============================================================================
 // Bootstrap Types
@@ -3115,20 +3232,10 @@ export type SealBarrierUnsealRequest = BarrierUnsealRequest;
 export type SealShamirInitRequest = BarrierShamirInitRequest;
 /** @deprecated Use BarrierShamirInitResponse. */
 export type SealShamirInitResponse = BarrierShamirInitResponse;
-/** @deprecated Use BarrierUnsealShareRequest. */
-export type SealUnsealShareRequest = BarrierUnsealShareRequest;
-/** @deprecated Use BarrierUnsealShareResponse. */
-export type SealUnsealShareResponse = BarrierUnsealShareResponse;
-/** @deprecated Use BarrierRekeyRequest. */
-export type SealRekeyRequest = BarrierRekeyRequest;
-/** @deprecated Use BarrierRekeyResponse. */
-export type SealRekeyResponse = BarrierRekeyResponse;
 /** @deprecated Use BarrierGenerateRecoveryKeysRequest. */
 export type SealGenerateRecoveryKeysRequest = BarrierGenerateRecoveryKeysRequest;
 /** @deprecated Use BarrierRecoveryKeysResponse. */
 export type SealRecoveryKeysResponse = BarrierRecoveryKeysResponse;
-/** @deprecated Use BarrierRootTokenResponse. */
-export type SealRootTokenResponse = BarrierRootTokenResponse;
 
 // =============================================================================
 // Inference Types

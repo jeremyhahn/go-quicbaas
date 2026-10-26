@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RestClient } from '../src/rest';
-import { APIError } from '../src/errors';
+import { APIError, CeremonyAdminSelectorError } from '../src/errors';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -51,6 +51,7 @@ describe('RestCeremonyClient.initialize', () => {
       so_pin: 'so-pin',
       user_pin: 'user-pin',
       threshold: 0,
+      admin_generate: true,
     });
 
     expect(result.spki_pin).toBe('sha256-abc');
@@ -64,7 +65,49 @@ describe('RestCeremonyClient.initialize', () => {
       so_pin: 'so-pin',
       user_pin: 'user-pin',
       threshold: 0,
+      admin_generate: true,
     });
+  });
+
+  it.each([
+    ['admin_csr_pem', { admin_csr_pem: 'ADMIN-CSR' }],
+    ['admin_cert_pem', { admin_cert_pem: 'ADMIN-CERT', admin_cert_pool_pem: 'ADMIN-POOL' }],
+    ['admin_generate', { admin_generate: true }],
+  ] as const)('sends the %s administrator selector under the server field names', async (_name, selector) => {
+    fetchMock.mockResolvedValue(jsonResponse({ state: 'complete' }));
+
+    await new RestClient('https://localhost').ceremony.initialize({
+      so_pin: 'so',
+      user_pin: 'user',
+      threshold: 2,
+      policy: 'designated',
+      ...selector,
+      secret: new TextEncoder().encode('pass'),
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual({
+      so_pin: 'so',
+      user_pin: 'user',
+      threshold: 2,
+      policy: 'designated',
+      ...selector,
+      secret: 'cGFzcw==',
+    });
+  });
+
+  it.each([
+    ['no selector', {}, []],
+    ['two selectors', { admin_cert_pem: 'CERT', admin_generate: true }, ['admin_cert_pem', 'admin_generate']],
+    ['three selectors', { admin_csr_pem: 'C', admin_cert_pem: 'P', admin_generate: true }, ['admin_csr_pem', 'admin_cert_pem', 'admin_generate']],
+  ] as const)('refuses %s before any call', async (_name, selector, selected) => {
+    const err = await new RestClient('http://localhost').ceremony
+      .initialize({ so_pin: 'so', user_pin: 'user', threshold: 0, ...selector })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(CeremonyAdminSelectorError);
+    expect((err as CeremonyAdminSelectorError).selected).toEqual(selected);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('initialises the ceremony with M-of-N officers', async () => {
@@ -89,6 +132,7 @@ describe('RestCeremonyClient.initialize', () => {
       ],
       hostname: 'example.com',
       sans: ['example.com', 'www.example.com'],
+      admin_csr_pem: 'ADMIN-CSR',
     });
 
     expect(result.share_count).toBe(5);
@@ -100,7 +144,7 @@ describe('RestCeremonyClient.initialize', () => {
 
     const client = new RestClient('http://localhost');
     await expect(
-      client.ceremony.initialize({ so_pin: 'x', user_pin: 'y', threshold: 0 }),
+      client.ceremony.initialize({ so_pin: 'x', user_pin: 'y', threshold: 0, admin_generate: true }),
     ).rejects.toBeInstanceOf(APIError);
   });
 });
@@ -129,96 +173,6 @@ describe('RestCeremonyClient.status', () => {
     expect(info.spki_pin).toBeUndefined();
   });
 });
-
-describe('RestCeremonyClient certificate claim flow', () => {
-  it('begins the certificate claim challenge', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        nonce_hex: 'deadbeef',
-        expires_at: '2026-04-30T13:00:00Z',
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const challenge = await client.ceremony.claimCertBegin({ username: 'alice' });
-
-    expect(challenge.nonce_hex).toBe('deadbeef');
-    expect(challenge.expires_at).toBe('2026-04-30T13:00:00Z');
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/claim-cert/begin');
-  });
-
-  it('completes the certificate claim with a signed nonce', async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({
-        cert_pem: '-----BEGIN CERTIFICATE-----',
-        ca_cert_pem: '-----BEGIN CERTIFICATE-----',
-      }),
-    );
-
-    const client = new RestClient('http://localhost');
-    const result = await client.ceremony.claimCertComplete({
-      username: 'alice',
-      nonce_hex: 'deadbeef',
-      signature: 'base64sig',
-    });
-
-    expect(result.cert_pem).toContain('CERTIFICATE');
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/claim-cert/complete');
-    expect(JSON.parse(init.body as string)).toEqual({
-      username: 'alice',
-      nonce_hex: 'deadbeef',
-      signature: 'base64sig',
-    });
-  });
-});
-
-describe('RestCeremonyClient.claimShareBegin/claimShareComplete', () => {
-  it('begins the share claim with the officer username only', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ nonce_hex: 'cafe', expires_at: '2026-10-18T13:00:00Z' }));
-
-    const client = new RestClient('http://localhost');
-    const challenge = await client.ceremony.claimShareBegin({ username: 'alice' });
-
-    expect(challenge).toEqual({ nonce_hex: 'cafe', expires_at: '2026-10-18T13:00:00Z' });
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/officer-share/begin');
-    expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ username: 'alice' });
-  });
-
-  it('completes the share claim with the signed nonce', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ share_index: 2, share_json: '{"x":1}' }));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.ceremony.claimShareComplete({
-      username: 'alice',
-      nonce_hex: 'cafe',
-      signature: 'c2ln',
-    });
-
-    expect(result).toEqual({ share_index: 2, share_json: '{"x":1}' });
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/officer-share/complete');
-    expect(JSON.parse(init.body as string)).toEqual({ username: 'alice', nonce_hex: 'cafe', signature: 'c2ln' });
-  });
-
-  it('surfaces a server refusal of the completion as APIError', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ error: 'signature does not verify' }, 401));
-
-    const client = new RestClient('http://localhost');
-    const err = await client.ceremony
-      .claimShareComplete({ username: 'alice', nonce_hex: 'cafe', signature: 'c2ln' })
-      .catch((e: unknown) => e);
-
-    expect(err).toBeInstanceOf(APIError);
-    expect((err as APIError).status).toBe(401);
-  });
-});
-
 describe('RestCeremonyClient.signCSR', () => {
   it('signs a CSR during the ceremony', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ cert_pem: '-----BEGIN CERTIFICATE-----' }));
@@ -243,137 +197,6 @@ describe('RestCeremonyClient.signCSR', () => {
     });
   });
 });
-
-describe('RestCeremonyClient.enrollExternalOfficer', () => {
-  it('enrols an external officer with a public key and seals a share', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ sealed_share: 'base64sealed' }));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.ceremony.enrollExternalOfficer({
-      username: 'extern-1',
-      pubkey_pem: '-----BEGIN PUBLIC KEY-----',
-      share_index: 4,
-      auth_factor: 'webauthn',
-      share_bytes: 'base64share',
-    });
-
-    expect(result.sealed_share).toBe('base64sealed');
-
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe('http://localhost/api/v1/init/enroll-external-officer');
-    expect(JSON.parse(init.body as string).username).toBe('extern-1');
-  });
-
-  it('enrols an external officer with a certificate and no share', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({}));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.ceremony.enrollExternalOfficer({
-      username: 'extern-2',
-      cert_pem: '-----BEGIN CERTIFICATE-----',
-      share_index: 5,
-      auth_factor: 'mtls',
-    });
-
-    expect(result.sealed_share).toBeUndefined();
-  });
-
-  it('enrols an external officer with the PIV auth factor', async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ sealed_share: 'piv-sealed' }));
-
-    const client = new RestClient('http://localhost');
-    const result = await client.ceremony.enrollExternalOfficer({
-      username: 'piv-officer',
-      cert_pem: '-----BEGIN CERTIFICATE-----',
-      share_index: 7,
-      auth_factor: 'piv',
-      share_bytes: 'plaintext-share',
-    });
-
-    expect(result.sealed_share).toBe('piv-sealed');
-
-    const [, init] = fetchMock.mock.calls[0];
-    const body = JSON.parse(init.body as string);
-    expect(body.auth_factor).toBe('piv');
-    expect(body.share_index).toBe(7);
-  });
-
-  it('throws APIError on bad request', async () => {
-    fetchMock.mockResolvedValue(errorResponse(400, 'invalid auth factor'));
-
-    const client = new RestClient('http://localhost');
-    await expect(
-      client.ceremony.enrollExternalOfficer({
-        username: 'x',
-        pubkey_pem: 'PEM',
-        share_index: 1,
-        auth_factor: 'unknown',
-      }),
-    ).rejects.toBeInstanceOf(APIError);
-  });
-});
-
-// =============================================================================
-// Full claim-cert flow — challenge then complete in sequence.
-// Mirrors the daemon's nonce-bound flow: a fresh client must succeed when the
-// nonce returned by Begin is presented to Complete.
-// =============================================================================
-
-describe('RestCeremonyClient certificate claim flow — end-to-end sequence', () => {
-  it('begins a challenge then completes the claim with the same nonce', async () => {
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({
-          nonce_hex: 'cafef00d',
-          expires_at: '2026-04-30T13:00:00Z',
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          cert_pem: '-----BEGIN CERTIFICATE-----',
-          ca_cert_pem: '-----BEGIN CERTIFICATE-----',
-        }),
-      );
-
-    const client = new RestClient('http://localhost');
-    const begin = await client.ceremony.claimCertBegin({ username: 'alice' });
-    expect(begin.nonce_hex).toBe('cafef00d');
-
-    const complete = await client.ceremony.claimCertComplete({
-      username: 'alice',
-      nonce_hex: begin.nonce_hex,
-      signature: 'base64sig',
-    });
-    expect(complete.cert_pem).toContain('CERTIFICATE');
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [beginUrl] = fetchMock.mock.calls[0];
-    const [completeUrl, completeInit] = fetchMock.mock.calls[1];
-    expect(beginUrl).toBe('http://localhost/api/v1/init/claim-cert/begin');
-    expect(completeUrl).toBe('http://localhost/api/v1/init/claim-cert/complete');
-    const completeBody = JSON.parse(completeInit.body as string);
-    expect(completeBody.nonce_hex).toBe(begin.nonce_hex);
-  });
-
-  it('reports an expired nonce on completion', async () => {
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({ nonce_hex: 'beef', expires_at: '2026-04-30T12:00:00Z' }),
-      )
-      .mockResolvedValueOnce(errorResponse(400, 'nonce expired'));
-
-    const client = new RestClient('http://localhost');
-    await client.ceremony.claimCertBegin({ username: 'alice' });
-    await expect(
-      client.ceremony.claimCertComplete({
-        username: 'alice',
-        nonce_hex: 'beef',
-        signature: 'sig',
-      }),
-    ).rejects.toBeInstanceOf(APIError);
-  });
-});
-
 // =============================================================================
 // Restart persistence — a freshly constructed client must observe the daemon's
 // persisted state. Since the SDK is stateless, "restart persistence" maps onto
@@ -435,6 +258,7 @@ describe('RestCeremonyClient restart persistence', () => {
         { username: 'bob', csr_pem: 'B' },
         { username: 'carol', csr_pem: 'C' },
       ],
+      admin_generate: true,
     });
     expect(init.state).toBe('awaiting-claims');
     expect(init.share_count).toBe(3);

@@ -162,14 +162,16 @@ export class GrpcWebBarrierClient {
     async unseal(_req) { return notImpl('barrier.unseal'); }
     async seal(_req) { return notImpl('barrier.seal'); }
     async initializeShamir(_req) { return notImpl('barrier.initializeShamir'); }
-    async unsealWithShare(_req) { return notImpl('barrier.unsealWithShare'); }
-    async unsealWithShares(_req) { return notImpl('barrier.unsealWithShares'); }
-    async rekey(_req) { return notImpl('barrier.rekey'); }
+    async officers() { return notImpl('barrier.officers'); }
+    async registerOfficer(_req, _domain) { return notImpl('barrier.registerOfficer'); }
+    async shareClaimBegin(_username, _domain) { return notImpl('barrier.shareClaimBegin'); }
+    async shareClaimComplete(_req, _domain) { return notImpl('barrier.shareClaimComplete'); }
+    async quorumBegin(_req) { return notImpl('barrier.quorumBegin'); }
+    async quorumSubmit(_req) { return notImpl('barrier.quorumSubmit'); }
+    async rekeyStart(_req) { return notImpl('barrier.rekeyStart'); }
     async generateRecoveryKeys(_req) { return notImpl('barrier.generateRecoveryKeys'); }
-    async recoverWithKeys(_req) { return notImpl('barrier.recoverWithKeys'); }
     async deleteRecoveryKeys() { return notImpl('barrier.deleteRecoveryKeys'); }
     async recoveryStatus() { return notImpl('barrier.recoveryStatus'); }
-    async generateRootToken(_req) { return notImpl('barrier.generateRootToken'); }
     async enableEncryption(_req) { return notImpl('barrier.enableEncryption'); }
 }
 // GrpcWebCeremonyClient is a stub CeremonyClient that throws
@@ -177,12 +179,7 @@ export class GrpcWebBarrierClient {
 export class GrpcWebCeremonyClient {
     async initialize(_req) { return notImpl('ceremony.initialize'); }
     async status() { return notImpl('ceremony.status'); }
-    async claimCertBegin(_req) { return notImpl('ceremony.claimCertBegin'); }
-    async claimCertComplete(_req) { return notImpl('ceremony.claimCertComplete'); }
-    async claimShareBegin(_req) { return notImpl('ceremony.claimShareBegin'); }
-    async claimShareComplete(_req) { return notImpl('ceremony.claimShareComplete'); }
     async signCSR(_req) { return notImpl('ceremony.signCSR'); }
-    async enrollExternalOfficer(_req) { return notImpl('ceremony.enrollExternalOfficer'); }
 }
 // GrpcWebClient is the stub entry point for the gRPC-Web transport.
 // Replace the stub implementations above with real gRPC-Web calls once the

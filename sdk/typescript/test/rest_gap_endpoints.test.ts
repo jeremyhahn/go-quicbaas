@@ -253,15 +253,18 @@ describe('RestSecretsClient.listVersions', () => {
 // =============================================================================
 
 describe('RestSealClient.rekey', () => {
-  it('POSTs to /api/v1/seal/rekey with threshold and shares', async () => {
-    const body = { shares: ['aGVsbG8=', 'd29ybGQ='], version: 2, timestamp: '2026-04-25T00:00:00Z' };
+  it('POSTs to /api/v1/seal/rekey and decodes the share-free response', async () => {
+    // The body pkg/service RekeyResponse marshals to: the new version and
+    // time, never share material. Officers re-claim their shares instead.
+    const body = { version: 2, timestamp: '2026-04-25T00:00:00Z' };
     fetchMock.mockResolvedValue(makeResponse(body));
 
     const client = new RestClient('http://localhost');
     const result = await client.seal.rekey({ new_threshold: 2, new_total_shares: 5 });
 
-    expect(result.version).toBe(2);
-    expect(result.shares).toHaveLength(2);
+    expect(result).toEqual(body);
+    // @ts-expect-error a rekey returns no shares (qrdb share-free contract).
+    expect(result.shares).toBeUndefined();
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://localhost/api/v1/seal/rekey');

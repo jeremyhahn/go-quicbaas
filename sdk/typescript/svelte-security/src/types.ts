@@ -66,14 +66,19 @@ export interface BarrierInitRequest {
   total_shares: number;
 }
 
-/** BarrierInitResponse contains the freshly minted Shamir shares. */
+/**
+ * BarrierInitResponse is the share-free result of a Shamir init: the shares
+ * are sealed to their holders, who each claim their own.
+ */
 export interface BarrierInitResponse {
-  shares: string[];
+  threshold: number;
+  total_shares: number;
+  share_count: number;
 }
 
-/** BarrierUnsealRequest submits one share toward unsealing. */
+/** BarrierUnsealRequest unseals a passphrase barrier. */
 export interface BarrierUnsealRequest {
-  share: string;
+  passphrase: string;
 }
 
 /** BarrierUnsealResponse reports the new state after submitting a share. */
@@ -83,15 +88,54 @@ export interface BarrierUnsealResponse {
   threshold: number;
 }
 
+/** BarrierQuorumBeginRequest asks for a key holder's unseal challenge. */
+export interface BarrierQuorumBeginRequest {
+  username: string;
+  /** factor picks the holder's factor; the daemon defaults it. */
+  factor?: string;
+}
+
+/** BarrierQuorumChallenge is the challenge the holder signs offline. */
+export interface BarrierQuorumChallenge {
+  challenge_id: string;
+  factor: string;
+  /** nonce is the base64 nonce qrdb binds into the signed message. */
+  nonce: string;
+  /** method_data carries the purpose qrdb bound the challenge to. */
+  method_data?: Record<string, string>;
+  expires_at: string;
+}
+
+/** BarrierQuorumSubmitRequest answers a challenge with the holder's share. */
+export interface BarrierQuorumSubmitRequest {
+  username: string;
+  challenge_id: string;
+  factor: string;
+  /** response is the base64 signed challenge response. */
+  response: string;
+  /** share is the holder's base64 share. */
+  share: string;
+}
+
+/** BarrierQuorumProgress reports the unseal quorum after a submission. */
+export interface BarrierQuorumProgress {
+  submitted: number;
+  required: number;
+  /** complete is true once the quorum has unsealed the barrier. */
+  complete: boolean;
+}
+
 /**
  * BarrierClient is the structural contract the components use to talk to the
- * daemon. The frontend can pass either the SDK BarrierClient (post Phase 8)
- * or a thin adapter around the legacy SealClient — both satisfy this shape.
+ * daemon. A passphrase barrier unseals directly; a Shamir barrier unseals
+ * through a quorum round in which each key holder answers a challenge.
  */
 export interface BarrierClient {
   status(): Promise<BarrierStatus>;
   init(req: BarrierInitRequest): Promise<BarrierInitResponse>;
   unseal(req: BarrierUnsealRequest): Promise<BarrierUnsealResponse>;
+  quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
+  quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumProgress>;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +157,17 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 export type TenantBarrierInitParams =
   | { strategy: 'none' }
   | { strategy: 'passphrase'; passphrase: string }
-  | { strategy: 'shamir'; threshold: number; shares: number };
+  | { strategy: 'shamir'; threshold: number; shares: number; officers?: BarrierHolderParams[] };
+
+/**
+ * BarrierHolderParams is one entry of the inline Shamir holder roster: the
+ * holder's username and the PEM CSR its certificate is issued from. The
+ * roster registers with initialization, one holder per share.
+ */
+export interface BarrierHolderParams {
+  username: string;
+  csr_pem: string;
+}
 
 // ---------------------------------------------------------------------------
 // Ceremony
@@ -144,43 +198,55 @@ export interface CeremonyOfficer {
   auth_factor: string;
 }
 
-/** ClaimCertificateRequest signs the ceremony challenge with a CSR private key. */
-export interface ClaimCertificateRequest {
-  username: string;
-  challenge: string;
-  signature_b64: string;
+/** ShareClaimChallenge is the nonce an officer signs to claim its share. */
+export interface ShareClaimChallenge {
+  nonce_hex: string;
+  expires_at: string;
 }
 
-/** ClaimShareRequest signs the share-claim challenge with the officer's private key. */
+/** ClaimShareRequest proves the officer's key over the claim nonce. */
 export interface ClaimShareRequest {
   username: string;
-  challenge: string;
+  nonce_hex: string;
   signature_b64: string;
 }
 
-/** ClaimResponse reports the outcome of a claim flow. */
-export interface ClaimResponse {
-  username: string;
-  status: OfficerClaimStatus;
+/** ClaimedShare is the officer's share, sealed to the officer. */
+export interface ClaimedShare {
+  share_index: number;
+  /** envelope is the base64 share envelope. */
+  envelope: string;
 }
 
-/** EnrollOfficerRequest creates an external officer record. */
+/** EnrollOfficerRequest registers an officer from its CSR. */
 export interface EnrollOfficerRequest {
   username: string;
-  kind: OfficerKind;
-  /** material is the PEM-encoded cert (kind=cert) or SSH/SPKI pubkey (kind=pubkey). */
-  material: string;
-  share_index: number;
-  auth_factor: string;
+  csr_pem: string;
+}
+
+/**
+ * EnrolledOfficer is the certificate issued to an enrolled officer. The
+ * officer presents it over mTLS to claim its share, and the officer list
+ * never returns it, so the enrolling view must hand it over.
+ */
+export interface EnrolledOfficer {
+  cert_pem: string;
+  role: string;
 }
 
 /** CeremonyClient is the structural API the ceremony components consume. */
 export interface CeremonyClient {
   listOfficers(): Promise<CeremonyOfficer[]>;
-  claimCertificate(req: ClaimCertificateRequest): Promise<ClaimResponse>;
-  claimShare(req: ClaimShareRequest): Promise<ClaimResponse>;
-  enrollOfficer(req: EnrollOfficerRequest): Promise<CeremonyOfficer>;
+  beginClaim(username: string): Promise<ShareClaimChallenge>;
+  claimShare(req: ClaimShareRequest): Promise<ClaimedShare>;
+  enrollOfficer(req: EnrollOfficerRequest): Promise<EnrolledOfficer>;
 }
+
+/**
+ * ShareClaimClient is the claim half of CeremonyClient: all a holder needs to
+ * claim its share, at system or tenant scope.
+ */
+export type ShareClaimClient = Pick<CeremonyClient, 'beginClaim' | 'claimShare'>;
 
 // ---------------------------------------------------------------------------
 // Bootstrap

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { McpClient } from '../src/mcp';
-import { McpError, SOPINRequiresTLSError } from '../src/errors';
+import { CeremonyAdminSelectorError, McpError, McpSecretNotTextError, SOPINRequiresTLSError } from '../src/errors';
 import { jsonReply, scriptServer, toolCalls, toolText } from './mcp_server';
 
 const endpoint = 'https://node.example:8081/mcp';
@@ -92,47 +92,23 @@ describe('McpBarrierClient tools', () => {
       tool: 'qrdb_barrier_shamir_initialize',
       args: { secret: 'pw', threshold: 2, total_shares: 3 },
       reply: { threshold: 2, total_shares: 3, share_count: 3 },
-      want: { shares: [], threshold: 2, total_shares: 3 },
-    },
-    {
-      name: 'unsealWithShare',
-      call: (c) => c.barrier.unsealWithShare({ share: 'share-1' }),
-      tool: 'qrdb_barrier_shamir_unseal_share',
-      args: { share: 'share-1' },
-      reply: { required: 2, submitted: 1, complete: false },
-      want: { required: 2, submitted: 1, complete: false },
-    },
-    {
-      name: 'unsealWithShares',
-      call: (c) => c.barrier.unsealWithShares({ shares: ['share-1', 'share-2'] }),
-      tool: 'qrdb_barrier_shamir_unseal_shares',
-      args: { shares: ['share-1', 'share-2'] },
-      reply: { status: 'unsealed' },
-      want: undefined,
-    },
-    {
-      name: 'rekey',
-      call: (c) => c.barrier.rekey({ threshold: 3, total: 5 }),
-      tool: 'qrdb_barrier_rekey',
-      args: { threshold: 3, total: 5 },
-      reply: { threshold: 3, total_shares: 5, share_count: 5 },
-      want: { shares: [], threshold: 3, total_shares: 5 },
+      want: { threshold: 2, total_shares: 3, share_count: 3 },
     },
     {
       name: 'generateRecoveryKeys',
-      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 2, total: 4 }),
+      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' }),
       tool: 'qrdb_barrier_recovery_generate',
-      args: { threshold: 2, total: 4 },
+      args: { threshold: 2, policy: 'designated', so_pin: 'so-pin-1234' },
       reply: { threshold: 2, total: 4, share_count: 4 },
-      want: { keys: [], threshold: 2, total: 4 },
+      want: { threshold: 2, total: 4, share_count: 4 },
     },
     {
-      name: 'recoverWithKeys',
-      call: (c) => c.barrier.recoverWithKeys({ keys: ['key-1', 'key-2'] }),
-      tool: 'qrdb_barrier_recovery_recover',
-      args: { keys: ['key-1', 'key-2'] },
-      reply: { status: 'recovered' },
-      want: undefined,
+      name: 'generateRecoveryKeys without a PIN or policy',
+      call: (c) => c.barrier.generateRecoveryKeys({ threshold: 1 }),
+      tool: 'qrdb_barrier_recovery_generate',
+      args: { threshold: 1 },
+      reply: { threshold: 1, total: 1, share_count: 1 },
+      want: { threshold: 1, total: 1, share_count: 1 },
     },
     {
       name: 'deleteRecoveryKeys',
@@ -149,14 +125,6 @@ describe('McpBarrierClient tools', () => {
       args: {},
       reply: { has_recovery_keys: true },
       want: { has_keys: true },
-    },
-    {
-      name: 'generateRootToken',
-      call: (c) => c.barrier.generateRootToken({ shares: ['share-1', 'share-2'] }),
-      tool: 'qrdb_barrier_root_token',
-      args: { shares: ['share-1', 'share-2'] },
-      reply: { token: 'ab12', created_at: '2026-10-17T00:00:00Z' },
-      want: { token: 'ab12', created_at: '2026-10-17T00:00:00Z' },
     },
     {
       name: 'enableEncryption on the system barrier',
@@ -207,6 +175,53 @@ describe('McpBarrierClient tools', () => {
     await expect(new McpClient(endpoint).barrier.status()).rejects.toBeInstanceOf(McpError);
   });
 
+  it('generateRecoveryKeys refuses to send an SO PIN over plaintext http', async () => {
+    const err = await new McpClient(plainEndpoint)
+      .barrier.generateRecoveryKeys({ threshold: 2, so_pin: 'so-pin-1234' })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['initialize', (c: McpClient) => c.barrier.initialize({ secret: new TextEncoder().encode('pass-1') })],
+    ['unseal', (c: McpClient) => c.barrier.unseal({ secret: new TextEncoder().encode('pass-1') })],
+    [
+      'initializeShamir',
+      (c: McpClient) =>
+        c.barrier.initializeShamir({ secret: new TextEncoder().encode('pass-1'), threshold: 2, total_shares: 3 }),
+    ],
+    [
+      'enableEncryption',
+      (c: McpClient) =>
+        c.barrier.enableEncryption({ strategy: 'passphrase', passphrase: new TextEncoder().encode('pass-1') }),
+    ],
+    [
+      'ceremony initialize with a user PIN',
+      (c: McpClient) => c.ceremony.initialize({ so_pin: '', user_pin: 'user-pin-1', threshold: 0, admin_generate: true }),
+    ],
+    [
+      'ceremony initialize with a secret',
+      (c: McpClient) =>
+        c.ceremony.initialize({
+          so_pin: '',
+          user_pin: '',
+          threshold: 0,
+          admin_generate: true,
+          secret: new TextEncoder().encode('pass-1'),
+        }),
+    ],
+  ] as const)('%s refuses to send a secret over plaintext http', async (_name, call) => {
+    const err = await call(new McpClient(plainEndpoint)).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(SOPINRequiresTLSError);
+    expect((err as SOPINRequiresTLSError).transport).toBe('mcp');
+    expect(String((err as Error).message)).not.toContain('pass-1');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('McpCeremonyClient tools', () => {
@@ -219,9 +234,12 @@ describe('McpCeremonyClient tools', () => {
           user_pin: 'user-pin-1234',
           threshold: 2,
           credential_seal_strategy: 'passphrase',
+          policy: 'any-enrolled',
           officers: [{ username: 'officer-1', csr_pem: 'CSR-1' }],
           hostname: 'node.example',
           sans: ['node.example', '10.0.0.1'],
+          admin_csr_pem: 'ADMIN-CSR',
+          secret: utf8('barrier passphrase'),
         }),
       tool: 'qrdb_ceremony_initialize',
       args: {
@@ -229,18 +247,43 @@ describe('McpCeremonyClient tools', () => {
         user_pin: 'user-pin-1234',
         threshold: 2,
         credential_seal_strategy: 'passphrase',
+        policy: 'any-enrolled',
         officers: [{ username: 'officer-1', csr_pem: 'CSR-1' }],
         hostname: 'node.example',
         sans: ['node.example', '10.0.0.1'],
+        admin_csr_pem: 'ADMIN-CSR',
+        secret: 'barrier passphrase',
       },
       reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
     },
     {
       name: 'initialize without the optional fields',
-      call: (c) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0 }),
+      call: (c) =>
+        c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true }),
       tool: 'qrdb_ceremony_initialize',
-      args: { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0 },
+      args: { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true },
+      reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
+      want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
+    },
+    {
+      name: 'initialize with a bring-your-own admin certificate',
+      call: (c) =>
+        c.ceremony.initialize({
+          so_pin: 'so-pin-1234',
+          user_pin: 'user-pin-1234',
+          threshold: 0,
+          admin_cert_pem: 'ADMIN-CERT',
+          admin_cert_pool_pem: 'ADMIN-POOL',
+        }),
+      tool: 'qrdb_ceremony_initialize',
+      args: {
+        so_pin: 'so-pin-1234',
+        user_pin: 'user-pin-1234',
+        threshold: 0,
+        admin_cert_pem: 'ADMIN-CERT',
+        admin_cert_pool_pem: 'ADMIN-POOL',
+      },
       reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 0 },
     },
@@ -253,61 +296,12 @@ describe('McpCeremonyClient tools', () => {
       want: { state: 'initialized', spki_pin: 'pin' },
     },
     {
-      name: 'claimCertBegin',
-      call: (c) => c.ceremony.claimCertBegin({ username: 'officer-1' }),
-      tool: 'qrdb_ceremony_claim_cert_begin',
-      args: { username: 'officer-1' },
-      reply: { nonce_hex: 'beef', expires_at: '2026-10-17T00:05:00Z' },
-      want: { nonce_hex: 'beef', expires_at: '2026-10-17T00:05:00Z' },
-    },
-    {
-      name: 'claimCertComplete',
-      call: (c) => c.ceremony.claimCertComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' }),
-      tool: 'qrdb_ceremony_claim_cert_complete',
-      args: { username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' },
-      reply: { cert_pem: 'CERT', ca_cert_pem: 'CA' },
-      want: { cert_pem: 'CERT', ca_cert_pem: 'CA' },
-    },
-    {
-      name: 'claimShareBegin',
-      call: (c) => c.ceremony.claimShareBegin({ username: 'officer-1' }),
-      tool: 'qrdb_ceremony_begin_claim_share',
-      args: { username: 'officer-1' },
-      reply: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
-      want: { nonce_hex: 'cafe', expires_at: '2026-10-18T00:05:00Z' },
-    },
-    {
-      // The signature travels as the caller's base64; the tool's base64 share
-      // is decoded back into the share JSON.
-      name: 'claimShareComplete',
-      call: (c) => c.ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' }),
-      tool: 'qrdb_ceremony_complete_claim_share',
-      args: { username: 'officer-1', nonce_hex: 'cafe', signature: 'c2ln' },
-      reply: { share_index: 3, share: btoa('{"index":3}') },
-      want: { share_index: 3, share_json: '{"index":3}' },
-    },
-    {
       name: 'signCSR',
       call: (c) => c.ceremony.signCSR({ username: 'svc-1', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'admin' }),
       tool: 'qrdb_ceremony_sign_csr',
       args: { username: 'svc-1', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'admin' },
       reply: { cert_pem: 'CERT' },
       want: { cert_pem: 'CERT' },
-    },
-    {
-      name: 'enrollExternalOfficer',
-      call: (c) =>
-        c.ceremony.enrollExternalOfficer({
-          username: 'officer-2',
-          pubkey_pem: 'PUB',
-          share_index: 2,
-          auth_factor: 'piv',
-          share_bytes: 'share',
-        }),
-      tool: 'qrdb_ceremony_enroll_external_officer',
-      args: { username: 'officer-2', pubkey_pem: 'PUB', share_index: 2, auth_factor: 'piv', share_bytes: 'share' },
-      reply: { sealed_share: 'c2VhbGVk' },
-      want: { sealed_share: 'c2VhbGVk' },
     },
   ];
 
@@ -320,7 +314,10 @@ describe('McpCeremonyClient tools', () => {
   });
 
   it.each([
-    ['initialize', (c: McpClient) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0 })],
+    [
+      'initialize',
+      (c: McpClient) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0, admin_generate: true }),
+    ],
     ['signCSR', (c: McpClient) => c.ceremony.signCSR({ username: 'u', so_pin: 'so-pin-1234', csr_pem: 'CSR', role: 'r' })],
   ] as const)('%s refuses to send an SO PIN over plaintext http', async (_name, call) => {
     const err = await call(new McpClient(plainEndpoint)).catch((e: unknown) => e);
@@ -329,23 +326,20 @@ describe('McpCeremonyClient tools', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('claimShareComplete refuses a share that is not base64 as McpError', async () => {
-    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { share_index: 1, share: '%%%' })));
-
-    const err = await new McpClient(endpoint)
-      .ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' })
+  it.each([
+    ['no selector', {}, []],
+    ['two selectors', { admin_csr_pem: 'CSR', admin_generate: true }, ['admin_csr_pem', 'admin_generate']],
+    ['an explicit false generate alone', { admin_generate: false }, []],
+  ] as const)('initialize with %s fails before any call', async (_name, selector, selected) => {
+    const err = await new McpClient(endpoint).ceremony
+      .initialize({ so_pin: 'so-pin-1234', user_pin: 'u', threshold: 0, ...selector })
       .catch((e: unknown) => e);
 
-    expect(err).toBeInstanceOf(McpError);
+    expect(err).toBeInstanceOf(CeremonyAdminSelectorError);
+    expect((err as CeremonyAdminSelectorError).selected).toEqual(selected);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('claimShareComplete surfaces a tool error reply as McpError', async () => {
-    toolError();
-
-    await expect(
-      new McpClient(endpoint).ceremony.claimShareComplete({ username: 'officer-1', nonce_hex: 'beef', signature: 'c2ln' }),
-    ).rejects.toBeInstanceOf(McpError);
-  });
 });
 
 describe('McpClient bootstrap', () => {
@@ -356,5 +350,54 @@ describe('McpClient bootstrap', () => {
     // @ts-expect-error bootstrap is a RestClient-only member
     expect(client.bootstrap).toBeUndefined();
     expect('bootstrap' in client).toBe(false);
+  });
+});
+
+// A barrier credential is bytes; MCP carries it as a JSON string. The
+// conversion keeps every valid UTF-8 byte, a leading BOM included, and
+// refuses bytes no string can carry before any request is sent, as the Go
+// MCP transport's secretArg does: a credential altered on the way would
+// initialize a barrier that the caller's real bytes can never unseal.
+describe('McpClient secret arguments', () => {
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8('pass phrase')]);
+  const malformed = new Uint8Array([0x70, 0x77, 0xff, 0xfe]);
+  const ceremonyReq = { so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0, admin_generate: true };
+
+  const verbs: { name: string; field: string; call: (c: McpClient, secret: Uint8Array) => Promise<unknown> }[] = [
+    { name: 'barrier.initialize', field: 'secret', call: (c, s) => c.barrier.initialize({ secret: s }) },
+    { name: 'barrier.unseal', field: 'secret', call: (c, s) => c.barrier.unseal({ secret: s }) },
+    {
+      name: 'barrier.initializeShamir',
+      field: 'secret',
+      call: (c, s) => c.barrier.initializeShamir({ secret: s, threshold: 2, total_shares: 3 }),
+    },
+    {
+      name: 'barrier.enableEncryption',
+      field: 'passphrase',
+      call: (c, s) => c.barrier.enableEncryption({ strategy: 'passphrase', passphrase: s }),
+    },
+    { name: 'ceremony.initialize', field: 'secret', call: (c, s) => c.ceremony.initialize({ ...ceremonyReq, secret: s }) },
+  ];
+
+  it.each(verbs)('$name sends a secret with a leading BOM byte for byte', async (v) => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, { threshold: 2, total_shares: 3 })));
+
+    await v.call(new McpClient(endpoint), bom);
+
+    const calls = toolCalls(fetchMock);
+    expect(calls).toHaveLength(1);
+    const sent = (calls[0].params?.arguments as Record<string, unknown>)[v.field] as string;
+    expect(sent.charCodeAt(0)).toBe(0xfeff);
+    expect(new TextEncoder().encode(sent)).toEqual(bom);
+  });
+
+  it.each(verbs)('$name refuses malformed UTF-8 before any request', async (v) => {
+    scriptServer(fetchMock, (msg) => jsonReply(toolText(msg.id as number, {})));
+
+    const err = await v.call(new McpClient(endpoint), malformed).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(McpSecretNotTextError);
+    expect((err as McpSecretNotTextError).field).toBe(v.field);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
