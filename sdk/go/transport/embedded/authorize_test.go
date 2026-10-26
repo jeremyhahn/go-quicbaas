@@ -236,6 +236,61 @@ func TestSecurityOperationPermissions_WithinPrincipalGrants(t *testing.T) {
 	require.NotZero(t, checked, "no Security operation was checked")
 }
 
+// schedulerOperationPermissions is the permission each Scheduler RPC declares
+// in api/proto/scheduler.proto, keyed by the embedded handler method name.
+var schedulerOperationPermissions = map[string]string{
+	"CreateJob":      "scheduler:create",
+	"GetJob":         "scheduler:read",
+	"UpdateJob":      "scheduler:update",
+	"DeleteJob":      "scheduler:delete",
+	"ListJobs":       "scheduler:list",
+	"TriggerJob":     "scheduler:trigger",
+	"PauseJob":       "scheduler:pause",
+	"ResumeJob":      "scheduler:resume",
+	"CancelJob":      "scheduler:cancel",
+	"GetJobHistory":  "scheduler:history",
+	"GetStatus":      "scheduler:status",
+	"RegisterNode":   "placement:manage",
+	"RenewNode":      "placement:manage",
+	"DeregisterNode": "placement:manage",
+	"CordonNode":     "placement:manage",
+	"UncordonNode":   "placement:manage",
+	"DrainNode":      "placement:manage",
+	"GetNode":        "placement:read",
+	"ListNodes":      "placement:read",
+	"GetPlacement":   "placement:read",
+	"ListPlacements": "placement:read",
+	"Place":          "placement:place",
+	"Release":        "placement:place",
+}
+
+func TestSchedulerOperations_DeclareTheProtoPermission(t *testing.T) {
+	checked := 0
+	for key := range unaryHandlers {
+		method, ok := strings.CutPrefix(key, "quicbaas.Scheduler/")
+		if !ok {
+			continue
+		}
+		checked++
+		want, known := schedulerOperationPermissions[method]
+		require.True(t, known, "%s has no proto permission in the test table", key)
+		assert.Equal(t, []string{want}, operationPermissions[key], "%s must declare its proto permission", key)
+	}
+	require.Len(t, schedulerOperationPermissions, checked, "every Scheduler RPC must have an embedded handler")
+}
+
+func TestSchedulerOperationPermissions_WithinPrincipalGrants(t *testing.T) {
+	grants, err := qrdbservice.Grants()
+	require.NoError(t, err)
+	granted := make(map[string]bool, len(grants))
+	for _, p := range grants {
+		granted[p.String()] = true
+	}
+	for method, perm := range schedulerOperationPermissions {
+		assert.True(t, granted[perm], "quicbaas.Scheduler/%s needs %s, which the embedded principal is not granted", method, perm)
+	}
+}
+
 func TestRequest_UnknownMethodNeverAuthorized(t *testing.T) {
 	var calls []recordedCall
 	tr := newAuthorizedTransport(t, &calls)

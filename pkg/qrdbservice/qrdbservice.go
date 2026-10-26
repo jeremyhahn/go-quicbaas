@@ -186,6 +186,20 @@ var grantNames = []string{
 	"piv:delete",                   // PIV.DeletePIVCertificate
 	"piv:use",                      // PIV.GeneratePIVCSR
 	"acme:write",                   // ACME orders, issuance and renewal
+	"scheduler:create",             // Scheduler.CreateJob
+	"scheduler:read",               // Scheduler.GetJob
+	"scheduler:update",             // Scheduler.UpdateJob
+	"scheduler:delete",             // Scheduler.DeleteJob
+	"scheduler:list",               // Scheduler.ListJobs
+	"scheduler:trigger",            // Scheduler.TriggerJob
+	"scheduler:pause",              // Scheduler.PauseJob
+	"scheduler:resume",             // Scheduler.ResumeJob
+	"scheduler:cancel",             // Scheduler.CancelJob
+	"scheduler:history",            // Scheduler.GetJobHistory
+	"scheduler:status",             // Scheduler.GetStatus
+	"placement:read",               // Scheduler node and placement reads
+	"placement:place",              // Scheduler.Place/Release
+	"placement:manage",             // Scheduler node registration and lifecycle
 }
 
 // GrantError reports a grant name qrdb's permission registry does not know.
