@@ -197,4 +197,58 @@ describe('TenantBarrierView seal and unseal routes', () => {
 
     expect(posts(calls, '/unseal')).toHaveLength(0);
   });
+
+  it('shows the issued holder certificates after a share-free Shamir init', async () => {
+    // The body go-qrdb's TenantBarrierInitResponse marshals to: share
+    // metadata and holder certificates, never the shares themselves.
+    const calls = stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT,
+          strategy: 'shamir',
+          threshold: 2,
+          total_shares: 3,
+          share_count: 3,
+          holders: [
+            { username: 'officer-1', role: 'unseal', cert_pem: 'cert-pem-1' },
+            { username: 'officer-2', role: 'unseal', cert_pem: 'cert-pem-2' },
+          ],
+        },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    const panel = await screen.findByTestId('tenant-barrier-holders');
+    expect(posts(calls, '/init')[0]?.body).toMatchObject({ strategy: 'shamir', threshold: 2 });
+    expect(panel).toHaveTextContent(/2 of 3/);
+    expect(panel).toHaveTextContent('officer-1');
+    expect(panel).toHaveTextContent('officer-2');
+    expect(panel).toHaveTextContent('cert-pem-1');
+    expect(screen.queryByTestId('tenant-barrier-shares-reveal')).toBeNull();
+  });
+
+  it('reports the sealed share count when the holders were registered before init', async () => {
+    stubFetch(
+      { strategy: 'none', sealed: false, initialized: false, shamir_threshold: 0, shamir_total: 0 },
+      {
+        [`${BASE}/init`]: {
+          tenant_id: TENANT, strategy: 'shamir', threshold: 2, total_shares: 3, share_count: 3,
+        },
+      },
+    );
+    render(TenantBarrierView);
+
+    await screen.findByTestId('barrier-strategy-picker');
+    await fireEvent.click(screen.getByTestId('barrier-strategy-radio-shamir'));
+    await fireEvent.click(screen.getByTestId('barrier-strategy-submit'));
+
+    const panel = await screen.findByTestId('tenant-barrier-holders');
+    expect(panel).toHaveTextContent(/3 shares sealed/);
+    expect(screen.queryByTestId('tenant-barrier-holder')).toBeNull();
+  });
 });

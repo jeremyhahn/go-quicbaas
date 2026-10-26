@@ -2876,6 +2876,7 @@ export type TenantBarrierStrategy = 'none' | 'passphrase' | 'shamir';
 // TenantBarrierInitRequest initializes a tenant's barrier with the chosen
 // strategy. passphrase is required for the "passphrase" strategy; threshold
 // and shares are required for the "shamir" strategy and ignored otherwise.
+// Mirrors transport.TenantBarrierInitRequest.
 export interface TenantBarrierInitRequest {
   /** Sealing strategy to provision for the tenant. */
   strategy: TenantBarrierStrategy;
@@ -2885,22 +2886,45 @@ export interface TenantBarrierInitRequest {
   threshold?: number;
   /** Total shares to generate (shamir strategy). */
   shares?: number;
+  /**
+   * Inline share-holder roster registered atomically with initialization
+   * (shamir strategy). Its length must equal shares. Omit it when the holders
+   * were registered before initialization.
+   */
+  officers?: BarrierOfficerRegisterRequest[];
+  /** Factor policy the officers enrol under: "designated" (default) or "any-enrolled". */
+  policy?: string;
+}
+
+// TenantBarrierHolderCert is the certificate issued to one inline roster
+// officer. Mirrors transport.TenantBarrierHolderCert.
+export interface TenantBarrierHolderCert {
+  /** Officer username. */
+  username: string;
+  /** Role bound to the certificate. */
+  role: string;
+  /** PEM-encoded officer certificate. */
+  cert_pem: string;
 }
 
 // TenantBarrierInitResponse is returned for the shamir strategy and carries
-// the freshly minted shares. The "none" and "passphrase" strategies return
-// 204 No Content, so callers receive undefined for those.
+// share-free metadata: the shares are sealed to their holders, who each claim
+// their own. The "none" and "passphrase" strategies return 204 No Content, so
+// callers receive undefined for those. Mirrors
+// transport.TenantBarrierInitResponse.
 export interface TenantBarrierInitResponse {
   /** Tenant whose barrier was initialized. */
   tenant_id: string;
   /** Sealing strategy that was provisioned. */
   strategy: TenantBarrierStrategy;
-  /** Shamir shares for distribution — returned exactly once. */
-  shares: string[];
   /** Threshold required for reconstruction. */
   threshold: number;
   /** Total shares generated. */
   total_shares: number;
+  /** Shares sealed to their holders, awaiting each holder's claim. */
+  share_count: number;
+  /** Certificates issued to the inline roster officers, in roster order; absent without a roster. */
+  holders?: TenantBarrierHolderCert[];
 }
 
 
