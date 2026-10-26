@@ -49,12 +49,8 @@ const identityUserIDKey = "quicbaas.user_id"
 
 // MarkTokenSubject records on identity that its Subject is the sub of a token
 // quicbaas issued, and that userID (the token's verified uid claim, zero when it
-// carried none) names the caller's account. A non-zero userID also becomes
-// identity.UserID, so go-qrdb resolves the caller by account id rather than
-// reading the sub (an email or a login name) as a username; a username sub is
-// kept as identity.Username for go-qrdb's AccountName. Subject is left as the
-// sub. It returns identity for use in a return statement; a nil identity is
-// returned unchanged.
+// carried none) names the caller's account. It returns identity for use in a return
+// statement; a nil identity is returned unchanged.
 func MarkTokenSubject(identity *qrdbsdk.Identity, userID uint64) *qrdbsdk.Identity {
 	if identity == nil {
 		return nil
@@ -63,13 +59,8 @@ func MarkTokenSubject(identity *qrdbsdk.Identity, userID uint64) *qrdbsdk.Identi
 		identity.Metadata = make(map[string]string, 1)
 	}
 	identity.Metadata[identityUserIDKey] = ""
-	if userID == 0 {
-		return identity
-	}
-	identity.Metadata[identityUserIDKey] = strconv.FormatUint(userID, 10)
-	identity.UserID = userID
-	if SubjectIDKindOf(identity.Subject) == interfaces.SubjectIDUsername {
-		identity.Username = identity.Subject
+	if userID != 0 {
+		identity.Metadata[identityUserIDKey] = strconv.FormatUint(userID, 10)
 	}
 	return identity
 }
@@ -89,33 +80,19 @@ func SubjectIDKindOf(sub string) interfaces.SubjectIDKind {
 // Subject the service layer reads. The identity came from
 // qrdbsdk.IdentityFromContext, so qrdb has already verified it and the subject
 // is authenticated. For an identity marked by MarkTokenSubject, IDKind
-// classifies the sub by SubjectIDKindOf and UserID is the recorded uid, until
-// qrdb's BindUser binds the account: then Username is the bound account's name
-// and UserID its id. Every other identity is qrdb's own and its Subject is a
-// username.
+// classifies the sub by SubjectIDKindOf and UserID is the recorded uid; every
+// other identity is qrdb's own and its Subject is a username.
 func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
-	// AccountName is the bound account's username when qrdb's BindUser
-	// resolved one (its Subject is then the decimal account id), otherwise
-	// the Subject the credential presented.
-	name := identity.AccountName()
 	subject := interfaces.Subject{
-		ID:            name,
-		Username:      name,
+		ID:            identity.Subject,
+		Username:      identity.Subject,
 		TenantID:      identity.TenantID,
 		Roles:         identity.Roles,
 		Authenticated: true,
 		IDKind:        interfaces.SubjectIDUsername,
-		UserID:        identity.UserID,
 	}
-	// Once qrdb has bound the token's account, the bound account names the
-	// caller: its username and id, as projected above.
-	if mark, fromToken := identity.Metadata[identityUserIDKey]; fromToken && !boundByQRDB(identity) {
-		// A token's sub is the name the caller logged in with, of the kind
-		// its form says; the mark, not Identity.UserID, carries its uid.
-		subject.ID = identity.Subject
-		subject.Username = identity.Subject
+	if mark, fromToken := identity.Metadata[identityUserIDKey]; fromToken {
 		subject.IDKind = SubjectIDKindOf(identity.Subject)
-		subject.UserID = 0
 		// Only MarkTokenSubject writes the mark, so it is empty or decimal. A
 		// value that does not parse names no account and leaves UserID zero.
 		if userID, err := strconv.ParseUint(mark, 10, 64); err == nil {
@@ -123,14 +100,6 @@ func SubjectFromIdentity(identity *qrdbsdk.Identity) interfaces.Subject {
 		}
 	}
 	return subject
-}
-
-// boundByQRDB reports whether qrdb's BindUser has resolved identity to an
-// account: BindUser sets UserID and Username and makes Subject the account id
-// in base 10. MarkTokenSubject alone leaves Subject as the token's sub.
-func boundByQRDB(identity *qrdbsdk.Identity) bool {
-	return identity.UserID != 0 && identity.Username != "" &&
-		identity.Subject == strconv.FormatUint(identity.UserID, 10)
 }
 
 // ContextWithIdentitySubject projects the verified qrdb identity the unified

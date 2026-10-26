@@ -21,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmsssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
@@ -106,27 +105,6 @@ func TestSSHService_SignDigestWithoutAUserIDLeavesTheActorUserIDEmpty(t *testing
 	require.NotNil(t, logger.events[0].Actor)
 	assert.Empty(t, logger.events[0].Actor.UserID)
 	assert.Equal(t, "svc-signer", logger.events[0].Actor.Username)
-}
-
-// TestSSHService_SignDigestAuditsABoundBearerByUsername signs as alice's
-// bearer identity after qrdb's BindUser set its Subject to her account id:
-// the audit names her username and account id, never the numeric Subject.
-func TestSSHService_SignDigestAuditsABoundBearerByUsername(t *testing.T) {
-	fake := sshfake.NewClient()
-	fake.SignerPublicKey = testSSHPublicKey(t)
-	logger := &mockAuditLogger{}
-	svc := NewSSHService(fake, WithSSHAudit(auditSource{logger: logger}))
-	identity := auth.MarkTokenSubject(&qrdbsdk.Identity{Subject: "alice", TenantID: "acme"}, 42)
-	identity.BindUser(42, "alice")
-	ctx := auth.ContextWithIdentitySubject(qrdbsdk.WithIdentity(context.Background(), identity))
-
-	_, err := svc.SignDigest(ctx, signRequest())
-	require.NoError(t, err)
-
-	require.Len(t, logger.events, 1)
-	require.NotNil(t, logger.events[0].Actor)
-	assert.Equal(t, "alice", logger.events[0].Actor.Username)
-	assert.Equal(t, "42", logger.events[0].Actor.UserID)
 }
 
 func TestSSHService_SignDigestAuditsARefusedSignature(t *testing.T) {

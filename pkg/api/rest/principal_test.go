@@ -222,33 +222,6 @@ func TestQueryIdentityMatches_ForeignUserWithUsername(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "user_id parameter does not match")
 }
 
-// boundBearerSubject projects alice's bearer identity the way the REST module
-// sees it: the token marked it with her uid 42, then qrdb's BindUser bound the
-// account and set Subject to "42".
-func boundBearerSubject() interfaces.Subject {
-	identity := auth.MarkTokenSubject(&qrdbsdk.Identity{Subject: "alice", TenantID: "t1"}, 42)
-	identity.BindUser(42, "alice")
-	return auth.SubjectFromIdentity(identity)
-}
-
-// A bound bearer caller asking for her own sessions by username is allowed.
-func TestQueryIdentityMatches_BoundBearerOwnUsername(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/x?user_id=alice&tenant_id=t1", nil)
-	w := httptest.NewRecorder()
-
-	assert.True(t, queryIdentityMatches(w, req, boundBearerSubject(), unusedCallerAccount(t)))
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// A bound bearer caller asking for another user's sessions is refused.
-func TestQueryIdentityMatches_BoundBearerOtherUsername(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/x?user_id=bob", nil)
-	w := httptest.NewRecorder()
-
-	assert.False(t, queryIdentityMatches(w, req, boundBearerSubject(), unusedCallerAccount(t)))
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
 // An empty Subject.Username never matches: only the subject ID counts.
 func TestQueryIdentityMatches_EmptyUsernameNoMatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/x?user_id=admin", nil)

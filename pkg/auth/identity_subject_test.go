@@ -46,53 +46,6 @@ func TestSubjectFromIdentity_UnmarkedIsUsername(t *testing.T) {
 	}
 }
 
-// TestSubjectFromIdentity_BoundAccount projects an identity the way qrdb's
-// mTLS path hands it over: BindUser has set Subject to the decimal account
-// id, so the projection must name the account by its verified UserID and
-// carry the real username, not the numeric Subject.
-func TestSubjectFromIdentity_BoundAccount(t *testing.T) {
-	identity := &qrdbsdk.Identity{TenantID: "t1", Roles: []string{"user"}}
-	identity.BindUser(42, "alice")
-
-	subject := SubjectFromIdentity(identity)
-	if subject.UserID != 42 {
-		t.Fatalf("UserID = %d, want 42 (Subject %q)", subject.UserID, identity.Subject)
-	}
-	if subject.ID != "alice" || subject.Username != "alice" || subject.IDKind != interfaces.SubjectIDUsername {
-		t.Fatalf("projected %+v, want the username alice", subject)
-	}
-	if subject.TenantID != "t1" || !subject.Authenticated {
-		t.Fatalf("projected %+v, want an authenticated t1 caller", subject)
-	}
-}
-
-// TestSubjectFromIdentity_BoundBearer projects a bearer identity after qrdb's
-// BindUser: the token marked it, then qrdb bound the account, which set
-// Subject to the decimal account id. The projection must name the bound
-// account by its username and id, never by the numeric Subject.
-func TestSubjectFromIdentity_BoundBearer(t *testing.T) {
-	cases := map[string]struct {
-		sub    string
-		userID uint64
-	}{
-		"username sub":      {sub: "alice", userID: 42},
-		"email sub":         {sub: "alice@example.com", userID: 42},
-		"token without uid": {sub: "alice", userID: 0},
-	}
-	for name, tc := range cases {
-		identity := MarkTokenSubject(&qrdbsdk.Identity{Subject: tc.sub, TenantID: "t1"}, tc.userID)
-		identity.BindUser(42, "alice")
-
-		subject := SubjectFromIdentity(identity)
-		if subject.Username != "alice" || subject.ID != "alice" || subject.IDKind != interfaces.SubjectIDUsername {
-			t.Errorf("%s: projected %+v, want the bound username alice", name, subject)
-		}
-		if subject.UserID != 42 {
-			t.Errorf("%s: UserID = %d, want the bound account id 42", name, subject.UserID)
-		}
-	}
-}
-
 // A token's sub is the ceremony's email or username; it is classified by what
 // it is, never as a user ID, and the verified uid travels separately.
 func TestSubjectFromIdentity_TokenSubject(t *testing.T) {
@@ -159,38 +112,6 @@ func TestMarkTokenSubject_KeepsExistingMetadata(t *testing.T) {
 func TestMarkTokenSubject_NilIdentity(t *testing.T) {
 	if got := MarkTokenSubject(nil, 42); got != nil {
 		t.Fatalf("MarkTokenSubject(nil) = %+v, want nil", got)
-	}
-}
-
-func TestMarkTokenSubject_BindsAccount(t *testing.T) {
-	cases := map[string]struct {
-		sub          string
-		wantUsername string
-	}{
-		"username sub": {sub: "alice", wantUsername: "alice"},
-		"email sub":    {sub: "alice@example.com", wantUsername: ""},
-	}
-	for name, tc := range cases {
-		identity := MarkTokenSubject(&qrdbsdk.Identity{Subject: tc.sub, TenantID: "t1"}, 42)
-		if identity.UserID != 42 {
-			t.Errorf("%s: UserID = %d, want 42", name, identity.UserID)
-		}
-		if identity.Username != tc.wantUsername {
-			t.Errorf("%s: Username = %q, want %q", name, identity.Username, tc.wantUsername)
-		}
-		if identity.Subject != tc.sub {
-			t.Errorf("%s: Subject = %q, want the sub %q unchanged", name, identity.Subject, tc.sub)
-		}
-	}
-}
-
-func TestMarkTokenSubject_NoUIDBindsNoAccount(t *testing.T) {
-	identity := MarkTokenSubject(&qrdbsdk.Identity{Subject: "alice", TenantID: "t1"}, 0)
-	if identity.UserID != 0 || identity.Username != "" {
-		t.Fatalf("token without uid bound an account: UserID=%d Username=%q", identity.UserID, identity.Username)
-	}
-	if mark, ok := identity.Metadata[identityUserIDKey]; !ok || mark != "" {
-		t.Fatalf("token mark = %q (present %v), want empty and present", mark, ok)
 	}
 }
 
