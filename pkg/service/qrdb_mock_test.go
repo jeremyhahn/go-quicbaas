@@ -50,6 +50,11 @@ type svcBoostMockTransport struct {
 	lastScanKey   string
 	// batchCalls records the ops passed to each ExecuteBatch invocation.
 	batchCalls [][]transport.Op
+	// txCalls records each ExecuteTransaction request; txResult and txErr
+	// are its outcome (a nil txResult commits the Success branch).
+	txCalls  []*transport.TransactionRequest
+	txResult *transport.TransactionResponse
+	txErr    error
 }
 
 func (t *svcBoostMockTransport) Connect(_ context.Context) error { return nil }
@@ -158,6 +163,28 @@ func (t *svcBoostMockTransport) ExecuteBatch(_ context.Context, ops []transport.
 		Responses: make([]transport.OpResponse, len(ops)),
 	}
 	for i := range ops {
+		resp.Responses[i] = transport.OpResponse{Succeeded: true}
+	}
+	return resp, nil
+}
+
+// TransactionClient methods.
+
+func (t *svcBoostMockTransport) ExecuteTransaction(_ context.Context, req *transport.TransactionRequest, _ ...transport.WriteOption) (*transport.TransactionResponse, error) {
+	t.mu.Lock()
+	t.txCalls = append(t.txCalls, req)
+	t.mu.Unlock()
+	if t.txErr != nil {
+		return nil, t.txErr
+	}
+	if t.txResult != nil {
+		return t.txResult, nil
+	}
+	resp := &transport.TransactionResponse{
+		Succeeded: true,
+		Responses: make([]transport.OpResponse, len(req.SuccessOps)),
+	}
+	for i := range req.SuccessOps {
 		resp.Responses[i] = transport.OpResponse{Succeeded: true}
 	}
 	return resp, nil
