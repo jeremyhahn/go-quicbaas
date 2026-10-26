@@ -19,7 +19,6 @@ import (
 	"errors"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -396,17 +395,26 @@ func TestBot_DoubleRun(t *testing.T) {
 	bot, signal, _, _ := newTestBot(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var ran atomic.Bool
+	firstErr := make(chan error, 1)
 	go func() {
-		ran.Store(true)
-		_ = bot.Run(ctx)
+		firstErr <- bot.Run(ctx)
 	}()
-	waitFor(t, func() bool { return ran.Load() })
+	// Wait until the first Run holds the running flag, so the call below
+	// is always the second caller and must see the conflict.
+	waitFor(t, func() bool { return bot.running.Load() })
 	err := bot.Run(ctx)
 	if !IsKind(err, ErrKindConflict) {
 		t.Fatalf("want conflict got %v", err)
 	}
-	_ = bot.Stop()
+	if err := bot.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// Run sets its cancel func after taking the flag, so Stop may have run
+	// before it existed; cancelling the parent context always ends Run.
+	cancel()
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
 	close(signal.in)
 }
 
