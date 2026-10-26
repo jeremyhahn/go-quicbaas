@@ -37,8 +37,8 @@ var operationPermissions = map[string][]string{
 	"quicbaas.KV/Put":             {"kv:put"},
 	"quicbaas.KV/Get":             {"kv:get"},
 	"quicbaas.KV/Delete":          {"kv:delete"},
-	"quicbaas.KV/List":            {"kv:list"},
-	"quicbaas.KV/ListEntityTypes": {"admin:status"},
+	"quicbaas.KV/List":            {"kv:range"},
+	"quicbaas.KV/ListEntityTypes": {"kv:range"},
 
 	"quicbaas.Batch/Put":    {"batch:execute"},
 	"quicbaas.Batch/Get":    {"batch:execute"},
@@ -46,9 +46,9 @@ var operationPermissions = map[string][]string{
 
 	"quicbaas.Transaction/Execute": {"transaction:execute"},
 
-	"quicbaas.Cluster/Status":             {"admin:status"},
-	"quicbaas.Cluster/GetLeader":          {"admin:status"},
-	"quicbaas.Cluster/Nodes":              {"admin:status"},
+	"quicbaas.Cluster/Status":             {"admin:topology"},
+	"quicbaas.Cluster/GetLeader":          {"admin:shard_state"},
+	"quicbaas.Cluster/Nodes":              {"admin:topology"},
 	"quicbaas.Cluster/AddNode":            {"admin:add_member"},
 	"quicbaas.Cluster/RemoveNode":         {"admin:remove_member"},
 	"quicbaas.Cluster/CreateShard":        {"admin:start_shard"},
@@ -105,7 +105,7 @@ var operationPermissions = map[string][]string{
 	"quicbaas.ParameterStore/ListParameters":   {"parameters:list"},
 	"quicbaas.ParameterStore/SearchByTags":     {"parameters:search"},
 
-	"quicbaas.TimeSeries/Aggregate":          {"timeseries:aggregate"},
+	"quicbaas.TimeSeries/Aggregate":          {"kv:range"},
 	"quicbaas.TimeSeries/Write":              {"timeseries:write"},
 	"quicbaas.TimeSeries/WritePoint":         {"timeseries:write_point"},
 	"quicbaas.TimeSeries/WriteBatch":         {"timeseries:write_batch"},
@@ -491,4 +491,20 @@ var operationPermissions = map[string][]string{
 	"quicbaas.IAM.WebAuthn/ListWebAuthnCredentials":   {"users:read"},
 	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredential":  {"users:delete"},
 	"quicbaas.IAM.WebAuthn/DeleteWebAuthnCredentials": {"users:delete"},
+}
+
+// streamOperationPermissions overrides operationPermissions for a stream
+// whose dispatch key a unary handler shares while serving another go-qrdb
+// verb. The unary TimeSeries/Query is TSQuery (timeseries:query); the stream
+// is TimeSeriesQuery, which scans entities (kv:range).
+var streamOperationPermissions = map[string][]string{
+	"quicbaas.TimeSeries/Query": {"kv:range"},
+}
+
+// streamPermissions returns the permissions a stream at key declares.
+func streamPermissions(key string) []string {
+	if perms, ok := streamOperationPermissions[key]; ok {
+		return perms
+	}
+	return operationPermissions[key]
 }

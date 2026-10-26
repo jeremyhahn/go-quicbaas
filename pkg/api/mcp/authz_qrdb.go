@@ -86,7 +86,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_batch_put":    {"batch", "execute"},
 	"quicbaas_batch_delete": {"batch", "execute"},
 	"qrdb_get":              {"kv", "get"},
-	"qrdb_list":             {"kv", "list"},
+	"qrdb_list":             {"kv", "range"},
 	"qrdb_put":              {"kv", "put"},
 	"qrdb_delete":           {"kv", "delete"},
 
@@ -94,8 +94,8 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_transaction": {"transaction", "execute"},
 
 	// Cluster admin
-	"quicbaas_cluster_status":     {"admin", "status"},
-	"quicbaas_get_leader":         {"admin", "status"},
+	"quicbaas_cluster_status":     {"admin", "topology"},
+	"quicbaas_get_leader":         {"admin", "shard_state"},
 	"quicbaas_add_node":           {"admin", "add_member"},
 	"quicbaas_remove_node":        {"admin", "remove_member"},
 	"quicbaas_create_shard":       {"admin", "start_shard"},
@@ -177,7 +177,7 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	"quicbaas_cache_clear": {"admin", "capabilities"},
 
 	// Aggregate / time-series
-	"quicbaas_aggregate": {"timeseries", "aggregate"},
+	"quicbaas_aggregate": {"kv", "range"},
 
 	// Auth (logout, introspection). Introspection carries the grant the gRPC
 	// IntrospectToken RPC declares.

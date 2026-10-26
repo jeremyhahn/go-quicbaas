@@ -31,6 +31,13 @@ func TestGetToolQRDBPermission_Mapped(t *testing.T) {
 		{"qrdb_get", "kv", "get"},
 		{"qrdb_put", "kv", "put"},
 		{"qrdb_delete", "kv", "delete"},
+		// Reads declare the permission of the go-qrdb verb that serves them:
+		// list and aggregate scan, cluster status reads the topology, and
+		// get-leader reads the shard state (ruling 161).
+		{"qrdb_list", "kv", "range"},
+		{"quicbaas_aggregate", "kv", "range"},
+		{"quicbaas_cluster_status", "admin", "topology"},
+		{"quicbaas_get_leader", "admin", "shard_state"},
 		{"quicbaas_batch_put", "batch", "execute"},
 		// User administration is the quicbaas_iam_user_* family; the
 		// quicbaas_user_* / quicbaas_role_* names that used to be pinned here

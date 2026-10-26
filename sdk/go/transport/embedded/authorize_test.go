@@ -105,6 +105,57 @@ func TestRequestStream_AuthorizerRefusalStopsDispatch(t *testing.T) {
 	assert.True(t, calls[0].bound, "the authorizer sees the bound context")
 }
 
+// TestReadOperations_DeclareTheServingVerb pins the read operations to the
+// permission of the go-qrdb verb that serves them, as their proto RPCs
+// declare (api/proto/quicbaas.proto).
+func TestReadOperations_DeclareTheServingVerb(t *testing.T) {
+	unary := map[string]string{
+		"quicbaas.KV/ListEntityTypes":   "kv:range",          // Scan of the tenant keyspace
+		"quicbaas.Cluster/Status":       "admin:topology",    // GetTopology
+		"quicbaas.Cluster/GetLeader":    "admin:shard_state", // GetShardState
+		"quicbaas.Cluster/Nodes":        "admin:topology",    // ClusterStatus, so GetTopology
+		"quicbaas.TimeSeries/Aggregate": "kv:range",          // Scan of entity points
+		"quicbaas.TimeSeries/Query":     "timeseries:query",  // TSQuery
+	}
+	for key, want := range unary {
+		assert.Equal(t, []string{want}, operationPermissions[key], key)
+	}
+
+	stream := map[string]string{
+		"quicbaas.KV/List":          "kv:range", // Scan
+		"quicbaas.TimeSeries/Query": "kv:range", // TimeSeriesQuery scans entities
+	}
+	for key, want := range stream {
+		assert.Equal(t, []string{want}, streamPermissions(key), key)
+	}
+}
+
+// TestRequestStream_PassesTheStreamPermissions proves a stream sharing its
+// key with a unary handler is authorized for the stream's own verb.
+func TestRequestStream_PassesTheStreamPermissions(t *testing.T) {
+	var calls []recordedCall
+	tr := newAuthorizedTransport(t, &calls)
+
+	_, err := tr.Request(context.Background(), "quicbaas.TimeSeries", "Query", nil)
+	assert.ErrorIs(t, err, operationRefusedError{})
+	_, err = tr.RequestStream(context.Background(), "quicbaas.TimeSeries", "Query", nil)
+	assert.ErrorIs(t, err, operationRefusedError{})
+
+	require.Len(t, calls, 2)
+	assert.Equal(t, []string{"timeseries:query"}, calls[0].perms, "unary Query is TSQuery")
+	assert.Equal(t, []string{"kv:range"}, calls[1].perms, "streamed Query is TimeSeriesQuery")
+}
+
+// TestStreamOperationPermissions_KeysAreStreamHandlers guards the stream
+// overrides against a key no stream serves.
+func TestStreamOperationPermissions_KeysAreStreamHandlers(t *testing.T) {
+	for key, perms := range streamOperationPermissions {
+		_, ok := streamHandlers[key]
+		assert.True(t, ok, "%s declares %v but has no stream handler", key, perms)
+		assert.NotEmpty(t, perms, "%s declares an empty permission list", key)
+	}
+}
+
 func TestRequest_UnknownMethodNeverAuthorized(t *testing.T) {
 	var calls []recordedCall
 	tr := newAuthorizedTransport(t, &calls)
