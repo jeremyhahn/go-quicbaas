@@ -44,9 +44,10 @@ var unaryHandlers = map[string]handlerFunc{
 	"quicbaas.KV/ListEntityTypes": handleListEntityTypes,
 
 	// Batch operations
-	"quicbaas.Batch/Put":    handleBatchPut,
-	"quicbaas.Batch/Get":    handleBatchGet,
-	"quicbaas.Batch/Delete": handleBatchDelete,
+	"quicbaas.Batch/Put":     handleBatchPut,
+	"quicbaas.Batch/Get":     handleBatchGet,
+	"quicbaas.Batch/Delete":  handleBatchDelete,
+	"quicbaas.Batch/Execute": handleBatchExecute,
 
 	// Transaction operations
 	"quicbaas.Transaction/Execute": handleTransaction,
