@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 	qrdbsecure "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config/secrets"
 	secretsclient "github.com/jeremyhahn/go-quicbaas/sdk/go/client/secrets"
 )
@@ -46,7 +47,12 @@ func (c *client) retrieveCredential(ctx context.Context, name string) (*qrdbsecu
 	if err != nil {
 		return nil, err
 	}
-	return credentials.CredentialRetrieveBuffer(ctx, name)
+	// Version 0 is the current version. qrdb authorizes this verb as
+	// credentials:retrieve_version, which the service principal holds;
+	// CredentialRetrieveBuffer needs credentials:retrieve, which it does not.
+	return credentials.CredentialRetrieveVersionBuffer(ctx, &qrdbtransport.CredentialRetrieveVersionRequest{
+		Name: name,
+	})
 }
 
 // boundKMSSecrets serves kms:// resolution through the client's bound
