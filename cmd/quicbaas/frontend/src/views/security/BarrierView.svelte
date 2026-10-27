@@ -44,7 +44,6 @@
     isWailsRuntime,
   } from '@quicbaas/sdk';
   import type {
-    BarrierClient as SDKBarrierClient,
     BarrierStatusResponse,
     CeremonyHolderCert,
     CeremonyInitializeRequest,
@@ -73,10 +72,18 @@
   // future server-side path changes propagate automatically.
   // ---------------------------------------------------------------------------
 
-  function classifyStrategy(mode: string | undefined): BarrierStrategy {
-    if (mode === undefined || mode === '' || mode === 'manual') return 'shamir';
+  // ViewStatus is the barrier status as this view knows it: strategy is null
+  // when the daemon does not disclose it. qrdb's sealed status reports only
+  // sealed and initialized, so a sealed barrier's strategy is never assumed.
+  type ViewStatus = Omit<BarrierStatus, 'strategy'> & { strategy: BarrierStrategy | null };
+
+  // classifyStrategy maps the daemon's strategy name, returning null for an
+  // empty (redacted) or unrecognised one.
+  function classifyStrategy(mode: string | undefined): BarrierStrategy | null {
+    if (mode === undefined || mode === '') return null;
+    if (mode === 'manual') return 'shamir';
     const lower = mode.toLowerCase();
-    if (lower === 'disabled' || lower === 'off') return 'disabled';
+    if (lower === 'disabled' || lower === 'off' || lower === 'none') return 'disabled';
     if (lower === 'software' || lower === 'password' || lower === 'passphrase') return 'software';
     if (lower === 'shamir') return 'shamir';
     if (lower === 'tpm2' || lower === 'tpm') return 'tpm2';
@@ -85,10 +92,17 @@
     if (lower === 'gcp-kms' || lower === 'gcpkms') return 'gcp-kms';
     if (lower === 'azure-kms' || lower === 'azurekms') return 'azure-kms';
     if (lower === 'vault-kms' || lower === 'vaultkms') return 'vault-kms';
-    return 'shamir';
+    return null;
   }
 
-  function isHardwareBacked(strategy: BarrierStrategy): boolean {
+  // quorumStatus is the status the Shamir quorum component reads. It is
+  // shown only on the quorum path, so an undisclosed strategy is the quorum
+  // the operator is working.
+  function quorumStatus(s: ViewStatus): BarrierStatus {
+    return { ...s, strategy: s.strategy ?? 'shamir' };
+  }
+
+  function isHardwareBacked(strategy: BarrierStrategy | null): boolean {
     return (
       strategy === 'tpm2' ||
       strategy === 'pkcs11' ||
@@ -99,7 +113,7 @@
     );
   }
 
-  function isAutoUnseal(strategy: BarrierStrategy): boolean {
+  function isAutoUnseal(strategy: BarrierStrategy | null): boolean {
     return isHardwareBacked(strategy);
   }
 
@@ -112,7 +126,10 @@
   // makeClient builds the structural BarrierClient that the svelte-security
   // components consume by adapting the typed SDK BarrierClient. Every HTTP
   // path is owned by the SDK — see RestBarrierClient in @quicbaas/sdk.
-  async function makeClient(): Promise<{ structural: BarrierClient; sdk: SDKBarrierClient }> {
+  async function makeClient(): Promise<{
+    structural: BarrierClient;
+    viewStatus: () => Promise<ViewStatus>;
+  }> {
     const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
     const sdk = await createBarrierClient(resolveTransport(), { baseURL });
 
@@ -122,7 +139,7 @@
     // best-effort: the SDK BarrierStatusResponse is intentionally minimal
     // because the daemon's response shape varies per strategy.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adaptStatus = async (raw: BarrierStatusResponse | any): Promise<BarrierStatus> => {
+    const adaptStatus = async (raw: BarrierStatusResponse | any): Promise<ViewStatus> => {
       const strategy = classifyStrategy(raw.strategy ?? raw.mode);
       const threshold = Number(raw.threshold ?? 0);
       const totalShares = Number(raw.total_shares ?? 0);
@@ -143,10 +160,11 @@
       };
     };
 
+    const viewStatus = async (): Promise<ViewStatus> => adaptStatus(await sdk.status());
+
     const structural: BarrierClient = {
       async status(): Promise<BarrierStatus> {
-        const raw = await sdk.status();
-        return adaptStatus(raw);
+        return quorumStatus(await viewStatus());
       },
       async unseal(req) {
         await sdk.unseal({ secret: new TextEncoder().encode(req.passphrase) });
@@ -166,7 +184,7 @@
       },
     };
 
-    return { structural, sdk };
+    return { structural, viewStatus };
   }
 
   // ---------------------------------------------------------------------------
@@ -174,7 +192,8 @@
   // ---------------------------------------------------------------------------
 
   let client: BarrierClient | null = $state(null);
-  let status: BarrierStatus | null = $state(null);
+  let readStatus: (() => Promise<ViewStatus>) | null = null;
+  let status: ViewStatus | null = $state(null);
   let loading = $state(false);
   let statusError: string | null = $state(null);
   let subsystemDisabled = $state(false);
@@ -239,11 +258,12 @@
     statusError = null;
     subsystemDisabled = false;
     try {
-      if (client === null) {
-        const { structural } = await makeClient();
-        client = structural;
+      if (client === null || readStatus === null) {
+        const made = await makeClient();
+        client = made.structural;
+        readStatus = made.viewStatus;
       }
-      status = await client.status();
+      status = await readStatus();
     } catch (e) {
       if (
         e instanceof APIError &&
@@ -443,11 +463,26 @@
               <p class="text-xs text-base-content/40 font-mono">{status.cluster_name}</p>
             {/if}
           </div>
-          <BarrierStatusBadge
-            strategy={status.strategy}
-            sealed={status.sealed}
-            hardwareBacked={status.hardware_backed}
-          />
+          {#if status.strategy !== null}
+            <BarrierStatusBadge
+              strategy={status.strategy}
+              sealed={status.sealed}
+              hardwareBacked={status.hardware_backed}
+            />
+          {:else}
+            <!-- The daemon withholds the strategy, so the badge names none. -->
+            <div class="flex items-center gap-2" data-testid="barrier-status-badge">
+              <span class="badge badge-lg badge-ghost font-semibold" aria-label="Barrier strategy">
+                undisclosed
+              </span>
+              <span
+                class="badge badge-lg {status.sealed ? 'badge-warning' : 'badge-success'}"
+                aria-label="Barrier sealed state"
+              >
+                {status.sealed ? 'Sealed' : 'Unsealed'}
+              </span>
+            </div>
+          {/if}
         </div>
 
         <!-- ===================================================================
@@ -490,9 +525,10 @@
           {/if}
 
         <!-- ===================================================================
-             Strategy: shamir
+             Strategy: shamir, or undisclosed. The initialization ceremony is
+             the only bootstrap for the system barrier.
              =================================================================== -->
-        {:else if status.strategy === 'shamir'}
+        {:else if status.strategy === 'shamir' || status.strategy === null}
           {#if !status.initialized}
             <div class="space-y-3" data-testid="barrier-strategy-shamir-init">
               <p class="text-sm text-base-content/70">
@@ -578,11 +614,48 @@
                 </button>
               {/if}
             </div>
+          {:else if status.sealed && client !== null && status.strategy === null}
+            <!-- A sealed barrier's status does not name its strategy, so both
+                 a passphrase and a Shamir quorum unseal are offered. -->
+            <div class="space-y-4" data-testid="barrier-strategy-redacted">
+              <p class="text-sm text-base-content/70">
+                The sealed barrier does not disclose its protection. Unseal it
+                with the passphrase, or with officer shares if it is a Shamir
+                barrier.
+              </p>
+              <BarrierUnsealForm
+                client={client}
+                label="Unseal passphrase"
+                placeholder="Enter the barrier passphrase..."
+                onunseal={(resp) => {
+                  if (!resp.sealed) {
+                    showToast({ message: 'Barrier unsealed', type: 'success' });
+                  }
+                  void loadStatus();
+                }}
+                onerror={(err) => {
+                  showToast({ message: err.message, type: 'error' });
+                }}
+              />
+              <ShamirShareInput
+                client={client}
+                status={quorumStatus(status)}
+                onunseal={(s) => {
+                  if (!s.sealed) {
+                    showToast({ message: 'Barrier unsealed', type: 'success' });
+                  }
+                  void loadStatus();
+                }}
+                onerror={(err) => {
+                  showToast({ message: err.message, type: 'error' });
+                }}
+              />
+            </div>
           {:else if status.sealed && client !== null}
             <div data-testid="barrier-strategy-shamir-unseal">
               <ShamirShareInput
                 client={client}
-                status={status}
+                status={quorumStatus(status)}
                 onunseal={(s) => {
                   if (!s.sealed) {
                     showToast({ message: 'Barrier unsealed', type: 'success' });
@@ -599,7 +672,7 @@
               class="alert alert-success text-sm"
               data-testid="barrier-strategy-shamir-unsealed"
             >
-              <span>Shamir barrier is unsealed and active.</span>
+              <span>{status.strategy === null ? 'Barrier' : 'Shamir barrier'} is unsealed and active.</span>
             </div>
           {/if}
 

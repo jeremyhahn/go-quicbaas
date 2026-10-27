@@ -481,6 +481,42 @@ describe('BarrierView strategy-aware rendering', () => {
     expect(screen.queryByTestId('barrier-strategy-shamir-init')).not.toBeInTheDocument();
   });
 
+  // A sealed barrier's status does not disclose its strategy, so the view
+  // cannot tell a passphrase barrier from a Shamir one and offers both.
+  it('sealed status without a strategy offers the passphrase unseal', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => sealedStatus(true),
+      '/api/v1/barrier/unseal': () => ({}),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    const redacted = await screen.findByTestId('barrier-strategy-redacted');
+    expect(screen.getByTestId('barrier-status-badge')).not.toHaveTextContent('shamir');
+    expect(within(redacted).getByTestId('shamir-share-input')).toBeInTheDocument();
+
+    await fireEvent.input(within(redacted).getByLabelText(/Unseal passphrase/i), {
+      target: { value: 'secret-pw' },
+    });
+    await fireEvent.click(within(redacted).getByRole('button', { name: /^Unseal$/i }));
+    await waitFor(() => {
+      const hit = spy.calls.find((c) => c.url.endsWith('/api/v1/barrier/unseal'));
+      expect(hit).toMatchObject({ method: 'POST', body: { secret: btoa('secret-pw') } });
+    });
+  });
+
+  it('a strategy the console does not know is not treated as Shamir', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => makeStatus({ strategy: 'quantum-vault' }),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await screen.findByTestId('barrier-strategy-redacted');
+    expect(screen.queryByTestId('barrier-strategy-shamir-unseal')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Unseal passphrase/i)).toBeInTheDocument();
+  });
+
   it('never infers initialized from initialized_at', async () => {
     spy = makeFetchSpy({
       '/api/v1/barrier/status': () => makeStatus({ initialized: undefined }),
