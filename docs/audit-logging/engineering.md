@@ -45,6 +45,13 @@ FIPS 140-3 (SP 800-107). Shorter keys are rejected at startup with
 `AUDIT_SIGN_KEY_TOO_SHORT`; an empty key with `sign_logs: true` is rejected
 with `AUDIT_SIGN_KEY_REQUIRED`. Use a random 32-byte key.
 
+The key is never held in plain Go memory. `AuditConfig.SignKey` is a
+`*secure.Buffer` (`sdk/go/xkms/secure`): mlocked, guard-paged and wipeable.
+The logger signs by borrowing the buffer for each HMAC, keeps no copy of
+the key, and destroys the buffer in `Close`. A buffer that is already
+destroyed is rejected with `AUDIT_SIGN_KEY_DESTROYED`, and signing after
+`Close` fails with the same code.
+
 Signed log entries include:
 
 ```json
@@ -343,19 +350,23 @@ SIEM events include signature IDs for correlation:
 
 ```go
 import (
-    "os"
-
     "github.com/jeremyhahn/go-quicbaas/pkg/security"
+    "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
-// Create audit logger
+// At least 14 bytes (112 bits); use a random 32-byte key. keyBytes comes
+// from protected configuration and is wiped once it is in the buffer.
+signKey, err := secure.NewBufferFromBytes(keyBytes)
+if err != nil {
+    return err
+}
+
+// Create audit logger; on success it owns signKey and Close destroys it
 cfg := &security.AuditConfig{
     Enabled:          true,
     File:             "/var/log/quicbaas/audit.log",
     SignLogs:         true,
-    // At least 14 bytes (112 bits). Generate with `openssl rand -base64 32`
-    // and load it from protected configuration rather than hardcoding it.
-    SignKey:          os.Getenv("AUDIT_SIGN_KEY"),
+    SignKey:          signKey,
     Compress:         true,
     CompressionLevel: security.CompressionLevelDefault,
     SyslogEnabled:    true,

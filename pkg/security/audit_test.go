@@ -40,6 +40,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 func TestNewAuditLogger(t *testing.T) {
@@ -83,7 +85,7 @@ func TestNewAuditLogger(t *testing.T) {
 			config: &AuditConfig{
 				Enabled:  true,
 				SignLogs: true,
-				SignKey:  "test-signing-key",
+				SignKey:  testSignKey(t, "test-signing-key"),
 			},
 			wantErr: false,
 		},
@@ -157,7 +159,7 @@ func TestAuditLogger_LogWithSigning(t *testing.T) {
 	config := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-signing-key-12345",
+		SignKey:  testSignKey(t, "test-signing-key-12345"),
 	}
 
 	al, err := NewAuditLogger(config, log)
@@ -1923,7 +1925,7 @@ func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
 			cfg := &AuditConfig{
 				Enabled:  true,
 				SignLogs: tt.signLogs,
-				SignKey:  tt.signKey,
+				SignKey:  testSignKey(t, tt.signKey),
 			}
 
 			al, err := NewAuditLogger(cfg, logger)
@@ -2594,7 +2596,7 @@ func TestVerifySignature_EmptySignature(t *testing.T) {
 		File:     logFile,
 		MaxSize:  100,
 		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
+		SignKey:  testSignKey(t, "test-hmac-key-for-signing"),
 	}
 
 	log := createTestLogger(t)
@@ -2624,7 +2626,7 @@ func TestVerifySignature_ValidSignature(t *testing.T) {
 		File:     logFile,
 		MaxSize:  100,
 		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
+		SignKey:  testSignKey(t, "test-hmac-key-for-signing"),
 	}
 
 	log := createTestLogger(t)
@@ -2661,7 +2663,7 @@ func TestVerifySignature_InvalidSignature(t *testing.T) {
 		File:     logFile,
 		MaxSize:  100,
 		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
+		SignKey:  testSignKey(t, "test-hmac-key-for-signing"),
 	}
 
 	log := createTestLogger(t)
@@ -3008,7 +3010,7 @@ func TestLog_WithSignedEvents(t *testing.T) {
 		File:     logFile,
 		MaxSize:  100,
 		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
+		SignKey:  testSignKey(t, "test-signing-key-for-hmac"),
 	}
 
 	log := createTestLogger(t)
@@ -3437,7 +3439,7 @@ func TestNewAuditLogger_WithSignLogsNoKey(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "", // Missing sign key
+		SignKey:  testSignKey(t, ""), // Missing sign key
 	}
 
 	al, err := NewAuditLogger(cfg, log)
@@ -3965,7 +3967,7 @@ func TestOpenLogFile_DirCreateError(t *testing.T) {
 func TestVerifySignature_NonexistentFile(t *testing.T) {
 	log := createTestLogger(t)
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: "test-key-12345678901234567890123", File: "/nonexistent/path/audit.log"},
+		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: testSignKey(t, "test-key-12345678901234567890123"), File: "/nonexistent/path/audit.log"},
 		logger:   log,
 		shutdown: make(chan struct{}),
 	}
@@ -3995,11 +3997,11 @@ func TestLog_WithSignLogs_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: "test-sign-key-that-is-32-bytes!"},
+		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: testSignKey(t, "test-sign-key-that-is-32-bytes!")},
 		logger:   log,
 		file:     f,
 		writer:   f,
-		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
+		signKey:  testSignKey(t, "test-sign-key-that-is-32-bytes!"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -4050,11 +4052,11 @@ func TestVerifySignature_ValidSignedLogs(t *testing.T) {
 	require.NoError(t, err)
 
 	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: "test-sign-key-that-is-32-bytes!"},
+		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: testSignKey(t, "test-sign-key-that-is-32-bytes!")},
 		logger:   log,
 		file:     f,
 		writer:   f,
-		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
+		signKey:  testSignKey(t, "test-sign-key-that-is-32-bytes!"),
 		shutdown: make(chan struct{}),
 	}
 
@@ -4749,7 +4751,7 @@ func TestAuditLogger_VerifySignature_EdgeCases(t *testing.T) {
 		config := &AuditConfig{
 			Enabled:  true,
 			SignLogs: true,
-			SignKey:  "test-key-112bits!",
+			SignKey:  testSignKey(t, "test-key-112bits!"),
 		}
 
 		al, err := NewAuditLogger(config, log)
@@ -5111,7 +5113,7 @@ func TestAuditLogger_VerifySignatureValid(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
+		SignKey:  testSignKey(t, "test-signing-key-for-hmac"),
 	}
 	log := createTestLogger(t)
 	al, err := NewAuditLogger(cfg, log)
@@ -5139,7 +5141,7 @@ func TestAuditLogger_VerifySignatureInvalid(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
+		SignKey:  testSignKey(t, "test-signing-key-for-hmac"),
 	}
 	log := createTestLogger(t)
 	al, err := NewAuditLogger(cfg, log)
@@ -5671,7 +5673,7 @@ func TestAuditLogger_VerifySignature_WithEmptySignature(t *testing.T) {
 	config := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-key-112bits!",
+		SignKey:  testSignKey(t, "test-key-112bits!"),
 	}
 
 	al, err := NewAuditLogger(config, log)
@@ -5698,7 +5700,7 @@ func TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed(t *testing.T) 
 	al, err := NewAuditLogger(&AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-key-112bits!",
+		SignKey:  testSignKey(t, "test-key-112bits!"),
 	}, createTestLogger(t))
 	require.NoError(t, err)
 	defer al.Close()
@@ -7189,7 +7191,7 @@ func TestNewAuditLogger_RequiresSignKey(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "",
+		SignKey:  testSignKey(t, ""),
 	}
 	log := createTestLogger(t)
 	_, err := NewAuditLogger(cfg, log)
@@ -7212,7 +7214,7 @@ func TestNewAuditLogger_RejectsShortSignKey(t *testing.T) {
 			cfg := &AuditConfig{
 				Enabled:  true,
 				SignLogs: true,
-				SignKey:  signKey,
+				SignKey:  testSignKey(t, signKey),
 			}
 			al, err := NewAuditLogger(cfg, log)
 			require.Error(t, err)
@@ -7233,7 +7235,7 @@ func TestNewAuditLogger_AcceptsMinimumLengthSignKey(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  signKey,
+		SignKey:  testSignKey(t, signKey),
 	}
 	al, err := NewAuditLogger(cfg, createTestLogger(t))
 	require.NoError(t, err)
@@ -7252,6 +7254,58 @@ func TestNewAuditLogger_AcceptsMinimumLengthSignKey(t *testing.T) {
 
 	event.Signature = sig
 	assert.True(t, al.VerifySignature(event))
+}
+
+// testSignKey seals key into the secure buffer AuditConfig.SignKey takes, and
+// destroys it when the test ends. An empty key yields no buffer at all, the
+// "no sign_key configured" case.
+func testSignKey(t testing.TB, key string) *secure.Buffer {
+	t.Helper()
+	if key == "" {
+		return nil
+	}
+	buf, err := secure.NewBufferFromBytes([]byte(key))
+	require.NoError(t, err)
+	t.Cleanup(buf.Destroy)
+	return buf
+}
+
+// TestAuditLogger_CloseDestroysSignKey pins the protected-memory contract for
+// the HMAC key (go-quicbaas#23): the logger signs straight from the caller's
+// secure buffer, owns it, and wipes it on Close, after which nothing signs or
+// verifies with it.
+func TestAuditLogger_CloseDestroysSignKey(t *testing.T) {
+	signKey := testSignKey(t, "close-destroys-this-hmac-key")
+	al, err := NewAuditLogger(&AuditConfig{Enabled: true, SignLogs: true, SignKey: signKey}, createTestLogger(t))
+	require.NoError(t, err)
+
+	event := &AuditEvent{Timestamp: time.Now(), Username: "alice", Action: ActionRead, Result: ResultSuccess}
+	require.NoError(t, al.Log(context.Background(), event))
+	require.True(t, al.VerifySignature(event))
+
+	require.NoError(t, al.Close())
+	assert.False(t, signKey.IsAlive(), "Close must destroy the sign key buffer")
+
+	_, err = al.signEvent(event)
+	var auditErr *AuditError
+	require.True(t, errors.As(err, &auditErr))
+	assert.Equal(t, ErrCodeAuditSignKeyDestroyed, auditErr.Code)
+	assert.False(t, al.VerifySignature(event), "a destroyed key must not verify")
+}
+
+// TestNewAuditLogger_RejectsDestroyedSignKey ensures a sign key buffer that
+// was already wiped is refused up front, not on the first event.
+func TestNewAuditLogger_RejectsDestroyedSignKey(t *testing.T) {
+	signKey := testSignKey(t, "destroyed-before-use-hmac-key")
+	signKey.Destroy()
+
+	al, err := NewAuditLogger(&AuditConfig{Enabled: true, SignLogs: true, SignKey: signKey}, createTestLogger(t))
+	require.Error(t, err)
+	assert.Nil(t, al)
+
+	var auditErr *AuditError
+	require.True(t, errors.As(err, &auditErr))
+	assert.Equal(t, ErrCodeAuditSignKeyDestroyed, auditErr.Code)
 }
 
 func TestNewAuditLogger_DisabledIsNoop(t *testing.T) {
@@ -7457,7 +7511,7 @@ func TestAuditLogger_VerifySignature(t *testing.T) {
 		Enabled:       true,
 		File:          auditFile,
 		SignLogs:      true,
-		SignKey:       "test-signing-key-12345",
+		SignKey:       testSignKey(t, "test-signing-key-12345"),
 		FlushInterval: 10 * time.Millisecond,
 	}
 
@@ -7612,7 +7666,7 @@ func TestAuditLogger_LogWithSigningError(t *testing.T) {
 		Enabled:       true,
 		File:          auditFile,
 		SignLogs:      true,
-		SignKey:       "test-key-112bits!",
+		SignKey:       testSignKey(t, "test-key-112bits!"),
 		FlushInterval: 10 * time.Millisecond,
 	}
 
@@ -7761,7 +7815,7 @@ func TestAuditLogger_VerifySignatureWithError(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-key-112bits!",
+		SignKey:  testSignKey(t, "test-key-112bits!"),
 	}
 
 	log := createTestLogger(t)
@@ -7787,7 +7841,7 @@ func TestAuditLogger_LogSignatureGeneration(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-signing-key",
+		SignKey:  testSignKey(t, "test-signing-key"),
 	}
 
 	log := createTestLogger(t)
@@ -7821,7 +7875,7 @@ func TestAuditLogger_LogSignatureGeneration(t *testing.T) {
 		event.Result,
 		event.IPAddress)
 
-	h := hmac.New(sha256.New, []byte(cfg.SignKey))
+	h := hmac.New(sha256.New, []byte("test-signing-key"))
 	h.Write([]byte(data))
 	expectedSig := hex.EncodeToString(h.Sum(nil))
 

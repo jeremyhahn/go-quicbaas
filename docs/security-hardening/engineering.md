@@ -1075,6 +1075,10 @@ security:
     sign_key: "${AUDIT_SIGN_KEY}"      # HMAC-SHA256 key from environment
 ```
 
+The audit HMAC key is never held in plain Go memory: `AuditConfig.SignKey`
+is an mlocked `secure.Buffer` that the audit logger owns and destroys on
+`Close` (see `docs/audit-logging/engineering.md`).
+
 The signing key must be at least 14 bytes (112 bits) per FIPS 140-3
 (SP 800-107); the audit logger refuses to start with a shorter key. Generate
 one with `openssl rand -base64 32`.

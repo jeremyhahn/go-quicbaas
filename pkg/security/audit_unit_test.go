@@ -642,7 +642,7 @@ func TestAuditLogger_VerifySignatureMismatch(t *testing.T) {
 	cfg := &AuditConfig{
 		Enabled:  true,
 		SignLogs: true,
-		SignKey:  "test-secret-key",
+		SignKey:  testSignKey(t, "test-secret-key"),
 	}
 
 	log := createTestLogger(t)

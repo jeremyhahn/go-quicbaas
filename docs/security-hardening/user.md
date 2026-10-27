@@ -149,7 +149,7 @@ security:
     enabled: true
     file: "/var/log/quicbaas/audit.log"
     sign_logs: true
-    sign_key: ${AUDIT_SIGN_KEY}  # >= 14 bytes (112 bits), FIPS 140-3 minimum
+    sign_key: ${AUDIT_SIGN_KEY}  # >= 14 bytes (112 bits), FIPS 140-3 minimum; held only in an mlocked secure buffer
     compress: true
     compression_level: 6  # gzip level (1-9)
     max_size: 100         # MB before rotation
