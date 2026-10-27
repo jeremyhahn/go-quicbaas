@@ -83,6 +83,23 @@ func (s *Server) ServiceContext(ctx context.Context) (context.Context, error) {
 	return node.ServiceContext(ctx)
 }
 
+// xkmsStorageContext is the composed go-xkms module's storage binder: every
+// call its datastore makes into the node, the feature-database opens at
+// composition and every later DAO call, runs on it. The module opens each
+// feature database once, in the system tenant, and partitions tenants by key
+// inside it (a key version's tenant prefix, an SSH record's "{tenant}/"
+// root), so its storage lives in the system tenant whoever the caller is.
+// The call therefore runs as the service principal with the system tenant
+// as its target; a tenant caller's request otherwise keeps its own tenant
+// as the target and the node's self-scope check refuses the principal.
+func (s *Server) xkmsStorageContext(ctx context.Context) (context.Context, error) {
+	bound, err := s.ServiceContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return qrdbsdk.ContextWithTenant(bound, qrdbsdk.SystemTenantID), nil
+}
+
 // issuanceReadContext binds the role and permission reads token issuance
 // makes for a user of tenantID (iam.OIDCDependencies.IssuanceReadBinder).
 // Issuance has no caller yet, so a system-tenant user's reads run as the

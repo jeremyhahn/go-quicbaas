@@ -128,6 +128,44 @@ func TestServiceContext_BindsTheNodePrincipal(t *testing.T) {
 	assert.Equal(t, "v1", string(got))
 }
 
+// TestXKMSStorageContext_TenantRequestRunsInTheSystemTenant pins Codex review
+// 7679 on PR #1841: the xkms module's storage lives in the system tenant, so
+// a tenant caller's request must reach it as the service principal targeting
+// the system tenant. ServiceContext alone keeps the request's tenant, which
+// the node's self-scope check refuses.
+func TestXKMSStorageContext_TenantRequestRunsInTheSystemTenant(t *testing.T) {
+	s, node := newPrincipalServer(t)
+	request := qrdbsdk.ContextWithTenant(context.Background(), "acme")
+
+	principalOnly, err := s.ServiceContext(request)
+	require.NoError(t, err)
+	require.Error(t, node.Client().KV().Put(principalOnly, "xkms-k", []byte("v1")),
+		"the principal reached the request tenant's storage")
+
+	bound, err := s.xkmsStorageContext(request)
+	require.NoError(t, err)
+	tenantID, ok := qrdbsdk.TenantFromContext(bound)
+	require.True(t, ok)
+	assert.Equal(t, qrdbsdk.SystemTenantID, tenantID)
+	require.NoError(t, node.Client().KV().Put(bound, "xkms-k", []byte("v1")))
+	got, err := node.Client().KV().Get(bound, "xkms-k")
+	require.NoError(t, err)
+	assert.Equal(t, "v1", string(got))
+}
+
+// TestXKMSStorageContext_NoServicePrincipalIsRefused: a node without a
+// service principal cannot bind the module's storage, and the binder says so
+// rather than run the call anonymously.
+func TestXKMSStorageContext_NoServicePrincipalIsRefused(t *testing.T) {
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), principalNodeConfig(t), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = node.Close() })
+
+	ctx, err := serverOverNode(node).xkmsStorageContext(context.Background())
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	assert.Nil(t, ctx)
+}
+
 // TestDelegatedContext_RefusesAnUnverifiedChain: a chain the node cannot
 // verify as a tenant-issued delegation binds no identity at all; nothing falls
 // back to the service principal.

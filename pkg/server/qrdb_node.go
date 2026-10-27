@@ -689,7 +689,10 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		// the node's service principal (qrdbservice). Without it a node with
 		// require_authz refuses that storage as unauthenticated and the
 		// module composes its DAO-backed features off (go-quicbaas#1727).
-		xkmssdk.WithServiceModuleServiceContext(s.ServiceContext),
+		// The binder also targets the system tenant the module's databases
+		// live in, so a tenant caller's DAO call is not refused by the
+		// node's self-scope check (xkmsStorageContext).
+		xkmssdk.WithServiceModuleServiceContext(s.xkmsStorageContext),
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
