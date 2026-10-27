@@ -13,7 +13,15 @@
 
 // downloadText saves content to the user's machine as filename.
 export function downloadText(filename: string, content: string, mime = 'application/x-pem-file'): void {
-  const blob = new Blob([content], { type: mime });
+  downloadBlob(filename, new Blob([content], { type: mime }));
+}
+
+// downloadBytes saves bytes to the user's machine as filename, unchanged.
+export function downloadBytes(filename: string, bytes: Uint8Array<ArrayBuffer>, mime = 'application/octet-stream'): void {
+  downloadBlob(filename, new Blob([bytes], { type: mime }));
+}
+
+function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

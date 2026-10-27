@@ -39,7 +39,8 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import { getSDKClient } from '../../stores/sdkClient.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
-  import { downloadText } from '../../lib/download.ts';
+  import { downloadBytes } from '../../lib/download.ts';
+  import { decodeShareEnvelope } from '../../lib/shareEnvelope.ts';
   import { Lock } from 'lucide-svelte';
   import { barrierCredentialBytes, toInitRequest } from '../../lib/barrierCredential.ts';
   import { APIError, RestTenantBarrierClient } from '@quicbaas/sdk';
@@ -165,6 +166,7 @@
           share_index: share.share_index,
           envelope: share.envelope,
           saved: false,
+          error: null,
         });
         return share;
       },
@@ -203,15 +205,27 @@
     tenantId: string;
     username: string;
     share_index: number;
+    // envelope is the claim response's field: base64 of the envelope bytes.
     envelope: string;
     saved: boolean;
+    error: string | null;
   }
   let claimedEnvelopes: ClaimedEnvelope[] = $state([]);
   const tenantEnvelopes = $derived(claimedEnvelopes.filter((e) => e.tenantId === selectedTenantID));
   const unsavedEnvelopes = $derived(tenantEnvelopes.filter((e) => !e.saved).length);
 
+  // saveEnvelope saves the envelope's decoded bytes, the file the holder's
+  // qrdb tooling parses, as the Go CLI does.
   function saveEnvelope(e: ClaimedEnvelope): void {
-    downloadText(`${e.tenantId}-${e.username}-share-${e.share_index}.envelope`, e.envelope, 'application/octet-stream');
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = decodeShareEnvelope(e.envelope);
+    } catch (err) {
+      e.error = err instanceof Error ? err.message : String(err);
+      return;
+    }
+    downloadBytes(`${e.tenantId}-${e.username}-share-${e.share_index}.envelope`, bytes, 'application/octet-stream');
+    e.error = null;
     e.saved = true;
   }
 
@@ -358,6 +372,7 @@
             Download envelope
           </button>
           {#if e.saved}<span class="badge badge-success badge-sm">saved</span>{/if}
+          {#if e.error !== null}<span class="text-error text-xs" role="alert">{e.error}</span>{/if}
         </div>
       {/each}
     {/if}
