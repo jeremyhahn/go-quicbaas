@@ -28,6 +28,7 @@ import (
 
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyenabled"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
 )
 
@@ -344,7 +345,11 @@ func (h *iamRESTHandler) handlePolicyRequest(ctx context.Context, method string,
 		if policyName == "" {
 			return nil, errors.NewInvalidInput("iamRESTHandler.handlePolicyRequest", "policy_name is required")
 		}
-		return h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/policies/"+policyName, nil)
+		resp, getErr := h.doRequest(ctx, http.MethodGet, "/api/v1/tenants/"+tenantID+"/policies/"+policyName, nil)
+		if getErr != nil {
+			return nil, getErr
+		}
+		return mapServerPolicyToSDK(resp), nil
 
 	case "Update":
 		// PUT /api/v1/tenants/{tenant_id}/policies/{policy_name}
@@ -356,7 +361,11 @@ func (h *iamRESTHandler) handlePolicyRequest(ctx context.Context, method string,
 		if innerReq == nil {
 			innerReq = reqMap
 		}
-		return h.doRequest(ctx, http.MethodPut, "/api/v1/tenants/"+tenantID+"/policies/"+policyName, innerReq)
+		resp, updateErr := h.doRequest(ctx, http.MethodPut, "/api/v1/tenants/"+tenantID+"/policies/"+policyName, innerReq)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		return mapServerPolicyToSDK(resp), nil
 
 	case "Delete":
 		// DELETE /api/v1/tenants/{tenant_id}/policies/{policy_name}
@@ -1925,11 +1934,9 @@ func mapServerPolicyToSDK(resp interface{}) interface{} {
 		if effect, ok := spec["effect"]; ok {
 			result["effect"] = effect
 		}
-		if enabled, ok := spec["enabled"]; ok {
-			result["enabled"] = enabled
-		}
 	}
 
+	policyenabled.Copy(policyMap, result)
 	policyloaderror.Copy(policyMap, result)
 
 	return result

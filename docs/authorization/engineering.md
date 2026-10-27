@@ -119,6 +119,13 @@ refuses what the transport under it refuses.
   sent. Embedded create refuses `Conditions`, `Targets` and each rule's
   `Conditions` and `Subjects` with `UnsupportedPolicyFieldError`, even
   alongside `spec_yaml`. REST sends the whole body.
+- **SDK create from `spec_yaml` alone.** `Policy().Create` needs `Rules` or
+  `spec_yaml`, not both: the policy document is a complete create on every
+  transport (#1929).
+- **Enabled on a read.** Every SDK transport reports a read policy's
+  `Enabled` by one rule (`sdk/go/transport/internal/policyenabled`): absent
+  `spec.enabled` is enabled, an explicit value is reported as stored, and an
+  entry with `load_error` reports false, since it is never applied (#1929).
 - **`spec_yaml` on a gRPC update.** The SDK gRPC transport refuses it with
   invalid input until the server's `UpdatePolicy` applies it (#1406).
 - **Server MCP policy tools.** In the SDK format (no `apiVersion`), a

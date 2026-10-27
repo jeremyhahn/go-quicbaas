@@ -22,6 +22,7 @@ import (
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	pepsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyenabled"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -805,6 +806,9 @@ func sdkPolicyFromInternal(p *iam.Policy) iamsdk.Policy {
 		CreatedAt:   p.Metadata.Created,
 		UpdatedAt:   p.Metadata.Updated,
 		Labels:      p.Metadata.Labels,
+		// The stored spec carries no enabled field, so the policy is enabled
+		// unless its record failed to load.
+		Enabled: policyenabled.Resolve(nil, p.LoadError != nil),
 	}
 	if p.LoadError != nil {
 		out.LoadError = &iamsdk.PolicyLoadError{

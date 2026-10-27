@@ -22,6 +22,7 @@ import (
 
 	iamsdk "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyenabled"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyloaderror"
 )
@@ -391,11 +392,9 @@ func mapMCPServerPolicyToSDK(respMap map[string]interface{}) interface{} {
 		if effect, ok := spec["effect"]; ok {
 			result["effect"] = effect
 		}
-		if enabled, ok := spec["enabled"]; ok {
-			result["enabled"] = enabled
-		}
 	}
 
+	policyenabled.Copy(policyRaw, result)
 	policyloaderror.Copy(policyRaw, result)
 
 	return result

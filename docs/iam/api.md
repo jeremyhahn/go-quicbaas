@@ -754,6 +754,11 @@ Write responses are what the store holds after the write, not the request:
   back after the write. The request's policy name selects the target. Over
   gRPC, the stored spec is replaced only when `spec_yaml` is given.
 
+The SDK `Policy().Create` accepts `spec_yaml` with no `Rules` on every
+transport. Every SDK read (Create, Get, Update, List) reports the stored
+`Enabled`: absent `spec.enabled` is `true`, and a policy carrying
+`load_error` is `false` (#1929).
+
 The requested policy name and a document's `metadata.name` must agree
 (`iam.CheckPolicyName`; a document that declares no name takes the requested
 one). On every transport (REST, gRPC, MCP; Create also on embedded):

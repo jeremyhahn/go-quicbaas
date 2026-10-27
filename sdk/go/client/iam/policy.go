@@ -1526,8 +1526,10 @@ func validateCreatePolicyRequest(tenantID string, req *CreatePolicyRequest) erro
 	if req.Name == "" {
 		return errors.NewInvalidInput("iam.Policy.Create", "policy name is required")
 	}
-	if len(req.Rules) == 0 {
-		return errors.NewInvalidInput("iam.Policy.Create", "at least one rule is required")
+	// Every transport carries the policy document as spec_yaml; gRPC and MCP
+	// carry it no other way, so spec_yaml alone is a complete create.
+	if len(req.Rules) == 0 && len(req.SpecYAML) == 0 {
+		return errors.NewInvalidInput("iam.Policy.Create", "at least one rule or spec_yaml is required")
 	}
 	return nil
 }

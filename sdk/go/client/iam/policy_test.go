@@ -215,6 +215,34 @@ func TestPolicyClient_Create(t *testing.T) {
 		}
 	})
 
+	// gRPC and MCP carry a policy only as spec_yaml (#1929), so a create
+	// with spec_yaml and no rules must reach the transport.
+	t.Run("spec_yaml without rules", func(t *testing.T) {
+		var sent *CreatePolicyRequest
+		tr := &mockPolicyTransport{
+			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+				sent = req.(*createPolicyRequest).Request
+				return &Policy{Name: "test-policy", Enabled: true}, nil
+			},
+		}
+		client := NewPolicyClient(tr)
+		req := &CreatePolicyRequest{
+			Name:     "test-policy",
+			SpecYAML: []byte("subjects:\n  users: [\"*\"]\nrules: []\n"),
+		}
+
+		policy, err := client.Create(context.Background(), "tenant-1", req)
+		if err != nil {
+			t.Fatalf("Create() = %v, want nil", err)
+		}
+		if sent != req {
+			t.Errorf("transport received %v, want the caller's request", sent)
+		}
+		if policy.Name != "test-policy" {
+			t.Errorf("Name = %q, want test-policy", policy.Name)
+		}
+	})
+
 	t.Run("nil response from server", func(t *testing.T) {
 		tr := &mockPolicyTransport{
 			requestFunc: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

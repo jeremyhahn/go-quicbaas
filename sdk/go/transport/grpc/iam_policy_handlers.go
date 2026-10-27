@@ -22,6 +22,7 @@ import (
 	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	iam "github.com/jeremyhahn/go-quicbaas/sdk/go/client/iam"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyenabled"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport/internal/policyfields"
 )
 
@@ -584,7 +585,9 @@ func (h *iamHandler) handleRotateAppSecret(ctx context.Context, client iampb.IAM
 // used to extract rules from the SpecYaml field in the proto response.
 type policySpecYAML struct {
 	Spec struct {
-		Rules []specRuleYAML `yaml:"rules"`
+		// Enabled is presence-tracked: nil means the document did not set it.
+		Enabled *bool          `yaml:"enabled"`
+		Rules   []specRuleYAML `yaml:"rules"`
 	} `yaml:"spec"`
 }
 
@@ -663,8 +666,19 @@ func convertProtoPolicyToSDK(p *iampb.Policy) *iam.Policy {
 			UnknownKeys: p.LoadError.UnknownKeys,
 		}
 	}
+	resp.Enabled = policyenabled.Resolve(specEnabledFromYAML(p.SpecYaml), p.LoadError != nil)
 
 	return resp
+}
+
+// specEnabledFromYAML returns the spec.enabled a policy document sets, or nil
+// when it sets none or does not decode.
+func specEnabledFromYAML(specYAML []byte) *bool {
+	var spec policySpecYAML
+	if err := yaml.Unmarshal(specYAML, &spec); err != nil {
+		return nil
+	}
+	return spec.Spec.Enabled
 }
 
 // convertProtoAppToSDK converts a protobuf Application to SDK Application.
