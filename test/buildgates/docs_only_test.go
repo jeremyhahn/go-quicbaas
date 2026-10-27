@@ -296,6 +296,17 @@ func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 			}
 			continue
 		}
+		// ci-template v1.28: deps-check is a lint-class gate on the PR tier
+		// and runs on every event, a docs-only pull request included.
+		if name == "make deps-check" {
+			if strings.Contains(cond, "docs_only") || strings.Contains(cond, "DOCS_ONLY") ||
+				strings.Contains(cond, fullTier) {
+				t.Errorf("make deps-check is guarded by docs_only or the full tier "+
+					"(if: %s). Since ci-template v1.28 it runs on every event, as "+
+					"make lint does.", cond)
+			}
+			continue
+		}
 		if strings.Contains(cond, docsOnlyGuard) && strings.Contains(step, "RELEASABILITY_TEST") {
 			continue
 		}
