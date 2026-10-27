@@ -209,40 +209,24 @@ func (p *OIDCProvider) resolveSessionPrincipal(ctx context.Context, identity Ses
 // or a nil user when nothing does. A store failure is returned as an error so
 // the caller fails closed rather than treating an outage as "no such user".
 //
-// The two lookups are now applied to DISJOINT subject shapes, which is what
-// makes the ambiguity this used to refuse impossible rather than merely caught.
-// An email-shaped subject is resolved by the email index and nothing else; a
-// subject that is not email-shaped cannot be in that index at all, so it is
-// resolved by username. Neither can produce a second, different record for one
-// subject, because a user that HAS an email has that email as its qrdb username
-// too (qrdbadapter.CoreUsername) and usernames are tenant-unique — the two
-// indexes name the same record whenever both would answer.
+// The email index is the only subject login key (go-quicbaas#377). A username
+// is never a second authentication key: an email-shaped username could
+// otherwise resolve as another user's account.
 //
-// Both are tenant-scoped. The email index used to be global, with the owning
-// tenant checked afterwards; scoping the lookup itself means a foreign-tenant
-// record is never read, rather than read and then discarded.
+// The lookup is tenant-scoped. The email index used to be global, with the
+// owning tenant checked afterwards; scoping the lookup itself means a
+// foreign-tenant record is never read, rather than read and then discarded.
 func (p *OIDCProvider) resolveSubject(ctx context.Context, identity SessionIdentity) (*User, error) {
-	// Email: how the ceremony keys the login. A non-email-shaped subject is a
-	// shape mismatch rather than a lookup failure, so it falls through to the
-	// username index instead of contributing an absent candidate.
-	if validateEmail(identity.Subject) == nil {
-		byEmail, err := p.identityStore.GetUserByEmail(ctx, identity.TenantID, identity.Subject)
-		switch {
-		case err == nil:
-			return byEmail, nil
-		case isPrincipalLookupMiss(err):
-			return nil, nil
-		default:
-			return nil, err
-		}
+	// A non-email subject is unresolvable, not a cue to try another index: a
+	// username is the handle an administrator types for RBAC, never a
+	// credential.
+	if validateEmail(identity.Subject) != nil {
+		return nil, nil
 	}
-
-	// Not an email: a system or bootstrap identity, which authenticates by a
-	// username and carries no email login key.
-	byName, err := p.identityStore.GetUserByUsername(ctx, identity.TenantID, identity.Subject)
+	byEmail, err := p.identityStore.GetUserByEmail(ctx, identity.TenantID, identity.Subject)
 	switch {
 	case err == nil:
-		return byName, nil
+		return byEmail, nil
 	case isPrincipalLookupMiss(err):
 		return nil, nil
 	default:

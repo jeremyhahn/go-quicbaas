@@ -57,7 +57,7 @@ func (c *enrolledFactorClient) GetAuthFactor(
 // no seam to replace that hydrator, which is why the issuer reads the record.
 func webauthnLoginIdentity(factorID string) *qrdbauth.Identity {
 	return &qrdbauth.Identity{
-		Subject:  "user-42",
+		Subject:  "user-42@example.test",
 		TenantID: "acme",
 		Metadata: map[string]string{
 			authMethodMetadataKey: "fido2",
@@ -189,7 +189,7 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 			name:    "identity carries no factor id",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
 			id: &qrdbauth.Identity{
-				Subject: "user-42", TenantID: "acme",
+				Subject: "user-42@example.test", TenantID: "acme",
 				Metadata: map[string]string{authMethodMetadataKey: "fido2"},
 			},
 			wire: true,
@@ -197,7 +197,7 @@ func TestOIDCSessionIssuer_AttestationFailuresUnderstateNeverOverstate(t *testin
 		{
 			name:    "identity carries no metadata at all",
 			factors: &enrolledFactorClient{wantFactorID: "factor-1"},
-			id:      &qrdbauth.Identity{Subject: "user-42", TenantID: "acme"},
+			id:      &qrdbauth.Identity{Subject: "user-42@example.test", TenantID: "acme"},
 			wire:    true,
 		},
 	} {
