@@ -148,8 +148,7 @@ security:
   audit:
     enabled: true
     file: "/var/log/quicbaas/audit.log"
-    sign_logs: true
-    sign_key: ${AUDIT_SIGN_KEY}  # >= 14 bytes (112 bits), FIPS 140-3 minimum; held only in an mlocked secure buffer
+    sign_logs: true       # key: the audit-sign-key credential, see below
     compress: true
     compression_level: 6  # gzip level (1-9)
     max_size: 100         # MB before rotation
@@ -194,6 +193,16 @@ security:
       key_file: /path/to/raft.key
       ca_file: /path/to/ca.crt
 ```
+
+The audit HMAC key has no configuration setting. Provision it as the named
+credential `audit-sign-key`, at least 14 bytes (112 bits, the FIPS 140-3
+minimum):
+
+```bash
+quicbaas credential submit audit-sign-key --value "$(openssl rand -base64 32)"
+```
+
+The audit logger holds it only in protected memory and signs in-process.
 
 ## API Security
 

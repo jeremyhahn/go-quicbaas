@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -41,7 +42,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
 )
 
 func TestNewAuditLogger(t *testing.T) {
@@ -7256,19 +7259,31 @@ func TestNewAuditLogger_AcceptsMinimumLengthSignKey(t *testing.T) {
 	assert.True(t, al.VerifySignature(event))
 }
 
-// testSignKey seals key into the secure buffer AuditConfig.SignKey takes, and
-// destroys it when the test ends. An empty key yields no buffer at all, the
-// "no sign_key configured" case.
-func testSignKey(t testing.TB, key string) *secure.Buffer {
+// testSignKey provisions key in qrdb's manual-strategy credential service,
+// as an operator does, and returns the credentials.Memory AuditConfig.SignKey
+// takes, destroyed when the test ends. An empty key yields no Memory at all,
+// the "no sign key provisioned" case.
+func testSignKey(t testing.TB, key string) *credentials.Memory {
 	t.Helper()
 	if key == "" {
 		return nil
 	}
-	buf, err := secure.NewBufferFromBytes([]byte(key))
+	store, err := qrdbsdk.NewVersionedCredentialService(
+		&qrdbsdk.CredentialConfig{Strategy: qrdbsdk.CredentialStrategyManual},
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
 	require.NoError(t, err)
-	t.Cleanup(buf.Destroy)
-	return buf
+	require.NoError(t, store.StoreCredential(context.Background(), testSignKeyName, []byte(key)))
+	m, err := credentials.NewMemory(context.Background(), store, testSignKeyName)
+	require.NoError(t, err)
+	t.Cleanup(m.Destroy)
+	return m
 }
+
+// testSignKeyName is the credential name the audit tests provision the
+// sign key under.
+const testSignKeyName = "audit-sign-key"
 
 // TestAuditLogger_CloseDestroysSignKey pins the protected-memory contract for
 // the HMAC key (go-quicbaas#23): the logger signs straight from the caller's
@@ -7284,7 +7299,7 @@ func TestAuditLogger_CloseDestroysSignKey(t *testing.T) {
 	require.True(t, al.VerifySignature(event))
 
 	require.NoError(t, al.Close())
-	assert.False(t, signKey.IsAlive(), "Close must destroy the sign key buffer")
+	assert.False(t, signKey.IsAlive(), "Close must destroy the sign key Memory")
 
 	_, err = al.signEvent(event)
 	var auditErr *AuditError

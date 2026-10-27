@@ -37,20 +37,30 @@ security:
   audit:
     enabled: true
     sign_logs: true
-    sign_key: "${AUDIT_SIGN_KEY}"  # HMAC-SHA256 key (environment variable)
 ```
 
-`sign_key` must be at least 14 bytes (112 bits) — the HMAC key minimum in
-FIPS 140-3 (SP 800-107). Shorter keys are rejected at startup with
-`AUDIT_SIGN_KEY_TOO_SHORT`; an empty key with `sign_logs: true` is rejected
+There is no `sign_key` setting: the HMAC-SHA256 key is never written in
+configuration. An operator provisions it as a named credential in qrdb
+credential support, the same store `quicbaas credential` manages:
+
+```bash
+quicbaas credential submit audit-sign-key --value "$(openssl rand -base64 32)"
+```
+
+Use `quicbaas credential rotate audit-sign-key` to replace it. The key must be
+at least 14 bytes (112 bits), the HMAC key minimum in FIPS 140-3
+(SP 800-107); a shorter key is rejected at startup with
+`AUDIT_SIGN_KEY_TOO_SHORT`, and no key with `sign_logs: true` is rejected
 with `AUDIT_SIGN_KEY_REQUIRED`. Use a random 32-byte key.
 
 The key is never held in plain Go memory. `AuditConfig.SignKey` is a
-`*secure.Buffer` (`sdk/go/xkms/secure`): mlocked, guard-paged and wipeable.
-The logger signs by borrowing the buffer for each HMAC, keeps no copy of
-the key, and destroys the buffer in `Close`. A buffer that is already
-destroyed is rejected with `AUDIT_SIGN_KEY_DESTROYED`, and signing after
-`Close` fails with the same code.
+`*credentials.Memory` (`pkg/credentials`), the one go-quicbaas surface that
+holds key bytes: `credentials.NewMemory` draws the named credential from qrdb
+credential support into protected memory. The logger signs in-process by
+borrowing the Memory for each HMAC, keeps no copy of the key, and destroys the
+Memory in `Close`. A Memory that is already destroyed is rejected with
+`AUDIT_SIGN_KEY_DESTROYED`, and signing after `Close` fails with the same
+code.
 
 Signed log entries include:
 
@@ -350,13 +360,14 @@ SIEM events include signature IDs for correlation:
 
 ```go
 import (
+    "github.com/jeremyhahn/go-quicbaas/pkg/credentials"
     "github.com/jeremyhahn/go-quicbaas/pkg/security"
-    "github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
-// At least 14 bytes (112 bits); use a random 32-byte key. keyBytes comes
-// from protected configuration and is wiped once it is in the buffer.
-signKey, err := secure.NewBufferFromBytes(keyBytes)
+// credentialStore is the node's qrdb credential service
+// (qrdbsdk.VersionedCredentialService). NewMemory blocks until the operator
+// has provisioned audit-sign-key or ctx is done.
+signKey, err := credentials.NewMemory(ctx, credentialStore, "audit-sign-key")
 if err != nil {
     return err
 }

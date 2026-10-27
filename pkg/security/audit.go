@@ -39,9 +39,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/credentials"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/httpbody"
-	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/secure"
 )
 
 // Compression level constants for audit log compression.
@@ -1313,7 +1313,7 @@ type AuditLogger struct {
 	config   *AuditConfig
 	logger   *logger.Logger
 	file     *os.File
-	signKey  *secure.Buffer
+	signKey  *credentials.Memory
 	mu       sync.Mutex
 	shutdown chan struct{}
 
@@ -1359,17 +1359,17 @@ const MinAuditSignKeyLen = 14
 func newSignKeyTooShortError(keyLen int) *AuditError {
 	return &AuditError{
 		Code: ErrCodeAuditSignKeyTooShort,
-		Message: fmt.Sprintf("sign_key must be at least %d bytes (%d bits); got %d",
+		Message: fmt.Sprintf("sign key must be at least %d bytes (%d bits); got %d",
 			MinAuditSignKeyLen, MinAuditSignKeyLen*8, keyLen),
 	}
 }
 
-// newSignKeyDestroyedError reports a sign key whose secure buffer has been
+// newSignKeyDestroyedError reports a sign key whose Memory has been
 // destroyed -- by Close, or by its owner -- or could not be borrowed.
 func newSignKeyDestroyedError(cause error) *AuditError {
 	return &AuditError{
 		Code:    ErrCodeAuditSignKeyDestroyed,
-		Message: "sign_key buffer is destroyed or unreadable",
+		Message: "sign key Memory is destroyed or unreadable",
 		Cause:   cause,
 	}
 }
@@ -1384,12 +1384,13 @@ type AuditConfig struct {
 	CompressionLevel int    `json:"compression_level"` // gzip compression level (0-9, -1 for default, -2 for Huffman only)
 	SignLogs         bool   `json:"sign_logs"`         // Tamper-proof logging
 	// SignKey is the HMAC-SHA256 key, at least MinAuditSignKeyLen bytes. It
-	// lives in an mlocked, guard-paged secure.Buffer, never in a Go string or
-	// a plain []byte, so it can be wiped. A logger that NewAuditLogger returns
-	// with signing on owns the buffer, and its Close destroys it.
-	SignKey       *secure.Buffer `json:"-"`
-	BufferSize    int            `json:"buffer_size"`    // Buffer size for batching
-	FlushInterval time.Duration  `json:"flush_interval"` // Auto-flush interval
+	// is provisioned in qrdb credential support and held only by a
+	// credentials.Memory (credentials.NewMemory), never configured as a
+	// literal, a Go string or a plain []byte. A logger that NewAuditLogger
+	// returns with signing on owns the Memory, and its Close destroys it.
+	SignKey       *credentials.Memory `json:"-"`
+	BufferSize    int                 `json:"buffer_size"`    // Buffer size for batching
+	FlushInterval time.Duration       `json:"flush_interval"` // Auto-flush interval
 
 	// Legacy output targets (backward compatibility)
 	Syslog       bool   `json:"syslog"`
@@ -1511,7 +1512,7 @@ func NewAuditLogger(cfg *AuditConfig, log *logger.Logger) (*AuditLogger, error) 
 		if cfg.SignKey == nil {
 			return nil, &AuditError{
 				Code:    ErrCodeAuditSignKeyRequired,
-				Message: "sign_key is required when sign_logs is enabled",
+				Message: "sign key is required when sign_logs is enabled",
 			}
 		}
 		if !cfg.SignKey.IsAlive() {
@@ -1994,7 +1995,7 @@ func (al *AuditLogger) signEvent(event *AuditEvent) (string, error) {
 		event.Result,
 		event.IPAddress)
 
-	// The key is borrowed for the HMAC only; no copy of it leaves the buffer.
+	// The key is borrowed for the HMAC only; no copy of it leaves the Memory.
 	var signature string
 	err := al.signKey.WithBytes(func(key []byte) error {
 		h := hmac.New(sha256.New, key)
@@ -2022,10 +2023,9 @@ func (al *AuditLogger) VerifySignature(event *AuditEvent) bool {
 		return false
 	}
 
-	// Under mu, so Close cannot destroy the key buffer mid-borrow.
-	al.mu.Lock()
+	// The Memory serializes Destroy against a running borrow, so Close
+	// cannot wipe the key mid-HMAC.
 	expectedSig, err := al.signEvent(event)
-	al.mu.Unlock()
 	if err != nil {
 		return false
 	}
