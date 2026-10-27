@@ -40,7 +40,7 @@ require (
 	github.com/lestrrat-go/jwx/v2 v2.1.7
 	github.com/mark3labs/mcp-go v1.3.0 // raised from v0.45.0 by the go-qrdb v0.51.0-alpha / go-xkms v0.60.0-alpha minimums; #1597 is the bump to latest
 	github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
-	github.com/moby/sys/user v0.4.1
+	github.com/moby/sys/user v0.4.1 // v0.5.0 (2026-10-26) is under the 7-day dependency age floor
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/opencontainers/go-digest v1.0.0
