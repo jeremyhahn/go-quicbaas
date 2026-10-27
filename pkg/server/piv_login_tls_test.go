@@ -55,15 +55,15 @@ func newOperatorTLSIntegrationNode(t *testing.T) (*Server, service.IAMComponents
 	srv.config.Security.TLSKeyFile = keyFile
 	srv.config.Security.TLSCAFile = certFile
 	srv.config.CA.KeysDir = filepath.Join(t.TempDir(), "ca-keys")
+	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
+	srv.config.IAM.PIVLogin.Enabled = true
+	srv.config.IAM.PIVLogin.AllowUnattested = true
 	require.NoError(t, srv.initializeCA(), "initializeCA")
 
 	require.NoError(t, srv.initStandaloneQRDBNode(), "qrdb node init")
 	t.Cleanup(func() { assert.NoError(t, srv.stopQRDBNode(), "stopping the qrdb node") })
 	srv.qrdbClient = newNodeBackedShardedClient(srv.qrdbNode)
 
-	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
-	srv.config.IAM.PIVLogin.Enabled = true
-	srv.config.IAM.PIVLogin.AllowUnattested = true
 	adminCertPath, _ := writeBootstrapPIVCert(t)
 	srv.config.Auth.BootstrapAdminPIVCertPath = adminCertPath
 	components, err := srv.initializeIAMComponents()
@@ -108,7 +108,13 @@ func postPIVLoginOverTLS(t *testing.T, srv *Server, router http.Handler, root *x
 	ts.TLS = srv.unifiedServerTLSConfig()
 	ts.StartTLS()
 	t.Cleanup(ts.Close)
+	return postPIVLogin(t, ts.URL, root, clientCert)
+}
 
+// postPIVLogin presents clientCert over mTLS to the go-xkms PIV login at
+// baseURL, trusting only root, and returns the status and body.
+func postPIVLogin(t *testing.T, baseURL string, root *x509.Certificate, clientCert tls.Certificate) (int, string) {
+	t.Helper()
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
 	client := &http.Client{
@@ -122,7 +128,7 @@ func postPIVLoginOverTLS(t *testing.T, srv *Server, router http.Handler, root *x
 	}
 	t.Cleanup(client.CloseIdleConnections)
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+xkmsPIVLoginPath, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, baseURL+xkmsPIVLoginPath, nil)
 	require.NoError(t, err)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
@@ -130,23 +136,6 @@ func postPIVLoginOverTLS(t *testing.T, srv *Server, router http.Handler, root *x
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	return resp.StatusCode, string(body)
-}
-
-// tenantBoundRouter binds the tenant the client certificate names into the
-// request context before the login runs. That is the step qrdb's
-// TenantFromClientCert contract asks of a host that resolves a certificate's
-// user on a public route; go-xkms handlePIVLogin does not take it yet, so its
-// thumbprint lookup reads the system tenant and misses every tenant admin.
-func tenantBoundRouter(t *testing.T, inner http.Handler) http.Handler {
-	t.Helper()
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := qrdbsdk.TenantFromCert(r.TLS.PeerCertificates[0], testTrustDomain)
-		if !assert.NoError(t, err, "the admin certificate names its tenant") {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		inner.ServeHTTP(w, r.WithContext(qrdbsdk.ContextWithTenant(r.Context(), id.TenantID)))
-	})
 }
 
 // TestOperatorTLS_ProvisionedTenantAdminCertReachesLogin is the second half of
@@ -171,10 +160,44 @@ func TestOperatorTLS_ProvisionedTenantAdminLogsInOverTLS(t *testing.T) {
 	srv, components, root := newOperatorTLSIntegrationNode(t)
 	adminCert := provisionCertModeTenant(t, components, "acme")
 
-	status, body := postPIVLoginOverTLS(t, srv, tenantBoundRouter(t, xkmsPIVLoginRouter(t, srv)), root, adminCert)
+	status, body := postPIVLoginOverTLS(t, srv, xkmsPIVLoginRouter(t, srv), root, adminCert)
 
 	require.Equal(t, http.StatusOK, status, body)
 	assert.Contains(t, body, "access_token")
+}
+
+// TestOperatorTLS_ProvisionedTenantAdminLogsInThroughNodeREST is go-quicbaas#1959:
+// the integration suites' data-plane helper provisions a cert-mode tenant and
+// logs its admin in at the node's own REST listener. No middleware binds a
+// tenant on that public route, so go-xkms looked the admin's certificate up in
+// the system tenant and answered 401 "authentication failed".
+func TestOperatorTLS_ProvisionedTenantAdminLogsInThroughNodeREST(t *testing.T) {
+	srv, components, root := newOperatorTLSIntegrationNode(t)
+	adminCert := provisionCertModeTenant(t, components, "acme")
+	addr := srv.RESTAddr()
+	require.NotNil(t, addr, "the qrdb node serves REST")
+
+	status, body := postPIVLogin(t, "https://"+addr.String(), root, adminCert)
+
+	require.Equal(t, http.StatusOK, status, body)
+	assert.Contains(t, body, "access_token")
+}
+
+// TestOperatorTLS_ForeignTrustDomainTenantCertIsRefusedAtNodeREST proves the
+// tenant binding pins the configured trust domain: a certificate the platform
+// CA signed whose SPIFFE SAN names another trust domain chooses no tenant and
+// never reaches the login.
+func TestOperatorTLS_ForeignTrustDomainTenantCertIsRefusedAtNodeREST(t *testing.T) {
+	srv, components, root := newOperatorTLSIntegrationNode(t)
+	adminCert := provisionCertModeTenant(t, components, "acme")
+	srv.config.IAM.SPIFFETrustDomain = "someone.else.test"
+	module, err := srv.hostXKMSModule(newXKMSPIVLoginModule(t, srv))
+	require.NoError(t, err)
+
+	status, body := postPIVLoginOverTLS(t, srv, moduleRouter(module), root, adminCert)
+
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "access_token")
 }
 
 // TestOperatorTLS_UnknownCACertIsNotAccepted is the refusal beside it: a

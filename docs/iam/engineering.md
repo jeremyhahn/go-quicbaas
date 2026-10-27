@@ -1950,6 +1950,17 @@ set. The module-side fix is filed as go-xkms#200. A deployment that requires att
 `/api/v1/iam/login/piv`; a node that declines to mount the module surface says
 so at startup.
 
+**The module's PIV login runs in the certificate's tenant.** The route is
+public, so the node middleware binds no tenant, and go-xkms resolves the
+certificate in whatever tenant the request context carries. quicbaas hosts the
+module through `apimodule.NewCertLoginTenantModule` (`Server.hostXKMSModule`),
+which binds the tenant qrdb's rule (`qrdbsdk.TenantFromClientCert`, pinned to
+`iam.spiffe_trust_domain`) reads from the verified client certificate. A
+provisioned tenant admin's certificate is therefore looked up in its own
+tenant, not the system tenant (go-quicbaas#1959). A certificate whose SPIFFE
+SAN names another trust domain is refused with 401; a certificate that names
+no tenant reaches go-xkms unchanged.
+
 #### Attestation claims are derived, never asserted
 
 `attest_level` and `attest_aaguid` are computed from verified evidence inside
