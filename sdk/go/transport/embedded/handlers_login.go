@@ -36,7 +36,21 @@ import (
 // caller-supplied LookupKey. A NETWORK transport must NEVER set this marker;
 // it must instead populate the verified peer certificate (see the per-transport
 // server handlers).
+//
+// A delegated caller (WithDelegatedCaller) is not that boundary: it acts for
+// a tenant delegation, not for the embedding service, so its login runs
+// without the marker and an mtls FinishLogin needs a verified peer
+// certificate (service.WithVerifiedPeerCert) like any network caller's.
 // =============================================================================
+
+// loginContext returns ctx marked embedded-trusted, unless the call was bound
+// for a delegated caller.
+func loginContext(ctx context.Context) context.Context {
+	if isDelegatedCall(ctx) {
+		return ctx
+	}
+	return service.WithEmbeddedTrustedContext(ctx)
+}
 
 // handleBeginLogin routes BeginLogin to the login facade.
 func handleBeginLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
@@ -48,11 +62,12 @@ func handleBeginLogin(ctx context.Context, svc service.QuicBaaS, req interface{}
 	if login == nil {
 		return nil, &service.LoginCeremonyUnavailableError{}
 	}
-	return login.BeginLogin(service.WithEmbeddedTrustedContext(ctx), r)
+	return login.BeginLogin(loginContext(ctx), r)
 }
 
 // handleFinishLogin routes FinishLogin to the login facade. The context is
-// marked embedded-trusted because the embedded transport is in-process.
+// marked embedded-trusted because the embedded transport is in-process,
+// unless the caller is a delegation.
 func handleFinishLogin(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*qrdbtransport.FinishLoginRequest)
 	if !ok {
@@ -62,7 +77,7 @@ func handleFinishLogin(ctx context.Context, svc service.QuicBaaS, req interface{
 	if login == nil {
 		return nil, &service.LoginCeremonyUnavailableError{}
 	}
-	result, err := login.FinishLogin(service.WithEmbeddedTrustedContext(ctx), r)
+	result, err := login.FinishLogin(loginContext(ctx), r)
 	if err != nil {
 		return nil, err
 	}

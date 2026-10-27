@@ -1988,9 +1988,11 @@ func createEmbeddedTransport(opts *clientOptions) (Transport, error) {
 		embedded.WithOperationAuthorizer(opts.embeddedIdentity.authorizeOperation),
 	}
 	// A delegation reaches the service only through bound, authorized
-	// calls: the raw service would resolve secrets with no identity.
+	// calls: the raw service would resolve secrets with no identity. Nor is
+	// it the in-process trust boundary, so its logins prove possession.
 	if opts.embeddedIdentity.delegator != nil {
-		transportOpts = append(transportOpts, embedded.WithServiceWithheld())
+		transportOpts = append(transportOpts,
+			embedded.WithServiceWithheld(), embedded.WithDelegatedCaller())
 	}
 	return embedded.New(svc, transportOpts...)
 }

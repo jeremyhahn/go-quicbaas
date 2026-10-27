@@ -36,7 +36,10 @@ type Transport struct {
 	// withheld hides service from Conn and Service: the transport's
 	// identity may reach it only through bound, authorized calls.
 	withheld bool
-	closed   atomic.Bool
+	// delegated marks every call as a delegation's, which never carries
+	// the in-process trust of the embedding service.
+	delegated bool
+	closed    atomic.Bool
 }
 
 // unaryHandlers maps service/method to handler functions for O(1) dispatch.
@@ -572,6 +575,25 @@ func WithServiceWithheld() Option {
 	}
 }
 
+// WithDelegatedCaller marks the transport's identity as a delegation rather
+// than the embedding service. A delegation is not the in-process trust
+// boundary, so its login ceremony proves possession like a network caller's:
+// an mTLS FinishLogin without a verified peer certificate is refused.
+func WithDelegatedCaller() Option {
+	return func(t *Transport) {
+		t.delegated = true
+	}
+}
+
+// delegatedCallKey marks a bound call's context as a delegation's.
+type delegatedCallKey struct{}
+
+// isDelegatedCall reports whether ctx was bound for a delegated caller.
+func isDelegatedCall(ctx context.Context) bool {
+	delegated, _ := ctx.Value(delegatedCallKey{}).(bool)
+	return delegated
+}
+
 // New creates a new embedded transport with the given service.
 func New(svc service.QuicBaaS, opts ...Option) (*Transport, error) {
 	if svc == nil {
@@ -598,6 +620,9 @@ func (t *Transport) bindCall(ctx context.Context, operation string, perms []stri
 			return nil, err
 		}
 		ctx = bound
+	}
+	if t.delegated {
+		ctx = context.WithValue(ctx, delegatedCallKey{}, true)
 	}
 	if _, public := publicOperations[operation]; !public && t.authorize != nil {
 		if err := t.authorize(ctx, operation, perms); err != nil {

@@ -111,6 +111,30 @@ func TestHandleFinishLogin_MTLS_EmbeddedTrustsClientKey(t *testing.T) {
 	}
 }
 
+// TestTransportFinishLogin_DelegatedCallerNeedsPeerCert asserts a transport
+// built WithDelegatedCaller does not grant in-process trust: an mtls
+// FinishLogin with only a caller-supplied key fails closed and never reaches
+// the login client.
+func TestTransportFinishLogin_DelegatedCallerNeedsPeerCert(t *testing.T) {
+	fake := &loginFakeClient{}
+	tr, err := New(&mockQuicBaaSForLogin{login: service.NewLoginService(fake)}, WithDelegatedCaller())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = tr.Request(context.Background(), "quicbaas.Auth", "FinishLogin", &qrdbtransport.FinishLoginRequest{
+		Type:      qrdbtransport.FactorTypeMTLS,
+		LookupKey: []byte("someone-else"),
+	})
+	var needCert *service.MTLSPeerCertRequiredError
+	if !errors.As(err, &needCert) {
+		t.Fatalf("FinishLogin = %v, want MTLSPeerCertRequiredError", err)
+	}
+	if fake.finishInvoked {
+		t.Fatal("a delegated mtls claim reached the login client")
+	}
+}
+
 // TestHandleFinishLogin_Unwired asserts a nil facade yields a typed error.
 func TestHandleFinishLogin_Unwired(t *testing.T) {
 	svc := &mockQuicBaaSForLogin{login: nil}
