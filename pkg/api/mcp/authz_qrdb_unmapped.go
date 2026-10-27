@@ -153,6 +153,23 @@ var unmappedToolGroups = []unmappedToolGroup{
 			"quicbaas_mfa_backup_codes_verify",
 		},
 	},
+	{
+		// Login is pre-authentication on every sibling, and login_begin is
+		// public here too. login_finish binds the session to the caller's
+		// VERIFIED mTLS leaf (service.WithVerifiedPeerCert), which REST and
+		// gRPC read from their own handshakes. The MCP tools are served on
+		// go-qrdb's MCP listener, whose verified chain reaches a tool handler
+		// only through go-qrdb's SDK verified-chain seam (go-qrdb#1181);
+		// reading PeerCertificates[0] or verifying in go-quicbaas is ruled
+		// out (ruling 172). Public without the leaf, every mTLS login would
+		// answer MTLSPeerCertRequiredError, so the tool stays dead.
+		reason: "login_finish needs the verified mTLS leaf, which the MCP listener exposes only " +
+			"through go-qrdb's SDK verified-chain seam (go-qrdb#1181), absent from the pinned go-qrdb/sdk/go",
+		resolution: "pin the go-qrdb alpha carrying #1181, put its verified leaf on the context, then add to publicTools",
+		tools: []string{
+			"quicbaas_login_finish",
+		},
+	},
 }
 
 // unmappedTools indexes unmappedToolGroups by exact tool name.

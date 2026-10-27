@@ -81,11 +81,13 @@ Dynamic Client Registration flow — was retired (see the package doc in
 Two properties worth stating here:
 
 - **A small set of tools is public.** `publicTools` in `pkg/api/mcp/authz.go`
-  names them: `quicbaas_login_begin`, `quicbaas_login_finish`, `qrdb_health`,
-  `quicbaas_liveness`, `quicbaas_readiness`. The SDK client's `isPublicTool`
-  (`sdk/go/transport/mcp/transport.go`) skips `ensureAuthenticated` for them,
-  and also for `quicbaas_login`, which its password login calls but the server
-  does not register. Login must be public or there is no way in;
+  names them: `quicbaas_login_begin`, `qrdb_health`, `quicbaas_liveness`,
+  `quicbaas_readiness`. `quicbaas_login_finish` stays undeclared (refused)
+  until go-qrdb#1181 gives MCP handlers the verified mTLS leaf it binds to.
+  The SDK client's `isPublicTool` (`sdk/go/transport/mcp/transport.go`) skips
+  `ensureAuthenticated` for them, and also for `quicbaas_login_finish` and
+  `quicbaas_login`, which its password login calls but the server does not
+  register. Login must be public or there is no way in;
   health must be public or a probe needs a token during exactly the states it
   exists to report.
 - **Tools are scope-filtered per principal.** An agent is an IAM principal, and

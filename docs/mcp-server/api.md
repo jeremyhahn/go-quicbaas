@@ -40,13 +40,14 @@ curl -X POST http://localhost:8888/mcp \
 
 **Public Tools (no auth required):**
 - `quicbaas_login_begin` - Begin the login ceremony
-- `quicbaas_login_finish` - Finish the login ceremony
 - `qrdb_health` - Health check
 - `quicbaas_liveness` - Liveness probe
 - `quicbaas_readiness` - Readiness probe
 
 Not yet reachable without a credential: see the known gap in
 [`user.md`](user.md#what-an-assistant-can-and-cannot-see).
+`quicbaas_login_finish` is refused until go-qrdb#1181; finish the login over
+REST or gRPC.
 
 ## Architecture
 

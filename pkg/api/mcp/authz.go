@@ -29,9 +29,10 @@ package mcp
 var publicTools = map[string]bool{
 	// Siblings treat login as pre-authentication too: gRPC lists
 	// BeginLogin/FinishLogin among its public methods and REST declares the
-	// login routes in authz_public_routes.go.
-	"quicbaas_login_begin":  true,
-	"quicbaas_login_finish": true,
+	// login routes in authz_public_routes.go. quicbaas_login_finish is not
+	// public yet: it needs the caller's verified mTLS leaf, which reaches an
+	// MCP handler only through go-qrdb#1181 (see authz_qrdb_unmapped.go).
+	"quicbaas_login_begin": true,
 	// qrdb-mirror health tool (Health.Check is exposed as qrdb_health — see
 	// pkg/api/mcp/CLAUDE.md). Liveness/readiness stay quicbaas_*.
 	"qrdb_health":        true,

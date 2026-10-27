@@ -69,9 +69,14 @@ table.** The fallback will produce a name nothing registered.
 `publicTools` (`pkg/api/mcp/authz.go`) is the server's exhaustive set:
 
 ```
-quicbaas_login_begin  quicbaas_login_finish
+quicbaas_login_begin
 qrdb_health           quicbaas_liveness     quicbaas_readiness
 ```
+
+`quicbaas_login_finish` is declared dead in `authz_qrdb_unmapped.go`: it needs
+the caller's verified mTLS leaf, and on go-qrdb's MCP listener that leaf reaches
+a handler only through go-qrdb's SDK verified-chain seam (go-qrdb#1181). Never
+substitute `PeerCertificates[0]` or a verifier built here.
 
 The SDK client's `isPublicTool` (`sdk/go/transport/mcp/transport.go`) skips
 `ensureAuthenticated` for these tools, and also for `quicbaas_login`, which its

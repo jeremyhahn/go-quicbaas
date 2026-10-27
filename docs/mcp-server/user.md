@@ -76,11 +76,15 @@ full registry. Giving an assistant an MCP endpoint is therefore not equivalent
 to giving it a token against the REST API — the containment is in the listing as
 well as the invocation.
 
-Five tools are public and need no token: `quicbaas_login_begin`,
-`quicbaas_login_finish`, `qrdb_health`, `quicbaas_liveness`,
-`quicbaas_readiness`. Login has to be reachable or there is
-no way in; health has to be reachable or a probe needs a token during exactly
-the states it exists to report.
+Four tools are public and need no token: `quicbaas_login_begin`,
+`qrdb_health`, `quicbaas_liveness`, `quicbaas_readiness`. Login has to be
+reachable or there is no way in; health has to be reachable or a probe needs a
+token during exactly the states it exists to report.
+
+`quicbaas_login_finish` is refused for now. It binds the login to the caller's
+verified mTLS certificate, and the MCP listener is go-qrdb's: that certificate
+reaches a tool only through go-qrdb's verified-chain seam (go-qrdb#1181), which
+the pinned go-qrdb SDK does not carry yet. Finish the login over REST or gRPC.
 
 > **Known gap (go-quicbaas#1127).** The endpoint does not yet behave as this
 > section requires, because the gate is go-qrdb's MCP server. With

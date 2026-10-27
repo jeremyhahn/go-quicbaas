@@ -119,6 +119,27 @@ func TestMCPToolPermissions(t *testing.T) {
 	}
 }
 
+// TestMCPToolPermissions_LoginFinishStaysRefused pins the ruling-172 outcome
+// on the module path: quicbaas_login_finish binds a login to the caller's
+// verified mTLS leaf, and the MCP tools are served on go-qrdb's own listener,
+// whose verified chain reaches a handler only through go-qrdb#1181 — a seam
+// the pinned go-qrdb/sdk/go does not carry. Until it does, the tool stays
+// undeclared, so qrdb's MCP gate default-denies it, while login_begin (which
+// needs no peer certificate) stays callable.
+func TestMCPToolPermissions_LoginFinishStaysRefused(t *testing.T) {
+	backend := newMCPBackend(t)
+	m := newMCPModule(t, func() *mcpapi.Server { return backend })
+
+	perms := m.MCPToolPermissions()
+
+	_, declared := perms[mcpapi.ToolName("quicbaas_login_finish")]
+	assert.False(t, declared, "quicbaas_login_finish must stay undeclared (refused) until go-qrdb#1181")
+
+	perm, declared := perms[mcpapi.ToolName("quicbaas_login_begin")]
+	require.True(t, declared, "quicbaas_login_begin must stay declared")
+	assert.Equal(t, qrdbsdk.PermissionIdentityGated, perm)
+}
+
 // TestMCPToolHandler_LazyAndDispatch proves the tool handler answers a tool
 // error while unresolved and dispatches the real registry handler once
 // resolved — without re-registration. Uses quicbaas_liveness: every

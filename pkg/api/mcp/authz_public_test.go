@@ -32,7 +32,7 @@ func TestIsPublicTool(t *testing.T) {
 		{"liveness tool is public", "quicbaas_liveness", true},
 		{"readiness tool is public", "quicbaas_readiness", true},
 		{"login begin is public", "quicbaas_login_begin", true},
-		{"login finish is public", "quicbaas_login_finish", true},
+		{"login finish is not public until go-qrdb#1181", "quicbaas_login_finish", false},
 		{"get tool is not public", "qrdb_get", false},
 		{"put tool is not public", "qrdb_put", false},
 		{"delete tool is not public", "qrdb_delete", false},
@@ -58,7 +58,6 @@ func TestPublicTools_MatchDocumentedSet(t *testing.T) {
 		"qrdb_health",
 		"quicbaas_liveness",
 		"quicbaas_login_begin",
-		"quicbaas_login_finish",
 		"quicbaas_readiness",
 	}
 
