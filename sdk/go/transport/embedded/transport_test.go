@@ -1095,6 +1095,18 @@ func TestTransport_Conn(t *testing.T) {
 	assert.Equal(t, mock, conn)
 }
 
+// TestTransport_ServiceWithheld proves a transport built WithServiceWithheld
+// hands its service to neither accessor, yet still dispatches through it.
+func TestTransport_ServiceWithheld(t *testing.T) {
+	mock := &mockQuicBaaS{}
+	transport, err := New(mock, WithServiceWithheld())
+	require.NoError(t, err)
+
+	assert.Nil(t, transport.Conn())
+	assert.Nil(t, transport.Service())
+	assert.True(t, transport.Healthy())
+}
+
 func TestTransport_Close(t *testing.T) {
 	mock := &mockQuicBaaS{}
 	transport, err := New(mock)

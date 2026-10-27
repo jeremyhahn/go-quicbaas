@@ -33,7 +33,10 @@ type Transport struct {
 	service   service.QuicBaaS
 	bind      ContextBinder
 	authorize OperationAuthorizer
-	closed    atomic.Bool
+	// withheld hides service from Conn and Service: the transport's
+	// identity may reach it only through bound, authorized calls.
+	withheld bool
+	closed   atomic.Bool
 }
 
 // unaryHandlers maps service/method to handler functions for O(1) dispatch.
@@ -558,6 +561,17 @@ func WithContextBinder(bind ContextBinder) Option {
 	}
 }
 
+// WithServiceWithheld keeps the in-process service out of Conn and Service,
+// so a holder of the transport reaches it only through Request and
+// RequestStream, each bound and authorized as the transport's identity. A
+// delegated client uses it: the raw service resolves secrets and credentials
+// with no identity at all.
+func WithServiceWithheld() Option {
+	return func(t *Transport) {
+		t.withheld = true
+	}
+}
+
 // New creates a new embedded transport with the given service.
 func New(svc service.QuicBaaS, opts ...Option) (*Transport, error) {
 	if svc == nil {
@@ -672,8 +686,12 @@ func runStreamHandler(ctx context.Context, svcName, method string, handler strea
 	_ = s.Close()
 }
 
-// Conn returns the underlying connection (the service instance for embedded transport).
+// Conn returns the underlying connection (the service instance for embedded
+// transport), or nil when the transport was built WithServiceWithheld.
 func (t *Transport) Conn() interface{} {
+	if t.withheld {
+		return nil
+	}
 	return t.service
 }
 
@@ -688,8 +706,12 @@ func (t *Transport) Healthy() bool {
 	return !t.closed.Load() && t.service != nil
 }
 
-// Service returns the underlying QuicBaaS service for direct access.
+// Service returns the underlying QuicBaaS service for direct access, or nil
+// when the transport was built WithServiceWithheld.
 func (t *Transport) Service() service.QuicBaaS {
+	if t.withheld {
+		return nil
+	}
 	return t.service
 }
 
