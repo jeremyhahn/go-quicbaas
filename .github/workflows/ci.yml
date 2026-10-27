@@ -1,4 +1,4 @@
-# ci-template: v1.28.0 (customized)
+# ci-template: v1.29.0 (customized)
 # go-quicbaas keeps these customizations beyond the template's own CUSTOMIZE
 # values; each is marked again at its step:
 # CUSTOMIZE: the changes job classifies a pull request with
@@ -23,6 +23,37 @@
 #   and 120 for the integration job (template 60), because the job builds
 #   the integration image itself when the image job's is gone, before the
 #   suite runs.
+# v1.29.0 (Company Agent ruling 220(5) and 221(4), 2026-10-27; handbook #474):
+# the Alpine package index checksum joins the integration image's tag hash.
+# Before v1.29 the tag hashed only the tree, so a tree whose files had not
+# changed kept its cached image after Alpine shipped a fix, and `trivy image`
+# stayed red on a fixed CVE until an unrelated file moved (go-enclave main
+# fd83b79ce, CVE-2026-92392, libcurl 8.23.0-r0). A new step, "Read the Alpine
+# package index", runs scripts/apk-index-sum.sh (v1, ships beside this file)
+# and puts its value in APK_INDEX_SUM. Every job that names the integration
+# image (image, lint-gates, integration, soak) runs it before "Name the
+# integration image", so none waits for the image job's serial stages. The
+# repository's `make -s it-image` hashes APK_INDEX_SUM, and `make
+# docker-build` passes it to the integration image's build as `--build-arg
+# APK_INDEX_SUM`. The Dockerfile's `integration` stage declares the ARG and
+# then, as root, runs `apk upgrade --no-cache`, so a new sum misses the cache
+# from that step on (ci-standard.md §9, devcontainer.md §6); `base` and
+# `toolchain` do not declare it. So a new Alpine package release changes the
+# tag and forces a rebuild, with the fixed package. A base image the script
+# cannot read fails the job: a missing index is never a pass. A repository
+# adopts v1.29 as one PR: this file, scripts/apk-index-sum.sh (in its
+# shellcheck list), the Makefile's APK_INDEX_SUM in it-image and docker-build,
+# and the Dockerfile's ARG and apk upgrade. A repository whose integration
+# image has no apk base gets `none`, a constant, so its tag changes only with
+# its tree. The parallel stage jobs move to v1.30: `runs-on` cannot take a
+# needs output on Gitea 1.27.1 (run 68501), and the registry-push question is
+# with the owner (169).
+#   CUSTOMIZE: go-quicbaas. The devcontainer builds from golang:<v>-trixie,
+#   a Debian base with no apk, so APK_INDEX_SUM is `none`: the Dockerfile
+#   declares no ARG and runs no apk upgrade, and docker-build passes no build
+#   argument no stage would consume. Its FROM names global ARGs with no
+#   default, so the step hands the script `make -s apk-base-images` as
+#   APK_BASE_IMAGES.
 # v1.28.0 (Company Agent ruling 219(3), 2026-10-26): `make deps-check` joins
 # the PR tier as a lint-class gate. Its step in the image job drops the
 # CI_FULL_TIER condition and runs on every event, as `make lint` does, so a
@@ -531,6 +562,14 @@ jobs:
   # (in-toolchain-image.sh v2, ci-standard.md §6), so a stage writes its
   # caches there and not into its container's layer.
   #
+  # v1.29 (Company Agent ruling 220(5)): the job reads the Alpine package
+  # indexes the build resolves against (scripts/apk-index-sum.sh, ships beside
+  # this file) into APK_INDEX_SUM, which the integration image's tag hashes and
+  # its build takes as a build argument (ci-standard.md §9, devcontainer.md
+  # §6). A new Alpine package release, a CVE fix among them, changes the tag,
+  # so the next run rebuilds the image rather than reuse a cached one with the
+  # old package (go-enclave main fd83b79ce, CVE-2026-92392).
+  #
   # The forge credentials reach the image build only as the gomodauth BuildKit
   # secret, from a file outside the context that the job removes.
   # No step and no make target prints that file, the job environment (`env`,
@@ -585,6 +624,18 @@ jobs:
       # <repo>-ci-it:<hash> (`make -s it-image`, ci-standard.md §9), so every
       # job of every run on this runner names the same image for the same
       # tree, builds it once and reuses it. No job removes it; the reap step does.
+      # v1.29 (ruling 220(5)): the Alpine package index checksum joins the
+      # integration image's tag hash (scripts/apk-index-sum.sh). A base image
+      # the script cannot read fails the step.
+      # CUSTOMIZE: go-quicbaas. The Dockerfile's FROM names global ARGs with no
+      # default, so the script takes its base from `make -s apk-base-images`.
+      # That base is Debian, with no apk, so the sum is `none`.
+      - name: Read the Alpine package index
+        run: |
+          bases=$(make -s apk-base-images)
+          sum=$(APK_BASE_IMAGES="$bases" scripts/apk-index-sum.sh)
+          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
+
       - name: Name the integration image
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
 
@@ -862,6 +913,15 @@ jobs:
 
       # make docker-build needs the integration image's name (as in the image
       # job); this job never runs or leases that image.
+      # v1.29: the Alpine package index checksum, which that name hashes (as in
+      # the image job).
+      - name: Read the Alpine package index
+        if: ${{ steps.probe.outputs.has_target == 'true' }}
+        run: |
+          bases=$(make -s apk-base-images)
+          sum=$(APK_BASE_IMAGES="$bases" scripts/apk-index-sum.sh)
+          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
+
       - name: Name the integration image
         if: ${{ steps.probe.outputs.has_target == 'true' }}
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
@@ -935,6 +995,13 @@ jobs:
       # (#436), before the integration image is named from the tree's content.
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      # v1.29: the Alpine package index checksum (as in the image job).
+      - name: Read the Alpine package index
+        run: |
+          bases=$(make -s apk-base-images)
+          sum=$(APK_BASE_IMAGES="$bases" scripts/apk-index-sum.sh)
+          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
 
       # v1.23: the content-addressed integration image (as in the image job).
       - name: Name the integration image
@@ -1077,6 +1144,13 @@ jobs:
       # (#436), before the integration image is named from the tree's content.
       - name: Validate the merge result, not the head alone
         run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
+
+      # v1.29: the Alpine package index checksum (as in the image job).
+      - name: Read the Alpine package index
+        run: |
+          bases=$(make -s apk-base-images)
+          sum=$(APK_BASE_IMAGES="$bases" scripts/apk-index-sum.sh)
+          echo "APK_INDEX_SUM=$sum" >> "$GITHUB_ENV"
 
       # v1.23: the content-addressed integration image (as in the image job).
       - name: Name the integration image

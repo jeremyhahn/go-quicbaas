@@ -642,6 +642,13 @@ make toolchain-image                    # print the toolchain image tag
 both modules' `go.mod`/`go.sum`. The integration image, which holds the source,
 is tagged `integration-<commit>`, plus `-dirty-<hash>` of the uncommitted
 changes when the tree is not clean, so any source change gives a new tag.
+In CI the tag is `make -s it-image`, `go-quicbaas-ci-it:<hash>` of the build
+arguments and the whole build context. From ci-template v1.29 that hash also
+covers `APK_INDEX_SUM`, the checksum of the Alpine package indexes that
+`scripts/apk-index-sum.sh` reads before each job names the image. A new Alpine
+package release then changes the tag and forces a rebuild. The devcontainer's
+base is Debian (`make -s apk-base-images`), which has no apk, so CI's sum is
+`none`. Locally it is empty.
 `make docker-run` builds the toolchain image
 when that tag is missing, then runs `CMD` in the compose `toolchain` service as
 the calling uid, with the source mounted at `/src`. The product image's own

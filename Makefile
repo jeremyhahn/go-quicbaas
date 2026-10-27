@@ -3354,7 +3354,16 @@ lint-pre: fmt-check ## Run the lint prerequisites (fmt-check)
 # image job's `make lint`, so none of them is a prerequisite of lint and none
 # runs twice. Times above lint-pre: vet-integration 153 s, secure-analyzer
 # 616 s, its self-test 89 s.
-lint-gates: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint ## Run the repository's lint gates (vet-integration, naming, nolint, secure-analyzer and its self-test, actionlint)
+lint-gates: vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint shellcheck-ci-scripts ## Run the repository's lint gates (vet-integration, naming, nolint, secure-analyzer and its self-test, actionlint, shellcheck of the CI scripts)
+
+# The bash scripts ci.yml runs, the ci-template's shellcheck list (v1.29 adds
+# apk-index-sum.sh). shellcheck ships in the devcontainer toolchain image.
+SHELLCHECK_CI_SCRIPTS := scripts/apk-index-sum.sh scripts/assert-build-tags.sh \
+	scripts/docs-only.sh scripts/in-toolchain-image.sh \
+	scripts/reap-stale-ci-stacks.sh scripts/trim-ci-caches.sh
+.PHONY: shellcheck-ci-scripts
+shellcheck-ci-scripts: ## Run shellcheck over the CI bash scripts
+	@shellcheck $(SHELLCHECK_CI_SCRIPTS)
 
 .PHONY: actionlint
 # actionlint with shellcheck over the workflows (ci-template v1.21 make lint;
@@ -5644,14 +5653,29 @@ toolchain-image: ## Print the toolchain image tag, hashed from the files it is b
 # commit's tree, and on a dirty checkout the diff and every untracked file
 # .gitignore does not exclude. The reaper (reap-stale-ci-stacks.sh) removes a
 # stale tag under the <repo>-ci- prefix.
+#
+# From ci-template v1.29 the hash also covers APK_INDEX_SUM, the checksum of
+# the Alpine package indexes the build resolves against
+# (scripts/apk-index-sum.sh, which CI runs into it before naming the image).
+# The devcontainer's base is Debian (golang:<v>-trixie), which has no apk, so
+# CI's value is the constant `none` and no Dockerfile stage declares the ARG.
+# Empty when unset, so a local or lane-verify tag is the tree's alone.
 CI_REPO_NAME ?= go-quicbaas
-IT_IMAGE_HASH = $(shell { printf '%s\n' '$(TOOLCHAIN_IMAGE)' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(strip $(INTEGRATION_BUILD_TAGS))' '$(strip $(COVER))'; \
+APK_INDEX_SUM ?=
+IT_IMAGE_HASH = $(shell { printf '%s\n' '$(TOOLCHAIN_IMAGE)' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(strip $(INTEGRATION_BUILD_TAGS))' '$(strip $(COVER))' '$(strip $(APK_INDEX_SUM))'; \
 	git rev-parse 'HEAD^{tree}'; git diff HEAD; \
 	git ls-files -o --exclude-standard -z | xargs -0r sha256sum; } | sha256sum | cut -c1-16)
 
 .PHONY: it-image
 it-image: ## Print the CI integration image tag, hashed from its build context
 	@echo "$(CI_REPO_NAME)-ci-it:$(IT_IMAGE_HASH)"
+
+# The devcontainer Dockerfile's one external base image. Its FROM line names
+# global ARGs with no default, which apk-index-sum.sh cannot resolve, so CI
+# hands the script this list as APK_BASE_IMAGES.
+.PHONY: apk-base-images
+apk-base-images: ## Print the devcontainer's external base images for apk-index-sum.sh
+	@echo "golang:$(GO_VERSION)-trixie@$(GO_IMAGE_DIGEST)"
 
 # A tag is its content (ci-standard.md §9), so a build target builds nothing
 # when the Docker daemon already holds every image it would build. The
