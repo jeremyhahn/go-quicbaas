@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
   import { showToast } from '../../stores/toast.svelte.ts';
+  import { downloadText } from '../../lib/download.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { ShieldOff } from 'lucide-svelte';
   import {
@@ -45,6 +46,7 @@
   import type {
     BarrierClient as SDKBarrierClient,
     BarrierStatusResponse,
+    CeremonyHolderCert,
     CeremonyInitializeRequest,
     CeremonyInitializeResponse,
     CeremonyOfficer,
@@ -289,11 +291,28 @@
     }
   }
 
+  // The ceremony issues each initial officer's certificate only in its
+  // response; no later call returns it. The result stays until every
+  // officer's certificate is downloaded.
+  let savedHolders: string[] = $state([]);
+  const unsavedHolders = $derived.by(() => {
+    const holders = initResult?.holders ?? [];
+    return holders.filter((h) => !savedHolders.includes(h.username)).length;
+  });
+
+  function saveHolderCert(holder: CeremonyHolderCert): void {
+    downloadText(`${holder.username}.crt.pem`, holder.cert_pem);
+    if (!savedHolders.includes(holder.username)) {
+      savedHolders = [...savedHolders, holder.username];
+    }
+  }
+
   // dismissInitResult drops the one-time credentials once the operator has
   // saved them.
   function dismissInitResult(): void {
     initResult = null;
     initAdminKeyPEM = '';
+    savedHolders = [];
   }
 </script>
 
@@ -376,7 +395,33 @@
             value={initResult.ca_cert_pem}
           ></textarea>
         </div>
-        <button class="btn btn-sm btn-primary" onclick={dismissInitResult}>Continue</button>
+        {#each initResult.holders ?? [] as holder (holder.username)}
+          <div class="form-control" data-testid="barrier-init-holder">
+            <label class="label label-text" for={`barrier-init-holder-${holder.username}`}>
+              {holder.username} certificate ({holder.role})
+            </label>
+            <textarea
+              id={`barrier-init-holder-${holder.username}`}
+              class="textarea textarea-bordered textarea-sm font-mono"
+              rows="4"
+              readonly
+              data-testid="barrier-init-holder-cert"
+              value={holder.cert_pem}
+            ></textarea>
+            <div class="flex items-center gap-2 mt-1">
+              <button class="btn btn-xs btn-outline" type="button" onclick={() => { saveHolderCert(holder); }}>
+                Download certificate
+              </button>
+              {#if savedHolders.includes(holder.username)}<span class="badge badge-success badge-sm">saved</span>{/if}
+            </div>
+          </div>
+        {/each}
+        <button
+          class="btn btn-sm btn-primary"
+          disabled={unsavedHolders > 0}
+          title={unsavedHolders > 0 ? 'Download every officer certificate first' : undefined}
+          onclick={dismissInitResult}
+        >Continue</button>
       </div>
     </div>
   {/if}

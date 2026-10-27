@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte';
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -172,8 +172,10 @@ async function fillCeremonyForm(opts: {
 vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
+vi.mock('../src/lib/download.ts', () => ({ downloadText: vi.fn() }));
 
 import BarrierView from '../src/views/security/BarrierView.svelte';
+import { downloadText } from '../src/lib/download.ts';
 
 describe('BarrierView strategy-aware rendering', () => {
   let spy: FetchSpy;
@@ -328,6 +330,53 @@ describe('BarrierView strategy-aware rendering', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
     expect(screen.queryByTestId('barrier-shamir-init-result')).not.toBeInTheDocument();
     expect(screen.queryByTestId('barrier-init-admin-key')).not.toBeInTheDocument();
+  });
+
+  it('delivers every initial officer certificate and keeps them until saved', async () => {
+    // holders[] is transport.CeremonyHolderCert (go-qrdb sdk/go
+    // transport/ceremony_types.go): cert_pem is a PEM string on the wire.
+    const holders = [
+      { username: 'alice', role: 'unseal', cert_pem: '-----BEGIN CERTIFICATE-----\nalice\n-----END CERTIFICATE-----' },
+      { username: 'bob', role: 'unseal', cert_pem: '-----BEGIN CERTIFICATE-----\nbob\n-----END CERTIFICATE-----' },
+    ];
+    const barrier = ceremonyBarrier();
+    spy = makeFetchSpy({
+      '/api/v1/init/initialize': () => barrier.initialize({
+        spki_pin: 'pin',
+        ca_cert_pem: CA_PEM,
+        tls_cert_pem: TLS_PEM,
+        state: 'initialized',
+        share_count: 2,
+        holders,
+        admin_cert_pem: ADMIN_CERT_PEM,
+        admin_credential_source: 'csr-sign',
+      }),
+      '/api/v1/barrier/status': () => barrier.status(),
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await fillCeremonyForm({ adminCSR: ADMIN_CSR_PEM });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('barrier-strategy-shamir-init')).not.toBeInTheDocument();
+    });
+
+    const shown = screen.getAllByTestId('barrier-init-holder');
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toHaveTextContent('alice');
+    expect(within(shown[0]).getByTestId('barrier-init-holder-cert')).toHaveValue(holders[0].cert_pem);
+    expect(within(shown[1]).getByTestId('barrier-init-holder-cert')).toHaveValue(holders[1].cert_pem);
+
+    // No issued certificate can be fetched again, so Continue waits for all.
+    const cont = screen.getByRole('button', { name: /Continue/i });
+    expect(cont).toBeDisabled();
+    await fireEvent.click(within(shown[0]).getByRole('button', { name: /Download certificate/i }));
+    expect(downloadText).toHaveBeenCalledWith('alice.crt.pem', holders[0].cert_pem);
+    expect(cont).toBeDisabled();
+    await fireEvent.click(within(shown[1]).getByRole('button', { name: /Download certificate/i }));
+    expect(downloadText).toHaveBeenCalledWith('bob.crt.pem', holders[1].cert_pem);
+    expect(cont).toBeEnabled();
   });
 
   it('refuses an officers roster that is not a JSON array without calling the server', async () => {
