@@ -183,6 +183,29 @@ func TestOperatorTLS_ProvisionedTenantAdminLogsInThroughNodeREST(t *testing.T) {
 	assert.Contains(t, body, "access_token")
 }
 
+// TestOperatorTLS_RevokedTenantAdminCertIsRefusedAtNodeREST pins go-quicbaas#1991:
+// a tenant admin certificate revoked at the platform CA no longer logs in, even
+// though its user binding stays active. The same certificate logs in before
+// the revocation, so the refusal comes from the CA's revocation store alone.
+func TestOperatorTLS_RevokedTenantAdminCertIsRefusedAtNodeREST(t *testing.T) {
+	srv, components, root := newOperatorTLSIntegrationNode(t)
+	adminCert := provisionCertModeTenant(t, components, "acme")
+	addr := srv.RESTAddr()
+	require.NotNil(t, addr, "the qrdb node serves REST")
+	baseURL := "https://" + addr.String()
+
+	status, body := postPIVLogin(t, baseURL, root, adminCert)
+	require.Equal(t, http.StatusOK, status, "an unrevoked certificate logs in: %s", body)
+
+	leaf, err := x509.ParseCertificate(adminCert.Certificate[0])
+	require.NoError(t, err)
+	require.NoError(t, srv.CA().Revoke(context.Background(), leaf.SerialNumber, 0))
+
+	status, body = postPIVLogin(t, baseURL, root, adminCert)
+	require.Equal(t, http.StatusUnauthorized, status, body)
+	assert.NotContains(t, body, "access_token")
+}
+
 // TestOperatorTLS_ForeignTrustDomainTenantCertIsRefusedAtNodeREST proves the
 // tenant binding pins the configured trust domain: a certificate the platform
 // CA signed whose SPIFFE SAN names another trust domain chooses no tenant and
