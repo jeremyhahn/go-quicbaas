@@ -1961,6 +1961,15 @@ tenant, not the system tenant (go-quicbaas#1959). A certificate whose SPIFFE
 SAN names another trust domain is refused with 401; a certificate that names
 no tenant reaches go-xkms unchanged.
 
+**A revoked certificate does not log in.** The login route is public, so qrdb's
+per-request revocation check never runs on it. The tenant wrapper therefore asks
+qrdb's `RevocationChecker` contract itself before go-xkms sees the request, and
+the server answers that contract from the platform xkms CA's revocation store
+(`caRevocationChecker`). A certificate revoked at the CA is refused with 401
+even while its user binding stays active. No CA, a certificate with no serial,
+or a failed CA lookup is a typed error, so the login fails closed
+(go-quicbaas#1991).
+
 #### Attestation claims are derived, never asserted
 
 `attest_level` and `attest_aaguid` are computed from verified evidence inside
