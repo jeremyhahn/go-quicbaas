@@ -251,3 +251,10 @@ func TestKMSServer_ImportKeyRefusedWithoutService(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, keys, "a refused import reached the manager")
 }
+
+// importTenantContext authorizes a caller of kmstenant.OwnerTenant.
+func importTenantContext() context.Context {
+	return contextWithAuthorizedSubject(context.Background(), &platformtoken.AuthorizedContext{
+		Subject: "caller", TenantID: kmstenant.OwnerTenant,
+	})
+}
