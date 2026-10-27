@@ -43,6 +43,30 @@ function makeStatus(over: Partial<RawBarrierStatus> = {}): RawBarrierStatus {
   };
 }
 
+// sealedStatus is the sealed system barrier's status as served: qrdb's
+// BarrierService.sealedStatus reports only sealed and initialized, and
+// barrierStatusToResponse (pkg/api/rest/handlers_barrier.go) forwards its
+// empty strategy unchanged.
+function sealedStatus(initialized: boolean): RawBarrierStatus {
+  return { sealed: true, initialized, strategy: '', hardware_backed: false };
+}
+
+// ceremonyBarrier models the system barrier across the initialization
+// ceremony: uninitialized until the ceremony answers, initialized after.
+function ceremonyBarrier(): {
+  status: () => RawBarrierStatus;
+  initialize: <T>(resp: T) => T;
+} {
+  let initialized = false;
+  return {
+    status: () => sealedStatus(initialized),
+    initialize: (resp) => {
+      initialized = true;
+      return resp;
+    },
+  };
+}
+
 // FetchSpy records every URL the view hits so tests can assert canonical
 // /api/v1/barrier/* paths and prove no /api/v1/seal/* leaks.
 interface FetchCall {
@@ -265,8 +289,9 @@ describe('BarrierView strategy-aware rendering', () => {
   });
 
   it('delivers the administrator credentials the ceremony issues', async () => {
+    const barrier = ceremonyBarrier();
     spy = makeFetchSpy({
-      '/api/v1/init/initialize': () => ({
+      '/api/v1/init/initialize': () => barrier.initialize({
         spki_pin: 'pin',
         ca_cert_pem: CA_PEM,
         tls_cert_pem: TLS_PEM,
@@ -277,7 +302,7 @@ describe('BarrierView strategy-aware rendering', () => {
         admin_key_pem: btoa(ADMIN_KEY_PEM),
         admin_credential_source: 'generated',
       }),
-      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
+      '/api/v1/barrier/status': () => barrier.status(),
     });
     vi.stubGlobal('fetch', spy.mock);
 
@@ -285,7 +310,12 @@ describe('BarrierView strategy-aware rendering', () => {
     await fillCeremonyForm({ generate: true });
     await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
 
-    const result = await screen.findByTestId('barrier-shamir-init-result');
+    // The refresh after a successful ceremony reports initialized: the
+    // one-time credentials must outlive that transition.
+    await waitFor(() => {
+      expect(screen.queryByTestId('barrier-strategy-shamir-init')).not.toBeInTheDocument();
+    });
+    const result = screen.getByTestId('barrier-shamir-init-result');
     expect(result).toHaveTextContent(/any 2 of 2 shares/);
     expect(screen.getByTestId('barrier-init-admin-cert')).toHaveValue(ADMIN_CERT_PEM);
     expect(screen.getByTestId('barrier-init-admin-key')).toHaveValue(ADMIN_KEY_PEM);
@@ -293,6 +323,11 @@ describe('BarrierView strategy-aware rendering', () => {
     const call = spy.calls.find((c) => c.url.endsWith('/api/v1/init/initialize'));
     expect(call?.body).toMatchObject({ admin_generate: true });
     expect(call?.body).not.toHaveProperty('admin_csr_pem');
+
+    // The operator dismisses the credentials once they are saved.
+    await fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+    expect(screen.queryByTestId('barrier-shamir-init-result')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('barrier-init-admin-key')).not.toBeInTheDocument();
   });
 
   it('refuses an officers roster that is not a JSON array without calling the server', async () => {

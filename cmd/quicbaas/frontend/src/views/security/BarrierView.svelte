@@ -288,6 +288,13 @@
       initing = false;
     }
   }
+
+  // dismissInitResult drops the one-time credentials once the operator has
+  // saved them.
+  function dismissInitResult(): void {
+    initResult = null;
+    initAdminKeyPEM = '';
+  }
 </script>
 
 <div class="p-6 space-y-6">
@@ -311,6 +318,66 @@
     <div class="alert alert-error text-sm flex items-center justify-between" role="alert">
       <span>{statusError}</span>
       <button class="btn btn-xs btn-ghost" onclick={() => { void loadStatus(); }}>Retry</button>
+    </div>
+  {/if}
+
+  <!-- The ceremony's credentials are returned once. They stay on screen,
+       whatever the refreshed status says, until the operator continues. -->
+  {#if initResult !== null}
+    <div class="card bg-base-200 rounded-box">
+      <div class="card-body p-6 gap-4" data-testid="barrier-init-credentials">
+        <div class="alert alert-success text-sm" role="alert" data-testid="barrier-shamir-init-result">
+          <span>
+            Barrier initialized: any {initThreshold} of {initResult.share_count}
+            shares unseal it. The shares are sealed to their officers; each
+            officer claims their own share.
+          </span>
+        </div>
+        {#if initAdminKeyPEM !== ''}
+          <div class="alert alert-warning text-sm" role="alert">
+            <span>
+              Save the administrator private key now: it is shown once and
+              the server keeps no copy.
+            </span>
+          </div>
+        {/if}
+        <div class="form-control">
+          <label class="label label-text" for="barrier-init-admin-cert">Administrator certificate</label>
+          <textarea
+            id="barrier-init-admin-cert"
+            class="textarea textarea-bordered textarea-sm font-mono"
+            rows="4"
+            readonly
+            data-testid="barrier-init-admin-cert"
+            value={initResult.admin_cert_pem ?? ''}
+          ></textarea>
+        </div>
+        {#if initAdminKeyPEM !== ''}
+          <div class="form-control">
+            <label class="label label-text" for="barrier-init-admin-key">Administrator private key</label>
+            <textarea
+              id="barrier-init-admin-key"
+              class="textarea textarea-bordered textarea-sm font-mono"
+              rows="4"
+              readonly
+              data-testid="barrier-init-admin-key"
+              value={initAdminKeyPEM}
+            ></textarea>
+          </div>
+        {/if}
+        <div class="form-control">
+          <label class="label label-text" for="barrier-init-ca-cert">CA certificate</label>
+          <textarea
+            id="barrier-init-ca-cert"
+            class="textarea textarea-bordered textarea-sm font-mono"
+            rows="4"
+            readonly
+            data-testid="barrier-init-ca-cert"
+            value={initResult.ca_cert_pem}
+          ></textarea>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick={dismissInitResult}>Continue</button>
+      </div>
     </div>
   {/if}
 
@@ -392,58 +459,7 @@
               {#if initError !== null}
                 <div class="alert alert-error text-sm" role="alert">{initError}</div>
               {/if}
-              {#if initResult !== null}
-                <div class="alert alert-success text-sm" role="alert" data-testid="barrier-shamir-init-result">
-                  <span>
-                    Barrier initialized: any {initThreshold} of {initResult.share_count}
-                    shares unseal it. The shares are sealed to their officers; each
-                    officer claims their own share.
-                  </span>
-                </div>
-                {#if initAdminKeyPEM !== ''}
-                  <div class="alert alert-warning text-sm" role="alert">
-                    <span>
-                      Save the administrator private key now: it is shown once and
-                      the server keeps no copy.
-                    </span>
-                  </div>
-                {/if}
-                <div class="form-control">
-                  <label class="label label-text" for="barrier-init-admin-cert">Administrator certificate</label>
-                  <textarea
-                    id="barrier-init-admin-cert"
-                    class="textarea textarea-bordered textarea-sm font-mono"
-                    rows="4"
-                    readonly
-                    data-testid="barrier-init-admin-cert"
-                    value={initResult.admin_cert_pem ?? ''}
-                  ></textarea>
-                </div>
-                {#if initAdminKeyPEM !== ''}
-                  <div class="form-control">
-                    <label class="label label-text" for="barrier-init-admin-key">Administrator private key</label>
-                    <textarea
-                      id="barrier-init-admin-key"
-                      class="textarea textarea-bordered textarea-sm font-mono"
-                      rows="4"
-                      readonly
-                      data-testid="barrier-init-admin-key"
-                      value={initAdminKeyPEM}
-                    ></textarea>
-                  </div>
-                {/if}
-                <div class="form-control">
-                  <label class="label label-text" for="barrier-init-ca-cert">CA certificate</label>
-                  <textarea
-                    id="barrier-init-ca-cert"
-                    class="textarea textarea-bordered textarea-sm font-mono"
-                    rows="4"
-                    readonly
-                    data-testid="barrier-init-ca-cert"
-                    value={initResult.ca_cert_pem}
-                  ></textarea>
-                </div>
-              {:else}
+              {#if initResult === null}
                 <div class="grid grid-cols-2 gap-3">
                   <div class="form-control">
                     <label class="label label-text" for="shamir-init-threshold">Threshold</label>
