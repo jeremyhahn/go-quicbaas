@@ -155,11 +155,9 @@ func TestModule_LifecycleNoOps(t *testing.T) {
 // all seven broker capability services, the five quicbaas-native broker
 // data-plane services (ParameterStore, DynamicSecretsService,
 // ObjectStorageService, ObjectStorageAdmin, OllamaService), PromptService,
-// and SecretsManagement (the one genuinely quicbaas-native xkms-wire service —
-// KeyManagement/DEKManagement/Crypto/CertificateService/TrustService/
-// AttestationService/PIVService moved to go-xkms's own ServiceModule, Phase 3
-// of the login-plane plan; see module.go's package doc and
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface), each with a method
+// SecretsManagement, and the quicbaas.v1 crypto services the SDK's gRPC
+// transport dials (KeyManagement, DEKManagement, Crypto, CertificateService,
+// TrustService, AttestationService, PIVService), each with a method
 // set identical to its generated service descriptor — the same wire surface
 // pkg/server/lifecycle.go registers on the legacy transport (minus the
 // qrdb-proxy planes that qrdb's own unified server already owns natively,
@@ -189,6 +187,13 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.ObjectStorageAdmin_ServiceDesc,
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
+		&pb.KeyManagement_ServiceDesc,
+		&pb.DEKManagement_ServiceDesc,
+		&pb.Crypto_ServiceDesc,
+		&pb.CertificateService_ServiceDesc,
+		&pb.TrustService_ServiceDesc,
+		&pb.AttestationService_ServiceDesc,
+		&pb.PIVService_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
@@ -197,7 +202,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-nine quicbaas-native, broker and crypto services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -249,40 +254,33 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 	}
 }
 
-// TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface proves KeyManagement,
-// DEKManagement, Crypto, CertificateService, TrustService, AttestationService,
-// and PIVService stay OFF the quicbaas module's surface (Phase 3 of the
-// login-plane plan, corrective to the prior design documented in
-// module.go's package doc): they were quicbaas.v1 wrappers over the SAME
-// composed go-xkms library go-xkms's OWN ServiceModule ("xkms") now serves
-// as its canonical xkms.v1 KeystoreService surface on this same unified
-// server — registering both would double-register a redundant proto
-// surface, exactly the failure mode go-qrdb's route/service-collision guard
-// exists to catch. SecretsManagement is deliberately absent from this
-// exclusion list: it is genuinely quicbaas-native (see
-// TestModule_RegisterGRPC_RegistersFullGRPCSurface).
-func TestModule_RegisterGRPC_ExcludesXKMSCanonicalSurface(t *testing.T) {
-	m, err := NewModule(func() service.QuicBaaS { return nil }, testLogger(t))
+// TestModule_KeyManagement_LateBinding proves the node's KeyManagement
+// service — the one the SDK's gRPC transport dials for `kms key generate`
+// (#1960) — answers Unavailable before the facade composes and serves once
+// the composed facade carries a KMS manager, the gate lifecycle.go applies to
+// the Unix listener.
+func TestModule_KeyManagement_LateBinding(t *testing.T) {
+	var svc atomic.Pointer[mocks.MockQuicBaaS]
+	m, err := NewModule(func() service.QuicBaaS {
+		if composed := svc.Load(); composed != nil {
+			return composed
+		}
+		return nil
+	}, testLogger(t))
 	require.NoError(t, err)
 
-	server := grpc.NewServer()
-	m.RegisterGRPC(server)
-	info := server.GetServiceInfo()
+	client := pb.NewKeyManagementClient(startBufconnModule(t, m))
+	ctx := context.Background()
 
-	excluded := []string{
-		pb.KeyManagement_ServiceDesc.ServiceName,
-		pb.DEKManagement_ServiceDesc.ServiceName,
-		pb.Crypto_ServiceDesc.ServiceName,
-		pb.CertificateService_ServiceDesc.ServiceName,
-		pb.TrustService_ServiceDesc.ServiceName,
-		pb.AttestationService_ServiceDesc.ServiceName,
-		pb.PIVService_ServiceDesc.ServiceName,
-	}
-	for _, name := range excluded {
-		_, ok := info[name]
-		assert.False(t, ok, "service %s must NOT be registered on the quicbaas module: "+
-			"go-xkms's own ServiceModule now owns this canonical xkms.v1 surface", name)
-	}
+	_, err = client.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{})
+	requireUnavailable(t, err, "KeyManagement (pre-composition)")
+
+	svc.Store(&mocks.MockQuicBaaS{
+		KMSManagerServiceFunc: func() interfaces.KMSManager { return stubKMSManager{} },
+	})
+	resp, err := client.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{})
+	require.NoError(t, err, "the late-bound KeyManagement must serve without re-registration")
+	assert.NotEmpty(t, resp.GetAlgorithms())
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
@@ -718,7 +716,7 @@ func TestModule_OllamaService_LateBinding(t *testing.T) {
 
 // TestModule_RegisterGRPC_ObjectTransferServiceDeferred proves
 // ObjectTransferService stays OFF this module's surface. Unlike the qrdb-
-// proxy and xkms-crypto-proxy planes (TestModule_RegisterGRPC_ExcludesProxyPlanes),
+// proxy planes (TestModule_RegisterGRPC_ExcludesProxyPlanes),
 // this is not a duplicate-ownership exclusion: it is deferred because no
 // production code anywhere (legacy gRPC, REST, or Unix transport) ever
 // populates a concrete service.ObjectTransferService, and the one existing

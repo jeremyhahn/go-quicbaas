@@ -665,6 +665,17 @@ Per service:
 | `quicbaas.objectstorage.v1.ObjectStorageAdmin` | Yes, all | — |
 | `quicbaas.ollama.v1.OllamaService` | Yes, all | — |
 | `quicbaas.kms.v1.SecretsManagement` | Yes, unary methods | `WatchSecretsByPrefix` (streaming) |
+| `quicbaas.kms.v1.KeyManagement` | Yes, all | — |
+| `quicbaas.kms.v1.DEKManagement` | Yes, all | — |
+| `quicbaas.kms.v1.Crypto` | Yes, all | — |
+| `quicbaas.certificate.v1.CertificateService` | Yes, all | — |
+| `quicbaas.certificate.v1.TrustService` | Yes, all | — |
+| `quicbaas.attestation.v1.AttestationService` | Yes, all | — |
+| `quicbaas.piv.v1.PIVService` | Yes, all | — |
+
+The seven crypto services above are the ones the SDK's gRPC transport dials.
+go-xkms's own module serves its canonical `xkms.v1` surface on the same
+server under different service names, so the two do not collide (#1960).
 
 `TestGRPCRegistrations_EveryProjectedMethodDeclaresAPermission` walks every
 descriptor `RegisterQUIC` registers, so a new RPC without a permission fails
