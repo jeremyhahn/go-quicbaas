@@ -16,9 +16,11 @@
 package apimodule
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -58,11 +60,34 @@ func (m *tenantProbeModule) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	r.HandlePublic(http.MethodPost, otherPublic, probe)
 }
 
-// certLoginRouter mounts the probe module, wrapped for trustDomain, on a bare
-// router.
+// revocationAnswer is a qrdbsdk.RevocationChecker that gives one fixed answer
+// and records the certificate it was asked about.
+type revocationAnswer struct {
+	revoked bool
+	err     error
+	asked   *x509.Certificate
+}
+
+func (a *revocationAnswer) IsCertRevoked(_ context.Context, peer *x509.Certificate) (bool, error) {
+	a.asked = peer
+	return a.revoked, a.err
+}
+
+// errRevocationLookup stands in for a revocation store that cannot be read.
+var errRevocationLookup = errors.New("revocation store unreadable")
+
+// certLoginRouter mounts the probe module, wrapped for trustDomain with a
+// revocation checker that clears every certificate, on a bare router.
 func certLoginRouter(t *testing.T, trustDomain string) http.Handler {
 	t.Helper()
-	hosted, err := NewCertLoginTenantModule(&tenantProbeModule{}, trustDomain, XKMSCertLoginRoutes)
+	return certLoginRouterWith(t, trustDomain, &revocationAnswer{})
+}
+
+// certLoginRouterWith mounts the probe module, wrapped for trustDomain and
+// revocation, on a bare router.
+func certLoginRouterWith(t *testing.T, trustDomain string, revocation qrdbsdk.RevocationChecker) http.Handler {
+	t.Helper()
+	hosted, err := NewCertLoginTenantModule(&tenantProbeModule{}, trustDomain, XKMSCertLoginRoutes, revocation)
 	require.NoError(t, err)
 	router := chi.NewRouter()
 	hosted.RegisterHTTP(qrdbsdk.NewModuleHTTPRegistrar(router,
@@ -114,6 +139,42 @@ func TestCertLoginTenantModule_RefusesAForeignTrustDomain(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "acme")
 }
 
+func TestCertLoginTenantModule_RefusesARevokedCertificate(t *testing.T) {
+	tenantSAN := "spiffe://" + fixtureTrustDomain + "/tenant/acme/user/admin"
+	for _, trustDomain := range []string{fixtureTrustDomain, ""} {
+		t.Run("trust domain "+trustDomain, func(t *testing.T) {
+			revocation := &revocationAnswer{revoked: true}
+			state := verifiedLeaf(t, tenantSAN)
+
+			rec := serveCertLogin(certLoginRouterWith(t, trustDomain, revocation), certLoginRoute, state)
+
+			assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			assert.NotContains(t, rec.Body.String(), "acme")
+			assert.Same(t, state.VerifiedChains[0][0], revocation.asked, "the verified leaf is the certificate checked")
+		})
+	}
+}
+
+func TestCertLoginTenantModule_FailsClosedWhenRevocationLookupFails(t *testing.T) {
+	revocation := &revocationAnswer{err: errRevocationLookup}
+	state := verifiedLeaf(t, "spiffe://"+fixtureTrustDomain+"/tenant/acme/user/admin")
+
+	rec := serveCertLogin(certLoginRouterWith(t, fixtureTrustDomain, revocation), certLoginRoute, state)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "acme")
+}
+
+func TestCertLoginTenantModule_ChecksRevocationOnlyOnCertLoginRoutes(t *testing.T) {
+	revocation := &revocationAnswer{revoked: true}
+	state := verifiedLeaf(t, "spiffe://"+fixtureTrustDomain+"/tenant/acme/user/admin")
+
+	rec := serveCertLogin(certLoginRouterWith(t, fixtureTrustDomain, revocation), otherPublic, state)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Nil(t, revocation.asked)
+}
+
 func TestCertLoginTenantModule_PassesThrough(t *testing.T) {
 	tenantSAN := "spiffe://" + fixtureTrustDomain + "/tenant/acme/user/admin"
 	tests := []struct {
@@ -139,14 +200,21 @@ func TestCertLoginTenantModule_PassesThrough(t *testing.T) {
 
 func TestNewCertLoginTenantModule_RejectsBadInput(t *testing.T) {
 	t.Run("nil module", func(t *testing.T) {
-		got, err := NewCertLoginTenantModule(nil, fixtureTrustDomain, XKMSCertLoginRoutes)
+		got, err := NewCertLoginTenantModule(nil, fixtureTrustDomain, XKMSCertLoginRoutes, &revocationAnswer{})
 		require.Nil(t, got)
 		var want *NilModuleError
 		require.ErrorAs(t, err, &want)
 	})
 
+	t.Run("nil revocation checker", func(t *testing.T) {
+		got, err := NewCertLoginTenantModule(&tenantProbeModule{}, fixtureTrustDomain, XKMSCertLoginRoutes, nil)
+		require.Nil(t, got)
+		var want *NilRevocationCheckerError
+		require.ErrorAs(t, err, &want)
+	})
+
 	t.Run("module missing an optional extension", func(t *testing.T) {
-		got, err := NewCertLoginTenantModule(&bareModule{}, fixtureTrustDomain, XKMSCertLoginRoutes)
+		got, err := NewCertLoginTenantModule(&bareModule{}, fixtureTrustDomain, XKMSCertLoginRoutes, &revocationAnswer{})
 		require.Nil(t, got)
 		var want *ModuleExtensionMissingError
 		require.ErrorAs(t, err, &want)
@@ -156,7 +224,7 @@ func TestNewCertLoginTenantModule_RejectsBadInput(t *testing.T) {
 
 func TestCertLoginTenantModule_ForwardsEveryOtherHook(t *testing.T) {
 	inner := &tenantProbeModule{recordingModule: recordingModule{publicGRPC: []string{"/pkg.Service/Method"}}}
-	hosted, err := NewCertLoginTenantModule(inner, fixtureTrustDomain, XKMSCertLoginRoutes)
+	hosted, err := NewCertLoginTenantModule(inner, fixtureTrustDomain, XKMSCertLoginRoutes, &revocationAnswer{})
 	require.NoError(t, err)
 
 	hosted.RegisterHTTP(nil)

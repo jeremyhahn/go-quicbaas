@@ -1390,7 +1390,8 @@ func (s *Server) hostXKMSModule(xkmsModule qrdbsdk.ServiceModule) (qrdbsdk.Servi
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "compose xkms module route precedence", Cause: err}
 	}
-	hosted, err = apimodule.NewCertLoginTenantModule(hosted, s.config.IAM.SPIFFETrustDomain, apimodule.XKMSCertLoginRoutes)
+	hosted, err = apimodule.NewCertLoginTenantModule(hosted, s.config.IAM.SPIFFETrustDomain,
+		apimodule.XKMSCertLoginRoutes, &caRevocationChecker{server: s})
 	if err != nil {
 		return nil, &QRDBNodeError{Stage: "bind xkms certificate login tenant", Cause: err}
 	}
