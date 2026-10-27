@@ -1901,6 +1901,16 @@ func (k *kmsServiceImpl) validateImportKeyRequest(req *ImportKeyRequest) error {
 		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "request is nil")
 	}
 
+	if strings.TrimSpace(req.Name) == "" {
+		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key name is required")
+	}
+
+	// A name inside the tenant key namespace would let the caller address
+	// another tenant's keys, so it is refused rather than scoped.
+	if strings.HasPrefix(req.Name, kmsTenantKeyPrefix) {
+		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key name uses the reserved tenant namespace")
+	}
+
 	if len(req.KeyMaterial) == 0 {
 		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key material is required")
 	}

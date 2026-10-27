@@ -38,6 +38,10 @@ var (
 
 	// ErrPeerCredUnsupported indicates SO_PEERCRED is not supported on this platform.
 	ErrPeerCredUnsupported = stderrors.New("SO_PEERCRED is only supported on Linux")
+
+	// ErrKMSServiceRequired refuses a KMS verb that has no tenant-scoped
+	// service layer: calling the manager directly would bypass tenant scoping.
+	ErrKMSServiceRequired = stderrors.New("kms: tenant-scoped service layer is required")
 )
 
 // FromGRPCError converts a gRPC status code to a QuicBaaS error code.

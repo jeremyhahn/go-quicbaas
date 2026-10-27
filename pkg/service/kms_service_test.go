@@ -4377,8 +4377,27 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 			errContains: "request is nil",
 		},
 		{
+			name: "blank key name returns error",
+			req: &ImportKeyRequest{
+				Name:        "  ",
+				KeyMaterial: []byte("some-key-data"),
+			},
+			wantErr:     true,
+			errContains: "key name is required",
+		},
+		{
+			name: "reserved tenant namespace returns error",
+			req: &ImportKeyRequest{
+				Name:        kmsTenantKeyPrefix + "other-tenant/planted",
+				KeyMaterial: []byte("some-key-data"),
+			},
+			wantErr:     true,
+			errContains: "reserved tenant namespace",
+		},
+		{
 			name: "empty key material returns error",
 			req: &ImportKeyRequest{
+				Name:        "import-key",
 				KeyMaterial: []byte{},
 			},
 			wantErr:     true,
@@ -4387,6 +4406,7 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 		{
 			name: "missing algorithm returns error",
 			req: &ImportKeyRequest{
+				Name:          "import-key",
 				KeyMaterial:   []byte("some-key-data"),
 				KeyAttributes: nil,
 			},
@@ -4396,6 +4416,7 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 		{
 			name: "valid request returns no error",
 			req: &ImportKeyRequest{
+				Name:        "import-key",
 				KeyMaterial: make([]byte, 32),
 				KeyAttributes: &xkmssdk.KeyAttributes{
 					SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,

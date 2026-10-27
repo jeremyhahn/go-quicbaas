@@ -25,8 +25,11 @@ import (
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/testutil/kmstenant"
 )
 
 // =============================================================================
@@ -34,27 +37,18 @@ import (
 // =============================================================================
 
 func TestKMSServer_ImportKey_Success(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	now := time.Now()
-
+	var importedID string
 	mockMgr := &mockKMSManager{
 		importKeyFunc: func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
-			assert.Equal(t, "import-key", keyID)
+			importedID = keyID
 			assert.Equal(t, []byte("key-material"), material)
 			assert.Equal(t, "AES-256-GCM", algorithm)
-			return &kms.KeyMetadata{
-				KeyID:     keyID,
-				Algorithm: kms.AlgAES256GCM,
-				State:     kms.KeyStateEnabled,
-				Version:   1,
-				Created:   now,
-				Updated:   now,
-			}, nil
+			return &kms.KeyMetadata{KeyID: keyID, Algorithm: kms.AlgAES256GCM, State: kms.KeyStateEnabled, Version: 1}, nil
 		},
 	}
-	server := NewKMSServer(mockMgr, log)
+	server := newServiceBackedKMSServer(t, mockMgr)
 
-	resp, err := server.ImportKey(context.Background(), &pb.ImportKeyRequest{
+	resp, err := server.ImportKey(importTenantContext(), &pb.ImportKeyRequest{
 		Name:        "import-key",
 		Description: "imported key",
 		KeyMaterial: []byte("key-material"),
@@ -65,9 +59,10 @@ func TestKMSServer_ImportKey_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.NotNil(t, resp.Key)
-	assert.NotNil(t, resp.Metadata)
+	assert.Equal(t, "tenant/"+kmstenant.OwnerTenant+"/import-key", importedID, "the manager must receive the tenant-scoped key ID")
+	assert.Equal(t, "import-key", resp.GetKey().GetKeyId())
+	assert.Equal(t, "imported key", resp.GetMetadata().GetDescription())
+	assert.Equal(t, map[string]string{"env": "test"}, resp.GetMetadata().GetTags())
 }
 
 func TestKMSServer_ImportKey_MissingKeyMaterial(t *testing.T) {
@@ -103,25 +98,44 @@ func TestKMSServer_ImportKey_MissingKeySpec(t *testing.T) {
 }
 
 func TestKMSServer_ImportKey_ManagerError(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-
 	mockMgr := &mockKMSManager{
 		importKeyFunc: func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
 			return nil, errors.New(errors.ErrAlreadyExists, "ImportKey", "key already exists")
 		},
 	}
-	server := NewKMSServer(mockMgr, log)
+	server := newServiceBackedKMSServer(t, mockMgr)
 
-	_, err := server.ImportKey(context.Background(), &pb.ImportKeyRequest{
+	_, err := server.ImportKey(importTenantContext(), &pb.ImportKeyRequest{
 		Name:        "import-key",
 		KeyMaterial: []byte("material"),
 		KeySpec:     &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM},
 	})
 
 	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.AlreadyExists, st.Code())
+	assert.Equal(t, codes.Internal, status.Code(err),
+		"the service wraps every manager import failure as ErrInternal, so the handler must answer Internal")
+}
+
+// newServiceBackedKMSServer wires mgr behind the service layer, the only
+// path ImportKey takes (#1992).
+func newServiceBackedKMSServer(t *testing.T, mgr *mockKMSManager) *KMSServer {
+	t.Helper()
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
+	require.NoError(t, err)
+	svc, err := service.NewServiceBuilder().
+		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
+		WithRaftNode(&importRaftNode{}).
+		WithKMSManager(mgr).
+		Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return NewKMSServerWithService(mgr, svc.KMS(), log)
+}
+
+// importRaftNode satisfies the service builder; the KMS service never
+// touches Raft.
+type importRaftNode struct {
+	interfaces.RaftNode
 }
 
 // =============================================================================
