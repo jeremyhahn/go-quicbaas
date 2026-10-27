@@ -373,13 +373,13 @@ func (w *fsWatcher) processBatches(ctx context.Context) {
 	for {
 		select {
 		case <-w.stopCh:
-			// Flush remaining events
-			w.flushEvents()
+			// Emit remaining events, even those inside the delay
+			w.drainPending()
 			return
 
 		case <-ctx.Done():
-			// Flush remaining events
-			w.flushEvents()
+			// Emit remaining events, even those inside the delay
+			w.drainPending()
 			return
 
 		case <-w.manualFlush:
@@ -392,14 +392,26 @@ func (w *fsWatcher) processBatches(ctx context.Context) {
 	}
 }
 
-// flushEvents flushes debounced events to the output channel.
+// flushEvents sends the events whose path has been quiet for DebounceDelay to
+// the output channel; paths changed more recently wait for a later batch.
 func (w *fsWatcher) flushEvents() {
-	events := w.debouncer.Flush()
+	w.emit(w.debouncer.Flush(), w.stopCh)
+}
 
+// drainPending sends every pending event to the output channel, including
+// those still inside DebounceDelay, so that stopping loses nothing. It runs
+// after stopCh has closed, so it does not watch stopCh.
+func (w *fsWatcher) drainPending() {
+	w.emit(w.debouncer.Drain(), nil)
+}
+
+// emit sends events to the output channel, dropping any that do not fit. It
+// gives up early when stop closes; a nil stop never does.
+func (w *fsWatcher) emit(events []Event, stop <-chan struct{}) {
 	for _, event := range events {
 		select {
 		case w.events <- event:
-		case <-w.stopCh:
+		case <-stop:
 			return
 		default:
 			// Drop event if channel is full

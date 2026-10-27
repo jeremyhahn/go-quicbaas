@@ -364,7 +364,8 @@ func latestPendingSize(d *debouncer, path string) (int64, bool) {
 		size  int64
 		found bool
 	)
-	for _, e := range d.events {
+	for _, pending := range d.events {
+		e := pending.event
 		if e.Path == path && (!found || e.Size > size) {
 			size, found = e.Size, true
 		}
@@ -411,6 +412,11 @@ func TestWatcher_Debouncing(t *testing.T) {
 	fw, ok := w.(*fsWatcher)
 	require.True(t, ok, "New must return *fsWatcher")
 
+	// The debouncer reads a test clock, so the DebounceDelay window is
+	// crossed only when the test advances it.
+	clock := newTestClock()
+	fw.debouncer.now = clock.Now
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -435,8 +441,16 @@ func TestWatcher_Debouncing(t *testing.T) {
 		}, 30*time.Second, time.Millisecond, "write %d never reached the debouncer", i)
 	}
 
-	// Draining the debouncer emits one event per distinct path regardless of
-	// how many events were buffered for it.
+	// Inside DebounceDelay the path is still being written, so a batch flush
+	// holds it back.
+	fw.flushEvents()
+	for _, e := range drainEvents(w) {
+		assert.NotEqual(t, testFile, e.Path, "a path inside DebounceDelay must not be emitted")
+	}
+
+	// Once the path has been quiet for DebounceDelay, the flush emits one
+	// event per distinct path regardless of how many were buffered for it.
+	clock.Advance(config.DebounceDelay)
 	fw.flushEvents()
 
 	var forTestFile []Event
@@ -450,6 +464,49 @@ func TestWatcher_Debouncing(t *testing.T) {
 		"%d writes to one path buffered in a single batch window must coalesce into exactly 1 event", writes)
 	assert.Equal(t, int64(writes), forTestFile[0].Size,
 		"the coalesced event must carry the newest write, not an earlier one")
+}
+
+// TestWatcher_DebounceDelayHoldsRecentWrites proves Config.DebounceDelay is
+// honoured: a batch flush holds back a path whose newest event is younger than
+// the delay, and stopping the watcher still emits it rather than dropping it.
+func TestWatcher_DebounceDelayHoldsRecentWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	config := Config{
+		Paths:         []string{tmpDir},
+		DebounceDelay: time.Hour,
+		BatchInterval: time.Hour,
+		BufferSize:    100,
+		IgnoreHidden:  false,
+	}
+
+	w, err := New(config)
+	require.NoError(t, err)
+
+	fw, ok := w.(*fsWatcher)
+	require.True(t, ok, "New must return *fsWatcher")
+
+	require.NoError(t, w.Start(context.Background()))
+
+	testFile := filepath.Join(tmpDir, "held.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("x"), 0644))
+	require.Eventually(t, func() bool {
+		_, ok := latestPendingSize(fw.debouncer, testFile)
+		return ok
+	}, 30*time.Second, time.Millisecond, "the write never reached the debouncer")
+
+	fw.flushEvents()
+	assert.Empty(t, drainEvents(w), "a path written inside DebounceDelay must not be emitted yet")
+	_, pending := latestPendingSize(fw.debouncer, testFile)
+	assert.True(t, pending, "the held event must stay pending for a later flush")
+
+	require.NoError(t, w.Stop())
+
+	var emitted []string
+	for e := range w.Events() {
+		emitted = append(emitted, e.Path)
+	}
+	assert.Contains(t, emitted, testFile, "stopping the watcher must emit events still held by the delay")
 }
 
 func TestWatcher_AddPath(t *testing.T) {

@@ -28,8 +28,12 @@ type Config struct {
 	// Examples: "*.tmp", "node_modules/", ".git/"
 	Exclude []string
 
-	// DebounceDelay is the time window for collecting rapid changes.
-	// Events for the same file within this window are deduplicated.
+	// DebounceDelay is how long a file must go unchanged before its event is
+	// emitted. Rapid changes to the same file are deduplicated, and each
+	// change restarts the wait, so a file still being written is held back.
+	// Held events are emitted by the first batch after the delay has passed,
+	// and all pending events are emitted when the watcher stops.
+	// Zero emits every pending event at the next batch.
 	// Default: 100ms
 	DebounceDelay time.Duration
 

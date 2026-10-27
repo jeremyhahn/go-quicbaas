@@ -20,33 +20,63 @@ import (
 	"time"
 )
 
-// debouncer collects events within a time window and deduplicates them.
+// debouncer coalesces events per path and holds each path back until it has
+// been quiet for the configured delay, so a file still being written is
+// emitted once, after its last change.
 type debouncer struct {
 	delay  time.Duration
+	now    func() time.Time
 	mu     sync.Mutex
-	events map[string]*Event // keyed by path
+	events map[string]pendingEvent // keyed by path
+}
+
+// pendingEvent is the newest event buffered for a path and when it arrived.
+type pendingEvent struct {
+	event   Event
+	arrived time.Time
 }
 
 // newDebouncer creates a new debouncer with the given delay.
 func newDebouncer(delay time.Duration) *debouncer {
 	return &debouncer{
 		delay:  delay,
-		events: make(map[string]*Event),
+		now:    time.Now,
+		events: make(map[string]pendingEvent),
 	}
 }
 
 // Add adds an event to the debouncer.
-// If an event for the same path already exists, it's replaced with the new one.
+// If an event for the same path already exists, it is replaced and the
+// path's delay starts again.
 func (d *debouncer) Add(event Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Replace any existing event for this path
-	d.events[event.Path] = &event
+	d.events[event.Path] = pendingEvent{event: event, arrived: d.now()}
 }
 
-// Flush returns all accumulated events and clears the buffer.
+// Flush returns and removes the events whose path has been quiet for at least
+// the delay. Paths changed more recently stay pending for a later flush.
 func (d *debouncer) Flush() []Event {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := d.now()
+	var events []Event
+	for path, pending := range d.events {
+		if now.Sub(pending.arrived) < d.delay {
+			continue
+		}
+		events = append(events, pending.event)
+		delete(d.events, path)
+	}
+
+	return events
+}
+
+// Drain returns and removes every pending event, ignoring the delay. It is
+// used on shutdown so that events still inside their delay are not lost.
+func (d *debouncer) Drain() []Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -54,14 +84,11 @@ func (d *debouncer) Flush() []Event {
 		return nil
 	}
 
-	// Convert map to slice
 	events := make([]Event, 0, len(d.events))
-	for _, event := range d.events {
-		events = append(events, *event)
+	for _, pending := range d.events {
+		events = append(events, pending.event)
 	}
-
-	// Clear the map
-	d.events = make(map[string]*Event)
+	d.events = make(map[string]pendingEvent)
 
 	return events
 }
@@ -73,9 +100,9 @@ func (d *debouncer) Count() int {
 	return len(d.events)
 }
 
-// Clear removes all pending events without returning them.
+// Clear removes all pending events.
 func (d *debouncer) Clear() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.events = make(map[string]*Event)
+	d.events = make(map[string]pendingEvent)
 }

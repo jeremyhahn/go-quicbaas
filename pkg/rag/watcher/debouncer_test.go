@@ -16,10 +16,12 @@
 package watcher
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDebouncer_Add(t *testing.T) {
@@ -42,7 +44,7 @@ func TestDebouncer_Add(t *testing.T) {
 }
 
 func TestDebouncer_AddSamePath(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer(0)
 
 	event1 := Event{
 		Type: EventCreate,
@@ -66,7 +68,7 @@ func TestDebouncer_AddSamePath(t *testing.T) {
 }
 
 func TestDebouncer_Flush(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer(0)
 
 	event1 := Event{
 		Type: EventCreate,
@@ -105,7 +107,7 @@ func TestDebouncer_FlushEmpty(t *testing.T) {
 }
 
 func TestDebouncer_Count(t *testing.T) {
-	d := newDebouncer(100 * time.Millisecond)
+	d := newDebouncer(0)
 
 	assert.Equal(t, 0, d.Count())
 
@@ -169,4 +171,79 @@ func TestDebouncer_ConcurrentAccess(t *testing.T) {
 
 	// Should not panic
 	d.Clear()
+}
+
+// testClock is a manually advanced clock for the debouncer's now hook. It is
+// safe to read from the watcher's goroutines while a test advances it.
+type testClock struct {
+	nanos atomic.Int64
+}
+
+func newTestClock() *testClock {
+	c := &testClock{}
+	c.nanos.Store(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	return c
+}
+
+func (c *testClock) Now() time.Time {
+	return time.Unix(0, c.nanos.Load()).UTC()
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.nanos.Add(int64(d))
+}
+
+func TestDebouncer_FlushHoldsPathsInsideDelay(t *testing.T) {
+	clock := newTestClock()
+	d := newDebouncer(100 * time.Millisecond)
+	d.now = clock.Now
+
+	d.Add(Event{Type: EventCreate, Path: "/old.txt"})
+	clock.Advance(60 * time.Millisecond)
+	d.Add(Event{Type: EventCreate, Path: "/new.txt"})
+	clock.Advance(40 * time.Millisecond)
+
+	events := d.Flush()
+	require.Len(t, events, 1, "only the path quiet for the whole delay may be emitted")
+	assert.Equal(t, "/old.txt", events[0].Path)
+	assert.Equal(t, 1, d.Count(), "the recent path must stay pending")
+
+	clock.Advance(60 * time.Millisecond)
+	events = d.Flush()
+	require.Len(t, events, 1)
+	assert.Equal(t, "/new.txt", events[0].Path)
+	assert.Equal(t, 0, d.Count())
+}
+
+func TestDebouncer_AddRestartsDelay(t *testing.T) {
+	clock := newTestClock()
+	d := newDebouncer(100 * time.Millisecond)
+	d.now = clock.Now
+
+	d.Add(Event{Type: EventCreate, Path: "/file.txt", Size: 1})
+	clock.Advance(90 * time.Millisecond)
+	d.Add(Event{Type: EventModify, Path: "/file.txt", Size: 2})
+	clock.Advance(90 * time.Millisecond)
+
+	assert.Nil(t, d.Flush(), "a path changed inside the delay must be held, even past the first event's delay")
+
+	clock.Advance(10 * time.Millisecond)
+	events := d.Flush()
+	require.Len(t, events, 1)
+	assert.Equal(t, EventModify, events[0].Type)
+	assert.Equal(t, int64(2), events[0].Size, "the emitted event must be the newest one")
+}
+
+func TestDebouncer_DrainIgnoresDelay(t *testing.T) {
+	clock := newTestClock()
+	d := newDebouncer(time.Hour)
+	d.now = clock.Now
+
+	d.Add(Event{Path: "/file1.txt"})
+	d.Add(Event{Path: "/file2.txt"})
+
+	assert.Nil(t, d.Flush())
+	assert.Len(t, d.Drain(), 2, "drain must emit events still inside the delay")
+	assert.Equal(t, 0, d.Count())
+	assert.Nil(t, d.Drain(), "draining an empty debouncer returns nothing")
 }
