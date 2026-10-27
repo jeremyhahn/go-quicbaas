@@ -68,6 +68,7 @@ github.com/jeremyhahn/go-quicbaas/pkg/routing
 github.com/jeremyhahn/go-quicbaas/pkg/scheduler
 github.com/jeremyhahn/go-quicbaas/pkg/scheduler/handlers
 github.com/jeremyhahn/go-quicbaas/pkg/scheduler/storage/quicbaas
+github.com/jeremyhahn/go-quicbaas/pkg/sdlc
 github.com/jeremyhahn/go-quicbaas/pkg/seal
 github.com/jeremyhahn/go-quicbaas/pkg/server/devcluster
 github.com/jeremyhahn/go-quicbaas/pkg/server/mocks
