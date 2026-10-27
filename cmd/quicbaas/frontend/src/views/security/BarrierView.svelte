@@ -36,10 +36,18 @@
   import { showToast } from '../../stores/toast.svelte.ts';
   import PageHeader from '../../components/core/PageHeader.svelte';
   import { ShieldOff } from 'lucide-svelte';
-  import { APIError, createBarrierClient, isWailsRuntime } from '@quicbaas/sdk';
+  import {
+    APIError,
+    createBarrierClient,
+    createCeremonyClient,
+    isWailsRuntime,
+  } from '@quicbaas/sdk';
   import type {
     BarrierClient as SDKBarrierClient,
     BarrierStatusResponse,
+    CeremonyInitializeRequest,
+    CeremonyInitializeResponse,
+    CeremonyOfficer,
   } from '@quicbaas/sdk';
   import {
     BarrierStatusBadge,
@@ -48,7 +56,6 @@
   } from '@quicbaas/svelte-security';
   import type {
     BarrierClient,
-    BarrierInitResponse,
     BarrierStatus,
     BarrierStrategy,
   } from '@quicbaas/svelte-security';
@@ -57,9 +64,9 @@
   // SDK -> structural BarrierClient adapter
   //
   // The svelte-security components consume a structurally-typed BarrierClient
-  // (init({threshold, total_shares}), unseal({passphrase}), quorumBegin,
-  // quorumSubmit, status() → BarrierStatus). The SDK BarrierClient surface is
-  // richer (initializeShamir, the quorum domains and ops, etc.) so we adapt the
+  // (unseal({passphrase}), quorumBegin, quorumSubmit, status() →
+  // BarrierStatus). The SDK BarrierClient surface is richer (the quorum
+  // domains and ops, etc.) so we adapt the
   // SDK calls into the shape the components expect. Crucially, all URL routing flows through the SDK so
   // future server-side path changes propagate automatically.
   // ---------------------------------------------------------------------------
@@ -139,23 +146,6 @@
         const raw = await sdk.status();
         return adaptStatus(raw);
       },
-      async init(req) {
-        const resp = await sdk.initializeShamir({
-          // The SDK initializeShamir requires a master-key secret; for the
-          // strategy-aware UI the daemon's barrier strategy already carries
-          // the protector, so we send an empty secret and rely on the daemon
-          // to derive the master key from the active strategy. The secret is
-          // bytes; the SDK encodes it.
-          secret: new Uint8Array(0),
-          threshold: req.threshold,
-          total_shares: req.total_shares,
-        });
-        return {
-          threshold: resp.threshold,
-          total_shares: resp.total_shares,
-          share_count: resp.share_count,
-        };
-      },
       async unseal(req) {
         await sdk.unseal({ secret: new TextEncoder().encode(req.passphrase) });
         const after = await adaptStatus(await sdk.status());
@@ -187,12 +177,60 @@
   let statusError: string | null = $state(null);
   let subsystemDisabled = $state(false);
 
-  // Shamir init form state.
+  // Shamir init form state. The system barrier is initialized only by the
+  // qrdb initialization ceremony (POST /api/v1/init/initialize): it seals one
+  // share to each officer and issues the bootstrap administrator's
+  // credential in the same call.
   let initThreshold = $state(2);
-  let initTotal = $state(3);
+  let initSOPin = $state('');
+  let initUserPin = $state('');
+  let initOfficers = $state('');
+  let initAdminMode: 'csr' | 'generate' = $state('csr');
+  let initAdminCSR = $state('');
   let initing = $state(false);
-  let initResult: BarrierInitResponse | null = $state(null);
+  let initResult: CeremonyInitializeResponse | null = $state(null);
+  let initAdminKeyPEM = $state('');
   let initError: string | null = $state(null);
+
+  // OfficerRosterError reports an officers field that is not a JSON array.
+  class OfficerRosterError extends Error {
+    constructor(detail: string) {
+      super(`Officers must be a JSON array of {username, csr_pem, ...} entries: ${detail}`);
+      this.name = 'OfficerRosterError';
+    }
+  }
+
+  // parseOfficers reads the officer roster: each officer prepares their own
+  // CSR and share-encryption key, so the roster is pasted, not generated here.
+  function parseOfficers(text: string): CeremonyOfficer[] {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new OfficerRosterError(e instanceof Error ? e.message : String(e));
+    }
+    if (!Array.isArray(parsed)) {
+      throw new OfficerRosterError(`got ${parsed === null ? 'null' : typeof parsed}`);
+    }
+    return parsed as CeremonyOfficer[];
+  }
+
+  // ceremonyRequest builds the initialization request with exactly one
+  // administrator credential selector.
+  function ceremonyRequest(): CeremonyInitializeRequest {
+    const req: CeremonyInitializeRequest = {
+      so_pin: initSOPin,
+      user_pin: initUserPin,
+      threshold: initThreshold,
+      officers: parseOfficers(initOfficers),
+    };
+    if (initAdminMode === 'generate') {
+      req.admin_generate = true;
+    } else {
+      req.admin_csr_pem = initAdminCSR.trim();
+    }
+    return req;
+  }
 
   async function loadStatus(): Promise<void> {
     loading = true;
@@ -226,16 +264,18 @@
   });
 
   async function submitShamirInit(): Promise<void> {
-    if (client === null) return;
     initError = null;
     initing = true;
     try {
-      const resp = await client.init({
-        threshold: initThreshold,
-        total_shares: initTotal,
-      });
+      const req = ceremonyRequest();
+      // The ceremony is served over REST; the desktop transport carries no
+      // ceremony client.
+      const baseURL = typeof window !== 'undefined' ? window.location.origin : '';
+      const ceremony = await createCeremonyClient('rest', { baseURL });
+      const resp = await ceremony.initialize(req);
       // Share-free: the shares are sealed to their holders, who each claim
-      // their own.
+      // their own. A generated administrator key is returned exactly once.
+      initAdminKeyPEM = resp.admin_key_pem ? atob(resp.admin_key_pem) : '';
       initResult = resp;
       showToast({
         message: 'Barrier initialized — each holder now claims their share',
@@ -344,9 +384,10 @@
           {#if !status.initialized}
             <div class="space-y-3" data-testid="barrier-strategy-shamir-init">
               <p class="text-sm text-base-content/70">
-                Initialize the Shamir barrier. Choose how many shares to mint and
-                the threshold required to unseal. Each share is sealed to its holder,
-                who claims it individually.
+                Initialize the Shamir barrier through the initialization ceremony.
+                Each officer's share is sealed to that officer, who claims it
+                individually; the threshold is how many officers must unseal it.
+                The ceremony also issues the bootstrap administrator's credential.
               </p>
               {#if initError !== null}
                 <div class="alert alert-error text-sm" role="alert">{initError}</div>
@@ -354,10 +395,53 @@
               {#if initResult !== null}
                 <div class="alert alert-success text-sm" role="alert" data-testid="barrier-shamir-init-result">
                   <span>
-                    Barrier initialized: any {initResult.threshold} of {initResult.total_shares}
-                    shares unseal it. {initResult.share_count} shares sealed to their holders;
-                    each holder claims their own share.
+                    Barrier initialized: any {initThreshold} of {initResult.share_count}
+                    shares unseal it. The shares are sealed to their officers; each
+                    officer claims their own share.
                   </span>
+                </div>
+                {#if initAdminKeyPEM !== ''}
+                  <div class="alert alert-warning text-sm" role="alert">
+                    <span>
+                      Save the administrator private key now: it is shown once and
+                      the server keeps no copy.
+                    </span>
+                  </div>
+                {/if}
+                <div class="form-control">
+                  <label class="label label-text" for="barrier-init-admin-cert">Administrator certificate</label>
+                  <textarea
+                    id="barrier-init-admin-cert"
+                    class="textarea textarea-bordered textarea-sm font-mono"
+                    rows="4"
+                    readonly
+                    data-testid="barrier-init-admin-cert"
+                    value={initResult.admin_cert_pem ?? ''}
+                  ></textarea>
+                </div>
+                {#if initAdminKeyPEM !== ''}
+                  <div class="form-control">
+                    <label class="label label-text" for="barrier-init-admin-key">Administrator private key</label>
+                    <textarea
+                      id="barrier-init-admin-key"
+                      class="textarea textarea-bordered textarea-sm font-mono"
+                      rows="4"
+                      readonly
+                      data-testid="barrier-init-admin-key"
+                      value={initAdminKeyPEM}
+                    ></textarea>
+                  </div>
+                {/if}
+                <div class="form-control">
+                  <label class="label label-text" for="barrier-init-ca-cert">CA certificate</label>
+                  <textarea
+                    id="barrier-init-ca-cert"
+                    class="textarea textarea-bordered textarea-sm font-mono"
+                    rows="4"
+                    readonly
+                    data-testid="barrier-init-ca-cert"
+                    value={initResult.ca_cert_pem}
+                  ></textarea>
                 </div>
               {:else}
                 <div class="grid grid-cols-2 gap-3">
@@ -367,21 +451,63 @@
                       id="shamir-init-threshold"
                       class="input input-bordered input-sm"
                       type="number"
-                      min="1"
+                      min="2"
                       bind:value={initThreshold}
                     />
                   </div>
                   <div class="form-control">
-                    <label class="label label-text" for="shamir-init-total">Total shares</label>
+                    <label class="label label-text" for="shamir-init-admin-mode">Administrator credential</label>
+                    <select
+                      id="shamir-init-admin-mode"
+                      class="select select-bordered select-sm"
+                      bind:value={initAdminMode}
+                    >
+                      <option value="csr">Sign my CSR</option>
+                      <option value="generate">Generate (evaluation only)</option>
+                    </select>
+                  </div>
+                  <div class="form-control">
+                    <label class="label label-text" for="shamir-init-so-pin">Security Officer PIN</label>
                     <input
-                      id="shamir-init-total"
+                      id="shamir-init-so-pin"
                       class="input input-bordered input-sm"
-                      type="number"
-                      min="1"
-                      bind:value={initTotal}
+                      type="password"
+                      autocomplete="off"
+                      bind:value={initSOPin}
+                    />
+                  </div>
+                  <div class="form-control">
+                    <label class="label label-text" for="shamir-init-user-pin">User PIN</label>
+                    <input
+                      id="shamir-init-user-pin"
+                      class="input input-bordered input-sm"
+                      type="password"
+                      autocomplete="off"
+                      bind:value={initUserPin}
                     />
                   </div>
                 </div>
+                <div class="form-control">
+                  <label class="label label-text" for="shamir-init-officers">Officers (JSON array)</label>
+                  <textarea
+                    id="shamir-init-officers"
+                    class="textarea textarea-bordered textarea-sm font-mono"
+                    rows="5"
+                    placeholder={'[{"username": "alice", "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----..."}]'}
+                    bind:value={initOfficers}
+                  ></textarea>
+                </div>
+                {#if initAdminMode === 'csr'}
+                  <div class="form-control">
+                    <label class="label label-text" for="shamir-init-admin-csr">Administrator CSR (PEM)</label>
+                    <textarea
+                      id="shamir-init-admin-csr"
+                      class="textarea textarea-bordered textarea-sm font-mono"
+                      rows="4"
+                      bind:value={initAdminCSR}
+                    ></textarea>
+                  </div>
+                {/if}
                 <button
                   class="btn btn-accent btn-sm"
                   disabled={initing}

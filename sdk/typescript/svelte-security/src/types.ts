@@ -60,22 +60,6 @@ export interface BarrierStatus {
   cluster_name?: string;
 }
 
-/** BarrierInitRequest initializes a new Shamir barrier. */
-export interface BarrierInitRequest {
-  threshold: number;
-  total_shares: number;
-}
-
-/**
- * BarrierInitResponse is the share-free result of a Shamir init: the shares
- * are sealed to their holders, who each claim their own.
- */
-export interface BarrierInitResponse {
-  threshold: number;
-  total_shares: number;
-  share_count: number;
-}
-
 /** BarrierUnsealRequest unseals a passphrase barrier. */
 export interface BarrierUnsealRequest {
   passphrase: string;
@@ -132,7 +116,6 @@ export interface BarrierQuorumProgress {
  */
 export interface BarrierClient {
   status(): Promise<BarrierStatus>;
-  init(req: BarrierInitRequest): Promise<BarrierInitResponse>;
   unseal(req: BarrierUnsealRequest): Promise<BarrierUnsealResponse>;
   quorumBegin(req: BarrierQuorumBeginRequest): Promise<BarrierQuorumChallenge>;
   quorumSubmit(req: BarrierQuorumSubmitRequest): Promise<BarrierQuorumProgress>;

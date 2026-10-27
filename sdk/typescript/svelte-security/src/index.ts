@@ -31,8 +31,6 @@ export { default as BootstrapMethodPicker } from './components/BootstrapMethodPi
 export type {
   BarrierStrategy,
   BarrierStatus,
-  BarrierInitRequest,
-  BarrierInitResponse,
   BarrierUnsealRequest,
   BarrierUnsealResponse,
   BarrierQuorumBeginRequest,

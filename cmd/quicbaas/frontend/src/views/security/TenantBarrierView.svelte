@@ -128,20 +128,6 @@
       async status(): Promise<BarrierStatus> {
         return adaptStatus(await tb.tenantBarrierStatus(tenantId));
       },
-      // init is unused by ShamirShareInput (we drive init via the picker), but
-      // the structural contract requires it. Route it through the shamir init.
-      async init(req) {
-        const resp = await tb.tenantBarrierInit(tenantId, {
-          strategy: 'shamir',
-          threshold: req.threshold,
-          shares: req.total_shares,
-        });
-        return {
-          threshold: resp?.threshold ?? 0,
-          total_shares: resp?.total_shares ?? 0,
-          share_count: resp?.share_count ?? 0,
-        };
-      },
       async unseal(req) {
         await tb.tenantBarrierUnseal(tenantId, barrierCredentialBytes(req.passphrase));
         const next = await tb.tenantBarrierStatus(tenantId);

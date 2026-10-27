@@ -106,33 +106,48 @@ function makeFetchSpy(
   return { calls, mock };
 }
 
+const CA_PEM = '-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----';
+const TLS_PEM = '-----BEGIN CERTIFICATE-----\ntls\n-----END CERTIFICATE-----';
+const ADMIN_CSR_PEM = '-----BEGIN CERTIFICATE REQUEST-----\nadmin\n-----END CERTIFICATE REQUEST-----';
+const ADMIN_CERT_PEM = '-----BEGIN CERTIFICATE-----\nadmin\n-----END CERTIFICATE-----';
+const ADMIN_KEY_PEM = '-----BEGIN PRIVATE KEY-----\nadmin\n-----END PRIVATE KEY-----';
+const OFFICERS = [
+  { username: 'alice', csr_pem: '-----BEGIN CERTIFICATE REQUEST-----\nalice\n-----END CERTIFICATE REQUEST-----' },
+  { username: 'bob', csr_pem: '-----BEGIN CERTIFICATE REQUEST-----\nbob\n-----END CERTIFICATE REQUEST-----' },
+];
+
+// fillCeremonyForm completes the system initialization ceremony form: the
+// PINs, a 2-of-2 officer roster and one administrator credential selector.
+async function fillCeremonyForm(opts: {
+  adminCSR?: string;
+  generate?: boolean;
+  officers?: string;
+}): Promise<void> {
+  await screen.findByRole('button', { name: /Initialize Shamir barrier/i });
+  await fireEvent.input(screen.getByLabelText(/Threshold/i), { target: { value: '2' } });
+  await fireEvent.input(screen.getByLabelText(/Security Officer PIN/i), {
+    target: { value: 'so-pin-1234' },
+  });
+  await fireEvent.input(screen.getByLabelText(/User PIN/i), { target: { value: 'user-pin-1234' } });
+  await fireEvent.input(screen.getByLabelText(/Officers/i), {
+    target: { value: opts.officers ?? JSON.stringify(OFFICERS) },
+  });
+  if (opts.generate) {
+    await fireEvent.change(screen.getByLabelText(/Administrator credential/i), {
+      target: { value: 'generate' },
+    });
+  } else {
+    await fireEvent.input(screen.getByLabelText(/Administrator CSR/i), {
+      target: { value: opts.adminCSR ?? '' },
+    });
+  }
+}
+
 // ----------------------------------------------------------------------------
 
 vi.mock('../src/stores/toast.svelte.ts', () => ({
   showToast: vi.fn(),
 }));
-
-// The real barrier client, wrapped to record the secret the view hands
-// initializeShamir: the wire cannot tell an empty string from empty bytes,
-// so the view's argument is checked before the SDK encodes it.
-const recorded = vi.hoisted(() => ({ shamirInitSecrets: [] as unknown[] }));
-vi.mock('@quicbaas/sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@quicbaas/sdk')>();
-  return {
-    ...actual,
-    createBarrierClient: async (
-      ...args: Parameters<typeof actual.createBarrierClient>
-    ): Promise<Awaited<ReturnType<typeof actual.createBarrierClient>>> => {
-      const client = await actual.createBarrierClient(...args);
-      const initializeShamir = client.initializeShamir.bind(client);
-      client.initializeShamir = (req) => {
-        recorded.shamirInitSecrets.push(req.secret);
-        return initializeShamir(req);
-      };
-      return client;
-    },
-  };
-});
 
 import BarrierView from '../src/views/security/BarrierView.svelte';
 
@@ -190,7 +205,7 @@ describe('BarrierView strategy-aware rendering', () => {
     expect(screen.getByTestId('barrier-status-badge')).toHaveTextContent('software');
   });
 
-  it('shamir strategy (uninitialized) shows the init form with threshold/total fields', async () => {
+  it('shamir strategy (uninitialized) shows the ceremony init form', async () => {
     spy = makeFetchSpy({
       '/api/v1/barrier/status': () => ({
         sealed: true,
@@ -205,88 +220,121 @@ describe('BarrierView strategy-aware rendering', () => {
       expect(screen.getByTestId('barrier-strategy-shamir-init')).toBeInTheDocument();
     });
     expect(screen.getByLabelText(/Threshold/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Total shares/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Security Officer PIN/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/User PIN/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Officers/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Administrator credential/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
     expect(screen.getByTestId('barrier-status-badge')).toHaveTextContent('shamir');
   });
 
-  it('shamir init posts to /api/v1/barrier/shamir/initialize', async () => {
+  // The system barrier is initialized only by the qrdb initialization
+  // ceremony; /api/v1/barrier/shamir/initialize refuses with 412.
+  it('shamir init runs the initialization ceremony at /api/v1/init/initialize', async () => {
     spy = makeFetchSpy({
-      '/api/v1/barrier/shamir/initialize': () => ({
-        threshold: 2,
-        total_shares: 3,
-        share_count: 3,
+      '/api/v1/init/initialize': () => ({
+        spki_pin: 'pin',
+        ca_cert_pem: CA_PEM,
+        tls_cert_pem: TLS_PEM,
+        state: 'initialized',
+        share_count: 2,
+        admin_cert_pem: ADMIN_CERT_PEM,
+        admin_credential_source: 'csr-sign',
       }),
-      '/api/v1/barrier/status': () => ({
-        sealed: true,
-        strategy: 'shamir',
-      }),
+      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
     });
     vi.stubGlobal('fetch', spy.mock);
 
     render(BarrierView);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
-    });
+    await fillCeremonyForm({ adminCSR: ADMIN_CSR_PEM });
     await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
 
     await waitFor(() => {
-      const hits = spy.calls.filter((c) => c.url.endsWith('/api/v1/barrier/shamir/initialize'));
-      expect(hits.length).toBeGreaterThan(0);
-      expect(hits[0].method).toBe('POST');
+      expect(spy.calls.some((c) => c.url.endsWith('/api/v1/init/initialize'))).toBe(true);
     });
-    expect(spy.calls.every((c) => !c.url.includes('/api/v1/seal/'))).toBe(true);
+    const call = spy.calls.find((c) => c.url.endsWith('/api/v1/init/initialize'));
+    expect(call?.method).toBe('POST');
+    expect(call?.body).toEqual({
+      so_pin: 'so-pin-1234',
+      user_pin: 'user-pin-1234',
+      threshold: 2,
+      officers: OFFICERS,
+      admin_csr_pem: ADMIN_CSR_PEM,
+    });
+    expect(spy.calls.some((c) => c.url.includes('/api/v1/barrier/shamir/initialize'))).toBe(false);
   });
 
-  it('reports the sealed share count after a share-free shamir init', async () => {
+  it('delivers the administrator credentials the ceremony issues', async () => {
     spy = makeFetchSpy({
-      '/api/v1/barrier/shamir/initialize': () => ({
-        threshold: 2,
-        total_shares: 3,
-        share_count: 3,
+      '/api/v1/init/initialize': () => ({
+        spki_pin: 'pin',
+        ca_cert_pem: CA_PEM,
+        tls_cert_pem: TLS_PEM,
+        state: 'initialized',
+        share_count: 2,
+        admin_cert_pem: ADMIN_CERT_PEM,
+        // []byte on the wire: JSON carries it base64-encoded.
+        admin_key_pem: btoa(ADMIN_KEY_PEM),
+        admin_credential_source: 'generated',
       }),
-      '/api/v1/barrier/status': () => ({
-        sealed: true,
-        strategy: 'shamir',
-      }),
+      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
     });
     vi.stubGlobal('fetch', spy.mock);
 
     render(BarrierView);
-    await fireEvent.click(await screen.findByRole('button', { name: /Initialize Shamir barrier/i }));
+    await fillCeremonyForm({ generate: true });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
 
     const result = await screen.findByTestId('barrier-shamir-init-result');
-    expect(result).toHaveTextContent(/2 of 3/);
-    expect(result).toHaveTextContent(/3 shares sealed/);
-    expect(screen.queryByTestId('shamir-share-result')).not.toBeInTheDocument();
+    expect(result).toHaveTextContent(/any 2 of 2 shares/);
+    expect(screen.getByTestId('barrier-init-admin-cert')).toHaveValue(ADMIN_CERT_PEM);
+    expect(screen.getByTestId('barrier-init-admin-key')).toHaveValue(ADMIN_KEY_PEM);
+    expect(screen.getByTestId('barrier-init-ca-cert')).toHaveValue(CA_PEM);
+    const call = spy.calls.find((c) => c.url.endsWith('/api/v1/init/initialize'));
+    expect(call?.body).toMatchObject({ admin_generate: true });
+    expect(call?.body).not.toHaveProperty('admin_csr_pem');
   });
 
-  it('shamir init hands the SDK an empty byte secret, not a string', async () => {
-    recorded.shamirInitSecrets.length = 0;
+  it('refuses an officers roster that is not a JSON array without calling the server', async () => {
     spy = makeFetchSpy({
-      '/api/v1/barrier/shamir/initialize': () => ({
-        threshold: 2,
-        total_shares: 3,
-        share_count: 3,
-      }),
-      '/api/v1/barrier/status': () => ({
-        sealed: true,
-        strategy: 'shamir',
-      }),
+      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
     });
     vi.stubGlobal('fetch', spy.mock);
 
     render(BarrierView);
-    await fireEvent.click(await screen.findByRole('button', { name: /Initialize Shamir barrier/i }));
+    await fillCeremonyForm({ adminCSR: ADMIN_CSR_PEM, officers: '{"username":"alice"}' });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
 
-    await waitFor(() => {
-      expect(recorded.shamirInitSecrets).toHaveLength(1);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/JSON array/i);
+    expect(spy.calls.some((c) => c.url.endsWith('/api/v1/init/initialize'))).toBe(false);
+  });
+
+  it('shows the ceremony refusal and keeps the form', async () => {
+    spy = makeFetchSpy({
+      '/api/v1/barrier/status': () => ({ sealed: true, strategy: 'shamir' }),
     });
-    const secret = recorded.shamirInitSecrets[0];
-    expect(typeof secret).not.toBe('string');
-    // jsdom's Uint8Array is another realm's, so check the shape, not instanceof.
-    expect(ArrayBuffer.isView(secret)).toBe(true);
-    expect((secret as Uint8Array).length).toBe(0);
+    const ok = spy.mock.getMockImplementation();
+    spy.mock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/v1/init/initialize')) {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          statusText: 'Conflict',
+          text: () => Promise.resolve(JSON.stringify({ error: 'ceremony already initialized' })),
+          json: () => Promise.resolve({ error: 'ceremony already initialized' }),
+        });
+      }
+      return ok?.(url, init);
+    });
+    vi.stubGlobal('fetch', spy.mock);
+
+    render(BarrierView);
+    await fillCeremonyForm({ adminCSR: ADMIN_CSR_PEM });
+    await fireEvent.click(screen.getByRole('button', { name: /Initialize Shamir barrier/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/already initialized/);
+    expect(screen.getByRole('button', { name: /Initialize Shamir barrier/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('barrier-shamir-init-result')).not.toBeInTheDocument();
   });
 
   it('software unseal posts to /api/v1/barrier/unseal', async () => {

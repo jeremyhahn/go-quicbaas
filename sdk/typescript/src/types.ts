@@ -3099,6 +3099,29 @@ export interface CeremonyInitializeResponse {
   state: string;
   /** Number of Shamir shares generated. */
   share_count: number;
+  /** Certificate issued to each initial holder. */
+  holders?: CeremonyHolderCert[];
+  /** PEM-encoded certificate of the bootstrap administrator. */
+  admin_cert_pem?: string;
+  /**
+   * Base64-encoded PEM private key of the bootstrap administrator; present
+   * only when admin_credential_source is "generated". It is returned exactly
+   * once; the server keeps no copy.
+   */
+  admin_key_pem?: string;
+  /** How the administrator credential was issued. */
+  admin_credential_source?: string;
+}
+
+// CeremonyHolderCert is the CA-issued certificate of one initial holder.
+// Mirrors transport.CeremonyHolderCert.
+export interface CeremonyHolderCert {
+  /** Holder username. */
+  username: string;
+  /** Role bound to the certificate. */
+  role: string;
+  /** PEM-encoded holder certificate. */
+  cert_pem: string;
 }
 
 // CeremonyStatusResponse describes the current ceremony state.
