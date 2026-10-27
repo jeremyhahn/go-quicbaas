@@ -662,9 +662,10 @@ func (m *Module) bind() (*grpcServers, error) {
 	// the Unix listener (#1960). The certificate, trust, attestation and PIV
 	// handlers live on the shared facade.
 	if kmsMgr := svc.KMSManager(); kmsMgr != nil {
-		kmsSvc := svc.KMS()
-		built.keyManagement = grpcapi.NewKMSServerWithService(kmsMgr, kmsSvc, m.log)
-		if kmsSvc != nil {
+		// KeyManagement mounts only with the tenant-scoped service: its
+		// manager fallbacks take key names verbatim (#1992).
+		if kmsSvc := svc.KMS(); kmsSvc != nil {
+			built.keyManagement = grpcapi.NewKMSServerWithService(kmsMgr, kmsSvc, m.log)
 			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
 		}
 	}

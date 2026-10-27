@@ -192,3 +192,62 @@ func TestKMSServer_TenantBGetsNotFoundForTenantAKey(t *testing.T) {
 		}
 	}
 }
+
+// TestKMSServer_ImportKeyIsTenantScoped proves ImportKey goes through the
+// tenant-scoped service (#1992): the importing tenant reads its key back,
+// another tenant cannot, and a name in the tenant namespace is refused.
+func TestKMSServer_ImportKeyIsTenantScoped(t *testing.T) {
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	svc := kmstenant.NewService(t)
+	srv := NewKMSServerWithService(nil, svc, log)
+	ctxFor := func(tenant string) context.Context {
+		return contextWithAuthorizedSubject(context.Background(), &platformtoken.AuthorizedContext{
+			Subject: "caller", TenantID: tenant,
+		})
+	}
+	spec := &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM}
+	owner, other := ctxFor(kmstenant.OwnerTenant), ctxFor(kmstenant.OtherTenant)
+
+	_, err = srv.ImportKey(owner, &pb.ImportKeyRequest{Name: "foo", KeyMaterial: []byte("material"), KeySpec: spec})
+	require.NoError(t, err)
+
+	got, err := srv.GetKey(owner, &pb.GetKeyRequest{KeyId: "foo"})
+	require.NoError(t, err)
+	require.Equal(t, "foo", got.GetKey().GetKeyId())
+	listed, err := srv.ListKeys(owner, &pb.ListKeysRequest{})
+	require.NoError(t, err)
+	var names []string
+	for _, k := range listed.GetKeys() {
+		names = append(names, k.GetKeyId())
+	}
+	require.Contains(t, names, "foo")
+
+	_, err = srv.GetKey(other, &pb.GetKeyRequest{KeyId: "foo"})
+	require.Equal(t, codes.NotFound, status.Code(err), "error: %v", err)
+
+	crossName := "tenant/" + kmstenant.OtherTenant + "/planted"
+	_, err = srv.ImportKey(owner, &pb.ImportKeyRequest{Name: crossName, KeyMaterial: []byte("material"), KeySpec: spec})
+	require.Equal(t, codes.InvalidArgument, status.Code(err), "error: %v", err)
+	_, err = srv.GetKey(other, &pb.GetKeyRequest{KeyId: "planted"})
+	require.Equal(t, codes.NotFound, status.Code(err), "a refused import wrote into the other tenant: %v", err)
+}
+
+// TestKMSServer_ImportKeyRefusedWithoutService proves ImportKey never falls
+// back to the manager, which would take the caller's name verbatim.
+func TestKMSServer_ImportKeyRefusedWithoutService(t *testing.T) {
+	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
+	require.NoError(t, err)
+	mgr := kmstenant.NewManager()
+	srv := NewKMSServer(mgr, log)
+
+	_, err = srv.ImportKey(context.Background(), &pb.ImportKeyRequest{
+		Name: "foo", KeyMaterial: []byte("material"),
+		KeySpec: &pb.KeySpec{Algorithm: pb.KeyAlgorithm_KEY_ALG_AES_256_GCM},
+	})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), "error: %v", err)
+	require.Contains(t, status.Convert(err).Message(), ErrKMSServiceRequired.Error())
+	keys, err := mgr.ListKeys(context.Background(), "")
+	require.NoError(t, err)
+	require.Empty(t, keys, "a refused import reached the manager")
+}
