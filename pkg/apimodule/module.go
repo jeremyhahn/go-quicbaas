@@ -52,25 +52,14 @@
 // wrapper over an xkms capability of the same shape.
 //
 // KeyManagement, DEKManagement, Crypto, CertificateService, TrustService,
-// AttestationService, and PIVService are DELIBERATELY NOT registered here
-// (Phase 3 of the login-plane plan, corrective to the prior design): they
-// were quicbaas.v1 wrappers over the SAME composed go-xkms library
-// (xkms.Get(), see pkg/server/qrdb_node.go's xkmsModule composition) that
-// go-xkms's OWN ServiceModule ("xkms", go-xkms/sdk/go/apimodule.go) now
-// registers on this SAME unified server as its canonical xkms.v1
-// KeystoreService surface. Registering both here would duplicate that
-// surface under a redundant proto name — the same reasoning that already
-// excluded the qrdb-proxy planes above. The quicbaas SDK's gRPC crypto
-// clients (sdk/go/transport/grpc/{certificate,trust,attestation,piv,kms,
-// crypto}_handler.go) re-export go-xkms's canonical SDK clients as thin
-// aliases instead (sdk/go/xkms_clients.go) so a downstream consumer
-// (go-trusted-platform) keeps ONE import point for the capability regardless
-// of which project's wire contract now serves it. quicbaas's legacy gRPC
-// transport (pkg/server/lifecycle.go, lifecycle_certificate_register.go,
-// lifecycle_fido2_piv_register.go) is UNCHANGED by this: it still registers
-// its own quicbaas.v1 handlers for these seven services, so a caller already
-// dialing the legacy listener directly (not through the unified server or
-// the SDK) keeps working exactly as before.
+// AttestationService, and PIVService are registered here too. go-xkms's own
+// ServiceModule ("xkms") serves its canonical xkms.v1 KeystoreService on the
+// same unified server, but the quicbaas SDK's gRPC transport
+// (sdk/go/transport/grpc/{kms,crypto,certificate,trust,attestation,piv}
+// _handler.go) speaks these quicbaas.v1 services, and the node's port is the
+// only TCP gRPC listener there is: without them `quicbaas --transport grpc
+// kms key generate` answers Unimplemented (#1960). The two surfaces carry
+// different proto service names, so they do not collide.
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -364,6 +353,13 @@ type grpcServers struct {
 	objectStorageAdmin pb.ObjectStorageAdminServer
 	ollama             pb.OllamaServiceServer
 	secretsManagement  pb.SecretsManagementServer
+	keyManagement      pb.KeyManagementServer
+	dekManagement      pb.DEKManagementServer
+	crypto             pb.CryptoServer
+	certificate        pb.CertificateServiceServer
+	trust              pb.TrustServiceServer
+	attestation        pb.AttestationServiceServer
+	piv                pb.PIVServiceServer
 	prompt             pb.PromptServiceServer
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
@@ -441,6 +437,13 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.ObjectStorageAdmin_ServiceDesc, capability: "object-storage-admin", pick: func(s *grpcServers) any { return s.objectStorageAdmin }},
 	{desc: &pb.OllamaService_ServiceDesc, capability: "ollama", pick: func(s *grpcServers) any { return s.ollama }},
 	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
+	{desc: &pb.KeyManagement_ServiceDesc, capability: "kms", pick: func(s *grpcServers) any { return s.keyManagement }},
+	{desc: &pb.DEKManagement_ServiceDesc, capability: "dek", pick: func(s *grpcServers) any { return s.dekManagement }},
+	{desc: &pb.Crypto_ServiceDesc, capability: "crypto", pick: func(s *grpcServers) any { return s.crypto }},
+	{desc: &pb.CertificateService_ServiceDesc, capability: "certificate", pick: func(s *grpcServers) any { return s.certificate }},
+	{desc: &pb.TrustService_ServiceDesc, capability: "trust", pick: func(s *grpcServers) any { return s.trust }},
+	{desc: &pb.AttestationService_ServiceDesc, capability: "attestation", pick: func(s *grpcServers) any { return s.attestation }},
+	{desc: &pb.PIVService_ServiceDesc, capability: "piv", pick: func(s *grpcServers) any { return s.piv }},
 	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
@@ -649,15 +652,33 @@ func (m *Module) bind() (*grpcServers, error) {
 	// go-xkms library — registered here exactly like the seven broker
 	// capability services above, with the SAME nil-gating
 	// pkg/server/lifecycle.go applies on the legacy transport.
-	//
-	// KeyManagement, DEKManagement, Crypto, CertificateService, TrustService,
-	// AttestationService, and PIVService are deliberately NOT bound here: see
-	// the package doc comment (Phase 3 of the login-plane plan) — go-xkms's
-	// own ServiceModule now serves that canonical surface on this same
-	// unified server, and quicbaas's legacy gRPC transport is unaffected.
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
 	}
+
+	// The quicbaas.v1 crypto services the SDK's gRPC transport dials
+	// (sdk/go/transport/grpc/{kms,crypto,certificate,trust,attestation,piv}
+	// _handler.go), gated exactly as pkg/server/lifecycle.go gates them on
+	// the Unix listener (#1960). The certificate, trust, attestation and PIV
+	// handlers live on the shared facade.
+	if kmsMgr := svc.KMSManager(); kmsMgr != nil {
+		kmsSvc := svc.KMS()
+		built.keyManagement = grpcapi.NewKMSServerWithService(kmsMgr, kmsSvc, m.log)
+		if kmsSvc != nil {
+			built.dekManagement = grpcapi.NewDEKServer(kmsSvc, m.log)
+		}
+	}
+	if cryptoSvc := svc.Crypto(); cryptoSvc != nil {
+		built.crypto = grpcapi.NewCryptoServer(cryptoSvc, m.log)
+	}
+	if svc.Certificate() != nil {
+		built.certificate = facade
+	}
+	if svc.Trust() != nil {
+		built.trust = facade
+	}
+	built.attestation = facade
+	built.piv = facade
 
 	// The registry, agent catalog and SDLC services are quicbaas-native, so
 	// the node serves them as the Unix listener does (#1696). The SDLC server
