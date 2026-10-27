@@ -397,6 +397,32 @@ func TestKMSService_DeleteKey_ReleasesOnlyTheCallersName(t *testing.T) {
 	}
 }
 
+// TestKMSService_ImportKey_RefusesReservedTenantNamespace proves an import
+// name inside the "tenant/" namespace is refused before the manager is
+// reached: scoping it would let the caller plant a key in another tenant.
+func TestKMSService_ImportKey_RefusesReservedTenantNamespace(t *testing.T) {
+	mgr := newMockKMSManager()
+	imported := false
+	mgr.importKeyFn = func(_ context.Context, _ string, _ []byte, _ string) (interface{}, error) {
+		imported = true
+		return nil, nil
+	}
+	svc := newKMSService(mgr, nil)
+	ownerCtx := tenantctx.WithTenant(context.Background(), scopeOwnerTenant)
+
+	resp, err := svc.ImportKey(ownerCtx, &ImportKeyRequest{
+		Name:        kmsTenantKeyPrefix + scopeOtherTenant + "/" + scopeImportedKey,
+		KeyMaterial: []byte("key-material"),
+	})
+
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.True(t, IsInvalidInput(err), "the refusal must carry the invalid-input code, got %v", err)
+	require.Contains(t, err.Error(), "reserved tenant namespace")
+	require.False(t, imported, "a refused import must never reach the manager")
+	require.Empty(t, mgr.keys, "a refused import must write nothing")
+}
+
 // startOwnerReencryption starts a re-encryption in the owner tenant. The
 // throttle holds the one-key run open, so the operation is still in progress
 // when the test inspects it; cleanup cancels it.

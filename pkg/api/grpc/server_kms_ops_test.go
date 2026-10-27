@@ -112,7 +112,8 @@ func TestKMSServer_ImportKey_ManagerError(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.NotEqual(t, codes.OK, status.Code(err), "a manager failure must surface as an error status")
+	assert.Equal(t, codes.Internal, status.Code(err),
+		"the service wraps every manager import failure as ErrInternal, so the handler must answer Internal")
 }
 
 // newServiceBackedKMSServer wires mgr behind the service layer, the only
