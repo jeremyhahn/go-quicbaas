@@ -337,6 +337,7 @@ services:
     command: >
       bash -c "
         set -o pipefail;
+        OVERALL_EXIT=1;
         echo 'Waiting for cluster to be fully operational...' &&
         /usr/local/bin/health_check.sh &&
         echo 'Cluster is ready.' &&
@@ -391,7 +392,7 @@ services:
           fi;
         fi;
         TEST_EXIT=$$OVERALL_EXIT;
-        if [ $$TEST_EXIT -eq 0 ]; then
+        if [ $${TEST_EXIT:-1} -eq 0 ]; then
           echo '';
           echo '========================================';
           echo 'Integration tests completed successfully';
@@ -402,7 +403,7 @@ services:
           echo 'Integration tests FAILED with exit code' $$TEST_EXIT;
           echo '========================================';
         fi;
-        exit $$TEST_EXIT
+        exit $${TEST_EXIT:-1}
       "
 
   # Test Node 1 - Primary node
