@@ -158,11 +158,14 @@ type SchedulerRESTClient struct {
 	httpClient *http.Client
 }
 
-// NewSchedulerRESTClient creates a new scheduler REST client.
-func NewSchedulerRESTClient(baseURL string) *SchedulerRESTClient {
+// NewSchedulerRESTClient creates a new scheduler REST client that acts as the
+// tenant operator: go-qrdb grants the scheduler:* job verbs to the built-in
+// Operator role and to no other built-in role.
+func NewSchedulerRESTClient(t *testing.T, baseURL string) *SchedulerRESTClient {
+	t.Helper()
 	return &SchedulerRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantOperatorHTTPClient(t, 30*time.Second),
 	}
 }
 

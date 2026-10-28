@@ -774,7 +774,7 @@ func (c *restProtocolClient) Name() string { return "REST" }
 func (c *restProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
-	c.client = NewServiceSchedulerRESTClient(endpoints[0])
+	c.client = NewServiceSchedulerRESTClient(t, endpoints[0])
 
 	// Check if scheduler service is available
 	_, err := c.client.GetStatus(ctx)
@@ -1510,11 +1510,13 @@ type ServiceSchedulerRESTClient struct {
 	httpClient *http.Client
 }
 
-// NewServiceSchedulerRESTClient creates a new scheduler REST client.
-func NewServiceSchedulerRESTClient(baseURL string) *ServiceSchedulerRESTClient {
+// NewServiceSchedulerRESTClient creates a new scheduler REST client that acts
+// as the tenant operator, as NewSchedulerRESTClient does.
+func NewServiceSchedulerRESTClient(t *testing.T, baseURL string) *ServiceSchedulerRESTClient {
+	t.Helper()
 	return &ServiceSchedulerRESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantOperatorHTTPClient(t, 30*time.Second),
 	}
 }
 

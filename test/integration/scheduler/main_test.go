@@ -43,6 +43,9 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
 
 	// Cleanup
 	if srv != nil {
@@ -60,7 +63,7 @@ func TestSchedulerAvailability(t *testing.T) {
 		endpoints := getRESTEndpoints()
 		for _, endpoint := range endpoints {
 			t.Run(endpoint, func(t *testing.T) {
-				client := NewSchedulerRESTClient(endpoint)
+				client := NewSchedulerRESTClient(t, endpoint)
 
 				resp, err := client.GetStatus(ctx)
 				require.NoError(t, err, "Scheduler must be available on REST at %s", endpoint)
@@ -100,7 +103,7 @@ func TestSchedulerJobLifecycle(t *testing.T) {
 // testRESTJobLifecycle tests job lifecycle via REST.
 func testRESTJobLifecycle(t *testing.T, ctx context.Context) {
 	endpoints := getRESTEndpoints()
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is running
 	status, err := client.GetStatus(ctx)
@@ -170,7 +173,7 @@ func TestSchedulerRecurringJob(t *testing.T) {
 	defer cancel()
 
 	endpoints := getRESTEndpoints()
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is available
 	_, err := client.GetStatus(ctx)
@@ -205,7 +208,7 @@ func TestSchedulerJobPauseResume(t *testing.T) {
 
 	endpoints := getRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available")
-	client := NewSchedulerRESTClient(endpoints[0])
+	client := NewSchedulerRESTClient(t, endpoints[0])
 
 	// Verify scheduler is running
 	status, err := client.GetStatus(ctx)
