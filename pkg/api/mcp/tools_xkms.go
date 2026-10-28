@@ -1277,7 +1277,7 @@ func (r *ToolRegistry) handleXKMSGetCert(ctx context.Context, args map[string]in
 		return nil, api.NewRequiredFieldError("key_id")
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(ctx, keyID)
+	cert, err := r.xkmsCertificateForCaller(ctx, keyID)
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "getCert", Cause: err}
 	}
@@ -1298,6 +1298,10 @@ func (r *ToolRegistry) handleXKMSDeleteCert(ctx context.Context, args map[string
 	keyID := getString(args, "key_id")
 	if keyID == "" {
 		return nil, api.NewRequiredFieldError("key_id")
+	}
+
+	if _, err := r.xkmsCertificateForCaller(ctx, keyID); err != nil {
+		return nil, &XKMSOperationError{Operation: "deleteCert", Cause: err}
 	}
 
 	if err := xkmssdk.ServiceDeleteCertificateByID(ctx, keyID); err != nil {
@@ -1345,10 +1349,35 @@ func (r *ToolRegistry) handleXKMSCertExists(ctx context.Context, args map[string
 	if err != nil {
 		return nil, &XKMSOperationError{Operation: "certExists", Cause: err}
 	}
+	if exists {
+		// A certificate the caller may not reach reads as absent.
+		_, err := r.xkmsCertificateForCaller(ctx, keyID)
+		exists = err == nil
+	}
 
 	return marshalResult(map[string]interface{}{
 		"exists": exists,
 	})
+}
+
+// xkmsCertificateForCaller reads the certificate stored under keyID in the
+// go-xkms key store and binds the caller to the tenant the CA issued it for
+// (service.BindCertificateToCaller), as certificate revoke does. The key store
+// records no tenant, so only the system tenant reaches a certificate no CA
+// issued for the caller.
+func (r *ToolRegistry) xkmsCertificateForCaller(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	cert, err := xkmssdk.ServiceCertificateByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	var certs service.CertificateService
+	if r.service != nil {
+		certs = r.service.Certificate()
+	}
+	if err := service.BindCertificateToCaller(ctx, certs, cert); err != nil {
+		return nil, err
+	}
+	return cert, nil
 }
 
 // handleXKMSSaveCertChain saves a certificate chain for a key.
