@@ -8,8 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestFilterCertificateIDsForCaller pins #1998: a tenant listing the go-xkms

@@ -5,8 +5,9 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // KeyStoreWriteRefusedError is returned when a caller other than the system
