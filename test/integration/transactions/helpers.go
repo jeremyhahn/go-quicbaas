@@ -28,5 +28,6 @@ import (
 // It wraps the central helpers package for transaction-specific test setup.
 func setupGRPCConnection(t *testing.T, ctx context.Context) *grpc.ClientConn {
 	endpoints := helpers.GetClusterEndpoints()
-	return helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, endpoints[0])
+	return helpers.MustSetupGRPCConnectionToEndpoint(t, ctx, endpoints[0],
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)))
 }

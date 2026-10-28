@@ -394,6 +394,7 @@ func (c *grpcBackupClient) Setup(t *testing.T, ctx context.Context) error {
 	}
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 	)
 	if err != nil {
@@ -484,6 +485,7 @@ func (c *unixSocketBackupClient) Setup(t *testing.T, ctx context.Context) error 
 	conn, err := grpc.DialContext(ctx,
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		grpc.WithBlock(),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return net.DialTimeout("unix", socketPath, 10*time.Second)

@@ -22,7 +22,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 )
 
 const (
@@ -72,6 +75,14 @@ func TenantPrincipalID(t *testing.T, baseURL string) string {
 func TenantGRPCCredentials(t *testing.T) credentials.PerRPCCredentials {
 	t.Helper()
 	return tenantPrincipalAuth.grpcCredentials(t)
+}
+
+// TenantGRPCClientOption returns the grpcclient option that sends the tenant
+// principal's bearer on every call, so a client of tenant-scoped RPCs (KMS,
+// DEK) acts in the tenant's own namespace.
+func TenantGRPCClientOption(t *testing.T) grpcclient.ClientOption {
+	t.Helper()
+	return grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(TenantGRPCCredentials(t)))
 }
 
 // NewTenantHTTPClient returns NewHTTPClient's client with every request

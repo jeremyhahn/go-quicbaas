@@ -79,7 +79,7 @@ func TestSchedulerAvailability(t *testing.T) {
 			t.Run(endpoint, func(t *testing.T) {
 				tlsCfg, err := helpers.IntegrationTLSConfig()
 				require.NoError(t, err, "load integration TLS config")
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), helpers.TenantGRPCClientOption(t))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 

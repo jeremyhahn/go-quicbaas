@@ -61,7 +61,7 @@ func TestKMSAvailability(t *testing.T) {
 			t.Run(endpoint, func(t *testing.T) {
 				tlsCfg, err := helpers.IntegrationTLSConfig()
 				require.NoError(t, err, "load integration TLS config")
-				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+				client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 				require.NoError(t, err, "gRPC service must be available at %s", endpoint)
 				defer client.Close()
 
@@ -104,7 +104,7 @@ func TestKMSHealthCheck(t *testing.T) {
 		endpoints := getGRPCEndpoints()
 		tlsCfg, err := helpers.IntegrationTLSConfig()
 		require.NoError(t, err, "load integration TLS config")
-		client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+		client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 		require.NoError(t, err, "gRPC service must be available")
 		defer client.Close()
 
@@ -143,7 +143,7 @@ func testGRPCKeyLifecycle(t *testing.T, ctx context.Context) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	require.NoError(t, err, "gRPC service must be available")
 	defer client.Close()
 

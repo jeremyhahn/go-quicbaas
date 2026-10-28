@@ -138,7 +138,7 @@ func TestGRPCBackendOperations(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	require.NoError(t, err, "must be able to connect to gRPC server in integration tests")
 	defer client.Close()
 

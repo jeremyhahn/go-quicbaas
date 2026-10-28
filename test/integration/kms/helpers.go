@@ -393,7 +393,7 @@ func skipIfProtocolUnavailable(t *testing.T, protocol string, endpoint string) {
 
 		tlsCfg, err := helpers.IntegrationTLSConfig()
 		require.NoError(t, err, "load integration TLS config")
-		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg))
+		client, err := grpcclient.NewClient(endpoint, grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 		if err != nil {
 			require.NoError(t, err, "%s service must be available at %s", protocol, endpoint)
 		}

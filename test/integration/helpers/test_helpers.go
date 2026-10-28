@@ -73,8 +73,8 @@ func SetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint s
 }
 
 // MustSetupGRPCConnectionToEndpoint creates a gRPC connection or fails the test
-func MustSetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string) *grpc.ClientConn {
-	conn, err := SetupGRPCConnectionToEndpoint(t, ctx, endpoint)
+func MustSetupGRPCConnectionToEndpoint(t *testing.T, ctx context.Context, endpoint string, opts ...grpc.DialOption) *grpc.ClientConn {
+	conn, err := SetupGRPCConnectionToEndpoint(t, ctx, endpoint, opts...)
 	require.NoError(t, err, "Failed to connect to gRPC server at %s", endpoint)
 	return conn
 }

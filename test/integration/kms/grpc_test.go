@@ -40,7 +40,7 @@ func TestGRPCKeyGeneration(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -139,7 +139,7 @@ func TestGRPCKeyRetrieval(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -212,7 +212,7 @@ func TestGRPCKeyListing(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -288,7 +288,7 @@ func TestGRPCKeyRotation(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -354,7 +354,7 @@ func TestGRPCKeyDeletion(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -433,7 +433,7 @@ func TestGRPCEncryptionDecryption(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -600,7 +600,7 @@ func TestGRPCConcurrentOperations(t *testing.T) {
 	endpoints := getGRPCEndpoints()
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	if err != nil {
 		require.NoError(t, err, "gRPC server must be available for integration tests")
 	}
@@ -745,13 +745,13 @@ func TestGRPCClusterConsistency(t *testing.T) {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg))
+	client1, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	require.NoError(t, err, "gRPC node 1 must be available at %s", endpoints[0])
 	defer client1.Close()
 
 	requireKMSAvailable(t, client1, ctx)
 
-	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(tlsCfg))
+	client2, err := grpcclient.NewClient(endpoints[1], grpcclient.WithTLSConfig(tlsCfg), helpers.SystemAdminGRPCClientOption(t))
 	require.NoError(t, err, "gRPC node 2 must be available at %s", endpoints[1])
 	defer client2.Close()
 

@@ -20,8 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
 )
 
@@ -95,4 +97,13 @@ func SystemAdminGRPCCredentials(t *testing.T) credentials.PerRPCCredentials {
 		t.Fatalf("system admin gRPC credentials: %v", err)
 	}
 	return creds
+}
+
+// SystemAdminGRPCClientOption returns the grpcclient option that sends the
+// system admin's bearer on every call. IntegrationTLSConfig carries no
+// credential the authenticators accept, so a client of protected RPCs built
+// from it alone is refused with "platform bearer authorization is missing".
+func SystemAdminGRPCClientOption(t *testing.T) grpcclient.ClientOption {
+	t.Helper()
+	return grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(SystemAdminGRPCCredentials(t)))
 }
