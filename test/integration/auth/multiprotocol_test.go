@@ -312,19 +312,23 @@ func TestRegisterAppRequiresBoundTenant(t *testing.T) {
 	systemBearer, err := helpers.AuthSystemAdminContext(ctx, httpEndpoint)
 	require.NoError(t, err, "system admin login")
 
+	// A request with no credential is unauthenticated (401, RFC 9110
+	// §15.5.2); an authenticated caller bound to another tenant is
+	// forbidden (403, §15.5.4).
 	cases := []struct {
 		name   string
 		bearer string
+		want   int
 	}{
-		{name: "no credential", bearer: ""},
-		{name: "system admin of another tenant", bearer: systemBearer},
+		{name: "no credential", bearer: "", want: http.StatusUnauthorized},
+		{name: "system admin of another tenant", bearer: systemBearer, want: http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			appName := fmt.Sprintf("unbound-app-%d", time.Now().UnixNano())
 			status, body, err := postRegisterApp(ctx, httpEndpoint, tenant.TenantID, tc.bearer, appName)
 			require.NoError(t, err)
-			require.Equal(t, http.StatusForbidden, status, "body=%s", body)
+			require.Equal(t, tc.want, status, "body=%s", body)
 		})
 	}
 
