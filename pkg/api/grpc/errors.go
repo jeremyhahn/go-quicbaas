@@ -142,6 +142,22 @@ func (e *PolicySpecYAMLError) GRPCStatus() *status.Status {
 	return status.New(codes.InvalidArgument, e.Error())
 }
 
+// NamespaceUpdateUnsupportedError refuses UpdateNamespace. The qrdb SDK
+// re-exports no in-place namespace update, and deleting and recreating the
+// namespace would permanently destroy every vector it holds.
+type NamespaceUpdateUnsupportedError struct {
+	Namespace string
+}
+
+func (e *NamespaceUpdateUnsupportedError) Error() string {
+	return fmt.Sprintf("vector namespace %q cannot be updated: the qrdb SDK has no in-place namespace update", e.Namespace)
+}
+
+// GRPCStatus maps the error to Unimplemented for gRPC callers.
+func (e *NamespaceUpdateUnsupportedError) GRPCStatus() *status.Status {
+	return status.New(codes.Unimplemented, e.Error())
+}
+
 // parseUserID converts a wire user id into the iam uint64 id. Zero is
 // refused because it means "not created yet" in the iam model.
 func parseUserID(field, value string) (uint64, error) {

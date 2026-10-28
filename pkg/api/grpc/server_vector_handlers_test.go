@@ -431,31 +431,26 @@ func TestUpdateNamespace_EmptyNamespace(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
-func TestUpdateNamespace_Success(t *testing.T) {
+// assertNamespaceUpdateRefused checks that UpdateNamespace answered with the
+// typed refusal, mapped to codes.Unimplemented, and no response.
+func assertNamespaceUpdateRefused(t *testing.T, resp *pb.UpdateNamespaceResponse, err error, namespace string) {
+	t.Helper()
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var refusal *NamespaceUpdateUnsupportedError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, namespace, refusal.Namespace)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.Unimplemented, st.Code())
+}
+
+// TestUpdateNamespace_RefusesWithoutDeleting pins the contract: with no
+// in-place namespace update in the qrdb SDK, UpdateNamespace refuses rather
+// than deleting and recreating the namespace, which would destroy its vectors.
+func TestUpdateNamespace_RefusesWithoutDeleting(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
-
-	// Mock GetNamespaceInfo to return existing namespace
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace:   "test-ns",
-			Dimension:   128,
-			IndexConfig: map[string]string{"M": "16"},
-			Metadata:    map[string]interface{}{"owner": "test"},
-		}, nil)
-
-	// Mock DeleteNamespace
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(&service.DeleteNamespaceResponse{
-			Success:   true,
-			Timestamp: 1234567890,
-		}, nil)
-
-	// Mock CreateNamespace for recreation
-	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(&service.CreateNamespaceResponse{
-			Namespace: "test-ns",
-			Timestamp: 1234567891,
-		}, nil)
 
 	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
 		Namespace:   "test-ns",
@@ -463,71 +458,53 @@ func TestUpdateNamespace_Success(t *testing.T) {
 		Metadata:    map[string]string{"env": "prod"},
 	})
 
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "test-ns", resp.Namespace)
-	assert.True(t, resp.RequiresRebuild)
-	mockSvc.AssertExpectations(t)
+	assertNamespaceUpdateRefused(t, resp, err, "test-ns")
+	mockSvc.AssertNotCalled(t, "DeleteNamespace", mock.Anything, mock.Anything)
+	mockSvc.AssertNotCalled(t, "CreateNamespace", mock.Anything, mock.Anything)
 }
 
-func TestUpdateNamespace_GetNamespaceInfoError(t *testing.T) {
+// TestUpdateNamespace_PopulatedNamespaceKeepsVectors is the regression test for
+// Codex review 8162: updating a populated namespace must leave its vectors
+// readable. The vectors are upserted and read back through the server's own
+// handlers, around the refused update.
+func TestUpdateNamespace_PopulatedNamespaceKeepsVectors(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
+	ctx := tenantctx.WithSystem(context.Background())
+	stored := map[string][]float32{
+		"vec-1": {0.1, 0.2, 0.3},
+		"vec-2": {0.4, 0.5, 0.6},
+	}
 
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
+	mockSvc.On("UpsertVector", mock.Anything, mock.Anything).
+		Return(&service.UpsertVectorResponse{Timestamp: 1234567890}, nil)
+	for id, values := range stored {
+		vectorID := parseVectorID(id)
+		mockSvc.On("GetVector", mock.Anything, mock.MatchedBy(func(req *service.GetVectorRequest) bool {
+			return req.ID == vectorID
+		})).Return(&service.GetVectorResponse{ID: vectorID, Vector: values, Found: true}, nil)
+	}
 
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "nonexistent-ns",
+	for id, values := range stored {
+		_, err := srv.UpsertVector(ctx, &pb.UpsertVectorRequest{
+			Vector: &pb.VectorEntity{Id: id, Namespace: "populated-ns", Vector: values},
+		})
+		require.NoError(t, err)
+	}
+
+	resp, err := srv.UpdateNamespace(ctx, &pb.UpdateNamespaceRequest{
+		Namespace:   "populated-ns",
+		IndexParams: map[string]string{"M": "32"},
 	})
+	assertNamespaceUpdateRefused(t, resp, err, "populated-ns")
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestUpdateNamespace_DeleteNamespaceError(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace: "test-ns",
-			Dimension: 128,
-		}, nil)
-
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "DeleteNamespace"})
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "test-ns",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace: "test-ns",
-			Dimension: 128,
-		}, nil)
-
-	mockSvc.On("DeleteNamespace", mock.Anything, mock.Anything).
-		Return(&service.DeleteNamespaceResponse{Success: true, Timestamp: 1234567890}, nil)
-
-	mockSvc.On("CreateNamespace", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrInternal, Op: "CreateNamespace"})
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "test-ns",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	mockSvc.AssertExpectations(t)
+	for id, values := range stored {
+		got, err := srv.GetVector(ctx, &pb.GetVectorRequest{Namespace: "populated-ns", Id: id, IncludeVector: true})
+		require.NoError(t, err)
+		require.True(t, got.Found)
+		assert.Equal(t, values, got.Vector.Vector)
+	}
+	mockSvc.AssertNotCalled(t, "DeleteNamespace", mock.Anything, mock.Anything)
+	mockSvc.AssertNotCalled(t, "CreateNamespace", mock.Anything, mock.Anything)
 }
 
 // =============================================================================

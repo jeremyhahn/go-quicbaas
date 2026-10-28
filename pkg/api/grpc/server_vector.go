@@ -128,75 +128,13 @@ func (s *Server) UpdateNamespace(ctx context.Context, req *pb.UpdateNamespaceReq
 	if s.service == nil {
 		return nil, status.Error(codes.Unimplemented, "vector service not available")
 	}
-	vectorService := s.service.Vector()
-	if vectorService == nil {
+	if s.service.Vector() == nil {
 		return nil, status.Error(codes.Unimplemented, "vector service not available")
 	}
 
-	// Get current namespace info
-	getReq := &service.GetNamespaceInfoRequest{
-		Namespace: req.Namespace,
-		ShardID:   s.vectorShardID,
-	}
-
-	info, err := vectorService.GetNamespaceInfo(ctx, getReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	// Merge index params if provided
-	indexConfig := info.IndexConfig
-	if indexConfig == nil {
-		indexConfig = make(map[string]string)
-	}
-	if req.IndexParams != nil {
-		for k, v := range req.IndexParams {
-			indexConfig[k] = v
-		}
-	}
-
-	// Merge metadata if provided
-	metadata := info.Metadata
-	if metadata == nil {
-		metadata = make(map[string]interface{})
-	}
-	if req.Metadata != nil {
-		for k, v := range req.Metadata {
-			metadata[k] = v
-		}
-	}
-
-	// Note: For now, we'll delete and recreate the namespace with updated config
-	// A production implementation should support in-place updates
-	deleteReq := &service.DeleteNamespaceRequest{
-		Namespace: req.Namespace,
-		ShardID:   s.vectorShardID,
-	}
-
-	_, err = vectorService.DeleteNamespace(ctx, deleteReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	// Recreate with updated config
-	createReq := &service.CreateNamespaceRequest{
-		Namespace:   req.Namespace,
-		Dimension:   info.Dimension,
-		IndexConfig: indexConfig,
-		Metadata:    metadata,
-		ShardID:     s.vectorShardID,
-	}
-
-	createResp, err := vectorService.CreateNamespace(ctx, createReq)
-	if err != nil {
-		return nil, toProtoError(err)
-	}
-
-	return &pb.UpdateNamespaceResponse{
-		Namespace:       createResp.Namespace,
-		Timestamp:       timestamppb.New(time.Unix(0, createResp.Timestamp)),
-		RequiresRebuild: true, // Always requires rebuild after update
-	}, nil
+	// The qrdb SDK has no in-place namespace update. Deleting and recreating
+	// the namespace would destroy its vectors, so the update is refused.
+	return nil, &NamespaceUpdateUnsupportedError{Namespace: req.Namespace}
 }
 
 // DeleteNamespace removes a namespace and all its vectors.
