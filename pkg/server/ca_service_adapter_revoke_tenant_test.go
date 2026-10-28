@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -69,9 +70,9 @@ func TestCAServiceAdapter_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 				if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
 					t.Fatalf("RevokeCertificate err = %v, want ErrTenantMissing", err)
 				}
-				var refusal *CAServiceAdapterRevokeTenantError
+				var refusal *service.CertificateTenantError
 				if !errors.As(err, &refusal) {
-					t.Fatalf("RevokeCertificate err = %T, want *CAServiceAdapterRevokeTenantError", err)
+					t.Fatalf("RevokeCertificate err = %T, want *service.CertificateTenantError", err)
 				}
 				if refusal.IssuingTenantID != tt.tenantID {
 					t.Fatalf("refusal issuing tenant = %q (cause %v), want %q", refusal.IssuingTenantID, refusal.Cause, tt.tenantID)
@@ -136,8 +137,9 @@ func TestCAServiceAdapter_RevokeReadsCallerTenantLikeTheServices(t *testing.T) {
 				t.Fatalf("IsRevoked(%s): %v", serial, statusErr)
 			}
 			if tt.wantRefuse {
-				if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
-					t.Fatalf("RevokeCertificate err = %v, want ErrTenantMissing", err)
+				var refusal *service.CertificateTenantError
+				if !errors.As(err, &refusal) || !errors.Is(err, qrdbsdk.ErrTenantMissing) {
+					t.Fatalf("RevokeCertificate err = %v, want *service.CertificateTenantError", err)
 				}
 				if revoked.Revoked {
 					t.Fatalf("serial %s was revoked by a caller outside its tenant", serial)
@@ -164,7 +166,7 @@ func TestCAServiceAdapter_SignCSRRecordsTenantWithoutTrustDomain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newCAServiceAdapter: %v", err)
 	}
-	resolver, ok := adapter.getCA().(certificateTenantResolver)
+	resolver, ok := adapter.getCA().(service.CertificateTenantResolver)
 	if !ok {
 		t.Fatalf("CA %T does not resolve certificate tenants", adapter.getCA())
 	}

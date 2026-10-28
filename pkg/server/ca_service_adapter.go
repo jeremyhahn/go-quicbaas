@@ -26,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -73,29 +72,6 @@ var (
 // It matches ErrCAServiceAdapterBundle and the cause under errors.Is.
 type CAServiceAdapterBundleError struct {
 	Cause error
-}
-
-// CAServiceAdapterRevokeTenantError reports that a tenant-scoped caller asked
-// to revoke a certificate that was not issued for its tenant. Like go-xkms's
-// TenantBindingError it looks exactly like a missing tenant: it unwraps to
-// qrdbsdk.ErrTenantMissing and renders the same message, so every transport
-// answers not-found and a probe cannot tell a foreign serial from an unknown
-// one. The fields are for server-side diagnostics (errors.As) only.
-type CAServiceAdapterRevokeTenantError struct {
-	CallerTenantID  string
-	IssuingTenantID string
-	Cause           error
-}
-
-// Error renders the message of qrdbsdk.ErrTenantMissing and nothing else.
-func (e *CAServiceAdapterRevokeTenantError) Error() string {
-	return qrdbsdk.ErrTenantMissing.Error()
-}
-
-// Unwrap returns qrdbsdk.ErrTenantMissing. The cause is deliberately not
-// exposed through the error chain, so it cannot change the transport status.
-func (e *CAServiceAdapterRevokeTenantError) Unwrap() error {
-	return qrdbsdk.ErrTenantMissing
 }
 
 // Error implements the error interface.
@@ -386,7 +362,7 @@ func (a *caServiceAdapter) RevokeCertificate(
 	}
 
 	ca := a.getCA()
-	if err := bindRevokeToIssuingTenant(ctx, ca, serial); err != nil {
+	if err := service.BindToIssuingTenant(ctx, ca, serial); err != nil {
 		return nil, err
 	}
 
@@ -397,41 +373,6 @@ func (a *caServiceAdapter) RevokeCertificate(
 		}, err
 	}
 	return &xkmstransport.RevokeCertificateResponse{Success: true}, nil
-}
-
-// certificateTenantResolver is the go-xkms CA capability that reads back the
-// tenant recorded on a certificate at issuance (go-xkms ca.CA.CertificateTenant).
-type certificateTenantResolver interface {
-	CertificateTenant(ctx context.Context, serial *big.Int) (string, error)
-}
-
-// bindRevokeToIssuingTenant applies go-xkms XKMSService.RevokeCertificate's
-// tenant binding before the adapter revokes on the CA. A cross-tenant caller
-// (no identity, an empty tenant, or the system tenant) may revoke any
-// certificate. A tenant-scoped caller may revoke only a certificate issued for
-// its own tenant; anything else, including a serial the CA cannot attribute,
-// is refused with CAServiceAdapterRevokeTenantError.
-func bindRevokeToIssuingTenant(ctx context.Context, ca xkmssdk.TrustedCA, serial *big.Int) error {
-	identity := qrdbsdk.IdentityFromContext(ctx)
-	if identity == nil || identity.TenantID == "" || identity.TenantID == qrdbsdk.SystemTenantID {
-		return nil
-	}
-
-	refusal := &CAServiceAdapterRevokeTenantError{CallerTenantID: identity.TenantID}
-	resolver, ok := ca.(certificateTenantResolver)
-	if !ok {
-		return refusal
-	}
-	issuingTenant, err := resolver.CertificateTenant(ctx, serial)
-	if err != nil {
-		refusal.Cause = err
-		return refusal
-	}
-	if issuingTenant != identity.TenantID {
-		refusal.IssuingTenantID = issuingTenant
-		return refusal
-	}
-	return nil
 }
 
 // GetCABundle returns the CA bundle in PEM form.
