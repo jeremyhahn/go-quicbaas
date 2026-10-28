@@ -330,8 +330,14 @@ func (s *certificateService) RevokeCertificate(ctx context.Context, req *RevokeC
 
 	resp, err := s.caService.RevokeCertificate(ctx, xkmsReq)
 	if err != nil {
+		// A certificate issued for another tenant is refused as a missing
+		// tenant; it must reach the transports as not-found, not internal.
+		code := errors.ErrInternal
+		if stderrors.Is(err, qrdbsdk.ErrTenantMissing) {
+			code = errors.ErrNotFound
+		}
 		return nil, &errors.QBError{
-			Code: errors.ErrInternal,
+			Code: code,
 			Op:   "CertificateService.RevokeCertificate",
 			Err:  err,
 		}
