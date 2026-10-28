@@ -7,19 +7,12 @@ logging:
   format: json
 
 security:
-  # This IAM integration suite predates the default-deny scope -> RBAC gate and
-  # authenticates its data-plane operations through its own per-test ceremonies
-  # (bootstrap admin + PIV/mTLS login + OAuth2 token), not the global gate. The
-  # gate is now ON by default (config.Default sets require_authz=true), so pin it
-  # OFF here to preserve this suite's established posture. The dedicated SDK
-  # integration suite (sdk/go/test/integration) proves default-deny enforcement
-  # with authenticated clients + a negative (no-token -> 401/403) test.
-  require_authz: false
-  # The refuse-to-start gate rejects require_authz=false with network
-  # transports enabled unless the dev-only escape hatch is set. This harness
-  # runs inside an isolated Docker network and authenticates via the per-test
-  # ceremonies above, so acknowledge explicitly. NEVER set this in production.
-  insecure_dev_mode: true
+  # The suite authenticates every data-plane call through its per-test
+  # ceremonies (bootstrap admin + PIV/mTLS login + OAuth2 token), so it runs
+  # with the default-deny gate and node auth ON: the production posture.
+  # require_authz also drives the embedded qrdb node's auth.enabled, and a
+  # tenant route cannot bind its tenant without node auth (#1994).
+  require_authz: true
 
 server:
   mode: cluster  # Cluster mode enables Raft consensus
