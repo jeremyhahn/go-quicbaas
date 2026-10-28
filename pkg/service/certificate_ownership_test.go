@@ -10,6 +10,7 @@ import (
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ownershipFailureCAService lists certificates but cannot read the CA's
@@ -49,6 +50,46 @@ func TestCertificateService_ListCertificatesReturnsOwnershipStoreFailure(t *test
 		t.Fatalf("ListCertificates = %+v, want no response", resp)
 	}
 	requireOwnershipStoreError(t, err)
+}
+
+var errRevocationCheckDown = errors.New("revocation check unavailable")
+
+// A certificate whose revocation status cannot be determined must not be
+// listed as not revoked: the listing fails instead.
+func TestCertificateService_ListCertificatesReturnsRevocationCheckFailure(t *testing.T) {
+	ca := newTenantListerCAService(issuingTenantCA{1: "acme"})
+	ca.isRevokedFunc = func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+		return nil, errRevocationCheckDown
+	}
+	svc := NewCertificateService(ca)
+
+	resp, err := svc.ListCertificates(tenantctx.WithTenant(context.Background(), "acme"), &ListCertificatesRequest{})
+	if resp != nil {
+		t.Fatalf("ListCertificates = %+v, want no response", resp)
+	}
+	var qbErr *qberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != qberrors.ErrInternal {
+		t.Fatalf("err = %v, want an internal *QBError", err)
+	}
+	if !errors.Is(err, errRevocationCheckDown) {
+		t.Fatalf("err = %v, want it to carry the revocation-check failure", err)
+	}
+}
+
+func TestCertificateService_ListCertificatesIncludeRevokedSkipsRevocationCheck(t *testing.T) {
+	ca := newTenantListerCAService(issuingTenantCA{1: "acme"})
+	ca.isRevokedFunc = func(_ context.Context, _ *xkmstransport.IsRevokedRequest) (*xkmstransport.IsRevokedResponse, error) {
+		return nil, errRevocationCheckDown
+	}
+	svc := NewCertificateService(ca)
+
+	resp, err := svc.ListCertificates(tenantctx.WithTenant(context.Background(), "acme"), &ListCertificatesRequest{IncludeRevoked: true})
+	if err != nil {
+		t.Fatalf("ListCertificates: %v", err)
+	}
+	if len(resp.Certificates) != 1 {
+		t.Fatalf("listed %d certificates, want the one acme issued", len(resp.Certificates))
+	}
 }
 
 // TestCertificateService_ListCertificatesExcludesForeignAndUnattributed pins

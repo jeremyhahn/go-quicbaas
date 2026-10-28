@@ -815,9 +815,16 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			continue
 		}
 		if !req.IncludeRevoked {
-			revoked, _ := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
+			revoked, err := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
 				SerialNumber: cert.SerialNumber.Text(16),
 			})
+			if err != nil {
+				return nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "CertificateService.ListCertificates",
+					Err:  err,
+				}
+			}
 			if revoked != nil && revoked.Revoked {
 				continue
 			}
