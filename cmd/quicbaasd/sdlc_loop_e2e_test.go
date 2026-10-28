@@ -68,6 +68,7 @@ const (
 	loopE2ETenant                     = "sdlc-loop-e2e-tenant"
 	loopE2EProject                    = "sdlc-loop-e2e-project"
 	loopE2EBackend                    = "e2e-agent"
+	loopE2EModel                      = "e2e-model"
 	loopE2EWorkerAgent                = "e2e-coder"
 	loopE2EKeyName                    = "agent-sdlc-loop-e2e"
 	loopE2EKeyScope                   = "service"
@@ -765,7 +766,7 @@ func (b *e2eAgentBackend) Capabilities() orchestration.BackendCapabilities {
 func (b *e2eAgentBackend) Type() string         { return "e2e" }
 func (b *e2eAgentBackend) ToolGuidance() string { return "" }
 func (b *e2eAgentBackend) ListModels(context.Context) ([]string, error) {
-	return []string{"e2e-model"}, nil
+	return []string{loopE2EModel}, nil
 }
 
 // spawnCount is how many sessions the job asked for. For an sdlc job it is
@@ -1208,7 +1209,7 @@ func defineFactoryWorker(t *testing.T, ctx context.Context, agents orchestration
 	_, err := directory.CreateAgent(ctx, loopE2ETenant, &orchestration.Agent{
 		ID: loopE2EWorkerAgent, Name: "Factory e2e coder",
 		Roles:   []orchestration.AgentRole{orchestration.AgentRoleCoding},
-		Backend: loopE2EBackend, Model: "claude-opus-5",
+		Backend: loopE2EBackend, Model: loopE2EModel,
 	})
 	require.NoError(t, err, "defining the worker Agent")
 	return ref
