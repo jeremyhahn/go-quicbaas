@@ -35,6 +35,7 @@ import (
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	sdkerrors "github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/xkms/fido2"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 
 	"github.com/stretchr/testify/require"
 )
@@ -162,9 +163,16 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
+	// The server adds the passkey to the authenticated caller's account and
+	// accepts only a bearer as that authentication, so the client sends the
+	// admin's bearer as well as the admin certificate.
+	endpoints := helpers.GetRESTEndpoints()
+	require.NotEmpty(t, endpoints, "a REST endpoint to log the admin in")
+	adminBearer := quicbaas.WithAuthToken(helpers.AuthPIV(t, endpoints[0]))
+
 	for _, tr := range allLoginTransports() {
 		t.Run(string(tr), func(t *testing.T) {
-			c, err := newLoginClient(t, tr, mtlsTLSConfig(t))
+			c, err := newLoginClient(t, tr, mtlsTLSConfig(t), adminBearer)
 			require.NoError(t, err, "[%s] build client", tr)
 			defer c.Close()
 
