@@ -69,7 +69,7 @@ const (
 	loopE2ETenant                     = "sdlc-loop-e2e-tenant"
 	loopE2EProject                    = "sdlc-loop-e2e-project"
 	loopE2EBackend                    = "e2e-agent"
-	loopE2EModel                      = "e2e-model"
+	loopE2EModel                      = "claude-opus-5" // the Anthropic family makes the codex review independent
 	loopE2EWorkerAgent                = "e2e-coder"
 	loopE2EKeyName                    = "agent-sdlc-loop-e2e"
 	loopE2EKeyScope                   = "service"
