@@ -218,7 +218,10 @@ func allocPortBundle(t *testing.T, transport string, dataDir string) PortBundle 
 	case "grpc":
 		bundle.GRPC = netport.MustReserveOne(t)
 	case "quic":
-		bundle.QUIC = netport.MustReserveOne(t)
+		// QUIC is REST over HTTP/3, which go-qrdb's unified REST server
+		// serves on the REST port itself; the embedded node has no
+		// dedicated QUIC listener to reserve a port for.
+		bundle.QUIC = bundle.REST
 	case "mcp":
 		bundle.MCP = netport.MustReserveOne(t)
 	default:
@@ -660,10 +663,9 @@ func startDaemonWithConfig(
 		)
 	}
 	if transport == "quic" {
-		env = append(env,
-			"QUICBAAS_SERVER_QUIC_ENABLED=true",
-			fmt.Sprintf("QUICBAAS_SERVER_QUIC_PORT=%d", ports.QUIC),
-		)
+		// No QUICBAAS_SERVER_QUIC_PORT: HTTP/3 shares the REST port
+		// (allocPortBundle), and that variable maps to no config field.
+		env = append(env, "QUICBAAS_SERVER_QUIC_ENABLED=true")
 	} else {
 		env = append(env, "QUICBAAS_SERVER_QUIC_ENABLED=false")
 	}
