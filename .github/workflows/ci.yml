@@ -532,6 +532,19 @@ jobs:
       - name: make integration-test (integration image)
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
+      # go-quicbaas (#2034): a server-side failure reaches the suite only as an
+      # opaque 500 or a timeout, and the target's 200-line tail of every
+      # service rarely holds the node's own error. On failure, print the node
+      # containers' warning and error lines from the full compose log the
+      # target wrote, so the cause is in the job log.
+      - name: Node container errors (failure only)
+        if: failure()
+        run: |
+          [ -f integration-compose.log ] || { echo "integration-compose.log not written"; exit 0; }
+          grep -E '^[^|]*test-node[0-9]' integration-compose.log \
+            | grep -Ei 'level.{0,3}(error|warn)|service-error|panic' \
+            | tail -n 2000 || true
+
       - name: Tear down
         if: always()
         run: |
