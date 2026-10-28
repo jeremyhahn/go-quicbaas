@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // failingTenantManager is a tenant directory that cannot answer.
@@ -65,5 +67,24 @@ func TestIAMTenantLister_TenantExistsReportsAnUnansweringDirectory(t *testing.T)
 	exists, err := tenants.TenantExists(context.Background(), "acme")
 	if !errors.Is(err, errTenantDirectorySealed) || exists {
 		t.Fatalf("TenantExists = %v, %v; want the directory failure, never a false \"absent\"", exists, err)
+	}
+}
+
+// A barrier-isolated tenant's own context routes IAM reads to that tenant's
+// store, but its tenant record lives in the system scope where CreateTenant
+// wrote it. A fleet registration arrives under the registering tenant's
+// context, so the lookup must still find the record (#2020).
+func TestIAMTenantLister_TenantExistsUnderTheTenantsOwnContext(t *testing.T) {
+	resolver := newFakeStoreResolver(kvstore.NewMemory())
+	resolver.barrierTenant("acme")
+	manager := iam.NewDefaultTenantManager(iam.NewBackendStorage(newTenantRoutingKVStore(resolver)))
+	if _, err := manager.CreateTenant(tenantctx.WithSystem(context.Background()), iam.CreateTenantOptions{ID: "acme", Name: "Acme"}); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	tenants := &iamTenantLister{tenants: manager}
+
+	exists, err := tenants.TenantExists(tenantctx.WithTenant(context.Background(), "acme"), "acme")
+	if err != nil || !exists {
+		t.Fatalf("TenantExists under the tenant's own context = %v, %v; want true", exists, err)
 	}
 }
