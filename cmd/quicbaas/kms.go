@@ -43,7 +43,11 @@ import (
 )
 
 var (
-	kmsAlgorithm         string
+	kmsAlgorithm string
+	// kmsUnwrapAlgorithm is unwrap's own --algorithm: its empty, required
+	// default must not overwrite generate's and import's AES-256-GCM default,
+	// which a shared variable would (cobra applies defaults at registration).
+	kmsUnwrapAlgorithm   string
 	kmsDescription       string
 	kmsExportable        bool
 	kmsMaterial          string
@@ -1005,7 +1009,7 @@ Examples:
 
 	cmd.Flags().StringVar(&kmsWrappingKey, "wrapping-key", "", "Wrapping key (required)")
 	cmd.Flags().StringVar(&kmsMaterial, "material", "", "Wrapped key material (base64) (required)")
-	cmd.Flags().StringVar(&kmsAlgorithm, "algorithm", "", "Target key algorithm (required)")
+	cmd.Flags().StringVar(&kmsUnwrapAlgorithm, "algorithm", "", "Target key algorithm (required)")
 
 	cmd.MarkFlagRequired("wrapping-key")
 	cmd.MarkFlagRequired("material")
@@ -1036,7 +1040,7 @@ func runKMSKeyUnwrapCommand(cmd *cobra.Command, args []string) error {
 		KeyID:         keyName,
 		WrappingKeyID: kmsWrappingKey,
 		WrappedKey:    wrappedKey,
-		Algorithm:     kmsAlgorithm,
+		Algorithm:     kmsUnwrapAlgorithm,
 	}
 
 	resp, err := client.KMSUnwrapKey(ctx, req)
