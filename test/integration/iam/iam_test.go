@@ -57,7 +57,8 @@ type testCluster struct {
 	grpcEndpoint string
 	quicEndpoint string
 	unixSocket   string
-	client       *http.Client
+	client       *http.Client // sends no bearer, or one the caller sets
+	adminClient  *http.Client // presents the system admin's bearer
 	grpcConn     *grpc.ClientConn
 }
 
@@ -256,6 +257,7 @@ func setupTestCluster(t *testing.T) *testCluster {
 		quicEndpoint: quicEndpoint,
 		unixSocket:   unixSocket,
 		client:       httpClient,
+		adminClient:  helpers.NewSystemAdminHTTPClient(t, defaultTimeout),
 		grpcConn:     grpcConn,
 	}
 }
@@ -312,8 +314,20 @@ func isRetryableError(statusCode int, body string) bool {
 	return false
 }
 
-// doHTTPRequest performs an HTTP request and returns the response.
+// doHTTPRequest performs an HTTP request as the system admin and returns the
+// response.
 func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	return tc.doRequest(tc.adminClient, method, path, body)
+}
+
+// doAnonymousHTTPRequest performs an HTTP request without a bearer and
+// returns the response.
+func (tc *testCluster) doAnonymousHTTPRequest(method, path string, body interface{}) (*http.Response, error) {
+	return tc.doRequest(tc.client, method, path, body)
+}
+
+// doRequest performs an HTTP request through client and returns the response.
+func (tc *testCluster) doRequest(client *http.Client, method, path string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -332,7 +346,7 @@ func (tc *testCluster) doHTTPRequest(method, path string, body interface{}) (*ht
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	return tc.client.Do(req)
+	return client.Do(req)
 }
 
 // getJSON performs a GET request and unmarshals the JSON response.

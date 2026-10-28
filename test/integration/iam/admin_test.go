@@ -142,7 +142,7 @@ func createTestAssignment(t *testing.T, cluster *testCluster, req AdminAssignmen
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -170,7 +170,7 @@ func deleteTestAssignment(t *testing.T, cluster *testCluster, assignmentID strin
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
 }
@@ -201,7 +201,7 @@ func TestAdmin_CreateAssignment_Success(t *testing.T) {
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -227,7 +227,7 @@ func TestAdmin_CreateAssignment_Success(t *testing.T) {
 	assert.Equal(t, "engineering", result.Metadata["department"], "Metadata should be preserved")
 
 	// Verify: Assignment exists via GET
-	getResp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + result.ID)
+	getResp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + result.ID)
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 
@@ -258,7 +258,7 @@ func TestAdmin_CreateAssignment_InvalidRole(t *testing.T) {
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -288,7 +288,7 @@ func TestAdmin_CreateAssignment_MissingUserID(t *testing.T) {
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -313,7 +313,7 @@ func TestAdmin_CreateAssignment_MissingGrantedBy(t *testing.T) {
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -344,7 +344,7 @@ func TestAdmin_GetAssignment_Success(t *testing.T) {
 	defer deleteTestAssignment(t, cluster, created.ID)
 
 	// GET the assignment by ID
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + created.ID)
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + created.ID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -370,7 +370,7 @@ func TestAdmin_GetAssignment_NotFound(t *testing.T) {
 
 	nonExistentID := uuid.New().String()
 
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + nonExistentID)
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + nonExistentID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -416,7 +416,7 @@ func TestAdmin_UpdateAssignment_Success(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -455,7 +455,7 @@ func TestAdmin_UpdateAssignment_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -486,7 +486,7 @@ func TestAdmin_DeleteAssignment_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -494,7 +494,7 @@ func TestAdmin_DeleteAssignment_Success(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode, "Expected 204 No Content for delete")
 
 	// Verify: GET returns 404
-	getResp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + created.ID)
+	getResp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments/" + created.ID)
 	require.NoError(t, err)
 	defer getResp.Body.Close()
 
@@ -515,7 +515,7 @@ func TestAdmin_DeleteAssignment_NotFound(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -531,7 +531,7 @@ func TestAdmin_ListAssignments_Empty(t *testing.T) {
 	// Use a unique filter to ensure empty results
 	uniqueFilter := uuid.New().String()
 
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + uniqueFilter)
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + uniqueFilter)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -593,7 +593,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 	// Test: Filter by admin_role
 	t.Run("FilterByRole", func(t *testing.T) {
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?admin_role=tenant_admin")
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?admin_role=tenant_admin")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -613,7 +613,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 	// Test: Filter by tenant_id
 	t.Run("FilterByTenant", func(t *testing.T) {
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?tenant_id=tenant-alpha")
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?tenant_id=tenant-alpha")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -634,7 +634,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 	// Test: Filter by user_id
 	t.Run("FilterByUserID", func(t *testing.T) {
 		userID := fmt.Sprintf("%s-user-2", testPrefix)
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -651,7 +651,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 	// Test: Filter by active_only
 	t.Run("FilterByActive", func(t *testing.T) {
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?active_only=true")
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?active_only=true")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -697,7 +697,7 @@ func TestAdmin_CheckPermission_Allowed(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -743,7 +743,7 @@ func TestAdmin_CheckPermission_Denied(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -779,7 +779,7 @@ func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -816,7 +816,7 @@ func TestAdmin_CheckPermission_ExpiredAssignment(t *testing.T) {
 	body, err := json.Marshal(createReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -840,7 +840,7 @@ func TestAdmin_CheckPermission_ExpiredAssignment(t *testing.T) {
 		checkBody, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		checkResp, err := cluster.client.Post(
+		checkResp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(checkBody),
@@ -886,7 +886,7 @@ func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
@@ -913,7 +913,7 @@ func TestAdmin_CheckPermission_TenantScope(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
@@ -956,7 +956,7 @@ func TestAdmin_CheckPermission_DeniedPermissions(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -1006,7 +1006,7 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1059,7 +1059,7 @@ func TestAdmin_StartImpersonation_NotAllowed(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1098,7 +1098,7 @@ func TestAdmin_StartImpersonation_MissingReason(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1139,7 +1139,7 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	startResp, err := cluster.client.Post(
+	startResp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1161,7 +1161,7 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	endResp, err := cluster.client.Do(endReq)
+	endResp, err := cluster.adminClient.Do(endReq)
 	require.NoError(t, err)
 	defer endResp.Body.Close()
 
@@ -1190,7 +1190,7 @@ func TestAdmin_EndImpersonation_NotFound(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1229,7 +1229,7 @@ func TestAdmin_ListActiveImpersonations(t *testing.T) {
 		body, err := json.Marshal(impersonationReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 			"application/json",
 			bytes.NewReader(body),
@@ -1246,7 +1246,7 @@ func TestAdmin_ListActiveImpersonations(t *testing.T) {
 	}
 
 	// List active impersonations
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?active=true")
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?active=true")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1279,7 +1279,7 @@ func TestAdmin_ListActiveImpersonations(t *testing.T) {
 			nil,
 		)
 		require.NoError(t, err)
-		resp, err := cluster.client.Do(req)
+		resp, err := cluster.adminClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
 		}
@@ -1319,7 +1319,7 @@ func TestAdmin_ListImpersonations_FilterByAdmin(t *testing.T) {
 		body, err := json.Marshal(impersonationReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 			"application/json",
 			bytes.NewReader(body),
@@ -1329,7 +1329,7 @@ func TestAdmin_ListImpersonations_FilterByAdmin(t *testing.T) {
 	}
 
 	// List impersonations for admin1 only
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?admin_user_id=" + admin1ID)
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/impersonation?admin_user_id=" + admin1ID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1414,7 +1414,7 @@ func TestAdmin_UpdateAssignment_Deactivate(t *testing.T) {
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := cluster.client.Do(req)
+	resp, err := cluster.adminClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1436,7 +1436,7 @@ func TestAdmin_UpdateAssignment_Deactivate(t *testing.T) {
 	checkBody, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	checkResp, err := cluster.client.Post(
+	checkResp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(checkBody),
@@ -1525,7 +1525,7 @@ func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
@@ -1554,7 +1554,7 @@ func TestAdmin_CheckPermission_WithResourceContext(t *testing.T) {
 		body, err := json.Marshal(checkReq)
 		require.NoError(t, err)
 
-		resp, err := cluster.client.Post(
+		resp, err := cluster.adminClient.Post(
 			cluster.httpEndpoint+"/api/v1/admin/check-permission",
 			"application/json",
 			bytes.NewReader(body),
@@ -1601,7 +1601,7 @@ func TestAdmin_Assignment_WithExpiry(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -1645,7 +1645,7 @@ func TestAdmin_Impersonation_AuditTrail(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.client.Post(
+	resp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1668,7 +1668,7 @@ func TestAdmin_Impersonation_AuditTrail(t *testing.T) {
 			nil,
 		)
 		require.NoError(t, err)
-		endResp, err := cluster.client.Do(endReq)
+		endResp, err := cluster.adminClient.Do(endReq)
 		if err == nil {
 			endResp.Body.Close()
 		}
@@ -1710,7 +1710,7 @@ func TestAdmin_MultipleAssignments_SameUser(t *testing.T) {
 	}()
 
 	// List assignments for user
-	resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
+	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -1731,7 +1731,7 @@ func TestAdmin_MultipleAssignments_SameUser(t *testing.T) {
 	body, err := json.Marshal(checkReq)
 	require.NoError(t, err)
 
-	checkResp, err := cluster.client.Post(
+	checkResp, err := cluster.adminClient.Post(
 		cluster.httpEndpoint+"/api/v1/admin/check-permission",
 		"application/json",
 		bytes.NewReader(body),
@@ -1773,7 +1773,7 @@ func TestAdmin_Pagination(t *testing.T) {
 
 	// Test pagination with limit
 	t.Run("WithLimit", func(t *testing.T) {
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?limit=2")
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?limit=2")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
@@ -1788,7 +1788,7 @@ func TestAdmin_Pagination(t *testing.T) {
 
 	// Test pagination with offset
 	t.Run("WithOffset", func(t *testing.T) {
-		resp, err := cluster.client.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?limit=2&offset=2")
+		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?limit=2&offset=2")
 		require.NoError(t, err)
 		defer resp.Body.Close()
 
