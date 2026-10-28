@@ -314,7 +314,7 @@ func TestReconcileRoles_RouteSpecUsesRoleCreateGrant(t *testing.T) {
 		}
 		found = true
 		assert.Equal(t, RouteAuthPermission, spec.Auth)
-		assert.Equal(t, "tenants", spec.Resource)
+		assert.Equal(t, "roles", spec.Resource)
 		assert.Equal(t, "create", spec.Action)
 
 		for _, sibling := range Routes() {
