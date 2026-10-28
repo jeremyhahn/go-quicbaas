@@ -168,11 +168,13 @@ func TestSchedulerJobsMultiProtocol(t *testing.T) {
 			jobs := client.Async().Scheduler()
 
 			created, err := jobs.CreateJob(ctx, &scheduler.CreateJobRequest{
-				Name:      "it-" + stamp + "-" + name,
-				JobType:   scheduler.JobTypeRecurring,
-				Handler:   "noop",
-				Schedule:  "0 3 * * *",
-				OwnerType: scheduler.OwnerTypeSystem,
+				Name:     "it-" + stamp + "-" + name,
+				JobType:  scheduler.JobTypeRecurring,
+				Handler:  "noop",
+				Schedule: "0 3 * * *",
+				// A tenant caller files jobs in its own namespace; a
+				// system-owned job names the system tenant and is refused.
+				OwnerType: scheduler.OwnerTypeTenant,
 				Tags:      map[string]string{"suite": "placement"},
 			})
 			if err != nil {
