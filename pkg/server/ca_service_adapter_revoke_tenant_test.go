@@ -68,8 +68,11 @@ func TestCAServiceAdapter_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 					t.Fatalf("RevokeCertificate err = %v, want ErrTenantMissing", err)
 				}
 				var refusal *CAServiceAdapterRevokeTenantError
-				if !errors.As(err, &refusal) || refusal.IssuingTenantID != tt.tenantID {
-					t.Fatalf("refusal issuing tenant = %q (cause %v, CA %T), want %q", refusal.IssuingTenantID, refusal.Cause, adapter.getCA(), tt.tenantID)
+				if !errors.As(err, &refusal) {
+					t.Fatalf("RevokeCertificate err = %T, want *CAServiceAdapterRevokeTenantError", err)
+				}
+				if refusal.IssuingTenantID != tt.tenantID {
+					t.Fatalf("refusal issuing tenant = %q (cause %v), want %q", refusal.IssuingTenantID, refusal.Cause, tt.tenantID)
 				}
 				if isRevoked(t, serial) {
 					t.Fatalf("serial %s was revoked by a foreign tenant", serial)
@@ -84,6 +87,51 @@ func TestCAServiceAdapter_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 			}
 			if !isRevoked(t, serial) {
 				t.Fatalf("serial %s not revoked", serial)
+			}
+		})
+	}
+}
+
+// TestCAServiceAdapter_SignCSRRecordsTenantWithoutTrustDomain pins the
+// issuance half of the revoke binding: with no SPIFFE trust domain
+// configured, the CA still records the requesting tenant as the issuing
+// tenant. Before #1998 the tenant was recorded only alongside a trust domain,
+// so every such certificate read back as system scope.
+func TestCAServiceAdapter_SignCSRRecordsTenantWithoutTrustDomain(t *testing.T) {
+	adapter, err := newCAServiceAdapter(newRealSoftwareCA(t))
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+	resolver, ok := adapter.getCA().(certificateTenantResolver)
+	if !ok {
+		t.Fatalf("CA %T does not resolve certificate tenants", adapter.getCA())
+	}
+
+	tests := []struct {
+		name     string
+		tenantID string
+		profile  string
+	}{
+		{name: "tenant with a profile", tenantID: "acme", profile: "client"},
+		{name: "tenant without a profile", tenantID: "acme"},
+		{name: "no tenant", tenantID: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := adapter.SignCSR(context.Background(), &xkmstransport.SignCSRRequest{
+				CSRPEM:   newCSR(t, "user-"+tt.tenantID),
+				Profile:  tt.profile,
+				TenantID: tt.tenantID,
+			})
+			if err != nil {
+				t.Fatalf("SignCSR: %v", err)
+			}
+			got, err := resolver.CertificateTenant(context.Background(), parseLeaf(t, resp.CertificatePEM).SerialNumber)
+			if err != nil {
+				t.Fatalf("CertificateTenant: %v", err)
+			}
+			if got != tt.tenantID {
+				t.Fatalf("CertificateTenant = %q, want %q", got, tt.tenantID)
 			}
 		})
 	}
