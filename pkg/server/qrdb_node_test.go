@@ -151,6 +151,31 @@ func TestBuildQRDBConfig_SPIFFETrustDomainUnsetLeavesNodeUnpinned(t *testing.T) 
 	assert.Empty(t, qcfg.Auth.SPIFFETrustDomain)
 }
 
+// TestBuildQRDBConfig_IntegrationConfigsRunWithNodeAuth loads the configs the
+// integration cluster runs with, through the loader quicbaasd uses for
+// --config, and asserts the embedded node they build has auth on. With node
+// auth off the node builds no auth middleware, no tenant is bound, and every
+// tenant route refuses the request (#1994).
+func TestBuildQRDBConfig_IntegrationConfigsRunWithNodeAuth(t *testing.T) {
+	files := []string{
+		"../../test/integration/quicbaas.yaml",
+		"../../test/integration/quicbaas-tenantbarrier.yaml",
+	}
+	for _, file := range files {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			cfg, err := config.LoadFromFile(file)
+			require.NoError(t, err)
+
+			qcfg, err := buildQRDBConfig(cfg, true)
+			require.NoError(t, err)
+
+			require.NotNil(t, qcfg.Auth.Enabled, "#1994: the node auth flag must be set")
+			assert.True(t, *qcfg.Auth.Enabled,
+				"#1994: %s must run the embedded node with auth on, or no tenant is bound", file)
+		})
+	}
+}
+
 // TestBuildQRDBConfig_NoNativeQUICListener pins that the embedded node never
 // starts go-qrdb's native QUIC server, whatever quicbaas serves. That server
 // is the only QUIC route to qrdb.v1 barrier.Seal; quicbaas's QUIC is REST
