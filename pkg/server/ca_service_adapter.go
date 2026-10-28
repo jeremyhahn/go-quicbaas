@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 	dbxkms "github.com/jeremyhahn/go-quicbaas/pkg/xkms"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -325,6 +326,8 @@ func (a *caServiceAdapter) SignCSR(
 //
 // The default sign profile is applied (no SPIFFE synthesis): ACME issuance is
 // driven by the requester's CSR identifiers, not a tenant-scoped login leaf.
+// The caller's tenant is still recorded as the issuing tenant, so the
+// certificate appears in that tenant's listing and the tenant can revoke it.
 func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certPEM, chainPEM []byte, err error) {
 	if len(csrPEM) == 0 {
 		return nil, nil, ErrCAServiceAdapterInvalidPEM
@@ -333,7 +336,7 @@ func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certP
 	if ca == nil {
 		return nil, nil, ErrCAServiceAdapterNilCA
 	}
-	cert, err := ca.SignCSR(ctx, csrPEM, nil)
+	cert, err := ca.SignCSR(ctx, csrPEM, callerTenantSignOptions(ctx))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -346,6 +349,17 @@ func (a *caServiceAdapter) SignCSRPEM(ctx context.Context, csrPEM []byte) (certP
 		Bytes: cert.Raw,
 	})
 	return certPEM, chain, nil
+}
+
+// callerTenantSignOptions returns sign options that record the context's
+// tenant as the issuing tenant under the CA's default profile, or nil when
+// the context carries no tenant.
+func callerTenantSignOptions(ctx context.Context) *xkmssdk.TrustedCASignOptions {
+	tenantID, err := tenantctx.FromContext(ctx, "acme.sign_csr")
+	if err != nil {
+		return nil
+	}
+	return &xkmssdk.TrustedCASignOptions{TenantID: tenantID}
 }
 
 // RevokeCertificate marks a certificate as revoked by serial number.

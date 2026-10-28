@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -198,5 +199,55 @@ func TestCAServiceAdapter_SignCSRRecordsTenantWithoutTrustDomain(t *testing.T) {
 				t.Fatalf("CertificateTenant = %q, want %q", got, tt.tenantID)
 			}
 		})
+	}
+}
+
+// TestCAServiceAdapter_SignCSRPEMRecordsCallerTenant pins go-quicbaas#2027:
+// an ACME-issued certificate records the caller's tenant as its issuing
+// tenant, keeps the default profile, and its tenant can revoke it.
+func TestCAServiceAdapter_SignCSRPEMRecordsCallerTenant(t *testing.T) {
+	adapter, err := newCAServiceAdapter(newRealSoftwareCA(t))
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+	resolver, ok := adapter.getCA().(service.CertificateTenantResolver)
+	if !ok {
+		t.Fatalf("CA %T does not resolve certificate tenants", adapter.getCA())
+	}
+	acmeCtx := qrdbsdk.WithIdentity(context.Background(),
+		&qrdbsdk.Identity{Subject: "acme-admin", TenantID: "acme"})
+
+	tenantPEM, _, err := adapter.SignCSRPEM(acmeCtx, newCSR(t, "acme-host"))
+	if err != nil {
+		t.Fatalf("SignCSRPEM(tenant): %v", err)
+	}
+	defaultPEM, _, err := adapter.SignCSRPEM(context.Background(), newCSR(t, "default-host"))
+	if err != nil {
+		t.Fatalf("SignCSRPEM(no tenant): %v", err)
+	}
+	leaf := parseLeaf(t, tenantPEM)
+	defaultLeaf := parseLeaf(t, defaultPEM)
+
+	got, err := resolver.CertificateTenant(context.Background(), leaf.SerialNumber)
+	if err != nil {
+		t.Fatalf("CertificateTenant: %v", err)
+	}
+	if got != "acme" {
+		t.Fatalf("CertificateTenant = %q, want %q", got, "acme")
+	}
+	if !slices.Equal(leaf.ExtKeyUsage, defaultLeaf.ExtKeyUsage) || leaf.KeyUsage != defaultLeaf.KeyUsage {
+		t.Fatalf("tenant leaf usages = %v/%v, want the default profile's %v/%v",
+			leaf.ExtKeyUsage, leaf.KeyUsage, defaultLeaf.ExtKeyUsage, defaultLeaf.KeyUsage)
+	}
+
+	resp, err := adapter.RevokeCertificate(acmeCtx, &xkmstransport.RevokeCertificateRequest{
+		SerialNumber: leaf.SerialNumber.Text(16),
+		Reason:       1,
+	})
+	if err != nil {
+		t.Fatalf("RevokeCertificate: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("RevokeCertificate success = false")
 	}
 }
