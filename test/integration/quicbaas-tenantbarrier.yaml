@@ -27,12 +27,10 @@ logging:
 
 security:
   # Same posture as the shared integration cluster (quicbaas.yaml): this
-  # suite authenticates through the PIV/mTLS login ceremonies, not the global
-  # default-deny scope gate. The refuse-to-start gate requires the explicit
-  # dev-mode acknowledgment when require_authz=false with network transports
-  # enabled. NEVER set insecure_dev_mode in production.
-  require_authz: false
-  insecure_dev_mode: true
+  # suite authenticates every call through the PIV/mTLS login ceremonies, so
+  # it runs with the default-deny gate and node auth ON, the production
+  # posture. A tenant route cannot bind its tenant without node auth (#1994).
+  require_authz: true
   tls_enabled: true
   tls_cert_file: /etc/quicbaas/certs/node1.crt
   tls_key_file: /etc/quicbaas/certs/node1.key
