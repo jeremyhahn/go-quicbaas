@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -122,8 +123,7 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 		return nil, err
 	}
 
-	// Pass tenantID to engine for scoped lookup
-	job, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+	job, err := a.lookupJob(ctx, req.JobID, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +137,41 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 		Job:       a.convertToServiceJob(job),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+// lookupJob reads jobID in tenantID's namespace. A delegated job, a system
+// job acting on one tenant's data such as the KMS grace-period disable a
+// tenant's RotateKey schedules, is filed in the system namespace. So a tenant
+// caller whose own namespace has no such job reads the system one, and gets
+// the job only when it is delegated to that tenant.
+func (a *SchedulerAdapter) lookupJob(ctx context.Context, jobID uint64, tenantID string) (*scheduler.Job, error) {
+	job, err := a.scheduler.GetJobWithTenant(ctx, jobID, tenantID)
+	if tenantID == "" || !isSchedulerJobNotFound(err) {
+		return job, err
+	}
+
+	delegated, sysErr := a.scheduler.GetJobWithTenant(ctx, jobID, "")
+	if sysErr != nil {
+		if isSchedulerJobNotFound(sysErr) {
+			return nil, err
+		}
+		return nil, sysErr
+	}
+	if delegated.OwnerType != scheduler.OwnerTypeDelegated || delegated.TargetTenantID != tenantID {
+		return nil, err
+	}
+	return delegated, nil
+}
+
+// isSchedulerJobNotFound reports whether err is the scheduler's missing-job
+// error, which storage returns by value or by pointer.
+func isSchedulerJobNotFound(err error) bool {
+	var v scheduler.JobNotFoundError
+	if errors.As(err, &v) {
+		return true
+	}
+	var p *scheduler.JobNotFoundError
+	return errors.As(err, &p)
 }
 
 // UpdateJob updates an existing job.

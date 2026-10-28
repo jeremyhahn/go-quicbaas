@@ -106,6 +106,50 @@ func TestSchedulerAdapter_CrossTenantJob_Denied(t *testing.T) {
 	})
 }
 
+// A delegated job is a system job acting on one tenant's data, such as the
+// KMS grace-period disable a tenant's RotateKey schedules. It is filed in the
+// system namespace, so the tenant that owns the data reads it there; any
+// other tenant, or a plain system job, stays not found.
+func TestSchedulerAdapter_GetJob_DelegatedJobOfCaller(t *testing.T) {
+	notFound := scheduler.ErrStorageError{Op: "GetJob", Cause: &scheduler.JobNotFoundError{JobID: 1}}
+
+	cases := []struct {
+		name    string
+		system  *scheduler.Job
+		wantErr bool
+	}{
+		{"delegated to the caller", &scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-a"}, false},
+		{"delegated to another tenant", &scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-b"}, true},
+		{"system job", &scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeSystem, TargetTenantID: "tenant-a"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			eng := newTestMockSchedulerEngine()
+			eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
+			eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(tc.system, nil)
+			a := &SchedulerAdapter{scheduler: eng}
+
+			resp, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1})
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, uint64(1), resp.Job.ID)
+		})
+	}
+
+	t.Run("tenant store error is not retried in the system namespace", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, errors.New("engine boom"))
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1})
+		require.Error(t, err)
+		eng.AssertNotCalled(t, "GetJobWithTenant", mock.Anything, uint64(1), "")
+	})
+}
+
 func TestSchedulerAdapter_EngineErrors(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("engine boom")
