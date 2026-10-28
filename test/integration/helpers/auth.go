@@ -74,8 +74,13 @@ type pivCachedToken struct {
 	ExpiresAt time.Time
 }
 
+// pivLoginPath is quicbaas's OIDC-provider PIV login. Its tokens are signed by
+// the quicbaas issuer, the only issuer the platform validator accepts; the
+// xkms session login at /api/v1/auth/login/piv signs with the xkms host key.
+const pivLoginPath = "/api/v1/iam/login/piv"
+
 // AuthPIV performs a PIV-cert-based login against the cluster's
-// /api/v1/auth/login/piv endpoint and returns the resulting bearer token.
+// /api/v1/iam/login/piv endpoint and returns the resulting bearer token.
 //
 // The handshake uses mTLS: the helper opens a TLS connection presenting the
 // integration test admin client certificate, the server resolves the user by
@@ -197,7 +202,7 @@ func AuthPIVFullSession(ctx context.Context, baseURL, certPath, keyPath, caPath 
 		return nil, err
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + "/api/v1/auth/login/piv"
+	endpoint := strings.TrimRight(baseURL, "/") + pivLoginPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return nil, &AuthError{Op: "build request", URL: endpoint, Cause: err}
@@ -262,7 +267,7 @@ func authPIV(ctx context.Context, baseURL, certPath, keyPath, caPath string) (st
 		},
 	}
 
-	endpoint := baseURL + "/api/v1/auth/login/piv"
+	endpoint := baseURL + pivLoginPath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return "", time.Time{}, &AuthError{Op: "build request", URL: endpoint, Cause: err}
