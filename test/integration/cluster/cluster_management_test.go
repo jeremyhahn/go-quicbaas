@@ -56,7 +56,9 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 
 	// Create shard 4
 	t.Log("Step 2: Creating shard 4")
-	createResp, err := client.CreateShard(ctx, &pb.CreateShardRequest{
+	// Starting a shard is a cluster-plane verb (admin:start_shard), so the
+	// system admin calls it; the tenant operator only writes the data.
+	createResp, err := admin.CreateShard(ctx, &pb.CreateShardRequest{
 		ShardId: 4,
 		InitialMembers: map[uint64]string{
 			1: "test-node1:63001",
@@ -82,7 +84,7 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 
 	// Create shard 5
 	t.Log("Step 3: Creating shard 5")
-	createResp, err = client.CreateShard(ctx, &pb.CreateShardRequest{
+	createResp, err = admin.CreateShard(ctx, &pb.CreateShardRequest{
 		ShardId: 5,
 		InitialMembers: map[uint64]string{
 			1: "test-node1:63001",
