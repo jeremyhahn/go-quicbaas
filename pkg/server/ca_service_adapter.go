@@ -66,6 +66,10 @@ var (
 	// while building an issuance response. Issuance fails rather than
 	// returning a certificate with an empty chain.
 	ErrCAServiceAdapterBundle = errors.New("server: ca service adapter cannot read the CA bundle")
+
+	// ErrCAServiceAdapterTenantUnsupported is returned when the configured CA
+	// does not record the tenant a certificate was issued for.
+	ErrCAServiceAdapterTenantUnsupported = errors.New("server: ca service adapter CA does not record issuing tenants")
 )
 
 // CAServiceAdapterBundleError carries the cause of a failed CA bundle read.
@@ -481,6 +485,22 @@ func (a *caServiceAdapter) ListStoredCertificates(_ context.Context) ([]*x509.Ce
 		return nil, ErrCAServiceAdapterCertStoreUnavailable
 	}
 	return store.ListCertificates()
+}
+
+// CertificateTenant returns the tenant the embedded CA recorded when it issued
+// the certificate with the given serial (go-xkms ca.CA.CertificateTenant). It
+// makes the adapter a service.CertificateTenantResolver, so the certificate
+// service can show a tenant the certificates issued for it.
+func (a *caServiceAdapter) CertificateTenant(ctx context.Context, serial *big.Int) (string, error) {
+	ca := a.getCA()
+	if ca == nil {
+		return "", ErrCAServiceAdapterNilCA
+	}
+	resolver, ok := ca.(service.CertificateTenantResolver)
+	if !ok {
+		return "", ErrCAServiceAdapterTenantUnsupported
+	}
+	return resolver.CertificateTenant(ctx, serial)
 }
 
 // CrossSignedRootPEMs returns the cross-sign-aware root set for the active
