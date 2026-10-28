@@ -20,9 +20,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
-	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // issuingTenantCertificates is a certificate service whose CA reports the
