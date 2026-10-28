@@ -447,11 +447,14 @@ type RESTClient struct {
 	httpClient *http.Client
 }
 
-// NewRESTClient creates a new REST client.
-func NewRESTClient(baseURL string) *RESTClient {
+// NewRESTClient creates a new REST client that acts as the system admin. The
+// KMS routes need keys:create and keys:delete, which go-qrdb grants to the
+// built-in Admin role and not to Operator.
+func NewRESTClient(t *testing.T, baseURL string) *RESTClient {
+	t.Helper()
 	return &RESTClient{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewSystemAdminHTTPClient(t, 30*time.Second),
 	}
 }
 

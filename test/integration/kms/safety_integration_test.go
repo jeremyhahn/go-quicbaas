@@ -830,7 +830,7 @@ func TestRESTExportKey(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	// Create a wrapping key first
 	wrappingKeyName := generateUniqueKeyName("rest-wrapping-key")
@@ -900,7 +900,7 @@ func TestRESTDEKSafetyOperations(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	dekPath := generateUniqueKeyName("rest-dek-safety-test")
 
@@ -966,7 +966,7 @@ func TestRESTKeySafety(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	// Create a test key
 	keyName := generateUniqueKeyName("rest-safety-test")
@@ -1015,7 +1015,7 @@ func TestRESTSafetyCheckAndReport(t *testing.T) {
 	defer cancel()
 
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	t.Run("safety check via REST", func(t *testing.T) {
 		resp, err := client.SafetyCheck(ctx, &service.SafetyCheckRequest{

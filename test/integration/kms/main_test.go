@@ -82,7 +82,7 @@ func TestKMSAvailability(t *testing.T) {
 		endpoints := helpers.GetRESTEndpoints()
 		for _, endpoint := range endpoints {
 			t.Run(endpoint, func(t *testing.T) {
-				client := NewRESTClient(endpoint)
+				client := NewRESTClient(t, endpoint)
 
 				req := &service.ListKeysRequest{
 					Limit: 1,
@@ -234,7 +234,7 @@ func testGRPCKeyLifecycle(t *testing.T, ctx context.Context) {
 // testRESTKeyLifecycle tests key lifecycle via REST.
 func testRESTKeyLifecycle(t *testing.T, ctx context.Context) {
 	endpoints := helpers.GetRESTEndpoints()
-	client := NewRESTClient(endpoints[0])
+	client := NewRESTClient(t, endpoints[0])
 
 	keyName := generateUniqueKeyName("rest-lifecycle-test")
 
