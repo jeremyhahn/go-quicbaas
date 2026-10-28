@@ -243,15 +243,21 @@ func (r *principalRegistry) grpcCredentials(t *testing.T) credentials.PerRPCCred
 // off the test goroutine, where t.Fatalf would exit through runtime.Goexit
 // and skip the caller's cleanup.
 func (r *principalRegistry) newGRPCCredentials(ctx context.Context) (credentials.PerRPCCredentials, error) {
-	source, err := r.newTokenSource(ctx)
-	if err != nil {
+	clusterURL := GetRESTEndpoints()[0]
+	if _, err := r.bearer(ctx, clusterURL); err != nil {
 		return nil, err
 	}
-	creds, err := dataplane.NewBearerCredentials(source)
-	if err != nil {
-		return nil, err
+	return newNodeBearerCredentials(clusterURL, r.name, r.nodeTokenSource(clusterURL)), nil
+}
+
+// nodeTokenSource returns the source of the principal's bearer at each node of
+// the cluster whose first node is clusterURL.
+func (r *principalRegistry) nodeTokenSource(clusterURL string) nodeTokenSource {
+	return func(_ context.Context, node string) (dataplane.TokenSource, error) {
+		return func(ctx context.Context) (string, error) {
+			return r.nodeBearer(ctx, clusterURL, node)
+		}, nil
 	}
-	return creds, nil
 }
 
 // newHTTPClient returns NewHTTPClient's client with every request carrying
@@ -263,12 +269,7 @@ func (r *principalRegistry) newHTTPClient(ctx context.Context, timeout time.Dura
 		return nil, err
 	}
 	client := NewHTTPClient(timeout)
-	client.Transport = newNodeBearerTransport(client.Transport, r.name,
-		func(_ context.Context, node string) (dataplane.TokenSource, error) {
-			return func(ctx context.Context) (string, error) {
-				return r.nodeBearer(ctx, clusterURL, node)
-			}, nil
-		})
+	client.Transport = newNodeBearerTransport(client.Transport, r.name, r.nodeTokenSource(clusterURL))
 	return client, nil
 }
 

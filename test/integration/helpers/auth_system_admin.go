@@ -62,13 +62,12 @@ func newSystemAdminHTTPClient(ctx context.Context, client *http.Client, baseURL,
 // newSystemAdminGRPCCredentials returns per-RPC credentials carrying the
 // system admin's bearer from baseURL.
 func newSystemAdminGRPCCredentials(ctx context.Context, baseURL, certPath, keyPath, caPath string) (credentials.PerRPCCredentials, error) {
-	source, err := systemAdminTokenSource(ctx, baseURL, certPath, keyPath, caPath)
-	if err != nil {
+	creds := newNodeBearerCredentials(baseURL, systemAdminPrincipal,
+		func(ctx context.Context, node string) (dataplane.TokenSource, error) {
+			return systemAdminTokenSource(ctx, node, certPath, keyPath, caPath)
+		})
+	if _, err := creds.nodes.get(ctx, creds.home); err != nil {
 		return nil, err
-	}
-	creds, err := dataplane.NewBearerCredentials(source)
-	if err != nil {
-		return nil, &PrincipalAuthError{Principal: systemAdminPrincipal, Step: "gRPC credentials", Cause: err}
 	}
 	return creds, nil
 }
