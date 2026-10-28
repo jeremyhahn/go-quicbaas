@@ -8,9 +8,10 @@ import (
 	"reflect"
 	"testing"
 
+	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
-	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ownershipFailureCAService lists certificates but cannot read the CA's
