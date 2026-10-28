@@ -91,7 +91,7 @@ type RemoveNodeRestResponse struct {
 // The test validates the API is reachable and returns a parseable JSON response.
 func TestRESTClusterStatus(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	resp, err := client.Get(baseURL + "/api/v1/cluster/status")
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestRESTClusterStatus(t *testing.T) {
 // In embedded/standalone mode, there may be no leader available.
 func TestRESTClusterLeader(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	resp, err := client.Get(baseURL + "/api/v1/cluster/leader")
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestRESTClusterLeader(t *testing.T) {
 // In embedded/standalone mode, total_count may be 0 and nodes may be empty.
 func TestRESTClusterListNodes(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	resp, err := client.Get(baseURL + "/api/v1/cluster/nodes")
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func TestRESTClusterListNodes(t *testing.T) {
 // TestRESTClusterAddNode tests adding a node to a shard via REST API
 func TestRESTClusterAddNode(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Try to add a new node (may fail depending on cluster state)
 	req := AddNodeRestRequest{
@@ -278,7 +278,7 @@ func removeTestClusterNode(t *testing.T, client *http.Client, baseURL string, sh
 // TestRESTClusterRemoveNode tests removing a node from a shard via REST API
 func TestRESTClusterRemoveNode(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Try to remove a non-existent node (should fail gracefully)
 	nodeID := uint64(999)
@@ -318,7 +318,7 @@ func TestRESTClusterRemoveNode(t *testing.T) {
 // TestRESTClusterAddNodeValidation tests validation for add node via REST API
 func TestRESTClusterAddNodeValidation(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Test missing shard_id
 	req := AddNodeRestRequest{
@@ -386,7 +386,7 @@ func TestRESTClusterAddNodeValidation(t *testing.T) {
 // TestRESTClusterRemoveNodeValidation tests validation for remove node via REST API
 func TestRESTClusterRemoveNodeValidation(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Test missing shard_id query parameter
 	url := baseURL + "/api/v1/cluster/nodes/999"
@@ -416,7 +416,7 @@ func TestRESTClusterRemoveNodeValidation(t *testing.T) {
 // TestRESTClusterAddNodeInvalidJSON tests error handling for malformed add node requests
 func TestRESTClusterAddNodeInvalidJSON(t *testing.T) {
 	baseURL := helpers.GetRESTEndpoints()[0]
-	client := newTLSHTTPClient(30 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	invalidJSON := []byte(`{"shard_id": "not_a_number"}`)
 

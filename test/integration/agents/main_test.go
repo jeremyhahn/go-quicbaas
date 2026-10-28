@@ -55,8 +55,10 @@ func TestMain(m *testing.M) {
 	}
 
 	// Verify QuicBaaS orchestrator is available - fail fast, no skipping.
+	// The health route is authenticated (orchestrator:health), so the probe
+	// presents the tenant operator's bearer.
 	orchestratorHealthURL := env.quicbaasURL + "/api/v1/orchestrator/health"
-	if !waitForService(orchestratorHealthURL) {
+	if !waitForService(newTLSClient, orchestratorHealthURL) {
 		fmt.Fprintf(os.Stderr, "FATAL: QuicBaaS orchestrator not available at %s after %s\n",
 			orchestratorHealthURL, readyTimeout)
 		os.Exit(1)
@@ -66,7 +68,7 @@ func TestMain(m *testing.M) {
 
 	// Verify Ollama is available - fail fast, no skipping.
 	ollamaTagsURL := env.ollamaURL + "/api/tags"
-	if !waitForService(ollamaTagsURL) {
+	if !waitForService(newPlainClient, ollamaTagsURL) {
 		fmt.Fprintf(os.Stderr, "FATAL: Ollama service not available at %s after %s\n",
 			ollamaTagsURL, readyTimeout)
 		os.Exit(1)
@@ -74,25 +76,49 @@ func TestMain(m *testing.M) {
 	env.ollamaAvailable = true
 	fmt.Printf("Ollama service is available at %s\n", env.ollamaURL)
 
-	os.Exit(m.Run())
+	code := m.Run()
+	if releaseErr := helpers.ReleaseDataPlaneTenants(); releaseErr != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", releaseErr)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// clientFactory builds the HTTP client a readiness probe uses.
+type clientFactory func(ctx context.Context, timeout time.Duration) (*http.Client, error)
+
+// newPlainClient builds a client without credentials, for the external Ollama
+// probe.
+func newPlainClient(_ context.Context, timeout time.Duration) (*http.Client, error) {
+	return helpers.NewHTTPClient(timeout), nil
 }
 
 // waitForService polls the given URL until it responds with HTTP 200 or the
-// context deadline expires. Uses a ticker for polling instead of time.Sleep.
-func waitForService(url string) bool {
-	client := helpers.NewHTTPClient(5 * time.Second)
-
+// context deadline expires. The client is built on each tick until it can be,
+// since an authenticated client needs the server up to log in. Uses a ticker
+// for polling instead of time.Sleep.
+func waitForService(newClient clientFactory, url string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), readyTimeout)
 	defer cancel()
 
 	ticker := time.NewTicker(healthCheckInterval)
 	defer ticker.Stop()
 
+	var client *http.Client
 	for {
 		select {
 		case <-ctx.Done():
 			return false
 		case <-ticker.C:
+			if client == nil {
+				built, buildErr := newClient(ctx, 5*time.Second)
+				if buildErr != nil {
+					continue
+				}
+				client = built
+			}
 			resp, err := client.Get(url)
 			if err == nil {
 				resp.Body.Close()
