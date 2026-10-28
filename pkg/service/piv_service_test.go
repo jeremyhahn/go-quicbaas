@@ -25,6 +25,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // TestNewPIVService verifies the constructor returns a non-nil service that
@@ -198,15 +200,38 @@ func TestPIVService_TenantCallerCannotTouchPlatformSlots(t *testing.T) {
 			return err
 		}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.call(tenantCtx)
-			if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
-				t.Errorf("Codex 7955 / #1996: tenant caller %s must be refused by the platform-scope check, got %v", tt.name, err)
-			}
-			if got := readBack(); !bytes.Equal(got, stored) {
-				t.Errorf("Codex 7955 / #1996: tenant caller %s changed the platform PIV slot %s", tt.name, slot)
-			}
-		})
+	// #2026: the embedded transport binds an in-process caller's tenant only
+	// through tenantctx, with no qrdb identity; it must be refused the same.
+	callers := map[string]context.Context{
+		"identity":       tenantCtx,
+		"tenantctx-only": tenantctx.WithTenant(context.Background(), "acme"),
+	}
+	for caller, ctx := range callers {
+		for _, tt := range tests {
+			t.Run(caller+"/"+tt.name, func(t *testing.T) {
+				err := tt.call(ctx)
+				if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
+					t.Errorf("Codex 7955 / #1996 / #2026: %s tenant caller %s must be refused by the platform-scope check, got %v", caller, tt.name, err)
+				}
+				if got := readBack(); !bytes.Equal(got, stored) {
+					t.Errorf("Codex 7955 / #1996 / #2026: %s tenant caller %s changed the platform PIV slot %s", caller, tt.name, slot)
+				}
+			})
+		}
+	}
+
+	// A tenantctx-only system caller keeps platform reach.
+	systemOnly := tenantctx.WithSystem(context.Background())
+	replacement := selfSignedDER(t)
+	if err := svc.StorePIVCertificate(systemOnly, &xkmstransport.StorePIVCertificateRequest{
+		Backend: backend, Slot: slot, Certificate: replacement, Format: "der",
+	}); err != nil {
+		t.Fatalf("tenantctx-only system caller StorePIVCertificate: %v", err)
+	}
+	if got := readBack(); !bytes.Equal(got, replacement) {
+		t.Fatal("tenantctx-only system caller should overwrite the platform PIV slot")
+	}
+	if err := svc.DeletePIVCertificate(systemOnly, &xkmstransport.DeletePIVCertificateRequest{Backend: backend, Slot: slot}); err != nil {
+		t.Fatalf("tenantctx-only system caller DeletePIVCertificate: %v", err)
 	}
 }

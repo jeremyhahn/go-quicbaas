@@ -17,10 +17,12 @@ import (
 	"context"
 	stderrors "errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // ErrPIVNilRequest is returned when a PIV verb receives a nil request.
@@ -76,6 +78,23 @@ func (p *pivService) platformService() (*xkmssdk.XKMSService, error) {
 	return svc, nil
 }
 
+// platformScoped projects the tenant bound to ctx into the go-qrdb identity
+// that go-xkms's platform-scope check reads. That check sees only the qrdb
+// Identity and reads a missing one as system scope, while an in-process
+// caller (the embedded transport) binds its tenant only through tenantctx.
+// An identity a transport already authenticated is authoritative and is kept;
+// a context bound to no tenant, or to the system tenant, is left unchanged.
+func platformScoped(ctx context.Context) context.Context {
+	if qrdbsdk.IdentityFromContext(ctx) != nil {
+		return ctx
+	}
+	tenantID, ok := tenantctx.Lookup(ctx)
+	if !ok || tenantctx.IsSystem(tenantID) {
+		return ctx
+	}
+	return qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{TenantID: tenantID})
+}
+
 // ListPIVSlots returns the status of all PIV slots in the requested backend.
 func (p *pivService) ListPIVSlots(ctx context.Context, req *xkmstransport.ListPIVSlotsRequest) (*xkmstransport.ListPIVSlotsResponse, error) {
 	if req == nil {
@@ -85,7 +104,7 @@ func (p *pivService) ListPIVSlots(ctx context.Context, req *xkmstransport.ListPI
 	if err != nil {
 		return nil, err
 	}
-	return svc.ListPIVSlots(ctx, req)
+	return svc.ListPIVSlots(platformScoped(ctx), req)
 }
 
 // GetPIVCertificate retrieves the certificate stored in a PIV slot.
@@ -97,7 +116,7 @@ func (p *pivService) GetPIVCertificate(ctx context.Context, req *xkmstransport.G
 	if err != nil {
 		return nil, err
 	}
-	return svc.GetPIVCertificate(ctx, req)
+	return svc.GetPIVCertificate(platformScoped(ctx), req)
 }
 
 // StorePIVCertificate stores a certificate in a PIV slot.
@@ -109,7 +128,7 @@ func (p *pivService) StorePIVCertificate(ctx context.Context, req *xkmstransport
 	if err != nil {
 		return err
 	}
-	return svc.StorePIVCertificate(ctx, req)
+	return svc.StorePIVCertificate(platformScoped(ctx), req)
 }
 
 // DeletePIVCertificate removes the certificate from a PIV slot.
@@ -121,7 +140,7 @@ func (p *pivService) DeletePIVCertificate(ctx context.Context, req *xkmstranspor
 	if err != nil {
 		return err
 	}
-	return svc.DeletePIVCertificate(ctx, req)
+	return svc.DeletePIVCertificate(platformScoped(ctx), req)
 }
 
 // GeneratePIVKey generates a new key pair in a PIV slot with a self-signed
@@ -134,7 +153,7 @@ func (p *pivService) GeneratePIVKey(ctx context.Context, req *xkmstransport.Gene
 	if err != nil {
 		return nil, err
 	}
-	return svc.GeneratePIVKey(ctx, req)
+	return svc.GeneratePIVKey(platformScoped(ctx), req)
 }
 
 // ImportPIVCertificate imports a certificate into a PIV slot.
@@ -146,7 +165,7 @@ func (p *pivService) ImportPIVCertificate(ctx context.Context, req *xkmstranspor
 	if err != nil {
 		return err
 	}
-	return svc.ImportPIVCertificate(ctx, req)
+	return svc.ImportPIVCertificate(platformScoped(ctx), req)
 }
 
 // ExportPIVCertificate exports the certificate from a PIV slot.
@@ -158,7 +177,7 @@ func (p *pivService) ExportPIVCertificate(ctx context.Context, req *xkmstranspor
 	if err != nil {
 		return nil, err
 	}
-	return svc.ExportPIVCertificate(ctx, req)
+	return svc.ExportPIVCertificate(platformScoped(ctx), req)
 }
 
 // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
@@ -170,5 +189,5 @@ func (p *pivService) GeneratePIVCSR(ctx context.Context, req *xkmstransport.Gene
 	if err != nil {
 		return nil, err
 	}
-	return svc.GeneratePIVCSR(ctx, req)
+	return svc.GeneratePIVCSR(platformScoped(ctx), req)
 }
