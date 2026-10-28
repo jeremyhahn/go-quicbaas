@@ -38,15 +38,17 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Get initial cluster status
 	t.Log("Step 1: Getting initial cluster status")
-	statusResp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+	statusResp, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
 	require.NoError(t, err, "Failed to get cluster status")
 
 	initialShardCount := len(statusResp.Shards)
@@ -96,7 +98,7 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 	// Wait for shards to elect leaders
 	t.Log("Step 4: Waiting for leader election")
 	pollUntil(t, clusterSettleTimeout, "new shards created with elected leaders", func(ctx context.Context) (bool, error) {
-		resp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+		resp, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
 		if err != nil {
 			return false, err
 		}
@@ -113,7 +115,7 @@ func TestClusterManagement_CreateShards(t *testing.T) {
 
 	// Verify all shards exist
 	t.Log("Step 5: Verifying all shards exist and have leaders")
-	statusResp, err = client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+	statusResp, err = admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
 	require.NoError(t, err, "Failed to get cluster status")
 
 	finalShardCount := len(statusResp.Shards)
@@ -166,13 +168,15 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 	// Connect to node 1
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	if err != nil {
 		t.Fatalf("Failed to connect to node1: %v", err)
 	}
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Write uneven data distribution
 	t.Log("Step 1: Writing 1000 entities with uneven distribution")
@@ -191,7 +195,7 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 
 	// Get cluster status before rebalancing
 	t.Log("Step 2: Checking cluster status before rebalancing")
-	statusResp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{
+	statusResp, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{
 		IncludeMetrics: true,
 	})
 	if err != nil {
@@ -205,7 +209,7 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 
 	// Trigger rebalancing
 	t.Log("Step 3: Triggering cluster rebalancing")
-	rebalanceResp, err := client.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
+	rebalanceResp, err := admin.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
 		Strategy: "round_robin",
 	})
 	if err != nil {
@@ -217,7 +221,7 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 	// Monitor rebalancing progress
 	t.Log("Step 4: Monitoring rebalancing progress")
 	for i := 0; i < 30; i++ {
-		progressResp, err := client.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
+		progressResp, err := admin.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
 			OperationId: rebalanceResp.OperationId,
 		})
 		if err != nil {
@@ -253,7 +257,7 @@ func TestClusterManagement_Rebalancing(t *testing.T) {
 
 	// Get cluster status after rebalancing
 	t.Log("Step 6: Checking cluster status after rebalancing")
-	statusResp, err = client.ClusterStatus(ctx, &pb.ClusterStatusRequest{
+	statusResp, err = admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{
 		IncludeMetrics: true,
 	})
 	if err != nil {

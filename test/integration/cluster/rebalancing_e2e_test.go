@@ -154,11 +154,13 @@ func TestDataDistributionRebalancing(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Wait for cluster to be fully ready including Raft consensus
 	t.Log("Waiting for Raft cluster to be ready...")
@@ -180,7 +182,7 @@ func TestDataDistributionRebalancing(t *testing.T) {
 
 	// Phase 2: Check cluster status before rebalancing
 	t.Run("Phase2_CheckStatusBefore", func(t *testing.T) {
-		statusResp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{
+		statusResp, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{
 			IncludeMetrics: true,
 		})
 		require.NoError(t, err, "Failed to get cluster status")
@@ -196,7 +198,7 @@ func TestDataDistributionRebalancing(t *testing.T) {
 
 	// Phase 3: Execute rebalancing via gRPC API
 	t.Run("Phase3_ExecuteRebalancing", func(t *testing.T) {
-		rebalanceResp, err := client.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
+		rebalanceResp, err := admin.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
 			Strategy: "round_robin",
 		})
 		require.NoError(t, err, "Failed to trigger rebalancing")
@@ -206,7 +208,7 @@ func TestDataDistributionRebalancing(t *testing.T) {
 
 		// Monitor rebalancing progress
 		for i := 0; i < 30; i++ {
-			progressResp, err := client.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
+			progressResp, err := admin.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
 				OperationId: rebalanceResp.OperationId,
 			})
 			if err != nil {
@@ -246,7 +248,7 @@ func TestDataDistributionRebalancing(t *testing.T) {
 
 	// Phase 5: Check cluster status after rebalancing
 	t.Run("Phase5_CheckStatusAfter", func(t *testing.T) {
-		statusResp, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{
+		statusResp, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{
 			IncludeMetrics: true,
 		})
 		require.NoError(t, err, "Failed to get cluster status")
@@ -270,11 +272,13 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Wait for cluster to be fully ready including Raft consensus
 	t.Log("Waiting for Raft cluster to be ready...")
@@ -340,7 +344,7 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 
 	// Phase 2: Execute rebalancing during writes
 	t.Run("Phase2_RebalanceDuringWrites", func(t *testing.T) {
-		rebalanceResp, err := client.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
+		rebalanceResp, err := admin.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
 			Strategy: "round_robin",
 		})
 		require.NoError(t, err, "Failed to trigger rebalancing")
@@ -349,7 +353,7 @@ func TestRebalancingWithConcurrentWrites(t *testing.T) {
 
 		// Monitor rebalancing progress
 		for i := 0; i < 30; i++ {
-			progressResp, err := client.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
+			progressResp, err := admin.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
 				OperationId: rebalanceResp.OperationId,
 			})
 			if err != nil {
@@ -401,11 +405,13 @@ func TestRebalancingMultipleShards(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Wait for cluster to be fully ready including Raft consensus
 	t.Log("Waiting for Raft cluster to be ready...")
@@ -431,7 +437,7 @@ func TestRebalancingMultipleShards(t *testing.T) {
 
 	// Phase 2: Execute rebalancing
 	t.Run("Phase2_RebalanceMultipleShards", func(t *testing.T) {
-		rebalanceResp, err := client.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
+		rebalanceResp, err := admin.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
 			Strategy: "round_robin",
 		})
 		require.NoError(t, err, "Failed to trigger rebalancing")
@@ -440,7 +446,7 @@ func TestRebalancingMultipleShards(t *testing.T) {
 
 		// Monitor progress
 		for i := 0; i < 30; i++ {
-			progressResp, err := client.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
+			progressResp, err := admin.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
 				OperationId: rebalanceResp.OperationId,
 			})
 			if err != nil {
@@ -495,11 +501,13 @@ func TestRebalancingIdempotency(t *testing.T) {
 	// Connect to node 1 via gRPC
 	tlsCfg := requireTLSConfig(t)
 	conn, err := grpc.NewClient("test-node1:50051",
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		tenantOperatorAuth(t))
 	require.NoError(t, err, "Failed to connect to node1")
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClientExt(conn)
+	admin := pb.NewQuicBaaSClientExt(dialSystemAdmin(t, "test-node1:50051"))
 
 	// Wait for cluster to be fully ready including Raft consensus
 	t.Log("Waiting for Raft cluster to be ready...")
@@ -524,14 +532,14 @@ func TestRebalancingIdempotency(t *testing.T) {
 		for run := 1; run <= 3; run++ {
 			t.Logf("Rebalance run %d/3", run)
 
-			rebalanceResp, err := client.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
+			rebalanceResp, err := admin.RebalanceCluster(ctx, &pb.RebalanceClusterRequest{
 				Strategy: "round_robin",
 			})
 			require.NoError(t, err, "Failed to trigger rebalancing run %d", run)
 
 			// Wait for completion
 			for i := 0; i < 20; i++ {
-				progressResp, err := client.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
+				progressResp, err := admin.GetRebalanceProgress(ctx, &pb.GetRebalanceProgressRequest{
 					OperationId: rebalanceResp.OperationId,
 				})
 				if err != nil || progressResp.Status == "completed" {

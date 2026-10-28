@@ -276,6 +276,8 @@ func getLeaderNode(ctx context.Context, t *testing.T) (string, uint64) {
 		conn, err := grpc.DialContext(connCtx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
+			// ClusterStatus requires admin:status, which the system admin holds.
+			grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 		)
 		connCancel()
 

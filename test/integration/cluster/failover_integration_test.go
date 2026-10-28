@@ -73,11 +73,13 @@ func TestFailoverScenarios(t *testing.T) {
 		conn, err := grpc.DialContext(ctx, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
+			tenantOperatorAuth(t),
 		)
 		require.NoError(t, err)
 		defer conn.Close()
 
 		client := pb.NewQuicBaaSClient(conn)
+		admin := pb.NewQuicBaaSClient(dialSystemAdmin(t, endpoints[0]))
 
 		// Write data before failover
 		preFailoverStart := time.Now()
@@ -110,7 +112,7 @@ func TestFailoverScenarios(t *testing.T) {
 		t.Logf("Simulating leader failover...")
 		holdSteady(t, simulatedFailureWindow, "node keeps answering cluster status during the failover",
 			func(ctx context.Context) error {
-				_, err := client.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
+				_, err := admin.ClusterStatus(ctx, &pb.ClusterStatusRequest{})
 				return err
 			})
 
@@ -159,6 +161,7 @@ func TestFailoverScenarios(t *testing.T) {
 		conn, err := grpc.DialContext(ctx, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 			grpc.WithBlock(),
+			tenantOperatorAuth(t),
 		)
 		require.NoError(t, err)
 		defer conn.Close()

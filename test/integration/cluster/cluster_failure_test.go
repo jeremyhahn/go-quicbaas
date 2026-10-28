@@ -107,6 +107,7 @@ func TestNodeFailureAndRecovery(t *testing.T) {
 		conn, err := grpc.DialContext(connCtx, endpoint,
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg1)),
 			grpc.WithBlock(),
+			tenantOperatorAuth(t),
 		)
 		connCancel()
 		require.NoError(t, err, "Failed to connect to node %d at %s", i+1, endpoint)
@@ -195,16 +196,18 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClient(conn)
+	admin := pb.NewQuicBaaSClient(dialSystemAdmin(t, endpoints[0]))
 
 	// Get initial leader with timeout
 	statusCtx, statusCancel := context.WithTimeout(ctx, 10*time.Second)
-	statusResp, err := client.ClusterStatus(statusCtx, &pb.ClusterStatusRequest{})
+	statusResp, err := admin.ClusterStatus(statusCtx, &pb.ClusterStatusRequest{})
 	statusCancel()
 	require.NoError(t, err)
 
@@ -223,7 +226,7 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 	// In real deployment, you'd kill the leader process
 	// Here we'll just wait and check that system is still operational
 
-	holdSteady(t, simulatedFailureWindow, "cluster status reports a leader", grpcClusterHasLeader(client))
+	holdSteady(t, simulatedFailureWindow, "cluster status reports a leader", grpcClusterHasLeader(admin))
 
 	// Verify cluster is still operational
 	// Try to perform operations
@@ -243,6 +246,7 @@ func TestLeaderElectionAfterLeaderFailure(t *testing.T) {
 		conn2, err2 := grpc.DialContext(connCtx2, endpoints[1],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg3)),
 			grpc.WithBlock(),
+			tenantOperatorAuth(t),
 		)
 		connCancel2()
 		require.NoError(t, err2, "Failed to connect to node 2 at %s", endpoints[1])
@@ -272,6 +276,7 @@ func TestNetworkPartition(t *testing.T) {
 	conn1, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg4)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
@@ -349,16 +354,18 @@ func TestNodeReplacement(t *testing.T) {
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg5)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
 	defer conn.Close()
 
 	client := pb.NewQuicBaaSClient(conn)
+	admin := pb.NewQuicBaaSClient(dialSystemAdmin(t, endpoints[0]))
 
 	// Get initial cluster status
 	statusCtx, statusCancel := context.WithTimeout(ctx, 10*time.Second)
-	initialStatus, err := client.ClusterStatus(statusCtx, &pb.ClusterStatusRequest{})
+	initialStatus, err := admin.ClusterStatus(statusCtx, &pb.ClusterStatusRequest{})
 	statusCancel()
 	require.NoError(t, err)
 	initialNodeCount := len(initialStatus.Nodes)
@@ -389,7 +396,7 @@ func TestNodeReplacement(t *testing.T) {
 
 	// After replacement, cluster should still have same number of nodes
 	statusCtx2, statusCancel2 := context.WithTimeout(ctx, 10*time.Second)
-	finalStatus, err := client.ClusterStatus(statusCtx2, &pb.ClusterStatusRequest{})
+	finalStatus, err := admin.ClusterStatus(statusCtx2, &pb.ClusterStatusRequest{})
 	statusCancel2()
 	require.NoError(t, err)
 
@@ -424,6 +431,7 @@ func TestSlowNode(t *testing.T) {
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg6)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
@@ -487,6 +495,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg7)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
@@ -524,6 +533,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 	conn2, err := grpc.DialContext(connCtx2, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg8)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel2()
 	if err != nil {
@@ -536,6 +546,7 @@ func TestRecoveryAfterCompleteClusterFailure(t *testing.T) {
 		conn2, err = grpc.DialContext(connCtx3, endpoints[0],
 			grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg9)),
 			grpc.WithBlock(),
+			tenantOperatorAuth(t),
 		)
 		connCancel3()
 		require.NoError(t, err, "Cluster should be available after recovery")
@@ -579,6 +590,7 @@ func TestConcurrentFailuresAndWrites(t *testing.T) {
 	conn, err := grpc.DialContext(connCtx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg10)),
 		grpc.WithBlock(),
+		tenantOperatorAuth(t),
 	)
 	connCancel()
 	require.NoError(t, err, "Failed to connect to node 1 at %s", endpoints[0])
