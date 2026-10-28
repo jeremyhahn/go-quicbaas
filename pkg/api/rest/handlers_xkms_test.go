@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -2781,8 +2782,9 @@ func TestXKMS91_ListPIVSlots(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns error when no PIV support available", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots", nil)
@@ -2808,8 +2810,9 @@ func TestXKMS91_GetPIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns error for software backend", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots/9a/cert", nil)
@@ -2834,8 +2837,9 @@ func TestXKMS91_StorePIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/xkms/piv/slots/9a/cert", bytes.NewReader([]byte(`{bad`)))
@@ -2865,8 +2869,9 @@ func TestXKMS91_DeletePIVCertificate(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("returns PIV error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/piv/slots/9a/cert", nil)
@@ -2891,8 +2896,9 @@ func TestXKMS91_GeneratePIVKey(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/key", bytes.NewReader([]byte(`{bad`)))
@@ -2922,8 +2928,9 @@ func TestXKMS91_GeneratePIVCSR(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
-	server, _, srvCleanup := setupMockServer(t)
+	server, mockService, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
+	mockService.PIVSvc = service.NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/csr", bytes.NewReader([]byte(`{bad`)))
