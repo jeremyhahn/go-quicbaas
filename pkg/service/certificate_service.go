@@ -775,7 +775,8 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			Err:  errCertNegativeLimit,
 		}
 	}
-	if _, err := prepareTenantContext(ctx); err != nil {
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
 		return nil, err
 	}
 
@@ -791,6 +792,10 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 			Op:   "CertificateService.ListCertificates",
 			Err:  err,
 		}
+	}
+
+	if tenantID != "" {
+		certs = s.certificatesIssuedForCaller(ctx, certs)
 	}
 
 	now := time.Now()
@@ -824,6 +829,19 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 		Certificates: out,
 		TotalCount:   len(certs),
 	}, nil
+}
+
+// certificatesIssuedForCaller keeps only the certificates issued for the
+// caller's tenant, so a tenant neither sees nor counts another tenant's
+// certificates.
+func (s *certificateService) certificatesIssuedForCaller(ctx context.Context, certs []*x509.Certificate) []*x509.Certificate {
+	own := make([]*x509.Certificate, 0, len(certs))
+	for _, cert := range certs {
+		if cert != nil && BindToIssuingTenant(ctx, s.caService, cert.SerialNumber) == nil {
+			own = append(own, cert)
+		}
+	}
+	return own
 }
 
 // summariseCertificate projects an x509.Certificate into the compact
