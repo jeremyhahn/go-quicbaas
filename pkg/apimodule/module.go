@@ -36,8 +36,7 @@
 // One family of legacy gRPC services is deliberately NOT registered here even
 // though pkg/server/lifecycle.go serves it on the legacy transport:
 //
-//   - qrdb-proxy planes (Barrier, TenantBarrier, Ceremony, VectorDB,
-//     VectorAdmin): their handlers forward every verb through the embedded
+//   - qrdb-proxy planes (Barrier, TenantBarrier, Ceremony): their handlers forward every verb through the embedded
 //     go-qrdb node's own SDK client (qrdbtransport.*Client) or mirror
 //     go-qrdb's own pkg/service surface verbatim. qrdb serves the identical
 //     capability natively on the unified server; registering quicbaas's
@@ -60,6 +59,11 @@
 // only TCP gRPC listener there is: without them `quicbaas --transport grpc
 // kms key generate` answers Unimplemented (#1960). The two surfaces carry
 // different proto service names, so they do not collide.
+//
+// VectorDB and VectorAdmin are registered for the same reason: the SDK's
+// gRPC transport (pkg/api/grpc/client_vector.go) speaks quicbaas.vector.v1,
+// which no other module serves, so without them every gRPC vector verb
+// answers Unimplemented (#2030).
 //
 // FIDO2Service is the other xkms-backed surface registered here: quicbaas's
 // own tenant-scoped LOGIN ceremony (the WebAuthn analogue of the Login
@@ -364,6 +368,8 @@ type grpcServers struct {
 	agentCatalog       pb.AgentCatalogServiceServer
 	sdlc               pb.SDLCServiceServer
 	registry           pb.RegistryServiceServer
+	vectorDB           pb.VectorDBServer
+	vectorAdmin        pb.VectorAdminServer
 }
 
 // HostGRPCServers carries the gRPC servers the host builds from IAM state
@@ -448,6 +454,8 @@ var grpcRegistrations = []grpcRegistration{
 	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
 	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
 	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
+	{desc: &pb.VectorDB_ServiceDesc, capability: "vector", pick: func(s *grpcServers) any { return s.vectorDB }},
+	{desc: &pb.VectorAdmin_ServiceDesc, capability: "vector-admin", pick: func(s *grpcServers) any { return s.vectorAdmin }},
 	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
 	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 }
@@ -680,6 +688,14 @@ func (m *Module) bind() (*grpcServers, error) {
 	}
 	built.attestation = facade
 	built.piv = facade
+
+	// The quicbaas.vector.v1 services the SDK's gRPC transport dials
+	// (pkg/api/grpc/client_vector.go), gated exactly as
+	// pkg/server/lifecycle.go gates them on the Unix listener (#2030).
+	if svc.Vector() != nil {
+		built.vectorDB = grpcapi.NewVectorDBWrapper(facade)
+		built.vectorAdmin = grpcapi.NewVectorAdminWrapper(facade)
+	}
 
 	// The registry, agent catalog and SDLC services are quicbaas-native, so
 	// the node serves them as the Unix listener does (#1696). The SDLC server

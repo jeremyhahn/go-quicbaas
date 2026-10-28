@@ -198,11 +198,13 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.AgentCatalogService_ServiceDesc,
 		&pb.SDLCService_ServiceDesc,
 		&pb.RegistryService_ServiceDesc,
+		&pb.VectorDB_ServiceDesc,
+		&pb.VectorAdmin_ServiceDesc,
 		&iampb.FederationService_ServiceDesc,
 		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the twenty-nine quicbaas-native, broker and crypto services must be registered")
+	require.Len(t, info, len(generated), "exactly the thirty-one quicbaas-native, broker and crypto services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -228,7 +230,7 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 }
 
 // TestModule_RegisterGRPC_ExcludesProxyPlanes proves the qrdb-proxy planes
-// (Barrier, TenantBarrier, Ceremony, VectorDB, VectorAdmin) stay OFF this
+// (Barrier, TenantBarrier, Ceremony) stay OFF this
 // module's surface: go-qrdb's own unified server already registers the
 // identical capability natively, so duplicating it here would register a
 // redundant proto surface.
@@ -244,8 +246,6 @@ func TestModule_RegisterGRPC_ExcludesProxyPlanes(t *testing.T) {
 		pb.Barrier_ServiceDesc.ServiceName,
 		pb.TenantBarrier_ServiceDesc.ServiceName,
 		pb.Ceremony_ServiceDesc.ServiceName,
-		pb.VectorDB_ServiceDesc.ServiceName,
-		pb.VectorAdmin_ServiceDesc.ServiceName,
 	}
 	for _, name := range excluded {
 		_, ok := info[name]
@@ -284,6 +284,46 @@ func TestModule_KeyManagement_LateBinding(t *testing.T) {
 	resp, err := client.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{})
 	require.NoError(t, err, "the late-bound KeyManagement must serve without re-registration")
 	assert.NotEmpty(t, resp.GetAlgorithms())
+}
+
+// TestModule_VectorDB_LateBinding proves the node serves the
+// quicbaas.vector.v1 VectorDB and VectorAdmin services the SDK's gRPC
+// transport dials (#2030): before the facade composes they answer
+// Unavailable, not Unimplemented, and once the facade carries a vector
+// service the same registration reaches it.
+func TestModule_VectorDB_LateBinding(t *testing.T) {
+	var svc atomic.Pointer[mocks.MockQuicBaaS]
+	m, err := NewModule(func() service.QuicBaaS {
+		if composed := svc.Load(); composed != nil {
+			return composed
+		}
+		return nil
+	}, testLogger(t))
+	require.NoError(t, err)
+
+	conn := startBufconnModule(t, m)
+	client := pb.NewVectorDBClient(conn)
+	admin := pb.NewVectorAdminClient(conn)
+	ctx := context.Background()
+	req := &pb.CreateNamespaceRequest{Config: &pb.NamespaceConfig{Namespace: "docs", Dimensions: 4}}
+
+	_, err = client.CreateNamespace(ctx, req)
+	requireUnavailable(t, err, "VectorDB (pre-composition)")
+	_, err = admin.GetClusterStats(ctx, &pb.GetClusterStatsRequest{})
+	requireUnavailable(t, err, "VectorAdmin (pre-composition)")
+
+	var created atomic.Bool
+	svc.Store(&mocks.MockQuicBaaS{
+		MockVectorService: &mocks.MockVectorService{
+			CreateNamespaceFunc: func(context.Context, *service.CreateNamespaceRequest) (*service.CreateNamespaceResponse, error) {
+				created.Store(true)
+				return &service.CreateNamespaceResponse{Success: true}, nil
+			},
+		},
+	})
+	_, err = client.CreateNamespace(ctx, req)
+	require.NoError(t, err, "the late-bound VectorDB must serve without re-registration")
+	assert.True(t, created.Load(), "CreateNamespace must reach the facade's vector service")
 }
 
 // startBufconnModule registers the module on a bufconn-backed gRPC server and
