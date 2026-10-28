@@ -345,7 +345,9 @@ func (c *restClusterClient) Setup(t *testing.T, ctx context.Context) error {
 	endpoints := helpers.GetRESTEndpoints()
 	require.NotEmpty(t, endpoints, "REST endpoints must be available for integration tests")
 	c.baseURL = endpoints[0]
-	c.client = newInsecureHTTPClient(30 * time.Second)
+	// The cluster routes need admin:status under require_authz: call as the
+	// system admin, as the gRPC and Unix cluster clients do.
+	c.client = helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	return nil
 }
 
