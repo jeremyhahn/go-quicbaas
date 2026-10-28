@@ -73,6 +73,10 @@ func pivLoginSession(t *testing.T, cluster *testCluster) *helpers.PIVSession {
 }
 
 // postRefresh redeems a refresh credential against the public renewal endpoint.
+// It posts to /api/v1/iam/refresh, the route served by iam.OIDCProvider, which
+// is the provider that minted the credential at /api/v1/iam/login/piv.
+// /api/v1/auth/refresh belongs to xkms and redeems against its own refresh
+// store, which has never seen a credential issued by the IAM login.
 func postRefresh(t *testing.T, cluster *testCluster, refreshToken string) (int, sessionTokens, string) {
 	t.Helper()
 
@@ -80,7 +84,7 @@ func postRefresh(t *testing.T, cluster *testCluster, refreshToken string) (int, 
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost,
-		cluster.httpEndpoint+"/api/v1/auth/refresh", bytes.NewReader(payload))
+		cluster.httpEndpoint+"/api/v1/iam/refresh", bytes.NewReader(payload))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
