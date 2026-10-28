@@ -33,12 +33,20 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 )
 
-// e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var e2eHTTPClient = newInsecureHTTPClient(30 * time.Second)
+// Each test's e2eHTTPClient carries the bearer its routes require: the tenant
+// operator's for entity and batch routes, which need go-qrdb's KV grants, and
+// the system admin's for cluster status and metrics.
+
+// e2eTenantClient returns a client that calls as the tenant operator.
+func e2eTenantClient(t *testing.T) *http.Client {
+	t.Helper()
+	return helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
+}
 
 // e2eCleanup sends a cleanup request, with body as JSON when it is non-nil,
 // and fails the test if the request cannot be sent.
 func e2eCleanup(t *testing.T, method, url string, body []byte) {
+	e2eHTTPClient := e2eTenantClient(t)
 	t.Helper()
 
 	var reader io.Reader
@@ -63,6 +71,7 @@ func e2eCleanup(t *testing.T, method, url string, body []byte) {
 
 // TestE2EDataConsistency validates that data written to one node is visible on all nodes
 func TestE2EDataConsistency(t *testing.T) {
+	e2eHTTPClient := e2eTenantClient(t)
 	if helpers.IsStandaloneMode(t, helpers.GetClusterEndpoints()) {
 		t.Log("Cluster running in standalone/embedded mode - data consistency requires real Raft cluster")
 		return
@@ -155,6 +164,7 @@ func TestE2EDataConsistency(t *testing.T) {
 
 // TestE2ELeaderElection validates leader election behavior
 func TestE2ELeaderElection(t *testing.T) {
+	e2eHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	if helpers.IsStandaloneMode(t, helpers.GetClusterEndpoints()) {
 		t.Log("Cluster running in standalone/embedded mode - leader election requires real Raft cluster")
 		return
@@ -195,6 +205,8 @@ func TestE2ELeaderElection(t *testing.T) {
 
 // TestE2EHealthChecks validates health check endpoints
 func TestE2EHealthChecks(t *testing.T) {
+	// The health routes are public.
+	e2eHTTPClient := newInsecureHTTPClient(30 * time.Second)
 	nodes := getNodeURLs()
 	waitForQuorumReady(t, nodes)
 
@@ -226,6 +238,7 @@ func TestE2EHealthChecks(t *testing.T) {
 
 // TestE2EMetricsEndpoint validates metrics endpoint
 func TestE2EMetricsEndpoint(t *testing.T) {
+	e2eHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	// Metrics are served on the REST port at /api/v1/metrics
 	// Try multiple nodes in case one was killed by other tests
 	metricsURLs := []string{
@@ -280,6 +293,7 @@ func TestE2EMetricsEndpoint(t *testing.T) {
 
 // TestE2EBasicCRUD validates basic Create, Read, Update, Delete operations
 func TestE2EBasicCRUD(t *testing.T) {
+	e2eHTTPClient := e2eTenantClient(t)
 	nodes := getNodeURLs()
 	waitForQuorumReady(t, nodes)
 
@@ -353,6 +367,7 @@ func TestE2EBasicCRUD(t *testing.T) {
 
 // TestE2EBatchOperations validates atomic batch operations
 func TestE2EBatchOperations(t *testing.T) {
+	e2eHTTPClient := e2eTenantClient(t)
 	nodes := getNodeURLs()
 	waitForQuorumReady(t, nodes)
 
@@ -462,6 +477,7 @@ func TestE2EBatchOperations(t *testing.T) {
 // Only the leader can accept writes; non-leader nodes return 408 (proposal timeout).
 // The probe entity is cleaned up before returning.
 func discoverLeaderNode(t *testing.T, nodes []string) string {
+	e2eHTTPClient := e2eTenantClient(t)
 	t.Helper()
 
 	probeEntityType := fmt.Sprintf("leader_probe_%d", time.Now().UnixNano())
@@ -501,6 +517,7 @@ func discoverLeaderNode(t *testing.T, nodes []string) string {
 
 // TestE2EConcurrentWrites validates concurrent writes don't cause issues
 func TestE2EConcurrentWrites(t *testing.T) {
+	e2eHTTPClient := e2eTenantClient(t)
 	nodes := getNodeURLs()
 	waitForQuorumReady(t, nodes)
 
@@ -602,6 +619,7 @@ func TestE2EConcurrentWrites(t *testing.T) {
 
 // TestE2EListOperations validates list functionality
 func TestE2EListOperations(t *testing.T) {
+	e2eHTTPClient := e2eTenantClient(t)
 	nodes := getNodeURLs()
 	waitForQuorumReady(t, nodes)
 

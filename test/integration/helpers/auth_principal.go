@@ -62,6 +62,9 @@ type enrolledPrincipal struct {
 	certPEM  []byte
 	keyPEM   []byte
 	token    pivCachedToken
+	// nodeTokens holds the bearer from each other node of the cluster: a node
+	// accepts only the bearers it issued.
+	nodeTokens map[string]pivCachedToken
 }
 
 // principalEnroller provisions a principal in the cluster at baseURL. A
@@ -129,6 +132,36 @@ func (r *principalRegistry) bearer(ctx context.Context, baseURL string) (string,
 		return "", &PrincipalAuthError{Principal: r.name, Step: "PIV login", TenantID: principal.tenantID, Cause: err}
 	}
 	principal.token = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
+	return bearer, nil
+}
+
+// nodeBearer returns the bearer of the principal of the cluster at clusterURL
+// at node. The principal enrolls once, at clusterURL, and logs in with its
+// certificate at each other node it calls, since a node accepts only the
+// bearers it issued.
+func (r *principalRegistry) nodeBearer(ctx context.Context, clusterURL, node string) (string, error) {
+	clusterURL = strings.TrimRight(clusterURL, "/")
+	node = strings.TrimRight(node, "/")
+	bearer, err := r.bearer(ctx, clusterURL)
+	if err != nil || node == clusterURL {
+		return bearer, err
+	}
+
+	r.Lock()
+	defer r.Unlock()
+
+	principal := r.principals[clusterURL]
+	if token, ok := principal.nodeTokens[node]; ok && time.Now().Before(token.ExpiresAt) {
+		return token.Bearer, nil
+	}
+	bearer, expiresIn, err := r.login(ctx, node, principal.certPEM, principal.keyPEM)
+	if err != nil {
+		return "", &PrincipalAuthError{Principal: r.name, Step: "PIV login", TenantID: principal.tenantID, Cause: err}
+	}
+	if principal.nodeTokens == nil {
+		principal.nodeTokens = make(map[string]pivCachedToken)
+	}
+	principal.nodeTokens[node] = pivCachedToken{Bearer: bearer, ExpiresAt: bearerExpiry(expiresIn)}
 	return bearer, nil
 }
 
@@ -222,18 +255,20 @@ func (r *principalRegistry) newGRPCCredentials(ctx context.Context) (credentials
 }
 
 // newHTTPClient returns NewHTTPClient's client with every request carrying
-// the principal's bearer.
+// the principal's bearer from the node it goes to. It enrolls the principal
+// up front, at the first REST endpoint's cluster.
 func (r *principalRegistry) newHTTPClient(ctx context.Context, timeout time.Duration) (*http.Client, error) {
-	source, err := r.newTokenSource(ctx)
-	if err != nil {
+	clusterURL := GetRESTEndpoints()[0]
+	if _, err := r.bearer(ctx, clusterURL); err != nil {
 		return nil, err
 	}
 	client := NewHTTPClient(timeout)
-	transport, err := dataplane.NewBearerTransport(source, client.Transport)
-	if err != nil {
-		return nil, &PrincipalAuthError{Principal: r.name, Step: "HTTP client", Cause: err}
-	}
-	client.Transport = transport
+	client.Transport = newNodeBearerTransport(client.Transport, r.name,
+		func(_ context.Context, node string) (dataplane.TokenSource, error) {
+			return func(ctx context.Context) (string, error) {
+				return r.nodeBearer(ctx, clusterURL, node)
+			}, nil
+		})
 	return client, nil
 }
 

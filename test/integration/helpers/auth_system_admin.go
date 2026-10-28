@@ -17,6 +17,7 @@ package helpers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,15 +45,15 @@ func systemAdminTokenSource(ctx context.Context, baseURL, certPath, keyPath, caP
 }
 
 // newSystemAdminHTTPClient wraps client's transport so every request carries
-// the system admin's bearer from baseURL.
+// the system admin's bearer from the node it goes to. It logs in at baseURL up
+// front so a bad certificate fails the caller before its first request.
 func newSystemAdminHTTPClient(ctx context.Context, client *http.Client, baseURL, certPath, keyPath, caPath string) (*http.Client, error) {
-	source, err := systemAdminTokenSource(ctx, baseURL, certPath, keyPath, caPath)
-	if err != nil {
+	transport := newNodeBearerTransport(client.Transport, systemAdminPrincipal,
+		func(ctx context.Context, node string) (dataplane.TokenSource, error) {
+			return systemAdminTokenSource(ctx, node, certPath, keyPath, caPath)
+		})
+	if _, err := transport.nodeTransport(ctx, strings.TrimRight(baseURL, "/")); err != nil {
 		return nil, err
-	}
-	transport, err := dataplane.NewBearerTransport(source, client.Transport)
-	if err != nil {
-		return nil, &PrincipalAuthError{Principal: systemAdminPrincipal, Step: "HTTP client", Cause: err}
 	}
 	client.Transport = transport
 	return client, nil

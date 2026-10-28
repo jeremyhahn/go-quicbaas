@@ -140,6 +140,48 @@ func TestPrincipalBearer_LoginFailureIsTyped(t *testing.T) {
 	require.ErrorIs(t, err, errLoginRefused)
 }
 
+// A node accepts only the bearers it issued, so the principal enrolled at the
+// cluster's first node logs in again at each other node, once per node.
+func TestPrincipalNodeBearer_LogsInAtEachNodeOnce(t *testing.T) {
+	fake := &fakeEnrollment{expiresIn: 900}
+	logins := map[string]int{}
+	registry := newPrincipalRegistry("test", fake.enroll, func(_ context.Context, baseURL string, _, _ []byte) (string, int, error) {
+		logins[baseURL]++
+		return "bearer@" + baseURL, 900, nil
+	})
+	const node2 = "https://test-node2:8080"
+
+	got, err := registry.nodeBearer(context.Background(), testBaseURL, testBaseURL)
+	require.NoError(t, err)
+	require.Equal(t, "bearer@"+testBaseURL, got)
+
+	for range 2 {
+		got, err = registry.nodeBearer(context.Background(), testBaseURL, node2+"/")
+		require.NoError(t, err)
+		require.Equal(t, "bearer@"+node2, got)
+	}
+	require.Equal(t, 1, fake.enrolls, "the principal enrolls once, at the cluster's first node")
+	require.Equal(t, map[string]int{testBaseURL: 1, node2: 1}, logins)
+}
+
+func TestPrincipalNodeBearer_LoginFailureAtANodeIsTyped(t *testing.T) {
+	fake := &fakeEnrollment{expiresIn: 900}
+	registry := newPrincipalRegistry("test", fake.enroll, func(_ context.Context, baseURL string, _, _ []byte) (string, int, error) {
+		if baseURL != testBaseURL {
+			return "", 0, errLoginRefused
+		}
+		return "bearer-1", 900, nil
+	})
+
+	_, err := registry.nodeBearer(context.Background(), testBaseURL, "https://test-node2:8080")
+
+	var authErr *PrincipalAuthError
+	require.ErrorAs(t, err, &authErr)
+	require.Equal(t, "PIV login", authErr.Step)
+	require.Equal(t, "tenant-1", authErr.TenantID)
+	require.ErrorIs(t, err, errLoginRefused)
+}
+
 func TestPrincipalTenantID_EmptyUntilEnrolled(t *testing.T) {
 	registry := newFakeRegistry(&fakeEnrollment{expiresIn: 3600})
 	require.Empty(t, registry.tenantID(testBaseURL))

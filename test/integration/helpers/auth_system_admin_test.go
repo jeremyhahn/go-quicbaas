@@ -16,6 +16,7 @@ package helpers
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -23,50 +24,68 @@ import (
 	"time"
 )
 
-// newAuthorizationRecorder starts a server that records the Authorization
-// header of every request it receives.
-func newAuthorizationRecorder(t *testing.T) (*httptest.Server, chan string) {
-	t.Helper()
-	headers := make(chan string, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		headers <- r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(server.Close)
-	return server, headers
-}
-
-// plainHTTPClient is a client for the recorder's plain HTTP server, which
-// needs no integration CA.
+// plainHTTPClient is a client that needs no integration CA, for tests whose
+// login is refused before any request is sent.
 func plainHTTPClient() *http.Client {
 	return &http.Client{Transport: http.DefaultTransport, Timeout: 5 * time.Second}
 }
 
+// newBearerIssuingNode starts a TLS server standing in for one cluster node:
+// its PIV login issues token, and every other request records the
+// Authorization header it carried.
+func newBearerIssuingNode(t *testing.T, token string) (*httptest.Server, chan string) {
+	t.Helper()
+	headers := make(chan string, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != pivLoginPath {
+			headers <- r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body := `{"access_token":"` + token + `","token_type":"Bearer","expires_in":900}`
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write login response: %v", err)
+		}
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequestClientCert}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	return server, headers
+}
+
 // Admin-resource routes reject a request without a bearer, so every request
 // the system admin client sends must carry the IAM login's token.
-func TestNewSystemAdminHTTPClient_SendsLoginBearer(t *testing.T) {
-	login, paths := newPIVLoginServer(t, http.StatusOK,
-		`{"access_token":"admin-token","token_type":"Bearer","expires_in":900}`)
-	certPath, keyPath, caPath := pivLoginFiles(t, login)
+func TestNewSystemAdminHTTPClient_SendsEachNodeItsOwnBearer(t *testing.T) {
+	node1, headers1 := newBearerIssuingNode(t, "node1-token")
+	node2, headers2 := newBearerIssuingNode(t, "node2-token")
+	certPath, keyPath, caPath := pivLoginFiles(t, node1)
 
-	client, err := newSystemAdminHTTPClient(context.Background(), plainHTTPClient(), login.URL, certPath, keyPath, caPath)
+	base := node1.Client().Transport
+	client, err := newSystemAdminHTTPClient(context.Background(), &http.Client{Transport: base, Timeout: 5 * time.Second},
+		node1.URL, certPath, keyPath, caPath)
 	if err != nil {
 		t.Fatalf("newSystemAdminHTTPClient: %v", err)
 	}
-	if got := <-paths; got != pivLoginPath {
-		t.Errorf("login path = %q, want %q", got, pivLoginPath)
-	}
 
-	target, headers := newAuthorizationRecorder(t)
-	resp, err := client.Get(target.URL + "/api/v1/cache/stats")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	if err := resp.Body.Close(); err != nil {
-		t.Fatalf("close body: %v", err)
-	}
-	if got := <-headers; got != "Bearer admin-token" {
-		t.Errorf("Authorization = %q, want %q", got, "Bearer admin-token")
+	for _, node := range []struct {
+		server  *httptest.Server
+		headers chan string
+		want    string
+	}{
+		{server: node1, headers: headers1, want: "Bearer node1-token"},
+		{server: node2, headers: headers2, want: "Bearer node2-token"},
+	} {
+		resp, err := client.Get(node.server.URL + "/api/v1/debug/route/users/1")
+		if err != nil {
+			t.Fatalf("GET %s: %v", node.server.URL, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("close body: %v", err)
+		}
+		if got := <-node.headers; got != node.want {
+			t.Errorf("Authorization at %s = %q, want %q", node.server.URL, got, node.want)
+		}
 	}
 }
 

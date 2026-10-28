@@ -133,7 +133,7 @@ func TestRaftLeaderElection(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
-	client := newInsecureHTTPClient(10 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 10*time.Second)
 
 	var leaderFound bool
 	var leaderID string
@@ -181,7 +181,7 @@ func TestClusterMembership(t *testing.T) {
 
 	nodes := getNodeURLs()
 	expectedMembers := len(nodes)
-	client := newInsecureHTTPClient(10 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 10*time.Second)
 
 	// Try to get cluster membership from each node
 	for i, nodeURL := range nodes {
@@ -253,7 +253,7 @@ func TestClusterMetrics(t *testing.T) {
 	t.Parallel()
 
 	nodes := getNodeURLs()
-	client := newInsecureHTTPClient(10 * time.Second)
+	client := helpers.NewSystemAdminHTTPClient(t, 10*time.Second)
 
 	for i, nodeURL := range nodes {
 		t.Run(fmt.Sprintf("Node%d", i+1), func(t *testing.T) {

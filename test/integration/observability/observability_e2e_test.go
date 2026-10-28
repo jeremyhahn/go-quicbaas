@@ -25,9 +25,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// e2eHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var e2eHTTPClient = helpers.NewHTTPClient(30 * time.Second)
-
 // TestMetricsCardinality validates that metric cardinality is within bounds
 func TestMetricsCardinality(t *testing.T) {
 	nodes := getNodeURLs()
@@ -46,10 +43,13 @@ func TestMetricsCardinality(t *testing.T) {
 		uniqueMetricsLimit    = 1000
 	)
 
+	// The metrics route is identity-gated; the system admin scrapes it.
+	client := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
+
 	// Check cardinality on all nodes
 	for i, nodeURL := range nodes {
 		t.Run(fmt.Sprintf("Node%d", i+1), func(t *testing.T) {
-			resp, err := e2eHTTPClient.Get(nodeURL + "/api/v1/metrics/")
+			resp, err := client.Get(nodeURL + "/api/v1/metrics/")
 			if err != nil {
 				t.Fatalf("Failed to get metrics from node %d: %v", i+1, err)
 			}
