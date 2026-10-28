@@ -34,19 +34,21 @@ Suites that read or write entities act as the **data-plane principal**:
   with the bearer set on every request.
 - `helpers.AuthDataPlane(t, baseURL)`: the raw bearer.
 
-On first use in a test process, the system admin creates three things on the
-first REST endpoint's cluster:
+On first use in a test process, the suite sets up two things on the first
+REST endpoint's cluster:
 
-1. a tenant named `itest-dp-<unixnano>`;
-2. a role `integration-data-plane` holding exactly `dataplane.Permissions`
-   (`kv:get`, `kv:put`, `kv:delete`, `kv:list`, `kv:range`, `batch:execute`);
-3. a PIV user bound to that role.
+1. a tenant named `itest-dp-<unixnano>`, provisioned by the system admin;
+2. a PIV user of that tenant, bound by the tenant's admin to the tenant's
+   built-in go-qrdb Operator role (`qrdbsdk.SystemRoleID(tenant,
+   qrdbsdk.RoleNameOperator)`). Roles are go-qrdb's, so the suite defines
+   none of its own.
 
 The bearer is cached and renewed by PIV login when it expires. The principal
 is neither anonymous nor the system admin, so a test still fails if a route
-starts requiring a permission outside that set.
+starts requiring a permission the Operator role does not hold.
 `pkg/api/grpc`'s `TestAuthorizationInterceptor_IntegrationDataPlaneRole` pins
-`dataplane.Permissions` to the server's authorization mapping in the unit tier.
+the Operator role's permissions to the server's authorization mapping in the
+unit tier.
 
 ## Protocol Adapter Template
 

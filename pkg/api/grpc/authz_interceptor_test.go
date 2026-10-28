@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -28,7 +29,6 @@ import (
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
-	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
 )
 
 // fakeValidatorAuthorizer is a test double for the central platform-token
@@ -435,16 +435,17 @@ func (a *scopeSetAuthorizer) Authorize(_ context.Context, token, requiredPerm, _
 }
 
 // TestAuthorizationInterceptor_IntegrationDataPlaneRole pins the integration
-// suites' data-plane role (test/integration/dataplane) to this server's
-// authorization mapping. Without a bearer every data-plane RPC the suites call
+// suites' data-plane role, the tenant's built-in Operator role, to this
+// server's authorization mapping. Without a bearer every data-plane RPC the suites call
 // is refused as unauthenticated before a handler runs, which is how they
 // failed in 0-30 ms (#1317); with a bearer whose scp is exactly the role's
 // permissions every one of them is admitted. A remapped data-plane RPC fails
 // here, in the unit tier, rather than as an opaque integration refusal.
 func TestAuthorizationInterceptor_IntegrationDataPlaneRole(t *testing.T) {
-	scp := make(map[string]bool, len(dataplane.Permissions))
-	for _, perm := range dataplane.Permissions {
-		scp[perm] = true
+	operator := qrdbsdk.PermissionsForRole(qrdbsdk.RoleNameOperator)
+	scp := make(map[string]bool, len(operator))
+	for _, perm := range operator {
+		scp[string(perm)] = true
 	}
 	authorizer := &scopeSetAuthorizer{token: "data-plane", scp: scp}
 	unary := UnaryAuthorizationInterceptor(authorizer)
