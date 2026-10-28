@@ -19,7 +19,7 @@ require (
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.3.0 // held: v5.5.0 adds the QUERY method to every route (archive/issue/1597b)
-	github.com/go-jose/go-jose/v4 v4.1.4 // held: v4.1.6 released 2026-10-14, under 7 days old (#1704)
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-webauthn/webauthn v0.17.4 // held: v0.18.2 is not in the lane module cache (#1597)
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-tpm v0.9.8
