@@ -368,6 +368,12 @@ func (r *ExecContainerRuntime) Remove(ctx context.Context, containerID string) e
 		if isNotFoundOutput(stderrStr) {
 			return &ContainerNotFoundError{ContainerID: containerID}
 		}
+		// An interactive container runs with --rm: once its process exits
+		// the daemon removes it on its own, and refuses this rm while that
+		// removal runs. The removal asked for is already underway.
+		if isRemovalInProgressOutput(stderrStr) {
+			return nil
+		}
 		return &ContainerStopError{
 			ContainerID: containerID,
 			Cause:       &CommandError{Command: r.command, Op: "rm", Output: stderrStr},
@@ -686,6 +692,14 @@ func isNotFoundOutput(stderr string) bool {
 		strings.Contains(lower, "error response from daemon: not found") ||
 		strings.Contains(lower, "error: not found") ||
 		strings.Contains(lower, "error: no such")
+}
+
+// isRemovalInProgressOutput reports whether stderr is docker refusing an rm
+// because the container's own removal (--rm) has already started.
+func isRemovalInProgressOutput(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "removal of container") &&
+		strings.Contains(lower, "is already in progress")
 }
 
 // truncateID shortens a container ID for log output.
