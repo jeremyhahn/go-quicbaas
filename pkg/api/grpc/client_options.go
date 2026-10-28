@@ -15,6 +15,7 @@
 package grpc
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -274,6 +275,40 @@ func WithMetadata(key, value string) ClientOption {
 			opts.md = metadata.MD{}
 		}
 		opts.md.Set(key, value)
+		return nil
+	}
+}
+
+// bearerCredentials presents a platform bearer as the "authorization"
+// metadata of every RPC, unary or streaming, made over the connection.
+type bearerCredentials struct {
+	authorization string
+}
+
+// GetRequestMetadata returns the "Bearer <token>" authorization header.
+func (b bearerCredentials) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": b.authorization}, nil
+}
+
+// RequireTransportSecurity reports that the bearer is only sent over TLS.
+func (bearerCredentials) RequireTransportSecurity() bool {
+	return true
+}
+
+// WithBearerToken presents token as the platform bearer on every RPC the
+// client makes. It is installed as per-RPC credentials on the connection, so
+// it reaches every service stub, not only the calls that add client metadata.
+func WithBearerToken(token string) ClientOption {
+	return func(opts *clientOptions) error {
+		if token == "" {
+			return errors.Newf(
+				errors.ErrInvalidInput,
+				"grpc.WithBearerToken",
+				"bearer token cannot be empty",
+			)
+		}
+		opts.dialOptions = append(opts.dialOptions,
+			grpc.WithPerRPCCredentials(bearerCredentials{authorization: "Bearer " + token}))
 		return nil
 	}
 }

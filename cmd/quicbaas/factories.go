@@ -334,6 +334,12 @@ func createGRPCClient() (*grpc.Client, error) {
 		grpc.WithTimeout(globalTimeout),
 	}
 	opts = append(opts, grpcTLSOption()...)
+	// The stored platform token authenticates the gRPC client against the
+	// server's default-deny gate, as it does the SDK transports
+	// (buildSDKClientOptions).
+	if token := loadStoredAuthToken(); token != "" {
+		opts = append(opts, grpc.WithBearerToken(token))
+	}
 	return grpc.NewClient(address, opts...)
 }
 
