@@ -885,6 +885,12 @@ type e2eExecCall struct {
 	ExitCode    int
 }
 
+// forgeCredentialStep reports whether call is the runner delivering the forge
+// token to the container's credential tier, or revoking it from there.
+func (call e2eExecCall) forgeCredentialStep() bool {
+	return call.Cmd[len(call.Cmd)-1] == orchestration.WorkspaceForgeCredentialFile
+}
+
 func newE2EContainerRuntime() *e2eContainerRuntime {
 	return &e2eContainerRuntime{containers: map[string]*e2eContainer{}}
 }
@@ -1679,12 +1685,17 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	containerDir := filepath.Join(orchestration.WorkspaceCheckoutRoot, loopE2EProject)
 	commands := rig.runtime.commandsRun()
 	require.NotEmpty(t, commands, "no command was run in the worker's container")
-	var sawClone, sawCommit, sawPush bool
+	var sawClone, sawCommit, sawPush, sawCredential bool
 	for _, call := range rig.runtime.execs {
 		require.Contains(t, []string{orchestration.WorkspaceCheckoutRoot, containerDir}, call.WorkDir,
 			"a command named %q, which is neither the checkout root nor the container's checkout", call.WorkDir)
-		// git and the binding's verification are the two things the runner runs
-		// in a worker's container; both run there and nothing else does.
+		// Beside git and the binding's verification, the runner delivers the
+		// forge token to the container's credential tier and revokes it; those
+		// run there and nothing else does.
+		if call.forgeCredentialStep() {
+			sawCredential = true
+			continue
+		}
 		require.Contains(t, []string{"git", "sh"}, call.Cmd[0],
 			"the runner ran something unaccounted for in the container: %v", call.Cmd)
 		if strings.Contains(strings.Join(call.Cmd, " "), " clone ") {
@@ -1703,6 +1714,7 @@ func TestSDLCRunner_TheContainerCommitsSignsAndPushes(t *testing.T) {
 	require.True(t, sawClone, "nothing cloned in the container: %v", commands)
 	require.True(t, sawCommit, "nothing committed in the container: %v", commands)
 	require.True(t, sawPush, "nothing pushed from the container: %v", commands)
+	require.True(t, sawCredential, "the forge token never reached the container: %v", commands)
 
 	// The commit that reached the remote carries a signature, and git accepts
 	// it against the tenant's signing key.
@@ -1772,7 +1784,7 @@ func TestSDLCRunner_TheContainerRunsTheVerificationCommands(t *testing.T) {
 
 	var verifications []e2eExecCall
 	for _, call := range rig.runtime.execs {
-		if call.Cmd[0] == "sh" {
+		if call.Cmd[0] == "sh" && !call.forgeCredentialStep() {
 			verifications = append(verifications, call)
 		}
 	}
