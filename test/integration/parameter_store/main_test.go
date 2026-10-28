@@ -93,5 +93,5 @@ func getQUICEndpoint() string {
 	if endpoint := os.Getenv("QUICBAAS_NODE1_QUIC"); endpoint != "" {
 		return endpoint
 	}
-	return "test-node1:4433"
+	return "test-node1:8080"
 }

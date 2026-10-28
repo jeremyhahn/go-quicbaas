@@ -169,21 +169,23 @@ func GetRESTEndpoints() []string {
 	return []string{node1, node2, node3}
 }
 
-// GetQUICEndpoints returns all QUIC endpoints for testing
+// GetQUICEndpoints returns all QUIC endpoints for testing. QUIC is REST over
+// HTTP/3, which go-qrdb's unified REST server serves on the REST port (UDP);
+// no listener exists on a separate QUIC port.
 func GetQUICEndpoints() []string {
 	node1 := os.Getenv("QUICBAAS_NODE1_QUIC")
 	if node1 == "" {
-		node1 = "test-node1:4433"
+		node1 = "test-node1:8080"
 	}
 
 	node2 := os.Getenv("QUICBAAS_NODE2_QUIC")
 	if node2 == "" {
-		node2 = "test-node2:4433"
+		node2 = "test-node2:8080"
 	}
 
 	node3 := os.Getenv("QUICBAAS_NODE3_QUIC")
 	if node3 == "" {
-		node3 = "test-node3:4433"
+		node3 = "test-node3:8080"
 	}
 
 	return []string{node1, node2, node3}
