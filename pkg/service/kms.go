@@ -366,7 +366,12 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 		threshold = int(req.ThresholdPercent)
 	}
 
-	results := k.safetyTracker.SafetyCheck(threshold)
+	// The tracker is shared by every tenant: report only the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyCheck(threshold))
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	keyCount := 0
@@ -399,7 +404,12 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 
 // SafetyReport generates a comprehensive safety report for all keys/DEKs.
 func (k *kmsServiceImpl) SafetyReport(ctx context.Context, req *SafetyReportRequest) (*SafetyReportResponse, error) {
-	results := k.safetyTracker.SafetyReport()
+	// The tracker is shared by every tenant: report only the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyReport())
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	var totalOps uint64
