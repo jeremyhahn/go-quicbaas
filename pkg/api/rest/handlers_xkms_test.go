@@ -782,7 +782,7 @@ func TestHandleXKMSSaveCert_NotInitialized(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{
 		"certificate_pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
@@ -794,7 +794,7 @@ func TestHandleXKMSListCerts_NotInitialized(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil).WithContext(tenantctx.WithSystem(context.Background()))
 	w := httptest.NewRecorder()
 	server.router.ServeHTTP(w, req)
 
@@ -2139,7 +2139,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 	certPEM := selfSignedCertPEM(t)
 
 	t.Run("invalid JSON body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader([]byte(`{bad`)))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader([]byte(`{bad`))).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2150,7 +2150,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": certPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2164,7 +2164,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": "",
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2178,7 +2178,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": "not-a-valid-pem",
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2196,7 +2196,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": invalidPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2210,7 +2210,7 @@ func TestXKMS91_SaveCert(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{
 			"certificate_pem": certPEM,
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=save-cert-test", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=save-cert-test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
@@ -2234,14 +2234,14 @@ func TestXKMS91_ListCerts(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=list-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=list-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("list all certs returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -2251,14 +2251,14 @@ func TestXKMS91_ListCerts(t *testing.T) {
 	})
 
 	t.Run("list certs with backend returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=software", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=software", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("list certs with invalid backend returns error", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs?backend=nonexistent", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2281,7 +2281,7 @@ func TestXKMS91_GetCert(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=get-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=get-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
@@ -2321,7 +2321,7 @@ func TestXKMS91_DeleteCert(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=del-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=del-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)
@@ -2358,7 +2358,7 @@ func TestXKMS91_CertExists(t *testing.T) {
 	savBody, _ := json.Marshal(map[string]string{
 		"certificate_pem": certPEM,
 	})
-	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=exists-cert-test", bytes.NewReader(savBody))
+	savReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=exists-cert-test", bytes.NewReader(savBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	savReq.Header.Set("Content-Type", "application/json")
 	savW := httptest.NewRecorder()
 	server.router.ServeHTTP(savW, savReq)

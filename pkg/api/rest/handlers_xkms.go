@@ -678,6 +678,10 @@ func (s *Server) HandleXKMSSaveCert(w http.ResponseWriter, r *http.Request) {
 		respondXKMSError(w, http.StatusPreconditionFailed, err)
 		return
 	}
+	if err := service.RequireSystemKeyStoreWriter(r.Context(), "SaveCertificate"); err != nil {
+		respondXKMSError(w, http.StatusForbidden, err)
+		return
+	}
 
 	var body struct {
 		CertificatePEM string `json:"certificate_pem"`
@@ -750,6 +754,11 @@ func (s *Server) HandleXKMSListCerts(w http.ResponseWriter, r *http.Request) {
 			Op:     "ListCertificates",
 			Detail: listErr.Error(),
 		})
+		return
+	}
+	certIDs, listErr = service.FilterCertificateIDsForCaller(r.Context(), s.service.Certificate(), certIDs, xkmssdk.ServiceCertificateByID)
+	if listErr != nil {
+		respondXKMSError(w, http.StatusForbidden, listErr)
 		return
 	}
 

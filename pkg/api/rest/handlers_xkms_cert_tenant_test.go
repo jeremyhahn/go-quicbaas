@@ -30,7 +30,7 @@ func TestXKMSCertByID_BindsCallerToIssuingTenant(t *testing.T) {
 	const keyID = "tenant-bound-cert"
 	saveBody, err := json.Marshal(map[string]string{"certificate_pem": selfSignedCertPEM(t)})
 	require.NoError(t, err)
-	saveReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id="+keyID, bytes.NewReader(saveBody))
+	saveReq := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id="+keyID, bytes.NewReader(saveBody)).WithContext(tenantctx.WithSystem(context.Background()))
 	saveReq.Header.Set("Content-Type", "application/json")
 	saveW := httptest.NewRecorder()
 	server.router.ServeHTTP(saveW, saveReq)
