@@ -637,7 +637,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.ImportKey", "failed to import key")
+		return nil, WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key")
 	}
 
 	// Convert manager response to service response
@@ -698,6 +698,32 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 	}
 
 	return resp, nil
+}
+
+// importKeyClassifiedCodes are the manager failure codes ImportKey passes
+// through unchanged. WrapError always stamps the supplied code, so without
+// this set an import of an existing key (AlreadyExists) or of bad material
+// (InvalidInput) would be clobbered with ErrInternal and answer 500.
+var importKeyClassifiedCodes = map[errors.ErrorCode]struct{}{
+	errors.ErrAlreadyExists: {},
+	errors.ErrNotFound:      {},
+	errors.ErrInvalidInput:  {},
+}
+
+// importKeyErrorCode returns the code ImportKey reports for a manager
+// failure: the manager's own code when it classified the failure, not-found
+// for a missing key, and ErrInternal for anything unclassified.
+func importKeyErrorCode(err error) errors.ErrorCode {
+	if stderrors.Is(err, kms.ErrKeyNotFound) {
+		return errors.ErrNotFound
+	}
+	var qbErr *errors.QBError
+	if stderrors.As(err, &qbErr) {
+		if _, ok := importKeyClassifiedCodes[qbErr.Code]; ok {
+			return qbErr.Code
+		}
+	}
+	return errors.ErrInternal
 }
 
 // GetKey retrieves key material or public key by key ID.

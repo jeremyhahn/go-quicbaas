@@ -551,6 +551,46 @@ func TestKMSService_ImportKey_ManagerError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// TestKMSService_ImportKey_ManagerClassifiedErrorKeepsItsCode pins that the
+// service keeps the manager's classified failure: importing a key that
+// already exists must stay AlreadyExists, not be re-stamped as Internal.
+func TestKMSService_ImportKey_ManagerClassifiedErrorKeepsItsCode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mgrErr   error
+		wantCode errors.ErrorCode
+	}{
+		{"already exists", errors.New(errors.ErrAlreadyExists, "ImportKey", "key already exists"), errors.ErrAlreadyExists},
+		{"invalid input", errors.New(errors.ErrInvalidInput, "ImportKey", "bad material"), errors.ErrInvalidInput},
+		{"key not found sentinel", kms.ErrKeyNotFound, errors.ErrNotFound},
+		{"unclassified", stderrors.New("backend unavailable"), errors.ErrInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockManager := newMockKMSManager()
+			mockManager.importKeyFn = func(ctx context.Context, keyID string, material []byte, algorithm string) (interface{}, error) {
+				return nil, tt.mgrErr
+			}
+			svc := newKMSService(mockManager, newMockLogger())
+
+			resp, err := svc.ImportKey(systemTenantCtx(), &ImportKeyRequest{
+				Name:        "imported-key",
+				KeyMaterial: []byte("mock-key"),
+				KeyAttributes: &xkmssdk.KeyAttributes{
+					SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+				},
+				Usage: []KeyUsage{KeyUsageEncrypt},
+			})
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *errors.QBError
+			require.True(t, stderrors.As(err, &qbErr), "service error must be a QBError, got %T", err)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
+}
+
 // =============================================================================
 // GetKey Tests
 // =============================================================================
