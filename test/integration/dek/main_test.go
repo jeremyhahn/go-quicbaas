@@ -16,15 +16,24 @@
 package dek
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // TestMain runs before all tests in this package.
 func TestMain(m *testing.M) {
+	// Every request checks token liveness against shard 1, so the suite
+	// must not start while a shard is still electing its leader.
+	if err := helpers.WaitForClusterShardLeaders(context.Background(), helpers.ClusterShards, 3*time.Minute); err != nil {
+		fmt.Fprintf(os.Stderr, "cluster not ready: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Boot embedded server for multi-protocol tests
 	_, srv, err := helpers.SetupEmbeddedServer()
 	if err != nil {

@@ -729,8 +729,53 @@ func logShardLeaders(t *testing.T, shardMap map[uint64]*ShardInfo) {
 // Returns the shard map when all shards have leaders, or error on timeout.
 func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint64, timeout time.Duration) (map[uint64]*ShardInfo, error) {
 	t.Helper()
+	return waitForShardLeaders(tc, expectedShards, timeout, t.Logf)
+}
 
-	t.Logf("Waiting for all %d shards to have leaders (timeout: %v)...", len(expectedShards), timeout)
+// ClusterShards lists the shards the integration cluster serves. Shard 1
+// holds the system tenant store, which every authenticated request reads to
+// check token liveness, so no suite can run before it has a leader.
+var ClusterShards = []uint64{1}
+
+// ShardLeadersError reports that a shard had no elected leader before the
+// wait for shard leaders ended.
+type ShardLeadersError struct {
+	Shards []uint64
+	Err    error
+}
+
+func (e *ShardLeadersError) Error() string {
+	return fmt.Sprintf("shards %v have no leader: %v", e.Shards, e.Err)
+}
+
+func (e *ShardLeadersError) Unwrap() error { return e.Err }
+
+// WaitForClusterShardLeaders connects to every cluster endpoint and waits
+// until each of the expected shards has an elected leader. It is the
+// TestMain counterpart of WaitForAllShardLeaders: a package calls it before
+// m.Run so its first request does not race a shard election.
+func WaitForClusterShardLeaders(ctx context.Context, expectedShards []uint64, timeout time.Duration) error {
+	tc, err := NewClusterBuilder().Build(ctx)
+	if err != nil {
+		return &ShardLeadersError{Shards: expectedShards, Err: err}
+	}
+	defer func() {
+		if err := tc.Close(); err != nil {
+			fmt.Printf("close cluster clients: %v\n", err)
+		}
+	}()
+
+	logf := func(format string, args ...any) { fmt.Printf(format+"\n", args...) }
+	if _, err := waitForShardLeaders(tc, expectedShards, timeout, logf); err != nil {
+		return &ShardLeadersError{Shards: expectedShards, Err: err}
+	}
+	return nil
+}
+
+// waitForShardLeaders polls every node of tc until each expected shard has a
+// leader, logging progress through logf.
+func waitForShardLeaders(tc *TestCluster, expectedShards []uint64, timeout time.Duration, logf func(format string, args ...any)) (map[uint64]*ShardInfo, error) {
+	logf("Waiting for all %d shards to have leaders (timeout: %v)...", len(expectedShards), timeout)
 	var lastShardMap map[uint64]*ShardInfo
 
 	err := Poll(context.Background(), 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
@@ -775,7 +820,7 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 			}
 		}
 
-		t.Logf("All %d shards have elected leaders", len(expectedShards))
+		logf("All %d shards have elected leaders", len(expectedShards))
 		return true, nil
 	})
 	if err == nil {
@@ -785,7 +830,7 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 	// Log which shards are missing leaders
 	for _, shardID := range expectedShards {
 		if info, ok := lastShardMap[shardID]; !ok || len(info.LeaderNodes) == 0 {
-			t.Logf("Shard %d still has no leader", shardID)
+			logf("Shard %d still has no leader", shardID)
 		}
 	}
 
