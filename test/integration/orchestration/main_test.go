@@ -75,7 +75,14 @@ func TestMain(m *testing.M) {
 	env.ollamaAvailable = true
 	fmt.Printf("Ollama service is available at %s (model: %s)\n", env.ollamaURL, env.ollamaModel)
 
-	os.Exit(m.Run())
+	code := m.Run()
+	if releaseErr := helpers.ReleaseDataPlaneTenants(); releaseErr != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", releaseErr)
+		if code == 0 {
+			code = 1
+		}
+	}
+	os.Exit(code)
 }
 
 // waitForService polls the given URL until it responds with HTTP 200 or times out.
