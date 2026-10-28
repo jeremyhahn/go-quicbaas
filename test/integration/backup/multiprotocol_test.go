@@ -294,7 +294,8 @@ func (c *restBackupClient) Setup(t *testing.T, ctx context.Context) error {
 		return &qberrors.MessageError{Message: "no REST endpoints available"}
 	}
 	c.baseURL = endpoints[0]
-	c.httpClient = helpers.NewHTTPClient(30 * time.Second)
+	// The backup routes are system-scoped (backup:list, backup:create).
+	c.httpClient = helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 
 	// Probe to verify backup feature is available
 	url := fmt.Sprintf("%s/api/v1/backups", c.baseURL)
