@@ -17,6 +17,7 @@ package helpers
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strconv"
 	"time"
@@ -32,6 +33,33 @@ type ClusterBuilder struct {
 	retryBackoff   time.Duration
 	healthTimeout  time.Duration
 	healthInterval time.Duration
+
+	// restEndpoints holds each node's REST base URL, index-aligned with
+	// endpoints; a login goes to the REST URL of the node being dialled.
+	restEndpoints []string
+
+	// tlsConfig supplies the TLS trust every client is dialled with.
+	tlsConfig func() (*tls.Config, error)
+
+	// login, when set, returns the bearer the node at a REST base URL
+	// issues; every client then carries its own node's bearer. Nil leaves
+	// clients unauthenticated.
+	login nodeLogin
+}
+
+// nodeLogin logs in at the cluster node whose REST base URL is restURL and
+// returns the bearer that node issued.
+type nodeLogin func(ctx context.Context, restURL string) (string, error)
+
+// ClusterRESTEndpointError reports that a node has no REST endpoint to log
+// in at, so its client cannot be authenticated.
+type ClusterRESTEndpointError struct {
+	Node     int
+	Endpoint string
+}
+
+func (e *ClusterRESTEndpointError) Error() string {
+	return "cluster node " + strconv.Itoa(e.Node) + " (" + e.Endpoint + ") has no REST endpoint to log in at"
 }
 
 // NewClusterBuilder creates a new ClusterBuilder with default values.
@@ -43,6 +71,28 @@ func NewClusterBuilder() *ClusterBuilder {
 		retryBackoff:   100 * time.Millisecond,
 		healthTimeout:  180 * time.Second,
 		healthInterval: 2 * time.Second,
+		restEndpoints:  GetRESTEndpoints(),
+		tlsConfig:      IntegrationTLSConfig,
+	}
+}
+
+// WithSystemAdmin makes every client log in as the system admin at its own
+// node, which issues the bearer that node's authorization accepts. A login
+// refused while the cluster is still electing is retried like a failed dial.
+func (cb *ClusterBuilder) WithSystemAdmin() *ClusterBuilder {
+	cb.login = pivLogin(pivCertPath(), pivKeyPath(), pivCAFile())
+	return cb
+}
+
+// pivLogin returns a nodeLogin that logs in as the system admin with the PIV
+// certificate and key at certPath and keyPath, trusting the CA at caPath.
+func pivLogin(certPath, keyPath, caPath string) nodeLogin {
+	return func(ctx context.Context, restURL string) (string, error) {
+		bearer, _, err := authPIV(ctx, restURL, certPath, keyPath, caPath)
+		if err != nil {
+			return "", &PrincipalAuthError{Principal: systemAdminPrincipal, Step: "login", Cause: err}
+		}
+		return bearer, nil
 	}
 }
 
@@ -83,8 +133,17 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 	}
 
 	// Connect to all nodes
+	if cb.login != nil && len(cb.restEndpoints) < len(cb.endpoints) {
+		node := len(cb.restEndpoints)
+		return nil, &ClusterRESTEndpointError{Node: node + 1, Endpoint: cb.endpoints[node]}
+	}
+
 	for i, endpoint := range cb.endpoints {
-		client, err := connectToNode(ctx, endpoint, cb.timeout, cb.retries, cb.retryBackoff)
+		var restURL string
+		if i < len(cb.restEndpoints) {
+			restURL = cb.restEndpoints[i]
+		}
+		client, err := cb.connectToNode(ctx, endpoint, restURL)
 		if err != nil {
 			// Clean up any successful connections
 			cluster.Close()
@@ -190,29 +249,26 @@ func (tc *TestCluster) FindLeader(ctx context.Context) (*TestNode, quicbaas.Clie
 	return nil, nil, fmt.Errorf("no leader found in cluster")
 }
 
-// connectToNode establishes a connection to a node using the SDK.
-func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, retries int, retryBackoff time.Duration) (quicbaas.Client, error) {
+// connectToNode establishes a connection to a node using the SDK, retrying a
+// failed dial or login with exponential backoff.
+func (cb *ClusterBuilder) connectToNode(ctx context.Context, endpoint, restURL string) (quicbaas.Client, error) {
 	var client quicbaas.Client
 	var err error
 
-	tlsCfg, err := IntegrationTLSConfig()
+	tlsCfg, err := cb.tlsConfig()
 	if err != nil {
 		return nil, err
 	}
 
 	// Retry connection with exponential backoff
-	backoff := retryBackoff
-	for attempt := 0; attempt <= retries; attempt++ {
-		client, err = quicbaas.NewClient(
-			endpoint,
-			quicbaas.WithTimeout(timeout),
-			quicbaas.WithTLSConfig(tlsCfg),
-		)
+	backoff := cb.retryBackoff
+	for attempt := 0; attempt <= cb.retries; attempt++ {
+		client, err = cb.dialNode(ctx, endpoint, restURL, tlsCfg)
 		if err == nil {
 			return client, nil
 		}
 
-		if attempt < retries {
+		if attempt < cb.retries {
 			timer := time.NewTimer(backoff)
 			select {
 			case <-ctx.Done():
@@ -227,5 +283,23 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 		}
 	}
 
-	return nil, fmt.Errorf("failed to connect after %d attempts: %w", retries+1, err)
+	return nil, fmt.Errorf("failed to connect after %d attempts: %w", cb.retries+1, err)
+}
+
+// dialNode creates one client for endpoint. When the builder logs in, it
+// first logs in at the node's REST URL so the client carries the bearer that
+// node issued.
+func (cb *ClusterBuilder) dialNode(ctx context.Context, endpoint, restURL string, tlsCfg *tls.Config) (quicbaas.Client, error) {
+	opts := []quicbaas.Option{
+		quicbaas.WithTimeout(cb.timeout),
+		quicbaas.WithTLSConfig(tlsCfg),
+	}
+	if cb.login != nil {
+		bearer, err := cb.login(ctx, restURL)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, quicbaas.WithAuthToken(bearer))
+	}
+	return quicbaas.NewClient(endpoint, opts...)
 }

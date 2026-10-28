@@ -729,7 +729,8 @@ func logShardLeaders(t *testing.T, shardMap map[uint64]*ShardInfo) {
 // Returns the shard map when all shards have leaders, or error on timeout.
 func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint64, timeout time.Duration) (map[uint64]*ShardInfo, error) {
 	t.Helper()
-	return waitForShardLeaders(tc, expectedShards, timeout, t.Logf)
+	clientsFor := func(context.Context) ([]quicbaas.Client, error) { return tc.Clients, nil }
+	return waitForShardLeaders(context.Background(), clientsFor, expectedShards, timeout, t.Logf)
 }
 
 // ClusterShards lists the shards the integration cluster serves. Shard 1
@@ -750,35 +751,64 @@ func (e *ShardLeadersError) Error() string {
 
 func (e *ShardLeadersError) Unwrap() error { return e.Err }
 
-// WaitForClusterShardLeaders connects to every cluster endpoint and waits
+// WaitForClusterShardLeaders connects to every cluster endpoint as the
+// system admin, whose bearer authorizes the Status probe, and waits
 // until each of the expected shards has an elected leader. It is the
 // TestMain counterpart of WaitForAllShardLeaders: a package calls it before
 // m.Run so its first request does not race a shard election.
 func WaitForClusterShardLeaders(ctx context.Context, expectedShards []uint64, timeout time.Duration) error {
-	tc, err := NewClusterBuilder().Build(ctx)
-	if err != nil {
-		return &ShardLeadersError{Shards: expectedShards, Err: err}
-	}
+	return waitForClusterShardLeaders(ctx, NewClusterBuilder().WithSystemAdmin(), expectedShards, timeout)
+}
+
+// waitForClusterShardLeaders waits for shard leaders through clients cb
+// builds. The clients are built inside the poll, so a node that refuses the
+// login while it is still electing is tried again until timeout.
+func waitForClusterShardLeaders(ctx context.Context, cb *ClusterBuilder, expectedShards []uint64, timeout time.Duration) error {
+	var tc *TestCluster
 	defer func() {
+		if tc == nil {
+			return
+		}
 		if err := tc.Close(); err != nil {
 			fmt.Printf("close cluster clients: %v\n", err)
 		}
 	}()
 
+	clientsFor := func(ctx context.Context) ([]quicbaas.Client, error) {
+		if tc == nil {
+			built, err := cb.Build(ctx)
+			if err != nil {
+				return nil, err
+			}
+			tc = built
+		}
+		return tc.Clients, nil
+	}
+
 	logf := func(format string, args ...any) { fmt.Printf(format+"\n", args...) }
-	if _, err := waitForShardLeaders(tc, expectedShards, timeout, logf); err != nil {
+	if _, err := waitForShardLeaders(ctx, clientsFor, expectedShards, timeout, logf); err != nil {
 		return &ShardLeadersError{Shards: expectedShards, Err: err}
 	}
 	return nil
 }
 
-// waitForShardLeaders polls every node of tc until each expected shard has a
-// leader, logging progress through logf.
-func waitForShardLeaders(tc *TestCluster, expectedShards []uint64, timeout time.Duration, logf func(format string, args ...any)) (map[uint64]*ShardInfo, error) {
+// shardProbeClients returns the clients one round of the shard-leader wait
+// queries.
+type shardProbeClients func(ctx context.Context) ([]quicbaas.Client, error)
+
+// waitForShardLeaders polls every client clientsFor returns until each
+// expected shard has a leader, logging progress through logf. On timeout the
+// error carries the last failed client build or Status probe.
+func waitForShardLeaders(ctx context.Context, clientsFor shardProbeClients, expectedShards []uint64, timeout time.Duration, logf func(format string, args ...any)) (map[uint64]*ShardInfo, error) {
 	logf("Waiting for all %d shards to have leaders (timeout: %v)...", len(expectedShards), timeout)
 	var lastShardMap map[uint64]*ShardInfo
 
-	err := Poll(context.Background(), 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
+	err := Poll(ctx, 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		clients, err := clientsFor(ctx)
+		if err != nil {
+			return false, err
+		}
+
 		// Get current shard distribution
 		shardMap := make(map[uint64]*ShardInfo)
 
@@ -797,13 +827,16 @@ func waitForShardLeaders(tc *TestCluster, expectedShards []uint64, timeout time.
 		// and serving writes. Querying only the first responding node
 		// produced false "shard has no leader" timeouts even though writes
 		// to those shards succeeded. A shard counts as having a leader when
-		// ANY node reports one.
-		for _, client := range tc.Clients {
+		// ANY node reports one. A node's refusal is kept so a timeout
+		// names it rather than reporting only a missing leader.
+		var probeErr error
+		for _, client := range clients {
 			statusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			status, err := client.Cluster().Status(statusCtx)
 			cancel()
 
 			if err != nil {
+				probeErr = err
 				continue // Try next node
 			}
 
@@ -816,7 +849,7 @@ func waitForShardLeaders(tc *TestCluster, expectedShards []uint64, timeout time.
 		// Check if all expected shards have leaders
 		for _, shardID := range expectedShards {
 			if info, ok := shardMap[shardID]; !ok || len(info.LeaderNodes) == 0 {
-				return false, nil
+				return false, probeErr
 			}
 		}
 
@@ -987,7 +1020,9 @@ func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 	t.Helper()
 
 	for _, endpoint := range endpoints {
-		client, err := connectToNode(context.Background(), endpoint, 10*time.Second, 1, 500*time.Millisecond)
+		probe := NewClusterBuilder().WithTimeout(10 * time.Second).WithRetries(1)
+		probe.retryBackoff = 500 * time.Millisecond
+		client, err := probe.connectToNode(context.Background(), endpoint, "")
 		if err != nil {
 			t.Logf("IsStandaloneMode: could not connect to %s: %v", endpoint, err)
 			continue
