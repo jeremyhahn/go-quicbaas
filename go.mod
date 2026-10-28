@@ -63,7 +63,7 @@ require (
 	github.com/veraison/go-cose v1.3.0
 	github.com/veraison/swid v1.1.1-0.20230911094910-8ffdd07a22ca
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/wailsapp/wails/v2 v2.13.0 // held: v2.13.0 is the CVE-2026-34157 fix; the v2.17.0 bump is tracked in #1704
+	github.com/wailsapp/wails/v2 v2.14.0 // held: v2.14.0 is the CVE-2026-34157 fix, the version go-trusted-platform pins (ruling 237); the v2.17.0 bump is tracked in #1704
 	go.opentelemetry.io/otel v1.45.0 // held: v1.47.0 needs go.opentelemetry.io/otel/metric/x v0.69.0, not in the lane module cache (#1597)
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 // held: v1.47.0 needs go.opentelemetry.io/otel/metric/x v0.69.0, not in the lane module cache (#1597)
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0 // held: v1.47.0 needs go.opentelemetry.io/otel/metric/x v0.69.0, not in the lane module cache (#1597)
