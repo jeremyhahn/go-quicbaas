@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc/credentials"
 
 	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
@@ -36,7 +37,7 @@ var dataPlaneAuth = newPrincipalRegistry(dataPlanePrincipalName, enrollDataPlane
 
 // AuthDataPlane returns a bearer for the data-plane principal of the cluster
 // at baseURL: a user of a tenant provisioned for this suite process whose only
-// role grants dataplane.Permissions. Data-plane RPCs and routes refuse a
+// role is the tenant's built-in Operator role. Data-plane RPCs and routes refuse a
 // caller with no bearer, so every suite that reads or writes entities acts as
 // this principal.
 func AuthDataPlane(t *testing.T, baseURL string) string {
@@ -83,8 +84,10 @@ func NewDataPlaneHTTPClient(t *testing.T, timeout time.Duration) *http.Client {
 }
 
 // enrollDataPlanePrincipal has the system admin provision a tenant for this
-// suite process (ProvisionTenant); that tenant's admin then creates a role in
-// it holding exactly dataplane.Permissions and a PIV user bound to that role.
+// suite process (ProvisionTenant); that tenant's admin then enrolls a PIV user
+// and binds it to the tenant's built-in Operator role, which grants the entity
+// and batch verbs. The admin binds a built-in role rather than creating one:
+// go-qrdb grants the tenant Admin roles:assign but not roles:create.
 // The tenant is unique per process so suite packages running against one
 // cluster never share or collide on a principal.
 func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*enrolledPrincipal, error) {
@@ -101,23 +104,16 @@ func enrollDataPlanePrincipal(ctx context.Context, baseURL string) (*enrolledPri
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "provision tenant", TenantID: tenantID, Cause: err}
 	}
 
-	role := map[string]interface{}{
-		"id":          dataplane.RoleID,
-		"name":        dataplane.RoleID,
-		"permissions": dataplane.Permissions,
-	}
-	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/roles", tenant.AdminBearer, role); err != nil {
-		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "create role", TenantID: tenantID, Cause: err}
-	}
-
 	userID, certPEM, keyPEM, err := enrollTenantPIVUser(ctx, baseURL, tenantID, tenant.AdminBearer)
 	if err != nil {
 		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "enroll PIV user", TenantID: tenantID, Cause: err}
 	}
 
-	binding := map[string]interface{}{"role_id": dataplane.RoleID}
+	// The tenant is fresh, so its Operator role carries the identifier go-qrdb
+	// seeds it under.
+	binding := map[string]interface{}{"role_id": qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator)}
 	if _, err := postJSON(ctx, baseURL+"/api/v1/tenants/"+tenantID+"/users/"+userID+"/roles", tenant.AdminBearer, binding); err != nil {
-		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "bind role to user " + userID, TenantID: tenantID, Cause: err}
+		return nil, &PrincipalAuthError{Principal: dataPlanePrincipalName, Step: "bind Operator role to user " + userID, TenantID: tenantID, Cause: err}
 	}
 
 	return &enrolledPrincipal{tenantID: tenantID, certPEM: certPEM, keyPEM: keyPEM}, nil
