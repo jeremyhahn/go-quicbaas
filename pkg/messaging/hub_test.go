@@ -2015,3 +2015,41 @@ func TestNotificationHub_RegistrationQueuesDoNotCrossLoops(t *testing.T) {
 			"a refused unregister left its client connected; a discarded one closes it")
 	})
 }
+
+// A publish that returned is counted at once: the event loop is not running,
+// so both messages are still queued when the channel stats are read.
+func TestNotificationHub_ReturnedPublishIsCounted(t *testing.T) {
+	t.Parallel()
+	hub := NewNotificationHub(newTestLogger(t))
+
+	created := make(chan *CreateChannelResponse, 1)
+	hub.handleCreateChannel(&CreateChannelRequest{Name: "stats", Response: created})
+	require.NotNil(t, <-created)
+
+	require.NoError(t, hub.Broadcast(&Message{Channel: "stats"}))
+	require.NoError(t, hub.Broadcast(&Message{Channel: "stats"}))
+
+	got := make(chan *getChannelResponse, 1)
+	hub.handleGetChannel(&getChannelRequest{Name: "stats", Response: got})
+	resp := <-got
+	require.True(t, resp.Found)
+	assert.Equal(t, int64(2), resp.Channel.MessagesPublished())
+}
+
+// A broadcast to a channel that does not exist counts nothing.
+func TestNotificationHub_PublishToUnknownChannelIsNotCounted(t *testing.T) {
+	t.Parallel()
+	hub := NewNotificationHub(newTestLogger(t))
+
+	require.NoError(t, hub.Broadcast(&Message{Channel: "missing"}))
+
+	created := make(chan *CreateChannelResponse, 1)
+	hub.handleCreateChannel(&CreateChannelRequest{Name: "missing", Response: created})
+	require.NotNil(t, <-created)
+
+	got := make(chan *getChannelResponse, 1)
+	hub.handleGetChannel(&getChannelRequest{Name: "missing", Response: got})
+	resp := <-got
+	require.True(t, resp.Found)
+	assert.Equal(t, int64(0), resp.Channel.MessagesPublished())
+}

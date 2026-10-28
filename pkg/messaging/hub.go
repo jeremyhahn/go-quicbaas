@@ -142,8 +142,10 @@ type HubChannel struct {
 	CreatedAt time.Time
 	// subscriberCount tracks the number of subscribers (updated in event loop).
 	subscriberCount int
-	// messagesPublished tracks the number of messages published (updated in event loop).
-	messagesPublished int64
+	// messagesPublished counts the messages published to this channel. Broadcast
+	// increments it when it enqueues a message, so a returned publish is counted
+	// before the event loop delivers it; every copy of the channel shares it.
+	messagesPublished *atomic.Int64
 }
 
 // SubscriberCount returns the current number of subscribers.
@@ -153,7 +155,10 @@ func (ch *HubChannel) SubscriberCount() int {
 
 // MessagesPublished returns the total number of messages published to this channel.
 func (ch *HubChannel) MessagesPublished() int64 {
-	return ch.messagesPublished
+	if ch.messagesPublished == nil {
+		return 0
+	}
+	return ch.messagesPublished.Load()
 }
 
 // SubscribeRequest represents a request to subscribe to a channel.
@@ -248,6 +253,7 @@ type NotificationHub struct {
 	getChannel    chan *getChannelRequest     // Get channel info
 	listChannels  chan *listChannelsRequest   // List all channels
 	channelInfo   map[string]*HubChannel      // Channel metadata
+	published     sync.Map                    // channel name -> *atomic.Int64, read by Broadcast off the event loop
 	running       atomic.Bool
 	clientCount   atomic.Int64 // Lock-free client count for safe concurrent reads.
 	channelCount  atomic.Int64 // Lock-free channel count for safe concurrent reads.
@@ -740,6 +746,7 @@ func (h *NotificationHub) Broadcast(msg *Message) error {
 
 	select {
 	case h.broadcast <- msg:
+		h.countPublished(msg.Channel)
 		return nil
 	default:
 		h.logger.Warn("broadcast channel full, message dropped")
@@ -1129,9 +1136,10 @@ func (h *NotificationHub) handleSubscribe(req *SubscribeRequest) {
 	// Auto-create channel if it doesn't exist
 	if _, exists := h.channelInfo[req.Channel]; !exists {
 		h.channelInfo[req.Channel] = &HubChannel{
-			Name:      req.Channel,
-			Options:   defaultChannelOptions(),
-			CreatedAt: time.Now(),
+			Name:              req.Channel,
+			messagesPublished: h.newPublishCounter(req.Channel),
+			Options:           defaultChannelOptions(),
+			CreatedAt:         time.Now(),
 		}
 		h.channels[req.Channel] = make(map[*Client]bool)
 		h.channelCount.Add(1)
@@ -1229,6 +1237,7 @@ func (h *NotificationHub) handleCreateChannel(req *CreateChannelRequest) {
 		CreatedAt: time.Now(),
 	}
 
+	channel.messagesPublished = h.newPublishCounter(req.Name)
 	h.channelInfo[req.Name] = channel
 	h.channels[req.Name] = make(map[*Client]bool)
 	h.channelCount.Add(1)
@@ -1263,6 +1272,7 @@ func (h *NotificationHub) handleDeleteChannel(req *DeleteChannelRequest) {
 	// Delete the channel
 	delete(h.channels, req.Name)
 	delete(h.channelInfo, req.Name)
+	h.published.Delete(req.Name)
 	h.channelCount.Add(-1)
 
 	h.logger.WithField("channel", req.Name).Debug("channel deleted")
@@ -1329,10 +1339,6 @@ func (h *NotificationHub) handleBroadcast(msg *Message) {
 			return
 		}
 		targets = subscribers
-		// Track per-channel publish count
-		if info, ok := h.channelInfo[msg.Channel]; ok {
-			info.messagesPublished++
-		}
 	} else {
 		// Send to all clients
 		targets = h.clients
@@ -1340,6 +1346,26 @@ func (h *NotificationHub) handleBroadcast(msg *Message) {
 
 	for client := range targets {
 		h.sendToClient(client, msg)
+	}
+}
+
+// newPublishCounter creates the publish counter of a new channel and registers
+// it for Broadcast. It runs on the event loop, where channels are created.
+func (h *NotificationHub) newPublishCounter(name string) *atomic.Int64 {
+	counter := &atomic.Int64{}
+	h.published.Store(name, counter)
+	return counter
+}
+
+// countPublished counts an enqueued message against its channel. Broadcast
+// calls it once the message is queued, so a stats read after a returned
+// publish sees it even before the event loop delivers the message.
+func (h *NotificationHub) countPublished(channel string) {
+	if channel == "" {
+		return
+	}
+	if counter, ok := h.published.Load(channel); ok {
+		counter.(*atomic.Int64).Add(1)
 	}
 }
 
@@ -1372,6 +1398,7 @@ func (h *NotificationHub) cleanup() {
 	h.clients = make(map[*Client]bool)
 	h.channels = make(map[string]map[*Client]bool)
 	h.channelInfo = make(map[string]*HubChannel)
+	h.published.Clear()
 
 	// AND THE COUNTS DERIVED FROM THEM, in the same place, because they are
 	// not independent facts — ClientCount and ChannelCount exist only to
