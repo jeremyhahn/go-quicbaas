@@ -275,8 +275,11 @@ func TestModule_KeyManagement_LateBinding(t *testing.T) {
 	_, err = client.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{})
 	requireUnavailable(t, err, "KeyManagement (pre-composition)")
 
+	// KeyManagement mounts only with the tenant-scoped KMS service beside
+	// the manager (#1992), so the late-bound facade composes both.
 	svc.Store(&mocks.MockQuicBaaS{
 		KMSManagerServiceFunc: func() interfaces.KMSManager { return stubKMSManager{} },
+		MockKMSService:        &mocks.MockKMSService{},
 	})
 	resp, err := client.GetSupportedAlgorithms(ctx, &pb.GetSupportedAlgorithmsRequest{})
 	require.NoError(t, err, "the late-bound KeyManagement must serve without re-registration")
