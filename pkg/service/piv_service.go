@@ -33,20 +33,47 @@ var errPIVNilRequest = stderrors.New("request must not be nil")
 // (backend-scoped slots: file / pkcs11 / tpm2), aliased so every QuicBaaS
 // transport serves exactly the xkms wire shape. QuicBaaS adds no PIV logic
 // of its own: the servicer below delegates each verb to the composed
-// go-xkms service functions.
+// go-xkms XKMSService, whose PIV methods are platform-scoped.
 type PIVService = xkmstransport.PIVService
 
-// pivService delegates every PIV verb to the composed go-xkms service
-// (xkmssdk.Service* package functions, backed by the embedded XKMSService
-// singleton). All request validation, backend resolution, and typed errors
-// (ServiceErrPIVNotInitialized, ServiceErrPIVBackendNotFound, ...) come
-// from go-xkms.
-type pivService struct{}
+// pivService delegates every PIV verb to the method of the same name on the
+// composed go-xkms XKMSService. The PIV card is platform-global state, so each
+// of those methods admits only a cross-tenant (system) identity and refuses a
+// tenant-scoped caller with go-xkms's TenantBindingError (go-xkms#1227). All
+// request validation, backend resolution, and typed errors come from go-xkms.
+type pivService struct {
+	// resolve returns the composed go-xkms service, or nil while it is not
+	// yet composed. It is late-bound: the service exists only after startup.
+	resolve func() *xkmssdk.XKMSService
+}
 
-// NewPIVService returns the PIV composition service. It is stateless: the
-// backend registry lives inside the composed go-xkms service singleton.
-func NewPIVService() PIVService {
-	return &pivService{}
+// NewPIVService returns the PIV composition service over the go-xkms service
+// resolve returns at call time.
+func NewPIVService(resolve func() *xkmssdk.XKMSService) PIVService {
+	return &pivService{resolve: resolve}
+}
+
+// composedXKMSService returns the process-global go-xkms service, or nil while
+// it is not initialized.
+func composedXKMSService() *xkmssdk.XKMSService {
+	svc, err := xkmssdk.Get()
+	if err != nil {
+		return nil
+	}
+	return svc
+}
+
+// platformService returns the composed go-xkms service, or go-xkms's typed
+// not-initialized error while there is none.
+func (p *pivService) platformService() (*xkmssdk.XKMSService, error) {
+	if p.resolve == nil {
+		return nil, xkmssdk.ServiceErrPIVNotInitialized
+	}
+	svc := p.resolve()
+	if svc == nil {
+		return nil, xkmssdk.ServiceErrPIVNotInitialized
+	}
+	return svc, nil
 }
 
 // ListPIVSlots returns the status of all PIV slots in the requested backend.
@@ -54,7 +81,11 @@ func (p *pivService) ListPIVSlots(ctx context.Context, req *xkmstransport.ListPI
 	if req == nil {
 		return nil, ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceListPIVSlots(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.ListPIVSlots(ctx, req)
 }
 
 // GetPIVCertificate retrieves the certificate stored in a PIV slot.
@@ -62,7 +93,11 @@ func (p *pivService) GetPIVCertificate(ctx context.Context, req *xkmstransport.G
 	if req == nil {
 		return nil, ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceGetPIVCertificate(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.GetPIVCertificate(ctx, req)
 }
 
 // StorePIVCertificate stores a certificate in a PIV slot.
@@ -70,7 +105,11 @@ func (p *pivService) StorePIVCertificate(ctx context.Context, req *xkmstransport
 	if req == nil {
 		return ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceStorePIVCertificate(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return err
+	}
+	return svc.StorePIVCertificate(ctx, req)
 }
 
 // DeletePIVCertificate removes the certificate from a PIV slot.
@@ -78,7 +117,11 @@ func (p *pivService) DeletePIVCertificate(ctx context.Context, req *xkmstranspor
 	if req == nil {
 		return ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceDeletePIVCertificate(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return err
+	}
+	return svc.DeletePIVCertificate(ctx, req)
 }
 
 // GeneratePIVKey generates a new key pair in a PIV slot with a self-signed
@@ -87,7 +130,11 @@ func (p *pivService) GeneratePIVKey(ctx context.Context, req *xkmstransport.Gene
 	if req == nil {
 		return nil, ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceGeneratePIVKey(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.GeneratePIVKey(ctx, req)
 }
 
 // ImportPIVCertificate imports a certificate into a PIV slot.
@@ -95,7 +142,11 @@ func (p *pivService) ImportPIVCertificate(ctx context.Context, req *xkmstranspor
 	if req == nil {
 		return ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceImportPIVCertificate(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return err
+	}
+	return svc.ImportPIVCertificate(ctx, req)
 }
 
 // ExportPIVCertificate exports the certificate from a PIV slot.
@@ -103,7 +154,11 @@ func (p *pivService) ExportPIVCertificate(ctx context.Context, req *xkmstranspor
 	if req == nil {
 		return nil, ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceExportPIVCertificate(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.ExportPIVCertificate(ctx, req)
 }
 
 // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
@@ -111,5 +166,9 @@ func (p *pivService) GeneratePIVCSR(ctx context.Context, req *xkmstransport.Gene
 	if req == nil {
 		return nil, ErrPIVNilRequest
 	}
-	return xkmssdk.ServiceGeneratePIVCSR(ctx, req)
+	svc, err := p.platformService()
+	if err != nil {
+		return nil, err
+	}
+	return svc.GeneratePIVCSR(ctx, req)
 }

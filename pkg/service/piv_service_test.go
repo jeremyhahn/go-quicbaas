@@ -26,7 +26,7 @@ import (
 // TestNewPIVService verifies the constructor returns a non-nil service that
 // satisfies the xkms PIVService contract.
 func TestNewPIVService(t *testing.T) {
-	svc := NewPIVService()
+	svc := NewPIVService(composedXKMSService)
 	if svc == nil {
 		t.Fatal("NewPIVService returned nil")
 	}
@@ -36,7 +36,7 @@ func TestNewPIVService(t *testing.T) {
 // TestPIVService_NilRequests verifies every verb fails closed with the typed
 // nil-request error instead of reaching the composed go-xkms service.
 func TestPIVService_NilRequests(t *testing.T) {
-	svc := NewPIVService()
+	svc := NewPIVService(composedXKMSService)
 	ctx := context.Background()
 
 	if _, err := svc.ListPIVSlots(ctx, nil); !errors.Is(err, ErrPIVNilRequest) {
@@ -70,7 +70,7 @@ func TestPIVService_NilRequests(t *testing.T) {
 // verb must surface go-xkms's own typed error (proof of delegation — the
 // error originates in go-xkms, not in QuicBaaS).
 func TestPIVService_DelegatesToXKMS(t *testing.T) {
-	svc := NewPIVService()
+	svc := NewPIVService(composedXKMSService)
 	ctx := context.Background()
 
 	if _, err := svc.ListPIVSlots(ctx, &xkmstransport.ListPIVSlotsRequest{Backend: "file"}); err == nil {

@@ -623,7 +623,7 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// FIDO2 resolves the per-tenant xkms relying-party service through the
 	// IAM WebAuthn factory at call time and reports ErrFIDO2NotConfigured
 	// until that manager is wired.
-	svc.pivService = NewPIVService()
+	svc.pivService = NewPIVService(composedXKMSService)
 	svc.fido2Service = NewFIDO2Service(svc)
 	// User-addressed WebAuthn credential administration. Like FIDO2 it
 	// resolves at call time, so it is wired unconditionally and reports
