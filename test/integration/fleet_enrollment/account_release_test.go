@@ -87,6 +87,8 @@ var daemonAccountRoutes = []accountRoute{
 	{http.MethodGet, "/api/v1/agent-accounts/{id}"},
 	{http.MethodGet, "/api/v1/agent-accounts/{id}/usage"},
 	{http.MethodPost, "/api/v1/agent-accounts/{id}/materialize"},
+	{http.MethodPost, "/api/v1/agent-accounts/{id}/reservations"},
+	{http.MethodDelete, "/api/v1/agent-accounts/{id}/reservations/{rid}"},
 }
 
 // adminAccountRoutes are the writes a tenant admin makes against the
@@ -186,7 +188,10 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 	// The tenant admin holds go-qrdb's built-in admin role. The harness role
 	// store carries that role's grants for these routes, and only the grants
 	// the built-in role really holds: a route whose permission it does not
-	// hold fails here instead of passing on a hand-made grant.
+	// hold fails here instead of passing on a hand-made grant. The role's
+	// placement for these permissions is registered by quicbaas, so it must be
+	// in qrdb's registry before the role is asked about it.
+	quicbaaspermission.Register()
 	grants := make([]string, 0, len(adminAccountRoutes))
 	for _, route := range adminAccountRoutes {
 		spec := f.routeSpec(t, route.method, route.pattern)

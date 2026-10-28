@@ -40,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/iamtest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam/qrdbadapter"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kvstore"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/orchestration"
 	"github.com/jeremyhahn/go-quicbaas/pkg/secrets"
@@ -344,6 +345,24 @@ func newEnrollmentFixture(t *testing.T) *enrollmentFixture {
 	require.True(t, ok, "the account service must accept a token manager, as server lifecycle wires it")
 	accountWirer.SetTokenManager(
 		orchestration.NewAccountTokenManager(accountSecrets, accountStore, 0))
+	// The daemon's pool counts an account's live sessions through its usage
+	// route, which answers 503 on a service with no usage tracker. Server
+	// lifecycle binds it to the orchestration cost ledger, over the in-memory
+	// store it falls back to when no qrdb storage is attached; so does this.
+	usageWirer, ok := accountSvc.(interface {
+		SetUsageTracker(orchestration.CostTracker)
+	})
+	require.True(t, ok, "the account service must accept a usage tracker, as server lifecycle wires it")
+	usageWirer.SetUsageTracker(orchestration.NewCostTracker(kvstore.NewMemory(), logger.NewAdapter(log)))
+	// The daemon reserves a session slot before it spawns. Server lifecycle
+	// counts sessions from the agent store's session records; so does this.
+	sessionCounter, err := orchestration.NewAccountSessionCounter(orchestration.NewInMemoryAgentStore())
+	require.NoError(t, err)
+	sessionWirer, ok := accountSvc.(interface {
+		SetSessionReserver(orchestration.AccountSessionReserver)
+	})
+	require.True(t, ok, "the account service must accept a session reserver, as server lifecycle wires it")
+	sessionWirer.SetSessionReserver(sessionCounter)
 
 	svc := &enrollmentService{
 		MockQuicBaaS:   testutil.NewMockQuicBaaS(),
