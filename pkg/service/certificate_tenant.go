@@ -121,7 +121,7 @@ func issuedForTenant(ctx context.Context, ca any, tenantID string, serial *big.I
 		return false, nil
 	}
 	issuingTenant, err := resolver.CertificateTenant(ctx, serial)
-	if stderrors.Is(err, ErrCertificateTenantNotSupported) {
+	if stderrors.Is(err, errCertificateTenantNotSupported) {
 		return false, nil
 	}
 	if err != nil {
