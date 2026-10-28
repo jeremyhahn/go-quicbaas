@@ -16,9 +16,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -98,5 +102,111 @@ func TestPIVService_DelegatesToXKMS(t *testing.T) {
 	}
 	if _, err := svc.GeneratePIVCSR(ctx, &xkmstransport.GeneratePIVCSRRequest{Backend: "file", Slot: "9a"}); err == nil {
 		t.Error("GeneratePIVCSR with uninitialized xkms PIV manager should error")
+	}
+}
+
+// TestPIVService_TenantCallerCannotTouchPlatformSlots pins Codex 7955
+// (go-quicbaas#1996): the server's PIV card is platform-global state, so
+// every PIV verb must run go-xkms's platform-scope check and refuse a
+// tenant-scoped caller before it reaches the backend.
+func TestPIVService_TenantCallerCannotTouchPlatformSlots(t *testing.T) {
+	const backend = "file"
+	const slot = "9a"
+
+	memory, err := xkmssdk.NewMemoryBackend()
+	if err != nil {
+		t.Fatalf("NewMemoryBackend: %v", err)
+	}
+	store, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
+		Backend:    memory,
+		DEREnabled: true,
+	})
+	if err != nil {
+		t.Fatalf("NewPIVFileBackend: %v", err)
+	}
+	if err := xkmssdk.InitializePIV(&xkmssdk.PIVManagerConfig{
+		Stores: map[string]xkmssdk.PIVCertificateStorage{backend: store},
+	}); err != nil {
+		t.Fatalf("InitializePIV: %v", err)
+	}
+	t.Cleanup(xkmssdk.XKMSResetPIV)
+
+	svc := NewPIVService(func() *xkmssdk.XKMSService { return &xkmssdk.XKMSService{} })
+	systemCtx := qrdbsdk.WithIdentity(context.Background(),
+		&qrdbsdk.Identity{Subject: "platform-admin", TenantID: qrdbsdk.SystemTenantID})
+	tenantCtx := qrdbsdk.WithIdentity(context.Background(),
+		&qrdbsdk.Identity{Subject: "acme-admin", TenantID: "acme"})
+
+	stored := selfSignedDER(t)
+	if err := svc.StorePIVCertificate(systemCtx, &xkmstransport.StorePIVCertificateRequest{
+		Backend: backend, Slot: slot, Certificate: stored, Format: "der",
+	}); err != nil {
+		t.Fatalf("system caller StorePIVCertificate: %v", err)
+	}
+
+	readBack := func() []byte {
+		t.Helper()
+		resp, err := svc.GetPIVCertificate(systemCtx, &xkmstransport.GetPIVCertificateRequest{
+			Backend: backend, Slot: slot, Format: "der",
+		})
+		if err != nil {
+			t.Fatalf("system caller GetPIVCertificate: %v", err)
+		}
+		return resp.Certificate
+	}
+	if got := readBack(); !bytes.Equal(got, stored) {
+		t.Fatal("system caller should read back the certificate it stored")
+	}
+
+	tests := []struct {
+		name string
+		call func(ctx context.Context) error
+	}{
+		{"StorePIVCertificate", func(ctx context.Context) error {
+			return svc.StorePIVCertificate(ctx, &xkmstransport.StorePIVCertificateRequest{
+				Backend: backend, Slot: slot, Certificate: selfSignedDER(t), Format: "der",
+			})
+		}},
+		{"DeletePIVCertificate", func(ctx context.Context) error {
+			return svc.DeletePIVCertificate(ctx, &xkmstransport.DeletePIVCertificateRequest{Backend: backend, Slot: slot})
+		}},
+		{"GeneratePIVKey", func(ctx context.Context) error {
+			_, err := svc.GeneratePIVKey(ctx, &xkmstransport.GeneratePIVKeyRequest{
+				Backend: backend, Slot: slot, Algorithm: "ecdsap256", Subject: "acme",
+			})
+			return err
+		}},
+		{"ImportPIVCertificate", func(ctx context.Context) error {
+			return svc.ImportPIVCertificate(ctx, &xkmstransport.StorePIVCertificateRequest{
+				Backend: backend, Slot: slot, Certificate: selfSignedDER(t), Format: "der",
+			})
+		}},
+		{"GeneratePIVCSR", func(ctx context.Context) error {
+			_, err := svc.GeneratePIVCSR(ctx, &xkmstransport.GeneratePIVCSRRequest{Backend: backend, Slot: slot, Subject: "acme"})
+			return err
+		}},
+		{"ListPIVSlots", func(ctx context.Context) error {
+			_, err := svc.ListPIVSlots(ctx, &xkmstransport.ListPIVSlotsRequest{Backend: backend})
+			return err
+		}},
+		{"GetPIVCertificate", func(ctx context.Context) error {
+			_, err := svc.GetPIVCertificate(ctx, &xkmstransport.GetPIVCertificateRequest{Backend: backend, Slot: slot, Format: "der"})
+			return err
+		}},
+		{"ExportPIVCertificate", func(ctx context.Context) error {
+			_, err := svc.ExportPIVCertificate(ctx, &xkmstransport.GetPIVCertificateRequest{Backend: backend, Slot: slot, Format: "der"})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(tenantCtx)
+			if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
+				t.Errorf("Codex 7955 / #1996: tenant caller %s must be refused by the platform-scope check, got %v", tt.name, err)
+			}
+			if got := readBack(); !bytes.Equal(got, stored) {
+				t.Errorf("Codex 7955 / #1996: tenant caller %s changed the platform PIV slot %s", tt.name, slot)
+			}
+		})
 	}
 }
