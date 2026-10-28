@@ -33,6 +33,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -776,7 +778,7 @@ func (s *Server) HandleXKMSGetCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cert, err := xkmssdk.ServiceCertificateByID(r.Context(), keyID)
+	cert, err := s.xkmsCertificateForCaller(r.Context(), keyID)
 	if err != nil {
 		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
 			Op:     "GetCertificate",
@@ -811,6 +813,14 @@ func (s *Server) HandleXKMSDeleteCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
+		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
+			Op:     "DeleteCertificate",
+			Detail: err.Error(),
+		})
+		return
+	}
+
 	if err := xkmssdk.ServiceDeleteCertificateByID(r.Context(), keyID); err != nil {
 		respondXKMSError(w, http.StatusInternalServerError, &XKMSOperationError{
 			Op:     "DeleteCertificate",
@@ -835,19 +845,27 @@ func (s *Server) HandleXKMSCertExists(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attrs, err := xkmssdk.ServiceParseCertificateID(keyID)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	exists, err := xkmssdk.ServiceCertificateExists(r.Context(), attrs)
-	if err != nil || !exists {
+	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// xkmsCertificateForCaller reads the certificate stored under keyID in the
+// go-xkms key store and binds the caller to the tenant the CA issued it for
+// (service.BindCertificateToCaller), as certificate revoke does. The key store
+// records no tenant, so a refusal answers like a missing certificate.
+func (s *Server) xkmsCertificateForCaller(ctx context.Context, keyID string) (*x509.Certificate, error) {
+	cert, err := xkmssdk.ServiceCertificateByID(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	if err := service.BindCertificateToCaller(ctx, s.service.Certificate(), cert); err != nil {
+		return nil, err
+	}
+	return cert, nil
 }
 
 // HandleXKMSSeal handles POST /api/v1/xkms/seal.

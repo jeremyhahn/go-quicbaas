@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -2285,7 +2287,7 @@ func TestXKMS91_GetCert(t *testing.T) {
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("get existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/get-cert-test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/get-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -2295,7 +2297,7 @@ func TestXKMS91_GetCert(t *testing.T) {
 	})
 
 	t.Run("get nonexistent cert returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/nonexistent-cert", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/nonexistent-cert", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)
@@ -2325,17 +2327,17 @@ func TestXKMS91_DeleteCert(t *testing.T) {
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("delete existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/del-cert-test", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/del-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("delete nonexistent cert returns error", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/nonexistent-delete", nil)
+	t.Run("delete nonexistent cert returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/nonexistent-delete", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 
@@ -2362,14 +2364,14 @@ func TestXKMS91_CertExists(t *testing.T) {
 	require.Equal(t, http.StatusOK, savW.Code)
 
 	t.Run("existing cert returns 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/exists-cert-test", nil)
+		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/exists-cert-test", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("nonexistent cert returns 404", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/nonexistent-exists", nil)
+		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/nonexistent-exists", nil).WithContext(tenantctx.WithSystem(context.Background()))
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusNotFound, w.Code)

@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
+	stderrors "errors"
 	"math/big"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -71,4 +74,37 @@ func BindToIssuingTenant(ctx context.Context, ca any, serial *big.Int) error {
 		return refusal
 	}
 	return nil
+}
+
+// ErrCertificateTenantNotSupported is returned when the CA behind the
+// certificate service does not record the tenant it issued a certificate for.
+var ErrCertificateTenantNotSupported = &errors.QBError{
+	Code: errors.ErrUnimplemented,
+	Op:   "CertificateService.CertificateTenant",
+	Err:  errCertificateTenantNotSupported,
+}
+
+var errCertificateTenantNotSupported = stderrors.New("CA service does not record issuing tenants")
+
+// CertificateTenant makes the certificate service a CertificateTenantResolver
+// over its CA, so a transport serving certificates from another store can bind
+// the caller to the tenant the CA issued a certificate for.
+func (s *certificateService) CertificateTenant(ctx context.Context, serial *big.Int) (string, error) {
+	resolver, ok := s.caService.(CertificateTenantResolver)
+	if !ok {
+		return "", ErrCertificateTenantNotSupported
+	}
+	return resolver.CertificateTenant(ctx, serial)
+}
+
+// BindCertificateToCaller applies BindToIssuingTenant to a certificate a
+// transport read from a store that does not record tenants (the go-xkms key
+// store, addressed by key ID). The issuing tenant is resolved through certs,
+// the CertificateService the transport is wired with; a nil service, or one
+// whose CA does not record tenants, leaves only the system tenant through.
+func BindCertificateToCaller(ctx context.Context, certs CertificateService, cert *x509.Certificate) error {
+	if cert == nil {
+		return BindToIssuingTenant(ctx, nil, nil)
+	}
+	return BindToIssuingTenant(ctx, certs, cert.SerialNumber)
 }
