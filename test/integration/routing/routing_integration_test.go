@@ -31,12 +31,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// testHTTPClient is a package-level HTTP client configured with CA-pinned TLS
-// trust for the integration cluster.
-var testHTTPClient = helpers.NewHTTPClient(30 * time.Second)
+// Each test's testHTTPClient carries the system admin's bearer: the route
+// debug endpoint requires admin:status.
 
 // TestRoutingDebug verifies that the routing debug endpoint reflects config pins.
 func TestRoutingDebug(t *testing.T) {
+	testHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	node1 := os.Getenv("QUICBAAS_NODE1_URL")
 	if node1 == "" {
 		node1 = "https://test-node1:8080"
@@ -59,6 +59,7 @@ func TestRoutingDebug(t *testing.T) {
 
 // TestRoutingDebugModulo verifies fallback modulo routing across IDs.
 func TestRoutingDebugModulo(t *testing.T) {
+	testHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	base := os.Getenv("QUICBAAS_NODE1_URL")
 	if base == "" {
 		base = "https://test-node1:8080"
@@ -91,6 +92,7 @@ func TestRoutingDebugModulo(t *testing.T) {
 
 // TestRoutingDebugNoIDDefault verifies id==0 defaults to first shard.
 func TestRoutingDebugNoIDDefault(t *testing.T) {
+	testHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	base := os.Getenv("QUICBAAS_NODE1_URL")
 	if base == "" {
 		base = "https://test-node1:8080"
@@ -109,6 +111,7 @@ func TestRoutingDebugNoIDDefault(t *testing.T) {
 
 // TestRoutingDebugConsistencyAcrossNodes ensures all nodes produce same decision.
 func TestRoutingDebugConsistencyAcrossNodes(t *testing.T) {
+	testHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	nodes := []string{os.Getenv("QUICBAAS_NODE1_URL"), os.Getenv("QUICBAAS_NODE2_URL"), os.Getenv("QUICBAAS_NODE3_URL")}
 	for i := range nodes {
 		if nodes[i] == "" {
@@ -142,6 +145,7 @@ func TestRoutingDebugConsistencyAcrossNodes(t *testing.T) {
 
 // TestRoutingMultiplePins verifies multiple entity-type pins work as expected.
 func TestRoutingMultiplePins(t *testing.T) {
+	testHTTPClient := helpers.NewSystemAdminHTTPClient(t, 30*time.Second)
 	base := os.Getenv("QUICBAAS_NODE1_URL")
 	if base == "" {
 		base = "https://test-node1:8080"
