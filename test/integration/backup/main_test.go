@@ -126,6 +126,12 @@ func waitForClusterReady() bool {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				log.Println("QuicBaaS cluster is ready for backup tests")
+				// Health readiness does not mean shard 1 has a leader: an
+				// election still in progress fails every authenticated call.
+				if err := helpers.WaitForClusterShardLeaders(context.Background(), helpers.ClusterShards, 2*time.Minute); err != nil {
+					log.Printf("Shard leaders not elected: %v", err)
+					return false
+				}
 				return true
 			}
 		}
