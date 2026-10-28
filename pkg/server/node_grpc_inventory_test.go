@@ -107,8 +107,6 @@ var unixOnlyServices = map[string]string{
 	"quicbaas.barrier.v1.Barrier":      "qrdb proxy plane",
 	"quicbaas.ceremony.v1.Ceremony":    "qrdb proxy plane",
 	"quicbaas.tenant.v1.TenantBarrier": "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorDB":      "qrdb proxy plane",
-	"quicbaas.vector.v1.VectorAdmin":   "qrdb proxy plane",
 }
 
 // serviceNames returns the sorted names of the services registered on gs.
