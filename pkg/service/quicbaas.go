@@ -1966,7 +1966,10 @@ func (t *transactionService) Transaction(ctx context.Context, req *TransactionRe
 }
 
 func (t *transactionService) evaluateCompare(ctx context.Context, shardID uint64, cmp *CompareCondition) (bool, error) {
-	key := []byte(fmt.Sprintf("%s:%d", cmp.EntityType, cmp.ID))
+	key, err := t.svc.keyspaceResolver.BuildKey(ctx, cmp.EntityType, cmp.ID)
+	if err != nil {
+		return false, err
+	}
 
 	// Read via qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)
@@ -2059,7 +2062,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 			}
 
 		case TransactionOpTypePut:
-			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+			if err != nil {
+				return nil, err
+			}
 			batchOps = append(batchOps, qrdbtransport.Op{
 				Type:  qrdbtransport.OpPut,
 				Key:   key,
@@ -2068,7 +2074,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 			writeOpsMetadata = append(writeOpsMetadata, op)
 
 		case TransactionOpTypeDelete:
-			key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+			key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+			if err != nil {
+				return nil, err
+			}
 			batchOps = append(batchOps, qrdbtransport.Op{
 				Type: qrdbtransport.OpDelete,
 				Key:  key,
@@ -2121,7 +2130,10 @@ func (t *transactionService) executeTransactionOps(ctx context.Context, shardID 
 }
 
 func (t *transactionService) executeGetOp(ctx context.Context, shardID uint64, op *TransactionOp) (*TransactionOpResponse, error) {
-	key := []byte(fmt.Sprintf("%s:%d", op.EntityType, op.ID))
+	key, err := t.svc.keyspaceResolver.BuildKey(ctx, op.EntityType, op.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Read via qrdb SDK
 	client, err := t.svc.qrdbForShard(shardID)
