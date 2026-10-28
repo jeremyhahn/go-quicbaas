@@ -56,6 +56,14 @@ func TenantOperatorHTTPClient(ctx context.Context, timeout time.Duration) (*http
 	return tenantOperatorAuth.newHTTPClient(ctx, timeout)
 }
 
+// AuthTenantOperator returns the tenant operator's bearer for baseURL's
+// cluster, for a client that takes a token rather than an *http.Client, such
+// as the SDK's quicbaas.WithAuthToken.
+func AuthTenantOperator(t *testing.T, baseURL string) string {
+	t.Helper()
+	return tenantOperatorAuth.mustBearer(t, baseURL)
+}
+
 // enrollTenantOperator has the tenant principal, the admin of this suite
 // process's tenant, enrol a PIV user in that tenant and bind it to go-qrdb's
 // built-in Operator role. The tenant is provisioned first if it is not yet.
