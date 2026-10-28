@@ -43,6 +43,9 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+	if err := helpers.ReleaseDataPlaneTenants(); err != nil {
+		fmt.Fprintf(os.Stderr, "release data-plane tenants: %v\n", err)
+	}
 
 	// Cleanup
 	if srv != nil {
@@ -154,7 +157,7 @@ func TestMessagingMultiProtocol(t *testing.T) {
 	})
 
 	t.Run("REST", func(t *testing.T) {
-		testMessagingProtocol(t, ctx, newRESTAdapter())
+		testMessagingProtocol(t, ctx, newRESTAdapter(t))
 	})
 
 	t.Run("UnixSocket", func(t *testing.T) {

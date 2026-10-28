@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
@@ -36,15 +37,17 @@ type restAdapter struct {
 }
 
 // newRESTAdapter creates a new REST adapter.
-func newRESTAdapter() *restAdapter {
+func newRESTAdapter(t *testing.T) *restAdapter {
+	t.Helper()
 	endpoints := helpers.GetRESTEndpoints()
 	baseURL := "https://localhost:8080"
 	if len(endpoints) > 0 {
 		baseURL = endpoints[0]
 	}
+	// The messaging verbs are granted to go-qrdb's built-in Operator role.
 	return &restAdapter{
 		baseURL:    baseURL,
-		httpClient: helpers.NewHTTPClient(30 * time.Second),
+		httpClient: helpers.NewTenantOperatorHTTPClient(t, 30*time.Second),
 	}
 }
 
