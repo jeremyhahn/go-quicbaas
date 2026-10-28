@@ -30,8 +30,11 @@ func TestXKMSCAServicer_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 		trustDomain string
 		issuer      context.Context
 		revoker     context.Context
+		keypair     bool
 		wantRefuse  bool
 	}{
+		{name: "tenant cannot revoke another tenant's keypair certificate", trustDomain: testTrustDomain, issuer: tenantB, revoker: tenantA, keypair: true, wantRefuse: true},
+		{name: "tenant revokes its own keypair certificate without a trust domain", issuer: tenantA, revoker: tenantA, keypair: true},
 		{name: "tenant cannot revoke another tenant's certificate", trustDomain: testTrustDomain, issuer: tenantB, revoker: tenantA, wantRefuse: true},
 		{name: "caller with no tenant is refused", trustDomain: testTrustDomain, issuer: tenantA, revoker: context.Background(), wantRefuse: true},
 		{name: "tenant cannot revoke a system certificate", trustDomain: testTrustDomain, issuer: system, revoker: tenantA, wantRefuse: true},
@@ -43,20 +46,14 @@ func TestXKMSCAServicer_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newXKMSCAServicer(testca.New(t, "xkmsca-revoke-ca"), tt.trustDomain)
 
-			signed, err := a.SignCSR(tt.issuer, &xkmstransport.SignCSRRequest{
-				CSRPEM:  newTestCSR(t, "leaf.example.test"),
-				Profile: "client",
-			})
-			if err != nil {
-				t.Fatalf("SignCSR: %v", err)
-			}
+			serial := issueForRevoke(t, a, tt.issuer, tt.keypair)
 
-			_, err = a.RevokeCertificate(tt.revoker, &xkmstransport.RevokeCertificateRequest{
-				SerialNumber: signed.SerialNumber,
+			_, err := a.RevokeCertificate(tt.revoker, &xkmstransport.RevokeCertificateRequest{
+				SerialNumber: serial,
 				Reason:       1,
 			})
 
-			status, statusErr := a.IsRevoked(context.Background(), &xkmstransport.IsRevokedRequest{SerialNumber: signed.SerialNumber})
+			status, statusErr := a.IsRevoked(context.Background(), &xkmstransport.IsRevokedRequest{SerialNumber: serial})
 			if statusErr != nil {
 				t.Fatalf("IsRevoked: %v", statusErr)
 			}
@@ -77,4 +74,30 @@ func TestXKMSCAServicer_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 			}
 		})
 	}
+}
+
+// issueForRevoke issues a client certificate for the tenant bound to ctx, on
+// the CSR-sign path or the generate-and-distribute (keypair) path, and returns
+// its serial.
+func issueForRevoke(t *testing.T, a *xkmsCAServicer, ctx context.Context, keypair bool) string {
+	t.Helper()
+	if keypair {
+		issued, err := a.IssueCertificate(ctx, &xkmstransport.IssueCertificateRequest{
+			CommonName:   "leaf.example.test",
+			Profile:      "client",
+			ValidityDays: 1,
+		})
+		if err != nil {
+			t.Fatalf("IssueCertificate: %v", err)
+		}
+		return issued.SerialNumber
+	}
+	signed, err := a.SignCSR(ctx, &xkmstransport.SignCSRRequest{
+		CSRPEM:  newTestCSR(t, "leaf.example.test"),
+		Profile: "client",
+	})
+	if err != nil {
+		t.Fatalf("SignCSR: %v", err)
+	}
+	return signed.SerialNumber
 }
