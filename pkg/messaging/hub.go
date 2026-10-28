@@ -1364,9 +1364,15 @@ func (h *NotificationHub) countPublished(channel string) {
 	if channel == "" {
 		return
 	}
-	if counter, ok := h.published.Load(channel); ok {
-		counter.(*atomic.Int64).Add(1)
+	value, ok := h.published.Load(channel)
+	if !ok {
+		return
 	}
+	counter, ok := value.(*atomic.Int64)
+	if !ok {
+		return
+	}
+	counter.Add(1)
 }
 
 // sendToClient sends a message to a specific client with slow consumer protection.
