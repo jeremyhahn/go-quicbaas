@@ -116,6 +116,8 @@ func TestRaftClusterLeaderElection(t *testing.T) {
 	conn, err := grpc.DialContext(ctx, endpoints[0],
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg2)),
 		grpc.WithBlock(),
+		// ClusterStatus requires admin:status, which the system admin holds.
+		grpc.WithPerRPCCredentials(helpers.SystemAdminGRPCCredentials(t)),
 	)
 	require.NoError(t, err)
 	defer conn.Close()

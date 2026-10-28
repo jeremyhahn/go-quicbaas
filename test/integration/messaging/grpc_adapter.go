@@ -17,6 +17,10 @@ package messaging
 
 import (
 	"context"
+	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	grpcclient "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
@@ -26,17 +30,21 @@ import (
 type grpcAdapter struct {
 	client   *grpcclient.Client
 	endpoint string
+	bearer   credentials.PerRPCCredentials
 }
 
 // newGRPCAdapter creates a new gRPC adapter.
-func newGRPCAdapter() *grpcAdapter {
+func newGRPCAdapter(t *testing.T) *grpcAdapter {
+	t.Helper()
 	endpoints := helpers.GetClusterEndpoints()
 	endpoint := "localhost:50051"
 	if len(endpoints) > 0 {
 		endpoint = endpoints[0]
 	}
+	// The messaging verbs are granted to go-qrdb's built-in Operator role.
 	return &grpcAdapter{
 		endpoint: endpoint,
+		bearer:   helpers.TenantOperatorGRPCCredentials(t),
 	}
 }
 
@@ -51,7 +59,8 @@ func (a *grpcAdapter) Setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient(a.endpoint, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(a.bearer)))
 	if err != nil {
 		return err
 	}
@@ -126,10 +135,12 @@ func (a *grpcAdapter) GetStats(ctx context.Context) (*grpcclient.MessagingGetSta
 type unixSocketAdapter struct {
 	client     *grpcclient.Client
 	socketPath string
+	bearer     credentials.PerRPCCredentials
 }
 
 // newUnixSocketAdapter creates a new Unix socket adapter.
-func newUnixSocketAdapter() *unixSocketAdapter {
+func newUnixSocketAdapter(t *testing.T) *unixSocketAdapter {
+	t.Helper()
 	endpoints := helpers.GetUnixSocketEndpoints()
 	socketPath := "/var/run/quicbaas/quicbaas.sock"
 	if len(endpoints) > 0 {
@@ -137,6 +148,7 @@ func newUnixSocketAdapter() *unixSocketAdapter {
 	}
 	return &unixSocketAdapter{
 		socketPath: socketPath,
+		bearer:     helpers.TenantOperatorGRPCCredentials(t),
 	}
 }
 
@@ -151,7 +163,8 @@ func (a *unixSocketAdapter) Setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(tlsCfg))
+	client, err := grpcclient.NewClient("unix://"+a.socketPath, grpcclient.WithTLSConfig(tlsCfg),
+		grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(a.bearer)))
 	if err != nil {
 		return err
 	}

@@ -24,12 +24,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	clitoken "github.com/jeremyhahn/go-quicbaas/pkg/cli"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // =============================================================================
@@ -87,6 +91,9 @@ type cliTestContext struct {
 	address   string
 	timeout   time.Duration
 	outputFmt string
+	// home is the HOME the CLI runs with; its ~/.quicbaas/token holds the
+	// system admin's bearer.
+	home string
 }
 
 // newCLITestContext creates a new CLI test context.
@@ -98,7 +105,29 @@ func newCLITestContext(t *testing.T, protocol, address string) *cliTestContext {
 		address:   address,
 		timeout:   30 * time.Second,
 		outputFmt: "json",
+		home:      systemAdminCLIHome(t),
 	}
+}
+
+// systemAdminCLIHome returns a fresh HOME whose CLI token file holds the
+// system admin's bearer, which the CLI sends on every network transport
+// (loadStoredAuthToken in cmd/quicbaas/client.go). The KMS verbs require
+// permissions the system admin holds.
+func systemAdminCLIHome(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	bearer, expiresAt, err := helpers.AuthPIVSession(ctx, helpers.GetRESTEndpoints()[0], "", "", "")
+	require.NoError(t, err, "system admin PIV login for the KMS CLI")
+
+	home := t.TempDir()
+	require.NoError(t, clitoken.SaveToken(filepath.Join(home, ".quicbaas", "token"), &clitoken.TokenData{
+		AccessToken: bearer,
+		ExpiresAt:   expiresAt,
+		TokenType:   "Bearer",
+	}), "persist the KMS CLI bearer")
+	return home
 }
 
 // run executes a CLI command with the configured protocol and address.
@@ -118,6 +147,7 @@ func (c *cliTestContext) run(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = append(os.Environ(), "HOME="+c.home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -155,6 +185,7 @@ func (c *cliTestContext) runExpectError(args ...string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.binary, fullArgs...)
+	cmd.Env = append(os.Environ(), "HOME="+c.home)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
