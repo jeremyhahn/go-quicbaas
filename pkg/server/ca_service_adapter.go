@@ -282,22 +282,24 @@ func (a *caServiceAdapter) IssueCertificate(
 // signOptionsWithSPIFFE builds the TrustedCASignOptions for a single signing
 // operation, folding in the operator-configured SPIFFE trust domain, the
 // request tenant, and the SPIFFE workload kind derived from the certificate
-// profile. When the trust domain or tenant is empty the CA omits the SPIFFE
-// SAN (single-domain / pre-broker mode). Returns nil when there is nothing to
-// configure so the CA applies its own profile defaults unchanged.
+// profile. A non-empty tenant is always recorded as the issuing tenant, with
+// or without a trust domain, so a later revoke can bind the caller to it.
+// When the trust domain or tenant is empty the CA omits the SPIFFE SAN
+// (single-domain / pre-broker mode). Returns nil only when profile, validity
+// and tenant are all empty, so the CA applies its own profile defaults
+// unchanged.
 func (a *caServiceAdapter) signOptionsWithSPIFFE(profile string, validityDays int, tenantID string) *xkmssdk.TrustedCASignOptions {
-	trustDomain := a.getSPIFFETrustDomain()
-	spiffeRequested := trustDomain != "" && tenantID != ""
-	if profile == "" && validityDays <= 0 && !spiffeRequested {
+	if profile == "" && validityDays <= 0 && tenantID == "" {
 		return nil
 	}
 	opts := &xkmssdk.TrustedCASignOptions{
 		Profile:      profile,
 		ValidityDays: validityDays,
+		TenantID:     tenantID,
 	}
-	if spiffeRequested {
+	trustDomain := a.getSPIFFETrustDomain()
+	if trustDomain != "" && tenantID != "" {
 		opts.SPIFFETrustDomain = trustDomain
-		opts.TenantID = tenantID
 		opts.SPIFFEKind = service.SPIFFEKindForProfile(profile)
 	}
 	return opts
