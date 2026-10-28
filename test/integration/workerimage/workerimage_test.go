@@ -16,6 +16,7 @@
 package workerimage_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -68,9 +69,15 @@ func docker(t *testing.T, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-	require.NoError(t, err, "docker %s: %s", strings.Join(args, " "), out)
-	return strings.TrimSpace(string(out))
+	// Only stdout is parsed: docker writes pull progress for an image that is
+	// not cached locally to stderr, which is kept for the error message.
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	require.NoError(t, err, "docker %s: %s%s", strings.Join(args, " "), stdout.String(), stderr.String())
+	return strings.TrimSpace(stdout.String())
 }
 
 func removeImages(t *testing.T, refs ...string) {
