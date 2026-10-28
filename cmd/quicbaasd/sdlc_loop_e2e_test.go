@@ -16,6 +16,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -832,6 +833,11 @@ type e2eContainer struct {
 	// checkoutRoot is what the container calls hostDir.
 	checkoutRoot string
 
+	// mounts are the container's other mounts, keyed by container path: the
+	// spec directory the daemon wrote (allowed_signers lives there) and a
+	// stand-in for the credential tier the runner delivers the forge token to.
+	mounts []orchestration.ContainerMount
+
 	authSock string
 }
 
@@ -847,6 +853,28 @@ func (c *e2eContainer) hostPath(containerDir string) (string, error) {
 			", which is outside this container's checkout root " + c.checkoutRoot)
 	}
 	return filepath.Join(c.hostDir, rel), nil
+}
+
+// hostArg translates an argument naming a path under one of the container's
+// mounts, alone or as the value of a key=value git config, into the host path
+// behind it; any other argument is returned as is.
+func (c *e2eContainer) hostArg(arg string) string {
+	key, value, isConfig := strings.Cut(arg, "=")
+	if !isConfig {
+		key, value = "", arg
+	}
+	for _, mount := range c.mounts {
+		rest, ok := strings.CutPrefix(value, mount.Target+"/")
+		if !ok {
+			continue
+		}
+		host := filepath.Join(mount.Source, rest)
+		if isConfig {
+			return key + "=" + host
+		}
+		return host
+	}
+	return arg
 }
 
 // e2eExecCall is one command the runner ran in a container.
@@ -869,11 +897,20 @@ func (r *e2eContainerRuntime) register(containerID string, req *orchestration.Sp
 	if err != nil {
 		return err
 	}
-	container := &e2eContainer{hostDir: req.WorkDir, checkoutRoot: spec.CheckoutRoot}
+	credentialDir := req.WorkDir + ".credentials"
+	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
+		return err
+	}
+	container := &e2eContainer{
+		hostDir:      req.WorkDir,
+		checkoutRoot: spec.CheckoutRoot,
+		mounts:       []orchestration.ContainerMount{{Source: credentialDir, Target: orchestration.WorkspaceCredentialDir}},
+	}
 	for _, mount := range req.ExtraMounts {
 		if mount.Target == orchestration.WorkspaceSigningAgentSocket {
 			container.authSock = mount.Source
 		}
+		container.mounts = append(container.mounts, mount)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -896,8 +933,15 @@ func (r *e2eContainerRuntime) Exec(ctx context.Context, containerID string, spec
 	if translateErr != nil {
 		return nil, &orchestration.ContainerExecError{ContainerID: containerID, Cause: translateErr}
 	}
-	cmd := exec.CommandContext(ctx, spec.Cmd[0], spec.Cmd[1:]...)
+	args := make([]string, 0, len(spec.Cmd)-1)
+	for _, arg := range spec.Cmd[1:] {
+		args = append(args, container.hostArg(arg))
+	}
+	cmd := exec.CommandContext(ctx, spec.Cmd[0], args...)
 	cmd.Dir = workDir
+	if len(spec.Stdin) > 0 {
+		cmd.Stdin = bytes.NewReader(spec.Stdin)
+	}
 	cmd.Env = append(os.Environ(), "SSH_AUTH_SOCK="+container.authSock)
 	for key, value := range spec.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
