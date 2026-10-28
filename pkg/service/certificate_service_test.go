@@ -27,10 +27,11 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // mockCAService implements xkmstransport.Client for testing the certificate service.
