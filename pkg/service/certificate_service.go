@@ -374,7 +374,7 @@ func (s *certificateService) VerifyCertificate(ctx context.Context, req *VerifyC
 	}
 
 	isRevokedResp, err := s.caService.IsRevoked(ctx, &xkmstransport.IsRevokedRequest{
-		SerialNumber: cert.SerialNumber.String(),
+		SerialNumber: cert.SerialNumber.Text(16),
 	})
 	if err != nil {
 		return &VerifyCertificateResponse{
