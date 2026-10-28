@@ -103,6 +103,12 @@ func waitForClusterReady() bool {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				fmt.Println("Cluster is ready")
+				// Health readiness does not mean shard 1 has a leader: an
+				// election still in progress fails every IAM call.
+				if err := helpers.WaitForClusterShardLeaders(ctx, helpers.ClusterShards, 2*time.Minute); err != nil {
+					fmt.Printf("Shard leaders not elected: %v\n", err)
+					return false
+				}
 				// Now wait for IAM shard to be ready
 				if waitForIAMReady(ctx, endpoint) {
 					return true
