@@ -91,9 +91,17 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 			"name":        opts.UserName,
 			"displayName": opts.UserDisplayName,
 		},
-		"pubKeyCredParams":       []map[string]any{{"type": "public-key", "alg": -7}},
-		"attestation":            "none",
-		"authenticatorSelection": map[string]string{"userVerification": userVerification},
+		"pubKeyCredParams": []map[string]any{{"type": "public-key", "alg": -7}},
+		"attestation":      "none",
+		// A passkey is a discoverable credential. The first-boot admin has a
+		// username and no email, so a login hinted "admin" resolves no account
+		// and asks for discoverable credentials with an empty allowCredentials.
+		// fido2.WebAuthnRegistrationOptions carries no resident-key field, so
+		// it is requested here.
+		"authenticatorSelection": map[string]string{
+			"userVerification": userVerification,
+			"residentKey":      "required",
+		},
 	}})
 	if err != nil {
 		return nil, &SoftwarePasskeyError{Op: "encode creation options", Cause: err}
