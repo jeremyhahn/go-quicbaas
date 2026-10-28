@@ -76,10 +76,18 @@ func newSystemAdminGRPCCredentials(ctx context.Context, baseURL, certPath, keyPa
 // request as the system admin, for suites that exercise admin-resource or
 // session routes (cache, routing debug, metrics). It fails the test when the
 // admin cannot log in.
+// SystemAdminHTTPClient returns an HTTP client that authenticates every
+// request as the system admin, or the login error. TestMain readiness probes
+// use it: they have no *testing.T, and a login that fails while the cluster is
+// still electing leaders is a reason to retry, not to fail.
+func SystemAdminHTTPClient(timeout time.Duration) (*http.Client, error) {
+	return newSystemAdminHTTPClient(context.Background(), NewHTTPClient(timeout),
+		GetRESTEndpoints()[0], pivCertPath(), pivKeyPath(), pivCAFile())
+}
+
 func NewSystemAdminHTTPClient(t *testing.T, timeout time.Duration) *http.Client {
 	t.Helper()
-	client, err := newSystemAdminHTTPClient(context.Background(), NewHTTPClient(timeout),
-		GetRESTEndpoints()[0], pivCertPath(), pivKeyPath(), pivCAFile())
+	client, err := SystemAdminHTTPClient(timeout)
 	if err != nil {
 		t.Fatalf("system admin HTTP client: %v", err)
 	}

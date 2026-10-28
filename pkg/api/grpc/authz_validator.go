@@ -76,8 +76,12 @@ var _ GRPCValidatorAuthenticator = (*platformtoken.Validator)(nil)
 //   - *platformtoken.ConfigError        -> Internal (server misconfiguration: a
 //     missing liveness checker or replay cache is an operator error, not the
 //     caller's; the request is still DENIED);
+//   - *platformtoken.LivenessCheckError -> Unavailable (the store that answers
+//     liveness could not be read, e.g. its shard has no leader yet; the token
+//     may be good, so the caller is told to retry rather than to log in again;
+//     the request is still DENIED);
 //   - every other error (invalid signature / issuer / audience / expiry / DPoP /
-//     missing-proof / liveness-backend failure) -> Unauthenticated.
+//     missing-proof) -> Unauthenticated.
 //
 // There is no allow path here: an unrecognised error still denies. The status
 // message is deliberately coarse so a caller cannot probe internal policy state.
@@ -93,6 +97,10 @@ func validatorGRPCStatus(err error) error {
 	var cfg *platformtoken.ConfigError
 	if errors.As(err, &cfg) {
 		return status.Error(codes.Internal, "authorization is misconfigured")
+	}
+	var liveness *platformtoken.LivenessCheckError
+	if errors.As(err, &liveness) {
+		return status.Error(codes.Unavailable, "token liveness could not be confirmed")
 	}
 	return status.Error(codes.Unauthenticated, "invalid or expired token")
 }

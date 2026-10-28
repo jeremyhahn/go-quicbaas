@@ -104,7 +104,7 @@ func waitForClusterReady() bool {
 			if resp.StatusCode == http.StatusOK {
 				fmt.Println("Cluster is ready")
 				// Now wait for IAM shard to be ready
-				if waitForIAMReady(ctx, client, endpoint) {
+				if waitForIAMReady(ctx, endpoint) {
 					return true
 				}
 			}
@@ -143,18 +143,35 @@ func (b *retryBackoff) wait() {
 // waitForIAMReady waits for the IAM shard (shard 1) to be ready.
 // It does this by attempting multiple ListTenants operations which require
 // the IAM shard to be available for reads. We require multiple consecutive
-// successful responses to ensure the shard is stable.
-func waitForIAMReady(ctx context.Context, client *http.Client, endpoint string) bool {
+// successful responses to ensure the shard is stable. Listing tenants is a
+// system-admin route, so the probe calls as the system admin; an anonymous
+// probe is refused on every attempt and can never see the shard ready.
+func waitForIAMReady(ctx context.Context, endpoint string) bool {
 	fmt.Println("Waiting for IAM shard to be ready...")
 
 	// Require 10 consecutive successes, 3 seconds apart, for 30 seconds of stability
 	const requiredSuccesses = 10
 	consecutiveSuccesses := 0
+	var admin *http.Client
 
 	for {
 		interval := 2 * time.Second
-		resp, err := client.Get(endpoint + "/api/v1/tenants")
-		if err == nil {
+		var (
+			resp *http.Response
+			err  error
+		)
+		if admin == nil {
+			// The admin logs in through the IAM shard, so the login itself
+			// waits for the shard like the probe does.
+			admin, err = helpers.SystemAdminHTTPClient(5 * time.Second)
+			if err != nil {
+				fmt.Printf("System admin login not ready: %v\n", err)
+			}
+		}
+		if admin != nil {
+			resp, err = admin.Get(endpoint + "/api/v1/tenants")
+		}
+		if admin != nil && err == nil {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 

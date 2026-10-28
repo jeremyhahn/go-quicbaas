@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/auth"
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/platformtoken"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/dataplane"
@@ -336,6 +337,27 @@ func TestUnaryAuthorizationInterceptor_Misconfigured(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
 	assert.False(t, called, "handler must not run on a misconfiguration deny")
+}
+
+// TestUnaryAuthorizationInterceptor_LivenessUnavailable asserts a liveness
+// check that could not reach its store (*LivenessCheckError, e.g. the tenant
+// shard has no leader yet) fails closed with Unavailable, not Unauthenticated:
+// the token may be good, so the caller must retry rather than log in again.
+func TestUnaryAuthorizationInterceptor_LivenessUnavailable(t *testing.T) {
+	authorizer := &fakeValidatorAuthorizer{
+		token:       "good",
+		grantedPerm: "kv:put",
+		denyErr:     &platformtoken.LivenessCheckError{Cause: &qberrors.MessageError{Message: "not leader for shard 1, leader unknown"}},
+	}
+	interceptor := UnaryAuthorizationInterceptor(authorizer)
+
+	called := false
+	_, err := interceptor(ctxWithBearer("good"), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/quicbaas.v1.QuicBaaS/Put"},
+		func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil })
+	require.Error(t, err)
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.False(t, called, "handler must not run when liveness could not be confirmed")
 }
 
 func TestUnaryAuthorizationInterceptor_UnmappedDenied(t *testing.T) {
