@@ -758,7 +758,12 @@ func (s *Server) HandleXKMSListCerts(w http.ResponseWriter, r *http.Request) {
 	}
 	certIDs, listErr = service.FilterCertificateIDsForCaller(r.Context(), s.service.Certificate(), certIDs, xkmssdk.ServiceCertificateByID)
 	if listErr != nil {
-		respondXKMSError(w, http.StatusForbidden, listErr)
+		status := http.StatusForbidden
+		var lookupErr *service.CertificateLookupError
+		if errors.As(listErr, &lookupErr) {
+			status = http.StatusInternalServerError
+		}
+		respondXKMSError(w, status, listErr)
 		return
 	}
 

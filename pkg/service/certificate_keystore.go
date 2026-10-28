@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // KeyStoreWriteRefusedError is returned when a caller other than the system
@@ -25,6 +27,25 @@ func (e *KeyStoreWriteRefusedError) Error() string {
 // permission-denied status.
 func (e *KeyStoreWriteRefusedError) Unwrap() error {
 	return ErrForbidden
+}
+
+// CertificateLookupError is returned when the key store cannot say whether a
+// listed key ID holds a certificate. Only a confirmed not-found is skipped
+// while filtering; any other failure (an unreadable store, a cancelled
+// context) would otherwise shrink the listing silently.
+type CertificateLookupError struct {
+	KeyID string
+	Cause error
+}
+
+// Error names the key ID whose certificate could not be read.
+func (e *CertificateLookupError) Error() string {
+	return "certificate: look up " + e.KeyID + ": " + e.Cause.Error()
+}
+
+// Unwrap returns the lookup failure.
+func (e *CertificateLookupError) Unwrap() error {
+	return e.Cause
 }
 
 // RequireSystemKeyStoreWriter refuses a raw go-xkms key-store write from any
@@ -58,10 +79,17 @@ func FilterCertificateIDsForCaller(ctx context.Context, certs CertificateService
 
 	visible := make([]string, 0, len(keyIDs))
 	for _, keyID := range keyIDs {
-		// An ID without a readable certificate, or with a certificate issued
-		// for another tenant, is not the caller's to see.
+		// An ID whose certificate is confirmed absent, or was issued for
+		// another tenant, is not the caller's to see. Any other lookup
+		// failure is returned rather than read as absence.
 		cert, lookupErr := lookup(ctx, keyID)
-		if lookupErr != nil || cert == nil {
+		if lookupErr != nil {
+			if isCertificateNotFound(lookupErr) {
+				continue
+			}
+			return nil, &CertificateLookupError{KeyID: keyID, Cause: lookupErr}
+		}
+		if cert == nil {
 			continue
 		}
 		issued, err := issuedForTenant(ctx, certs, callerTenant, cert.SerialNumber, "certificate.filter_issuing_tenant")
@@ -73,4 +101,12 @@ func FilterCertificateIDsForCaller(ctx context.Context, certs CertificateService
 		}
 	}
 	return visible, nil
+}
+
+// isCertificateNotFound reports whether a CertificateLookup failed only
+// because the key ID holds no certificate. The embedded go-xkms key store
+// wraps its storage not-found sentinel; a remote go-xkms client answers with
+// its own not-found sentinels and coded errors.
+func isCertificateNotFound(err error) bool {
+	return errors.Is(err, xkmssdk.ErrStorageNotFound) || xkmssdk.IsNotFound(err)
 }
