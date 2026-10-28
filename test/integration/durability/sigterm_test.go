@@ -148,6 +148,30 @@ func waitForREST(t *testing.T, port int, exited <-chan struct{}) error {
 	}
 }
 
+// daemonLogTailBytes bounds how much of the daemon log a readiness failure
+// quotes: enough for the boot error, not the whole boot transcript.
+const daemonLogTailBytes = 8 * 1024
+
+// requireDaemonReady waits for the daemon's REST listener and, when it never
+// comes up, fails the test with the tail of the daemon's own log. Without it
+// a daemon that dies during boot reports only "daemon exited before becoming
+// ready", and the reason it died is lost with the test's temp dir.
+func requireDaemonReady(t *testing.T, port int, exited <-chan struct{}, logPath string) {
+	t.Helper()
+	err := waitForREST(t, port, exited)
+	if err == nil {
+		return
+	}
+	logBytes, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatalf("daemon must become ready: %v (daemon log unreadable: %v)", err, readErr)
+	}
+	if len(logBytes) > daemonLogTailBytes {
+		logBytes = logBytes[len(logBytes)-daemonLogTailBytes:]
+	}
+	t.Fatalf("daemon must become ready: %v\n--- daemon log (tail) ---\n%s", err, logBytes)
+}
+
 // TestDaemonSIGTERMRunsGracefulShutdown is the end-to-end regression test for
 // the reported data loss. It spawns the real quicbaasd binary, sends SIGTERM,
 // and asserts the daemon shut down gracefully.
@@ -210,7 +234,7 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 		}
 	}()
 
-	require.NoError(t, waitForREST(t, restPort, exited), "daemon must become ready")
+	requireDaemonReady(t, restPort, exited, logPath)
 
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM), "deliver SIGTERM")
 
@@ -288,7 +312,7 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 		}
 	}()
 
-	require.NoError(t, waitForREST(t, restPort, exited), "daemon must become ready")
+	requireDaemonReady(t, restPort, exited, logPath)
 	require.NoError(t, cmd.Process.Signal(syscall.SIGINT), "deliver SIGINT")
 
 	select {
