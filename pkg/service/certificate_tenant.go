@@ -108,3 +108,28 @@ func BindCertificateToCaller(ctx context.Context, certs CertificateService, cert
 	}
 	return BindToIssuingTenant(ctx, certs, cert.SerialNumber)
 }
+
+// issuedForTenant reports whether the CA attributes serial to tenantID, for
+// filtering a listing to the caller's own certificates. A serial the CA
+// attributes to no tenant (go-xkms returns an empty tenant and a nil error for
+// a missing ownership record), or a CA that records no issuing tenants, is not
+// the caller's. A failure to read the CA's ownership records is returned, so a
+// listing stops instead of reporting an incomplete inventory as complete.
+func issuedForTenant(ctx context.Context, ca any, tenantID string, serial *big.Int, op string) (bool, error) {
+	resolver, ok := ca.(CertificateTenantResolver)
+	if !ok {
+		return false, nil
+	}
+	issuingTenant, err := resolver.CertificateTenant(ctx, serial)
+	if stderrors.Is(err, ErrCertificateTenantNotSupported) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   op,
+			Err:  err,
+		}
+	}
+	return issuingTenant != "" && issuingTenant == tenantID, nil
+}

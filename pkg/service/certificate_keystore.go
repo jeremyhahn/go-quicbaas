@@ -61,10 +61,14 @@ func FilterCertificateIDsForCaller(ctx context.Context, certs CertificateService
 		// An ID without a readable certificate, or with a certificate issued
 		// for another tenant, is not the caller's to see.
 		cert, lookupErr := lookup(ctx, keyID)
-		if lookupErr != nil {
+		if lookupErr != nil || cert == nil {
 			continue
 		}
-		if BindCertificateToCaller(ctx, certs, cert) == nil {
+		issued, err := issuedForTenant(ctx, certs, callerTenant, cert.SerialNumber, "certificate.filter_issuing_tenant")
+		if err != nil {
+			return nil, err
+		}
+		if issued {
 			visible = append(visible, keyID)
 		}
 	}

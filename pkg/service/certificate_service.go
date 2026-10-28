@@ -795,7 +795,10 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 	}
 
 	if tenantID != "" {
-		certs = s.certificatesIssuedForCaller(ctx, certs)
+		certs, err = s.certificatesIssuedForCaller(ctx, tenantID, certs)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	now := time.Now()
@@ -833,15 +836,22 @@ func (s *certificateService) ListCertificates(ctx context.Context, req *ListCert
 
 // certificatesIssuedForCaller keeps only the certificates issued for the
 // caller's tenant, so a tenant neither sees nor counts another tenant's
-// certificates.
-func (s *certificateService) certificatesIssuedForCaller(ctx context.Context, certs []*x509.Certificate) []*x509.Certificate {
+// certificates. A failure to read the CA's ownership records stops the listing.
+func (s *certificateService) certificatesIssuedForCaller(ctx context.Context, tenantID string, certs []*x509.Certificate) ([]*x509.Certificate, error) {
 	own := make([]*x509.Certificate, 0, len(certs))
 	for _, cert := range certs {
-		if cert != nil && BindToIssuingTenant(ctx, s.caService, cert.SerialNumber) == nil {
+		if cert == nil {
+			continue
+		}
+		issued, err := issuedForTenant(ctx, s.caService, tenantID, cert.SerialNumber, "CertificateService.ListCertificates")
+		if err != nil {
+			return nil, err
+		}
+		if issued {
 			own = append(own, cert)
 		}
 	}
-	return own
+	return own, nil
 }
 
 // summariseCertificate projects an x509.Certificate into the compact

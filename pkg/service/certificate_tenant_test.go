@@ -11,18 +11,22 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-var errIssuingTenantUnknown = errors.New("serial not attributed")
+var errOwnershipStoreDown = errors.New("ownership store unavailable")
 
 // issuingTenantCA answers CertificateTenant from a fixed serial -> tenant map,
-// as go-xkms ca.CA does from its issuance records.
+// as go-xkms ca.CA does from its issuance records: a serial with no record
+// is unattributed, an empty tenant and a nil error.
 type issuingTenantCA map[int64]string
 
 func (c issuingTenantCA) CertificateTenant(_ context.Context, serial *big.Int) (string, error) {
-	tenantID, ok := c[serial.Int64()]
-	if !ok {
-		return "", errIssuingTenantUnknown
-	}
-	return tenantID, nil
+	return c[serial.Int64()], nil
+}
+
+// failingOwnershipCA is a CA whose ownership records cannot be read.
+type failingOwnershipCA struct{}
+
+func (failingOwnershipCA) CertificateTenant(context.Context, *big.Int) (string, error) {
+	return "", errOwnershipStoreDown
 }
 
 func TestBindToIssuingTenant(t *testing.T) {
@@ -44,7 +48,8 @@ func TestBindToIssuingTenant(t *testing.T) {
 		{name: "system acts on a serial the CA cannot attribute", ctx: tenantctx.WithSystem(context.Background()), ca: ca, serial: 9},
 		{name: "tenant is refused another tenant's certificate", ctx: acme, ca: ca, serial: 2, wantRefuse: true, wantIssuing: "globex"},
 		{name: "tenant is refused a system certificate", ctx: acme, ca: ca, serial: 3, wantRefuse: true},
-		{name: "tenant is refused a serial the CA cannot attribute", ctx: acme, ca: ca, serial: 9, wantRefuse: true, wantCause: true},
+		{name: "tenant is refused a serial the CA cannot attribute", ctx: acme, ca: ca, serial: 9, wantRefuse: true},
+		{name: "tenant is refused when the CA cannot read its ownership records", ctx: acme, ca: failingOwnershipCA{}, serial: 1, wantRefuse: true, wantCause: true},
 		{name: "tenant is refused when the CA cannot report issuing tenants", ctx: acme, ca: struct{}{}, serial: 1, wantRefuse: true},
 		{name: "caller with no tenant is refused", ctx: context.Background(), ca: ca, serial: 1, wantRefuse: true, wantCause: true},
 	}
@@ -75,12 +80,12 @@ func TestBindToIssuingTenant(t *testing.T) {
 }
 
 func TestCertificateTenantError_HidesTheCause(t *testing.T) {
-	err := &CertificateTenantError{CallerTenantID: "acme", IssuingTenantID: "globex", Cause: errIssuingTenantUnknown}
+	err := &CertificateTenantError{CallerTenantID: "acme", IssuingTenantID: "globex", Cause: errOwnershipStoreDown}
 
 	if err.Error() != qrdbsdk.ErrTenantMissing.Error() {
 		t.Fatalf("Error() = %q, want %q", err.Error(), qrdbsdk.ErrTenantMissing.Error())
 	}
-	if errors.Is(err, errIssuingTenantUnknown) {
+	if errors.Is(err, errOwnershipStoreDown) {
 		t.Fatalf("the cause leaks through the error chain")
 	}
 }
