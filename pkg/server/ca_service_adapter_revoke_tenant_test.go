@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -86,6 +88,66 @@ func TestCAServiceAdapter_RevokeBindsCallerToIssuingTenant(t *testing.T) {
 				t.Fatalf("RevokeCertificate success = false")
 			}
 			if !isRevoked(t, serial) {
+				t.Fatalf("serial %s not revoked", serial)
+			}
+		})
+	}
+}
+
+// TestCAServiceAdapter_RevokeReadsCallerTenantLikeTheServices pins that the
+// revoke binding resolves the caller's tenant the way every service does
+// (tenantctx.FromContext): the gRPC authz interceptor, the REST principal
+// injector and the embedded transport bind the tenant under go-qrdb's tenant
+// key without a qrdb Identity, and a caller with no tenant at all is refused
+// rather than read as cross-tenant.
+func TestCAServiceAdapter_RevokeReadsCallerTenantLikeTheServices(t *testing.T) {
+	adapter, err := newCAServiceAdapter(newRealSoftwareCA(t))
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		tenantID   string
+		wantRefuse bool
+	}{
+		{name: "tenant bound under the tenant key cannot revoke another tenant's certificate", ctx: tenantctx.WithTenant(context.Background(), "acme"), tenantID: "globex", wantRefuse: true},
+		{name: "caller with no tenant is refused", ctx: context.Background(), tenantID: "acme", wantRefuse: true},
+		{name: "tenant bound under the tenant key revokes its own certificate", ctx: tenantctx.WithTenant(context.Background(), "acme"), tenantID: "acme"},
+		{name: "system bound under the tenant key revokes any certificate", ctx: tenantctx.WithSystem(context.Background()), tenantID: "globex"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			signed, err := adapter.SignCSR(context.Background(), &xkmstransport.SignCSRRequest{
+				CSRPEM:   newCSR(t, tt.tenantID+"-user"),
+				Profile:  "client",
+				TenantID: tt.tenantID,
+			})
+			if err != nil {
+				t.Fatalf("SignCSR(%s): %v", tt.tenantID, err)
+			}
+			serial := parseLeaf(t, signed.CertificatePEM).SerialNumber.Text(16)
+
+			_, err = adapter.RevokeCertificate(tt.ctx, &xkmstransport.RevokeCertificateRequest{SerialNumber: serial, Reason: 1})
+
+			revoked, statusErr := adapter.IsRevoked(context.Background(), &xkmstransport.IsRevokedRequest{SerialNumber: serial})
+			if statusErr != nil {
+				t.Fatalf("IsRevoked(%s): %v", serial, statusErr)
+			}
+			if tt.wantRefuse {
+				if !errors.Is(err, qrdbsdk.ErrTenantMissing) {
+					t.Fatalf("RevokeCertificate err = %v, want ErrTenantMissing", err)
+				}
+				if revoked.Revoked {
+					t.Fatalf("serial %s was revoked by a caller outside its tenant", serial)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RevokeCertificate: %v", err)
+			}
+			if !revoked.Revoked {
 				t.Fatalf("serial %s not revoked", serial)
 			}
 		})
