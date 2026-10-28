@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	xkmstransport "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -383,6 +385,26 @@ func TestCertificateService_RevokeCertificate(t *testing.T) {
 			t.Error("expected error from ca service")
 		}
 	})
+}
+
+// A revoke the CA adapter refuses because the serial belongs to another
+// tenant reaches the transports as not-found, never as internal
+// (go-quicbaas#1998).
+func TestCertificateService_RevokeCertificate_ForeignTenantIsNotFound(t *testing.T) {
+	mock := &mockCAService{
+		revokeCertificateFunc: func(ctx context.Context, req *xkmstransport.RevokeCertificateRequest) (*xkmstransport.RevokeCertificateResponse, error) {
+			return nil, qrdbsdk.ErrTenantMissing
+		},
+	}
+	svc := NewCertificateService(mock)
+	acmeCtx := qrdbsdk.WithIdentity(context.Background(),
+		&qrdbsdk.Identity{Subject: "acme-admin", TenantID: "acme"})
+
+	_, err := svc.RevokeCertificate(acmeCtx, &RevokeCertificateRequest{SerialNumber: "12345"})
+
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "want ErrNotFound, got %v", err)
+	assert.True(t, stderrors.Is(err, qrdbsdk.ErrTenantMissing))
 }
 
 // Test VerifyCertificate
