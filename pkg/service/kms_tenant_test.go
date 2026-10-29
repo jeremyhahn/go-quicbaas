@@ -706,3 +706,79 @@ func TestKMSOwnership_ListShowsOnlyOwnedKeys(t *testing.T) {
 	require.Equal(t, "mine", resp.Keys[0].KeyID)
 	require.Equal(t, 1, resp.TotalCount)
 }
+
+// newOwnershipMixKMS holds, in ownershipTenant's namespace, one owned key
+// ("mine"), one whose record names another tenant ("theirs"), and the
+// fixture's unrecorded legacy key; plus a key in the other tenant's own
+// namespace. Each has safety usage recorded.
+func newOwnershipMixKMS(t *testing.T) *kmsServiceImpl {
+	t.Helper()
+	svc, mgr, _ := newOwnershipKMS(t)
+	scoped := []string{
+		tenantScopedKeyID(ownershipTenant, "mine"),
+		tenantScopedKeyID(ownershipTenant, "theirs"),
+		tenantScopedKeyID(ownershipTenant, ownershipKey),
+		tenantScopedKeyID(ownershipOtherTenant, "other"),
+	}
+	for _, id := range scoped {
+		mgr.keys[id] = &mockKeyData{keyID: id, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled"}
+		// One operation of two puts each key at 50%, inside SafetyCheck's
+		// threshold as well as the report.
+		svc.safetyTracker.SetKeyConfig(id, AEADSafetyConfig{MaxOperations: 2, MaxBytes: 1 << 20, WarningPercent: 80, AutoRotatePercent: 95})
+		require.NoError(t, svc.safetyTracker.RecordKeyEncrypt(context.Background(), id, 100))
+	}
+	seedTenantKeyOwners(t, svc, ownershipTenant, "mine")
+	seedTenantKeyOwners(t, svc, ownershipOtherTenant, "other")
+	require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(context.Background()),
+		kmsOwnerRecordKey(scoped[1]), []byte(ownershipOtherTenant)))
+	return svc
+}
+
+func TestKMSOwnership_ReencryptionCountsOnlyOwnedKeys(t *testing.T) {
+	svc := newOwnershipMixKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	resp, err := svc.StartReencryption(ctx, &StartReencryptionRequest{FromVersion: 1, ToVersion: 2})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), resp.TotalEntities,
+		"only the owned key counts: another tenant's record, the legacy key and the other namespace are excluded")
+}
+
+func TestKMSOwnership_ReencryptionStoreFaultIsTyped(t *testing.T) {
+	svc := newOwnershipMixKMS(t)
+	svc.SetKVStore(&ownershipFailingStore{KVStore: qrdbsdk.NewMemoryKVStore()})
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.StartReencryption(ctx, &StartReencryptionRequest{FromVersion: 1, ToVersion: 2})
+
+	require.True(t, IsStorageError(err), "want a storage error, got %v", err)
+	_, err = svc.StartReencryption(ctx, &StartReencryptionRequest{FromVersion: 1, ToVersion: 2})
+	require.True(t, IsStorageError(err), "a failed start must not leave a re-encryption in progress, got %v", err)
+}
+
+func TestKMSOwnership_SafetyResultsShowOnlyOwnedKeys(t *testing.T) {
+	svc := newOwnershipMixKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	report, err := svc.SafetyReport(ctx, &SafetyReportRequest{})
+	require.NoError(t, err)
+	require.Len(t, report.Items, 1, "another tenant's record and the legacy key must be hidden")
+	require.Equal(t, "mine", report.Items[0].ID)
+
+	check, err := svc.SafetyCheck(ctx, &SafetyCheckRequest{ThresholdPercent: 10})
+	require.NoError(t, err)
+	require.Len(t, check.Items, 1, "SafetyCheck must show only the owned key")
+	require.Equal(t, "mine", check.Items[0].ID)
+}
+
+func TestKMSOwnership_SafetyResultsStoreFaultIsTyped(t *testing.T) {
+	svc := newOwnershipMixKMS(t)
+	svc.SetKVStore(&ownershipFailingStore{KVStore: qrdbsdk.NewMemoryKVStore()})
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.SafetyReport(ctx, &SafetyReportRequest{})
+	require.True(t, IsStorageError(err), "want a storage error, got %v", err)
+	_, err = svc.SafetyCheck(ctx, &SafetyCheckRequest{ThresholdPercent: 10})
+	require.True(t, IsStorageError(err), "want a storage error, got %v", err)
+}

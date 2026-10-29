@@ -371,7 +371,10 @@ func (k *kmsServiceImpl) SafetyCheck(ctx context.Context, req *SafetyCheckReques
 	if err != nil {
 		return nil, err
 	}
-	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyCheck(threshold))
+	results, err := k.safetyResultsForTenant(ctx, tenantID, "SafetyCheck", k.safetyTracker.SafetyCheck(threshold))
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	keyCount := 0
@@ -409,7 +412,10 @@ func (k *kmsServiceImpl) SafetyReport(ctx context.Context, req *SafetyReportRequ
 	if err != nil {
 		return nil, err
 	}
-	results := safetyResultsForTenant(tenantID, k.safetyTracker.SafetyReport())
+	results, err := k.safetyResultsForTenant(ctx, tenantID, "SafetyReport", k.safetyTracker.SafetyReport())
+	if err != nil {
+		return nil, err
+	}
 
 	items := make([]SafetyCheckItem, 0, len(results))
 	var totalOps uint64
@@ -3546,6 +3552,11 @@ func (k *kmsServiceImpl) StartReencryption(ctx context.Context, req *StartReencr
 	if err != nil {
 		k.reencryptionState.mu.Unlock()
 		return nil, WrapError(err, errors.ErrInternal, "kms.StartReencryption", "failed to list keys for re-encryption")
+	}
+	keys, err = k.ownedListedKeys(ctx, tenantID, "StartReencryption", keys)
+	if err != nil {
+		k.reencryptionState.mu.Unlock()
+		return nil, err
 	}
 	totalKeys := uint64(len(keys))
 

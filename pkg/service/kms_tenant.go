@@ -29,6 +29,7 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -106,21 +107,32 @@ func rejectReservedKeyName(name, operation string) error {
 }
 
 // safetyResultsForTenant keeps the shared safety tracker's results that
-// belong to tenantID, each ID returned in the tenant's own namespace. The
-// system caller keeps every tenant's results.
-func safetyResultsForTenant(tenantID string, results []SafetyCheckResult) []SafetyCheckResult {
+// belong to tenantID, each ID returned in the tenant's own namespace. A key
+// result is kept only when the tenant's ownership record names it, as in
+// ListKeys; DEK results, which carry no record, go by namespace. The system
+// caller keeps every tenant's results.
+func (k *kmsServiceImpl) safetyResultsForTenant(ctx context.Context, tenantID, operation string, results []SafetyCheckResult) ([]SafetyCheckResult, error) {
 	if qrdbsdk.IsSystemTenant(tenantID) {
-		return results
+		return results, nil
 	}
 	owned := make([]SafetyCheckResult, 0, len(results))
 	for _, r := range results {
 		if !tenantKeyBelongsTo(tenantID, r.ID) {
 			continue
 		}
+		if r.Type == "key" {
+			ok, err := k.tenantOwnsKey(ctx, tenantID, r.ID, operation)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
 		r.ID = tenantStripKeyID(tenantID, r.ID)
 		owned = append(owned, r)
 	}
-	return owned
+	return owned, nil
 }
 
 // tenantListPrefix returns the prefix to use when listing keys for a tenant.
@@ -404,6 +416,43 @@ func (k *kmsServiceImpl) tenantOwnsKey(ctx context.Context, tenantID, scopedID, 
 		return false, err
 	}
 	return owner == tenantID, nil
+}
+
+// ownedListedKeys keeps the entries of a KMS manager key listing that
+// tenantID owns: each must sit in the tenant's namespace and carry the
+// tenant's ownership record, as in ListKeys. An entry whose key ID cannot be
+// read is not the tenant's. The system caller keeps every entry.
+func (k *kmsServiceImpl) ownedListedKeys(ctx context.Context, tenantID, operation string, keys []interface{}) ([]interface{}, error) {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return keys, nil
+	}
+	owned := make([]interface{}, 0, len(keys))
+	for _, key := range keys {
+		keyID, ok := listedKeyID(key)
+		if !ok || !tenantKeyBelongsTo(tenantID, keyID) {
+			continue
+		}
+		ownsKey, err := k.tenantOwnsKey(ctx, tenantID, keyID, operation)
+		if err != nil {
+			return nil, err
+		}
+		if ownsKey {
+			owned = append(owned, key)
+		}
+	}
+	return owned, nil
+}
+
+// listedKeyID returns the key ID of one entry of a KMS manager key listing.
+func listedKeyID(key interface{}) (string, bool) {
+	switch meta := key.(type) {
+	case *kms.KeyMetadata:
+		return meta.KeyID, true
+	case *KeyMetadata:
+		return meta.KeyID, true
+	default:
+		return "", false
+	}
 }
 
 // prepareTenantContext reads the request's tenant (tenantctx.FromContext,

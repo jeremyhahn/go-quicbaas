@@ -30,6 +30,7 @@ func recordSafetyUsageForTwoTenants(t *testing.T, svc *kmsServiceImpl) {
 	t.Helper()
 	ctx := context.Background()
 	for _, tenant := range []string{"tenant-a", "tenant-b"} {
+		seedTenantKeyOwners(t, svc, tenant, "shared-key")
 		require.NoError(t, svc.safetyTracker.RecordKeyEncrypt(ctx, tenantScopedKeyID(tenant, "shared-key"), 100))
 		require.NoError(t, svc.safetyTracker.RecordDEKEncrypt(ctx, tenantScopedKeyID(tenant, "/shared-dek"), 50))
 	}
