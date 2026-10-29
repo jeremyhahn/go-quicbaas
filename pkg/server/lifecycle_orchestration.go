@@ -196,6 +196,11 @@ func (s *Server) startOrchestration() error {
 	})
 	s.logger.Infof("OpenCode backend registered for orchestration (command: %s)", opencodePath)
 
+	for name, backend := range s.opts.agentBackends {
+		backends[name] = backend
+		s.logger.Infof("Host agent backend registered for orchestration: %s", name)
+	}
+
 	logAdapter := &logger.LoggerAdapter{Logger: s.logger}
 
 	agentSvc, err := orchestration.NewAgentService(store, backends, logAdapter)
@@ -558,6 +563,10 @@ func (s *Server) startOrchestration() error {
 			if reapErr := s.startContainerReaper(containerRuntime, owner, backends); reapErr != nil {
 				return reapErr
 			}
+		}
+		if s.opts.agentContainerRuntime != nil {
+			wirer.SetContainerRuntime(s.opts.agentContainerRuntime)
+			s.logger.Info("Host container runtime attached to orchestration service")
 		}
 
 		// Wire the per-tenant token ledger. It binds to the SAME tenant-routed,

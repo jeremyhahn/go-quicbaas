@@ -114,6 +114,17 @@ type serverOptions struct {
 	// go-xkms's, so one node serves all three across gRPC, unix, REST and
 	// MCP under a single authorizer. See module_host.go.
 	hostModules []qrdbsdk.ServiceModule
+
+	// agentBackends are agent backends a host adds beside the built-in ones
+	// (claude, codex, opencode, ollama). They are in the orchestration
+	// service before Start recovers interrupted jobs, so a resumed job
+	// finds the backend it was dispatched on. See WithAgentBackend.
+	agentBackends map[string]orchestration.AgentBackend
+
+	// agentContainerRuntime replaces the docker/podman runtime the
+	// orchestration service would otherwise find on the host. Like
+	// agentBackends, it is in place before interrupted jobs are recovered.
+	agentContainerRuntime orchestration.ContainerRuntime
 }
 
 // ServerOption configures optional behavior on the Server during construction.
@@ -155,6 +166,28 @@ func WithTLSCertificate(cert *tls.Certificate) ServerOption {
 // constructed. The server does not retain a reference beyond node creation.
 func WithSealPassphrase(passphrase []byte) ServerOption {
 	return func(o *serverOptions) { o.sealPassphrase = passphrase }
+}
+
+// WithAgentBackend returns a ServerOption that registers an agent backend
+// under name when the orchestration service is built, before Start
+// recovers interrupted jobs. A backend registered later through
+// AgentService.RegisterBackend is not there when a job that ran on it is
+// resumed. A name that matches a built-in backend replaces it.
+func WithAgentBackend(name string, backend orchestration.AgentBackend) ServerOption {
+	return func(o *serverOptions) {
+		if o.agentBackends == nil {
+			o.agentBackends = make(map[string]orchestration.AgentBackend)
+		}
+		o.agentBackends[name] = backend
+	}
+}
+
+// WithAgentContainerRuntime returns a ServerOption that sets the container
+// runtime the orchestration service spawns workers in, in place of the
+// docker/podman runtime it would find on the host. It is wired before Start
+// recovers interrupted jobs.
+func WithAgentContainerRuntime(runtime orchestration.ContainerRuntime) ServerOption {
+	return func(o *serverOptions) { o.agentContainerRuntime = runtime }
 }
 
 // WithDANEPublisher returns a ServerOption that registers the

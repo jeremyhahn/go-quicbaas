@@ -1066,7 +1066,7 @@ func readSpawnWorkspaceSpec(req *orchestration.SpawnRequest) (orchestration.Work
 // startFactoryNode boots a node with the engine and the module on fast
 // cadences over dataDir. reapTTL is orchestration.reap_lease_ttl; nodeID
 // names the node on its leases.
-func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64) *server.Server {
+func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Duration, nodeID uint64, opts ...server.ServerOption) *server.Server {
 	t.Helper()
 	requireTestTrustDomain(t)
 	f := &inlineInitFlags{
@@ -1102,7 +1102,7 @@ func startFactoryNode(t *testing.T, dataDir string, init bool, reapTTL time.Dura
 	cfg.SDLC.VerificationCommands = []string{"test -f WORK.md"}
 	cfg.SDLC.Surfacing.RetryInterval = 10 * time.Millisecond
 
-	srv, err := server.NewServer(cfg, server.WithSealPassphrase([]byte(f.secret)))
+	srv, err := server.NewServer(cfg, append([]server.ServerOption{server.WithSealPassphrase([]byte(f.secret))}, opts...)...)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	require.NotNil(t, srv.SDLCService(), "the sdlc module did not start")
@@ -1419,20 +1419,28 @@ func factoryCtx() context.Context {
 // awaitJob waits for one job to reach a terminal state and returns it.
 func awaitJob(t *testing.T, srv *server.Server, want orchestration.JobState) *orchestration.JobStatus {
 	t.Helper()
+	return awaitJobWhere(t, srv, func(job *orchestration.JobStatus) bool { return job.State == want },
+		"no job reached %s", want)
+}
+
+// awaitJobWhere waits until one of the tenant's jobs satisfies match and
+// returns it.
+func awaitJobWhere(t *testing.T, srv *server.Server, match func(*orchestration.JobStatus) bool, msgAndArgs ...interface{}) *orchestration.JobStatus {
+	t.Helper()
 	var found *orchestration.JobStatus
 	require.Eventually(t, func() bool {
 		jobs, err := srv.Service().Agent().ListJobs(factoryCtx(), loopE2ETenant, nil)
-		if err != nil || len(jobs) == 0 {
+		if err != nil {
 			return false
 		}
 		for _, job := range jobs {
-			if job.State == want {
+			if match(job) {
 				found = job
 				return true
 			}
 		}
 		return false
-	}, 90*time.Second, 50*time.Millisecond, "no job reached %s", want)
+	}, 90*time.Second, 50*time.Millisecond, msgAndArgs...)
 	return found
 }
 
@@ -1616,6 +1624,9 @@ func TestSDLCRunner_AKilledWorkerResumesAndFinishesTheSameBranch(t *testing.T) {
 
 	require.Eventually(t, func() bool { return blocked.promptCount() > 0 }, 90*time.Second, 50*time.Millisecond,
 		"the worker was never prompted before the node was killed")
+	interrupted := awaitJobWhere(t, srv, func(job *orchestration.JobStatus) bool {
+		return job.Runner == sdlc.JobRunnerName && job.State == orchestration.JobStateExecuting
+	}, "the worker's sdlc job was not executing when the node was killed")
 	// The node dies with the worker's turn still in flight. The blocked
 	// backend is never released: shutdown cancels the job's context, which is
 	// exactly what a killed node does to the turn it was in the middle of.
@@ -1630,17 +1641,30 @@ func TestSDLCRunner_AKilledWorkerResumesAndFinishesTheSameBranch(t *testing.T) {
 	// sockets root outlives the daemon and nothing else would ever remove it.
 	orphan := plantKilledSigningSession(t, factorySocketsRoot(t))
 
-	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1)
+	// A real daemon has its agent backends before Start, and Start is what
+	// resumes the interrupted job. The successor gets its backend and the
+	// runtime it spawns in the same way; registering them after Start would
+	// race the resume, which then finds no backend for the job's workspace.
+	resumed := newE2EBackend()
+	successor := startFactoryNode(t, dataDir, false, 2*time.Second, 1,
+		server.WithAgentBackend(loopE2EBackend, resumed),
+		server.WithAgentContainerRuntime(resumed.runtime))
 	t.Cleanup(func() { _ = successor.Shutdown(context.Background()) })
 	require.NoDirExists(t, orphan,
 		"the session a killed daemon left survived the successor's startup: %s", orphan)
 
-	resumed := newE2EBackend()
 	registerFactoryProject(t, successor, resumed, repo)
 
-	awaitJob(t, successor, orchestration.JobStateCompleted)
+	// The job awaited is the one the kill interrupted: any other job of the
+	// tenant (triage completes at once) says nothing about the resume.
+	finished := awaitJobWhere(t, successor, func(job *orchestration.JobStatus) bool {
+		return job.JobID == interrupted.JobID && job.State == orchestration.JobStateCompleted
+	}, "the interrupted job %s never completed on the successor", interrupted.JobID)
+	require.Empty(t, finished.Error, "the resumed job completed with an error")
 	prs := loopForge.pullRequests()
-	require.Len(t, prs, 1, "the resumed attempt opened a second pull request: %+v", prs)
+	// A Completed job with no pull request is a resume that gave up, not one
+	// that finished; two is a resume that cut a second attempt.
+	require.Len(t, prs, 1, "the resumed job completed with %d pull requests, want exactly one: %+v", len(prs), prs)
 	require.True(t, prs[0].Merged)
 	require.Equal(t, "issue/75-fix-the-widget", prs[0].HeadRef, "the resumed attempt cut a different branch")
 
