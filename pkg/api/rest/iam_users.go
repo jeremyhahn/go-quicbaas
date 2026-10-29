@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
@@ -161,6 +162,10 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Email == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "email is required"))
+		return
+	}
+
+	if len(req.Roles) > 0 && !h.authorizeRoleAssignment(w, r, tenantID) {
 		return
 	}
 
@@ -418,6 +423,14 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Any explicit roles array is a role assignment, so it needs roles:assign
+	// on top of the route's users:update, even when it equals the roles the
+	// user holds now: an equality exemption decided on an earlier read would
+	// let a concurrent revocation be undone by this write (Codex 8269).
+	if req.Roles != nil && !h.authorizeRoleAssignment(w, r, tenantID) {
+		return
+	}
+
 	// Update user
 	opts := iam.UpdateUserOptions{
 		Email:      req.Email,
@@ -444,6 +457,43 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondJSON(w, r, http.StatusOK, user)
+}
+
+// Role assignment is the "roles:assign" permission, the one the AssignRole
+// route declares.
+const (
+	roleAssignmentResource = "roles"
+	roleAssignmentAction   = "assign"
+)
+
+// authorizeRoleAssignment reports whether the caller may assign roles in
+// tenantID, and answers the request when it may not. A user create or update
+// that carries roles assigns them as surely as AssignRole does, so it needs
+// the same roles:assign: without it, a caller holding only users:update could
+// write the tenant Admin role into its own account (Codex 8243). The decision
+// is go-qrdb's RBAC authorizer's, the one the route permissions use. It fails
+// closed: with no authorizer wired, a role-bearing request is refused.
+func (h *IAMHandler) authorizeRoleAssignment(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	identity := qrdbsdk.IdentityFromContext(r.Context())
+	if identity == nil {
+		RespondError(w, r, http.StatusUnauthorized, &UnauthorizedError{Message: "authentication required"})
+		return false
+	}
+	authz := h.server.barrierScopeAuthorizer()
+	if authz == nil {
+		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
+			Reason: "roles:assign cannot be checked: no authorizer is configured",
+		})
+		return false
+	}
+	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
+	if err := authz.Authorize(ctx, identity, roleAssignmentResource, roleAssignmentAction); err != nil {
+		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
+			Reason: roleAssignmentResource + ":" + roleAssignmentAction + " is required to set a user's roles",
+		})
+		return false
+	}
+	return true
 }
 
 // DeleteUser handles DELETE /api/v1/tenants/{tenant_id}/users/{user_id} - Delete a user.
