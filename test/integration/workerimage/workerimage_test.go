@@ -18,6 +18,7 @@ package workerimage_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -131,6 +132,12 @@ func TestE2E_BuildInspectTagPushAndPullByDigest(t *testing.T) {
 	require.NoError(t, rt.TagImage(ctx, id, remote))
 	removeImages(t, remote)
 	digest, err := rt.PushImage(ctx, remote, nil)
+	// CommandError.Error() withholds docker's stderr, so a failed push logs
+	// it here, in the test's own output, before the assertion stops the test.
+	var pushErr *orchestration.CommandError
+	if errors.As(err, &pushErr) {
+		t.Logf("docker %s output: %s", pushErr.Op, pushErr.Output)
+	}
 	require.NoError(t, err)
 	require.NoError(t, orchestration.ValidateImageDigest(digest))
 
