@@ -126,27 +126,24 @@ func waitForQuorumReady(t *testing.T, nodes []string) {
 }
 
 // waitForEntitiesOnAllNodes polls every client of cluster until each entity
-// is found there, failing the test once replicationTimeout elapses. Callers
-// assert the data afterwards.
+// is found there, failing the test once replicationTimeout elapses. Each
+// attempt resumes every node where the last one stopped, and each lookup has
+// its own entityLookupTimeout. Callers assert the data afterwards.
 func waitForEntitiesOnAllNodes(t *testing.T, cluster *helpers.TestCluster, entities []helpers.TestEntity) {
 	t.Helper()
+	sweep := newEntitySweep(len(cluster.Clients), len(entities))
 	pollUntil(t, replicationTimeout, fmt.Sprintf("%d entities on all %d nodes", len(entities), len(cluster.Clients)),
 		func(ctx context.Context) (bool, error) {
-			for _, client := range cluster.Clients {
-				for _, entity := range entities {
-					resp, err := client.KV().Get(ctx, &service.GetRequest{
-						EntityType: entity.EntityType,
-						ID:         id.HashString(entity.Key),
-					})
-					if err != nil {
-						return false, err
-					}
-					if !resp.Found {
-						return false, nil
-					}
+			return sweep.advance(ctx, entityLookupTimeout, func(ctx context.Context, node, entity int) (bool, error) {
+				resp, err := cluster.Clients[node].KV().Get(ctx, &service.GetRequest{
+					EntityType: entities[entity].EntityType,
+					ID:         id.HashString(entities[entity].Key),
+				})
+				if err != nil {
+					return false, err
 				}
-			}
-			return true, nil
+				return resp.Found, nil
+			})
 		})
 }
 
