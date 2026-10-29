@@ -292,6 +292,9 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectReservedKeyName(req.KeyID, "UnwrapKey"); err != nil {
+		return nil, err
+	}
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
 	scopedWrappingKeyID := tenantScopedKeyID(tenantID, req.WrappingKeyID)
 

@@ -471,6 +471,9 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 
 	// Use the provided name as the key ID, scoped by tenant if applicable
 	// The name must be unique within the KMS/tenant namespace
+	if err := rejectReservedKeyName(req.Name, "GenerateKey"); err != nil {
+		return nil, err
+	}
 	keyID := tenantScopedKeyID(tenantID, req.Name)
 	if _, exists := k.keyNames.Load(keyID); exists {
 		return nil, NewError(errors.ErrAlreadyExists, "kms.GenerateKey", "key with name '"+req.Name+"' already exists")
@@ -1943,8 +1946,8 @@ func (k *kmsServiceImpl) validateImportKeyRequest(req *ImportKeyRequest) error {
 
 	// A name inside the tenant key namespace would let the caller address
 	// another tenant's keys, so it is refused rather than scoped.
-	if strings.HasPrefix(req.Name, kmsTenantKeyPrefix) {
-		return NewError(errors.ErrInvalidInput, "kms.validateImportKeyRequest", "key name uses the reserved tenant namespace")
+	if err := rejectReservedKeyName(req.Name, "validateImportKeyRequest"); err != nil {
+		return err
 	}
 
 	if len(req.KeyMaterial) == 0 {
@@ -2806,6 +2809,9 @@ func (k *kmsServiceImpl) CreateDEK(ctx context.Context, req *CreateDEKRequest) (
 	// Scope the DEK path to the caller's tenant, the same way key IDs are
 	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := rejectReservedKeyName(normalizedPath, "CreateDEK"); err != nil {
 		return nil, err
 	}
 	scopedPath := tenantScopedKeyID(tenantID, normalizedPath)

@@ -20,6 +20,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -70,6 +71,35 @@ func tenantKeyBelongsTo(tenantID, keyID string) bool {
 	}
 	prefix := kmsTenantKeyPrefix + tenantID + kmsTenantKeySuffix
 	return strings.HasPrefix(keyID, prefix)
+}
+
+// ReservedKeyNameError is returned when a caller names a new key or DEK
+// with the reserved tenant prefix. The system scope stores a name
+// unscoped, so "tenant.acme.k" would otherwise create a key that tenant
+// acme lists and owns.
+type ReservedKeyNameError struct {
+	// Name is the name the caller supplied.
+	Name string
+}
+
+// Error returns a human-readable description.
+func (e *ReservedKeyNameError) Error() string {
+	return fmt.Sprintf("service: key name %q uses the reserved tenant namespace %q", e.Name, kmsTenantKeyPrefix)
+}
+
+// rejectReservedKeyName refuses a caller-chosen name for a new key or DEK
+// that starts with kmsTenantKeyPrefix, in every scope, so a stored name
+// is attributed to exactly the tenant that created it. Every verb that
+// creates a name (GenerateKey, ImportKey, UnwrapKey, CreateDEK) calls it.
+func rejectReservedKeyName(name, operation string) error {
+	if !strings.HasPrefix(name, kmsTenantKeyPrefix) {
+		return nil
+	}
+	return &errors.QBError{
+		Code: errors.ErrInvalidInput,
+		Op:   "kms." + operation,
+		Err:  &ReservedKeyNameError{Name: name},
+	}
 }
 
 // safetyResultsForTenant keeps the shared safety tracker's results that

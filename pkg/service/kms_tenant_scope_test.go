@@ -423,6 +423,72 @@ func TestKMSService_ImportKey_RefusesReservedTenantNamespace(t *testing.T) {
 	require.Empty(t, mgr.keys, "a refused import must write nothing")
 }
 
+// TestKMSService_CreatingVerbsRefuseReservedTenantPrefix proves that no
+// caller, tenant or system, can name a new key or DEK inside another
+// tenant's namespace. The system scope stores names unscoped, so without
+// the refusal "tenant.globex.planted" would become a key globex owns.
+func TestKMSService_CreatingVerbsRefuseReservedTenantPrefix(t *testing.T) {
+	planted := kmsTenantKeyPrefix + scopeOtherTenant + kmsTenantKeySuffix + "planted"
+	verbs := map[string]func(svc *kmsServiceImpl, ctx context.Context) error{
+		"GenerateKey": func(svc *kmsServiceImpl, ctx context.Context) error {
+			_, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
+				Name:          planted,
+				Usage:         []KeyUsage{KeyUsageEncrypt, KeyUsageDecrypt},
+				KeyAttributes: buildSymmetricAttrs(),
+			})
+			return err
+		},
+		"ImportKey": func(svc *kmsServiceImpl, ctx context.Context) error {
+			_, err := svc.ImportKey(ctx, &ImportKeyRequest{Name: planted, KeyMaterial: []byte("key-material")})
+			return err
+		},
+		"UnwrapKey": func(svc *kmsServiceImpl, ctx context.Context) error {
+			_, err := svc.UnwrapKey(ctx, &UnwrapKeyRequest{
+				KeyID:             planted,
+				WrappedKey:        []byte("wrapped"),
+				WrappingKeyID:     scopeWrappingKey,
+				WrappingAlgorithm: "AES-KW",
+				Algorithm:         string(KeyAlgAES256GCM),
+			})
+			return err
+		},
+		"CreateDEK": func(svc *kmsServiceImpl, ctx context.Context) error {
+			_, err := svc.CreateDEK(ctx, &CreateDEKRequest{Path: planted, Algorithm: KeyAlgAES256GCM})
+			return err
+		},
+	}
+	callers := map[string]context.Context{
+		"tenant caller": tenantctx.WithTenant(context.Background(), scopeOwnerTenant),
+		"system caller": systemTenantCtx(),
+	}
+	for verbName, verb := range verbs {
+		for callerName, ctx := range callers {
+			t.Run(verbName+"/"+callerName, func(t *testing.T) {
+				svc, mgr := newTenantScopeWrapKMS(t)
+				keysBefore := len(mgr.keys)
+
+				err := verb(svc, ctx)
+
+				var reserved *ReservedKeyNameError
+				require.True(t, stderrors.As(err, &reserved), "error %v does not wrap ReservedKeyNameError", err)
+				require.Equal(t, planted, reserved.Name)
+				require.True(t, IsInvalidInput(err), "the refusal must carry the invalid-input code, got %v", err)
+				require.Len(t, mgr.keys, keysBefore, "a refused name must write nothing")
+			})
+		}
+	}
+}
+
+func TestRejectReservedKeyName(t *testing.T) {
+	require.NoError(t, rejectReservedKeyName("my-key", "GenerateKey"))
+	require.NoError(t, rejectReservedKeyName("mytenant.key", "GenerateKey"), "only a leading prefix is reserved")
+
+	err := rejectReservedKeyName(kmsTenantKeyPrefix+"acme.key", "GenerateKey")
+	var reserved *ReservedKeyNameError
+	require.True(t, stderrors.As(err, &reserved), "error %v does not wrap ReservedKeyNameError", err)
+	require.True(t, IsInvalidInput(err))
+}
+
 // startOwnerReencryption starts a re-encryption in the owner tenant. The
 // throttle holds the one-key run open, so the operation is still in progress
 // when the test inspects it; cleanup cancels it.
