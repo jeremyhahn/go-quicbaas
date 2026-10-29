@@ -105,6 +105,17 @@ func reservePort(t *testing.T) int {
 	return listener.Addr().(*net.TCPAddr).Port
 }
 
+// writeDaemonConfig writes the config file the daemon starts with. First-boot
+// needs iam.spiffe_trust_domain to issue the admin certificate, as in
+// test/integration/init/helpers.go writeInitConfig.
+func writeDaemonConfig(t *testing.T, dataDir string) string {
+	t.Helper()
+	path := filepath.Join(dataDir, "daemon-config.yaml")
+	body := "iam:\n  spiffe_trust_domain: quicbaas.integration.test\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o600), "write daemon config")
+	return path
+}
+
 // waitForREST waits until the daemon's HTTPS listener is accepting TLS
 // connections, or the deadline expires. The daemon mints its own CA during
 // first boot, so this probe cannot chain-verify the presented certificate --
@@ -197,6 +208,7 @@ func TestDaemonSIGTERMRunsGracefulShutdown(t *testing.T) {
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeDaemonConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),
@@ -278,6 +290,7 @@ func TestDaemonSIGINTRunsGracefulShutdown(t *testing.T) {
 
 	cmd := exec.Command(binary,
 		"start",
+		"--config", writeDaemonConfig(t, dataDir),
 		"--data-dir", dataDir,
 		"--log-level", "info",
 		"--http-port", strconv.Itoa(restPort),
