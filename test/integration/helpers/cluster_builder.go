@@ -139,15 +139,11 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 	}
 
 	for i, endpoint := range cb.endpoints {
-		var restURL string
-		if i < len(cb.restEndpoints) {
-			restURL = cb.restEndpoints[i]
-		}
-		client, err := cb.connectToNode(ctx, endpoint, restURL)
+		client, err := cb.buildNode(ctx, i)
 		if err != nil {
 			// Clean up any successful connections
 			cluster.Close()
-			return nil, fmt.Errorf("failed to connect to node %d (%s): %w", i+1, endpoint, err)
+			return nil, err
 		}
 
 		cluster.Clients[i] = client
@@ -158,6 +154,23 @@ func (cb *ClusterBuilder) Build(ctx context.Context) (*TestCluster, error) {
 	}
 
 	return cluster, nil
+}
+
+// buildNode connects to the i-th configured endpoint, logging in at its REST
+// URL when the builder logs in.
+func (cb *ClusterBuilder) buildNode(ctx context.Context, i int) (quicbaas.Client, error) {
+	endpoint := cb.endpoints[i]
+	var restURL string
+	if i < len(cb.restEndpoints) {
+		restURL = cb.restEndpoints[i]
+	} else if cb.login != nil {
+		return nil, &ClusterRESTEndpointError{Node: i + 1, Endpoint: endpoint}
+	}
+	client, err := cb.connectToNode(ctx, endpoint, restURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to node %d (%s): %w", i+1, endpoint, err)
+	}
+	return client, nil
 }
 
 // TestCluster represents a cluster of QuicBaaS nodes for testing.

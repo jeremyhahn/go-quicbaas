@@ -195,6 +195,44 @@ func TestWaitForClusterShardLeaders_RefusedLoginSurfaces(t *testing.T) {
 	}
 }
 
+// twoNodeBuilderFor returns a system-admin builder for a stopped node followed
+// by node, the way a failover target runs with node1 down.
+func twoNodeBuilderFor(t *testing.T, node *shardProbeNode) *ClusterBuilder {
+	t.Helper()
+	stopped := httptest.NewTLSServer(http.NotFoundHandler())
+	stopped.Close()
+	cb := builderFor(t, node, true)
+	cb.endpoints = []string{stopped.URL, node.server.URL}
+	cb.restEndpoints = []string{stopped.URL, node.server.URL}
+	return cb
+}
+
+// A stopped node is skipped: the node that answers carries the wait.
+func TestWaitForClusterShardLeaders_StoppedNodeSkipped(t *testing.T) {
+	node := newShardProbeNode(t, "admin-token", 0, http.StatusOK, http.StatusForbidden)
+	if err := waitForClusterShardLeaders(context.Background(), twoNodeBuilderFor(t, node), nil, time.Second); err != nil {
+		t.Fatalf("waitForClusterShardLeaders: %v", err)
+	}
+}
+
+// With every node stopped no node answers, and the timeout carries the last
+// failed build.
+func TestWaitForClusterShardLeaders_AllNodesStoppedSurfaces(t *testing.T) {
+	node := newShardProbeNode(t, "admin-token", 0, http.StatusOK, http.StatusOK)
+	cb := twoNodeBuilderFor(t, node)
+	cb.endpoints = []string{cb.endpoints[0], cb.endpoints[0]}
+	cb.restEndpoints = []string{cb.restEndpoints[0], cb.restEndpoints[0]}
+	err := waitForClusterShardLeaders(context.Background(), cb, nil, 300*time.Millisecond)
+	var leadersErr *ShardLeadersError
+	if !errors.As(err, &leadersErr) {
+		t.Fatalf("error = %v, want *ShardLeadersError", err)
+	}
+	var timeoutErr *PollTimeoutError
+	if !errors.As(leadersErr.Err, &timeoutErr) || timeoutErr.LastErr == nil {
+		t.Errorf("ShardLeadersError.Err = %v, want a *PollTimeoutError carrying the failed build", leadersErr.Err)
+	}
+}
+
 // A refused Status probe is kept as the poll's last error.
 func TestWaitForClusterShardLeaders_RefusedStatusSurfaces(t *testing.T) {
 	node := newShardProbeNode(t, "admin-token", 0, http.StatusOK, http.StatusForbidden)

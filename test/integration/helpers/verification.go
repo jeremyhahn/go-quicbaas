@@ -764,25 +764,36 @@ func WaitForClusterShardLeaders(ctx context.Context, expectedShards []uint64, ti
 // builds. The clients are built inside the poll, so a node that refuses the
 // login while it is still electing is tried again until timeout.
 func waitForClusterShardLeaders(ctx context.Context, cb *ClusterBuilder, expectedShards []uint64, timeout time.Duration) error {
-	var tc *TestCluster
+	// Each node is built on its own, so a node stopped by a failover test
+	// is skipped for the round rather than failing every node's build. A
+	// node that connected keeps its client; the rest are retried each round.
+	clients := make([]quicbaas.Client, len(cb.endpoints))
 	defer func() {
-		if tc == nil {
-			return
-		}
-		if err := tc.Close(); err != nil {
-			fmt.Printf("close cluster clients: %v\n", err)
+		for i, client := range clients {
+			if client == nil {
+				continue
+			}
+			if err := client.Close(); err != nil {
+				fmt.Printf("close cluster client %d: %v\n", i+1, err)
+			}
 		}
 	}()
 
 	clientsFor := func(ctx context.Context) ([]quicbaas.Client, error) {
-		if tc == nil {
-			built, err := cb.Build(ctx)
-			if err != nil {
-				return nil, err
+		var connected []quicbaas.Client
+		var lastErr error
+		for i := range clients {
+			if clients[i] == nil {
+				client, err := cb.buildNode(ctx, i)
+				if err != nil {
+					lastErr = err
+					continue
+				}
+				clients[i] = client
 			}
-			tc = built
+			connected = append(connected, clients[i])
 		}
-		return tc.Clients, nil
+		return connected, lastErr
 	}
 
 	logf := func(format string, args ...any) { fmt.Printf(format+"\n", args...) }
@@ -793,7 +804,8 @@ func waitForClusterShardLeaders(ctx context.Context, cb *ClusterBuilder, expecte
 }
 
 // shardProbeClients returns the clients one round of the shard-leader wait
-// queries.
+// queries, and the last node build that failed that round. The round probes
+// the clients it got even when the error is set.
 type shardProbeClients func(ctx context.Context) ([]quicbaas.Client, error)
 
 // waitForShardLeaders polls every client clientsFor returns until each
@@ -804,9 +816,11 @@ func waitForShardLeaders(ctx context.Context, clientsFor shardProbeClients, expe
 	var lastShardMap map[uint64]*ShardInfo
 
 	err := Poll(ctx, 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
-		clients, err := clientsFor(ctx)
-		if err != nil {
-			return false, err
+		// A failed build with clients beside it names a node skipped this
+		// round; with none, no node answered and the round cannot pass.
+		clients, buildErr := clientsFor(ctx)
+		if buildErr != nil && len(clients) == 0 {
+			return false, buildErr
 		}
 
 		// Get current shard distribution
@@ -829,7 +843,7 @@ func waitForShardLeaders(ctx context.Context, clientsFor shardProbeClients, expe
 		// to those shards succeeded. A shard counts as having a leader when
 		// ANY node reports one. A node's refusal is kept so a timeout
 		// names it rather than reporting only a missing leader.
-		var probeErr error
+		probeErr := buildErr
 		for _, client := range clients {
 			statusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			status, err := client.Cluster().Status(statusCtx)
