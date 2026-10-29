@@ -111,6 +111,12 @@ type e2eForge struct {
 	// leaves it unreviewed. It is how the test speaks as the reviewer and
 	// the pipeline without racing the runner to the gate.
 	verdictOnOpen string
+
+	// approveEachHead, once set, has the reviewer approve — and the pipeline
+	// pass — the head a pull request carries when the runner next reads it,
+	// so the approval lands on the head a review round pushed rather than
+	// on the head the round started from.
+	approveEachHead bool
 }
 
 var loopForge = newE2EForge()
@@ -131,6 +137,7 @@ func (f *e2eForge) reset(repoDir string) {
 	defer f.mu.Unlock()
 	f.repoDir = repoDir
 	f.verdictOnOpen = ""
+	f.approveEachHead = false
 	f.nextPR = 500
 	f.statuses = nil
 	f.issues = map[int]*sdlc.ForgeIssue{}
@@ -399,6 +406,9 @@ func (f *e2eForge) ListReviews(_ context.Context, _ sdlc.RepoRef, number int) ([
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []sdlc.ForgeReview
+	if pr, ok := f.prs[number]; ok && f.approveEachHead {
+		f.approveCurrentHeadLocked(number, pr)
+	}
 	if head, ok := f.refused[number]; ok {
 		out = append(out, sdlc.ForgeReview{ID: 1, Reviewer: "codex", State: "REQUEST_CHANGES",
 			Body: "keep the change inside the task's scope", HeadSHA: head, Submitted: time.Now()})
@@ -412,6 +422,9 @@ func (f *e2eForge) ListReviews(_ context.Context, _ sdlc.RepoRef, number int) ([
 func (f *e2eForge) ListCheckRuns(_ context.Context, _ sdlc.RepoRef, sha string) ([]sdlc.ForgeCheckRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.approveEachHead {
+		f.green[sha] = true
+	}
 	if !f.green[sha] {
 		return nil, nil
 	}
@@ -591,15 +604,29 @@ func (f *e2eForge) approveEveryOpenPullRequest() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for number, pr := range f.prs {
-		head := f.headOf(pr.HeadRef)
-		if head == "" {
-			head = pr.HeadSHA
-		}
-		pr.HeadSHA = head
-		delete(f.refused, number)
-		f.approved[number] = head
-		f.green[head] = true
+		f.approveCurrentHeadLocked(number, pr)
 	}
+}
+
+// approveEachHeadFromNowOn has the reviewer approve every head the runner
+// reads from now on, including one a review round has yet to push.
+func (f *e2eForge) approveEachHeadFromNowOn() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.approveEachHead = true
+}
+
+// approveCurrentHeadLocked approves pull request number at its branch's
+// current head and passes its check. The caller holds f.mu.
+func (f *e2eForge) approveCurrentHeadLocked(number int, pr *sdlc.ForgePullRequest) {
+	head := f.headOf(pr.HeadRef)
+	if head == "" {
+		head = pr.HeadSHA
+	}
+	pr.HeadSHA = head
+	delete(f.refused, number)
+	f.approved[number] = head
+	f.green[head] = true
 }
 
 // approve grants the independent approval and the green check on the pull
@@ -726,6 +753,7 @@ func runGit(dir string, args ...string) error {
 func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptRequest) (*orchestration.PromptResponse, error) {
 	b.mu.Lock()
 	b.prompts = append(b.prompts, req.Prompt)
+	promptNumber := len(b.prompts)
 	workDir := b.sessions[req.SessionID]
 	block := b.block
 	onPrompt := b.onPrompt
@@ -741,7 +769,12 @@ func (b *e2eAgentBackend) Prompt(ctx context.Context, req *orchestration.PromptR
 	if workDir == "" {
 		return nil, errors.New("e2e backend: the worker session has no checkout")
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte("done by the e2e worker\n"), 0o600); err != nil {
+	// Each prompt changes the tree, as a real worker addressing review
+	// findings does: the runner charges a turn that reports work on an
+	// unchanged checkout (sdlc.TurnOutcomeClaimedWork), so identical content
+	// would fail every review round.
+	work := fmt.Sprintf("done by the e2e worker (prompt %d)\n", promptNumber)
+	if err := os.WriteFile(filepath.Join(workDir, "WORK.md"), []byte(work), 0o600); err != nil {
 		return nil, err
 	}
 	if onPrompt != nil {
@@ -1464,8 +1497,10 @@ func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.
 	rig := startFactory(t, 72)
 	loopForge.setVerdictOnOpen("REQUEST_CHANGES")
 	rig.backend.onPrompt = func(string) {
+		// The second prompt is the review round; it has not pushed yet, so
+		// the reviewer approves the head the round lands, not this one.
 		if rig.backend.promptCount() >= 2 {
-			loopForge.approveEveryOpenPullRequest()
+			loopForge.approveEachHeadFromNowOn()
 		}
 	}
 
