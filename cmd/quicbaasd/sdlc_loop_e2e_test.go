@@ -804,7 +804,8 @@ func (b *e2eAgentBackend) ListModels(context.Context) ([]string, error) {
 }
 
 // spawnCount is how many sessions the job asked for. For an sdlc job it is
-// ONE, always: no lead, no per-work-item worker.
+// one per round: no lead, no per-work-item worker, and a worker released on
+// entry to reviewing is respawned for a review round.
 func (b *e2eAgentBackend) spawnCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -1490,10 +1491,12 @@ func taskOfJob(t *testing.T, srv *server.Server, job *orchestration.JobStatus) s
 	return job.Config.TaskID
 }
 
-// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession: the review
-// sends the work back, the SAME worker is prompted again with the findings,
-// and the second round lands.
-func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.T) {
+// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnARespawnedWorker: the
+// review sends the work back and the second round lands on the same pull
+// request. The runner releases a worker on entry to reviewing once its work
+// is published (go-quicbaas#938, auditWorkerReleased), so the round is
+// prompted on a respawned session: one worker per round.
+func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnARespawnedWorker(t *testing.T) {
 	rig := startFactory(t, 72)
 	loopForge.setVerdictOnOpen("REQUEST_CHANGES")
 	rig.backend.onPrompt = func(string) {
@@ -1506,7 +1509,7 @@ func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.
 
 	job := awaitJob(t, rig.srv, orchestration.JobStateCompleted)
 	require.Equal(t, sdlc.JobRunnerName, job.Runner)
-	require.Equal(t, 1, rig.backend.spawnCount(), "a review round must not spawn a second worker")
+	require.Equal(t, 2, rig.backend.spawnCount(), "each round runs on its own worker: the first is released for review")
 	require.GreaterOrEqual(t, rig.backend.promptCount(), 2, "the findings never reached the worker")
 	require.Len(t, loopForge.pullRequests(), 1, "a review round opened a second pull request")
 	t.Logf("OBSERVED: sessions=%d prompts=%d iteration=%d", rig.backend.spawnCount(), rig.backend.promptCount(), job.Iteration)
