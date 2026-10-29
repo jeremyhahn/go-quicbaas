@@ -182,6 +182,14 @@ func signWith(key crypto.Signer) func(nonce []byte) ([]byte, error) {
 	}
 }
 
+// passkeyTransportOrder runs every login transport, but gRPC first, so the
+// admin's first passkey enrollment does not happen on REST. The REST subtest
+// fails its discoverable login when it runs first; this order shows whether
+// the failure belongs to REST or to the admin's first enrollment.
+func passkeyTransportOrder() []loginTransport {
+	return []loginTransport{transportGRPC, transportREST, transportQUIC, transportUnix, transportMCP}
+}
+
 // A passkey the administrator enrolls through AdminFactors().Enroll is the
 // credential the unified login resolves to that administrator, on every
 // transport. Without a FIDO2 handler Enroll refuses before the server is asked.
@@ -196,8 +204,11 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 	require.NotEmpty(t, endpoints, "a REST endpoint to log the admin in")
 	adminBearer := quicbaas.WithAuthToken(helpers.AuthPIV(t, endpoints[0]))
 
-	for _, tr := range allLoginTransports() {
+	order := passkeyTransportOrder()
+	t.Logf("passkey transport order %v: the admin's first passkey enrollment runs on %s", order, order[0])
+	for i, tr := range order {
 		t.Run(string(tr), func(t *testing.T) {
+			t.Logf("[%s] passkey enrollment %d of %d for the admin", tr, i+1, len(order))
 			c, err := newLoginClient(t, tr, mtlsTLSConfig(t), adminBearer)
 			require.NoError(t, err, "[%s] build client", tr)
 			defer c.Close()
