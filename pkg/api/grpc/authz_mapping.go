@@ -475,14 +475,16 @@ var grpcMethodPermissions = map[string]methodPermission{
 	// Chain runs the CA's Authority Information Access walk, which fetches
 	// issuer certificates over the network and imports them into the CA
 	// certificate store. That is the same mutation TrustService/AutoImportAIA
-	// performs, so it carries the same write-strength verb; mapping it to
-	// certs:read would let a read-only principal drive the importer.
+	// performs, so it carries the same verb, aia:import. The server CA's
+	// stores are shared by every tenant and keyed by Common Name, and the
+	// pinned go-xkms has no per-tenant AIA store, so the verb is cross-tenant:
+	// a tenant-scoped trust:write or certs:generate must not drive the importer.
 	//
 	// IssueDeviceIdentity mints TCG EK / AK / IEEE 802.1AR IDevID
 	// certificates. Those are END-ENTITY certificates, so they stay in the
 	// leaf-issuance family: certs:generate.
 	"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-	"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+	"/quicbaas.certificate.v1.CertificateService/Chain":               {"aia", "import"},
 	"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
 
 	// ---- quicbaas.attestation.v1.AttestationService ----
@@ -534,7 +536,7 @@ var grpcMethodPermissions = map[string]methodPermission{
 
 	// ---- quicbaas.certificate.v1.TrustService ----
 	"/quicbaas.certificate.v1.TrustService/CrossSignedRootPool": {"certs", "read"},
-	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"trust", "write"},
+	"/quicbaas.certificate.v1.TrustService/AutoImportAIA":       {"aia", "import"},
 	"/quicbaas.certificate.v1.TrustService/PublishDANE":         {"trust", "write"},
 
 	// ---- quicbaas.fido2.v1.FIDO2Service (registration pair) ----

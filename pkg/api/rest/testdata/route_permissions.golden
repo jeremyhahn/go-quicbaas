@@ -369,7 +369,7 @@ POST /api/v1/bootstrap/dane permission trust:write
 POST /api/v1/bootstrap/noise permission trust:write
 POST /api/v1/bootstrap/spki permission trust:write
 POST /api/v1/cache/clear permission admin:capabilities
-POST /api/v1/certificate/chain permission certs:generate
+POST /api/v1/certificate/chain permission aia:import
 POST /api/v1/certificate/cross-sign permission ca:create
 POST /api/v1/certificate/device-identity permission certs:generate
 POST /api/v1/certificate/issue permission certs:generate
@@ -535,7 +535,7 @@ POST /api/v1/timeseries/query permission timeseries:write
 POST /api/v1/timeseries/write permission timeseries:write
 POST /api/v1/timeseries/write-batch permission timeseries:write
 POST /api/v1/transaction permission transaction:execute
-POST /api/v1/trust/auto-import-aia permission trust:write
+POST /api/v1/trust/auto-import-aia permission aia:import
 POST /api/v1/trust/publish-dane permission trust:write
 POST /api/v1/vector/admin/compact permission vector:compact
 POST /api/v1/vector/admin/export/{namespace} permission vector:list

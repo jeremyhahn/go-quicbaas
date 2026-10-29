@@ -306,12 +306,14 @@ func TestMCPPermissions_CertificateToolsMatchGRPC(t *testing.T) {
 		"quicbaas_certificate_get_tls_config": {"certs", "read"},
 		// The certificate EXTENSION tools, pinned alongside so the two halves
 		// of the surface cannot drift apart again.
-		"quicbaas_certificate_cross_sign":            {"ca", "create"},
-		"quicbaas_certificate_chain":                 {"certs", "generate"},
+		"quicbaas_certificate_cross_sign": {"ca", "create"},
+		// The chain walk imports issuer certificates into the server CA's
+		// stores, which every tenant shares: the cross-tenant aia:import.
+		"quicbaas_certificate_chain":                 {"aia", "import"},
 		"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 	}
 
-	writeActions := map[string]bool{"generate": true, "revoke": true, "create": true}
+	writeActions := map[string]bool{"generate": true, "revoke": true, "create": true, "import": true}
 
 	for tool, want := range expected {
 		resource, action, ok := getToolQRDBPermission(tool)

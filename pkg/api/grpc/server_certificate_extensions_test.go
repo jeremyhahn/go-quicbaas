@@ -231,7 +231,7 @@ func TestServer_IssueDeviceIdentity_Errors(t *testing.T) {
 func TestCertificateExtensionGRPCPermissions(t *testing.T) {
 	cases := map[string]struct{ resource, action string }{
 		"/quicbaas.certificate.v1.CertificateService/CrossSign":           {"ca", "create"},
-		"/quicbaas.certificate.v1.CertificateService/Chain":               {"certs", "generate"},
+		"/quicbaas.certificate.v1.CertificateService/Chain":               {"aia", "import"},
 		"/quicbaas.certificate.v1.CertificateService/IssueDeviceIdentity": {"certs", "generate"},
 	}
 

@@ -456,11 +456,11 @@ var qrdbToolExactMapping = map[string]qrdbToolResource{
 	// foreign ROOT's key), which qrdb documents as strictly more privileged
 	// than leaf issuance, so it authorizes with ca:create. The AIA chain walk
 	// fetches and imports issuer certificates, the same mutation
-	// quicbaas_trust_auto_import_aia performs, so it carries the same
-	// write-strength verb. Device identity issuance mints END-ENTITY TCG
+	// quicbaas_trust_auto_import_aia performs, into server CA stores every
+	// tenant shares, so both carry the cross-tenant aia:import. Device identity issuance mints END-ENTITY TCG
 	// EK / AK / IDevID certificates and stays on certs:generate.
 	"quicbaas_certificate_cross_sign":            {"ca", "create"},
-	"quicbaas_certificate_chain":                 {"certs", "generate"},
+	"quicbaas_certificate_chain":                 {"aia", "import"},
 	"quicbaas_certificate_issue_device_identity": {"certs", "generate"},
 
 	// Ollama -> ollama
@@ -884,7 +884,7 @@ var qrdbToolPrefixMapping = map[string]qrdbToolResource{
 	"quicbaas_attestation_appraise_quote":          {"attestation", "verify"},
 
 	"quicbaas_trust_cross_signed_root_pool": {"certs", "read"},
-	"quicbaas_trust_auto_import_aia":        {"certs", "generate"},
+	"quicbaas_trust_auto_import_aia":        {"aia", "import"},
 	"quicbaas_trust_publish_dane":           {"certs", "generate"},
 
 	// Timeseries

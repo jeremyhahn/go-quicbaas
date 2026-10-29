@@ -180,6 +180,13 @@ const (
 	WorkerImageRead    qrdbsdk.Permission = "worker_images:read"
 	WorkerImageRefresh qrdbsdk.Permission = "worker_images:refresh"
 
+	// AIAImport ("aia:import") authorizes the Authority Information
+	// Access walk that fetches issuer certificates and imports them into the
+	// server CA's certificate stores. Those stores are shared by every tenant
+	// and keyed by Common Name, so the verb is cross-tenant: a tenant admin's
+	// trust:write must not reach them.
+	AIAImport qrdbsdk.Permission = "aia:import"
+
 	// AgentAccountMaterialize ("agent_accounts:materialize") authorizes
 	// RELEASING one pooled provider account's credential envelope to the
 	// caller — the single verb in this stack whose response body is secret
@@ -597,6 +604,9 @@ var contributions = []contribution{
 	// module governance: outside the Security Officer's duties.
 	{permission: WorkerImageRead, roles: []string{qrdbsdk.PermissionRoleAdmin, qrdbsdk.PermissionRoleOperator}, duty: dutyOutsideSecurityOfficer, scope: scopeCross},
 	{permission: WorkerImageRefresh, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeCross},
+
+	// The server CA's AIA import writes stores every tenant shares.
+	{permission: AIAImport, roles: []string{qrdbsdk.PermissionRoleAdmin}, duty: dutyOutsideSecurityOfficer, scope: scopeCross},
 	{
 		// agent_accounts:materialize releases a pooled login's plaintext
 		// credential envelope. Admin alone among the built-ins, by the same

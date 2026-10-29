@@ -2223,7 +2223,7 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"TLSVersion\x12\x1b\n" +
 	"\x17TLS_VERSION_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fTLS_VERSION_1_2\x10\x01\x12\x13\n" +
-	"\x0fTLS_VERSION_1_3\x10\x022\xc4\t\n" +
+	"\x0fTLS_VERSION_1_3\x10\x022\xbf\t\n" +
 	"\x12CertificateService\x12\x8b\x01\n" +
 	"\x10IssueCertificate\x120.quicbaas.certificate.v1.IssueCertificateRequest\x1a1.quicbaas.certificate.v1.IssueCertificateResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12p\n" +
 	"\aSignCSR\x12'.quicbaas.certificate.v1.SignCSRRequest\x1a(.quicbaas.certificate.v1.SignCSRResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x8c\x01\n" +
@@ -2234,13 +2234,15 @@ const file_api_proto_certificate_proto_rawDesc = "" +
 	"certs:read\x12{\n" +
 	"\fGetTLSConfig\x12,.quicbaas.certificate.v1.GetTLSConfigRequest\x1a-.quicbaas.certificate.v1.GetTLSConfigResponse\"\x0e\xc2\xf3\x18\n" +
 	"certs:read\x12q\n" +
-	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\"\r\xc2\xf3\x18\tca:create\x12\x80\x01\n" +
-	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\"\x12\xc2\xf3\x18\x0ecerts:generate\x12\x94\x01\n" +
-	"\x13IssueDeviceIdentity\x123.quicbaas.certificate.v1.IssueDeviceIdentityRequest\x1a4.quicbaas.certificate.v1.IssueDeviceIdentityResponse\"\x12\xc2\xf3\x18\x0ecerts:generate2\x9d\x03\n" +
+	"\tCrossSign\x12).quicbaas.certificate.v1.CrossSignRequest\x1a*.quicbaas.certificate.v1.CrossSignResponse\"\r\xc2\xf3\x18\tca:create\x12|\n" +
+	"\x05Chain\x120.quicbaas.certificate.v1.CertificateChainRequest\x1a1.quicbaas.certificate.v1.CertificateChainResponse\"\x0e\xc2\xf3\x18\n" +
+	"aia:import\x12\x94\x01\n" +
+	"\x13IssueDeviceIdentity\x123.quicbaas.certificate.v1.IssueDeviceIdentityRequest\x1a4.quicbaas.certificate.v1.IssueDeviceIdentityResponse\"\x12\xc2\xf3\x18\x0ecerts:generate2\x9c\x03\n" +
 	"\fTrustService\x12\x90\x01\n" +
 	"\x13CrossSignedRootPool\x123.quicbaas.certificate.v1.CrossSignedRootPoolRequest\x1a4.quicbaas.certificate.v1.CrossSignedRootPoolResponse\"\x0e\xc2\xf3\x18\n" +
-	"certs:read\x12\x7f\n" +
-	"\rAutoImportAIA\x12-.quicbaas.certificate.v1.AutoImportAIARequest\x1a..quicbaas.certificate.v1.AutoImportAIAResponse\"\x0f\xc2\xf3\x18\vtrust:write\x12y\n" +
+	"certs:read\x12~\n" +
+	"\rAutoImportAIA\x12-.quicbaas.certificate.v1.AutoImportAIARequest\x1a..quicbaas.certificate.v1.AutoImportAIAResponse\"\x0e\xc2\xf3\x18\n" +
+	"aia:import\x12y\n" +
 	"\vPublishDANE\x12+.quicbaas.certificate.v1.PublishDANERequest\x1a,.quicbaas.certificate.v1.PublishDANEResponse\"\x0f\xc2\xf3\x18\vtrust:writeB3Z1github.com/jeremyhahn/go-quicbaas/api/proto;protob\x06proto3"
 
 var (

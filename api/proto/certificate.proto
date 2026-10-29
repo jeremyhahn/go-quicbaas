@@ -62,7 +62,7 @@ service CertificateService {
   // Authority Information Access extension. The chain is ordered issuer-first
   // and root-last and excludes the leaf.
   rpc Chain(CertificateChainRequest) returns (CertificateChainResponse) {
-      option (qrdb.v1.permission) = "certs:generate";
+      option (qrdb.v1.permission) = "aia:import";
   }
 
   // IssueDeviceIdentity issues a TCG device identity certificate: an
@@ -504,7 +504,7 @@ service TrustService {
   // AutoImportAIA walks the AIA extension of each supplied DER-encoded
   // certificate and imports the referenced issuing CA certificates.
   rpc AutoImportAIA(AutoImportAIARequest) returns (AutoImportAIAResponse) {
-      option (qrdb.v1.permission) = "trust:write";
+      option (qrdb.v1.permission) = "aia:import";
   }
 
   // PublishDANE derives the DANE TLSA records for the supplied certificate
