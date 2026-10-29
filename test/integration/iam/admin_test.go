@@ -557,28 +557,33 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 	defer cluster.Close()
 
 	// Create multiple assignments with different roles and tenants
-	testPrefix := uuid.New().String()[:8]
+	userIDs := []string{
+		generateUniqueUserID(),
+		generateUniqueUserID(),
+		generateUniqueUserID(),
+		generateUniqueUserID(),
+	}
 
 	assignments := []AdminAssignmentRequest{
 		{
-			UserID:    fmt.Sprintf("%s-user-1", testPrefix),
+			UserID:    userIDs[1-1],
 			AdminRole: "super_admin",
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-2", testPrefix),
+			UserID:    userIDs[2-1],
 			AdminRole: "tenant_admin",
 			TenantIDs: []string{"tenant-alpha"},
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-3", testPrefix),
+			UserID:    userIDs[3-1],
 			AdminRole: "tenant_admin",
 			TenantIDs: []string{"tenant-beta"},
 			GrantedBy: "system",
 		},
 		{
-			UserID:    fmt.Sprintf("%s-user-4", testPrefix),
+			UserID:    userIDs[4-1],
 			AdminRole: "user_admin",
 			TenantIDs: []string{"tenant-alpha"},
 			GrantedBy: "system",
@@ -638,7 +643,7 @@ func TestAdmin_ListAssignments_WithFiltering(t *testing.T) {
 
 	// Test: Filter by user_id
 	t.Run("FilterByUserID", func(t *testing.T) {
-		userID := fmt.Sprintf("%s-user-2", testPrefix)
+		userID := userIDs[1]
 		resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + userID)
 		require.NoError(t, err)
 		defer resp.Body.Close()
@@ -774,7 +779,7 @@ func TestAdmin_CheckPermission_NoAssignment(t *testing.T) {
 	defer cluster.Close()
 
 	// Use a user ID that doesn't have any assignment
-	nonExistentUser := uuid.New().String()
+	nonExistentUser := generateUniqueUserID()
 
 	checkReq := AdminCheckRequest{
 		UserID:     nonExistentUser,
@@ -1758,12 +1763,11 @@ func TestAdmin_Pagination(t *testing.T) {
 	defer cluster.Close()
 
 	// Create multiple assignments
-	testPrefix := uuid.New().String()[:8]
 	var createdIDs []string
 
 	for i := 0; i < 5; i++ {
 		createReq := AdminAssignmentRequest{
-			UserID:    fmt.Sprintf("%s-paginate-user-%d", testPrefix, i),
+			UserID:    generateUniqueUserID(),
 			AdminRole: "read_only",
 			GrantedBy: "system",
 		}
