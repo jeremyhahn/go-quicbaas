@@ -472,6 +472,14 @@ const matrixTrustDomain = "quicbaas.integration.test"
 // trustDomainConfig is the iam section every matrix config file starts with.
 const trustDomainConfig = "iam:\n  spiffe_trust_domain: " + matrixTrustDomain + "\n"
 
+// pivLoginConfig continues the iam section with iam.piv_login
+// (config.IAMConfig.PIVLogin). It names no ca_file, so the server validates the
+// login certificate against its own CA pool, which issued the admin
+// certificate. allow_unattested is set because that certificate is a
+// software key with no slot attestation; the token it earns records
+// attest_level=software.
+const pivLoginConfig = "  piv_login:\n    enabled: true\n    allow_unattested: true\n"
+
 // writeInitConfig writes the minimal config file `quicbaasd init` needs and
 // returns its path.
 //
@@ -497,10 +505,11 @@ func backendConfigPath(dataDir string) string {
 // `quicbaasd init` and `quicbaasd start`: the trust domain plus the storage
 // engine under test. Start needs the trust domain too, because on a
 // non-durable engine first-boot runs again at start and refuses to issue the
-// admin certificate without one (#1732).
+// admin certificate without one (#1732). PIV login is on as well, because the
+// SDK liveness probe logs the administrator in with the admin certificate.
 func writeBackendConfig(dataDir, backend string) (string, error) {
 	path := backendConfigPath(dataDir)
-	body := trustDomainConfig + "storage:\n  backend: " + backend + "\n"
+	body := trustDomainConfig + pivLoginConfig + "storage:\n  backend: " + backend + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return "", fmt.Errorf("writeBackendConfig: %w", err)
 	}

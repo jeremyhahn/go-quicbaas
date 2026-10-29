@@ -22,6 +22,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 )
 
 // backendConfigFile is the subset of the daemon configuration the backend
@@ -74,6 +76,16 @@ func TestBackendMatrixStart_ReadsTheInitConfig(t *testing.T) {
 			}
 			if cfg.Storage.Backend != backend {
 				t.Errorf("storage.backend = %q, want %q", cfg.Storage.Backend, backend)
+			}
+
+			// The daemon's own loader must see PIV login on: the SDK
+			// liveness probe logs the administrator in over it.
+			loaded, err := config.LoadFromFile(cfgPath)
+			if err != nil {
+				t.Fatalf("config.LoadFromFile: %v", err)
+			}
+			if !loaded.IAM.PIVLogin.Enabled || !loaded.IAM.PIVLogin.AllowUnattested {
+				t.Errorf("iam.piv_login = %+v, want enabled with allow_unattested", loaded.IAM.PIVLogin)
 			}
 		})
 	}
