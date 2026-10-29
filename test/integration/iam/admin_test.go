@@ -18,12 +18,15 @@ package iam_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -992,11 +995,18 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Create super admin with impersonation permission
-	adminUserID := generateUniqueUserID()
+	// The target is a real user in a real tenant: the server refuses to
+	// mint a session for a user it cannot resolve.
+	tenantID, targetUserID := setupUserForSessionTests(t, cluster)
+
+	// The acting admin is the authenticated caller, not a name in the
+	// request body, so the impersonation grant goes to the caller's uid and
+	// lists the target tenant explicitly.
+	adminUserID := systemAdminUserID(t, cluster)
 	createReq := AdminAssignmentRequest{
 		UserID:      adminUserID,
 		AdminRole:   "super_admin",
+		TenantIDs:   []string{tenantID},
 		Permissions: []string{"user:impersonate"},
 		GrantedBy:   "system",
 	}
@@ -1005,11 +1015,9 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	defer deleteTestAssignment(t, cluster, created.ID)
 
 	// Start impersonation
-	targetUserID := generateUniqueUserID()
 	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
 		TargetUserID: targetUserID,
-		TenantID:     "test-tenant",
+		TenantID:     tenantID,
 		Reason:       "Support ticket #12345 - user cannot access dashboard",
 		Duration:     "1h",
 	}
@@ -1037,13 +1045,48 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 
 	// Assert: Session created with correct fields
 	assert.NotEmpty(t, session.ID, "Session ID should not be empty")
-	assert.Equal(t, adminUserID, session.AdminUserID, "AdminUserID should match")
+	assert.Equal(t, adminUserID, session.AdminUserID, "AdminUserID should be the caller")
 	assert.Equal(t, targetUserID, session.TargetUserID, "TargetUserID should match")
-	assert.Equal(t, "test-tenant", session.TenantID, "TenantID should match")
+	assert.Equal(t, tenantID, session.TenantID, "TenantID should match")
 	assert.Equal(t, "Support ticket #12345 - user cannot access dashboard", session.Reason, "Reason should match")
-	assert.NotEmpty(t, session.StartedAt, "StartedAt should be set")
-	assert.NotEmpty(t, session.ExpiresAt, "ExpiresAt should be set")
 	assert.Nil(t, session.EndedAt, "EndedAt should be nil for active session")
+
+	startedAt, err := time.Parse(time.RFC3339Nano, session.StartedAt)
+	require.NoError(t, err, "StartedAt should be an RFC 3339 time")
+	expiresAt, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
+	require.NoError(t, err, "ExpiresAt should be an RFC 3339 time")
+	assert.True(t, expiresAt.After(startedAt), "ExpiresAt %s should be after StartedAt %s", expiresAt, startedAt)
+}
+
+// systemAdminUserID returns the uid claim of the bearer cluster.adminClient
+// presents. StartImpersonation takes the acting admin from that claim
+// (pkg/iam/admin.go:573-580), so a grant meant for the caller is keyed by it.
+// The bearer is read from one request to a local recorder, so it never goes
+// anywhere but this process.
+func systemAdminUserID(t *testing.T, cluster *testCluster) string {
+	t.Helper()
+
+	bearers := make(chan string, 1)
+	recorder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bearers <- strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}))
+	defer recorder.Close()
+
+	resp, err := cluster.adminClient.Get(recorder.URL)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	parts := strings.Split(<-bearers, ".")
+	require.Len(t, parts, 3, "the system admin bearer should be a JWT")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+
+	var claims struct {
+		UserID string `json:"uid"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &claims))
+	require.NotEmpty(t, claims.UserID, "the system admin bearer should carry a uid claim")
+	return claims.UserID
 }
 
 // TestAdmin_StartImpersonation_NotAllowed tests starting impersonation without permission.
