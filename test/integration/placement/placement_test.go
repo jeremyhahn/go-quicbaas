@@ -84,8 +84,7 @@ func restEndpoint(t *testing.T) string {
 	return endpoints[0]
 }
 
-func transports(t *testing.T, auth quicbaas.Option) map[string]func() (quicbaas.Client, error) {
-	tlsCfg := adminTLS(t)
+func transports(t *testing.T, tlsCfg *tls.Config, auth quicbaas.Option) map[string]func() (quicbaas.Client, error) {
 	first := func(endpoints []string, name string) string {
 		if len(endpoints) == 0 {
 			t.Fatalf("no %s endpoint configured", name)
@@ -127,7 +126,7 @@ func TestPlacementMultiProtocol(t *testing.T) {
 	// placement:manage, which node registration needs, is granted to the
 	// built-in Admin role alone, so the suite acts as the system admin.
 	auth := quicbaas.WithAuthToken(helpers.AuthPIV(t, restEndpoint(t)))
-	for name, build := range transports(t, auth) {
+	for name, build := range transports(t, adminTLS(t), auth) {
 		t.Run(name, func(t *testing.T) {
 			client, err := build()
 			if err != nil {
@@ -152,9 +151,17 @@ func TestSchedulerJobsMultiProtocol(t *testing.T) {
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
 
 	// The scheduler:* job verbs are granted to the built-in Operator role
-	// alone, so this suite acts as the tenant operator.
+	// alone, so this suite acts as the tenant operator. The connection carries
+	// no client certificate: a certificate is an identity of its own, and the
+	// admin certificate would make the caller the system admin, which the
+	// tenant-only scheduler permission refuses.
+	bearerTLS, err := helpers.IntegrationTLSConfig()
+	if err != nil {
+		t.Fatalf("integration TLS config: %v", err)
+	}
+	tenantID := helpers.TenantPrincipalID(t, restEndpoint(t))
 	auth := quicbaas.WithAuthToken(helpers.AuthTenantOperator(t, restEndpoint(t)))
-	for name, build := range transports(t, auth) {
+	for name, build := range transports(t, bearerTLS, auth) {
 		t.Run(name, func(t *testing.T) {
 			client, err := build()
 			if err != nil {
@@ -175,6 +182,7 @@ func TestSchedulerJobsMultiProtocol(t *testing.T) {
 				// A tenant caller files jobs in its own namespace; a
 				// system-owned job names the system tenant and is refused.
 				OwnerType: scheduler.OwnerTypeTenant,
+				OwnerID:   tenantID,
 				Tags:      map[string]string{"suite": "placement"},
 			})
 			if err != nil {
