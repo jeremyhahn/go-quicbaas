@@ -147,11 +147,19 @@ func generateUniqueUserID() string {
 // createTestAssignment is a helper to create a test admin assignment.
 func createTestAssignment(t *testing.T, cluster *testCluster, req AdminAssignmentRequest) AdminAssignmentResponse {
 	t.Helper()
+	return createTestAssignmentAs(t, cluster, cluster.adminClient, req)
+}
+
+// createTestAssignmentAs creates an assignment as client. Admin assignments
+// live in the caller's tenant-routed IAM store, so a grant a tenant-scoped
+// check must see is created by a caller in that tenant.
+func createTestAssignmentAs(t *testing.T, cluster *testCluster, client *http.Client, req AdminAssignmentRequest) AdminAssignmentResponse {
+	t.Helper()
 
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
-	resp, err := cluster.adminClient.Post(
+	resp, err := client.Post(
 		cluster.httpEndpoint+"/api/v1/admin/assignments",
 		"application/json",
 		bytes.NewReader(body),
@@ -159,17 +167,25 @@ func createTestAssignment(t *testing.T, cluster *testCluster, req AdminAssignmen
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	require.Equal(t, http.StatusCreated, resp.StatusCode, "Expected 201 Created for assignment creation")
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, resp.StatusCode, "assignment creation: %s", respBody)
 
 	var result AdminAssignmentResponse
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	require.NoError(t, err)
-
+	require.NoError(t, json.Unmarshal(respBody, &result))
 	return result
 }
 
 // deleteTestAssignment is a helper to delete a test admin assignment.
 func deleteTestAssignment(t *testing.T, cluster *testCluster, assignmentID string) {
+	t.Helper()
+	deleteTestAssignmentAs(t, cluster, cluster.adminClient, assignmentID)
+}
+
+// deleteTestAssignmentAs deletes an assignment as client, which must be the
+// caller whose tenant holds it: admin assignments live in the caller's
+// tenant-routed IAM store.
+func deleteTestAssignmentAs(t *testing.T, cluster *testCluster, client *http.Client, assignmentID string) {
 	t.Helper()
 
 	req, err := http.NewRequest(
@@ -179,7 +195,7 @@ func deleteTestAssignment(t *testing.T, cluster *testCluster, assignmentID strin
 	)
 	require.NoError(t, err)
 
-	resp, err := cluster.adminClient.Do(req)
+	resp, err := client.Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
 }
@@ -1003,7 +1019,10 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	// The acting admin is the authenticated caller, not a name in the
 	// request body. tenantctx keeps the system admin out of a tenant's IAM,
 	// so the caller is the tenant's own admin: the impersonation grant goes
-	// to that admin's uid and lists the tenant explicitly.
+	// to that admin's uid and lists the tenant explicitly. Admin
+	// assignments live in the caller's tenant-routed IAM store, so the
+	// tenant admin creates the grant too; one the system admin created
+	// would sit in the system tenant's store, which this check never reads.
 	tenantAdmin := createTestTenant(t, cluster, tenantID)
 	adminUserID := tenantAdminUserID(t, cluster, tenantID)
 	createReq := AdminAssignmentRequest{
@@ -1014,8 +1033,8 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 		GrantedBy:   "system",
 	}
 
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
+	created := createTestAssignmentAs(t, cluster, tenantAdmin, createReq)
+	defer deleteTestAssignmentAs(t, cluster, tenantAdmin, created.ID)
 
 	// Start impersonation
 	impersonationReq := ImpersonationRequest{
