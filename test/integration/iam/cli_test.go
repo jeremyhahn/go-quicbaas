@@ -115,6 +115,25 @@ func newIAMCLITestContext(t *testing.T, protocol, address, tenantID string) *iam
 	}
 }
 
+// credentialArgs returns the client credentials for the context's transport.
+// REST authenticates with the bearer provisionRESTBearer stored; gRPC, QUIC
+// and Unix authenticate by mTLS, so they present the fixture's system-admin
+// client certificate, the same one the REST bearer is minted from
+// (QUICBAAS_TEST_PIV_CERT / _KEY override it, as in helpers.AuthPIVSession).
+func (c *iamCLITestContext) credentialArgs() []string {
+	if c.protocol == "rest" {
+		return nil
+	}
+	certPath, keyPath := "/etc/quicbaas/certs/admin.crt", "/etc/quicbaas/certs/admin.key"
+	if v := os.Getenv("QUICBAAS_TEST_PIV_CERT"); v != "" {
+		certPath = v
+	}
+	if v := os.Getenv("QUICBAAS_TEST_PIV_KEY"); v != "" {
+		keyPath = v
+	}
+	return []string{"--tls-cert", certPath, "--tls-key", keyPath}
+}
+
 // run executes a CLI command with the configured protocol, address, and tenant.
 func (c *iamCLITestContext) run(args ...string) (string, error) {
 	c.t.Helper()
@@ -126,6 +145,7 @@ func (c *iamCLITestContext) run(args ...string) (string, error) {
 		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
+	fullArgs = append(fullArgs, c.credentialArgs()...)
 	fullArgs = append(fullArgs, args...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
@@ -164,6 +184,7 @@ func (c *iamCLITestContext) runExpectError(args ...string) (string, error) {
 		"--tls-ca", "/etc/quicbaas/certs/ca.crt",
 		"--output", c.outputFmt,
 	}
+	fullArgs = append(fullArgs, c.credentialArgs()...)
 	fullArgs = append(fullArgs, args...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
