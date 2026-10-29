@@ -125,8 +125,13 @@ func (p *softwarePasskey) RegisterWebAuthn(opts fido2.WebAuthnRegistrationOption
 }
 
 // passkeyLogin runs the unified FIDO2 login with the software authenticator.
-func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter) (*quicbaas.FinishLoginResponse, error) {
+// It logs which ceremony transport tr began: the tenant and hint it sent, and
+// whether the options named credentials (a hinted login) or left the choice
+// to a discoverable credential.
+func passkeyLogin(ctx context.Context, t *testing.T, tr loginTransport, c quicbaas.Client, adapter *webauthnclient.SoftwareAdapter) (*quicbaas.FinishLoginResponse, error) {
+	t.Helper()
 	auth := c.Security().Auth()
+	t.Logf("[%s] passkey begin: tenant=%q hint=%q", tr, systemTenantID, adminSubject)
 	begin, err := auth.BeginLogin(ctx, qrdbtransport.BeginLoginRequest{
 		Type:     qrdbtransport.FactorTypeFIDO2,
 		Hint:     adminSubject,
@@ -134,6 +139,17 @@ func passkeyLogin(ctx context.Context, c quicbaas.Client, adapter *webauthnclien
 	})
 	if err != nil {
 		return nil, err
+	}
+	var options struct {
+		PublicKey struct {
+			AllowCredentials []json.RawMessage `json:"allowCredentials"`
+		} `json:"publicKey"`
+	}
+	if err := json.Unmarshal([]byte(begin.ChallengeMetadata["options"]), &options); err != nil {
+		t.Logf("[%s] passkey begin: options are not WebAuthn JSON: %v", tr, err)
+	} else {
+		t.Logf("[%s] passkey begin: allowCredentials non-empty=%t (%d)", tr,
+			len(options.PublicKey.AllowCredentials) > 0, len(options.PublicKey.AllowCredentials))
 	}
 	assertion, err := adapter.GetAssertion(ctx, &webauthnclient.CeremonyOptions{
 		OptionsJSON: []byte(begin.ChallengeMetadata["options"]),
@@ -200,7 +216,7 @@ func TestAdminFactors_PasskeyEnrollsThenLogsIn(t *testing.T) {
 			credentialID := results[0].Enrollment.Metadata["credential_id"]
 			require.NotEmpty(t, credentialID, "[%s] the server must report the stored credential", tr)
 
-			finish, err := passkeyLogin(ctx, c, adapter)
+			finish, err := passkeyLogin(ctx, t, tr, c, adapter)
 			require.NoError(t, err, "[%s] login with the enrolled passkey", tr)
 			require.NotEmpty(t, finish.Bearer, "[%s] login must mint a bearer", tr)
 			require.NotNil(t, finish.Identity, "[%s] login must resolve an identity", tr)
