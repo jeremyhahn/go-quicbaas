@@ -194,3 +194,53 @@ func TestToolchainImageTagCoversTheGoBaseImage(t *testing.T) {
 		seen[got] = name
 	}
 }
+
+// runToolchainBuild runs docker-build-toolchain-image with the given DOCKER
+// command and a DEVCONTAINER_BUILD that always fails, the way a build whose
+// export lost the race for the tag fails.
+func runToolchainBuild(t *testing.T, docker string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("make", "-s", "--no-print-directory", "-C", repoRoot,
+		"docker-build-toolchain-image", "DOCKER="+docker, "DEVCONTAINER_BUILD=false")
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestToolchainBuildPassesWhenAConcurrentJobBuiltTheTag pins the CI 71256
+// race: two jobs on one daemon both find the tag absent and both build it, and
+// the second build fails because the first already wrote the tag. The tag is
+// content-addressed, so the image present afterwards is the one wanted.
+func TestToolchainBuildPassesWhenAConcurrentJobBuiltTheTag(t *testing.T) {
+	dir := t.TempDir()
+	docker := filepath.Join(dir, "docker")
+	// image inspect fails on the first call (tag absent before the build)
+	// and succeeds on every later one (tag written by the other job).
+	stub := "#!/bin/sh\n" +
+		"if [ \"$1 $2\" = \"image inspect\" ]; then\n" +
+		"\tif [ -e '" + dir + "/inspected' ]; then exit 0; fi\n" +
+		"\t: > '" + dir + "/inspected'; exit 1\n" +
+		"fi\n"
+	if err := os.WriteFile(docker, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runToolchainBuild(t, docker)
+	if err != nil {
+		t.Fatalf("docker-build-toolchain-image failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "built concurrently") {
+		t.Errorf("output does not report the concurrent build:\n%s", out)
+	}
+}
+
+// TestToolchainBuildFailsWhenNoImageExistsAfterAFailedBuild checks the race
+// allowance does not hide a real build failure.
+func TestToolchainBuildFailsWhenNoImageExistsAfterAFailedBuild(t *testing.T) {
+	out, err := runToolchainBuild(t, "false")
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("docker-build-toolchain-image error = %v, want a non-zero exit; output:\n%s", err, out)
+	}
+	if strings.Contains(out, "built concurrently") {
+		t.Errorf("output reports a concurrent build that did not happen:\n%s", out)
+	}
+}

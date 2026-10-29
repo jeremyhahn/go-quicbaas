@@ -5696,10 +5696,14 @@ docker-build: ## Build both devcontainer images, toolchain and integration
 # A docs-only pull request's CI runs lint alone, in the toolchain image
 # (DS-3161), and the lint-gates job needs only this image.
 .PHONY: docker-build-toolchain-image
+# The tag is content-addressed, so a build that fails because another job on
+# the same daemon wrote the tag first has produced the same image: that passes.
 docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
 	@if $(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1; then \
 		echo "docker-build-toolchain-image: $(TOOLCHAIN_IMAGE) is present"; \
-	else $(DEVCONTAINER_BUILD) toolchain; fi
+	else $(DEVCONTAINER_BUILD) toolchain || { \
+		$(DOCKER) image inspect '$(TOOLCHAIN_IMAGE)' >/dev/null 2>&1 && \
+		echo "docker-build-toolchain-image: $(TOOLCHAIN_IMAGE) was built concurrently"; }; fi
 
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
