@@ -304,8 +304,6 @@ func (s *certificateService) extensionsCA() (CertificateExtensionsCA, error) {
 	return ca, nil
 }
 
-// CrossSign cross-signs an external root certificate with the local CA and
-// returns the PEM-encoded cross-signed certificate.
 // PlatformCASignRefusedError is returned when a caller other than the system
 // tenant asks the shared platform CA to sign a CA-capable certificate. Such a
 // certificate chains to the platform root, so granting it to a tenant would
@@ -339,6 +337,8 @@ func requireSystemCASigner(ctx context.Context, op string) error {
 	return nil
 }
 
+// CrossSign cross-signs an external root certificate with the local CA and
+// returns the PEM-encoded cross-signed certificate.
 func (s *certificateService) CrossSign(ctx context.Context, req *CrossSignRequest) (*CrossSignResponse, error) {
 	if req == nil {
 		return nil, ErrCertNilRequest

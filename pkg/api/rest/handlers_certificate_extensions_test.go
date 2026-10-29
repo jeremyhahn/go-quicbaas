@@ -117,6 +117,20 @@ func TestHandleCertificateCrossSign(t *testing.T) {
 			(*Server).HandleCertificateCrossSign)
 		assert.Equal(t, http.StatusNotImplemented, w.Code)
 	})
+
+	t.Run("maps a platform CA refusal to 403", func(t *testing.T) {
+		w := postCertExt(t, "/api/v1/certificate/cross-sign",
+			CrossSignRESTRequest{ForeignRootPEM: []byte("r")},
+			func(m *testutil.MockQuicBaaS) {
+				m.CertificateSvc = &MockCertificateService{
+					CrossSignFunc: func(context.Context, *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+						return nil, &service.PlatformCASignRefusedError{Op: "cross_sign", CallerTenantID: "acme"}
+					},
+				}
+			},
+			(*Server).HandleCertificateCrossSign)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 }
 
 // =============================================================================

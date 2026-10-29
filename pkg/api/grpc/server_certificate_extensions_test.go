@@ -83,6 +83,17 @@ func TestServer_CrossSign_Errors(t *testing.T) {
 		_, err := srv.CrossSign(ctx, &pb.CrossSignRequest{ForeignRootPem: []byte("r")})
 		assert.Equal(t, codes.Unimplemented, status.Code(err))
 	})
+
+	t.Run("platform CA refusal is PermissionDenied", func(t *testing.T) {
+		srv, mockSvc := createTestServerWithMockService(t)
+		mockSvc.CertificateSvc = &mockCertificateService{
+			CrossSignFunc: func(context.Context, *service.CrossSignRequest) (*service.CrossSignResponse, error) {
+				return nil, &service.PlatformCASignRefusedError{Op: "cross_sign", CallerTenantID: "acme"}
+			},
+		}
+		_, err := srv.CrossSign(ctx, &pb.CrossSignRequest{ForeignRootPem: []byte("r")})
+		assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	})
 }
 
 // =============================================================================
