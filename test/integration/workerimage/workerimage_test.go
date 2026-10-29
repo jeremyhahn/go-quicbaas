@@ -117,7 +117,11 @@ func TestE2E_BuildInspectTagPushAndPullByDigest(t *testing.T) {
 	local := "quicbaas-worker-image-it:" + strings.ToLower(strings.ReplaceAll(t.Name(), "_", "-"))
 	labels := map[string]string{softwarefactoryworker.LabelClaudeCodeVersion: "2.1.280"}
 
-	id, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}, Labels: labels})
+	// Pull as the refresher does: a push needs the base layers' compressed
+	// blobs, and a base image already on the runner may hold only its
+	// unpacked snapshot, which builds fine but pushes "content digest not
+	// found".
+	id, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}, Labels: labels, Pull: true})
 	require.NoError(t, err)
 	removeImages(t, local)
 	require.True(t, strings.HasPrefix(id, "sha256:"), "the build must report its image ID, got %q", id)
