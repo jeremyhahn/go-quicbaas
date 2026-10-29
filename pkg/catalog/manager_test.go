@@ -16,8 +16,11 @@ package catalog
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -280,6 +283,91 @@ func TestManagerUpdate(t *testing.T) {
 			t.Error("expected error for empty key")
 		}
 	})
+}
+
+func TestManagerConcurrentPutGet(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const goroutines, perGoroutine = 10, 20
+
+	// run drives one phase and reports its errors before the next phase
+	// starts. Each phase owns a channel sized for every op it can fail, so a
+	// failing phase can never block on send and hang wg.Wait.
+	run := func(phase string, op func(key string) error) {
+		var wg sync.WaitGroup
+		errs := make(chan error, goroutines*perGoroutine)
+		for g := 0; g < goroutines; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				for j := 0; j < perGoroutine; j++ {
+					if err := op(fmt.Sprintf("ns%d:file%d", g, j)); err != nil {
+						errs <- err
+					}
+				}
+			}(g)
+		}
+		wg.Wait()
+		close(errs)
+
+		failed := 0
+		for err := range errs {
+			failed++
+			t.Errorf("concurrent %s failed: %v", phase, err)
+		}
+		if failed > 0 {
+			t.Fatalf("concurrent %s: %d of %d ops failed", phase, failed, goroutines*perGoroutine)
+		}
+	}
+
+	run("Put", func(key string) error { return manager.Put(ctx, createTestEntry(key)) })
+	run("Get", func(key string) error {
+		_, err := manager.Get(ctx, key)
+		return err
+	})
+}
+
+func TestManagerUpdateConcurrent(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	const key = "conflict:file"
+	if err := manager.Put(ctx, createTestEntry(key)); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	const updaters = 10
+	var wg sync.WaitGroup
+	var succeeded atomic.Int64
+	unexpected := make(chan error, updaters)
+	for i := 0; i < updaters; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err := manager.Update(ctx, key, func(e *CatalogEntry) error {
+				e.Size = int64(i * 1000)
+				return nil
+			})
+			switch {
+			case err == nil:
+				succeeded.Add(1)
+			case !IsVersionMismatch(err):
+				unexpected <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(unexpected)
+
+	for err := range unexpected {
+		t.Errorf("concurrent Update returned a non-version-mismatch error: %v", err)
+	}
+	if succeeded.Load() == 0 {
+		t.Error("expected at least one concurrent Update to succeed")
+	}
 }
 
 func TestManagerExists(t *testing.T) {

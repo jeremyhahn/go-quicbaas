@@ -35,61 +35,53 @@ import (
 // WaitForClusterHealthy polls all nodes until they report healthy status or timeout.
 func WaitForClusterHealthy(t *testing.T, cluster *TestCluster) error {
 	t.Helper()
-	deadline := time.Now().Add(cluster.healthTimeout)
-
 	t.Logf("Waiting for cluster to become healthy (timeout: %v)...", cluster.healthTimeout)
 
-	for time.Now().Before(deadline) {
-		allHealthy := true
+	return Poll(context.Background(), cluster.healthInterval, cluster.healthTimeout, func(ctx context.Context) (bool, error) {
 		var unhealthyNodes []int
-
 		for i, client := range cluster.Clients {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := client.Health().Ping(ctx)
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := client.Health().Ping(pingCtx)
 			cancel()
 
 			if err != nil {
-				allHealthy = false
 				unhealthyNodes = append(unhealthyNodes, i+1)
 			}
 		}
 
-		if allHealthy {
+		if len(unhealthyNodes) == 0 {
 			t.Logf("Cluster is healthy: all %d nodes responding", len(cluster.Clients))
-			return nil
+			return true, nil
 		}
-
-		if len(unhealthyNodes) > 0 {
-			t.Logf("Waiting for nodes %v to become healthy...", unhealthyNodes)
-		}
-
-		time.Sleep(cluster.healthInterval)
-	}
-
-	return fmt.Errorf("cluster did not become healthy within %v", cluster.healthTimeout)
+		t.Logf("Waiting for nodes %v to become healthy...", unhealthyNodes)
+		return false, nil
+	})
 }
 
 // WaitForLeaderElection waits for a leader to be elected in the cluster.
 func WaitForLeaderElection(t *testing.T, cluster *TestCluster, timeout time.Duration) (*TestNode, quicbaas.Client, error) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-
 	t.Logf("Waiting for leader election (timeout: %v)...", timeout)
 
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		leader, client, err := cluster.FindLeader(ctx)
+	var leader *TestNode
+	var leaderClient quicbaas.Client
+	err := Poll(context.Background(), time.Second, timeout, func(ctx context.Context) (bool, error) {
+		findCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		node, client, err := cluster.FindLeader(findCtx)
 		cancel()
 
-		if err == nil && leader != nil {
-			t.Logf("Leader elected: node %d", leader.ID)
-			return leader, client, nil
+		if err != nil || node == nil {
+			return false, err
 		}
-
-		time.Sleep(1 * time.Second)
+		leader, leaderClient = node, client
+		return true, nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return nil, nil, fmt.Errorf("no leader elected within %v", timeout)
+	t.Logf("Leader elected: node %d", leader.ID)
+	return leader, leaderClient, nil
 }
 
 // VerifyClusterSize verifies that all nodes report the expected cluster size.
@@ -135,21 +127,18 @@ func VerifyClusterSizeAtLeast(t *testing.T, cluster *TestCluster, minSize int) {
 func VerifyLeaderConsistency(t *testing.T, cluster *TestCluster) uint64 {
 	t.Helper()
 
-	// Retry for up to 10 seconds to allow leader consensus to form
-	deadline := time.Now().Add(10 * time.Second)
-	var lastError string
-
-	for time.Now().Before(deadline) {
+	// Poll for up to 10 seconds to allow leader consensus to form
+	var leaderID uint64
+	err := Poll(context.Background(), time.Second, 10*time.Second, func(ctx context.Context) (bool, error) {
 		leaders := make(map[string]int) // leaderID -> count
 
 		for i, client := range cluster.Clients {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			status, err := client.Cluster().Status(ctx)
+			statusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			status, err := client.Cluster().Status(statusCtx)
 			cancel()
 
 			if err != nil {
 				t.Logf("Warning: Failed to get cluster status from node %d: %v (retrying...)", i+1, err)
-				time.Sleep(1 * time.Second)
 				continue
 			}
 
@@ -173,40 +162,50 @@ func VerifyLeaderConsistency(t *testing.T, cluster *TestCluster) uint64 {
 			}
 		}
 
-		// Check if all nodes agree on one leader
-		if len(leaders) == 1 {
-			var leaderID string
-			var count int
-			for nodeID, c := range leaders {
-				leaderID = nodeID
-				count = c
-			}
-
-			if count == len(cluster.Clients) {
-				t.Logf("All nodes agree on leader: %s", leaderID)
-				// Convert string leaderID to uint64
-				if id, err := strconv.ParseUint(leaderID, 10, 64); err == nil {
-					return id
-				}
-				return 0
-			} else {
-				lastError = fmt.Sprintf("Not all nodes agree on leader %s: %d/%d nodes", leaderID, count, len(cluster.Clients))
-				t.Logf("%s (retrying...)", lastError)
-			}
-		} else if len(leaders) > 1 {
-			lastError = fmt.Sprintf("Multiple leaders detected: %v", leaders)
-			t.Logf("%s (retrying...)", lastError)
-		} else {
-			lastError = "No leader reported by any node"
-			t.Logf("%s (retrying...)", lastError)
+		if len(leaders) != 1 {
+			consensusErr := &LeaderConsensusError{Leaders: leaders}
+			t.Logf("%v (retrying...)", consensusErr)
+			return false, consensusErr
 		}
 
-		time.Sleep(1 * time.Second)
-	}
+		for nodeID, count := range leaders {
+			if count != len(cluster.Clients) {
+				consensusErr := &LeaderConsensusError{Leaders: leaders, Nodes: len(cluster.Clients)}
+				t.Logf("%v (retrying...)", consensusErr)
+				return false, consensusErr
+			}
 
-	// If we get here, consensus was not reached
-	t.Fatalf("Leader consensus not reached within 10 seconds: %s", lastError)
-	return 0
+			t.Logf("All nodes agree on leader: %s", nodeID)
+			// Convert string leaderID to uint64
+			if id, err := strconv.ParseUint(nodeID, 10, 64); err == nil {
+				leaderID = id
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("Leader consensus not reached within 10 seconds: %v", err)
+	}
+	return leaderID
+}
+
+// LeaderConsensusError reports a round in which the nodes did not agree on
+// one leader. Leaders maps each reported leader ID to the nodes reporting it;
+// Nodes, when set, is the cluster size the single leader fell short of.
+type LeaderConsensusError struct {
+	Leaders map[string]int
+	Nodes   int
+}
+
+func (e *LeaderConsensusError) Error() string {
+	switch {
+	case len(e.Leaders) == 0:
+		return "no leader reported by any node"
+	case len(e.Leaders) > 1:
+		return "multiple leaders detected: " + fmt.Sprint(e.Leaders)
+	default:
+		return "not all nodes agree on leader " + fmt.Sprint(e.Leaders) + " of " + strconv.Itoa(e.Nodes) + " nodes"
+	}
 }
 
 // VerifyDataConsistency verifies that all nodes have identical data for test entities.
@@ -732,10 +731,9 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 	t.Helper()
 
 	t.Logf("Waiting for all %d shards to have leaders (timeout: %v)...", len(expectedShards), timeout)
-	deadline := time.Now().Add(timeout)
 	var lastShardMap map[uint64]*ShardInfo
 
-	for time.Now().Before(deadline) {
+	err := Poll(context.Background(), 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
 		// Get current shard distribution
 		shardMap := make(map[uint64]*ShardInfo)
 
@@ -756,8 +754,8 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 		// to those shards succeeded. A shard counts as having a leader when
 		// ANY node reports one.
 		for _, client := range tc.Clients {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			status, err := client.Cluster().Status(ctx)
+			statusCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			status, err := client.Cluster().Status(statusCtx)
 			cancel()
 
 			if err != nil {
@@ -771,20 +769,17 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 		lastShardMap = shardMap
 
 		// Check if all expected shards have leaders
-		allHaveLeaders := true
 		for _, shardID := range expectedShards {
 			if info, ok := shardMap[shardID]; !ok || len(info.LeaderNodes) == 0 {
-				allHaveLeaders = false
-				break
+				return false, nil
 			}
 		}
 
-		if allHaveLeaders {
-			t.Logf("All %d shards have elected leaders", len(expectedShards))
-			return shardMap, nil
-		}
-
-		time.Sleep(2 * time.Second)
+		t.Logf("All %d shards have elected leaders", len(expectedShards))
+		return true, nil
+	})
+	if err == nil {
+		return lastShardMap, nil
 	}
 
 	// Log which shards are missing leaders
@@ -794,7 +789,7 @@ func WaitForAllShardLeaders(t *testing.T, tc *TestCluster, expectedShards []uint
 		}
 	}
 
-	return lastShardMap, fmt.Errorf("not all shards elected leaders within %v", timeout)
+	return lastShardMap, err
 }
 
 // OperationMetrics tracks success and failure metrics for operations.
@@ -829,6 +824,9 @@ func ContinuousReadWrite(ctx context.Context, t *testing.T, client quicbaas.Clie
 
 	opts := DefaultDataGeneratorOptions()
 	opts.Count = 1
+
+	pacing := time.NewTicker(100 * time.Millisecond)
+	defer pacing.Stop()
 
 	for {
 		select {
@@ -870,7 +868,11 @@ func ContinuousReadWrite(ctx context.Context, t *testing.T, client quicbaas.Clie
 				}
 			}
 
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return
+			case <-pacing.C:
+			}
 		}
 	}
 }

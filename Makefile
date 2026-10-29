@@ -2039,15 +2039,6 @@ integration-test-signalbridge: ## Run Signal Bridge integration tests (docker-co
 # Phase F: Standalone + Cluster + Seal/Hardware integration test targets
 # ==============================================================================
 
-.PHONY: integration-test-standalone
-integration-test-standalone: ## Phase F: Run standalone (no-Raft, in-process embedded qrdb engine) integration tests (no docker required)
-	@echo "$(BLUE)Running Phase F standalone integration tests (in-process, no docker)...$(NC)"
-	@# No -mod=mod: this repo is used inside a go.work workspace, where any -mod
-	@# other than readonly/vendor is rejected outright, so the flag made the
-	@# target unrunnable rather than permissive.
-	@$(GOTEST) -v -tags integration -timeout 120s ./test/integration/standalone/...
-	@echo "$(GREEN)✓ Phase F standalone integration tests PASSED$(NC)"
-
 .PHONY: integration-test-cluster
 integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration tests in Docker (requires docker-compose.cluster.yml)
 	@echo "$(BLUE)Running Phase F cluster integration tests (3+1-node qrdb Raft cluster with at-rest encryption)...$(NC)"
@@ -4670,11 +4661,6 @@ integration-test-login: ## Run unified login ceremony integration tests (mTLS + 
 	@echo "$(BLUE)Running unified login ceremony integration tests...$(NC)"
 	@QUICBAAS_TEST_FILTER="./test/integration/login/..." WITH_RAFT=1 WITH_REST=1 WITH_QUIC=1 WITH_MCP=1 $(MAKE) integration-test
 
-.PHONY: integration-test-factors
-integration-test-factors: ## Run cross-vendor hardware factor integration tests (spec §M13)
-	@echo "$(BLUE)Running cross-vendor factor integration tests...$(NC)"
-	@go test -v -tags integration -timeout 60s ./test/integration/factors/...
-
 .PHONY: integration-test-fleet-enrollment
 integration-test-fleet-enrollment: ## Run the fleet enrollment E2E (register -> heartbeat with peer cert + bearer -> listed -> dispatch)
 	@echo "$(BLUE)Running fleet enrollment E2E...$(NC)"
@@ -4852,10 +4838,6 @@ test-npu-sidecar-device: $(NPU_SIDECAR_DEVICE_STAMP) ## Run NPU sidecar tests ag
 .PHONY: clean-npu-sidecar
 clean-npu-sidecar: ## Remove the NPU sidecar virtualenv (rebuilt on next use)
 	@rm -rf $(NPU_SIDECAR_VENV)
-
-.PHONY: integration-test-embedding
-integration-test-embedding: ## Run embedding integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)
-	@$(MAKE) integration-test QUICBAAS_TEST_FILTER="./test/integration/embedding/..." OLLAMA_CPU=$${OLLAMA_CPU:-1}
 
 .PHONY: integration-test-orchestration
 integration-test-orchestration: ## Run orchestrator E2E integration tests in Docker (Ollama via local CPU container; pass GPU_HOST=<host> for a remote GPU)

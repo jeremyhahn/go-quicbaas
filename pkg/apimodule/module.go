@@ -95,6 +95,16 @@
 //     Without the rag tag the capability answers Unavailable regardless of
 //     configuration, matching the legacy listener's own no-op registration.
 //
+// AgentCatalogService, SDLCService, RegistryService, FederationService and
+// SessionService are quicbaas-native too and are registered here (#1696), so
+// the node's TCP gRPC port serves them as the Unix listener does. The first
+// three are built from the facade. Federation and Session need IAM state the
+// facade does not expose, so the host builds them and passes the SAME
+// instances it registers on the Unix listener (WithHostGRPCServers). The
+// other iam.v1 services (IAMService, PEPService, MFAService, AuditService)
+// stay off: most of their RPCs carry no (qrdb.v1.permission) option, and an
+// unannotated RPC is default-denied here.
+//
 // ObjectTransferService is deliberately NOT registered here. Unlike the five
 // above, it has no facade-backed gRPC implementation to reuse: the only
 // existing pb.ObjectTransferServiceServer (pkg/api/grpc/server_object_transfer.go)
@@ -137,6 +147,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
@@ -266,6 +277,15 @@ func WithSPIFFETrustDomain(trustDomain string) Option {
 	}
 }
 
+// WithHostGRPCServers mounts the host-built FederationService and
+// SessionService servers (see HostGRPCServers) on the node's gRPC server.
+// Without it those services answer Unavailable.
+func WithHostGRPCServers(resolve HostGRPCResolver) Option {
+	return func(m *Module) {
+		m.resolveHost = resolve
+	}
+}
+
 // Module is go-quicbaas's broker capability plane and quicbaas-native core
 // plane as a qrdb ServiceModule. It registers the Scheduler, Orchestrator,
 // Project, Account, SSH, Messaging, and Embedding broker surfaces, plus the
@@ -301,6 +321,10 @@ type Module struct {
 
 	// trustDomain carries the WithSPIFFETrustDomain option.
 	trustDomain string
+
+	// resolveHost carries the WithHostGRPCServers option; nil leaves every
+	// HostGRPCServers service answering Unavailable.
+	resolveHost HostGRPCResolver
 
 	// servers memoizes the lazily-constructed gRPC server bundle. Lock-free:
 	// concurrent first calls may both construct, and CompareAndSwap keeps
@@ -341,7 +365,27 @@ type grpcServers struct {
 	ollama             pb.OllamaServiceServer
 	secretsManagement  pb.SecretsManagementServer
 	prompt             pb.PromptServiceServer
+	agentCatalog       pb.AgentCatalogServiceServer
+	sdlc               pb.SDLCServiceServer
+	registry           pb.RegistryServiceServer
 }
+
+// HostGRPCServers carries the gRPC servers the host builds from IAM state
+// the service facade does not expose: the federation manager and the session
+// storage. The host builds them once and registers the SAME instances on its
+// Unix-socket gRPC server, so both listeners serve one session store. A nil
+// field answers Unavailable.
+type HostGRPCServers struct {
+	Federation iampb.FederationServiceServer
+	Session    iampb.SessionServiceServer
+}
+
+// HostGRPCResolver returns the host's gRPC servers. The module calls it on
+// every host-service RPC and caches nothing, so the host owns when the
+// servers are built and memoizes them itself. An error (one carrying a gRPC
+// status, such as Unavailable while the host is still initialising) is
+// returned to the caller unchanged.
+type HostGRPCResolver func() (HostGRPCServers, error)
 
 // NewModule builds go-quicbaas's ServiceModule around the QuicBaaS facade
 // resolver. A nil resolver or logger is a composition error and fails
@@ -367,11 +411,13 @@ func NewModule(resolve ServiceResolver, log *logger.Logger, opts ...Option) (*Mo
 func (m *Module) Name() string { return ModuleName }
 
 // grpcRegistration binds one generated service descriptor to the bundle field
-// serving it.
+// serving it, or, for the host-built services, to the HostGRPCServers field
+// serving it (hostPick). Exactly one of pick and hostPick is set.
 type grpcRegistration struct {
 	desc       *grpc.ServiceDesc
 	capability string
 	pick       func(*grpcServers) any
+	hostPick   func(HostGRPCServers) any
 }
 
 // grpcRegistrations is the full gRPC surface the module registers: the
@@ -379,23 +425,28 @@ type grpcRegistration struct {
 // seven broker capability services pkg/server/lifecycle.go registers on the
 // legacy transport, in the same construction shapes (see bind).
 var grpcRegistrations = []grpcRegistration{
-	{&pb.QuicBaaS_ServiceDesc, "quicbaas", func(s *grpcServers) any { return s.quicbaas }},
-	{&pb.Login_ServiceDesc, "login", func(s *grpcServers) any { return s.login }},
-	{&pb.FIDO2Service_ServiceDesc, "fido2", func(s *grpcServers) any { return s.fido2 }},
-	{&pb.SchedulerService_ServiceDesc, "scheduler", func(s *grpcServers) any { return s.scheduler }},
-	{&pb.OrchestratorService_ServiceDesc, "orchestrator", func(s *grpcServers) any { return s.orchestrator }},
-	{&pb.ProjectService_ServiceDesc, "project", func(s *grpcServers) any { return s.project }},
-	{&pb.AccountService_ServiceDesc, "account", func(s *grpcServers) any { return s.account }},
-	{&pb.SSHService_ServiceDesc, "ssh", func(s *grpcServers) any { return s.ssh }},
-	{&pb.MessagingService_ServiceDesc, "messaging", func(s *grpcServers) any { return s.messaging }},
-	{&pb.EmbeddingService_ServiceDesc, "embedding", func(s *grpcServers) any { return s.embedding }},
-	{&pb.ParameterStore_ServiceDesc, "parameter-store", func(s *grpcServers) any { return s.parameterStore }},
-	{&pb.DynamicSecretsService_ServiceDesc, "dynamic-secrets", func(s *grpcServers) any { return s.dynamicSecrets }},
-	{&pb.ObjectStorageService_ServiceDesc, "object-storage", func(s *grpcServers) any { return s.objectStorage }},
-	{&pb.ObjectStorageAdmin_ServiceDesc, "object-storage-admin", func(s *grpcServers) any { return s.objectStorageAdmin }},
-	{&pb.OllamaService_ServiceDesc, "ollama", func(s *grpcServers) any { return s.ollama }},
-	{&pb.SecretsManagement_ServiceDesc, "secrets-management", func(s *grpcServers) any { return s.secretsManagement }},
-	{&pb.PromptService_ServiceDesc, "prompt", func(s *grpcServers) any { return s.prompt }},
+	{desc: &pb.QuicBaaS_ServiceDesc, capability: "quicbaas", pick: func(s *grpcServers) any { return s.quicbaas }},
+	{desc: &pb.Login_ServiceDesc, capability: "login", pick: func(s *grpcServers) any { return s.login }},
+	{desc: &pb.FIDO2Service_ServiceDesc, capability: "fido2", pick: func(s *grpcServers) any { return s.fido2 }},
+	{desc: &pb.SchedulerService_ServiceDesc, capability: "scheduler", pick: func(s *grpcServers) any { return s.scheduler }},
+	{desc: &pb.OrchestratorService_ServiceDesc, capability: "orchestrator", pick: func(s *grpcServers) any { return s.orchestrator }},
+	{desc: &pb.ProjectService_ServiceDesc, capability: "project", pick: func(s *grpcServers) any { return s.project }},
+	{desc: &pb.AccountService_ServiceDesc, capability: "account", pick: func(s *grpcServers) any { return s.account }},
+	{desc: &pb.SSHService_ServiceDesc, capability: "ssh", pick: func(s *grpcServers) any { return s.ssh }},
+	{desc: &pb.MessagingService_ServiceDesc, capability: "messaging", pick: func(s *grpcServers) any { return s.messaging }},
+	{desc: &pb.EmbeddingService_ServiceDesc, capability: "embedding", pick: func(s *grpcServers) any { return s.embedding }},
+	{desc: &pb.ParameterStore_ServiceDesc, capability: "parameter-store", pick: func(s *grpcServers) any { return s.parameterStore }},
+	{desc: &pb.DynamicSecretsService_ServiceDesc, capability: "dynamic-secrets", pick: func(s *grpcServers) any { return s.dynamicSecrets }},
+	{desc: &pb.ObjectStorageService_ServiceDesc, capability: "object-storage", pick: func(s *grpcServers) any { return s.objectStorage }},
+	{desc: &pb.ObjectStorageAdmin_ServiceDesc, capability: "object-storage-admin", pick: func(s *grpcServers) any { return s.objectStorageAdmin }},
+	{desc: &pb.OllamaService_ServiceDesc, capability: "ollama", pick: func(s *grpcServers) any { return s.ollama }},
+	{desc: &pb.SecretsManagement_ServiceDesc, capability: "secrets-management", pick: func(s *grpcServers) any { return s.secretsManagement }},
+	{desc: &pb.PromptService_ServiceDesc, capability: "prompt", pick: func(s *grpcServers) any { return s.prompt }},
+	{desc: &pb.AgentCatalogService_ServiceDesc, capability: "agent-catalog", pick: func(s *grpcServers) any { return s.agentCatalog }},
+	{desc: &pb.SDLCService_ServiceDesc, capability: "sdlc", pick: func(s *grpcServers) any { return s.sdlc }},
+	{desc: &pb.RegistryService_ServiceDesc, capability: "registry", pick: func(s *grpcServers) any { return s.registry }},
+	{desc: &iampb.FederationService_ServiceDesc, capability: "federation", hostPick: func(h HostGRPCServers) any { return h.Federation }},
+	{desc: &iampb.SessionService_ServiceDesc, capability: "session", hostPick: func(h HostGRPCServers) any { return h.Session }},
 }
 
 // publicGRPCMethods is the exact set of this module's gRPC methods the
@@ -415,6 +466,8 @@ var publicGRPCMethods = []string{
 	"/quicbaas.login.v1.Login/FinishLogin",
 	"/quicbaas.fido2.v1.FIDO2Service/BeginAuthentication",
 	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication",
+	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin",
+	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback",
 }
 
 // PublicGRPCMethods implements qrdbsdk.ModuleGRPCPublicMethodLister. It
@@ -454,8 +507,12 @@ func (m *Module) RegisterQUIC(reg grpc.ServiceRegistrar) {
 
 // server returns the per-service implementation resolver: it binds the bundle
 // on first use and answers Unavailable while the facade is still composing or
-// when the capability is not enabled on this node.
+// when the capability is not enabled on this node. Host-built services
+// resolve through hostServer instead and never enter the bundle.
 func (m *Module) server(entry grpcRegistration) func() (any, error) {
+	if entry.hostPick != nil {
+		return m.hostServer(entry)
+	}
 	return func() (any, error) {
 		servers, err := m.bind()
 		if err != nil {
@@ -465,6 +522,31 @@ func (m *Module) server(entry grpcRegistration) func() (any, error) {
 		if impl == nil {
 			return nil, status.Error(codes.Unavailable,
 				"quicbaas "+entry.capability+" service is not enabled on this node")
+		}
+		return impl, nil
+	}
+}
+
+// hostServer returns the resolver for a host-built service. It asks the
+// host on every call and caches nothing here, so a call that arrives while
+// the host is still initialising (the resolver's error, typically
+// Unavailable) never pins an incomplete server: the host builds and
+// memoizes the servers once it is ready. Without WithHostGRPCServers the
+// service answers Unavailable.
+func (m *Module) hostServer(entry grpcRegistration) func() (any, error) {
+	return func() (any, error) {
+		unavailable := status.Error(codes.Unavailable,
+			"quicbaas "+entry.capability+" service is not enabled on this node")
+		if m.resolveHost == nil {
+			return nil, unavailable
+		}
+		host, err := m.resolveHost()
+		if err != nil {
+			return nil, err
+		}
+		impl := entry.hostPick(host)
+		if impl == nil {
+			return nil, unavailable
 		}
 		return impl, nil
 	}
@@ -525,6 +607,7 @@ func (m *Module) bind() (*grpcServers, error) {
 	}
 	if agentSvc := svc.Agent(); agentSvc != nil {
 		built.orchestrator = grpcapi.NewOrchestratorServer(agentSvc, m.log)
+		built.agentCatalog = grpcapi.NewAgentCatalogServer(agentSvc, m.log)
 	}
 	if projectSvc := svc.Project(); projectSvc != nil {
 		built.project = grpcapi.NewProjectServer(projectSvc, m.log)
@@ -575,6 +658,13 @@ func (m *Module) bind() (*grpcServers, error) {
 	if secretsSvc := svc.Secrets(); secretsSvc != nil {
 		built.secretsManagement = grpcapi.NewSecretsServer(secretsSvc, m.log)
 	}
+
+	// The registry, agent catalog and SDLC services are quicbaas-native, so
+	// the node serves them as the Unix listener does (#1696). The SDLC server
+	// resolves its binding service per call and answers Unavailable while
+	// the module is disabled.
+	built.registry = grpcapi.NewRegistryServer(svc.Registry())
+	built.sdlc = grpcapi.NewSDLCServer(svc, m.log)
 
 	if m.servers.CompareAndSwap(nil, built) {
 		return built, nil

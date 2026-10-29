@@ -39,6 +39,7 @@ import (
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	mcpapi "github.com/jeremyhahn/go-quicbaas/pkg/api/mcp"
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
+	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/backup"
 	"github.com/jeremyhahn/go-quicbaas/pkg/cache"
 	"github.com/jeremyhahn/go-quicbaas/pkg/catalog"
@@ -644,6 +645,14 @@ type Server struct {
 	grpcUnixListener net.Listener // Unix domain socket listener for gRPC
 	grpcAPI          *grpcapi.Server
 	restServer       *restapi.Server
+
+	// hostGRPC memoizes the host-built gRPC servers (hostGRPCServers) that
+	// the Unix-socket gRPC server and the quicbaas module share.
+	hostGRPC atomic.Pointer[apimodule.HostGRPCServers]
+	// iamReady is set once attachIAMComponents has finished, whether or not
+	// the deployment configures IAM. hostGRPCServers builds nothing before
+	// it, so no listener caches servers over missing IAM components.
+	iamReady atomic.Bool
 
 	// Unified-API-server module bindings (pkg/apimodule): lazily-constructed
 	// non-listening REST/MCP servers backing the module surfaces when the

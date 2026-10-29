@@ -18,7 +18,9 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -2177,6 +2179,115 @@ func TestWorker_GracefulShutdown(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("Stop timed out - worker not shutting down gracefully")
 	}
+}
+
+// gatedWorker is a Worker double whose loop holds one unit of in-flight work
+// until the test closes release, so a test can observe shutdown joining it.
+type gatedWorker struct {
+	*BaseWorker
+	entered     chan struct{}
+	stopping    chan struct{} // closed once Stop has cancelled the work's context
+	release     chan struct{}
+	enteredOnce sync.Once
+	exited      atomic.Bool
+}
+
+func newGatedWorker(t *testing.T, name string) *gatedWorker {
+	t.Helper()
+	base, err := NewBaseWorker(name, nil, nil)
+	if err != nil {
+		t.Fatalf("NewBaseWorker failed: %v", err)
+	}
+	return &gatedWorker{
+		BaseWorker: base,
+		entered:    make(chan struct{}),
+		stopping:   make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+}
+
+func (w *gatedWorker) Start(ctx context.Context) error {
+	if err := w.StartBase(ctx); err != nil {
+		return err
+	}
+	workCtx := w.Context()
+	w.WaitGroup().Add(1)
+	go func() {
+		defer w.WaitGroup().Done()
+		defer w.exited.Store(true)
+		w.enteredOnce.Do(func() { close(w.entered) })
+		// The work outlives its cancellation until released, so Stop must
+		// join it rather than return on cancel.
+		<-workCtx.Done()
+		close(w.stopping)
+		<-w.release
+	}()
+	return nil
+}
+
+func (w *gatedWorker) Stop() error {
+	return w.StopBase()
+}
+
+func TestWorkerManager_CloseJoinsInFlightWork(t *testing.T) {
+	// Inside the bubble, synctest.Wait returns only once every goroutine is
+	// durably blocked, so what Close has or has not done by then does not
+	// depend on how the goroutines were scheduled.
+	synctest.Test(t, func(t *testing.T) {
+		mgr := NewWorkerManager(nil)
+		worker := newGatedWorker(t, "gated")
+		if err := mgr.Register(worker); err != nil {
+			t.Fatalf("Register failed: %v", err)
+		}
+		if err := mgr.StartAll(t.Context()); err != nil {
+			t.Fatalf("StartAll failed: %v", err)
+		}
+		// A failed assertion must still let the work exit, or the bubble
+		// ends with a blocked goroutine and panics.
+		var releaseOnce sync.Once
+		releaseWork := func() { releaseOnce.Do(func() { close(worker.release) }) }
+		t.Cleanup(releaseWork)
+		synctest.Wait()
+		select {
+		case <-worker.entered:
+		default:
+			t.Fatal("worker never entered its in-flight work")
+		}
+
+		closeDone := make(chan error, 1)
+		go func() { closeDone <- mgr.Close() }()
+
+		// The work is now gated on release, and the closer is blocked in
+		// Close or has returned from it: nothing else can make progress.
+		synctest.Wait()
+		select {
+		case <-worker.stopping:
+		default:
+			t.Fatal("Close never cancelled the in-flight work")
+		}
+		select {
+		case err := <-closeDone:
+			t.Fatalf("Close returned (err %v) while the in-flight work was still gated", err)
+		default:
+		}
+
+		releaseWork()
+		synctest.Wait()
+		select {
+		case err := <-closeDone:
+			if err != nil {
+				t.Fatalf("Close failed: %v", err)
+			}
+		default:
+			t.Fatal("Close did not return after the in-flight work was released")
+		}
+		if !worker.exited.Load() {
+			t.Error("Close returned before the in-flight work finished")
+		}
+		if mgr.IsRunning() {
+			t.Error("manager still running after Close")
+		}
+	})
 }
 
 // slowMockStorage adds delay to operations for testing

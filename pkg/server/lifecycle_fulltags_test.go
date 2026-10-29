@@ -1435,14 +1435,25 @@ func TestFinal91Extra_RegisterIAMService_FullPath(t *testing.T) {
 		sessionStore:  &mockSessionStorageF91{},
 	}
 	srv.quicBaaSService = mock
+	// registerIAMService runs from startGRPCServer, after attachIAMComponents.
+	srv.iamReady.Store(true)
 
 	grpcServer := ggrpc.NewServer()
-	// Should register all IAM, MFA, PEP, Session, Audit gRPC services
 	srv.registerIAMService(grpcServer)
+
+	// Every component is present except the federation manager.
+	assert.Equal(t, []string{
+		"quicbaas.iam.v1.AuditService",
+		"quicbaas.iam.v1.IAMService",
+		"quicbaas.iam.v1.MFAService",
+		"quicbaas.iam.v1.PEPService",
+		"quicbaas.iam.v1.SessionService",
+	}, serviceNames(grpcServer))
 }
 
 // TestFinal91Extra_RegisterIAMService_FallbackPath covers the path where
-// MFA returns nil and session/audit return nil, triggering fallback to in-memory.
+// MFA, session and audit return nil: session falls back to in-memory storage,
+// MFA and Audit are skipped.
 func TestFinal91Extra_RegisterIAMService_FallbackPath(t *testing.T) {
 	cfg := createTestConfig(t)
 	t.Cleanup(func() { cleanupTestData(t, cfg) })
@@ -1460,10 +1471,19 @@ func TestFinal91Extra_RegisterIAMService_FallbackPath(t *testing.T) {
 		appManager:    &iam.AppManager{},
 	}
 	srv.quicBaaSService = mock
+	// registerIAMService runs from startGRPCServer, after attachIAMComponents.
+	srv.iamReady.Store(true)
 
 	grpcServer := ggrpc.NewServer()
-	// Should register IAM + PEP, and use fallback in-memory for session and audit
 	srv.registerIAMService(grpcServer)
+
+	// Session falls back to in-memory storage; MFA and Audit have no
+	// fallback, so a nil manager or logger leaves them unregistered.
+	assert.Equal(t, []string{
+		"quicbaas.iam.v1.IAMService",
+		"quicbaas.iam.v1.PEPService",
+		"quicbaas.iam.v1.SessionService",
+	}, serviceNames(grpcServer))
 }
 
 // =============================================================================
@@ -1509,6 +1529,19 @@ func (m *mockIAMComponentsGetterFull) GetAuditLogger(_ context.Context) (iam.Aud
 func (m *mockIAMComponentsGetterFull) GetSessionStorage(_ context.Context) (iam.SessionStorage, error) {
 	return m.sessionStore, nil
 }
+func (m *mockIAMComponentsGetterFull) GetFederationManager(_ context.Context) (iam.FederationManager, error) {
+	return nil, nil // nil federation manager -> FederationService not served
+}
+func (m *mockIAMComponentsGetterFull) GetWebAuthnManager(_ context.Context) (service.WebAuthnManager, error) {
+	return nil, nil // nil WebAuthn manager -> credential verbs report unavailable
+}
+
+// Both mocks must satisfy iamComponentsGetter, or registerIAMService skips
+// registration entirely and the tests above prove nothing.
+var (
+	_ iamComponentsGetter = (*mockIAMComponentsGetterFull)(nil)
+	_ iamComponentsGetter = (*mockIAMComponentsGetterFallback)(nil)
+)
 
 // mockIAMComponentsGetterFallback provides all required components but returns
 // nil for MFA, session, and audit to trigger fallback paths.
@@ -1542,10 +1575,16 @@ func (m *mockIAMComponentsGetterFallback) GetMFAManager(_ context.Context) (serv
 	return nil, nil // nil MFA -> skip MFA registration
 }
 func (m *mockIAMComponentsGetterFallback) GetAuditLogger(_ context.Context) (iam.AuditLogger, error) {
-	return nil, nil // nil audit -> fallback to in-memory
+	return nil, nil // nil audit -> skip Audit registration
 }
 func (m *mockIAMComponentsGetterFallback) GetSessionStorage(_ context.Context) (iam.SessionStorage, error) {
 	return nil, nil // nil session -> fallback to in-memory
+}
+func (m *mockIAMComponentsGetterFallback) GetFederationManager(_ context.Context) (iam.FederationManager, error) {
+	return nil, nil // nil federation manager -> FederationService not served
+}
+func (m *mockIAMComponentsGetterFallback) GetWebAuthnManager(_ context.Context) (service.WebAuthnManager, error) {
+	return nil, nil // nil WebAuthn manager -> credential verbs report unavailable
 }
 
 // mockMFAManagerFull implements service.MFAManager for testing.

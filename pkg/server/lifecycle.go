@@ -1689,6 +1689,7 @@ func (s *Server) attachIAMComponents(svc service.QuicBaaS) error {
 	}
 	if iamComponents == nil {
 		s.logger.Info("IAM components not configured for this deployment; IAM surfaces are unavailable")
+		s.iamReady.Store(true)
 		return nil
 	}
 
@@ -1700,6 +1701,10 @@ func (s *Server) attachIAMComponents(svc service.QuicBaaS) error {
 	// injected into the qrdb node before IAM init. This activates OIDC bearer
 	// issuance for the node's in-process login ceremony.
 	s.bindLoginCeremonyProvider(iamComponents)
+	// Only now may the host-built gRPC servers (hostGRPCServers) be built:
+	// before this point the facade has no federation manager or session
+	// storage, and a server built over them would be cached for good.
+	s.iamReady.Store(true)
 	return nil
 }
 
