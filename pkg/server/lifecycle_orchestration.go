@@ -517,10 +517,13 @@ func (s *Server) startOrchestration() error {
 			s.startOrchestrationSweeps(sweeper, leaseTTL/3)
 		}
 
-		// Wire container runtime if Docker/Podman is available.
-		containerRuntime, rtErr := orchestration.NewExecContainerRuntime(logAdapter)
-		if rtErr == nil {
-			s.orchContainerRuntime = containerRuntime
+		// The runtime agent sessions run in is chosen once and wired into the
+		// orchestration service and every built-in ACP backend alike.
+		containerRuntime, hostRuntime := s.agentContainerRuntime(func() (*orchestration.ExecContainerRuntime, error) {
+			return orchestration.NewExecContainerRuntime(logAdapter)
+		})
+		if containerRuntime != nil {
+			s.orchContainerRuntime = hostRuntime
 			wirer.SetContainerRuntime(containerRuntime)
 			s.logger.Info("Container runtime attached to orchestration service")
 
@@ -536,37 +539,25 @@ func (s *Server) startOrchestration() error {
 			if ownerErr != nil {
 				return ownerErr
 			}
-
-			// Give ACP backends access to the container runtime for sandboxed
-			// sessions, stamp their containers with this daemon's owner label
-			// and mount the shared Go cache into them.
-			for _, name := range []string{"claude", "codex", "opencode"} {
-				if b, ok := backends[name]; ok {
-					if acpBackend, ok := b.(*orchestration.ACPBackend); ok {
-						acpBackend.SetContainerRuntime(containerRuntime)
-						acpBackend.SetSandboxOwner(owner)
-						acpBackend.SetGoBuildCache(goCache)
-					}
-				}
-			}
+			wireSandboxedBackends(backends, containerRuntime, owner, goCache)
 
 			// Nothing has spawned yet — jobs are recovered once every module
 			// has registered — so every container carrying this owner label
-			// is a previous run's orphan (go-quicbaas#750).
-			sweep, sweepErr := containerRuntime.SweepOwned(context.Background(), owner)
-			if sweepErr != nil {
-				return sweepErr
+			// is a previous run's orphan (go-quicbaas#750). An injected
+			// runtime is not the host's, so there is nothing of ours to sweep
+			// or reap.
+			if hostRuntime != nil {
+				sweep, sweepErr := hostRuntime.SweepOwned(context.Background(), owner)
+				if sweepErr != nil {
+					return sweepErr
+				}
+				if len(sweep.Removed) > 0 {
+					s.logger.Infof("Swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
+				}
+				if reapErr := s.startContainerReaper(hostRuntime, owner, backends); reapErr != nil {
+					return reapErr
+				}
 			}
-			if len(sweep.Removed) > 0 {
-				s.logger.Infof("Swept %d orphaned worker container(s) left by a previous run", len(sweep.Removed))
-			}
-			if reapErr := s.startContainerReaper(containerRuntime, owner, backends); reapErr != nil {
-				return reapErr
-			}
-		}
-		if s.opts.agentContainerRuntime != nil {
-			wirer.SetContainerRuntime(s.opts.agentContainerRuntime)
-			s.logger.Info("Host container runtime attached to orchestration service")
 		}
 
 		// Wire the per-tenant token ledger. It binds to the SAME tenant-routed,
@@ -1199,6 +1190,46 @@ func orchestratorContainerOwner(dataDir string) (string, error) {
 		return "", &ServerCauseError{Message: "orchestration: container owner from data dir", Cause: err}
 	}
 	return "orchestrator:" + abs, nil
+}
+
+// agentContainerRuntime returns the runtime agent sessions run in: the
+// WithAgentContainerRuntime override when one is supplied, otherwise the
+// host's docker/podman runtime from discover, which is not called when an
+// override is supplied. host is the discovered runtime, nil under an
+// override: only the host's own runtime is swept and reaped. A nil runtime
+// means none was supplied and none is available.
+func (s *Server) agentContainerRuntime(discover func() (*orchestration.ExecContainerRuntime, error)) (runtime orchestration.ContainerRuntime, host *orchestration.ExecContainerRuntime) {
+	if s.opts.agentContainerRuntime != nil {
+		return s.opts.agentContainerRuntime, nil
+	}
+	host, err := discover()
+	if err != nil {
+		s.logger.Infof("No host container runtime available: %v", err)
+		return nil, nil
+	}
+	return host, host
+}
+
+// sandboxedBackend is the part of an ACP backend that runs its agent in a
+// container.
+type sandboxedBackend interface {
+	SetContainerRuntime(orchestration.ContainerRuntime)
+	SetSandboxOwner(string)
+	SetGoBuildCache(orchestration.GoBuildCache)
+}
+
+// wireSandboxedBackends attaches runtime, owner and goCache to each built-in
+// ACP backend present in backends.
+func wireSandboxedBackends[B any](backends map[string]B, runtime orchestration.ContainerRuntime, owner string, goCache orchestration.GoBuildCache) {
+	for _, name := range []string{"claude", "codex", "opencode"} {
+		backend, ok := any(backends[name]).(sandboxedBackend)
+		if !ok {
+			continue
+		}
+		backend.SetContainerRuntime(runtime)
+		backend.SetSandboxOwner(owner)
+		backend.SetGoBuildCache(goCache)
+	}
 }
 
 // startContainerReaper runs the container reaper over the orchestrator's own
