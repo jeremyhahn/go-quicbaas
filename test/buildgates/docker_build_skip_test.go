@@ -14,6 +14,7 @@
 package buildgates
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,5 +151,46 @@ func TestITImageHashCoversTheInputsTheDefaultTagOmits(t *testing.T) {
 	writeRepoFile(t, repo, "untracked.go", "package untracked // edited\n")
 	if edited := hash(); edited == base {
 		t.Errorf("IT_IMAGE_HASH did not change with an untracked file's contents (%s)", base)
+	}
+}
+
+// TestToolchainImageTagCoversTheGoBaseImage checks that the toolchain tag
+// hashes the effective GO_VERSION and GO_IMAGE_DIGEST, not only the files:
+// docker-build-toolchain-image skips the build when the tag is present, so a
+// command-line override of either must name a different image (Codex 8189).
+func TestToolchainImageTagCoversTheGoBaseImage(t *testing.T) {
+	tag := func(vars ...string) string {
+		t.Helper()
+		args := append([]string{"-s", "--no-print-directory", "-C", repoRoot, "toolchain-image"}, vars...)
+		cmd := exec.Command("make", args...)
+		// Stdout alone: a $(shell) command's stderr is not part of the value.
+		out, err := cmd.Output()
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				t.Fatalf("make %s: %v\n%s", strings.Join(args, " "), err, exitErr.Stderr)
+			}
+			t.Fatalf("make %s: %v", strings.Join(args, " "), err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	const (
+		otherVersion = "GO_VERSION=0.0.0-buildgatesprobe"
+		otherDigest  = "GO_IMAGE_DIGEST=sha256:" +
+			"0000000000000000000000000000000000000000000000000000000000000000"
+	)
+	base := tag()
+	if again := tag(); again != base {
+		t.Fatalf("TOOLCHAIN_IMAGE is not stable: %q then %q", base, again)
+	}
+	seen := map[string]string{base: "no override"}
+	for _, override := range [][]string{{otherVersion}, {otherDigest}, {otherVersion, otherDigest}} {
+		got := tag(override...)
+		name := strings.Join(override, " ")
+		if prev, dup := seen[got]; dup {
+			t.Errorf("TOOLCHAIN_IMAGE with %s = %q, the same as with %s", name, got, prev)
+		}
+		seen[got] = name
 	}
 }
