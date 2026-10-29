@@ -153,22 +153,6 @@ var unmappedToolGroups = []unmappedToolGroup{
 			"quicbaas_mfa_backup_codes_verify",
 		},
 	},
-	{
-		// Both siblings treat login as PRE-AUTHENTICATION, not as a
-		// permission: gRPC lists /quicbaas.login.v1.Login/BeginLogin and
-		// FinishLogin among its public methods, and REST declares the login
-		// routes in authz_public_routes.go. The MCP equivalent of that
-		// treatment is membership in publicTools, which WIDENS the
-		// unauthenticated MCP surface. That is a security-posture decision for
-		// the owner, not a mapping, so the tools stay dead — failing closed.
-		reason: "siblings treat login as pre-auth (gRPC public methods, REST public routes); " +
-			"the MCP equivalent is publicTools membership, which widens the unauthenticated surface",
-		resolution: "owner decision: add to publicTools, or keep login off the MCP transport",
-		tools: []string{
-			"quicbaas_login_begin",
-			"quicbaas_login_finish",
-		},
-	},
 }
 
 // unmappedTools indexes unmappedToolGroups by exact tool name.

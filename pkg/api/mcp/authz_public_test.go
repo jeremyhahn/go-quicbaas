@@ -30,6 +30,8 @@ func TestIsPublicTool(t *testing.T) {
 		{"health tool is public", "qrdb_health", true},
 		{"version tool is public", "quicbaas_version", true},
 		{"liveness tool is public", "quicbaas_liveness", true},
+		{"login begin is identity-gated", "quicbaas_login_begin", true},
+		{"login finish is identity-gated", "quicbaas_login_finish", true},
 		{"get tool is not public", "qrdb_get", false},
 		{"put tool is not public", "qrdb_put", false},
 		{"delete tool is not public", "qrdb_delete", false},

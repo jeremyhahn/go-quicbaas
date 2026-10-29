@@ -28,6 +28,13 @@ var publicTools = map[string]bool{
 	// qrdb-mirror health tool (Health.Check is exposed as qrdb_health — see
 	// pkg/api/mcp/CLAUDE.md). Liveness/readiness stay quicbaas_*.
 	"qrdb_health": true,
+	// Login exchanges the caller's already-authenticated identity (the
+	// verified mTLS peer at qrdb's gate) for a bearer, so it cannot carry a
+	// resource:action permission. REST and gRPC serve it pre-auth; on MCP the
+	// identity-gated sentinel still requires an authenticated caller, so this
+	// adds no unauthenticated surface.
+	"quicbaas_login_begin":  true,
+	"quicbaas_login_finish": true,
 }
 
 // IsPublicTool returns true if the tool does not require authentication.
