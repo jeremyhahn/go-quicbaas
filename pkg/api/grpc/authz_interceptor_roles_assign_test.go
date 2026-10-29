@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -71,4 +72,40 @@ func TestAuthorizeGRPCArguments_NoExtraPermission(t *testing.T) {
 	require.NoError(t, authorizeGRPCArguments(ctx, iampb.IAMService_UpdateUser_FullMethodName, &iampb.UpdateUserRequest{Roles: []string{}}, authz))
 	require.NoError(t, authorizeGRPCArguments(ctx, "/quicbaas.iam.v1.IAMService/GetUser", &iampb.CreateUserRequest{Roles: []string{"admin"}}, authz))
 	assert.Nil(t, grpcArgumentPermissionsFor(iampb.IAMService_CreateUser_FullMethodName, struct{}{}))
+}
+
+// TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached
+// proves IAMService CreateUser and UpdateUser are mapped to the grants their
+// REST twins require, so the interceptor reaches the roles:assign argument
+// check instead of default-denying the method (go-quicbaas#2064).
+func TestUnaryAuthorizationInterceptor_UserWriteMappedAndRolesAssignReached(t *testing.T) {
+	assert.Equal(t, methodPermission{"users", "create"}, grpcMethodPermissions[iampb.IAMService_CreateUser_FullMethodName])
+	assert.Equal(t, methodPermission{"users", "update"}, grpcMethodPermissions[iampb.IAMService_UpdateUser_FullMethodName])
+
+	tests := []struct {
+		name    string
+		scp     map[string]bool
+		req     interface{}
+		allowed bool
+	}{
+		{"users:create without roles:assign is refused", map[string]bool{"users:create": true}, &iampb.CreateUserRequest{Roles: []string{"admin"}}, false},
+		{"users:create with roles:assign is allowed", map[string]bool{"users:create": true, "roles:assign": true}, &iampb.CreateUserRequest{Roles: []string{"admin"}}, true},
+		{"users:create without roles in the request is allowed", map[string]bool{"users:create": true}, &iampb.CreateUserRequest{}, true},
+	}
+	info := &grpc.UnaryServerInfo{FullMethod: iampb.IAMService_CreateUser_FullMethodName}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			handler := func(context.Context, interface{}) (interface{}, error) { called = true; return nil, nil }
+			authz := &scopeSetAuthorizer{token: "tok", scp: tc.scp}
+
+			_, err := UnaryAuthorizationInterceptor(authz)(bearerContext("tok"), tc.req, info, handler)
+			assert.Equal(t, tc.allowed, called)
+			if tc.allowed {
+				require.NoError(t, err)
+				return
+			}
+			assert.Equal(t, codes.PermissionDenied, status.Code(err))
+		})
+	}
 }
