@@ -43,6 +43,7 @@ import (
 	"time"
 
 	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // sdkLivenessTimeout bounds a single SDK Health.Liveness call. The
@@ -65,7 +66,14 @@ const sdkLivenessTimeout = 10 * time.Second
 func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBundle, dataDir string) {
 	t.Helper()
 
-	client, err := newSDKClient(transport, ports, dataDir)
+	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
+	defer cancel()
+
+	auth, err := adminAuth(ctx, ports, dataDir)
+	if err != nil {
+		t.Fatalf("administrator login for transport %q: %v", transport, err)
+	}
+	client, err := newSDKClient(transport, ports, dataDir, auth)
 	if err != nil {
 		t.Fatalf("construct SDK client for transport %q: %v", transport, err)
 	}
@@ -74,9 +82,6 @@ func verifySDKLivenessOverTransport(t *testing.T, transport string, ports PortBu
 			t.Logf("SDK client Close: %v", closeErr)
 		}
 	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), sdkLivenessTimeout)
-	defer cancel()
 
 	// We dispatch via Transport().Request directly because the SDK's
 	// per-transport Liveness decoding is inconsistent: gRPC + Unix +
@@ -167,7 +172,7 @@ func isMapHealthyByAlive(m map[string]interface{}) bool {
 // auto-generated CA chain so the SDK accepts the self-signed server
 // cert; CLAUDE.md bans WithInsecure so explicit CA trust is the only
 // supported path.
-func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.Client, error) {
+func newSDKClient(transport string, ports PortBundle, dataDir string, auth quicbaas.Option) (quicbaas.Client, error) {
 	tlsCfg, err := loadDaemonCATLSConfig(dataDir)
 	if err != nil {
 		return nil, err
@@ -178,11 +183,13 @@ func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.
 		return quicbaas.NewClient(address,
 			quicbaas.WithREST(),
 			quicbaas.WithTLSConfig(tlsCfg),
+			auth,
 		)
 	case "grpc":
 		address := fmt.Sprintf("127.0.0.1:%d", ports.GRPC)
 		return quicbaas.NewClient(address,
 			quicbaas.WithTLSConfig(tlsCfg),
+			auth,
 		)
 	case "quic":
 		address := fmt.Sprintf("127.0.0.1:%d", ports.QUIC)
@@ -192,20 +199,39 @@ func newSDKClient(transport string, ports PortBundle, dataDir string) (quicbaas.
 		return quicbaas.NewClient(address,
 			quicbaas.WithQUIC(),
 			quicbaas.WithTLSConfig(tlsCfg),
+			auth,
 		)
 	case "mcp":
 		address := fmt.Sprintf("https://127.0.0.1:%d/mcp", ports.MCP)
 		return quicbaas.NewClient(address,
 			quicbaas.WithMCP(),
 			quicbaas.WithTLSConfig(tlsCfg),
+			auth,
 		)
 	case "unix":
 		return quicbaas.NewClient("unix",
 			quicbaas.WithUnix(ports.Unix),
 			quicbaas.WithTLSConfig(tlsCfg),
+			auth,
 		)
 	}
 	return nil, fmt.Errorf("newSDKClient: unknown transport %q", transport)
+}
+
+// adminAuth logs in as the administrator first-boot issued, by PIV mTLS
+// against the cell's REST listener, and returns the platform bearer as a
+// client option. The data plane is fail-closed (RequireAuthz), and MCP
+// refuses even session initialisation without a bearer.
+func adminAuth(ctx context.Context, ports PortBundle, dataDir string) (quicbaas.Option, error) {
+	bearer, err := helpers.AuthPIVContext(ctx,
+		fmt.Sprintf("https://127.0.0.1:%d", ports.REST),
+		filepath.Join(dataDir, "admin", "admin.crt"),
+		filepath.Join(dataDir, "admin", "admin.key"),
+		caChainPath(dataDir))
+	if err != nil {
+		return nil, err
+	}
+	return quicbaas.WithAuthToken(bearer), nil
 }
 
 // loadDaemonCATLSConfig reads the CA chain quicbaasd writes after start
