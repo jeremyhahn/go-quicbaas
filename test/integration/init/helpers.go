@@ -487,13 +487,20 @@ const pivLoginConfig = "  piv_login:\n    enabled: true\n    allow_unattested: t
 // variable: viper's AutomaticEnv only resolves keys it already knows from a
 // default or a config file, so QUICBAAS_IAM_SPIFFE_TRUST_DOMAIN alone is
 // silently ignored. Passing it here keeps the init helpers hermetic while
-// still exercising the real operator path.
+// still exercising the real operator path. startDaemon hands the same file to
+// `quicbaasd start`, so it carries PIV login too: the SDK liveness probe logs
+// the administrator in with the admin certificate.
 func writeInitConfig(dataDir string) (string, error) {
-	path := filepath.Join(dataDir, "init-config.yaml")
-	if err := os.WriteFile(path, []byte(trustDomainConfig), 0o600); err != nil {
+	path := initConfigPath(dataDir)
+	if err := os.WriteFile(path, []byte(trustDomainConfig+pivLoginConfig), 0o600); err != nil {
 		return "", fmt.Errorf("writeInitConfig: %w", err)
 	}
 	return path, nil
+}
+
+// initConfigPath is where writeInitConfig puts a cell's config file.
+func initConfigPath(dataDir string) string {
+	return filepath.Join(dataDir, "init-config.yaml")
 }
 
 // backendConfigPath is where writeBackendConfig puts a cell's config file.
@@ -587,7 +594,9 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 // ---------------------------------------------------------------------------
 
 // startDaemon spawns `quicbaasd start` against an already-initialised
-// data dir with the supplied port bundle. Ports that map to 0 disable
+// data dir with the supplied port bundle and the config file init read
+// (writeInitConfig), so start runs under the same trust domain with PIV
+// login on. Ports that map to 0 disable
 // the corresponding transport via env-var overrides; only the
 // transport-under-test plus REST (the always-on health-probe channel)
 // are enabled.
@@ -599,7 +608,7 @@ func runShamirInit(ctx context.Context, binary string, dataDir string) (string, 
 // per-subtest path under the data dir.
 func startDaemon(t *testing.T, binary string, dataDir string, strategy string, transport string, ports PortBundle) *DaemonProcess {
 	t.Helper()
-	return startDaemonWithConfig(t, binary, dataDir, "", strategy, transport, ports)
+	return startDaemonWithConfig(t, binary, dataDir, initConfigPath(dataDir), strategy, transport, ports)
 }
 
 // unknownTransportError reports a transport the harness cannot start.

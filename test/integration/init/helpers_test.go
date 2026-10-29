@@ -18,6 +18,7 @@ package init
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -88,6 +89,37 @@ func TestBackendMatrixStart_ReadsTheInitConfig(t *testing.T) {
 				t.Errorf("iam.piv_login = %+v, want enabled with allow_unattested", loaded.IAM.PIVLogin)
 			}
 		})
+	}
+}
+
+// TestInitMatrixStart_ConfigEnablesPIVLogin pins the config the init matrix
+// hands `quicbaasd start`: the file init wrote, with PIV login on, because
+// the SDK liveness probe logs the administrator in over it.
+func TestInitMatrixStart_ConfigEnablesPIVLogin(t *testing.T) {
+	dataDir := t.TempDir()
+	cfgPath, err := writeInitConfig(dataDir)
+	if err != nil {
+		t.Fatalf("writeInitConfig: %v", err)
+	}
+	if cfgPath != initConfigPath(dataDir) {
+		t.Fatalf("writeInitConfig wrote %s, startDaemon reads %s", cfgPath, initConfigPath(dataDir))
+	}
+
+	loaded, err := config.LoadFromFile(cfgPath)
+	if err != nil {
+		t.Fatalf("config.LoadFromFile: %v", err)
+	}
+	if loaded.IAM.SPIFFETrustDomain != matrixTrustDomain {
+		t.Errorf("iam.spiffe_trust_domain = %q, want %q", loaded.IAM.SPIFFETrustDomain, matrixTrustDomain)
+	}
+	if !loaded.IAM.PIVLogin.Enabled || !loaded.IAM.PIVLogin.AllowUnattested {
+		t.Errorf("iam.piv_login = %+v, want enabled with allow_unattested", loaded.IAM.PIVLogin)
+	}
+}
+
+func TestWriteInitConfig_UnwritableDataDir(t *testing.T) {
+	if _, err := writeInitConfig(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("writeInitConfig into a missing directory succeeded")
 	}
 }
 
