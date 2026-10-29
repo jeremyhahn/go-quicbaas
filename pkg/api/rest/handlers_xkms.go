@@ -758,10 +758,12 @@ func (s *Server) HandleXKMSListCerts(w http.ResponseWriter, r *http.Request) {
 	}
 	certIDs, listErr = service.FilterCertificateIDsForCaller(r.Context(), s.service.Certificate(), certIDs, xkmssdk.ServiceCertificateByID)
 	if listErr != nil {
-		status := http.StatusForbidden
-		var lookupErr *service.CertificateLookupError
-		if errors.As(listErr, &lookupErr) {
-			status = http.StatusInternalServerError
+		// Only the tenant refusal is a 403; a failed certificate or
+		// ownership lookup is the server's fault.
+		status := http.StatusInternalServerError
+		var refusal *service.CertificateTenantError
+		if errors.As(listErr, &refusal) {
+			status = http.StatusForbidden
 		}
 		respondXKMSError(w, status, listErr)
 		return

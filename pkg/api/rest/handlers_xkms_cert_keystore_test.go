@@ -118,6 +118,28 @@ func TestXKMSCertsKeyStore_TenantScope(t *testing.T) {
 		w := serve(context.Background(), http.MethodGet, "/api/v1/xkms/certs", "")
 		require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 	})
+	// Codex 8293 P1: an ownership store outage is a server error, not a
+	// refusal the client could act on.
+	t.Run("ownership store failure is a server error", func(t *testing.T) {
+		mockService.CertificateSvc = ownershipStoreDownCertificates{}
+		w := serve(acme, http.MethodGet, "/api/v1/xkms/certs", "")
+		require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
+	})
+}
+
+// ownershipStoreDownCertificates is a certificate service whose CA cannot
+// reach its ownership store.
+type ownershipStoreDownCertificates struct {
+	service.CertificateService
+}
+
+// ownershipStoreDownError reports the unreachable ownership store.
+type ownershipStoreDownError struct{}
+
+func (ownershipStoreDownError) Error() string { return "ownership store unavailable" }
+
+func (ownershipStoreDownCertificates) CertificateTenant(context.Context, *big.Int) (string, error) {
+	return "", ownershipStoreDownError{}
 }
 
 // keystoreTestCertPEM returns a self-signed PEM certificate with the given
