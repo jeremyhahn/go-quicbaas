@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
 	qrdbspiffe "github.com/jeremyhahn/go-qrdb/pkg/auth/spiffe"
@@ -621,6 +622,45 @@ func TestCAServiceAdapter_IsRevoked(t *testing.T) {
 			t.Fatalf("want ErrCAServiceAdapterInvalidSerial, got %v", err)
 		}
 	})
+}
+
+// TestCAServiceAdapter_CertificateTenant_Unsupported pins that a CA without
+// issuing-tenant records reports the certificate service's own sentinel, so
+// the service treats it as "no ownership records" rather than a server error.
+func TestCAServiceAdapter_CertificateTenant_Unsupported(t *testing.T) {
+	adapter, err := newCAServiceAdapter(newFakeTrustedCA(t))
+	if err != nil {
+		t.Fatalf("newCAServiceAdapter: %v", err)
+	}
+
+	t.Run("returns the service sentinel", func(t *testing.T) {
+		_, err := adapter.CertificateTenant(context.Background(), big.NewInt(1))
+		if !errors.Is(err, service.ErrCertificateTenantNotSupported) {
+			t.Fatalf("want service.ErrCertificateTenantNotSupported, got %v", err)
+		}
+	})
+
+	t.Run("filter shows a tenant caller nothing", func(t *testing.T) {
+		lookup := func(context.Context, string) (*x509.Certificate, error) {
+			return &x509.Certificate{SerialNumber: big.NewInt(1)}, nil
+		}
+		ctx := tenantctx.WithTenant(context.Background(), "tenant-a")
+		visible, err := service.FilterCertificateIDsForCaller(ctx, service.NewCertificateService(adapter), []string{"key-1"}, lookup)
+		if err != nil {
+			t.Fatalf("FilterCertificateIDsForCaller: %v", err)
+		}
+		if len(visible) != 0 {
+			t.Fatalf("want no visible IDs, got %v", visible)
+		}
+	})
+}
+
+func TestCAServiceAdapter_CertificateTenant_NilCA(t *testing.T) {
+	adapter := &caServiceAdapter{}
+	_, err := adapter.CertificateTenant(context.Background(), big.NewInt(1))
+	if !errors.Is(err, ErrCAServiceAdapterNilCA) {
+		t.Fatalf("want ErrCAServiceAdapterNilCA, got %v", err)
+	}
 }
 
 func TestParseTransportSANs(t *testing.T) {
