@@ -150,6 +150,36 @@ func TestSchedulerAdapter_GetJob_DelegatedJobOfCaller(t *testing.T) {
 	})
 }
 
+func TestSchedulerAdapter_CancelJob_DelegatedJobOfCaller(t *testing.T) {
+	notFound := scheduler.ErrStorageError{Op: "GetJob", Cause: &scheduler.JobNotFoundError{JobID: 1}}
+
+	t.Run("cancels in the delegated job's namespace", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(
+			&scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-a"}, nil)
+		eng.On("CancelJobWithTenant", mock.Anything, uint64(1), "", "done").Return(scheduler.JobStatusPending, nil)
+		a := &SchedulerAdapter{scheduler: eng}
+
+		resp, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Reason: "done"})
+		require.NoError(t, err)
+		require.Equal(t, SchedulerJobStatusCanceled, resp.NewStatus)
+		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, uint64(1), "tenant-a", "done")
+	})
+
+	t.Run("refuses a job delegated to another tenant", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(
+			&scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-b"}, nil)
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Reason: "done"})
+		require.Error(t, err)
+		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
 func TestSchedulerAdapter_EngineErrors(t *testing.T) {
 	ctx := context.Background()
 	boom := errors.New("engine boom")

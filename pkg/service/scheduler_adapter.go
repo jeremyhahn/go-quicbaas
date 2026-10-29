@@ -359,7 +359,21 @@ func (a *SchedulerAdapter) CancelJob(ctx context.Context, req *CancelSchedulerJo
 		return nil, err
 	}
 
-	oldStatus, err := a.scheduler.CancelJobWithTenant(ctx, req.JobID, tenantID, req.Reason)
+	// A delegated job lives in the system namespace, so it is found and
+	// cancelled there, the way GetJob finds it.
+	job, err := a.lookupJob(ctx, req.JobID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "CancelJob"); err != nil {
+		return nil, err
+	}
+	jobNamespace := tenantID
+	if job.OwnerType == scheduler.OwnerTypeDelegated {
+		jobNamespace = ""
+	}
+
+	oldStatus, err := a.scheduler.CancelJobWithTenant(ctx, req.JobID, jobNamespace, req.Reason)
 	if err != nil {
 		return nil, err
 	}
