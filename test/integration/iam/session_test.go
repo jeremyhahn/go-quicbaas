@@ -149,12 +149,12 @@ func TestSessionListUnauthorized(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Attempt to list sessions without authentication context
-	var sessions SessionListResponse
-	err := cluster.getJSON("/api/v1/iam/sessions", &sessions)
+	// List sessions with no client credentials at all.
+	resp, err := cluster.doAnonymousHTTPRequest(http.MethodGet, "/api/v1/iam/sessions", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-	// Should fail with unauthorized error
-	assert.Error(t, err, "Should return error when not authenticated")
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode, "an anonymous session list must be rejected as unauthenticated")
 }
 
 // TestSessionListEmpty tests listing sessions when user has no active sessions.
