@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -326,34 +327,39 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 		query = &scheduler.JobQuery{}
 	}
 
-	prefixes := jobScanPrefixes(query)
+	scans := jobScans(query)
 
 	limit := query.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 
-	// The cursor is the ID of the last job on the previous page. The scan
-	// does not promise key order, and "jobs/10" sorts before "jobs/9"
-	// anyway, so pages are cut by job ID rather than by scan position.
-	var after uint64
+	// The cursor names the last job on the previous page by scope and ID: a
+	// job ID is unique only within its scope, and a tenant listing merges the
+	// system scope with the tenant's, so the ID alone would skip a job that
+	// shares its ID with one already returned. The scan does not promise key
+	// order, and "jobs/10" sorts before "jobs/9" anyway, so pages are cut by
+	// (scope, ID) rather than by scan position.
+	var after jobPosition
 	if query.Cursor != "" {
-		id, err := strconv.ParseUint(query.Cursor, 10, 64)
+		pos, err := parseJobCursor(query.Cursor)
 		if err != nil {
-			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.cursor", Cause: ErrInvalidCursor}
+			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.cursor", Cause: err}
 		}
-		after = id
+		after = pos
 	}
 
-	jobs := make([]*scheduler.Job, 0)
+	listed := make([]listedJob, 0)
 
+	var scope string
 	visit := func(key string, value []byte) error {
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
 			return nil
 		}
-		if job.ID <= after {
+		pos := jobPosition{scope: scope, id: job.ID}
+		if query.Cursor != "" && pos.compare(after) <= 0 {
 			return nil
 		}
 
@@ -382,42 +388,112 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 			}
 		}
 
-		jobs = append(jobs, &job)
+		listed = append(listed, listedJob{pos: pos, job: &job})
 		return nil
 	}
-	for _, prefix := range prefixes {
-		if err := s.kv.Scan(ctx, prefix, visit); err != nil {
+	for _, scan := range scans {
+		scope = scan.scope
+		if err := s.kv.Scan(ctx, scan.prefix, visit); err != nil {
 			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.scan", Cause: err}
 		}
 	}
 
-	slices.SortFunc(jobs, func(a, b *scheduler.Job) int {
-		return cmp.Compare(a.ID, b.ID)
+	slices.SortFunc(listed, func(a, b listedJob) int {
+		return a.pos.compare(b.pos)
 	})
 
 	// A cursor is returned only when another page exists, so callers can
 	// read "no cursor" as "no more jobs".
 	var nextCursor string
-	if len(jobs) > limit {
-		jobs = jobs[:limit]
-		nextCursor = strconv.FormatUint(jobs[limit-1].ID, 10)
+	if len(listed) > limit {
+		listed = listed[:limit]
+		nextCursor = listed[limit-1].pos.cursor()
 	}
 
+	jobs := make([]*scheduler.Job, len(listed))
+	for i, entry := range listed {
+		jobs[i] = entry.job
+	}
 	return jobs, nextCursor, nil
 }
 
-// jobScanPrefixes returns the key prefixes a ListJobs query must scan. A
-// tenant's own jobs live under its tenant prefix while system and delegated
-// jobs aimed at it live under the system prefix, so a query scoped only by
-// target tenant scans both.
-func jobScanPrefixes(query *scheduler.JobQuery) []string {
+// jobPosition is a job's place in a ListJobs page order. A job ID is unique
+// only within its scope (see scopeToken), so the position pairs the two.
+type jobPosition struct {
+	scope string
+	id    uint64
+}
+
+// compare orders positions by scope, then by ID.
+func (p jobPosition) compare(other jobPosition) int {
+	return cmp.Or(strings.Compare(p.scope, other.scope), cmp.Compare(p.id, other.id))
+}
+
+// cursor renders the position as a ListJobs cursor: "<scope>/<id>".
+func (p jobPosition) cursor() string {
+	return p.scope + "/" + strconv.FormatUint(p.id, 10)
+}
+
+// parseJobCursor reads a cursor written by jobPosition.cursor. The ID is split
+// at the last "/" so a tenant ID that holds one still parses.
+func parseJobCursor(cursor string) (jobPosition, error) {
+	sep := strings.LastIndex(cursor, "/")
+	if sep < 0 {
+		return jobPosition{}, ErrInvalidCursor
+	}
+	scope := cursor[:sep]
+	if !isScopeToken(scope) {
+		return jobPosition{}, ErrInvalidCursor
+	}
+	id, err := strconv.ParseUint(cursor[sep+1:], 10, 64)
+	if err != nil {
+		return jobPosition{}, ErrInvalidCursor
+	}
+	return jobPosition{scope: scope, id: id}, nil
+}
+
+// isScopeToken reports whether s is a value scopeToken returns.
+func isScopeToken(s string) bool {
+	if s == scopeToken("") {
+		return true
+	}
+	tenantID, ok := strings.CutPrefix(s, "t:")
+	if !ok {
+		return false
+	}
+	tenantID, ok = strings.CutSuffix(tenantID, ":")
+	return ok && tenantID != ""
+}
+
+// listedJob is a job read by ListJobs with its page position.
+type listedJob struct {
+	pos jobPosition
+	job *scheduler.Job
+}
+
+// jobScan is one key range a ListJobs query reads, with the scope (see
+// scopeToken) whose job IDs it holds.
+type jobScan struct {
+	prefix string
+	scope  string
+}
+
+// jobScans returns the key ranges a ListJobs query must scan. A tenant's own
+// jobs live under its tenant prefix while system and delegated jobs aimed at
+// it live under the system prefix, so a query scoped only by target tenant
+// scans both.
+func jobScans(query *scheduler.JobQuery) []jobScan {
+	system := jobScan{prefix: SystemJobsPrefix, scope: scopeToken("")}
+	tenant := func(tenantID string) jobScan {
+		return jobScan{prefix: fmt.Sprintf(TenantJobsPrefixFmt, tenantID), scope: scopeToken(tenantID)}
+	}
 	switch {
 	case query.OwnerID != "":
-		return []string{fmt.Sprintf(TenantJobsPrefixFmt, query.OwnerID)}
+		return []jobScan{tenant(query.OwnerID)}
 	case query.OwnerType == "" && query.TargetTenantID != "":
-		return []string{SystemJobsPrefix, fmt.Sprintf(TenantJobsPrefixFmt, query.TargetTenantID)}
+		return []jobScan{system, tenant(query.TargetTenantID)}
 	default:
-		return []string{SystemJobsPrefix}
+		return []jobScan{system}
 	}
 }
 

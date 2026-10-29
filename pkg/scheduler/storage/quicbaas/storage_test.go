@@ -685,14 +685,75 @@ func TestListJobs_NoCursorOnLastPage(t *testing.T) {
 	}
 }
 
-// TestListJobs_InvalidCursor checks a cursor that is not a job ID is refused
-// rather than read as the first page.
+// TestListJobs_InvalidCursor checks a cursor that is not "<scope>/<job ID>" is
+// refused rather than read as the first page.
 func TestListJobs_InvalidCursor(t *testing.T) {
 	storage := NewStorage(newMockKVStore())
 
-	_, _, err := storage.ListJobs(context.Background(), &scheduler.JobQuery{Cursor: "not-an-id"})
-	if !errors.Is(err, ErrInvalidCursor) {
-		t.Errorf("got %v, want ErrInvalidCursor", err)
+	for _, cursor := range []string{"not-an-id", "7", "sys:/x", "bogus/7", "t::/7", "t:acme/7", "/7"} {
+		_, _, err := storage.ListJobs(context.Background(), &scheduler.JobQuery{Cursor: cursor})
+		if !errors.Is(err, ErrInvalidCursor) {
+			t.Errorf("cursor %q: got %v, want ErrInvalidCursor", cursor, err)
+		}
+	}
+}
+
+// TestListJobs_EqualIDsAcrossScopesArePagedSeparately pins Codex 8344 P1: a
+// tenant listing merges the system scope with the tenant's, where IDs are
+// numbered independently. With one job per page, a system job 7 and a tenant
+// job 7 must come back on two pages; a cursor of the bare ID skipped the
+// second.
+func TestListJobs_EqualIDsAcrossScopesArePagedSeparately(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(newMockKVStore())
+
+	delegated := createTestJob("delegated", scheduler.OwnerTypeDelegated, "")
+	delegated.ID = 7
+	delegated.TargetTenantID = "tenant-A"
+	own := createTestJob("own", scheduler.OwnerTypeTenant, "tenant-A")
+	own.ID = 7
+	own.TargetTenantID = "tenant-A"
+	for _, job := range []*scheduler.Job{delegated, own} {
+		if err := storage.CreateJob(ctx, job); err != nil {
+			t.Fatalf("CreateJob(%s): %v", job.Name, err)
+		}
+	}
+
+	var names []string
+	cursor := ""
+	for page := 0; page < 3; page++ {
+		jobs, next, err := storage.ListJobs(ctx, &scheduler.JobQuery{TargetTenantID: "tenant-A", Limit: 1, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListJobs page %d: %v", page, err)
+		}
+		for _, job := range jobs {
+			names = append(names, job.Name)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(names) != 2 || names[0] != "delegated" || names[1] != "own" {
+		t.Errorf("pages returned %v, want [delegated own]", names)
+	}
+}
+
+// TestParseJobCursor_RoundTrip checks every cursor ListJobs writes parses back
+// to the same position, including a tenant ID that holds the separator.
+func TestParseJobCursor_RoundTrip(t *testing.T) {
+	for _, pos := range []jobPosition{
+		{scope: scopeToken(""), id: 7},
+		{scope: scopeToken("tenant-A"), id: 7},
+		{scope: scopeToken("org/unit"), id: 18446744073709551615},
+	} {
+		got, err := parseJobCursor(pos.cursor())
+		if err != nil {
+			t.Fatalf("parseJobCursor(%q): %v", pos.cursor(), err)
+		}
+		if got != pos {
+			t.Errorf("parseJobCursor(%q) = %+v, want %+v", pos.cursor(), got, pos)
+		}
 	}
 }
 
