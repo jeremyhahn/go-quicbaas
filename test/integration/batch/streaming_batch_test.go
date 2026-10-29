@@ -737,8 +737,10 @@ func TestStreamingBatchBackpressure(t *testing.T) {
 	duration := time.Since(startTime)
 	throughputMB := float64(totalOps*len(largeData)) / duration.Seconds() / 1024 / 1024
 
-	assert.True(t, finalResult.Succeeded, "Backpressure test should succeed")
-	assert.Equal(t, int64(totalOps), finalResult.OperationsCommitted)
+	assert.True(t, finalResult.Succeeded, "Backpressure test should succeed: error=%q failed_keys=%v",
+		finalResult.Error, finalResult.FailedKeys)
+	assert.Equal(t, int64(totalOps), finalResult.OperationsCommitted, "error=%q failed_keys=%v",
+		finalResult.Error, finalResult.FailedKeys)
 
 	t.Logf("Backpressure test completed: %d operations, %d progress updates, %.2f MB/s throughput",
 		finalResult.OperationsCommitted, progressCount, throughputMB)
