@@ -6,7 +6,7 @@ go 1.27.3
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
 
 require (
-	cloud.google.com/go/kms v1.36.0
+	cloud.google.com/go/kms v1.36.0 // held: v1.36.1 released 2026-10-28, under 7 days old (#1704)
 	connectrpc.com/connect v1.21.1
 	github.com/aws/aws-sdk-go-v2 v1.47.5
 	github.com/aws/aws-sdk-go-v2/config v1.33.12
