@@ -306,12 +306,48 @@ func (s *certificateService) extensionsCA() (CertificateExtensionsCA, error) {
 
 // CrossSign cross-signs an external root certificate with the local CA and
 // returns the PEM-encoded cross-signed certificate.
+// PlatformCASignRefusedError is returned when a caller other than the system
+// tenant asks the shared platform CA to sign a CA-capable certificate. Such a
+// certificate chains to the platform root, so granting it to a tenant would
+// make that tenant a trusted subordinate CA for every other tenant.
+type PlatformCASignRefusedError struct {
+	Op             string
+	CallerTenantID string
+}
+
+// Error names the refused operation.
+func (e *PlatformCASignRefusedError) Error() string {
+	return "certificate: " + e.Op + ": platform CA signing is reserved to the system tenant"
+}
+
+// Unwrap returns ErrForbidden, so every transport answers with its
+// permission-denied status.
+func (e *PlatformCASignRefusedError) Unwrap() error {
+	return ErrForbidden
+}
+
+// requireSystemCASigner refuses every caller but the system tenant, including
+// a caller that carries no tenant at all.
+func requireSystemCASigner(ctx context.Context, op string) error {
+	callerTenant, err := tenantctx.FromContext(ctx, "certificate."+op)
+	if err != nil {
+		return &PlatformCASignRefusedError{Op: op}
+	}
+	if !tenantctx.IsSystem(callerTenant) {
+		return &PlatformCASignRefusedError{Op: op, CallerTenantID: callerTenant}
+	}
+	return nil
+}
+
 func (s *certificateService) CrossSign(ctx context.Context, req *CrossSignRequest) (*CrossSignResponse, error) {
 	if req == nil {
 		return nil, ErrCertNilRequest
 	}
 	if len(req.ForeignRootPEM) == 0 {
 		return nil, ErrCertExtMissingForeignRoot
+	}
+	if err := requireSystemCASigner(ctx, "cross_sign"); err != nil {
+		return nil, err
 	}
 	if _, err := prepareTenantContext(ctx); err != nil {
 		return nil, err

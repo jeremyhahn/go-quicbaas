@@ -128,6 +128,37 @@ func TestCertificateService_CrossSign_Errors(t *testing.T) {
 	})
 }
 
+// A cross-signed foreign root chains to the shared platform CA, so only the
+// system tenant may ask for one: a tenant admin holding a self-scoped
+// ca:create must not mint a trusted subordinate CA.
+func TestCertificateService_CrossSign_IsReservedToTheSystemTenant(t *testing.T) {
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		wantTenant string
+	}{
+		{name: "tenant caller", ctx: tenantctx.WithTenant(context.Background(), "acme"), wantTenant: "acme"},
+		{name: "no tenant", ctx: context.Background(), wantTenant: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &extCAStub{crossSignPEM: []byte("cross")}
+			svc := newExtService(t, stub)
+
+			resp, err := svc.CrossSign(tt.ctx, &CrossSignRequest{ForeignRootPEM: []byte("foreign-root")})
+
+			var refusal *PlatformCASignRefusedError
+			require.ErrorAs(t, err, &refusal)
+			assert.ErrorIs(t, err, ErrForbidden)
+			assert.Equal(t, tt.wantTenant, refusal.CallerTenantID)
+			assert.Equal(t, "cross_sign", refusal.Op)
+			assert.NotEmpty(t, refusal.Error())
+			assert.Nil(t, resp)
+			assert.Nil(t, stub.crossSignArg, "a refused caller must never reach the CA")
+		})
+	}
+}
+
 // =============================================================================
 // Chain
 // =============================================================================
