@@ -44,6 +44,13 @@ const (
 	// serve again, which can include a full leader election after an earlier
 	// test disturbed it.
 	clusterSettleTimeout = 60 * time.Second
+
+	// entityLookupAllowance is the time one entity lookup is budgeted on top
+	// of replicationTimeout. Confirming a large write set means one lookup
+	// per entity per node, so the wait grows with the work: a CI runner
+	// serves about 20 requests a second, and 1000 entities on 3 nodes is
+	// 3000 lookups.
+	entityLookupAllowance = 75 * time.Millisecond
 )
 
 // pollUntil calls check every pollInterval until it reports done, failing the
@@ -126,13 +133,16 @@ func waitForQuorumReady(t *testing.T, nodes []string) {
 }
 
 // waitForEntitiesOnAllNodes polls every client of cluster until each entity
-// is found there, failing the test once replicationTimeout elapses. Each
+// is found there, failing the test once replicationTimeout plus an
+// entityLookupAllowance for every lookup the sweep needs elapses. Each
 // attempt resumes every node where the last one stopped, and each lookup has
 // its own entityLookupTimeout. Callers assert the data afterwards.
 func waitForEntitiesOnAllNodes(t *testing.T, cluster *helpers.TestCluster, entities []helpers.TestEntity) {
 	t.Helper()
 	sweep := newEntitySweep(len(cluster.Clients), len(entities))
-	pollUntil(t, replicationTimeout, fmt.Sprintf("%d entities on all %d nodes", len(entities), len(cluster.Clients)),
+	lookups := len(cluster.Clients) * len(entities)
+	timeout := replicationTimeout + time.Duration(lookups)*entityLookupAllowance
+	pollUntil(t, timeout, fmt.Sprintf("%d entities on all %d nodes", len(entities), len(cluster.Clients)),
 		func(ctx context.Context) (bool, error) {
 			return sweep.advance(ctx, entityLookupTimeout, func(ctx context.Context, node, entity int) (bool, error) {
 				resp, err := cluster.Clients[node].KV().Get(ctx, &service.GetRequest{
