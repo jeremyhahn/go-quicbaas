@@ -1013,45 +1013,75 @@ func contains(slice []uint64, val uint64) bool {
 
 // IsStandaloneMode probes the cluster to determine if it is running in
 // standalone/embedded mode (no real Raft consensus). It queries each node's
-// cluster status and checks whether any node reports a leader. If no leader is
-// found across all nodes or the cluster status API returns errors, the cluster
-// is considered to be in standalone mode.
+// cluster status as the system admin and checks whether any node reports a
+// leader. Only successful probes that find no leader mean standalone mode; a
+// probe that cannot connect or whose Status is refused fails the test.
 func IsStandaloneMode(t *testing.T, endpoints []string) bool {
 	t.Helper()
 
-	for _, endpoint := range endpoints {
-		probe := NewClusterBuilder().WithTimeout(10 * time.Second).WithRetries(1)
-		probe.retryBackoff = 500 * time.Millisecond
-		client, err := probe.connectToNode(context.Background(), endpoint, "")
+	probe := NewClusterBuilder().WithSystemAdmin().WithTimeout(10 * time.Second).WithRetries(1)
+	probe.retryBackoff = 500 * time.Millisecond
+	standalone, err := standaloneMode(context.Background(), probe, endpoints)
+	if err != nil {
+		t.Fatalf("IsStandaloneMode: %v", err)
+	}
+	return standalone
+}
+
+// StandaloneProbeError reports a cluster node whose leader probe could not
+// be answered, so the suite cannot tell whether a leader exists.
+type StandaloneProbeError struct {
+	Endpoint string
+	Err      error
+}
+
+func (e *StandaloneProbeError) Error() string {
+	return fmt.Sprintf("leader probe of %s failed: %v", e.Endpoint, e.Err)
+}
+
+func (e *StandaloneProbeError) Unwrap() error { return e.Err }
+
+// standaloneMode reports whether no node in endpoints knows of a leader,
+// probing each one through a client cb builds against the REST URL at the
+// same index. A failed connect or Status is an error, never standalone.
+func standaloneMode(ctx context.Context, cb *ClusterBuilder, endpoints []string) (bool, error) {
+	for i, endpoint := range endpoints {
+		if cb.login != nil && i >= len(cb.restEndpoints) {
+			return false, &ClusterRESTEndpointError{Node: i + 1, Endpoint: endpoint}
+		}
+		var restURL string
+		if i < len(cb.restEndpoints) {
+			restURL = cb.restEndpoints[i]
+		}
+		client, err := cb.connectToNode(ctx, endpoint, restURL)
 		if err != nil {
-			t.Logf("IsStandaloneMode: could not connect to %s: %v", endpoint, err)
-			continue
+			return false, &StandaloneProbeError{Endpoint: endpoint, Err: err}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		status, err := client.Cluster().Status(ctx)
+		statusCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		status, err := client.Cluster().Status(statusCtx)
 		cancel()
-		_ = client.Close()
-
+		if closeErr := client.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		if err != nil {
-			t.Logf("IsStandaloneMode: cluster status error from %s: %v", endpoint, err)
-			continue
+			return false, &StandaloneProbeError{Endpoint: endpoint, Err: err}
 		}
 
 		// Check if any member reports as leader
 		for _, member := range status.Members {
 			if member.IsLeader {
-				return false
+				return false, nil
 			}
 		}
 
 		// Check the LeaderID field as a fallback
 		if status.LeaderID != "" && status.LeaderID != "0" {
-			return false
+			return false, nil
 		}
 	}
 
-	return true
+	return true, nil
 }
 
 // IsStandaloneModeFromCluster probes an already-connected TestCluster to

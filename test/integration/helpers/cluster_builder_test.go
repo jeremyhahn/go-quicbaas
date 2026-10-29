@@ -18,11 +18,18 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+
+	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 )
 
 // shardProbeNode stands in for one cluster node: its PIV login answers
@@ -199,5 +206,82 @@ func TestWaitForClusterShardLeaders_RefusedStatusSurfaces(t *testing.T) {
 	var timeoutErr *PollTimeoutError
 	if !errors.As(leadersErr.Err, &timeoutErr) || timeoutErr.LastErr == nil {
 		t.Errorf("ShardLeadersError.Err = %v, want a *PollTimeoutError carrying the refused probe", leadersErr.Err)
+	}
+}
+
+func TestStandaloneMode_ProbeCarriesSystemAdminBearer(t *testing.T) {
+	node := newShardProbeNode(t, "admin-token", 0, http.StatusOK, http.StatusOK)
+	status := newLeaderlessStatusNode(t, node)
+	cb := builderFor(t, node, true).WithEndpoints([]string{status.addr})
+	standalone, err := standaloneMode(context.Background(), cb, []string{status.addr})
+	if err != nil {
+		t.Fatalf("standaloneMode: %v", err)
+	}
+	if !standalone {
+		t.Error("standaloneMode = false, want true for a leaderless Status")
+	}
+	if got := <-status.headers; got != "Bearer admin-token" {
+		t.Errorf("probe Authorization = %q, want the system admin's bearer", got)
+	}
+}
+
+// leaderlessStatusNode is a gRPC node whose ClusterStatus reports a cluster
+// with no leader. The probe reaches cluster status over gRPC, as the
+// integration cluster's endpoints do, while the system admin logs in at the
+// REST shardProbeNode.
+type leaderlessStatusNode struct {
+	pb.UnimplementedQuicBaaSServer
+	addr    string
+	headers chan string
+}
+
+// newLeaderlessStatusNode serves ClusterStatus over TLS with the certificate
+// of rest, so the builder's TLS configuration trusts both nodes.
+func newLeaderlessStatusNode(t *testing.T, rest *shardProbeNode) *leaderlessStatusNode {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	node := &leaderlessStatusNode{addr: listener.Addr().String(), headers: make(chan string, 1)}
+	creds := credentials.NewTLS(&tls.Config{Certificates: rest.server.TLS.Certificates})
+	server := grpc.NewServer(grpc.Creds(creds))
+	pb.RegisterQuicBaaSServer(server, node)
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	t.Cleanup(func() {
+		server.Stop()
+		if err := <-served; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve: %v", err)
+		}
+	})
+	return node
+}
+
+// ClusterStatus records the caller's Authorization and answers with a cluster
+// that has no leader.
+func (n *leaderlessStatusNode) ClusterStatus(ctx context.Context, _ *pb.ClusterStatusRequest) (*pb.ClusterStatusResponse, error) {
+	var authorization string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if values := md.Get("authorization"); len(values) > 0 {
+			authorization = values[0]
+		}
+	}
+	select {
+	case n.headers <- authorization:
+	default:
+	}
+	return &pb.ClusterStatusResponse{ClusterId: "standalone"}, nil
+}
+
+func TestStandaloneMode_RefusedStatusFails(t *testing.T) {
+	node := newShardProbeNode(t, "admin-token", 0, http.StatusOK, http.StatusForbidden)
+	standalone, err := standaloneMode(context.Background(), builderFor(t, node, true), []string{node.server.URL})
+	var probeErr *StandaloneProbeError
+	if !errors.As(err, &probeErr) {
+		t.Fatalf("error = %v, want *StandaloneProbeError", err)
+	}
+	if standalone {
+		t.Error("standaloneMode = true on a refused probe, want false")
 	}
 }
