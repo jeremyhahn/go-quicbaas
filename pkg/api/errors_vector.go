@@ -431,6 +431,30 @@ func NewIVFQueryDimensionError(op string, got, expected int) *dberrors.QBError {
 // =============================================================================
 
 // KMeansEmptyVectorSetError indicates an attempt to cluster an empty vector set.
+// RebuildMissingEmbeddingError reports a scanned vector that carries no
+// embedding, which an index rebuild cannot index.
+type RebuildMissingEmbeddingError struct {
+	Namespace string
+	ID        uint64
+}
+
+// Error implements the error interface.
+func (e *RebuildMissingEmbeddingError) Error() string {
+	return "vector " + strconv.FormatUint(e.ID, 10) + " in namespace " + e.Namespace + " has no embedding"
+}
+
+// RebuildCursorStalledError reports a storage scan that returned the cursor it
+// was given, which would page the same vectors forever.
+type RebuildCursorStalledError struct {
+	Namespace string
+	Cursor    string
+}
+
+// Error implements the error interface.
+func (e *RebuildCursorStalledError) Error() string {
+	return "vector scan of namespace " + e.Namespace + " did not advance past cursor " + e.Cursor
+}
+
 type KMeansEmptyVectorSetError struct{}
 
 // Error implements the error interface.

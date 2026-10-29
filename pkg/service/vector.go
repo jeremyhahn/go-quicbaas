@@ -18,7 +18,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -1763,7 +1762,7 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 
 		for _, vec := range page.Vectors {
 			if len(vec.Embedding) == 0 {
-				return failJob("index vector", &RebuildMissingEmbeddingError{Namespace: namespace, ID: vec.ID})
+				return failJob("index vector", &api.RebuildMissingEmbeddingError{Namespace: namespace, ID: vec.ID})
 			}
 			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
 				return failJob("index vector", err)
@@ -1778,7 +1777,7 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 			break
 		}
 		if page.NextCursor == opts.Cursor {
-			return failJob("scan vectors", &RebuildCursorStalledError{Namespace: namespace, Cursor: opts.Cursor})
+			return failJob("scan vectors", &api.RebuildCursorStalledError{Namespace: namespace, Cursor: opts.Cursor})
 		}
 		opts.Cursor = page.NextCursor
 	}
@@ -1798,30 +1797,6 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 
 // rebuildScanPageSize is the number of vectors an index rebuild reads per page.
 const rebuildScanPageSize = 1000
-
-// RebuildMissingEmbeddingError reports a scanned vector that carries no
-// embedding, which an index rebuild cannot index.
-type RebuildMissingEmbeddingError struct {
-	Namespace string
-	ID        uint64
-}
-
-// Error implements the error interface.
-func (e *RebuildMissingEmbeddingError) Error() string {
-	return "vector " + strconv.FormatUint(e.ID, 10) + " in namespace " + e.Namespace + " has no embedding"
-}
-
-// RebuildCursorStalledError reports a storage scan that returned the cursor it
-// was given, which would page the same vectors forever.
-type RebuildCursorStalledError struct {
-	Namespace string
-	Cursor    string
-}
-
-// Error implements the error interface.
-func (e *RebuildCursorStalledError) Error() string {
-	return "vector scan of namespace " + e.Namespace + " did not advance past cursor " + e.Cursor
-}
 
 // GetIndexStats retrieves statistics about the vector index.
 func (v *vectorService) GetIndexStats(ctx context.Context, req *GetIndexStatsRequest) (*GetIndexStatsResponse, error) {

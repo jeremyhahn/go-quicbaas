@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	api "github.com/jeremyhahn/go-quicbaas/pkg/api"
 	qbErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -1971,7 +1972,7 @@ func TestPerformIndexRebuild_MissingEmbeddingFailsJob(t *testing.T) {
 	require.Error(t, err)
 	job.mu.RLock()
 	defer job.mu.RUnlock()
-	var missing *RebuildMissingEmbeddingError
+	var missing *api.RebuildMissingEmbeddingError
 	require.ErrorAs(t, job.Error, &missing)
 	assert.Equal(t, uint64(2), missing.ID)
 	assert.Equal(t, "test-ns", missing.Namespace)
@@ -2006,7 +2007,7 @@ func TestPerformIndexRebuild_StalledCursorFailsJob(t *testing.T) {
 	require.Error(t, err)
 	job.mu.RLock()
 	defer job.mu.RUnlock()
-	var stalled *RebuildCursorStalledError
+	var stalled *api.RebuildCursorStalledError
 	require.ErrorAs(t, job.Error, &stalled)
 	assert.Equal(t, "same", stalled.Cursor)
 }
