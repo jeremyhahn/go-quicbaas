@@ -24,6 +24,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -102,9 +103,29 @@ func startObjectTransferServer(t *testing.T, srv pb.ObjectTransferServiceServer)
 			t.Errorf("serve: %v", err)
 		}
 	})
+	// A new client starts Idle and its first RPC moves it through
+	// Connecting; grpc-go installs the Ready picker before it publishes the
+	// Ready state, so the pool's health check can still read Connecting right
+	// after that RPC and report the one-slot pool exhausted. Settle the
+	// connection Ready before the pool hands it out.
+	awaitReady(t, conn)
 	pc := &pooledConn{conn: conn, createdAt: time.Now()}
 	pool := &Pool{cfg: &PoolConfig{MaxSize: 1}, connections: []*pooledConn{pc}}
 	return &Transport{cfg: &transport.Config{}, pool: pool}, pc
+}
+
+// awaitReady connects conn and blocks until it reports Ready, failing the
+// test if that takes longer than objectTransferWait.
+func awaitReady(t *testing.T, conn *grpc.ClientConn) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), objectTransferWait)
+	defer cancel()
+	conn.Connect()
+	for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+		if !conn.WaitForStateChange(ctx, state) {
+			t.Fatalf("connection stuck in %s", state)
+		}
+	}
 }
 
 // receiveWithin returns the next value on ch, failing the test when none
