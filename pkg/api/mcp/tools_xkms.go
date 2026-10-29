@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"strings"
 
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -1350,9 +1351,15 @@ func (r *ToolRegistry) handleXKMSCertExists(ctx context.Context, args map[string
 		return nil, &XKMSOperationError{Operation: "certExists", Cause: err}
 	}
 	if exists {
-		// A certificate the caller may not reach reads as absent.
+		// A certificate the caller may not reach reads as absent; any other
+		// lookup failure is returned, not reported as absence.
 		_, err := r.xkmsCertificateForCaller(ctx, keyID)
-		exists = err == nil
+		var refusal *service.CertificateTenantError
+		if errors.As(err, &refusal) {
+			exists = false
+		} else if err != nil {
+			return nil, &XKMSOperationError{Operation: "certExists", Cause: err}
+		}
 	}
 
 	return marshalResult(map[string]interface{}{
