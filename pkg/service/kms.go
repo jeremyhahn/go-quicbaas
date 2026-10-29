@@ -478,7 +478,8 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	if _, exists := k.keyNames.Load(keyID); exists {
 		return nil, NewError(errors.ErrAlreadyExists, "kms.GenerateKey", "key with name '"+req.Name+"' already exists")
 	}
-	if err := k.claimTenantKey(ctx, tenantID, req.Name, "GenerateKey"); err != nil {
+	claim, err := k.claimTenantKey(ctx, tenantID, req.Name, "GenerateKey")
+	if err != nil {
 		return nil, err
 	}
 
@@ -509,7 +510,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 		}
-		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.Name, "GenerateKey",
+		return nil, k.abandonTenantKeyClaim(ctx, claim, "GenerateKey",
 			WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key"))
 	}
 
@@ -634,7 +635,8 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 
 	// Use the provided name as the key ID, scoped by tenant if applicable
 	keyID := tenantScopedKeyID(tenantID, req.Name)
-	if err := k.claimTenantKey(ctx, tenantID, req.Name, "ImportKey"); err != nil {
+	claim, err := k.claimTenantKey(ctx, tenantID, req.Name, "ImportKey")
+	if err != nil {
 		return nil, err
 	}
 
@@ -647,7 +649,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
 		}
-		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.Name, "ImportKey",
+		return nil, k.abandonTenantKeyClaim(ctx, claim, "ImportKey",
 			WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key"))
 	}
 

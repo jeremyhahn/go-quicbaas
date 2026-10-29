@@ -355,14 +355,15 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 
 	// Import the unwrapped key into the KMS, after recording the tenant
 	// as its owner
-	if err := k.claimTenantKey(ctx, tenantID, req.KeyID, "UnwrapKey"); err != nil {
+	claim, err := k.claimTenantKey(ctx, tenantID, req.KeyID, "UnwrapKey")
+	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
 		return nil, err
 	}
 	_, err = k.kmsManager.ImportKey(ctx, scopedKeyID, unwrappedKeyMaterial, req.Algorithm)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
-		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.KeyID, "UnwrapKey",
+		return nil, k.abandonTenantKeyClaim(ctx, claim, "UnwrapKey",
 			WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key"))
 	}
 

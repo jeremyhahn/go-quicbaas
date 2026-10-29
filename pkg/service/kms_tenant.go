@@ -20,6 +20,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -177,6 +179,14 @@ func enforceTenantAccess(tenantID, keyID, operation string) error {
 // (written before rejectReservedKeyName existed), and it has no record.
 const kmsOwnerRecordPrefix = "kms/owner/"
 
+// kmsOwnerRecordSeparator splits an ownership record's value into the owning
+// tenant and the holder of the create request that wrote it. Tenant IDs
+// never contain it (see isValidTenantChar).
+const kmsOwnerRecordSeparator = ":"
+
+// kmsOwnerHolderBytes is the size of the random holder in an ownership record.
+const kmsOwnerHolderBytes = 16
+
 // KeyOwnershipError reports that a tenant asked for a key it does not own:
 // the key has no ownership record, or the record names another tenant.
 type KeyOwnershipError struct {
@@ -196,6 +206,17 @@ type KeyOwnershipStoreUnsetError struct{}
 
 func (e *KeyOwnershipStoreUnsetError) Error() string {
 	return "KMS key ownership store is not configured"
+}
+
+// KeyOwnershipStoreNotAtomicError reports that the ownership store cannot
+// reserve a key name atomically, so two creates of one name could both
+// believe they own it.
+type KeyOwnershipStoreNotAtomicError struct {
+	StoreType string
+}
+
+func (e *KeyOwnershipStoreNotAtomicError) Error() string {
+	return fmt.Sprintf("KMS key ownership store %s does not support atomic reservations", e.StoreType)
 }
 
 // kmsOwnerRecordKey returns the system-scope key of the ownership record
@@ -230,28 +251,88 @@ func (k *kmsServiceImpl) readKeyOwner(ctx context.Context, scopedID, operation s
 		}
 		return "", WrapError(err, errors.ErrStorage, "kms."+operation, "failed to read key ownership record")
 	}
-	return string(owner), nil
+	tenantID, _, _ := strings.Cut(string(owner), kmsOwnerRecordSeparator)
+	return tenantID, nil
 }
 
-// claimTenantKey writes the ownership record for a key a tenant is about to
-// create. It must run before the key is created; when creation fails the
-// caller calls releaseTenantKey. The system tenant claims nothing.
-func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, operation string) error {
+// tenantKeyClaim is one create request's reservation of a key name. Its
+// value names the tenant and a random holder unique to the request, so a
+// rollback deletes the record only while it is still this request's.
+type tenantKeyClaim struct {
+	store qrdbsdk.AtomicKVStore
+	key   string
+	value []byte
+}
+
+// newTenantKeyClaimHolder returns a random holder that tells one create
+// request's claim apart from any other's.
+func newTenantKeyClaimHolder() (string, error) {
+	buf := make([]byte, kmsOwnerHolderBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// claimTenantKey atomically reserves the ownership record for a key a
+// tenant is about to create. It must run before the key is created; when
+// creation fails the caller passes the claim to abandonTenantKeyClaim. A
+// name that already holds a key or a record is refused. The system tenant
+// claims nothing and gets a nil claim.
+func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, operation string) (*tenantKeyClaim, error) {
 	if qrdbsdk.IsSystemTenant(tenantID) {
-		return nil
+		return nil, nil
 	}
+	op := "kms." + operation
 	scopedID := tenantScopedKeyID(tenantID, name)
-	owner, err := k.readKeyOwner(ctx, scopedID, operation)
+
+	// A key that already exists under the scoped name is never claimed: it
+	// is either this tenant's own key or one the tenant does not own, such
+	// as a legacy system key in the tenant namespace.
+	if existing, err := k.kmsManager.GetKey(ctx, scopedID); err == nil && existing != nil {
+		owner, ownerErr := k.readKeyOwner(ctx, scopedID, operation)
+		if ownerErr != nil {
+			return nil, ownerErr
+		}
+		if owner == tenantID {
+			return nil, NewErrorf(errors.ErrAlreadyExists, op, "key %q already exists", name)
+		}
+		return nil, &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   op,
+			Err:  &KeyOwnershipError{TenantID: tenantID, Key: name},
+		}
+	}
+
+	store, err := k.ownerStore(operation)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if owner != "" {
-		return NewErrorf(errors.ErrAlreadyExists, "kms."+operation, "key %q already exists", name)
+	atomicStore, ok := store.(qrdbsdk.AtomicKVStore)
+	if !ok {
+		return nil, &errors.QBError{
+			Code: errors.ErrUnavailable,
+			Op:   op,
+			Err:  &KeyOwnershipStoreNotAtomicError{StoreType: fmt.Sprintf("%T", store)},
+		}
 	}
-	if err := k.kvStore.Put(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), []byte(tenantID)); err != nil {
-		return WrapError(err, errors.ErrStorage, "kms."+operation, "failed to write key ownership record")
+	holder, err := newTenantKeyClaimHolder()
+	if err != nil {
+		return nil, WrapError(err, errors.ErrInternal, op, "failed to generate key ownership claim holder")
 	}
-	return nil
+	claim := &tenantKeyClaim{
+		store: atomicStore,
+		key:   kmsOwnerRecordKey(scopedID),
+		value: []byte(tenantID + kmsOwnerRecordSeparator + holder),
+	}
+	stored, err := atomicStore.PutIfAbsent(tenantctx.WithSystem(ctx), claim.key, claim.value)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrStorage, op, "failed to write key ownership record")
+	}
+	if !stored {
+		return nil, NewErrorf(errors.ErrAlreadyExists, op, "key %q already exists", name)
+	}
+	return claim, nil
 }
 
 // releaseTenantKey deletes the ownership record of a tenant key, after the
@@ -271,16 +352,20 @@ func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, tenantID, name, o
 }
 
 // abandonTenantKeyClaim releases the claim of a key whose creation failed
-// and returns the creation error. A failed release is logged, because the
-// creation error is the one the caller needs. When the key exists anyway, a
-// concurrent create of the same name won, and the record is that key's.
-func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, tenantID, name, operation string, createErr error) error {
-	if _, err := k.kmsManager.GetKey(ctx, tenantScopedKeyID(tenantID, name)); err == nil {
+// and returns the creation error. The record is deleted only if it still
+// holds this request's value, so a rollback never erases another request's
+// record. A failed release is logged, because the creation error is the one
+// the caller needs.
+func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, claim *tenantKeyClaim, operation string, createErr error) error {
+	if claim == nil {
 		return createErr
 	}
-	if err := k.releaseTenantKey(ctx, tenantID, name, operation); err != nil && k.logger != nil {
-		k.logger.Error("failed to release key ownership record after a failed create",
-			"operation", operation, "key", name, "error", err)
+	deleted, err := claim.store.CompareAndDelete(tenantctx.WithSystem(ctx), claim.key, claim.value)
+	if err != nil || !deleted {
+		if k.logger != nil {
+			k.logger.Error("failed to release key ownership record after a failed create",
+				"operation", operation, "record", claim.key, "released", deleted, "error", err)
+		}
 	}
 	return createErr
 }

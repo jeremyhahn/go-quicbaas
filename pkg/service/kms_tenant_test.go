@@ -17,6 +17,7 @@ import (
 	"context"
 	stderrors "errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -377,7 +378,8 @@ func seedTenantKeyOwners(t *testing.T, svc *kmsServiceImpl, tenantID string, nam
 		svc.SetKVStore(qrdbsdk.NewMemoryKVStore())
 	}
 	for _, name := range names {
-		require.NoError(t, svc.claimTenantKey(context.Background(), tenantID, name, "seed"))
+		require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(context.Background()),
+			kmsOwnerRecordKey(tenantScopedKeyID(tenantID, name)), []byte(tenantID)))
 	}
 }
 
@@ -560,6 +562,134 @@ func TestKMSOwnership_StoreFaultsAreTyped(t *testing.T) {
 		require.True(t, stderrors.As(err, &unset), "want KeyOwnershipStoreUnsetError, got %v", err)
 		require.Zero(t, *reached)
 	})
+}
+
+// TestKMSOwnership_ImportOverUnownedKeyClaimsNothing pins Codex 8340: a
+// failed import of a name that already holds a legacy system key must not
+// leave the tenant a record that makes the platform key its own.
+func TestKMSOwnership_ImportOverUnownedKeyClaimsNothing(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	imported := 0
+	mgr.importKeyFn = func(context.Context, string, []byte, string) (interface{}, error) {
+		imported++
+		return nil, stderrors.New("malformed key material")
+	}
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.ImportKey(ctx, &ImportKeyRequest{
+		Name:          ownershipKey,
+		KeyMaterial:   []byte{0x01, 0x02, 0x03},
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	})
+	requireKeyOwnershipError(t, err, ownershipTenant, ownershipKey)
+	require.Zero(t, imported, "an existing key's name must be refused before the import runs")
+
+	owner, err := svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, ownershipKey), "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "a refused import must write no record")
+
+	_, err = svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+	requireKeyOwnershipError(t, err, ownershipTenant, ownershipKey)
+}
+
+func TestKMSOwnership_CreateOverOwnedKeyIsAlreadyExists(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	seedTenantKeyOwners(t, svc, ownershipTenant, ownershipKey)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.claimTenantKey(ctx, ownershipTenant, ownershipKey, "test")
+
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrAlreadyExists, qe.Code)
+}
+
+func TestKMSOwnership_ConcurrentClaimsHaveOneWinner(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	// The fixture's GetKey counts calls; a stateless one keeps the race
+	// detector on the claim itself.
+	mgr.getKeyFn = func(context.Context, string) (interface{}, error) {
+		return nil, kms.ErrKeyNotFound
+	}
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const contenders = 8
+
+	start := make(chan struct{})
+	claims := make([]*tenantKeyClaim, contenders)
+	errs := make([]error, contenders)
+	var wg sync.WaitGroup
+	for i := range contenders {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			claims[i], errs[i] = svc.claimTenantKey(ctx, ownershipTenant, "contested", "test")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for i := range contenders {
+		if errs[i] == nil {
+			winners++
+			continue
+		}
+		var qe *errors.QBError
+		require.True(t, stderrors.As(errs[i], &qe), "want a QBError, got %v", errs[i])
+		require.Equal(t, errors.ErrAlreadyExists, qe.Code, "a losing claim must be already-exists")
+		require.Nil(t, claims[i])
+	}
+	require.Equal(t, 1, winners, "exactly one claim on a name may win")
+}
+
+func TestKMSOwnership_RollbackLeavesAnotherRequestsRecord(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	scopedID := tenantScopedKeyID(ownershipTenant, "contested")
+
+	first, err := svc.claimTenantKey(ctx, ownershipTenant, "contested", "test")
+	require.NoError(t, err)
+	createErr := stderrors.New("backend down")
+	require.Equal(t, createErr, svc.abandonTenantKeyClaim(ctx, first, "test", createErr))
+
+	winner, err := svc.claimTenantKey(ctx, ownershipTenant, "contested", "test")
+	require.NoError(t, err)
+
+	// The first request's rollback runs again, late: its value is no longer
+	// the record's, so the winner's record must survive it.
+	require.Equal(t, createErr, svc.abandonTenantKeyClaim(ctx, first, "test", createErr))
+
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID))
+	require.NoError(t, err)
+	require.Equal(t, winner.value, stored, "a stale rollback must not erase the winner's record")
+	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner)
+}
+
+// ownershipPlainStore hides the atomic methods of the store it wraps.
+type ownershipPlainStore struct {
+	interfaces.KVStore
+}
+
+func TestKMSOwnership_NonAtomicStoreIsRefused(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	svc.SetKVStore(&ownershipPlainStore{KVStore: qrdbsdk.NewMemoryKVStore()})
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
+		Name:          "fresh",
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	})
+
+	var notAtomic *KeyOwnershipStoreNotAtomicError
+	require.True(t, stderrors.As(err, &notAtomic), "want KeyOwnershipStoreNotAtomicError, got %v", err)
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe))
+	require.Equal(t, errors.ErrUnavailable, qe.Code)
 }
 
 func TestKMSOwnership_ListShowsOnlyOwnedKeys(t *testing.T) {
