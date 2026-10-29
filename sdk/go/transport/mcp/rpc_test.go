@@ -193,7 +193,7 @@ func TestIsSessionTerminated(t *testing.T) {
 func TestNotifyRPC_ForwardsParams(t *testing.T) {
 	received := make(chan mcpgo.JSONRPCNotification, 1)
 	srv := mcpserver.NewMCPServer("TestServer", "1.0.0")
-	srv.AddNotificationHandler("notifications/cancelled", func(_ context.Context, n mcpgo.JSONRPCNotification) {
+	srv.AddNotificationHandler("notifications/quicbaas/forwarded", func(_ context.Context, n mcpgo.JSONRPCNotification) {
 		received <- n
 	})
 	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
@@ -208,7 +208,7 @@ func TestNotifyRPC_ForwardsParams(t *testing.T) {
 	if _, err := tr.CallRPC(ctx, "initialize", rpcInitializeParams(t)); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	if err := tr.NotifyRPC(ctx, "notifications/cancelled", json.RawMessage(`{"requestId":7,"reason":"user"}`)); err != nil {
+	if err := tr.NotifyRPC(ctx, "notifications/quicbaas/forwarded", json.RawMessage(`{"requestId":7,"reason":"user"}`)); err != nil {
 		t.Fatalf("NotifyRPC: %v", err)
 	}
 	select {
@@ -217,7 +217,7 @@ func TestNotifyRPC_ForwardsParams(t *testing.T) {
 			t.Errorf("params = %+v, want reason=user", n.Params.AdditionalFields)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("server never received notifications/cancelled")
+		t.Fatal("server never received notifications/quicbaas/forwarded")
 	}
 }
 
