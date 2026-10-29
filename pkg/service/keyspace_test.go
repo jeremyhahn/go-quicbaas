@@ -46,6 +46,16 @@ func TestKeyspaceResolver_BuildKey_SingleTenant(t *testing.T) {
 	assert.Equal(t, "User:12345", string(key))
 }
 
+func TestKeyspaceResolver_BuildKey_UnboundContextRefused(t *testing.T) {
+	resolver := NewKeyspaceResolver()
+
+	// A context bound to neither a tenant nor the system must not fall back
+	// to the unprefixed system layout.
+	_, err := resolver.BuildKey(context.Background(), "User", 456)
+	var missing *tenantctx.MissingTenantError
+	require.ErrorAs(t, err, &missing)
+}
+
 func TestKeyspaceResolver_BuildKey_InvalidEntityType(t *testing.T) {
 	resolver := NewKeyspaceResolver()
 	ctx := tenantctx.WithSystem(context.Background())

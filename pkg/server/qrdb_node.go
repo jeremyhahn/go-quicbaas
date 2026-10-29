@@ -636,38 +636,9 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithAuditLogger(s.qrdbAuditSink))
 
-	// Build the same multi-shard router and vector shard ID
-	// startGRPCServer's legacy gRPC transport applies to its own facade
-	// instance (buildModuleShardRouter, below) so the module's shared
-	// *grpcapi.Server facade — backing QuicBaaS, FIDO2Service, and, when
-	// enabled, Embedding — routes identically once the unified server's
-	// transports are enabled. s.config is already fully loaded at this point
-	// (config load precedes qrdb node construction), so unlike the QuicBaaS
-	// facade and REST/MCP servers below, the router needs no late-binding
-	// resolver.
-	shardRouter, vectorShardID, err := s.buildModuleShardRouter()
+	module, err := s.newQuicBaaSModule()
 	if err != nil {
 		return nil, err
-	}
-
-	// The REST and MCP resolvers late-bind the module's HTTP surface
-	// (pkg/apimodule module_http.go, rest builds) and real MCP tools
-	// (module_mcp.go, mcp builds) to servers built from the SAME
-	// configuration path the legacy listeners use (buildRESTServer /
-	// buildMCPServer). Both return nil while the facade composes; module
-	// routes answer 503 and module tools a tool error until then. On
-	// tag-less builds the accessors and the hooks are matching no-ops.
-	module, err := apimodule.NewModule(
-		func() service.QuicBaaS { return s.quicBaaSServiceRef() },
-		s.logger,
-		apimodule.WithNodeInfo(s.config.Raft.NodeID, s.config.Server.Host),
-		apimodule.WithRESTServer(func() *restapi.Server { return s.ModuleRESTServer() }),
-		apimodule.WithMCPServer(func() *mcpapi.Server { return s.ModuleMCPServer() }),
-		apimodule.WithShardRouting(shardRouter, vectorShardID),
-		apimodule.WithSPIFFETrustDomain(s.config.IAM.SPIFFETrustDomain),
-	)
-	if err != nil {
-		return nil, &QRDBNodeError{Stage: "new quicbaas module", Cause: err}
 	}
 	serverOpts = append(serverOpts, qrdbsdk.WithModule(module))
 
@@ -774,6 +745,47 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		serverOpts = append(serverOpts, qrdbsdk.WithServerTLS(s.unifiedServerTLSConfig()))
 	}
 	return serverOpts, nil
+}
+
+// newQuicBaaSModule builds the quicbaas ServiceModule the unified server
+// mounts: every quicbaas gRPC service the node's TCP port serves, plus the
+// module's HTTP and MCP surfaces.
+func (s *Server) newQuicBaaSModule() (*apimodule.Module, error) {
+	// Build the same multi-shard router and vector shard ID
+	// startGRPCServer's legacy gRPC transport applies to its own facade
+	// instance (buildModuleShardRouter, below) so the module's shared
+	// *grpcapi.Server facade — backing QuicBaaS, FIDO2Service, and, when
+	// enabled, Embedding — routes identically once the unified server's
+	// transports are enabled. s.config is already fully loaded at this point
+	// (config load precedes qrdb node construction), so unlike the QuicBaaS
+	// facade and REST/MCP servers below, the router needs no late-binding
+	// resolver.
+	shardRouter, vectorShardID, err := s.buildModuleShardRouter()
+	if err != nil {
+		return nil, err
+	}
+
+	// The REST and MCP resolvers late-bind the module's HTTP surface
+	// (pkg/apimodule module_http.go, rest builds) and real MCP tools
+	// (module_mcp.go, mcp builds) to servers built from the SAME
+	// configuration path the legacy listeners use (buildRESTServer /
+	// buildMCPServer). Both return nil while the facade composes; module
+	// routes answer 503 and module tools a tool error until then. On
+	// tag-less builds the accessors and the hooks are matching no-ops.
+	module, err := apimodule.NewModule(
+		func() service.QuicBaaS { return s.quicBaaSServiceRef() },
+		s.logger,
+		apimodule.WithNodeInfo(s.config.Raft.NodeID, s.config.Server.Host),
+		apimodule.WithRESTServer(func() *restapi.Server { return s.ModuleRESTServer() }),
+		apimodule.WithMCPServer(func() *mcpapi.Server { return s.ModuleMCPServer() }),
+		apimodule.WithShardRouting(shardRouter, vectorShardID),
+		apimodule.WithSPIFFETrustDomain(s.config.IAM.SPIFFETrustDomain),
+		apimodule.WithHostGRPCServers(s.hostGRPCServers),
+	)
+	if err != nil {
+		return nil, &QRDBNodeError{Stage: "new quicbaas module", Cause: err}
+	}
+	return module, nil
 }
 
 // quicbaasWebAuthnConfigToXKMS projects quicbaas's iam.webauthn config

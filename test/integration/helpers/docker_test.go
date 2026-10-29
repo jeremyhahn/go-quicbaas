@@ -83,8 +83,9 @@ func TestDockerManagerStopAndStart(t *testing.T) {
 	err := dm.StopContainer(ctx, "test-node1")
 	require.NoError(t, err, "should be able to stop test-node1")
 
-	// Give it a moment
-	time.Sleep(2 * time.Second)
+	// Wait until docker reports it stopped
+	err = dm.waitForContainerStopped(ctx, t, "test-node1", 30*time.Second)
+	require.NoError(t, err, "test-node1 should report stopped")
 
 	// Start it back
 	err = dm.StartContainer(ctx, "test-node1")

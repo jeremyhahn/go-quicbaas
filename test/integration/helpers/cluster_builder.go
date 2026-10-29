@@ -213,7 +213,13 @@ func connectToNode(ctx context.Context, endpoint string, timeout time.Duration, 
 		}
 
 		if attempt < retries {
-			time.Sleep(backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 			backoff *= 2
 			if backoff > 5*time.Second {
 				backoff = 5 * time.Second

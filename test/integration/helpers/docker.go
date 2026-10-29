@@ -18,6 +18,7 @@ package helpers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,7 +37,8 @@ import (
 type DockerManager struct {
 	projectName string
 	composeFile string
-	available   bool // whether Docker daemon is accessible
+	available   bool          // whether Docker daemon is accessible
+	run         commandRunner // runs docker inspect
 }
 
 // errDockerNotAvailable is returned when Docker daemon is not accessible
@@ -49,6 +51,7 @@ func NewDockerManager() *DockerManager {
 		projectName: "integration", // Docker Compose project name
 		composeFile: "docker-compose.integration.yml",
 		available:   IsDockerComposeAvailable(),
+		run:         execCommand,
 	}
 	return dm
 }
@@ -307,103 +310,130 @@ func (dm *DockerManager) waitForContainerHealthy(ctx context.Context, t *testing
 	}
 	t.Helper()
 	containerName := dm.getContainerName(nodeName)
-	deadline := time.Now().Add(timeout)
 
 	t.Logf("Waiting for container %s to become healthy (timeout: %v)...", containerName, timeout)
 
-	for time.Now().Before(deadline) {
-		// Check if container is running
-		cmd := exec.CommandContext(ctx,
-			"docker",
-			"inspect",
-			"-f", "{{.State.Status}}",
-			containerName,
-		)
-
-		var stdout bytes.Buffer
-		cmd.Stdout = &stdout
-
-		if err := cmd.Run(); err != nil {
-			// Container doesn't exist yet, wait
-			time.Sleep(2 * time.Second)
-			continue
+	return Poll(ctx, 2*time.Second, timeout, func(ctx context.Context) (bool, error) {
+		// An inspect error means the container does not exist yet.
+		status, err := inspectContainer(ctx, dm.run, containerName, "{{.State.Status}}")
+		if err != nil || status != "running" {
+			return false, err
 		}
 
-		status := strings.TrimSpace(stdout.String())
-		if status != "running" {
-			time.Sleep(2 * time.Second)
-			continue
+		health, err := inspectContainer(ctx, dm.run, containerName, "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}")
+		if err != nil {
+			return false, err
 		}
-
-		// Check health status
-		cmd = exec.CommandContext(ctx,
-			"docker",
-			"inspect",
-			"-f", "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
-			containerName,
-		)
-
-		stdout.Reset()
-		cmd.Stdout = &stdout
-
-		if err := cmd.Run(); err != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		health := strings.TrimSpace(stdout.String())
 		t.Logf("Container %s health: %s", containerName, health)
 
-		if health == "healthy" {
+		switch health {
+		case "healthy":
 			t.Logf("Container %s is healthy", containerName)
-			return nil
-		}
-
-		// If container has no health check, just check if it's running
-		if health == "none" && status == "running" {
+			return true, nil
+		case "none":
+			// Running is the only state a container without a health check
+			// exposes, so it is the condition.
 			t.Logf("Container %s is running (no health check defined)", containerName)
-			// Give it a few seconds to start up
-			time.Sleep(5 * time.Second)
-			return nil
+			return true, nil
+		default:
+			return false, nil
 		}
+	})
+}
 
-		time.Sleep(2 * time.Second)
+// inspectContainer returns the trimmed `docker inspect -f format` output for
+// containerName.
+func inspectContainer(ctx context.Context, run commandRunner, containerName, format string) (string, error) {
+	stdout, stderr, err := run(ctx, "docker", "inspect", "-f", format, containerName)
+	if err != nil {
+		// A cancelled or expired context killed the command: that says
+		// nothing about the container, so it is never read as "not found".
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", &ContainerInspectError{Container: containerName, Stderr: string(stderr), Cause: errors.Join(ctxErr, err)}
+		}
+		if reportsNoSuchContainer(stderr) {
+			return "", &ContainerNotFoundError{Container: containerName}
+		}
+		return "", &ContainerInspectError{Container: containerName, Stderr: string(stderr), Cause: err}
 	}
+	return strings.TrimSpace(string(stdout)), nil
+}
 
-	return fmt.Errorf("container %s did not become healthy within %v", containerName, timeout)
+// reportsNoSuchContainer reports whether docker inspect's stderr says the
+// container does not exist. Without --type, docker names it an object.
+func reportsNoSuchContainer(stderr []byte) bool {
+	msg := strings.ToLower(string(stderr))
+	return strings.Contains(msg, "no such container") || strings.Contains(msg, "no such object")
+}
+
+// commandRunner runs name with args under ctx and returns its stdout and
+// stderr. DockerManager runs docker through one so tests can stand in for it.
+type commandRunner func(ctx context.Context, name string, args ...string) (stdout, stderr []byte, err error)
+
+// execCommand is the commandRunner that runs a real process.
+func execCommand(ctx context.Context, name string, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
+// ContainerNotFoundError reports that docker inspect positively said the
+// container does not exist.
+type ContainerNotFoundError struct {
+	Container string
+}
+
+func (e *ContainerNotFoundError) Error() string {
+	return "container " + e.Container + " does not exist"
+}
+
+// ContainerInspectError reports a docker inspect that failed for any reason
+// other than a missing container, including cancellation by its context.
+type ContainerInspectError struct {
+	Container string
+	Stderr    string
+	Cause     error
+}
+
+func (e *ContainerInspectError) Error() string {
+	msg := "inspect container " + e.Container
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	if stderr := strings.TrimSpace(e.Stderr); stderr != "" {
+		msg += " (stderr: " + stderr + ")"
+	}
+	return msg
+}
+
+func (e *ContainerInspectError) Unwrap() error { return e.Cause }
+
+// containerStoppedCondition holds once the container has exited or stopped,
+// or inspect positively reports it does not exist. Any other inspect failure
+// is returned, so Poll reports it rather than taking it as a stop.
+func containerStoppedCondition(run commandRunner, containerName string) PollCondition {
+	return func(ctx context.Context) (bool, error) {
+		status, err := inspectContainer(ctx, run, containerName, "{{.State.Status}}")
+		var notFound *ContainerNotFoundError
+		if errors.As(err, &notFound) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return status == "exited" || status == "stopped", nil
+	}
 }
 
 // waitForContainerStopped waits for a container to stop.
 func (dm *DockerManager) waitForContainerStopped(ctx context.Context, t *testing.T, nodeName string, timeout time.Duration) error {
 	t.Helper()
 	containerName := dm.getContainerName(nodeName)
-	deadline := time.Now().Add(timeout)
 
-	for time.Now().Before(deadline) {
-		cmd := exec.CommandContext(ctx,
-			"docker",
-			"inspect",
-			"-f", "{{.State.Status}}",
-			containerName,
-		)
-
-		var stdout bytes.Buffer
-		cmd.Stdout = &stdout
-
-		if err := cmd.Run(); err != nil {
-			// Container doesn't exist, consider it stopped
-			return nil
-		}
-
-		status := strings.TrimSpace(stdout.String())
-		if status == "exited" || status == "stopped" {
-			return nil
-		}
-
-		time.Sleep(1 * time.Second)
-	}
-
-	return fmt.Errorf("container %s did not stop within %v", containerName, timeout)
+	return Poll(ctx, time.Second, timeout, containerStoppedCondition(dm.run, containerName))
 }
 
 // getContainerName returns the Docker container name for a service.

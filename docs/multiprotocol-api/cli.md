@@ -1092,10 +1092,8 @@ Alias: `quicbaas dynsec`. All eight verbs route through
 | Cluster | `test/integration/cluster/` |
 | DAO | `test/integration/dao/` |
 | DEK | `test/integration/dek/` |
-| Embedding | `test/integration/embedding/` |
 | IAM | `test/integration/iam/` |
 | KMS | `test/integration/kms/` |
-| KVStore | `test/integration/kvstore/` |
 | MCP | `test/integration/mcp/` |
 | Object Store | `test/integration/objectstore/` |
 | Parameter Store | `test/integration/parameter_store/` |

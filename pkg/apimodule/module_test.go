@@ -34,6 +34,7 @@ import (
 	xkmstypes "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
+	iampb "github.com/jeremyhahn/go-quicbaas/api/proto/iam"
 	grpcapi "github.com/jeremyhahn/go-quicbaas/pkg/api/grpc"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -189,9 +190,14 @@ func TestModule_RegisterGRPC_RegistersFullGRPCSurface(t *testing.T) {
 		&pb.OllamaService_ServiceDesc,
 		&pb.SecretsManagement_ServiceDesc,
 		&pb.PromptService_ServiceDesc,
+		&pb.AgentCatalogService_ServiceDesc,
+		&pb.SDLCService_ServiceDesc,
+		&pb.RegistryService_ServiceDesc,
+		&iampb.FederationService_ServiceDesc,
+		&iampb.SessionService_ServiceDesc,
 	}
 	info := server.GetServiceInfo()
-	require.Len(t, info, len(generated), "exactly the seventeen quicbaas-native and broker services must be registered")
+	require.Len(t, info, len(generated), "exactly the twenty-two quicbaas-native and broker services must be registered")
 
 	for _, desc := range generated {
 		svcInfo, ok := info[desc.ServiceName]
@@ -484,12 +490,14 @@ func TestModule_LateBinding_ConcurrentFirstUse(t *testing.T) {
 // intentionally absent here: that service belongs to qrdb's own module, not
 // this one.
 var wantPublicGRPCMethods = map[string]bool{
-	"/quicbaas.v1.QuicBaaS/Health":                         true,
-	"/quicbaas.v1.QuicBaaS/Login":                          true,
-	"/quicbaas.login.v1.Login/BeginLogin":                  true,
-	"/quicbaas.login.v1.Login/FinishLogin":                 true,
-	"/quicbaas.fido2.v1.FIDO2Service/BeginAuthentication":  true,
-	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication": true,
+	"/quicbaas.v1.QuicBaaS/Health":                               true,
+	"/quicbaas.v1.QuicBaaS/Login":                                true,
+	"/quicbaas.login.v1.Login/BeginLogin":                        true,
+	"/quicbaas.login.v1.Login/FinishLogin":                       true,
+	"/quicbaas.fido2.v1.FIDO2Service/BeginAuthentication":        true,
+	"/quicbaas.fido2.v1.FIDO2Service/FinishAuthentication":       true,
+	"/quicbaas.iam.v1.FederationService/BeginFederatedLogin":     true,
+	"/quicbaas.iam.v1.FederationService/HandleFederatedCallback": true,
 }
 
 // TestModule_PublicGRPCMethods_ExactSet proves PublicGRPCMethods returns

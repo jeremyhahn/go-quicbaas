@@ -88,7 +88,10 @@ func createTestConfig(t *testing.T) *config.Config {
 	httpPort, grpcPort, raftPort := ports[0], ports[1], ports[2]
 
 	cfg := config.Default()
-	cfg.Storage.Backend = config.StorageBackendPebble
+	// Unit tests run in memory (#1770): the embedded qrdb node opens its
+	// database on the memory engine. TestWithTempServer_StartOpensNoPebbleDatabase
+	// guards this and lists the stores that still have no in-memory option.
+	cfg.Storage.Backend = config.StorageBackendMemory
 	cfg.Storage.DataDir = filepath.Join(tempDir, "data")
 	cfg.Storage.WALDir = filepath.Join(tempDir, "wal")
 	// Pin engine storage paths to the temp dir. config.Default() seeds these with
