@@ -249,22 +249,51 @@ func (k *kmsServiceImpl) ownerStore(operation string) (interfaces.KVStore, error
 	return k.kvStore, nil
 }
 
+// atomicOwnerStore returns the ownership store as an AtomicKVStore. Claims
+// and releases are compare-and-swap operations, so a store that cannot do
+// them atomically is refused rather than raced.
+func (k *kmsServiceImpl) atomicOwnerStore(operation string) (qrdbsdk.AtomicKVStore, error) {
+	store, err := k.ownerStore(operation)
+	if err != nil {
+		return nil, err
+	}
+	atomicStore, ok := store.(qrdbsdk.AtomicKVStore)
+	if !ok {
+		return nil, &errors.QBError{
+			Code: errors.ErrUnavailable,
+			Op:   "kms." + operation,
+			Err:  &KeyOwnershipStoreNotAtomicError{StoreType: fmt.Sprintf("%T", store)},
+		}
+	}
+	return atomicStore, nil
+}
+
 // readKeyOwner returns the tenant recorded as the owner of scopedID, or ""
 // when there is no record.
 func (k *kmsServiceImpl) readKeyOwner(ctx context.Context, scopedID, operation string) (string, error) {
-	store, err := k.ownerStore(operation)
+	record, err := k.readKeyOwnerRecord(ctx, scopedID, operation)
 	if err != nil {
 		return "", err
 	}
-	owner, err := store.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID))
+	tenantID, _, _ := strings.Cut(string(record), kmsOwnerRecordSeparator)
+	return tenantID, nil
+}
+
+// readKeyOwnerRecord returns the raw ownership record of a scoped key ID, or
+// nil when the key has none.
+func (k *kmsServiceImpl) readKeyOwnerRecord(ctx context.Context, scopedID, operation string) ([]byte, error) {
+	store, err := k.ownerStore(operation)
+	if err != nil {
+		return nil, err
+	}
+	record, err := store.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID))
 	if err != nil {
 		if errors.IsNotFound(err) {
-			return "", nil
+			return nil, nil
 		}
-		return "", WrapError(err, errors.ErrStorage, "kms."+operation, "failed to read key ownership record")
+		return nil, WrapError(err, errors.ErrStorage, "kms."+operation, "failed to read key ownership record")
 	}
-	tenantID, _, _ := strings.Cut(string(owner), kmsOwnerRecordSeparator)
-	return tenantID, nil
+	return record, nil
 }
 
 // tenantKeyClaim is one create request's reservation of a key name. Its
@@ -316,17 +345,9 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 		}
 	}
 
-	store, err := k.ownerStore(operation)
+	atomicStore, err := k.atomicOwnerStore(operation)
 	if err != nil {
 		return nil, err
-	}
-	atomicStore, ok := store.(qrdbsdk.AtomicKVStore)
-	if !ok {
-		return nil, &errors.QBError{
-			Code: errors.ErrUnavailable,
-			Op:   op,
-			Err:  &KeyOwnershipStoreNotAtomicError{StoreType: fmt.Sprintf("%T", store)},
-		}
 	}
 	holder, err := newTenantKeyClaimHolder()
 	if err != nil {
@@ -347,20 +368,52 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 	return claim, nil
 }
 
-// releaseTenantKey deletes the ownership record of a tenant key, after the
-// key is deleted or when its creation failed. The system tenant has none.
-func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, tenantID, name, operation string) error {
-	if qrdbsdk.IsSystemTenant(tenantID) {
+// releaseTenantKey deletes the ownership record a delete resolved, only if
+// the store still holds that exact record. A nil record (a system-tenant key)
+// releases nothing.
+func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, scopedID string, record []byte, operation string) error {
+	if record == nil {
 		return nil
 	}
-	store, err := k.ownerStore(operation)
+	atomicStore, err := k.atomicOwnerStore(operation)
 	if err != nil {
 		return err
 	}
-	if err := store.Delete(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(tenantID, name))); err != nil && !errors.IsNotFound(err) {
+	// A lost compare is not an error: the record now belongs to a newer
+	// key of the same name, created after this delete resolved its own.
+	if _, err := atomicStore.CompareAndDelete(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), record); err != nil {
 		return WrapError(err, errors.ErrStorage, "kms."+operation, "failed to delete key ownership record")
 	}
 	return nil
+}
+
+// resolveDeletedKey resolves a key for DeleteKey and returns the ownership
+// record it read alongside the scoped ID. The record names the key's
+// generation, so the delete releases exactly that record and never one a
+// later create wrote for a new key of the same name. A system-tenant caller
+// deleting a key in a tenant namespace gets that tenant's record too, so the
+// tenant can create the name again; the system tenant's own keys have none.
+func (k *kmsServiceImpl) resolveDeletedKey(ctx context.Context, tenantID, name, operation string) (string, []byte, error) {
+	scopedID := tenantScopedKeyID(tenantID, name)
+	if qrdbsdk.IsSystemTenant(tenantID) && !strings.HasPrefix(scopedID, kmsTenantKeyPrefix) {
+		return scopedID, nil, nil
+	}
+	record, err := k.readKeyOwnerRecord(ctx, scopedID, operation)
+	if err != nil {
+		return "", nil, err
+	}
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return scopedID, record, nil
+	}
+	owner, _, _ := strings.Cut(string(record), kmsOwnerRecordSeparator)
+	if record == nil || owner != tenantID {
+		return "", nil, &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   "kms." + operation,
+			Err:  &KeyOwnershipError{TenantID: tenantID, Key: name},
+		}
+	}
+	return scopedID, record, nil
 }
 
 // abandonTenantKeyClaim releases the claim of a key whose creation failed

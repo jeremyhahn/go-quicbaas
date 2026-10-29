@@ -669,6 +669,71 @@ func TestKMSOwnership_RollbackLeavesAnotherRequestsRecord(t *testing.T) {
 	require.Equal(t, ownershipTenant, owner)
 }
 
+func TestKMSOwnership_StaleDeleteLeavesRecreatedKeysRecord(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "recycled"
+	req := &GenerateKeyRequest{
+		Name:          name,
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	}
+	_, err := svc.GenerateKey(ctx, req)
+	require.NoError(t, err)
+
+	// Delete A resolves the first generation's record, then stalls.
+	scopedID, staleRecord, err := svc.resolveDeletedKey(ctx, ownershipTenant, name, "DeleteKey")
+	require.NoError(t, err)
+
+	// Delete B runs to completion, and the name is created again.
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	require.NoError(t, err)
+	_, err = svc.GenerateKey(ctx, req)
+	require.NoError(t, err)
+
+	// Delete A's release runs late: the record is the new generation's.
+	require.NoError(t, svc.releaseTenantKey(ctx, scopedID, staleRecord, "DeleteKey"))
+
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID))
+	require.NoError(t, err)
+	require.NotEqual(t, staleRecord, stored, "a stale delete must not erase the recreated key's record")
+	_, err = svc.GetKey(ctx, &GetKeyRequest{KeyID: name})
+	require.NoError(t, err, "the tenant must still reach its recreated key")
+}
+
+func TestKMSOwnership_SystemDeleteOfTenantKeyReleasesRecord(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	sysCtx := tenantctx.WithSystem(context.Background())
+	const name = "reclaimed"
+	req := &GenerateKeyRequest{
+		Name:          name,
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	}
+	_, err := svc.GenerateKey(ctx, req)
+	require.NoError(t, err)
+
+	_, err = svc.DeleteKey(sysCtx, &DeleteKeyRequest{KeyID: tenantScopedKeyID(ownershipTenant, name)})
+	require.NoError(t, err)
+	owner, err := svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, name), "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "a system delete must release the tenant's record")
+
+	_, err = svc.GenerateKey(ctx, req)
+	require.NoError(t, err, "the tenant must be able to create the name again")
+}
+
+func TestKMSOwnership_SystemDeleteOfSystemKeyNeedsNoStore(t *testing.T) {
+	mgr := newMockKMSManager()
+	mgr.keys["platform"] = &mockKeyData{keyID: "platform", algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled"}
+	svc := newKMSService(mgr, nil)
+
+	_, err := svc.DeleteKey(tenantctx.WithSystem(context.Background()), &DeleteKeyRequest{KeyID: "platform"})
+
+	require.NoError(t, err, "a system key has no ownership record to release")
+}
+
 // ownershipPlainStore hides the atomic methods of the store it wraps.
 type ownershipPlainStore struct {
 	interfaces.KVStore

@@ -1336,7 +1336,7 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	}
 
 	// Scope the key ID with tenant prefix for storage lookup
-	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	scopedKeyID, ownerRecord, err := k.resolveDeletedKey(ctx, tenantID, req.KeyID, "DeleteKey")
 	if err != nil {
 		return nil, err
 	}
@@ -1354,7 +1354,7 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
 			// The key is gone, so its ownership record must go too; a
 			// retried delete after a failed release lands here.
-			if releaseErr := k.releaseTenantKey(ctx, tenantID, req.KeyID, "DeleteKey"); releaseErr != nil {
+			if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); releaseErr != nil {
 				return nil, releaseErr
 			}
 			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
@@ -1365,7 +1365,7 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	// Release the name in the caller's tenant only; another tenant's key of
 	// the same name keeps its entry.
 	k.keyNames.Delete(scopedKeyID)
-	if err := k.releaseTenantKey(ctx, tenantID, req.KeyID, "DeleteKey"); err != nil {
+	if err := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); err != nil {
 		return nil, err
 	}
 
