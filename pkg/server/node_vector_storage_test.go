@@ -16,11 +16,109 @@
 package server
 
 import (
+	"context"
+	"errors"
+	"strconv"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
+
+// pagedVectorTransport is a qrdb transport whose VectorClient serves a
+// namespace of total vectors through ListVectors with the qrdb wire's cursor
+// paging and include_vectors semantics. Every other VectorClient method is
+// the nil embedded interface and panics if called.
+type pagedVectorTransport struct {
+	qrdbtransport.VectorClient
+	total   int
+	listErr error
+}
+
+func (p *pagedVectorTransport) Connect(context.Context) error { return nil }
+func (p *pagedVectorTransport) Close() error                  { return nil }
+func (p *pagedVectorTransport) Healthy(context.Context) bool  { return true }
+func (p *pagedVectorTransport) Request(context.Context, string, any, any) error {
+	return nil
+}
+
+func (p *pagedVectorTransport) ListVectors(_ context.Context, req *qrdbtransport.ListVectorsRequest) (*qrdbtransport.ListVectorsResponse, error) {
+	if p.listErr != nil {
+		return nil, p.listErr
+	}
+	start := 0
+	if req.Cursor != "" {
+		n, err := strconv.Atoi(req.Cursor)
+		if err != nil {
+			return nil, err
+		}
+		start = n
+	}
+	end := min(start+req.Limit, p.total)
+	resp := &qrdbtransport.ListVectorsResponse{TotalCount: uint64(p.total)}
+	for i := start; i < end; i++ {
+		vec := &qrdbtransport.VectorData{ID: uint64(i + 1)}
+		if req.IncludeVectors {
+			vec.Vector = []float32{float32(i), 1, 2}
+		}
+		resp.Vectors = append(resp.Vectors, vec)
+	}
+	if end < p.total {
+		resp.NextCursor = strconv.Itoa(end)
+	}
+	return resp, nil
+}
+
+func newPagedNodeVectorStorage(t *testing.T, fake *pagedVectorTransport) interfaces.VectorStorage {
+	t.Helper()
+	client, err := qrdbsdk.NewClient(fake)
+	require.NoError(t, err)
+	return newNodeVectorStorage(client)
+}
+
+// TestNodeVectorStorage_ScanNamespacePage_WalksEveryVector verifies the
+// adapter forwards the cursor and include_vectors to ListVectors and returns
+// the next cursor, so a walk visits every vector once with its embedding.
+func TestNodeVectorStorage_ScanNamespacePage_WalksEveryVector(t *testing.T) {
+	const total = 2500
+	storage := newPagedNodeVectorStorage(t, &pagedVectorTransport{total: total})
+
+	seen := make(map[uint64]bool, total)
+	opts := &interfaces.VectorScanOptions{Limit: 1000, IncludeVectors: true}
+	for {
+		page, err := storage.ScanNamespacePage(context.Background(), "ns", opts)
+		require.NoError(t, err)
+		for _, vec := range page.Vectors {
+			require.NotEmpty(t, vec.Embedding, "vector %d has no embedding", vec.ID)
+			require.False(t, seen[vec.ID], "vector %d returned twice", vec.ID)
+			seen[vec.ID] = true
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		opts.Cursor = page.NextCursor
+	}
+	assert.Len(t, seen, total)
+}
+
+// TestNodeVectorStorage_ScanNamespacePage_ListError verifies a ListVectors
+// error comes back from the scan.
+func TestNodeVectorStorage_ScanNamespacePage_ListError(t *testing.T) {
+	listErr := errors.New("list vectors failed")
+	storage := newPagedNodeVectorStorage(t, &pagedVectorTransport{listErr: listErr})
+
+	page, err := storage.ScanNamespacePage(context.Background(), "ns", &interfaces.VectorScanOptions{Limit: 10})
+	require.ErrorIs(t, err, listErr)
+	assert.Nil(t, page)
+
+	vecs, err := storage.ScanNamespace(context.Background(), "ns", nil)
+	require.ErrorIs(t, err, listErr)
+	assert.Nil(t, vecs)
+}
 
 // TestNewNodeVectorStorage_NilClient verifies that newNodeVectorStorage
 // accepts a nil client without panicking and returns a non-nil storage.
