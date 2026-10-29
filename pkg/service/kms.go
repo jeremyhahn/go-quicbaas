@@ -210,6 +210,7 @@ type kmsServiceImpl struct {
 	versionStatus     sync.Map           // local cache: "keyID:version" -> *versionStatusInfo
 	kvStore           interfaces.KVStore // persistent store for version status and key policies (Raft-replicated)
 	authzEnabled      bool               // when true, per-key authorization is enforced on crypto ops
+	clock             func() time.Time   // stamps key ownership claims; nil means time.Now
 }
 
 // versionStatusInfo stores status information for a specific key version.

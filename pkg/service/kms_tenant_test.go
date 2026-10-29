@@ -16,9 +16,11 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -755,6 +757,119 @@ func TestKMSOwnership_NonAtomicStoreIsRefused(t *testing.T) {
 	var qe *errors.QBError
 	require.True(t, stderrors.As(err, &qe))
 	require.Equal(t, errors.ErrUnavailable, qe.Code)
+}
+
+// ownershipCancelRefusingStore refuses writes on a cancelled context, as a
+// qrdb node refuses a proposal whose request was cancelled.
+type ownershipCancelRefusingStore struct {
+	qrdbsdk.AtomicKVStore
+}
+
+func (s *ownershipCancelRefusingStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.AtomicKVStore.PutIfAbsent(ctx, key, value)
+}
+
+func (s *ownershipCancelRefusingStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return s.AtomicKVStore.CompareAndDelete(ctx, key, expected)
+}
+
+// ownershipGenerateRequest is a create of name that the fixtures accept.
+func ownershipGenerateRequest(name string) *GenerateKeyRequest {
+	return &GenerateKeyRequest{
+		Name:          name,
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	}
+}
+
+func TestKMSOwnership_CancelledCreateReleasesClaim(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	svc.SetKVStore(&ownershipCancelRefusingStore{AtomicKVStore: qrdbsdk.NewMemoryKVStore()})
+	ctx, cancel := context.WithCancel(tenantctx.WithTenant(context.Background(), ownershipTenant))
+	defer cancel()
+	mgr.generateKeyFn = func(context.Context, *xkmssdk.KeyAttributes) (interface{}, error) {
+		// The request is cancelled after the reservation, mid-create.
+		cancel()
+		return nil, context.Canceled
+	}
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("cancelled"))
+	require.Error(t, err)
+	owner, err := svc.readKeyOwner(context.Background(), tenantScopedKeyID(ownershipTenant, "cancelled"), "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "a cancelled create must still release its claim")
+
+	mgr.generateKeyFn = nil
+	_, err = svc.GenerateKey(tenantctx.WithTenant(context.Background(), ownershipTenant), ownershipGenerateRequest("cancelled"))
+	require.NoError(t, err, "a retry must be able to create the name")
+}
+
+// seedOwnershipClaim writes a claim record for name, stamped at claimedAt,
+// with no key behind it, as a failed cleanup leaves one.
+func seedOwnershipClaim(t *testing.T, svc *kmsServiceImpl, name string, claimedAt time.Time) []byte {
+	t.Helper()
+	record := []byte(ownershipTenant + kmsOwnerRecordSeparator + "deadbeef" + kmsOwnerRecordSeparator +
+		strconv.FormatInt(claimedAt.UTC().UnixNano(), 10))
+	require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(context.Background()),
+		kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, name)), record))
+	return record
+}
+
+func TestKMSOwnership_StaleClaimIsReclaimed(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	svc.clock = func() time.Time { return now }
+	stale := seedOwnershipClaim(t, svc, "orphan", now.Add(-kmsClaimStaleAfter-time.Second))
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("orphan"))
+
+	require.NoError(t, err, "a stale claim with no key must be reclaimed")
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, "orphan")))
+	require.NoError(t, err)
+	require.NotEqual(t, stale, stored, "the new create must own the record")
+}
+
+func TestKMSOwnership_FreshClaimIsNotReclaimed(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	svc.clock = func() time.Time { return now }
+	fresh := seedOwnershipClaim(t, svc, "inflight", now.Add(-time.Minute))
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("inflight"))
+
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrAlreadyExists, qe.Code)
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, "inflight")))
+	require.NoError(t, err)
+	require.Equal(t, fresh, stored, "a create in flight must keep its claim")
+}
+
+func TestKMSOwnership_MalformedClaimIsRefused(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	scopedID := tenantScopedKeyID(ownershipTenant, "garbled")
+	require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(context.Background()),
+		kmsOwnerRecordKey(scopedID), []byte(ownershipTenant+kmsOwnerRecordSeparator+"deadbeef")))
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("garbled"))
+
+	var malformed *KeyOwnershipRecordMalformedError
+	require.True(t, stderrors.As(err, &malformed), "want KeyOwnershipRecordMalformedError, got %v", err)
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe))
+	require.Equal(t, errors.ErrStorage, qe.Code)
+	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner, "a malformed record must never be reclaimed")
 }
 
 func TestKMSOwnership_ListShowsOnlyOwnedKeys(t *testing.T) {

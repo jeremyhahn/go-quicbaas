@@ -23,7 +23,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -192,12 +194,33 @@ func enforceTenantAccess(tenantID, keyID, operation string) error {
 const kmsOwnerRecordPrefix = "kms/owner/"
 
 // kmsOwnerRecordSeparator splits an ownership record's value into the owning
-// tenant and the holder of the create request that wrote it. Tenant IDs
+// tenant, the holder of the create request that wrote it, and the claim time
+// in UTC unix nanoseconds. Tenant IDs
 // never contain it (see isValidTenantChar).
 const kmsOwnerRecordSeparator = ":"
 
 // kmsOwnerHolderBytes is the size of the random holder in an ownership record.
 const kmsOwnerHolderBytes = 16
+
+// kmsClaimCleanupTimeout bounds the release of a claim after a failed
+// create. The release runs detached from the request, so a cancelled request
+// still frees the name.
+const kmsClaimCleanupTimeout = 5 * time.Second
+
+// kmsClaimStaleAfter is the age past which a claim with no key behind it is
+// treated as left by a failed cleanup and reclaimed. It is far longer than
+// any key creation, so a live create never loses its claim.
+const kmsClaimStaleAfter = 10 * time.Minute
+
+// KeyOwnershipRecordMalformedError reports an ownership record that does not
+// parse as tenant, holder and claim time. It is never reclaimed.
+type KeyOwnershipRecordMalformedError struct {
+	Record string
+}
+
+func (e *KeyOwnershipRecordMalformedError) Error() string {
+	return fmt.Sprintf("service: malformed key ownership record %q", e.Record)
+}
 
 // KeyOwnershipError reports that a tenant asked for a key it does not own:
 // the key has no ownership record, or the record names another tenant.
@@ -356,16 +379,85 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 	claim := &tenantKeyClaim{
 		store: atomicStore,
 		key:   kmsOwnerRecordKey(scopedID),
-		value: []byte(tenantID + kmsOwnerRecordSeparator + holder),
+		value: []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator +
+			strconv.FormatInt(k.now().UTC().UnixNano(), 10)),
 	}
 	stored, err := atomicStore.PutIfAbsent(tenantctx.WithSystem(ctx), claim.key, claim.value)
 	if err != nil {
 		return nil, WrapError(err, errors.ErrStorage, op, "failed to write key ownership record")
 	}
-	if !stored {
-		return nil, NewErrorf(errors.ErrAlreadyExists, op, "key %q already exists", name)
+	if stored {
+		return claim, nil
 	}
-	return claim, nil
+
+	// The name is reserved but has no key behind it (checked above). A
+	// claim whose failed create could not release it is reclaimed once it
+	// is older than any create could take; a fresh one is a create in flight.
+	reclaimed, err := k.reclaimStaleTenantKeyClaim(ctx, atomicStore, claim.key, op)
+	if err != nil {
+		return nil, err
+	}
+	if reclaimed {
+		stored, err = atomicStore.PutIfAbsent(tenantctx.WithSystem(ctx), claim.key, claim.value)
+		if err != nil {
+			return nil, WrapError(err, errors.ErrStorage, op, "failed to write key ownership record")
+		}
+		if stored {
+			return claim, nil
+		}
+	}
+	return nil, NewErrorf(errors.ErrAlreadyExists, op, "key %q already exists", name)
+}
+
+// reclaimStaleTenantKeyClaim removes the ownership record at recordKey when
+// its claim time is older than kmsClaimStaleAfter, comparing on exactly the
+// value it read. It reports whether the record was removed. A malformed
+// record is never removed.
+func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store qrdbsdk.AtomicKVStore, recordKey, op string) (bool, error) {
+	record, err := store.Get(tenantctx.WithSystem(ctx), recordKey)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, WrapError(err, errors.ErrStorage, op, "failed to read key ownership record")
+	}
+	claimedAt, err := tenantKeyClaimTime(record)
+	if err != nil {
+		return false, WrapError(err, errors.ErrStorage, op, "failed to parse key ownership record")
+	}
+	if k.now().Sub(claimedAt) < kmsClaimStaleAfter {
+		return false, nil
+	}
+	deleted, err := store.CompareAndDelete(tenantctx.WithSystem(ctx), recordKey, record)
+	if err != nil {
+		return false, WrapError(err, errors.ErrStorage, op, "failed to delete stale key ownership record")
+	}
+	if deleted && k.logger != nil {
+		k.logger.Warn("reclaimed a stale key ownership record with no key", "operation", op, "record", recordKey)
+	}
+	return deleted, nil
+}
+
+// tenantKeyClaimTime parses the claim time of an ownership record of the form
+// tenant, holder and UTC unix nanoseconds, joined with kmsOwnerRecordSeparator.
+func tenantKeyClaimTime(record []byte) (time.Time, error) {
+	fields := strings.Split(string(record), kmsOwnerRecordSeparator)
+	if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
+		return time.Time{}, &KeyOwnershipRecordMalformedError{Record: string(record)}
+	}
+	nanos, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return time.Time{}, &KeyOwnershipRecordMalformedError{Record: string(record)}
+	}
+	return time.Unix(0, nanos).UTC(), nil
+}
+
+// now returns the service clock, which tests replace to age claims.
+func (k *kmsServiceImpl) now() time.Time {
+	if k.clock != nil {
+		return k.clock()
+	}
+	return time.Now()
 }
 
 // releaseTenantKey deletes the ownership record a delete resolved, only if
@@ -425,7 +517,12 @@ func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, claim *tenan
 	if claim == nil {
 		return createErr
 	}
-	deleted, err := claim.store.CompareAndDelete(tenantctx.WithSystem(ctx), claim.key, claim.value)
+	// The create may have failed because the request was cancelled, and a
+	// cancelled context would refuse the release too, leaving the name
+	// reserved with no key. The rollback outlives the request, bounded.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
+	defer cancel()
+	deleted, err := claim.store.CompareAndDelete(tenantctx.WithSystem(cleanupCtx), claim.key, claim.value)
 	if err != nil || !deleted {
 		if k.logger != nil {
 			k.logger.Error("failed to release key ownership record after a failed create",
