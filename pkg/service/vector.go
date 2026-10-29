@@ -18,6 +18,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -1736,37 +1737,36 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 		}
 	}
 
-	// Scan all vectors and rebuild index
-	opts := &interfaces.VectorScanOptions{
-		Limit: 1000,
+	// failJob records cause on the job and returns it as the rebuild's error.
+	failJob := func(operation string, cause error) error {
+		job.mu.Lock()
+		job.Error = cause
+		job.mu.Unlock()
+		return &qbErrors.QBError{
+			Code: qbErrors.ErrInternal,
+			Op:   "vector.performIndexRebuild",
+			Err:  &api.OperationFailedError{Operation: operation, Cause: cause},
+		}
 	}
 
-	offset := 0
+	// Page through every vector, with its embedding, by the storage cursor
+	// until the storage reports no further page.
+	opts := &interfaces.VectorScanOptions{
+		Limit:          rebuildScanPageSize,
+		IncludeVectors: true,
+	}
 	for {
-		opts.Offset = offset
-		vecs, err := v.storage.ScanNamespace(ctx, namespace, opts)
+		page, err := v.storage.ScanNamespacePage(ctx, namespace, opts)
 		if err != nil {
-			job.mu.Lock()
-			job.Error = err
-			job.mu.Unlock()
-			return &qbErrors.QBError{
-				Code: qbErrors.ErrInternal,
-				Op:   "vector.performIndexRebuild",
-				Err:  &api.OperationFailedError{Operation: "scan vectors", Cause: err},
+			return failJob("scan vectors", err)
+		}
+
+		for _, vec := range page.Vectors {
+			if len(vec.Embedding) == 0 {
+				return failJob("index vector", &RebuildMissingEmbeddingError{Namespace: namespace, ID: vec.ID})
 			}
-		}
-
-		if len(vecs) == 0 {
-			break
-		}
-
-		for _, vec := range vecs {
 			if err := newIndex.Insert(vec.ID, vec.Embedding); err != nil {
-				v.logger.WithFields(map[string]interface{}{
-					"namespace": namespace,
-					"id":        vec.ID,
-					"error":     err,
-				}).Warn("failed to insert vector into new index")
+				return failJob("index vector", err)
 			}
 
 			job.mu.Lock()
@@ -1774,12 +1774,13 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 			job.mu.Unlock()
 		}
 
-		offset += len(vecs)
-
-		// Break if we got less than requested
-		if len(vecs) < opts.Limit {
+		if len(page.Vectors) == 0 || page.NextCursor == "" {
 			break
 		}
+		if page.NextCursor == opts.Cursor {
+			return failJob("scan vectors", &RebuildCursorStalledError{Namespace: namespace, Cursor: opts.Cursor})
+		}
+		opts.Cursor = page.NextCursor
 	}
 
 	// Replace old index with new one
@@ -1793,6 +1794,33 @@ func (v *vectorService) performIndexRebuild(ctx context.Context, jobID, namespac
 	}).Info("index rebuild completed successfully")
 
 	return nil
+}
+
+// rebuildScanPageSize is the number of vectors an index rebuild reads per page.
+const rebuildScanPageSize = 1000
+
+// RebuildMissingEmbeddingError reports a scanned vector that carries no
+// embedding, which an index rebuild cannot index.
+type RebuildMissingEmbeddingError struct {
+	Namespace string
+	ID        uint64
+}
+
+// Error implements the error interface.
+func (e *RebuildMissingEmbeddingError) Error() string {
+	return "vector " + strconv.FormatUint(e.ID, 10) + " in namespace " + e.Namespace + " has no embedding"
+}
+
+// RebuildCursorStalledError reports a storage scan that returned the cursor it
+// was given, which would page the same vectors forever.
+type RebuildCursorStalledError struct {
+	Namespace string
+	Cursor    string
+}
+
+// Error implements the error interface.
+func (e *RebuildCursorStalledError) Error() string {
+	return "vector scan of namespace " + e.Namespace + " did not advance past cursor " + e.Cursor
 }
 
 // GetIndexStats retrieves statistics about the vector index.

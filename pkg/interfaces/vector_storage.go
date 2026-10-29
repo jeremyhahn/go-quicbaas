@@ -126,6 +126,14 @@ type VectorScanOptions struct {
 	IncludeMetadata bool
 }
 
+// VectorScanPage is one page of a cursor-paged namespace scan.
+type VectorScanPage struct {
+	// Vectors are the vectors on this page.
+	Vectors []*VectorValue
+	// NextCursor resumes the scan after this page; empty when the scan is complete.
+	NextCursor string
+}
+
 // VectorStorageStats holds storage statistics for a namespace.
 type VectorStorageStats struct {
 	// VectorCount is the number of vectors.
@@ -170,6 +178,9 @@ type VectorStorage interface {
 
 	// ScanNamespace lists vectors in a namespace with optional pagination.
 	ScanNamespace(ctx context.Context, namespace string, opts *VectorScanOptions) ([]*VectorValue, error)
+	// ScanNamespacePage returns one page of the namespace starting at
+	// opts.Cursor, with the cursor that resumes the scan after it.
+	ScanNamespacePage(ctx context.Context, namespace string, opts *VectorScanOptions) (*VectorScanPage, error)
 
 	// ScanByMultipleFilters scans vectors matching multiple metadata filters.
 	ScanByMultipleFilters(ctx context.Context, namespace string, filters []VectorMetadataFilter, opts *VectorScanOptions) ([]*VectorValue, error)

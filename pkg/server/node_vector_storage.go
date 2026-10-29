@@ -189,6 +189,16 @@ func (n *nodeVectorStorage) BatchDeleteVectors(ctx context.Context, namespace st
 
 // ScanNamespace lists vectors in a namespace with optional pagination via the node transport.
 func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+	page, err := n.ScanNamespacePage(ctx, namespace, opts)
+	if err != nil {
+		return nil, err
+	}
+	return page.Vectors, nil
+}
+
+// ScanNamespacePage lists one page of the namespace through qrdb's
+// cursor-paged ListVectors and returns the cursor that resumes the scan.
+func (n *nodeVectorStorage) ScanNamespacePage(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
 	req := &qrdbtransport.ListVectorsRequest{
 		Namespace:       namespace,
 		IncludeVectors:  true,
@@ -204,7 +214,10 @@ func (n *nodeVectorStorage) ScanNamespace(ctx context.Context, namespace string,
 	if err != nil {
 		return nil, err
 	}
-	return nodeVectorDataToInterface(resp.Vectors), nil
+	return &interfaces.VectorScanPage{
+		Vectors:    nodeVectorDataToInterface(resp.Vectors),
+		NextCursor: resp.NextCursor,
+	}, nil
 }
 
 // ScanByMultipleFilters scans vectors matching multiple metadata filters via the node transport.

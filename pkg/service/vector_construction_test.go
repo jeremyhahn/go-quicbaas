@@ -37,6 +37,7 @@ type vecMockStorage struct {
 	batchDeleteVectorsFn func(ctx context.Context, namespace string, ids []uint64) error
 	scanByMultiFiltersFn func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error)
 	scanNamespaceFn      func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error)
+	scanNamespacePageFn  func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error)
 	listNamespacesFn     func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error)
 	getNamespaceInfoFn   func(ctx context.Context, namespace string) (*interfaces.VectorNamespaceInfo, error)
 	getStatsFn           func(ctx context.Context, namespace string) (*interfaces.VectorStorageStats, error)
@@ -74,6 +75,13 @@ func (m *vecMockStorage) ScanNamespace(ctx context.Context, namespace string, op
 		return m.scanNamespaceFn(ctx, namespace, opts)
 	}
 	return nil, nil
+}
+
+func (m *vecMockStorage) ScanNamespacePage(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+	if m.scanNamespacePageFn != nil {
+		return m.scanNamespacePageFn(ctx, namespace, opts)
+	}
+	return &interfaces.VectorScanPage{}, nil
 }
 
 func (m *vecMockStorage) ListNamespaces(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
