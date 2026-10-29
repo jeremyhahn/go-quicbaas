@@ -34,8 +34,27 @@ import (
 )
 
 // tenantSetupTimeout bounds provisioning a tenant and deleting it, so a hung
-// server fails the test instead of stalling it.
-const tenantSetupTimeout = 30 * time.Second
+// server fails the test instead of stalling it. Setup is a system-admin
+// login, a provision of a dozen Raft writes plus a CSR signing, and a
+// certificate login; on a loaded CI runner the provision alone overran 30s
+// (Integration 71951), so the budget is sized to all three steps.
+const tenantSetupTimeout = 2 * time.Minute
+
+// defaultRequestTimeout bounds a helper request whose context has no
+// deadline of its own.
+const defaultRequestTimeout = 30 * time.Second
+
+// requestTimeout returns the HTTP client timeout for a request made under
+// ctx: whatever is left of the caller's deadline, so a setup budget is not
+// cut short by a fixed per-request limit, or defaultRequestTimeout when the
+// caller set none.
+func requestTimeout(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultRequestTimeout
+	}
+	return time.Until(deadline)
+}
 
 // provisionedTenants memoises (baseURL, tenantID) → the admin session of the
 // tenant provisioned for it, so a second call for the same tenant reuses its
@@ -388,7 +407,7 @@ func postJSON(ctx context.Context, rawURL, bearer string, body interface{}) ([]b
 		return nil, &AuthError{Op: "marshal request", URL: rawURL, Cause: err}
 	}
 
-	client := NewHTTPClient(30 * time.Second)
+	client := NewHTTPClient(requestTimeout(ctx))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(data))
 	if err != nil {
