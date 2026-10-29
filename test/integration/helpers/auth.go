@@ -194,6 +194,30 @@ func PIVMTLSClient(certPath, keyPath, caPath string) (*http.Client, error) {
 	}, nil
 }
 
+// SystemAdminTLSConfig is IntegrationTLSConfig presenting the fixture's
+// system-admin client certificate. require_authz authenticates the gRPC,
+// QUIC and Unix transports by mTLS, so a client of those transports dials
+// with this config to act as the system admin. QUICBAAS_TEST_PIV_CERT /
+// _KEY override the certificate, as in AuthPIVSession.
+func SystemAdminTLSConfig() (*tls.Config, error) {
+	cfg, err := IntegrationTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	return withClientCertificate(cfg, pivCertPath(), pivKeyPath())
+}
+
+// withClientCertificate sets cfg to present the certificate at certPath,
+// whose private key is at keyPath, and returns cfg.
+func withClientCertificate(cfg *tls.Config, certPath, keyPath string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return nil, &AuthError{Op: "load client cert", URL: certPath, Cause: err}
+	}
+	cfg.Certificates = []tls.Certificate{cert}
+	return cfg, nil
+}
+
 // AuthPIVFullSession performs an UNCACHED PIV mTLS login and returns the whole
 // token bundle, including the refresh credential.
 func AuthPIVFullSession(ctx context.Context, baseURL, certPath, keyPath, caPath string) (*PIVSession, error) {

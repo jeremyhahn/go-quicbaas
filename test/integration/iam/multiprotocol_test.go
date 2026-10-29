@@ -324,9 +324,9 @@ func NewGRPCClient(endpoint string) (*GRPCClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tlsCfg, err := helpers.IntegrationTLSConfig()
+	tlsCfg, err := helpers.SystemAdminTLSConfig()
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
 	}
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
@@ -815,9 +815,9 @@ func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tlsCfg, err := helpers.IntegrationTLSConfig()
+	tlsCfg, err := helpers.SystemAdminTLSConfig()
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
 	}
 	conn, err := grpc.DialContext(ctx, "unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
@@ -852,9 +852,9 @@ type QUICClient struct {
 
 // NewQUICClient creates a new QUIC protocol client.
 func NewQUICClient(endpoint string) (*QUICClient, error) {
-	tlsCfg, err := helpers.IntegrationTLSConfig()
+	tlsCfg, err := helpers.SystemAdminTLSConfig()
 	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load integration TLS config", Cause: err}
+		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
 	}
 	tlsCfg.NextProtos = []string{"quicbaas-quic"}
 	cfg := &transport.Config{

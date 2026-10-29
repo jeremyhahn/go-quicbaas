@@ -132,3 +132,35 @@ func TestAuthPIV_RejectedLoginReturnsBadStatus(t *testing.T) {
 		t.Errorf("status = %d, want %d", badStatus.Status, http.StatusUnauthorized)
 	}
 }
+
+func TestWithClientCertificate_PresentsTheCertificate(t *testing.T) {
+	server, _ := newPIVLoginServer(t, http.StatusOK, `{}`)
+	certPath, keyPath, _ := pivLoginFiles(t, server)
+	base := &tls.Config{MinVersion: tls.VersionTLS13}
+
+	cfg, err := withClientCertificate(base, certPath, keyPath)
+	if err != nil {
+		t.Fatalf("withClientCertificate: %v", err)
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("certificates = %d, want 1", len(cfg.Certificates))
+	}
+	if cfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %x, want the base config's TLS 1.3", cfg.MinVersion)
+	}
+}
+
+func TestWithClientCertificate_MissingKeyReturnsAuthError(t *testing.T) {
+	server, _ := newPIVLoginServer(t, http.StatusOK, `{}`)
+	certPath, _, _ := pivLoginFiles(t, server)
+	missingKey := filepath.Join(t.TempDir(), "absent.key")
+
+	_, err := withClientCertificate(&tls.Config{}, certPath, missingKey)
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("withClientCertificate error = %v, want *AuthError", err)
+	}
+	if authErr.URL != certPath {
+		t.Errorf("AuthError.URL = %q, want %q", authErr.URL, certPath)
+	}
+}
