@@ -831,6 +831,15 @@ func (c *restProtocolClient) GetStatus(ctx context.Context) (*service.GetSchedul
 	return c.client.GetStatus(ctx)
 }
 
+// tenantOperatorGRPCClientOption sends the tenant operator's bearer on every
+// call. go-qrdb grants the scheduler permissions to the tenant's Operator
+// role, not to its Admin, so scheduler RPCs on gRPC and Unix present the same
+// principal the REST scheduler client does.
+func tenantOperatorGRPCClientOption(t *testing.T) grpcclient.ClientOption {
+	t.Helper()
+	return grpcclient.WithDialOptions(grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)))
+}
+
 // grpcProtocolClient implements schedulerProtocol using gRPC.
 type grpcProtocolClient struct {
 	client *grpcclient.Client
@@ -844,7 +853,7 @@ func (c *grpcProtocolClient) Setup(t *testing.T, ctx context.Context) error {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.TenantGRPCClientOption(t))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), tenantOperatorGRPCClientOption(t))
 	require.NoError(t, err, "Failed to connect to gRPC endpoint %s", endpoints[0])
 	c.client = client
 
@@ -929,14 +938,14 @@ func (c *unixSocketProtocolClient) Setup(t *testing.T, ctx context.Context) erro
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfgConn)),
 		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
-		grpc.WithPerRPCCredentials(helpers.TenantGRPCCredentials(t)),
+		grpc.WithPerRPCCredentials(helpers.TenantOperatorGRPCCredentials(t)),
 	)
 	require.NoError(t, err, "Failed to connect to unix socket at %s", socketPath)
 	c.conn = conn
 
 	tlsCfgClient, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfgClient), helpers.TenantGRPCClientOption(t))
+	client, err := grpcclient.NewClient("unix://"+socketPath, grpcclient.WithTLSConfig(tlsCfgClient), tenantOperatorGRPCClientOption(t))
 	require.NoError(t, err, "Failed to create gRPC client over unix socket at %s", socketPath)
 	c.client = client
 

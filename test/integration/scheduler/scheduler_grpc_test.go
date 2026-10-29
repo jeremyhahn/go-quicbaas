@@ -169,7 +169,7 @@ func setupGRPCClient(t *testing.T, ctx context.Context) *grpcclient.Client {
 
 	tlsCfg, err := helpers.IntegrationTLSConfig()
 	require.NoError(t, err, "load integration TLS config")
-	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), helpers.TenantGRPCClientOption(t))
+	client, err := grpcclient.NewClient(endpoints[0], grpcclient.WithTLSConfig(tlsCfg), tenantOperatorGRPCClientOption(t))
 	require.NoError(t, err, "Failed to create gRPC client for endpoint %s", endpoints[0])
 
 	return client
