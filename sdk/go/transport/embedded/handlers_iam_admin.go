@@ -115,6 +115,12 @@ func requireSubjectTenant(ctx context.Context, method, requested string) (string
 // distinguished from "policies not loaded yet", and defaulting to allow on a
 // delegated-administration surface is the wrong side to err on.
 func requireAdminPermission(ctx context.Context, svc service.QuicBaaS, method, resource, action string) error {
+	return requireSubjectPermission(ctx, svc, "quicbaas.IAM.Admin", method, resource, action)
+}
+
+// requireSubjectPermission is requireAdminPermission for any embedded
+// service: the refusal names serviceName, the rule is the same.
+func requireSubjectPermission(ctx context.Context, svc service.QuicBaaS, serviceName, method, resource, action string) error {
 	subject, bound := auth.SubjectFromContext(ctx)
 	if !bound {
 		return nil
@@ -122,7 +128,7 @@ func requireAdminPermission(ctx context.Context, svc service.QuicBaaS, method, r
 
 	engine, err := policyEngineFor(ctx, svc)
 	if err != nil {
-		return NewPermissionDeniedError("quicbaas.IAM.Admin", method,
+		return NewPermissionDeniedError(serviceName, method,
 			"no policy engine is configured to authorize "+resource+":"+action)
 	}
 
@@ -143,7 +149,7 @@ func requireAdminPermission(ctx context.Context, svc service.QuicBaaS, method, r
 		return err
 	}
 	if resp == nil || !resp.Allowed {
-		return NewPermissionDeniedError("quicbaas.IAM.Admin", method,
+		return NewPermissionDeniedError(serviceName, method,
 			"subject lacks "+resource+":"+action)
 	}
 	return nil
