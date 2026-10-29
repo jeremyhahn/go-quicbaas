@@ -28,6 +28,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -45,7 +46,7 @@ type toolResultFn func(t *testing.T, tool string, args map[string]interface{}) m
 func newMultiToolMCPServer(t *testing.T, tools []string, fn toolResultFn) (*Transport, *[]string, func()) {
 	t.Helper()
 	srv, called := newMultiToolServer(t, tools, fn)
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {

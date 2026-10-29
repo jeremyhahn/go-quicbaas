@@ -33,6 +33,7 @@ import (
 	mcpclienttransport "github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -58,7 +59,7 @@ func newRPCTestTransportWithNotifications(t *testing.T) (*Transport, <-chan stri
 	srv.AddTool(mcpgo.NewTool("qrdb_health"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultText("ok"), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
@@ -195,7 +196,7 @@ func TestNotifyRPC_ForwardsParams(t *testing.T) {
 	srv.AddNotificationHandler("notifications/cancelled", func(_ context.Context, n mcpgo.JSONRPCNotification) {
 		received <- n
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {

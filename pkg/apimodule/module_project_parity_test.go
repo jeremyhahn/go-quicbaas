@@ -33,6 +33,7 @@ import (
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	grpclib "google.golang.org/grpc"
@@ -231,7 +232,7 @@ func parityTransports(t *testing.T, facade service.QuicBaaS, registerGRPC func(g
 	require.NoError(t, err)
 	mcpSrv := mcpserver.NewMCPServer("quicbaas-parity", "1.0.0")
 	module.RegisterMCP(mcpSrv)
-	mcpHTTP := mcpserver.NewTestStreamableHTTPServer(mcpSrv,
+	mcpHTTP := mcpservertest.NewTestStreamableHTTPServer(mcpSrv,
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, _ *http.Request) context.Context {
 			return tenantctx.WithTenant(ctx, parityProjectTenant)
 		}))

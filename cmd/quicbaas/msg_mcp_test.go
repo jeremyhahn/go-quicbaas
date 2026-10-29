@@ -20,6 +20,7 @@ import (
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -52,7 +53,7 @@ func withMCPMessaging(t *testing.T) {
 	require.NoError(t, err)
 	srv := mcpserver.NewMCPServer("quicbaas-msg-test", "1.0.0")
 	module.RegisterMCP(srv)
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 
 	tr, err := mcptransport.New(&sdktransport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	require.NoError(t, err)

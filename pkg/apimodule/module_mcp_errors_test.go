@@ -22,6 +22,7 @@ import (
 	"time"
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -72,7 +73,7 @@ func newMCPClientFor(t *testing.T, resolve MCPResolver) transport.Transport {
 
 	srv := mcpserver.NewMCPServer("quicbaas-test", "1.0.0")
 	m.RegisterMCP(srv)
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 
 	tr, err := mcptransport.New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})

@@ -23,6 +23,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -77,7 +78,7 @@ func registryMCPTransport(t *testing.T, reg *ToolRegistry, onCall func(tool stri
 		})
 	}
 
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	tr, err := sdkmcp.New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
 	if err != nil {
 		httpSrv.Close()

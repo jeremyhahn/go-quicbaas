@@ -34,6 +34,7 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
+	mcpservertest "github.com/mark3labs/mcp-go/server/servertest"
 
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/errors"
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
@@ -56,7 +57,7 @@ func TestTransport_Request_Success(t *testing.T) {
 			"data":  "dGVzdA==",
 		}))), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	defer httpSrv.Close()
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second})
@@ -92,7 +93,7 @@ func TestTransport_Request_ToolError(t *testing.T) {
 	srv.AddTool(mcpgo.NewTool("qrdb_get"), func(context.Context, mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 		return mcpgo.NewToolResultError("Key not found"), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	defer httpSrv.Close()
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second, MaxRetries: 0})
@@ -152,7 +153,7 @@ func TestTransport_Request_ContextCancellation(t *testing.T) {
 		}
 		return mcpgo.NewToolResultText("{}"), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	defer httpSrv.Close()
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 10 * time.Second, MaxRetries: 0})
@@ -204,7 +205,7 @@ func TestTransport_AuthSession(t *testing.T) {
 		return mcpgo.NewToolResultText("{}"), nil
 	})
 
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv,
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv,
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			return context.WithValue(ctx, authHeaderKey{}, r.Header.Get("Authorization"))
 		}),
@@ -252,7 +253,7 @@ func TestTransport_EnsureAuthenticatedRacesWithClose(t *testing.T) {
 			"access_token": "tok-123",
 		}))), nil
 	})
-	httpSrv := mcpserver.NewTestStreamableHTTPServer(srv)
+	httpSrv := mcpservertest.NewTestStreamableHTTPServer(srv)
 	defer httpSrv.Close()
 
 	tr, err := New(&transport.Config{Address: httpSrv.URL, Timeout: 5 * time.Second},
