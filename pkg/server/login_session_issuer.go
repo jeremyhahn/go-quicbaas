@@ -119,7 +119,10 @@ func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsd
 	if factorID == "" {
 		return "", "", 0
 	}
-	resp, err := reader.get(ctx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
+	// A factor is enrolled in its tenant, so it is read in the login's tenant:
+	// a factor of another tenant is not found and names no user.
+	tenantCtx := qrdbsdk.ContextWithTenant(ctx, identity.TenantID)
+	resp, err := reader.get(tenantCtx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
 	// A record without attestation metadata still names its owner: reading a
 	// nil map yields "" for the attestation, never a dropped user id.
 	if err != nil || resp == nil {
