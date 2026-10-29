@@ -11,6 +11,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1854,23 +1855,61 @@ func TestPerformIndexRebuild_FactoryError(t *testing.T) {
 }
 
 func TestPerformIndexRebuild_Success(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		if opts.Offset > 0 {
-			return nil, nil
-		}
-		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}, {ID: 2, Embedding: []float32{4, 5, 6}}}, nil
+	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespacePageFn = cursorPagedVectors(t, 2*rebuildScanPageSize+500)
+	indexed := make(map[uint64]bool)
+	mockIndex.insertFn = func(id uint64, vector []float32) error {
+		require.NotEmpty(t, vector)
+		require.False(t, indexed[id], "vector %d indexed twice", id)
+		indexed[id] = true
+		return nil
 	}
-	job := &RebuildJobState{JobID: "j3", Namespace: "test-ns", InProgress: true, TotalVectors: 2, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j3"] = job
-	svc.jobMu.Unlock()
 
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j3", "test-ns", nil)
+	job, err := runRebuildJob(svc, "j3")
 	require.NoError(t, err)
+	assert.Len(t, indexed, 2*rebuildScanPageSize+500)
 	job.mu.RLock()
-	assert.Equal(t, uint64(2), job.VectorsProcessed)
+	assert.Equal(t, uint64(2*rebuildScanPageSize+500), job.VectorsProcessed)
+	assert.NoError(t, job.Error)
 	job.mu.RUnlock()
+}
+
+// cursorPagedVectors returns a ScanNamespacePage double serving total vectors
+// by cursor, with the cursor and IncludeVectors semantics of qrdb ListVectors.
+func cursorPagedVectors(t *testing.T, total int) func(context.Context, string, *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+	t.Helper()
+	return func(_ context.Context, _ string, opts *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+		start := 0
+		if opts.Cursor != "" {
+			n, err := strconv.Atoi(opts.Cursor)
+			if err != nil {
+				return nil, err
+			}
+			start = n
+		}
+		end := min(start+opts.Limit, total)
+		page := &interfaces.VectorScanPage{}
+		for i := start; i < end; i++ {
+			vec := &interfaces.VectorValue{ID: uint64(i + 1)}
+			if opts.IncludeVectors {
+				vec.Embedding = []float32{float32(i), 1, 2}
+			}
+			page.Vectors = append(page.Vectors, vec)
+		}
+		if end < total {
+			page.NextCursor = strconv.Itoa(end)
+		}
+		return page, nil
+	}
+}
+
+// runRebuildJob registers a rebuild job for test-ns and runs it to completion.
+func runRebuildJob(svc *vectorService, jobID string) (*RebuildJobState, error) {
+	job := &RebuildJobState{JobID: jobID, Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+	svc.jobMu.Lock()
+	svc.rebuildJobs[jobID] = job
+	svc.jobMu.Unlock()
+	return job, svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), jobID, "test-ns", nil)
 }
 
 func TestPerformIndexRebuild_WithCustomConfig(t *testing.T) {
@@ -1907,16 +1946,69 @@ func TestPerformIndexRebuild_InvalidConfig(t *testing.T) {
 
 func TestPerformIndexRebuild_ScanError(t *testing.T) {
 	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, errors.New("scan error")
+	scanErr := errors.New("scan error")
+	storage.scanNamespacePageFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+		return nil, scanErr
 	}
-	job := &RebuildJobState{JobID: "j6", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j6"] = job
-	svc.jobMu.Unlock()
 
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j6", "test-ns", nil)
+	job, err := runRebuildJob(svc, "j6")
 	require.Error(t, err)
+	job.mu.RLock()
+	assert.ErrorIs(t, job.Error, scanErr)
+	job.mu.RUnlock()
+}
+
+func TestPerformIndexRebuild_MissingEmbeddingFailsJob(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespacePageFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+		return &interfaces.VectorScanPage{Vectors: []*interfaces.VectorValue{
+			{ID: 1, Embedding: []float32{1, 2, 3}},
+			{ID: 2},
+		}}, nil
+	}
+
+	job, err := runRebuildJob(svc, "j-missing")
+	require.Error(t, err)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	var missing *RebuildMissingEmbeddingError
+	require.ErrorAs(t, job.Error, &missing)
+	assert.Equal(t, uint64(2), missing.ID)
+	assert.Equal(t, "test-ns", missing.Namespace)
+	assert.Equal(t, uint64(1), job.VectorsProcessed)
+}
+
+func TestPerformIndexRebuild_InsertErrorFailsJob(t *testing.T) {
+	svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespacePageFn = cursorPagedVectors(t, 10)
+	insertErr := errors.New("insert failed")
+	mockIndex.insertFn = func(_ uint64, _ []float32) error {
+		return insertErr
+	}
+
+	job, err := runRebuildJob(svc, "j-insert")
+	require.Error(t, err)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	assert.ErrorIs(t, job.Error, insertErr)
+	assert.Equal(t, uint64(0), job.VectorsProcessed)
+}
+
+func TestPerformIndexRebuild_StalledCursorFailsJob(t *testing.T) {
+	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+	storage.scanNamespacePageFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) (*interfaces.VectorScanPage, error) {
+		return &interfaces.VectorScanPage{
+			Vectors:    []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}},
+			NextCursor: "same",
+		}, nil
+	}
+	job, err := runRebuildJob(svc, "j-stalled")
+	require.Error(t, err)
+	job.mu.RLock()
+	defer job.mu.RUnlock()
+	var stalled *RebuildCursorStalledError
+	require.ErrorAs(t, job.Error, &stalled)
+	assert.Equal(t, "same", stalled.Cursor)
 }
 
 func TestRebuildIndex_Synchronous(t *testing.T) {
