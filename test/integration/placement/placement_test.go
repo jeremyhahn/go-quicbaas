@@ -101,7 +101,8 @@ func transports(t *testing.T, tlsCfg *tls.Config, auth quicbaas.Option) map[stri
 		},
 		"QUIC": func() (quicbaas.Client, error) {
 			quicCfg := tlsCfg.Clone()
-			quicCfg.NextProtos = []string{"quicbaas-quic"}
+			// The ALPN is left unset so quictransport.New defaults it to the
+			// "h3" the server speaks; "quicbaas-quic" is retired.
 			return quicbaas.NewClient(first(helpers.GetQUICEndpoints(), "QUIC"), quicbaas.WithQUIC(), quicbaas.WithTLSConfig(quicCfg), auth, timeout)
 		},
 		"Unix": func() (quicbaas.Client, error) {
