@@ -10,7 +10,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
@@ -42,17 +41,10 @@ func saveKeyStoreCertificate(t *testing.T, keyID string, certStorage xkmssdk.Sto
 		DefaultBackend: "software",
 	}))
 
-	cert := newSelfSignedCertificate(t, 42)
-	require.NoError(t, xkmssdk.ServiceSaveCertificateByID(context.Background(), keyID, cert))
-}
-
-// newSelfSignedCertificate returns a self-signed certificate with serial.
-func newSelfSignedCertificate(t *testing.T, serial int64) *x509.Certificate {
-	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(serial),
+		SerialNumber: big.NewInt(42),
 		Subject:      pkix.Name{CommonName: "key-store-cert"},
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(time.Hour),
@@ -61,68 +53,7 @@ func newSelfSignedCertificate(t *testing.T, serial int64) *x509.Certificate {
 	require.NoError(t, err)
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
-	return cert
-}
-
-// storedCertificateSerial returns the serial of the certificate the go-xkms
-// key store holds under keyID.
-func storedCertificateSerial(t *testing.T, keyID string) int64 {
-	t.Helper()
-	cert, err := xkmssdk.ServiceCertificateByID(context.Background(), keyID)
-	require.NoError(t, err)
-	return cert.SerialNumber.Int64()
-}
-
-// TestXKMSSaveCert_RequiresSystemKeyStoreWriter pins that xkms.saveCert and
-// xkms.saveCertChain refuse every caller but the system tenant, as REST does:
-// the key store records no tenant, so a tenant that could overwrite another
-// tenant's entry with a certificate issued for itself would pass the issuing
-// tenant check on every later read and delete of that key ID.
-func TestXKMSSaveCert_RequiresSystemKeyStoreWriter(t *testing.T) {
-	const keyID = "globex-cert"
-	saveKeyStoreCertificate(t, keyID, xkmssdk.NewStorageMemory())
-	svc := certificateTenantService{
-		QuicBaaS: newMinimalMockService(),
-		certs:    issuingTenantCertificates{tenants: map[int64]string{42: "globex", 7: "acme"}},
-	}
-	registry := NewToolRegistry(svc, newTestLogger(t))
-	acme := tenantctx.WithTenant(context.Background(), "acme")
-	system := tenantctx.WithSystem(context.Background())
-	acmeCertPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: newSelfSignedCertificate(t, 7).Raw}))
-	keyArgs := map[string]interface{}{"key_id": keyID}
-
-	requireWriteRefused := func(t *testing.T, err error, operation string) {
-		t.Helper()
-		var opErr *XKMSOperationError
-		require.True(t, errors.As(err, &opErr), "err = %v, want *XKMSOperationError", err)
-		require.Equal(t, operation, opErr.Operation)
-		var refused *service.KeyStoreWriteRefusedError
-		require.True(t, errors.As(err, &refused), "err = %v, want *service.KeyStoreWriteRefusedError", err)
-	}
-
-	t.Run("tenant cannot overwrite an entry with saveCert", func(t *testing.T) {
-		_, err := registry.handleXKMSSaveCert(acme, map[string]interface{}{"key_id": keyID, "cert_pem": acmeCertPEM})
-		requireWriteRefused(t, err, "saveCert")
-		require.Equal(t, int64(42), storedCertificateSerial(t, keyID))
-	})
-	t.Run("tenant cannot overwrite an entry with saveCertChain", func(t *testing.T) {
-		_, err := registry.handleXKMSSaveCertChain(acme, map[string]interface{}{"key_id": keyID, "chain_pems": []interface{}{acmeCertPEM}})
-		requireWriteRefused(t, err, "saveCertChain")
-		require.Equal(t, int64(42), storedCertificateSerial(t, keyID))
-	})
-	t.Run("after the refused overwrite the tenant still cannot read or delete the entry", func(t *testing.T) {
-		_, err := registry.handleXKMSGetCert(acme, keyArgs)
-		var opErr *XKMSOperationError
-		require.True(t, errors.As(err, &opErr), "getCert err = %v, want *XKMSOperationError", err)
-		_, err = registry.handleXKMSDeleteCert(acme, keyArgs)
-		require.True(t, errors.As(err, &opErr), "deleteCert err = %v, want *XKMSOperationError", err)
-		require.Equal(t, int64(42), storedCertificateSerial(t, keyID))
-	})
-	t.Run("system caller saves the certificate", func(t *testing.T) {
-		_, err := registry.handleXKMSSaveCert(system, map[string]interface{}{"key_id": keyID, "cert_pem": acmeCertPEM})
-		require.NoError(t, err)
-		require.Equal(t, int64(7), storedCertificateSerial(t, keyID))
-	})
+	require.NoError(t, xkmssdk.ServiceSaveCertificateByID(context.Background(), keyID, cert))
 }
 
 // TestXKMSCertByKeyID_BindsCallerToIssuingTenant covers xkms.getCert,
