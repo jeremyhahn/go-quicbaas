@@ -798,6 +798,8 @@ func TestSchedulerAdapter_CancelJob_Success(t *testing.T) {
 		Reason:   "No longer needed",
 	}
 
+	mockEngine.On("GetJobWithTenant", ctx, uint64(600), "tenant-1").
+		Return(&scheduler.Job{ID: 600, TargetTenantID: "tenant-1"}, nil).Once()
 	mockEngine.On("CancelJobWithTenant", ctx, uint64(600), "tenant-1", "No longer needed").
 		Return(scheduler.JobStatusPending, nil).Once()
 
@@ -833,6 +835,8 @@ func TestSchedulerAdapter_CancelJob_Error(t *testing.T) {
 	}
 
 	expectedErr := errors.New("cancel failed")
+	mockEngine.On("GetJobWithTenant", ctx, uint64(600), "tenant-1").
+		Return(&scheduler.Job{ID: 600, TargetTenantID: "tenant-1"}, nil).Once()
 	mockEngine.On("CancelJobWithTenant", ctx, uint64(600), "tenant-1", "No longer needed").
 		Return(scheduler.JobStatus(""), expectedErr).Once()
 
