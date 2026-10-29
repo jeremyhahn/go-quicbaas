@@ -26,8 +26,32 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/hash"
+	quicbaas "github.com/jeremyhahn/go-quicbaas/sdk/go"
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
+
+// tenantOperatorAt builds the tenant operator's clients of the cluster and
+// returns them with the operator's client at leader, a node of the system
+// admin's cluster. The system admin is control plane only, so a test drives
+// Status and membership through the admin's clients and reads and writes
+// entities through the operator's; both dial the same endpoints in order.
+func tenantOperatorAt(t *testing.T, leader *helpers.TestNode) (*helpers.TestCluster, quicbaas.Client) {
+	t.Helper()
+	operator, err := helpers.NewClusterBuilder().WithTenantOperator().Build(t.Context())
+	require.NoError(t, err, "Failed to build the tenant operator's clients")
+	t.Cleanup(func() {
+		if err := operator.Close(); err != nil {
+			t.Errorf("close the tenant operator's clients: %v", err)
+		}
+	})
+	return operator, operatorClientAt(operator, leader)
+}
+
+// operatorClientAt returns the tenant operator's client at node, a node of
+// the system admin's cluster; TestCluster numbers its nodes from 1.
+func operatorClientAt(operator *helpers.TestCluster, node *helpers.TestNode) quicbaas.Client {
+	return operator.Clients[node.ID-1]
+}
 
 // TestClusterConsistency runs Phase 4 tests for data consistency verification.
 const (
@@ -65,7 +89,7 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 	ctx := context.Background()
 
 	// Build 3-node cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -76,8 +100,9 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Wait for leader election (may take a few seconds after cluster is healthy)
-	_, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
+	leaderNode, _, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
 	require.NoError(t, err, "Failed to elect leader")
+	operator, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Phase 1: Write 500 baseline entities
 	t.Log("Phase 1: Writing 500 baseline entities...")
@@ -121,7 +146,7 @@ func testDataSurvivesMembershipChanges(t *testing.T) {
 
 	// Verify data consistency across all nodes
 	t.Log("Verifying data consistency across all cluster nodes...")
-	helpers.VerifyDataConsistency(t, cluster, allEntities)
+	helpers.VerifyDataConsistency(t, operator, allEntities)
 
 	// Final checksum verification
 	t.Log("Final checksum verification...")
@@ -138,7 +163,7 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 	ctx := context.Background()
 
 	// Build cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -149,8 +174,9 @@ func testWriteSuccessRateDuringMembershipChanges(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Wait for leader election (may take a few seconds after cluster is healthy)
-	_, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
+	leaderNode, _, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
 	require.NoError(t, err, "Failed to elect leader")
+	_, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Initialize operation metrics
 	metrics := &helpers.OperationMetrics{}
@@ -237,7 +263,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 	ctx := context.Background()
 
 	// Build cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -248,8 +274,9 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Wait for leader election (may take a few seconds after cluster is healthy)
-	_, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
+	leaderNode, _, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
 	require.NoError(t, err, "Failed to elect leader")
+	operator, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Write 100 entities with unique timestamps
 	t.Log("Writing 100 test entities with timestamps...")
@@ -261,7 +288,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 
 	// Wait for replication
 	t.Log("Waiting for replication across cluster...")
-	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
+	waitForEntitiesOnAllNodes(t, operator, writtenEntities)
 
 	// Perform linearizable reads from all nodes
 	t.Log("Performing linearizable reads from all nodes...")
@@ -271,7 +298,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 		var referenceData []byte
 		var referenceFound bool
 
-		for i, sdkClient := range cluster.Clients {
+		for i, sdkClient := range operator.Clients {
 			readCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			resp, err := sdkClient.KV().Get(readCtx, &service.GetRequest{
 				EntityType:  entity.EntityType,
@@ -305,7 +332,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 	// Test eventual consistency (may have stale reads, but should not error)
 	staleReadCount := 0
 	for _, entity := range writtenEntities[:10] { // Test first 10 entities
-		for i, sdkClient := range cluster.Clients {
+		for i, sdkClient := range operator.Clients {
 			readCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			resp, err := sdkClient.KV().Get(readCtx, &service.GetRequest{
 				EntityType:  entity.EntityType,
@@ -328,7 +355,7 @@ func testReadConsistencyAcrossAllNodes(t *testing.T) {
 	// Verify strong consistency always returns latest data
 	t.Log("Verifying strong consistency guarantees...")
 	for _, entity := range writtenEntities[:10] {
-		for i, sdkClient := range cluster.Clients {
+		for i, sdkClient := range operator.Clients {
 			readCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			resp, err := sdkClient.KV().Get(readCtx, &service.GetRequest{
 				EntityType:  entity.EntityType,
@@ -355,7 +382,7 @@ func testZeroDataLossVerification(t *testing.T) {
 	ctx := context.Background()
 
 	// Build cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -367,8 +394,9 @@ func testZeroDataLossVerification(t *testing.T) {
 
 	// Wait for leader election with extended timeout for stability
 	t.Log("Waiting for leader election...")
-	_, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
+	leaderNode, _, err := helpers.WaitForLeaderElection(t, cluster, 60*time.Second)
 	require.NoError(t, err, "Failed to elect leader")
+	operator, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Wait for initial leader stability before writing data.
 	// Use 30s window to allow Raft to settle in containerized environments
@@ -398,7 +426,7 @@ func testZeroDataLossVerification(t *testing.T) {
 
 	// Wait for data to replicate across all nodes
 	t.Log("Waiting for data replication...")
-	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
+	waitForEntitiesOnAllNodes(t, operator, writtenEntities)
 
 	// Define test scenarios
 	scenarios := []struct {
@@ -449,6 +477,7 @@ func testZeroDataLossVerification(t *testing.T) {
 				currentLeaderClient = leaderClient
 			} else {
 				t.Logf("Current leader for verification: node %d", currentLeader.ID)
+				currentLeaderClient = operatorClientAt(operator, currentLeader)
 			}
 
 			// Verify all entities still exist using linearizable reads
@@ -491,10 +520,11 @@ func testZeroDataLossVerification(t *testing.T) {
 		finalLeaderClient = leaderClient
 	} else {
 		t.Logf("Final verification using leader: node %d", finalLeader.ID)
+		finalLeaderClient = operatorClientAt(operator, finalLeader)
 	}
 
 	helpers.VerifyDataIntegrity(t, finalLeaderClient, writtenEntities, expectedChecksums)
-	helpers.VerifyDataConsistency(t, cluster, writtenEntities)
+	helpers.VerifyDataConsistency(t, operator, writtenEntities)
 
 	t.Log("Zero data loss verification: PASSED")
 	t.Logf("All 1000 entities verified across %d scenarios", len(scenarios))

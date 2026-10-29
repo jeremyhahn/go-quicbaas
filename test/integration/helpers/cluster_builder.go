@@ -84,6 +84,23 @@ func (cb *ClusterBuilder) WithSystemAdmin() *ClusterBuilder {
 	return cb
 }
 
+// WithTenantOperator authenticates every client as the tenant operator, the
+// data-plane principal whose Operator role holds the KV grants the system
+// admin lacks. The operator enrolls once, at the first REST endpoint, and
+// logs in at each node it dials, since a node accepts only its own bearers.
+func (cb *ClusterBuilder) WithTenantOperator() *ClusterBuilder {
+	return cb.withPrincipal(tenantOperatorAuth)
+}
+
+// withPrincipal makes every client carry the bearer that r's principal holds
+// at the client's node.
+func (cb *ClusterBuilder) withPrincipal(r *principalRegistry) *ClusterBuilder {
+	cb.login = func(ctx context.Context, restURL string) (string, error) {
+		return r.nodeBearer(ctx, cb.restEndpoints[0], restURL)
+	}
+	return cb
+}
+
 // pivLogin returns a nodeLogin that logs in as the system admin with the PIV
 // certificate and key at certPath and keyPath, trusting the CA at caPath.
 func pivLogin(certPath, keyPath, caPath string) nodeLogin {

@@ -45,7 +45,7 @@ func TestRaftClusterLifecycle(t *testing.T) {
 // testClusterBootstrap verifies that a 3-node Raft cluster forms correctly.
 func testClusterBootstrap(t *testing.T) {
 	// Build cluster
-	builder := helpers.NewClusterBuilder()
+	builder := helpers.NewClusterBuilder().WithSystemAdmin()
 	cluster, err := builder.Build(context.Background())
 	require.NoError(t, err, "Failed to build test cluster")
 	defer cluster.Close()
@@ -64,7 +64,7 @@ func testClusterBootstrap(t *testing.T) {
 // testLeaderElection verifies that a leader is elected and remains stable.
 func testLeaderElection(t *testing.T) {
 	// Build cluster
-	builder := helpers.NewClusterBuilder()
+	builder := helpers.NewClusterBuilder().WithSystemAdmin()
 	cluster, err := builder.Build(context.Background())
 	require.NoError(t, err, "Failed to build test cluster")
 	defer cluster.Close()
@@ -99,7 +99,7 @@ func testLeaderElection(t *testing.T) {
 // testDataReplication verifies that data is replicated across all nodes.
 func testDataReplication(t *testing.T) {
 	// Build cluster
-	builder := helpers.NewClusterBuilder()
+	builder := helpers.NewClusterBuilder().WithSystemAdmin()
 	cluster, err := builder.Build(context.Background())
 	require.NoError(t, err, "Failed to build test cluster")
 	defer cluster.Close()
@@ -109,8 +109,9 @@ func testDataReplication(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Find leader
-	leader, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 30*time.Second)
+	leader, _, err := helpers.WaitForLeaderElection(t, cluster, 30*time.Second)
 	require.NoError(t, err, "Failed to find leader")
+	operator, leaderClient := tenantOperatorAt(t, leader)
 	require.NotNil(t, leader, "No leader found")
 
 	t.Logf("Writing test data to leader (node %d)...", leader.ID)
@@ -129,11 +130,11 @@ func testDataReplication(t *testing.T) {
 
 	t.Logf("Wrote 100 entities in %v, waiting for replication...", writeTime)
 
-	waitForEntitiesOnAllNodes(t, cluster, entities)
+	waitForEntitiesOnAllNodes(t, operator, entities)
 
 	// Verify data consistency across all nodes
 	startVerify := time.Now()
-	helpers.VerifyDataConsistency(t, cluster, entities)
+	helpers.VerifyDataConsistency(t, operator, entities)
 	verifyTime := time.Since(startVerify)
 
 	t.Logf("Data replication verified in %v", verifyTime)
@@ -146,7 +147,7 @@ func testQuorumOperations(t *testing.T) {
 	// For now, we'll implement a basic version that verifies writes succeed with full quorum
 
 	// Build cluster
-	builder := helpers.NewClusterBuilder()
+	builder := helpers.NewClusterBuilder().WithSystemAdmin()
 	cluster, err := builder.Build(context.Background())
 	require.NoError(t, err, "Failed to build test cluster")
 	defer cluster.Close()
@@ -156,8 +157,9 @@ func testQuorumOperations(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Find leader
-	leader, leaderClient, err := helpers.WaitForLeaderElection(t, cluster, 30*time.Second)
+	leader, _, err := helpers.WaitForLeaderElection(t, cluster, 30*time.Second)
 	require.NoError(t, err, "Failed to find leader")
+	operator, leaderClient := tenantOperatorAt(t, leader)
 	require.NotNil(t, leader, "No leader found")
 
 	t.Logf("Testing quorum operations with leader (node %d)...", leader.ID)
@@ -176,8 +178,8 @@ func testQuorumOperations(t *testing.T) {
 	t.Log("Writes successful with full quorum (3/3 nodes)")
 
 	// Verify all nodes have the data
-	waitForEntitiesOnAllNodes(t, cluster, entities[:5])
-	helpers.VerifyDataConsistency(t, cluster, entities[:5])
+	waitForEntitiesOnAllNodes(t, operator, entities[:5])
+	helpers.VerifyDataConsistency(t, operator, entities[:5])
 
 	// Note: To properly test phases 2-4 (node failures), we would need to:
 	// - Stop specific Docker containers (requires docker exec/docker-compose commands)

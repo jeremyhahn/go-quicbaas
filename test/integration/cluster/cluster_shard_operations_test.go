@@ -46,7 +46,7 @@ func testVerifyShardDistribution(t *testing.T) {
 	ctx := context.Background()
 
 	// Build cluster connection
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -119,17 +119,18 @@ func testVerifyShardDistribution(t *testing.T) {
 	entities := helpers.GenerateTestEntities(dataOpts)
 
 	// Get leader client for writing
-	_, leaderClient, err := cluster.FindLeader(ctx)
+	leaderNode, _, err := cluster.FindLeader(ctx)
 	require.NoError(t, err, "Failed to find leader")
+	operator, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Write test data
 	writtenEntities := helpers.WriteTestData(t, leaderClient, entities)
 	t.Logf("Successfully wrote %d entities across shards", len(writtenEntities))
 
-	waitForEntitiesOnAllNodes(t, cluster, writtenEntities)
+	waitForEntitiesOnAllNodes(t, operator, writtenEntities)
 
 	// Verify data is accessible from all nodes
-	helpers.VerifyDataConsistency(t, cluster, writtenEntities)
+	helpers.VerifyDataConsistency(t, operator, writtenEntities)
 
 	t.Log("Shard distribution verification completed successfully")
 }
@@ -141,7 +142,7 @@ func testShardRebalancingWhenNodeAdded(t *testing.T) {
 	ctx := context.Background()
 
 	// Build initial 3-node cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -152,8 +153,9 @@ func testShardRebalancingWhenNodeAdded(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Get leader client
-	_, leaderClient, err := cluster.FindLeader(ctx)
+	leaderNode, _, err := cluster.FindLeader(ctx)
 	require.NoError(t, err, "Failed to find leader")
+	_, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Record initial shard distribution. Only shard 1 is a physical
 	// Raft group; see the note in testVerifyShardDistribution.
@@ -221,7 +223,7 @@ func testDataMigrationDuringRebalancing(t *testing.T) {
 	ctx := context.Background()
 
 	// Build cluster
-	cluster, err := helpers.NewClusterBuilder().
+	cluster, err := helpers.NewClusterBuilder().WithSystemAdmin().
 		WithHealthCheck(180*time.Second, 2*time.Second).
 		Build(ctx)
 	require.NoError(t, err, "Failed to build cluster")
@@ -232,8 +234,9 @@ func testDataMigrationDuringRebalancing(t *testing.T) {
 	require.NoError(t, err, "Cluster did not become healthy")
 
 	// Get leader client
-	_, leaderClient, err := cluster.FindLeader(ctx)
+	leaderNode, _, err := cluster.FindLeader(ctx)
 	require.NoError(t, err, "Failed to find leader")
+	operator, leaderClient := tenantOperatorAt(t, leaderNode)
 
 	// Write 1000 entities distributed across all shards
 	t.Log("Writing 1000 test entities across shards...")
@@ -281,7 +284,7 @@ func testDataMigrationDuringRebalancing(t *testing.T) {
 
 	// Verify data consistency across all nodes
 	t.Log("Verifying data consistency across all nodes...")
-	helpers.VerifyDataConsistency(t, cluster, writtenEntities)
+	helpers.VerifyDataConsistency(t, operator, writtenEntities)
 
 	// Verify all checksums still match
 	t.Log("Final checksum verification...")

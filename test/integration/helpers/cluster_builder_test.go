@@ -160,6 +160,39 @@ func TestClusterBuilder_RefusedLoginFails(t *testing.T) {
 	}
 }
 
+func TestClusterBuilder_WithPrincipal_ProbeCarriesPrincipalBearer(t *testing.T) {
+	node := newShardProbeNode(t, "operator-token", 0, http.StatusOK, http.StatusForbidden)
+	fake := &fakeEnrollment{expiresIn: 900}
+	registry := newPrincipalRegistry("test", fake.enroll, func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "operator-token", 900, nil
+	})
+	cb := builderFor(t, node, false).withPrincipal(registry)
+	if got := probeAuthorization(t, cb, node); got != "Bearer operator-token" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer operator-token")
+	}
+	if fake.enrolls != 1 {
+		t.Errorf("enrolls = %d, want 1", fake.enrolls)
+	}
+}
+
+func TestClusterBuilder_WithPrincipal_RefusedEnrollmentFails(t *testing.T) {
+	node := newShardProbeNode(t, "operator-token", 0, http.StatusOK, http.StatusOK)
+	fake := &fakeEnrollment{enrollFail: true}
+	registry := newPrincipalRegistry("test", fake.enroll, func(context.Context, string, []byte, []byte) (string, int, error) {
+		return "operator-token", 900, nil
+	})
+	_, err := builderFor(t, node, false).WithRetries(0).withPrincipal(registry).Build(context.Background())
+	if !errors.Is(err, errEnrollRefused) {
+		t.Fatalf("error = %v, want the refused enrollment", err)
+	}
+}
+
+func TestClusterBuilder_WithTenantOperator_SetsLogin(t *testing.T) {
+	if NewClusterBuilder().WithTenantOperator().login == nil {
+		t.Fatal("WithTenantOperator left the builder unauthenticated")
+	}
+}
+
 func TestClusterBuilder_SystemAdminWithoutRESTEndpointFails(t *testing.T) {
 	cb := NewClusterBuilder().WithEndpoints([]string{"node1:50051"}).WithSystemAdmin()
 	cb.restEndpoints = nil
