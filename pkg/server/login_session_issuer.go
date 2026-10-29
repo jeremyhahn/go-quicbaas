@@ -120,7 +120,9 @@ func (i *oidcSessionIssuer) attestationFor(ctx context.Context, identity *qrdbsd
 		return "", "", 0
 	}
 	resp, err := reader.get(ctx, &qrdbtransport.AuthFactorGetRequest{FactorID: factorID})
-	if err != nil || resp == nil || resp.Factor.Metadata == nil {
+	// A record without attestation metadata still names its owner: reading a
+	// nil map yields "" for the attestation, never a dropped user id.
+	if err != nil || resp == nil {
 		return "", "", 0
 	}
 	return resp.Factor.Metadata[iam.AuthFactorMetadataAttestLevel],

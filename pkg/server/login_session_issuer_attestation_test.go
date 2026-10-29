@@ -31,6 +31,7 @@ type enrolledFactorClient struct {
 
 	wantFactorID string
 	metadata     map[string]string
+	userID       uint64
 	err          error
 
 	gets int
@@ -47,7 +48,7 @@ func (c *enrolledFactorClient) GetAuthFactor(
 		return nil, errors.New("no such factor")
 	}
 	return &qrdbtransport.AuthFactorGetResponse{
-		Factor: qrdbtransport.AuthFactorRecord{ID: req.FactorID, Metadata: c.metadata},
+		Factor: qrdbtransport.AuthFactorRecord{ID: req.FactorID, UserID: c.userID, Metadata: c.metadata},
 	}, nil
 }
 
@@ -109,6 +110,58 @@ func TestOIDCSessionIssuer_WebAuthnLoginReplaysEnrolledAttestation(t *testing.T)
 	}
 	if factors.gets != 1 {
 		t.Fatalf("the factor was read %d times, want exactly 1", factors.gets)
+	}
+}
+
+// passkeyUsernameIdentity is a WebAuthn login whose subject is the username,
+// as an invited admin's passkey login presents it (go-quicbaas#377).
+func passkeyUsernameIdentity(factorID string) *qrdbauth.Identity {
+	identity := webauthnLoginIdentity(factorID)
+	identity.Subject = "user-42"
+	return identity
+}
+
+// Issue copies the user go-qrdb bound to the verified factor into the session
+// identity, so a username-subject passkey login resolves to that user — even
+// when the factor record carries no attestation metadata (ruling 254 option 1).
+func TestOIDCSessionIssuer_PasskeyLoginResolvesTheFactorOwner(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+	ctx := context.Background()
+	owner, err := users.GetUserByUsername(ctx, "acme", "user-42")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{wantFactorID: "factor-1", userID: owner.ID})
+
+	token, _, err := issuer.Issue(ctx, passkeyUsernameIdentity("factor-1"))
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != owner.ID {
+		t.Fatalf("uid = %d, want the factor owner's %d", claims.UserID, owner.ID)
+	}
+}
+
+// A factor that cannot be read binds no user, so the username subject stays
+// unresolvable and the login is refused rather than resolved by name.
+func TestOIDCSessionIssuer_PasskeyLoginWithUnreadableFactorIsRefused(t *testing.T) {
+	provider, users := newTestOIDCProviderWithUsers(t)
+	seedSessionUser(t, users, "acme", "user-42", []string{"admin"})
+
+	issuer := newOIDCSessionIssuer()
+	issuer.SetProvider(provider)
+	issuer.SetAuthFactorClient(&enrolledFactorClient{wantFactorID: "another-factor"})
+
+	if _, _, err := issuer.Issue(context.Background(), passkeyUsernameIdentity("factor-1")); err == nil {
+		t.Fatal("Issue resolved a username subject with no go-qrdb-bound user")
 	}
 }
 

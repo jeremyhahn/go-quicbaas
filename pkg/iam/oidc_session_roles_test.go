@@ -988,6 +988,89 @@ func TestCeremonyLoginRefusesAnEmailOwnedByAnotherTenant(t *testing.T) {
 	}
 }
 
+// A passkey login presents a username subject, which never resolves on its
+// own; the user go-qrdb bound to the verified factor does (ruling 254 option 1).
+func TestPasskeyLoginResolvesTheUserGoQRDBBound(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	identityStore := NewIdentityStore(IdentityStoreOptions{
+		UserStorage: storage, RoleStorage: storage,
+	})
+	ctx := context.Background()
+
+	user := createRESTUser(t, storage, identityStore, burninTenant,
+		"passkey_admin", "passkey-admin@automatethethings.com", []string{adminRoleID})
+
+	token, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    user.LoginName(),
+		TenantID:   burninTenant,
+		UserID:     user.ID,
+		AuthMethod: "fido2",
+	})
+	if err != nil {
+		t.Fatalf("passkey login by the go-qrdb-bound user id: %v", err)
+	}
+	claims, err := provider.ValidateAccessToken(ctx, token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Fatalf("uid = %d, want the bound user's %d", claims.UserID, user.ID)
+	}
+}
+
+// The bound user id is looked up inside the login's tenant: an id owned by
+// another tenant is a miss, never a cross-tenant principal.
+func TestPasskeyLoginRefusesABoundUserOfAnotherTenant(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	ctx := context.Background()
+
+	const foreignID = 55
+	if err := storage.CreateUser(ctx, &User{
+		ID: foreignID, TenantID: "some-other-tenant",
+		Name: "elsewhere", Email: "elsewhere@automatethethings.com",
+		Roles: []string{adminRoleID}, Lifecycle: LifecycleActive,
+	}); err != nil {
+		t.Fatalf("seed foreign-tenant user: %v", err)
+	}
+
+	_, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    "elsewhere",
+		TenantID:   burninTenant,
+		UserID:     foreignID,
+		AuthMethod: "fido2",
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("err = %v, want the login refused: the bound user belongs to another tenant", err)
+	}
+	if unresolved.Cause != nil {
+		t.Fatalf("a foreign-tenant id is a miss, not a lookup failure: cause = %v", unresolved.Cause)
+	}
+}
+
+// Without a go-qrdb-bound user id a passkey login's username subject stays
+// unresolvable: the #377 email rule is not loosened for passkeys.
+func TestPasskeyLoginWithoutABoundUserRefusesAUsernameSubject(t *testing.T) {
+	provider, storage := newCeremonyProvider(t, nil)
+	identityStore := NewIdentityStore(IdentityStoreOptions{
+		UserStorage: storage, RoleStorage: storage,
+	})
+	ctx := context.Background()
+
+	user := createRESTUser(t, storage, identityStore, burninTenant,
+		"passkey_unbound", "passkey-unbound@automatethethings.com", []string{operatorRoleID})
+
+	_, _, err := provider.IssueSessionToken(ctx, SessionIdentity{
+		Subject:    user.LoginName(),
+		TenantID:   burninTenant,
+		AuthMethod: "fido2",
+	})
+	var unresolved *SessionPrincipalUnresolvedError
+	if !errors.As(err, &unresolved) {
+		t.Fatalf("a username subject with no bound user id must be unresolvable, got err = %v", err)
+	}
+}
+
 // TestEmailShapedDisplayNameIsRefusedAtWrite pins validateDisplayName's
 // input-hygiene rule: the qrdb username is derived from Name, and a handle an
 // administrator types for RBAC must not look like another user's email. It is
