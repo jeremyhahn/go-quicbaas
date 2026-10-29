@@ -64,7 +64,7 @@ func newProvisionFixture(t *testing.T) *provisionFixture {
 func newProvisionFixtureOver(t *testing.T, storage *iam.MemoryStorage, userStorage iam.UserStorage) *provisionFixture {
 	t.Helper()
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c, factors := buildTestIAMComponentsOver(t, storage, userStorage, storage)
@@ -159,7 +159,7 @@ func TestTenantProvisioner_CertModeNeedsASignerAndTrustDomain(t *testing.T) {
 
 	t.Run("no CA", func(t *testing.T) {
 		f := newProvisionFixture(t)
-		f.srv.xkmsCA = nil
+		f.srv.setCA(nil)
 
 		_, err := f.p.Provision(context.Background(), req)
 		var unavailableErr *TenantProvisionUnavailableError

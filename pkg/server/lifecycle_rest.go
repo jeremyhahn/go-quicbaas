@@ -274,8 +274,8 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// /api/v1/xkms/ca/* endpoints delegate to go-xkms's production
 	// CA handlers instead of returning 503. The REST server builds
 	// its own adapter around the CA; we only pass the handle.
-	if s.xkmsCA != nil {
-		restServer.SetCertificateAuthority(s.xkmsCA)
+	if s.CA() != nil {
+		restServer.SetCertificateAuthority(s.CA())
 	}
 
 	// Mount the cluster CA secret-delivery endpoint (tpm-kek) when the active

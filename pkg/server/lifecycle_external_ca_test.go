@@ -101,7 +101,7 @@ func TestIssueTLSCertFromExternalCA_Issues(t *testing.T) {
 	s.config.Server.Host = "127.0.0.1"
 	s.config.CA.RootOrganization = "Test Org"
 	s.config.CA.DefaultValidityDays = 365
-	s.xkmsCA = &externalCAMock{serverCfg: &tls.Config{}}
+	s.setCA(&externalCAMock{serverCfg: &tls.Config{}})
 
 	if err := s.issueTLSCertFromExternalCA(); err != nil {
 		t.Fatalf("issueTLSCertFromExternalCA: %v", err)
@@ -123,7 +123,7 @@ func TestIssueTLSCertFromExternalCA_IssueError(t *testing.T) {
 		config: &config.Config{},
 		logger: buildTestLogger(t),
 	}
-	s.xkmsCA = &externalCAMock{issueErr: errors.New("ca offline")}
+	s.setCA(&externalCAMock{issueErr: errors.New("ca offline")})
 
 	if err := s.issueTLSCertFromExternalCA(); err == nil {
 		t.Fatal("expected error when CA issuance fails")
@@ -140,11 +140,11 @@ func TestIssueTLSCertFromExternalCA_AlreadyExistsRSA(t *testing.T) {
 	s.config.CA.RootKeyAlgorithm = "RSA"
 	certs := newSANCertStoreMock(t)
 	certs.certs["localhost"] = newSANTestLeaf(t, "localhost", s.serverCertSANs())
-	s.xkmsCA = &externalCAMock{
+	s.setCA(&externalCAMock{
 		issueErr:  xkmssdk.ErrCertificateAlreadyExists,
 		serverCfg: &tls.Config{},
 		certs:     certs,
-	}
+	})
 
 	if err := s.issueTLSCertFromExternalCA(); err != nil {
 		t.Fatalf("already-exists must be treated as success: %v", err)
@@ -160,7 +160,7 @@ func TestIssueTLSCertFromExternalCA_ServerConfigError(t *testing.T) {
 		config: &config.Config{},
 		logger: buildTestLogger(t),
 	}
-	s.xkmsCA = &externalCAMock{serverErr: errors.New("no key")}
+	s.setCA(&externalCAMock{serverErr: errors.New("no key")})
 
 	if err := s.issueTLSCertFromExternalCA(); err == nil {
 		t.Fatal("expected error when ServerTLSConfig fails")

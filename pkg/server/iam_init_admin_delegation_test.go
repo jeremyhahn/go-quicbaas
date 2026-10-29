@@ -45,7 +45,7 @@ import (
 // needs deps.CA and an operator who later configures a CSR needs deps.Signer.
 func TestFirstBootDependencies_LeavesPathASelectionToQRDB(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c := buildTestIAMComponents(t)
@@ -65,7 +65,7 @@ func TestFirstBootDependencies_LeavesPathASelectionToQRDB(t *testing.T) {
 // be a decision, not the only thing this function can do.
 func TestFirstBootDependencies_ForwardsTheOperatorCSR(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	csrPath := writeTestAdminCSR(t, t.TempDir())
 	srv.config.Auth.BootstrapAdminCSRPath = csrPath
@@ -90,7 +90,7 @@ func TestFirstBootDependencies_ForwardsTheOperatorCSR(t *testing.T) {
 // else's key would also satisfy.
 func TestFirstBootBootstrap_DelegatedAdminKeyMatchesItsCertificate(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c := buildTestIAMComponents(t)
@@ -139,7 +139,7 @@ func TestFirstBootBootstrap_DelegatedAdminKeyMatchesItsCertificate(t *testing.T)
 // file decorative.
 func TestFirstBootBootstrap_DelegatedAdminKeyIsOwnerOnly(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c := buildTestIAMComponents(t)

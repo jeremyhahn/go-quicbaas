@@ -67,7 +67,7 @@ func TestGetCertificateAuthority_ReturnsCAWhenSet(t *testing.T) {
 
 	// Create a mock CA to assign directly
 	mockCA := &mockCertificateAuthority{}
-	srv.xkmsCA = mockCA
+	srv.setCA(mockCA)
 
 	result := srv.GetCertificateAuthority()
 	assert.NotNil(t, result)
@@ -440,12 +440,12 @@ func TestInitializeCA_AlreadyInitialized_LoadSuccess(t *testing.T) {
 	// First call initializes the CA and creates keys/certs on disk
 	err = srv.initializeCA()
 	require.NoError(t, err)
-	assert.NotNil(t, srv.xkmsCA, "CA should be set after first initialization")
+	assert.NotNil(t, srv.CA(), "CA should be set after first initialization")
 
 	// Second call should load the existing CA (already initialized)
 	err = srv.initializeCA()
 	require.NoError(t, err)
-	assert.NotNil(t, srv.xkmsCA, "CA should be set after successful load")
+	assert.NotNil(t, srv.CA(), "CA should be set after successful load")
 	assert.True(t, cfg.Security.TLSEnabled)
 	assert.False(t, cfg.Security.TLSClientAuth)
 }
@@ -744,7 +744,7 @@ func TestUpdateCA_ErrorsWhenAdapterNotReady(t *testing.T) {
 }
 
 // TestUpdateCA_SwapsCAOnAdapter verifies that UpdateCA updates both
-// Server.xkmsCA and the live caAdapter reference.
+// Server.CA() and the live caAdapter reference.
 func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
 	t.Parallel()
 
@@ -761,13 +761,13 @@ func TestUpdateCA_SwapsCAOnAdapter(t *testing.T) {
 	adapter, adapterErr := newCAServiceAdapter(firstCA)
 	require.NoError(t, adapterErr)
 	srv.caAdapter = adapter
-	srv.xkmsCA = firstCA
+	srv.setCA(firstCA)
 
 	// UpdateCA should swap to secondCA.
 	require.NoError(t, srv.UpdateCA(secondCA))
 
 	// Server-level reference should be updated.
-	assert.Equal(t, secondCA, srv.xkmsCA)
+	assert.Equal(t, secondCA, srv.CA())
 
 	// Adapter-level reference should also be updated.
 	assert.Equal(t, secondCA, adapter.getCA())

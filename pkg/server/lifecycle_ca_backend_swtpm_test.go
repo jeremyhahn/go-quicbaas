@@ -103,7 +103,7 @@ func TestInitializeCA_TPM2Backend_Swtpm(t *testing.T) {
 		// than fail, mirroring the seal swtpm test's environment guard.
 		t.Skipf("initializeCA with tpm2 CA backend failed (swtpm reachable but not CA-capable): %v", caErr)
 	}
-	require.NotNil(t, srv.xkmsCA, "CA must be initialized")
+	require.NotNil(t, srv.CA(), "CA must be initialized")
 	require.NotNil(t, srv.xkmsKeyStorage, "software key storage must be present")
 	require.NotNil(t, srv.tlsConfig, "TLS server key/cert (software) must be wired")
 
@@ -127,12 +127,12 @@ func TestInitializeCA_TPM2Backend_Swtpm(t *testing.T) {
 
 	// PROOF 3: end-to-end issuance. Signing uses the TPM-resident CA key; the
 	// issued cert verifies against the CA trust chain.
-	issued, err := srv.xkmsCA.IssueCertificate(ctx, &xkmssdk.TrustedCACertificateRequest{
+	issued, err := srv.CA().IssueCertificate(ctx, &xkmssdk.TrustedCACertificateRequest{
 		Subject: xkmssdk.TrustedCASubject{CommonName: "leaf.swtpm.example.com"},
 		Valid:   1,
 	})
 	require.NoError(t, err, "CA must issue a cert signed by the TPM-resident signing key")
-	_, err = srv.xkmsCA.Verify(issued.Certificate)
+	_, err = srv.CA().Verify(issued.Certificate)
 	require.NoError(t, err, "issued cert must verify against the TPM-backed CA")
 
 	t.Log("CA signing key resides in swtpm; TLS leaf key stays software; issue+verify OK")

@@ -186,7 +186,7 @@ func TestInitializeCA_DefaultIsSoftware_NoRegression(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, srv.initializeCA(), "default-config CA bootstrap must succeed")
-	require.NotNil(t, srv.xkmsCA, "CA must be initialized")
+	require.NotNil(t, srv.CA(), "CA must be initialized")
 	require.NotNil(t, srv.tlsConfig, "TLS server key/cert (always software) must be wired")
 
 	st, stErr := srv.resolveCAStoreType()

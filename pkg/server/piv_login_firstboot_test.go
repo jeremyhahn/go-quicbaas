@@ -48,7 +48,7 @@ func newIntegrationLikeNode(t *testing.T, configure ...func(*Server)) (*Server, 
 	t.Helper()
 	setupOIDCTestXKMS(t)
 	srv := newFreshInstallNode(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	srv.config.IAM.PIVLogin.Enabled = true
 	srv.config.IAM.PIVLogin.AllowUnattested = true

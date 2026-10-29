@@ -33,10 +33,10 @@ import (
 // supplied); callers must treat nil as "cert issuance is unavailable" rather
 // than constructing an adapter over a nil CA.
 func (s *Server) ceremonyCAAdapter() *xkmssdk.CAAdapter {
-	if s == nil || s.xkmsCA == nil {
+	if s == nil || s.CA() == nil {
 		return nil
 	}
-	return xkmssdk.NewCAAdapter(s.xkmsCA, s.config.IAM.SPIFFETrustDomain)
+	return xkmssdk.NewCAAdapter(s.CA(), s.config.IAM.SPIFFETrustDomain)
 }
 
 // lateBoundCeremonyCA is a qrdbsdk.CeremonyCA whose backing CA is attached

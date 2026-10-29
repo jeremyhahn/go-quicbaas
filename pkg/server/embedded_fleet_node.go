@@ -128,7 +128,7 @@ func (ea *embeddedFleetNode) stop(ctx context.Context) error {
 
 // startEmbeddedFleetNode initialises and starts the in-process fleet node runtime.
 // Call order requirements (all enforced by the caller in lifecycle order):
-//  1. s.xkmsCA must be initialized (CA up, TLS enabled)
+//  1. s.CA() must be initialized (CA up, TLS enabled)
 //  2. s.fleetRegistry must be non-nil (orchestration started)
 //  3. s.quicBaaSService must be non-nil (service facade wired)
 //
@@ -188,8 +188,8 @@ func (s *Server) startEmbeddedFleetNode() error {
 	// issuer path is unavailable; the embedded fleet node still starts but without
 	// a hardware-bound identity (acceptable for non-TLS dev deployments).
 	var issuedCertPEM []byte
-	if s.xkmsCA != nil {
-		issuer, issueErr := service.NewXKMSFleetNodeCertIssuer(s.xkmsCA)
+	if s.CA() != nil {
+		issuer, issueErr := service.NewXKMSFleetNodeCertIssuer(s.CA())
 		if issueErr == nil {
 			req := &service.FleetNodeCertificateRequest{
 				TenantID: embeddedFleetNodeTenantID,
@@ -560,7 +560,7 @@ func (s *Server) buildEmbeddedFleetNodeMCPResolver(hostname string, log interfac
 		log.Debug("Embedded agent: MCP disabled; quicbaas MCP preset will not be resolved")
 		return nil
 	}
-	if s.xkmsCA == nil {
+	if s.CA() == nil {
 		log.Warn("Embedded agent: CA unavailable; quicbaas MCP preset will not be resolved (no agent cert)")
 		return nil
 	}
@@ -575,7 +575,7 @@ func (s *Server) buildEmbeddedFleetNodeMCPResolver(hostname string, log interfac
 	}
 	endpoint := fmt.Sprintf("https://%s:%d/mcp", host, s.config.Server.MCP.Port)
 
-	issuer, err := service.NewXKMSFleetNodeCertIssuer(s.xkmsCA)
+	issuer, err := service.NewXKMSFleetNodeCertIssuer(s.CA())
 	if err != nil {
 		log.Warnf("Embedded agent: MCP preset resolver disabled (cert issuer init failed): %v", err)
 		return nil

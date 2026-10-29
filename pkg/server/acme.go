@@ -41,14 +41,14 @@ const acmeShardID uint64 = 0
 // A non-nil error is returned only when the CA cannot satisfy the TCG
 // interface or the xkms RestService construction fails.
 func (s *Server) buildACMEService(caAdapter *caServiceAdapter) (service.ACMEServicer, error) {
-	if caAdapter == nil || s.xkmsCA == nil || s.qrdbClient == nil {
+	if caAdapter == nil || s.CA() == nil || s.qrdbClient == nil {
 		return nil, nil
 	}
 
 	// The ACME RFC 8555 handlers require the TCG-extended CA surface. The
 	// quicbaas TrustedCA is created by pkg/ca.New, whose concrete type
 	// implements TCGCA — the same assertion xkmsd performs in cmd/xkmsd/acme.go.
-	tcgCA, ok := s.xkmsCA.(xkmsacme.CACertificateAuthority)
+	tcgCA, ok := s.CA().(xkmsacme.CACertificateAuthority)
 	if !ok {
 		return nil, &ACMECAAssertError{}
 	}

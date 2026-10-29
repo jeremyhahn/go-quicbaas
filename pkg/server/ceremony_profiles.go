@@ -91,10 +91,10 @@ type profileRegistryProvider interface {
 // that exposes no profile registry is left untouched — its own typed
 // profile-not-found error surfaces if a ceremony profile is ever needed.
 func (s *Server) registerCeremonyProfiles() error {
-	if s == nil || s.xkmsCA == nil {
+	if s == nil || s.CA() == nil {
 		return nil
 	}
-	provider, ok := s.xkmsCA.(profileRegistryProvider)
+	provider, ok := s.CA().(profileRegistryProvider)
 	if !ok {
 		return nil
 	}

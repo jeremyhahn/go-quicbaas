@@ -178,8 +178,8 @@ func (s *Server) appendPlatformClientCAs(tlsConfig *tls.Config) error {
 // client sends a certificate only when its issuer is among the CAs the server
 // names, so a missing platform CA means the certificate is never presented.
 func (s *Server) trustPlatformClientCAs(tlsConfig *tls.Config) error {
-	if s.xkmsCA != nil {
-		caBundle, err := s.xkmsCA.CABundle()
+	if s.CA() != nil {
+		caBundle, err := s.CA().CABundle()
 		if err != nil {
 			return api.NewOperationFailedError("get xkms CA bundle for client auth", err)
 		}
@@ -287,7 +287,7 @@ func (s *Server) initializeCA() error {
 	// CA for embedded/in-process servers (TLS off, no listeners) even though
 	// they had explicitly passed WithCA(...), leaving those SDK accessors nil.
 	if s.opts.externalCA != nil {
-		s.xkmsCA = s.opts.externalCA
+		s.setCA(s.opts.externalCA)
 		s.logger.Info("Using external certificate authority — skipping internal CA bootstrap")
 		// Only issue a TLS serving cert when this server actually serves TLS.
 		if !s.config.Security.TLSEnabled {
@@ -608,7 +608,7 @@ func (s *Server) initializeCA() error {
 		s.logger.Info("Certificate authority loaded from existing files")
 	}
 
-	s.xkmsCA = xkmsCA
+	s.setCA(xkmsCA)
 
 	// Update config paths for TLS transports unless the operator has already
 	// configured them (via security.tls_cert_file / tls_key_file / tls_ca_file
@@ -838,7 +838,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 		Valid: s.config.CA.DefaultValidityDays,
 	}
 
-	if _, err := s.issueServerCert(context.Background(), s.xkmsCA, serverRequest); err != nil {
+	if _, err := s.issueServerCert(context.Background(), s.CA(), serverRequest); err != nil {
 		return err
 	}
 
@@ -879,7 +879,7 @@ func (s *Server) issueTLSCertFromExternalCA() error {
 	// Get in-memory TLS config backed by the external CA's OpaqueKey.
 	// ServerTLSConfig (not bare TLSConfig) makes server intent explicit
 	// and silences the false-positive "ServerName not specified" WARN.
-	s.tlsConfig, err = s.xkmsCA.ServerTLSConfig(context.Background(), serverKeyAttrs, false)
+	s.tlsConfig, err = s.CA().ServerTLSConfig(context.Background(), serverKeyAttrs, false)
 	if err != nil {
 		return api.NewOperationFailedError("create server TLS config from external CA", err)
 	}
@@ -2072,8 +2072,8 @@ func (s *Server) startService() error {
 	// supplied externally via WithCA or created internally by initializeCA,
 	// it is now reachable through the service facade for callers such as
 	// platformd's provisionDaemonIdentity.
-	if s.xkmsCA != nil {
-		caAdapter, caErr := newCAServiceAdapter(s.xkmsCA)
+	if s.CA() != nil {
+		caAdapter, caErr := newCAServiceAdapter(s.CA())
 		if caErr != nil {
 			s.logger.Warnf("Failed to wire CA into service builder: %v", caErr)
 		} else {

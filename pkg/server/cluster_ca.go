@@ -187,8 +187,8 @@ func (s *Server) ClusterSecretDeliveryService() *clustercasdk.SecretDeliveryServ
 		return nil
 	}
 	var pool *x509.CertPool
-	if s.xkmsCA != nil {
-		if p, err := s.xkmsCA.CABundleCertPool(); err == nil {
+	if s.CA() != nil {
+		if p, err := s.CA().CABundleCertPool(); err == nil {
 			pool = p
 		}
 	}

@@ -201,7 +201,7 @@ func (s *Server) buildLoginFactorVerifiers() {
 //   - The tenant-aware WebAuthn verifier receives the per-tenant WebAuthn
 //     service factory from the IAM webauthn manager.
 //   - The PIV verifier receives an xkms PIV verifier built from the CA trust
-//     roots (s.xkmsCA.CABundleCertPool()).
+//     roots (s.CA().CABundleCertPool()).
 //   - The PKCS#11 verifier needs no binding: it is a stateless possession-only
 //     verifier whose only inputs are the factor record's enrolled public key and
 //     the challenge nonce+signature submitted at login time.
@@ -227,16 +227,16 @@ func (s *Server) bindLoginFactorVerifiers(c *iamComponents) {
 
 // bindPIVLoginVerifier builds the xkms PIV verifier from the CA trust roots and
 // attaches it to the late-bound PIV login verifier. The trust roots are obtained
-// from the CA the server already holds (s.xkmsCA.CABundleCertPool()) — the same
+// from the CA the server already holds (s.CA().CABundleCertPool()) — the same
 // roots the bootstrap TLS path uses for client-cert validation — so no roots are
 // hardcoded. A nil CA or a roots-resolution failure leaves the verifier unbound;
 // it then fails closed at verification time.
 func (s *Server) bindPIVLoginVerifier(ver *lateBoundPIVVerifier) {
-	if s.xkmsCA == nil {
+	if s.CA() == nil {
 		s.logger.Warn("PIV login verifier left unbound: no CA available for trust roots")
 		return
 	}
-	roots, err := s.xkmsCA.CABundleCertPool()
+	roots, err := s.CA().CABundleCertPool()
 	if err != nil {
 		s.logger.WithError(err).Warn("PIV login verifier left unbound: failed to obtain CA trust roots")
 		return

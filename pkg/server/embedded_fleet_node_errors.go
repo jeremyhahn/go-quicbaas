@@ -26,7 +26,7 @@ var (
 	ErrEmbeddedFleetNodeAlreadyStarted = errors.New("embedded agent: already started")
 
 	// ErrEmbeddedFleetNodeNoCA is returned when embedded fleet node startup requires a
-	// certificate authority but s.xkmsCA is nil (TLS disabled or CA not yet
+	// certificate authority but s.CA() is nil (TLS disabled or CA not yet
 	// initialized).
 	ErrEmbeddedFleetNodeNoCA = errors.New("embedded agent: CA not available — ensure TLS is enabled before starting embedded agent")
 

@@ -40,8 +40,8 @@ func TestBuildACMEService_NonTCGCARejected(t *testing.T) {
 		logger:     buildTestLogger(t),
 		config:     cfg,
 		qrdbClient: newNodeBackedShardedClient(node),
-		xkmsCA:     newFakeTrustedCA(t), // base TrustedCA only; not a TCGCA
 	}
+	s.setCA(newFakeTrustedCA(t)) // base TrustedCA only; not a TCGCA
 
 	adapter, err := newCAServiceAdapter(newFakeTrustedCA(t))
 	if err != nil {

@@ -249,7 +249,7 @@ func TestOperatorTLS_UnknownCACertIsNotAccepted(t *testing.T) {
 func TestInitializeCA_OperatorCert_ClientCAsTrustOperatorAndPlatform(t *testing.T) {
 	srv, _, root := newOperatorTLSIntegrationNode(t)
 
-	bundle, err := srv.xkmsCA.CABundle()
+	bundle, err := srv.CA().CABundle()
 	require.NoError(t, err)
 	block, _ := pem.Decode(bundle)
 	require.NotNil(t, block, "the platform CA bundle holds a certificate")

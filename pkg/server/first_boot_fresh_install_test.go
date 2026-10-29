@@ -220,7 +220,7 @@ func countFirstBootBanners(t *testing.T) *int {
 // they stub this function.
 func TestInitializeIAMComponents_RefusesWhenFirstBootFailsOnAFreshInstall(t *testing.T) {
 	srv := newFreshInstallNode(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = ""
 	banners := countFirstBootBanners(t)
 

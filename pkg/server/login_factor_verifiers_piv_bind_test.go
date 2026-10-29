@@ -64,7 +64,7 @@ func assertPIVUnbound(t *testing.T, v *lateBoundPIVVerifier) {
 func TestBindPIVLoginVerifier_NilCA(t *testing.T) {
 	s := newTestServer(t)
 	v := pivVerifierFromServer(t, s)
-	s.xkmsCA = nil
+	s.setCA(nil)
 	s.bindPIVLoginVerifier(v)
 	assertPIVUnbound(t, v)
 }
@@ -72,7 +72,7 @@ func TestBindPIVLoginVerifier_NilCA(t *testing.T) {
 func TestBindPIVLoginVerifier_CertPoolError(t *testing.T) {
 	s := newTestServer(t)
 	v := pivVerifierFromServer(t, s)
-	s.xkmsCA = &pivBindFakeCA{err: errors.New("roots unavailable")}
+	s.setCA(&pivBindFakeCA{err: errors.New("roots unavailable")})
 	s.bindPIVLoginVerifier(v)
 	assertPIVUnbound(t, v)
 }
@@ -80,7 +80,7 @@ func TestBindPIVLoginVerifier_CertPoolError(t *testing.T) {
 func TestBindPIVLoginVerifier_NilPool(t *testing.T) {
 	s := newTestServer(t)
 	v := pivVerifierFromServer(t, s)
-	s.xkmsCA = &pivBindFakeCA{pool: nil}
+	s.setCA(&pivBindFakeCA{pool: nil})
 	s.bindPIVLoginVerifier(v)
 	assertPIVUnbound(t, v)
 }
@@ -92,7 +92,7 @@ func TestBindPIVLoginVerifier_Success(t *testing.T) {
 	root, _ := newTestPIVRoot(t)
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
-	s.xkmsCA = &pivBindFakeCA{pool: pool}
+	s.setCA(&pivBindFakeCA{pool: pool})
 
 	s.bindPIVLoginVerifier(v)
 
@@ -119,7 +119,7 @@ func TestBindLoginFactorVerifiers_RoutesPIV(t *testing.T) {
 	root, _ := newTestPIVRoot(t)
 	pool := x509.NewCertPool()
 	pool.AddCert(root)
-	s.xkmsCA = &pivBindFakeCA{pool: pool}
+	s.setCA(&pivBindFakeCA{pool: pool})
 
 	s.bindLoginFactorVerifiers(&iamComponents{})
 
@@ -234,7 +234,7 @@ func TestBindPIVLoginVerifier_IncludesOperatorRoots(t *testing.T) {
 	daemonRoot, _ := newTestPIVRoot(t)
 	pool := x509.NewCertPool()
 	pool.AddCert(daemonRoot)
-	s.xkmsCA = &pivBindFakeCA{pool: pool}
+	s.setCA(&pivBindFakeCA{pool: pool})
 
 	operatorRoot, _ := newTestPIVRoot(t)
 	s.config.IAM.PIVLogin.Enabled = true

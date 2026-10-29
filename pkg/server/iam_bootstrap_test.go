@@ -129,7 +129,7 @@ func TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite(t *test
 	srv.config.Auth.InsecureDevMode = false
 	// The platform CA is up before IAM init in the real boot order
 	// (initializeCA runs from Server.initialize before startService).
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c, _ := buildTestIAMComponentsWithFactors(t)
@@ -201,7 +201,7 @@ func TestFirstBootBootstrap_BindsCanonicalSPKIThumbprintAndMintsNoInvite(t *test
 // fails FinishLogin with "factor not found".
 func TestFirstBootBootstrap_IssuedCertIsLoginResolvable(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c, factors := buildTestIAMComponentsWithFactors(t)
@@ -233,7 +233,7 @@ func TestFirstBootBootstrap_IssuedCertIsLoginResolvable(t *testing.T) {
 // CSR and this host never holds the admin private key.
 func TestFirstBootBootstrap_CSRSignPathKeepsAdminKeyOffHost(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	srv.config.Auth.BootstrapAdminCSRPath = writeTestAdminCSR(t, t.TempDir())
 
@@ -264,7 +264,7 @@ func TestFirstBootBootstrap_CSRSignPathKeepsAdminKeyOffHost(t *testing.T) {
 // on a host the operator deliberately kept it off.
 func TestFirstBootBootstrap_EmptyAdminCSRFailsClosed(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	empty := filepath.Join(t.TempDir(), "admin.csr")
@@ -286,7 +286,7 @@ func TestFirstBootBootstrap_EmptyAdminCSRFailsClosed(t *testing.T) {
 // misconfiguration: a path that does not exist.
 func TestFirstBootBootstrap_MissingAdminCSRFailsClosed(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	srv.config.Auth.BootstrapAdminCSRPath = filepath.Join(t.TempDir(), "absent.csr")
 
@@ -303,7 +303,7 @@ func TestFirstBootBootstrap_MissingAdminCSRFailsClosed(t *testing.T) {
 // certificate is absent.
 func TestFirstBootBootstrap_NoCAStillCreatesAdmin(t *testing.T) {
 	srv := withTempServer(t)
-	require.Nil(t, srv.xkmsCA)
+	require.Nil(t, srv.CA())
 
 	c := buildTestIAMComponents(t)
 
@@ -332,7 +332,7 @@ func TestFirstBootBootstrap_NoCAStillCreatesAdmin(t *testing.T) {
 // CWD (the source tree in development). First-boot must refuse instead.
 func TestFirstBootBootstrap_NoDataDirRefusesToWriteAdminBundle(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	srv.config.Storage.DataDir = ""
 
@@ -370,7 +370,7 @@ func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) 
 	const trustDomain = "quicbaas.example.test"
 
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = trustDomain
 
 	c := buildTestIAMComponents(t)
@@ -418,7 +418,7 @@ func TestFirstBootBootstrap_AdminCertCarriesSystemTenantSPIFFESAN(t *testing.T) 
 // a different configured trust domain.
 func TestFirstBootBootstrap_AdminCertSANPinsTrustDomain(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = "issued.example.test"
 
 	c := buildTestIAMComponents(t)
@@ -449,7 +449,7 @@ func TestFirstBootBootstrap_FreshStorage_CreatesAdminAssignment(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 
 	c := buildTestIAMComponents(t)

@@ -43,7 +43,7 @@ func assertPlatformCATrusted(t *testing.T, srv *Server, pool *x509.CertPool) {
 	t.Helper()
 	require.NotNil(t, pool, "ClientCAs pool must be populated so client certs chain-verify")
 
-	caBundle, err := srv.xkmsCA.CABundle()
+	caBundle, err := srv.CA().CABundle()
 	require.NoError(t, err)
 	require.NotEmpty(t, caBundle, "platform CA bundle must be non-empty")
 

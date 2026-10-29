@@ -171,7 +171,7 @@ func TestServer_InitializeCA_TLSDisabledIsNoOp(t *testing.T) {
 	srv.config.Security.TLSEnabled = false
 
 	require.NoError(t, srv.initializeCA())
-	assert.Nil(t, srv.xkmsCA)
+	assert.Nil(t, srv.CA())
 }
 
 // =============================================================================

@@ -351,7 +351,7 @@ func TestIssueTLSCertFromExternalCA_CarriesAdditionalSANs(t *testing.T) {
 	ca := &sanCAMock{certs: newSANCertStoreMock(t)}
 	ca.certs.certs["localhost"] = newSANTestLeaf(t, "localhost",
 		&xkmssdk.TrustedCASubjectAlternativeNames{DNS: []string{"localhost"}})
-	s.xkmsCA = ca
+	s.setCA(ca)
 
 	require.NoError(t, s.issueTLSCertFromExternalCA())
 

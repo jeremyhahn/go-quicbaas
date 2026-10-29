@@ -32,7 +32,7 @@ import (
 
 func TestCeremonyCAAdapter_NilWithoutCA(t *testing.T) {
 	srv := withTempServer(t)
-	require.Nil(t, srv.xkmsCA)
+	require.Nil(t, srv.CA())
 	assert.Nil(t, srv.ceremonyCAAdapter(),
 		"a CA-less server must report no adapter rather than one wrapping nil")
 }
@@ -40,7 +40,7 @@ func TestCeremonyCAAdapter_NilWithoutCA(t *testing.T) {
 func TestCeremonyCAAdapter_SatisfiesEveryBootstrapSeam(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.IAM.SPIFFETrustDomain = "example.test"
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 
 	adapter := srv.ceremonyCAAdapter()
 	require.NotNil(t, adapter)
@@ -82,7 +82,7 @@ func TestLateBoundCeremonyCA_FailsClosedBeforeBinding(t *testing.T) {
 // the node holds issues real certificates instead of failing closed.
 func TestLateBoundCeremonyCA_ResolvesAfterBinding(t *testing.T) {
 	srv := withTempServer(t)
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 
 	// Before binding the node's wrapper is inert.
 	_, err := srv.ceremonyCA.CABundle()
@@ -112,7 +112,7 @@ func TestLateBoundCeremonyCA_ResolvesAfterBinding(t *testing.T) {
 // failing closed instead of panicking on a nil inner CA.
 func TestLateBoundCeremonyCA_BindWithoutCAStaysClosed(t *testing.T) {
 	srv := withTempServer(t)
-	require.Nil(t, srv.xkmsCA)
+	require.Nil(t, srv.CA())
 
 	srv.bindCeremonyCA()
 

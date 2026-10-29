@@ -259,8 +259,10 @@ type Server struct {
 	backendManager catalog.BackendManager
 	workerManager  *catalog.WorkerManager
 
-	// Certificate Authority - manages TLS certificate issuance
-	xkmsCA xkmssdk.TrustedCA
+	// Certificate Authority - manages TLS certificate issuance. UpdateCA
+	// swaps it while logins read it, so it is held atomically: read it
+	// with CA() and write it with setCA().
+	xkmsCA atomic.Pointer[trustedCARef]
 
 	// caAdapter is the live CA service adapter wired into the QuicBaaS service
 	// at startService() time. Keeping a reference allows UpdateCA() to swap
@@ -1846,14 +1848,32 @@ func (s *Server) GetBackupManager() *backup.BackupManager {
 	return s.backupManager
 }
 
+// trustedCARef boxes the CA interface so it can sit in an atomic.Pointer.
+type trustedCARef struct {
+	ca xkmssdk.TrustedCA
+}
+
 // CA returns the Certificate Authority (nil if TLS is disabled).
 func (s *Server) CA() xkmssdk.TrustedCA {
-	return s.xkmsCA
+	ref := s.xkmsCA.Load()
+	if ref == nil {
+		return nil
+	}
+	return ref.ca
+}
+
+// setCA stores ca as the server's Certificate Authority. A nil ca clears it.
+func (s *Server) setCA(ca xkmssdk.TrustedCA) {
+	if ca == nil {
+		s.xkmsCA.Store(nil)
+		return
+	}
+	s.xkmsCA.Store(&trustedCARef{ca: ca})
 }
 
 // GetCertificateAuthority returns the CA (nil if TLS is disabled).
 func (s *Server) GetCertificateAuthority() xkmssdk.TrustedCA {
-	return s.xkmsCA
+	return s.CA()
 }
 
 // UpdateCA replaces the Certificate Authority used by the QuicBaaS
@@ -1868,7 +1888,7 @@ func (s *Server) UpdateCA(ca xkmssdk.TrustedCA) error {
 	if s.caAdapter == nil {
 		return UpdateCANotReadyError{}
 	}
-	s.xkmsCA = ca
+	s.setCA(ca)
 	s.caAdapter.SetCA(ca)
 	return nil
 }

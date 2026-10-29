@@ -533,7 +533,7 @@ func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
 	srv := withTempServer(t)
 	srv.config.Auth.AllowPasswordAuth = false
 	srv.config.Auth.InsecureDevMode = false
-	srv.xkmsCA = newFakeTrustedCA(t)
+	srv.setCA(newFakeTrustedCA(t))
 	srv.config.IAM.SPIFFETrustDomain = testTrustDomain
 	c := buildTestIAMComponents(t)
 	ctx := context.Background()
@@ -575,7 +575,7 @@ func TestFirstBootBootstrap_ReEntryWithoutAReissuedCertRefuses(t *testing.T) {
 // Refusing there would brick every CA-less deployment on its second pass.
 func TestFirstBootBootstrap_CALessReEntryStillCompletes(t *testing.T) {
 	srv := withTempServer(t)
-	require.Nil(t, srv.xkmsCA, "this test is about the CA-less path")
+	require.Nil(t, srv.CA(), "this test is about the CA-less path")
 	c := buildTestIAMComponents(t)
 	ctx := context.Background()
 
