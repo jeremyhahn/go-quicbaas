@@ -628,6 +628,74 @@ func TestListJobs_Pagination(t *testing.T) {
 	}
 }
 
+// TestListJobs_CursorWalksEveryJobOnce pages through more jobs than one page
+// holds and checks each job is returned exactly once. The cursor used to be
+// ignored, so every page repeated the first and later jobs were unreachable.
+func TestListJobs_CursorWalksEveryJobOnce(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(newMockKVStore())
+
+	const total = 12
+	for i := 0; i < total; i++ {
+		if err := storage.CreateJob(ctx, createTestJob("job", scheduler.OwnerTypeSystem, "")); err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+	}
+
+	seen := make(map[uint64]bool)
+	cursor := ""
+	for page := 0; page < total; page++ {
+		jobs, next, err := storage.ListJobs(ctx, &scheduler.JobQuery{Limit: 5, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListJobs page %d: %v", page, err)
+		}
+		for _, job := range jobs {
+			if seen[job.ID] {
+				t.Fatalf("job %d returned twice", job.ID)
+			}
+			seen[job.ID] = true
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	if len(seen) != total {
+		t.Errorf("walked %d jobs, want %d", len(seen), total)
+	}
+}
+
+// TestListJobs_NoCursorOnLastPage checks a page that holds the remaining
+// jobs exactly carries no cursor, so callers do not ask for an empty page.
+func TestListJobs_NoCursorOnLastPage(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(newMockKVStore())
+	for i := 0; i < 5; i++ {
+		if err := storage.CreateJob(ctx, createTestJob("job", scheduler.OwnerTypeSystem, "")); err != nil {
+			t.Fatalf("CreateJob: %v", err)
+		}
+	}
+
+	jobs, cursor, err := storage.ListJobs(ctx, &scheduler.JobQuery{Limit: 5})
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 5 || cursor != "" {
+		t.Errorf("got %d jobs and cursor %q, want 5 jobs and no cursor", len(jobs), cursor)
+	}
+}
+
+// TestListJobs_InvalidCursor checks a cursor that is not a job ID is refused
+// rather than read as the first page.
+func TestListJobs_InvalidCursor(t *testing.T) {
+	storage := NewStorage(newMockKVStore())
+
+	_, _, err := storage.ListJobs(context.Background(), &scheduler.JobQuery{Cursor: "not-an-id"})
+	if !errors.Is(err, ErrInvalidCursor) {
+		t.Errorf("got %v, want ErrInvalidCursor", err)
+	}
+}
+
 func TestListJobs_TenantJobs(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()

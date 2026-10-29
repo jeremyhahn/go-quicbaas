@@ -147,16 +147,24 @@ func testRESTJobLifecycle(t *testing.T, ctx context.Context) {
 	assert.Equal(t, jobName, retrievedJob.Name)
 
 	// 3. List jobs (should include our job)
-	listResp, err := client.ListJobs(ctx, 100, "")
-	require.NoError(t, err)
-	assert.NotNil(t, listResp)
-
+	// The scheduler is shared with every other test in the package, so the
+	// job may sit past the first page: walk the cursor until it is found.
 	var found bool
-	for _, j := range listResp.Jobs {
-		if j.ID == job.ID {
-			found = true
+	cursor := ""
+	for !found {
+		listResp, err := client.ListJobs(ctx, 100, cursor)
+		require.NoError(t, err)
+		require.NotNil(t, listResp)
+		for _, j := range listResp.Jobs {
+			if j.ID == job.ID {
+				found = true
+				break
+			}
+		}
+		if !listResp.HasMore || listResp.NextCursor == "" {
 			break
 		}
+		cursor = listResp.NextCursor
 	}
 	assert.True(t, found, "job should be in the list")
 

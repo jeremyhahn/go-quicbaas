@@ -15,10 +15,13 @@
 package quicbaas
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -339,13 +342,27 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 		limit = 100
 	}
 
+	// The cursor is the ID of the last job on the previous page. The scan
+	// does not promise key order, and "jobs/10" sorts before "jobs/9"
+	// anyway, so pages are cut by job ID rather than by scan position.
+	var after uint64
+	if query.Cursor != "" {
+		id, err := strconv.ParseUint(query.Cursor, 10, 64)
+		if err != nil {
+			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.cursor", Cause: ErrInvalidCursor}
+		}
+		after = id
+	}
+
 	jobs := make([]*scheduler.Job, 0)
-	var scanErr error
 
 	err := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
+			return nil
+		}
+		if job.ID <= after {
 			return nil
 		}
 
@@ -375,27 +392,22 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 		}
 
 		jobs = append(jobs, &job)
-
-		// Stop if we've reached the limit
-		if len(jobs) >= limit {
-			return ErrLimitReached
-		}
-
 		return nil
 	})
-
-	if err != nil && !errors.Is(err, ErrLimitReached) {
+	if err != nil {
 		return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.scan", Cause: err}
 	}
-	if scanErr != nil {
-		return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.scan", Cause: scanErr}
-	}
 
-	// Generate cursor for pagination if we hit the limit
+	slices.SortFunc(jobs, func(a, b *scheduler.Job) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+
+	// A cursor is returned only when another page exists, so callers can
+	// read "no cursor" as "no more jobs".
 	var nextCursor string
-	if len(jobs) >= limit && len(jobs) > 0 {
-		lastJob := jobs[len(jobs)-1]
-		nextCursor = fmt.Sprintf("%d", lastJob.ID)
+	if len(jobs) > limit {
+		jobs = jobs[:limit]
+		nextCursor = strconv.FormatUint(jobs[limit-1].ID, 10)
 	}
 
 	return jobs, nextCursor, nil

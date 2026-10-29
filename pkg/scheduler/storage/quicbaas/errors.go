@@ -30,6 +30,9 @@ var (
 	// ErrLimitReached is an internal sentinel used to stop iteration.
 	ErrLimitReached = errors.New("limit reached")
 
+	// ErrInvalidCursor indicates a ListJobs cursor that is not a job ID.
+	ErrInvalidCursor = errors.New("cursor is not a job ID")
+
 	// ErrNilClaim indicates a nil firing claim was passed to ClaimFiring.
 	ErrNilClaim = errors.New("firing claim cannot be nil")
 
