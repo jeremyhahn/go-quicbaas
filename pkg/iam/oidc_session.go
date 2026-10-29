@@ -36,6 +36,9 @@ type SessionIdentity struct {
 	Roles []string
 	// Groups are the domain groups resolved for the principal.
 	Groups []string
+	// UserID is the qrdb user id go-qrdb bound to the verified login factor
+	// (the factor record's owner). Zero when the login carries no factor.
+	UserID uint64
 	// AuthMethod records the factor used (mtls, fido2, piv).
 	AuthMethod string
 	// MFAVerified reports whether the login satisfied multi-factor assurance.
@@ -217,16 +220,27 @@ func (p *OIDCProvider) resolveSessionPrincipal(ctx context.Context, identity Ses
 // owning tenant checked afterwards; scoping the lookup itself means a
 // foreign-tenant record is never read, rather than read and then discarded.
 func (p *OIDCProvider) resolveSubject(ctx context.Context, identity SessionIdentity) (*User, error) {
+	// A go-qrdb-verified factor login names its user by the id go-qrdb bound
+	// to the factor, so the subject (a username for a passkey) is never the
+	// key (ruling 254 option 1). The lookup stays inside the login's tenant.
+	if identity.UserID != 0 {
+		return principalOrMiss(p.identityStore.GetUser(ctx, identity.TenantID, identity.UserID))
+	}
 	// A non-email subject is unresolvable, not a cue to try another index: a
 	// username is the handle an administrator types for RBAC, never a
 	// credential.
 	if validateEmail(identity.Subject) != nil {
 		return nil, nil
 	}
-	byEmail, err := p.identityStore.GetUserByEmail(ctx, identity.TenantID, identity.Subject)
+	return principalOrMiss(p.identityStore.GetUserByEmail(ctx, identity.TenantID, identity.Subject))
+}
+
+// principalOrMiss maps a principal lookup's not-found to (nil, nil), so the
+// caller reports an unresolved principal rather than a store failure.
+func principalOrMiss(user *User, err error) (*User, error) {
 	switch {
 	case err == nil:
-		return byEmail, nil
+		return user, nil
 	case isPrincipalLookupMiss(err):
 		return nil, nil
 	default:
