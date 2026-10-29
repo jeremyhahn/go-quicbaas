@@ -326,16 +326,7 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 		query = &scheduler.JobQuery{}
 	}
 
-	// Determine prefix based on query
-	var prefix string
-	switch {
-	case query.OwnerID != "":
-		prefix = fmt.Sprintf(TenantJobsPrefixFmt, query.OwnerID)
-	case query.OwnerType == scheduler.OwnerTypeSystem || query.OwnerType == scheduler.OwnerTypeDelegated:
-		prefix = SystemJobsPrefix
-	default:
-		prefix = SystemJobsPrefix // Default to system jobs
-	}
+	prefixes := jobScanPrefixes(query)
 
 	limit := query.Limit
 	if limit <= 0 {
@@ -356,7 +347,7 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 
 	jobs := make([]*scheduler.Job, 0)
 
-	err := s.kv.Scan(ctx, prefix, func(key string, value []byte) error {
+	visit := func(key string, value []byte) error {
 		var job scheduler.Job
 		if err := json.Unmarshal(value, &job); err != nil {
 			// Skip malformed entries
@@ -393,9 +384,11 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 
 		jobs = append(jobs, &job)
 		return nil
-	})
-	if err != nil {
-		return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.scan", Cause: err}
+	}
+	for _, prefix := range prefixes {
+		if err := s.kv.Scan(ctx, prefix, visit); err != nil {
+			return nil, "", &scheduler.ErrStorageError{Op: "ListJobs.scan", Cause: err}
+		}
 	}
 
 	slices.SortFunc(jobs, func(a, b *scheduler.Job) int {
@@ -411,6 +404,21 @@ func (s *Storage) ListJobs(ctx context.Context, query *scheduler.JobQuery) ([]*s
 	}
 
 	return jobs, nextCursor, nil
+}
+
+// jobScanPrefixes returns the key prefixes a ListJobs query must scan. A
+// tenant's own jobs live under its tenant prefix while system and delegated
+// jobs aimed at it live under the system prefix, so a query scoped only by
+// target tenant scans both.
+func jobScanPrefixes(query *scheduler.JobQuery) []string {
+	switch {
+	case query.OwnerID != "":
+		return []string{fmt.Sprintf(TenantJobsPrefixFmt, query.OwnerID)}
+	case query.OwnerType == "" && query.TargetTenantID != "":
+		return []string{SystemJobsPrefix, fmt.Sprintf(TenantJobsPrefixFmt, query.TargetTenantID)}
+	default:
+		return []string{SystemJobsPrefix}
+	}
 }
 
 // GetJobsDueForExecution returns jobs that need to run.

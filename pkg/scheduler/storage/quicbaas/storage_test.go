@@ -723,6 +723,41 @@ func TestListJobs_TenantJobs(t *testing.T) {
 	}
 }
 
+// TestListJobs_TargetTenantIncludesOwnJobs pins the listing a tenant caller
+// gets with no owner filter: its own tenant-owned jobs and the delegated jobs
+// aimed at it, but nothing that belongs to another tenant.
+func TestListJobs_TargetTenantIncludesOwnJobs(t *testing.T) {
+	ctx := context.Background()
+	storage := NewStorage(newMockKVStore())
+
+	own := createTestJob("own", scheduler.OwnerTypeTenant, "tenant-A")
+	own.TargetTenantID = "tenant-A"
+	delegated := createTestJob("delegated", scheduler.OwnerTypeDelegated, "")
+	delegated.TargetTenantID = "tenant-A"
+	other := createTestJob("other", scheduler.OwnerTypeTenant, "tenant-B")
+	other.TargetTenantID = "tenant-B"
+	for _, job := range []*scheduler.Job{own, delegated, other} {
+		if err := storage.CreateJob(ctx, job); err != nil {
+			t.Fatalf("CreateJob(%s): %v", job.Name, err)
+		}
+	}
+
+	jobs, cursor, err := storage.ListJobs(ctx, &scheduler.JobQuery{TargetTenantID: "tenant-A"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cursor != "" {
+		t.Errorf("cursor = %q, want none on a single page", cursor)
+	}
+	names := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		names[job.Name] = true
+	}
+	if len(jobs) != 2 || !names["own"] || !names["delegated"] {
+		t.Errorf("jobs = %v, want exactly own and delegated", names)
+	}
+}
+
 func TestListJobs_ScanError(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
