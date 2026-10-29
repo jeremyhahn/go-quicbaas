@@ -59,7 +59,7 @@ func TestKMSServer_ImportKey_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "tenant/"+kmstenant.OwnerTenant+"/import-key", importedID, "the manager must receive the tenant-scoped key ID")
+	assert.Equal(t, "tenant."+kmstenant.OwnerTenant+".import-key", importedID, "the manager must receive the tenant-scoped key ID")
 	assert.Equal(t, "import-key", resp.GetKey().GetKeyId())
 	assert.Equal(t, "imported key", resp.GetMetadata().GetDescription())
 	assert.Equal(t, map[string]string{"env": "test"}, resp.GetMetadata().GetTags())

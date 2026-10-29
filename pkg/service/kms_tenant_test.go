@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -41,13 +42,13 @@ func TestTenantScopedKeyID_EmptyTenant(t *testing.T) {
 func TestTenantScopedKeyID_WithTenant(t *testing.T) {
 	// Multi-tenant mode: key ID is prefixed with tenant namespace
 	result := tenantScopedKeyID("acme-corp", "my-key")
-	assert.Equal(t, "tenant/acme-corp/my-key", result)
+	assert.Equal(t, "tenant.acme-corp.my-key", result)
 }
 
 func TestTenantScopedKeyID_PreservesComplexKeyID(t *testing.T) {
 	// Key IDs with special characters are preserved
 	result := tenantScopedKeyID("tenant-123", "key/with/slashes")
-	assert.Equal(t, "tenant/tenant-123/key/with/slashes", result)
+	assert.Equal(t, "tenant.tenant-123.key/with/slashes", result)
 }
 
 // =============================================================================
@@ -62,7 +63,7 @@ func TestTenantStripKeyID_EmptyTenant(t *testing.T) {
 
 func TestTenantStripKeyID_WithTenant(t *testing.T) {
 	// Multi-tenant mode: tenant prefix is removed
-	result := tenantStripKeyID("acme-corp", "tenant/acme-corp/my-key")
+	result := tenantStripKeyID("acme-corp", "tenant.acme-corp.my-key")
 	assert.Equal(t, "my-key", result)
 }
 
@@ -74,8 +75,8 @@ func TestTenantStripKeyID_NoMatchingPrefix(t *testing.T) {
 
 func TestTenantStripKeyID_WrongTenant(t *testing.T) {
 	// If the key belongs to a different tenant, the prefix is not stripped
-	result := tenantStripKeyID("acme-corp", "tenant/other-corp/my-key")
-	assert.Equal(t, "tenant/other-corp/my-key", result)
+	result := tenantStripKeyID("acme-corp", "tenant.other-corp.my-key")
+	assert.Equal(t, "tenant.other-corp.my-key", result)
 }
 
 // =============================================================================
@@ -85,15 +86,15 @@ func TestTenantStripKeyID_WrongTenant(t *testing.T) {
 func TestTenantKeyBelongsTo_EmptyTenant(t *testing.T) {
 	// Single-tenant mode: all keys belong
 	assert.True(t, tenantKeyBelongsTo("", "any-key"))
-	assert.True(t, tenantKeyBelongsTo("", "tenant/acme-corp/key"))
+	assert.True(t, tenantKeyBelongsTo("", "tenant.acme-corp.key"))
 }
 
 func TestTenantKeyBelongsTo_MatchingTenant(t *testing.T) {
-	assert.True(t, tenantKeyBelongsTo("acme-corp", "tenant/acme-corp/my-key"))
+	assert.True(t, tenantKeyBelongsTo("acme-corp", "tenant.acme-corp.my-key"))
 }
 
 func TestTenantKeyBelongsTo_NonMatchingTenant(t *testing.T) {
-	assert.False(t, tenantKeyBelongsTo("acme-corp", "tenant/other-corp/my-key"))
+	assert.False(t, tenantKeyBelongsTo("acme-corp", "tenant.other-corp.my-key"))
 }
 
 func TestTenantKeyBelongsTo_UnscopedKey(t *testing.T) {
@@ -110,7 +111,7 @@ func TestTenantListPrefix_EmptyTenant(t *testing.T) {
 }
 
 func TestTenantListPrefix_WithTenant(t *testing.T) {
-	assert.Equal(t, "tenant/acme-corp/", tenantListPrefix("acme-corp"))
+	assert.Equal(t, "tenant.acme-corp.", tenantListPrefix("acme-corp"))
 }
 
 // =============================================================================
@@ -234,11 +235,11 @@ func TestEnforceTenantAccess_EmptyTenant(t *testing.T) {
 }
 
 func TestEnforceTenantAccess_MatchingTenant(t *testing.T) {
-	assert.NoError(t, enforceTenantAccess("acme-corp", "tenant/acme-corp/my-key", "GetKey"))
+	assert.NoError(t, enforceTenantAccess("acme-corp", "tenant.acme-corp.my-key", "GetKey"))
 }
 
 func TestEnforceTenantAccess_CrossTenantDenied(t *testing.T) {
-	err := enforceTenantAccess("acme-corp", "tenant/other-corp/my-key", "GetKey")
+	err := enforceTenantAccess("acme-corp", "tenant.other-corp.my-key", "GetKey")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not belong to the requesting tenant")
 }
@@ -336,8 +337,30 @@ func TestKMSTenant_SystemTenantIsPlatformScoped(t *testing.T) {
 // the "system" prefix is still fully isolated.
 func TestKMSTenant_OrdinaryTenantStaysIsolated(t *testing.T) {
 	scoped := tenantScopedKeyID("system-2", "my-key")
-	assert.Equal(t, "tenant/system-2/my-key", scoped)
+	assert.Equal(t, "tenant.system-2.my-key", scoped)
 	assert.False(t, tenantKeyBelongsTo("system-2", "my-key"))
 	err := enforceTenantAccess("system-2", "my-key", "GetKey")
 	require.Error(t, err)
+}
+
+// xkmsKeyReference builds the key reference the XKMS backend hands to xkms
+// for an encryption key: "backend:encryption:algorithm:keyname".
+func xkmsKeyReference(keyName string) string {
+	return "software:encryption:aes256-gcm:" + keyName
+}
+
+// A tenant-scoped key ID is the keyname of the key reference every crypto
+// path builds, so xkms must accept it as one.
+func TestTenantScopedKeyID_IsAValidXKMSKeyReference(t *testing.T) {
+	scoped := tenantScopedKeyID("acme-corp", "my_key-1.v2")
+	_, _, _, keyName, err := xkmssdk.ServiceParseKeyID(xkmsKeyReference(scoped))
+	require.NoError(t, err, "xkms must accept the tenant-scoped key ID %q", scoped)
+	assert.Equal(t, scoped, keyName, "the keyname xkms resolves is the scoped key ID")
+}
+
+// The key reference check xkms applies refuses a keyname outside its
+// character set, which the tenant namespace delimiter must never introduce.
+func TestTenantScopedKeyID_XKMSRefusesAnInvalidKeyName(t *testing.T) {
+	_, _, _, _, err := xkmssdk.ServiceParseKeyID(xkmsKeyReference("tenant/acme-corp/my-key"))
+	require.Error(t, err, "xkms must refuse a keyname containing '/'")
 }

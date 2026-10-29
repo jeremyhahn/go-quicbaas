@@ -398,7 +398,7 @@ func TestKMSService_DeleteKey_ReleasesOnlyTheCallersName(t *testing.T) {
 }
 
 // TestKMSService_ImportKey_RefusesReservedTenantNamespace proves an import
-// name inside the "tenant/" namespace is refused before the manager is
+// name inside the "tenant." namespace is refused before the manager is
 // reached: scoping it would let the caller plant a key in another tenant.
 func TestKMSService_ImportKey_RefusesReservedTenantNamespace(t *testing.T) {
 	mgr := newMockKMSManager()
@@ -411,7 +411,7 @@ func TestKMSService_ImportKey_RefusesReservedTenantNamespace(t *testing.T) {
 	ownerCtx := tenantctx.WithTenant(context.Background(), scopeOwnerTenant)
 
 	resp, err := svc.ImportKey(ownerCtx, &ImportKeyRequest{
-		Name:        kmsTenantKeyPrefix + scopeOtherTenant + "/" + scopeImportedKey,
+		Name:        kmsTenantKeyPrefix + scopeOtherTenant + kmsTenantKeySuffix + scopeImportedKey,
 		KeyMaterial: []byte("key-material"),
 	})
 

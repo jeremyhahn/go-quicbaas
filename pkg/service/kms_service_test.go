@@ -4428,7 +4428,7 @@ func TestKMSService_ValidateImportKeyRequest(t *testing.T) {
 		{
 			name: "reserved tenant namespace returns error",
 			req: &ImportKeyRequest{
-				Name:        kmsTenantKeyPrefix + "other-tenant/planted",
+				Name:        kmsTenantKeyPrefix + "other-tenant" + kmsTenantKeySuffix + "planted",
 				KeyMaterial: []byte("some-key-data"),
 			},
 			wantErr:     true,

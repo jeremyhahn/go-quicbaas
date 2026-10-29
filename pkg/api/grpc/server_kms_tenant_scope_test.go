@@ -226,7 +226,7 @@ func TestKMSServer_ImportKeyIsTenantScoped(t *testing.T) {
 	_, err = srv.GetKey(other, &pb.GetKeyRequest{KeyId: "foo"})
 	require.Equal(t, codes.NotFound, status.Code(err), "error: %v", err)
 
-	crossName := "tenant/" + kmstenant.OtherTenant + "/planted"
+	crossName := "tenant." + kmstenant.OtherTenant + ".planted"
 	_, err = srv.ImportKey(owner, &pb.ImportKeyRequest{Name: crossName, KeyMaterial: []byte("material"), KeySpec: spec})
 	require.Equal(t, codes.InvalidArgument, status.Code(err), "error: %v", err)
 	_, err = srv.GetKey(other, &pb.GetKeyRequest{KeyId: "planted"})

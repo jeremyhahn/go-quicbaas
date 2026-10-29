@@ -28,17 +28,21 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-// kmsTenantKeyPrefix is the storage prefix for tenant-scoped KMS keys.
-const kmsTenantKeyPrefix = "tenant/"
+// kmsTenantKeyPrefix is the storage prefix for tenant-scoped KMS keys. A
+// scoped key ID is passed to the XKMS backend as the keyname of a key
+// reference, which allows only a-z, A-Z, 0-9, '-', '_' and '.', so the
+// namespace is delimited with '.'. A tenant ID never contains '.'
+// (isValidTenantChar), so the first '.' after the prefix ends the tenant ID.
+const kmsTenantKeyPrefix = "tenant."
 
 // kmsTenantKeySuffix follows the tenant ID in the key namespace.
-const kmsTenantKeySuffix = "/"
+const kmsTenantKeySuffix = "."
 
 // tenantScopedKeyID returns a tenant-scoped key ID if tenantID is non-empty.
 // For single-tenant mode (empty tenantID) or the system tenant, the key ID is
 // returned as-is: a system-tenant caller is platform-scoped, not isolated
 // into a namespace literally named "system".
-// Format: "tenant/{tenantID}/{keyID}".
+// Format: "tenant.{tenantID}.{keyID}".
 func tenantScopedKeyID(tenantID, keyID string) string {
 	if qrdbsdk.IsSystemTenant(tenantID) {
 		return keyID
@@ -88,7 +92,7 @@ func safetyResultsForTenant(tenantID string, results []SafetyCheckResult) []Safe
 
 // tenantListPrefix returns the prefix to use when listing keys for a tenant.
 // For single-tenant mode or the system tenant, returns empty string (list all).
-// For multi-tenant mode, returns "tenant/{tenantID}/".
+// For multi-tenant mode, returns "tenant.{tenantID}.".
 func tenantListPrefix(tenantID string) string {
 	if qrdbsdk.IsSystemTenant(tenantID) {
 		return ""

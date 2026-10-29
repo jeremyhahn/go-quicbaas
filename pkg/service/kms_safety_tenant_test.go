@@ -45,7 +45,7 @@ func TestKMSService_SafetyReport_ShowsOnlyTheCallersTenant(t *testing.T) {
 	require.Len(t, resp.Items, 2)
 	for _, item := range resp.Items {
 		assert.NotContains(t, item.ID, "tenant-a", "tenant-b's report must not show tenant-a's %s", item.Type)
-		assert.NotContains(t, item.ID, "tenant/", "IDs are reported in the caller's own namespace")
+		assert.NotContains(t, item.ID, kmsTenantKeyPrefix, "IDs are reported in the caller's own namespace")
 	}
 	assert.Equal(t, uint64(2), resp.TotalOperations)
 	assert.Equal(t, uint64(150), resp.TotalBytesProcessed)
