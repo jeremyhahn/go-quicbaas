@@ -856,7 +856,8 @@ func NewQUICClient(endpoint string) (*QUICClient, error) {
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
 	}
-	tlsCfg.NextProtos = []string{"quicbaas-quic"}
+	// The ALPN is left for quictransport.New to default to "h3" (RFC 9114);
+	// the "quicbaas-quic" opcode protocol is retired.
 	cfg := &transport.Config{
 		Address:         endpoint,
 		Timeout:         30 * time.Second,
