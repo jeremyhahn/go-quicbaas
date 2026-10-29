@@ -3350,7 +3350,7 @@ lint-pre: fmt-check ## Run the lint prerequisites (fmt-check)
 
 .PHONY: lint-gates
 # The slow repository gates (ci-template v1.27, ci-standard.md §10 (g)). CI runs
-# them as `make -k lint-gates` in the lint-gates job, in parallel with the
+# them as `make lint-gates` in the lint-gates job, in parallel with the
 # image job's `make lint`, so none of them is a prerequisite of lint and none
 # runs twice. Times above lint-pre: vet-integration 153 s, secure-analyzer
 # 616 s, its self-test 89 s.
