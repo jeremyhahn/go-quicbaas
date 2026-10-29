@@ -32,9 +32,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
-// failoverHTTPClient is a package-level HTTP client configured for self-signed TLS certs.
-var failoverHTTPClient = newInsecureHTTPClient(30 * time.Second)
-
 // TestDataConsistencyAcrossNodes validates that data remains consistent after writes
 func TestDataConsistencyAcrossNodes(t *testing.T) {
 	if helpers.IsStandaloneMode(t, helpers.GetClusterEndpoints()) {
@@ -43,6 +40,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
+	client := e2eTenantClient(t)
 	waitForQuorumReady(t, nodes)
 
 	entityType := "consistency_test"
@@ -56,19 +54,19 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 		"value":   "initial",
 	}
 
-	if err := writeEntity(nodes[0], entityType, entityID, initialData); err != nil {
+	if err := writeEntity(client, nodes[0], entityType, entityID, initialData); err != nil {
 		t.Fatalf("Failed to write initial data: %v", err)
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, anyEntity)
+		waitForEntity(t, client, nodeURL, entityType, entityID, anyEntity)
 	}
 
 	// Read from all nodes and verify
 	t.Log("Phase 2: Verifying data on all nodes...")
 
 	for i, nodeURL := range nodes {
-		data, err := readEntity(failoverHTTPClient, nodeURL, entityType, entityID)
+		data, err := readEntity(client, nodeURL, entityType, entityID)
 		if err != nil {
 			t.Errorf("Node %d: Failed to read data: %v", i+1, err)
 			continue
@@ -95,7 +93,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 
 	var updateErr error
 	for _, nodeURL := range nodes {
-		if err := writeEntity(nodeURL, entityType, entityID, updatedData); err == nil {
+		if err := writeEntity(client, nodeURL, entityType, entityID, updatedData); err == nil {
 			updateErr = nil
 			break
 		} else {
@@ -107,7 +105,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, func(data map[string]interface{}) bool {
+		waitForEntity(t, client, nodeURL, entityType, entityID, func(data map[string]interface{}) bool {
 			version, ok := data["version"].(float64)
 			return ok && version == 2
 		})
@@ -117,7 +115,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	t.Log("Phase 4: Verifying updated data on all nodes...")
 
 	for i, nodeURL := range nodes {
-		data, err := readEntity(failoverHTTPClient, nodeURL, entityType, entityID)
+		data, err := readEntity(client, nodeURL, entityType, entityID)
 		if err != nil {
 			t.Errorf("Node %d: Failed to read updated data: %v", i+1, err)
 			continue
@@ -137,12 +135,13 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	t.Log("SUCCESS: Data consistency validated across all nodes")
 
 	// Cleanup
-	deleteEntity(nodes[0], entityType, entityID)
+	deleteEntity(client, nodes[0], entityType, entityID)
 }
 
 // TestReadConsistencyLevels validates different consistency levels
 func TestReadConsistencyLevels(t *testing.T) {
 	nodes := getNodeURLs()
+	client := e2eTenantClient(t)
 	waitForQuorumReady(t, nodes)
 
 	entityType := "consistency_levels"
@@ -154,14 +153,14 @@ func TestReadConsistencyLevels(t *testing.T) {
 		"timestamp": time.Now().Unix(),
 	}
 
-	if err := writeEntity(nodes[0], entityType, entityID, testData); err != nil {
+	if err := writeEntity(client, nodes[0], entityType, entityID, testData); err != nil {
 		// Write failure after retries means the cluster is temporarily
 		// unable to commit proposals (e.g., leader change under load).
 		// Skip rather than fail — this is a transient cluster condition.
 		t.Skipf("Skipping consistency level test: cluster write unavailable: %v", err)
 	}
 
-	waitForEntity(t, failoverHTTPClient, nodes[0], entityType, entityID, anyEntity)
+	waitForEntity(t, client, nodes[0], entityType, entityID, anyEntity)
 
 	// Test different consistency levels
 	consistencyLevels := []string{"linearizable", "strong", "eventual"}
@@ -171,7 +170,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 			url := fmt.Sprintf("%s/api/v1/entities/%s/%d?consistency=%s",
 				nodes[0], entityType, entityID, level)
 
-			resp, err := failoverHTTPClient.Get(url)
+			resp, err := client.Get(url)
 			if err != nil {
 				t.Fatalf("Read with %s consistency failed: %v", level, err)
 			}
@@ -188,7 +187,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 	}
 
 	// Cleanup
-	deleteEntity(nodes[0], entityType, entityID)
+	deleteEntity(client, nodes[0], entityType, entityID)
 }
 
 // TestNetworkPartitionRecovery simulates a node going down and coming back
@@ -196,6 +195,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 // For now, it validates the cluster can handle temporary node unavailability
 func TestClusterResilience(t *testing.T) {
 	nodes := getNodeURLs()
+	client := e2eTenantClient(t)
 	waitForQuorumReady(t, nodes)
 
 	entityType := "resilience_test"
@@ -216,7 +216,7 @@ func TestClusterResilience(t *testing.T) {
 		}
 
 		nodeIndex := i % len(nodes)
-		if err := writeEntity(nodes[nodeIndex], entityType, entityID, data); err != nil {
+		if err := writeEntity(client, nodes[nodeIndex], entityType, entityID, data); err != nil {
 			if i == 0 {
 				// First write failed: cluster can't process writes right now. Skip.
 				t.Skipf("Skipping resilience test: cluster write unavailable: %v", err)
@@ -228,7 +228,7 @@ func TestClusterResilience(t *testing.T) {
 	}
 
 	for _, entityID := range written {
-		waitForEntity(t, failoverHTTPClient, nodes[0], entityType, entityID, anyEntity)
+		waitForEntity(t, client, nodes[0], entityType, entityID, anyEntity)
 	}
 
 	// Verify all data is accessible
@@ -237,7 +237,7 @@ func TestClusterResilience(t *testing.T) {
 	accessibleCount := 0
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
-		if _, err := readEntity(failoverHTTPClient, nodes[0], entityType, entityID); err == nil {
+		if _, err := readEntity(client, nodes[0], entityType, entityID); err == nil {
 			accessibleCount++
 		}
 	}
@@ -253,14 +253,14 @@ func TestClusterResilience(t *testing.T) {
 		"test": "cluster_resilience",
 	}
 
-	if err := writeEntity(nodes[0], entityType, testID, testData); err != nil {
+	if err := writeEntity(client, nodes[0], entityType, testID, testData); err != nil {
 		t.Errorf("Cluster unable to accept writes: %v", err)
 	} else {
 		t.Log("SUCCESS: Cluster continues to accept writes")
 	}
 
 	// Verify read
-	if _, err := readEntity(failoverHTTPClient, nodes[0], entityType, testID); err != nil {
+	if _, err := readEntity(client, nodes[0], entityType, testID); err != nil {
 		t.Errorf("Unable to read newly written data: %v", err)
 	} else {
 		t.Log("SUCCESS: Cluster continues to serve reads")
@@ -269,7 +269,7 @@ func TestClusterResilience(t *testing.T) {
 	// Cleanup
 	for i := 0; i <= numEntities; i++ {
 		entityID := baseID + uint64(i)
-		deleteEntity(nodes[0], entityType, entityID)
+		deleteEntity(client, nodes[0], entityType, entityID)
 	}
 }
 
@@ -281,6 +281,7 @@ func TestDataPersistence(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
+	client := e2eTenantClient(t)
 	waitForQuorumReady(t, nodes)
 
 	entityType := "persistence_test"
@@ -300,7 +301,7 @@ func TestDataPersistence(t *testing.T) {
 			"persisted": true,
 		}
 
-		if err := writeEntity(nodes[0], entityType, entityID, data); err == nil {
+		if err := writeEntity(client, nodes[0], entityType, entityID, data); err == nil {
 			writeSuccess++
 			written = append(written, entityID)
 		}
@@ -309,7 +310,7 @@ func TestDataPersistence(t *testing.T) {
 	t.Logf("Successfully wrote %d/%d entities", writeSuccess, numEntities)
 
 	for _, entityID := range written {
-		waitForEntity(t, failoverHTTPClient, nodes[1], entityType, entityID, anyEntity)
+		waitForEntity(t, client, nodes[1], entityType, entityID, anyEntity)
 	}
 
 	// Read back all entities
@@ -318,7 +319,7 @@ func TestDataPersistence(t *testing.T) {
 	readSuccess := 0
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
-		if data, err := readEntity(failoverHTTPClient, nodes[1], entityType, entityID); err == nil {
+		if data, err := readEntity(client, nodes[1], entityType, entityID); err == nil {
 			if persisted, ok := data["persisted"].(bool); ok && persisted {
 				readSuccess++
 			}
@@ -336,7 +337,7 @@ func TestDataPersistence(t *testing.T) {
 	// Cleanup
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
-		deleteEntity(nodes[0], entityType, entityID)
+		deleteEntity(client, nodes[0], entityType, entityID)
 	}
 }
 
@@ -348,6 +349,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	}
 
 	nodes := getNodeURLs()
+	client := e2eTenantClient(t)
 	waitForQuorumReady(t, nodes)
 
 	entityType := "concurrent_rw"
@@ -358,12 +360,12 @@ func TestConcurrentReadWrite(t *testing.T) {
 		"counter": 0,
 	}
 
-	if err := writeEntity(nodes[0], entityType, entityID, initialData); err != nil {
+	if err := writeEntity(client, nodes[0], entityType, entityID, initialData); err != nil {
 		t.Fatalf("Failed to write initial data: %v", err)
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, anyEntity)
+		waitForEntity(t, client, nodeURL, entityType, entityID, anyEntity)
 	}
 
 	// Concurrent reads
@@ -382,7 +384,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 			for time.Now().Before(deadline) {
 				nodeIndex := readerID % len(nodes)
-				if _, err := readEntity(failoverHTTPClient, nodes[nodeIndex], entityType, entityID); err != nil {
+				if _, err := readEntity(client, nodes[nodeIndex], entityType, entityID); err != nil {
 					errors <- &qberrors.WrappedMessageError{Message: "reader " + strconv.Itoa(readerID), Cause: err}
 					done <- false
 					return
@@ -421,12 +423,14 @@ func TestConcurrentReadWrite(t *testing.T) {
 	}
 
 	// Cleanup
-	deleteEntity(nodes[0], entityType, entityID)
+	deleteEntity(client, nodes[0], entityType, entityID)
 }
 
 // Helper functions
 
-func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]interface{}) error {
+// writeEntity creates the entity on nodeURL as the caller client
+// authenticates, the tenant operator in these tests.
+func writeEntity(client *http.Client, nodeURL, entityType string, entityID uint64, data map[string]interface{}) error {
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
 		return &qberrors.WrappedMessageError{Message: "marshal failed", Cause: err}
@@ -443,9 +447,7 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 
 	// One attempt per write: with a 40s hard timeout, callers can always make
 	// progress. Use a channel-based timeout to guarantee the write doesn't
-	// block beyond a fixed duration. A fresh transport avoids stale keepalive
-	// connections from prior tests that can cause the client to hang even
-	// when the server sends a response.
+	// block beyond a fixed duration.
 	type result struct {
 		code int
 		body []byte
@@ -453,8 +455,7 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 	}
 	done := make(chan result, 1)
 	go func() {
-		cl := newInsecureHTTPClient(35 * time.Second)
-		resp, err := cl.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
+		resp, err := client.Post(apiURL, "application/json", bytes.NewReader(payloadBytes))
 		if err != nil {
 			done <- result{err: err}
 			return
@@ -535,11 +536,13 @@ func readEntity(client *http.Client, nodeURL, entityType string, entityID uint64
 	return nil, &qberrors.MessageError{Message: "no data field in response"}
 }
 
-func deleteEntity(nodeURL, entityType string, entityID uint64) error {
+// deleteEntity removes the entity from nodeURL as the caller client
+// authenticates.
+func deleteEntity(client *http.Client, nodeURL, entityType string, entityID uint64) error {
 	url := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodeURL, entityType, entityID)
 
 	req, _ := http.NewRequest(http.MethodDelete, url, nil)
-	resp, err := failoverHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
