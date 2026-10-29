@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,6 +32,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-quicbaas/test/integration/helpers"
 )
 
 // AdminAssignmentRequest represents a request to create an admin assignment.
@@ -1058,25 +1059,14 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	assert.True(t, expiresAt.After(startedAt), "ExpiresAt %s should be after StartedAt %s", expiresAt, startedAt)
 }
 
-// systemAdminUserID returns the uid claim of the bearer cluster.adminClient
-// presents. StartImpersonation takes the acting admin from that claim
-// (pkg/iam/admin.go:573-580), so a grant meant for the caller is keyed by it.
-// The bearer is read from one request to a local recorder, so it never goes
-// anywhere but this process.
+// systemAdminUserID returns the uid claim of the system admin's bearer, the
+// one cluster.adminClient presents. StartImpersonation takes the acting admin
+// from that claim (pkg/iam/admin.go:573-580), so a grant meant for the caller
+// is keyed by it.
 func systemAdminUserID(t *testing.T, cluster *testCluster) string {
 	t.Helper()
 
-	bearers := make(chan string, 1)
-	recorder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bearers <- strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	}))
-	defer recorder.Close()
-
-	resp, err := cluster.adminClient.Get(recorder.URL)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-
-	parts := strings.Split(<-bearers, ".")
+	parts := strings.Split(helpers.AuthPIV(t, cluster.httpEndpoint), ".")
 	require.Len(t, parts, 3, "the system admin bearer should be a JWT")
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	require.NoError(t, err)
