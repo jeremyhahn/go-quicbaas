@@ -605,6 +605,44 @@ func TestBindAdminPIVCert_MissingEnrollerFailsClosed(t *testing.T) {
 	require.Empty(t, user.PIVThumbprint(), "an unwired enroller must not produce a binding")
 }
 
+// The certificate first boot issues is the admin's login credential, so
+// enrolling it must also permit mtls in the admin's method policy. Without
+// that the gRPC middleware refused every request the certificate
+// authenticated with "mtls is not permitted ... (permitted: webauthn)".
+func TestEnrollFirstBootAdminCert_PermitsCertificateLogin(t *testing.T) {
+	c, certFactors := buildTestIAMComponentsWithFactors(t)
+	adminID := createBootstrapAdmin(t, c)
+	certPEM, err := os.ReadFile(writeTestCertPEM(t))
+	require.NoError(t, err)
+
+	s := &Server{logger: buildTestLogger(t)}
+	result := &qrdbsdk.FirstBootResult{AdminCertPEM: certPEM}
+	require.NoError(t, s.enrollFirstBootAdminCert(context.Background(), c, "default", adminID, result))
+
+	user, err := c.identityStore.GetUser(context.Background(), "default", adminID)
+	require.NoError(t, err)
+	assert.Contains(t, user.AuthMethods, iam.AuthMethodMTLS)
+	assert.Contains(t, user.AuthMethods, iam.AuthMethodWebAuthn, "the default method stays permitted")
+
+	cert, err := parseCertLoginPEM(certPEM)
+	require.NoError(t, err)
+	assertCertLoginFactorEnrolled(t, certFactors, cert)
+}
+
+func TestEnrollFirstBootAdminCert_UnknownAdminIsTyped(t *testing.T) {
+	c := buildTestIAMComponents(t)
+	certPEM, err := os.ReadFile(writeTestCertPEM(t))
+	require.NoError(t, err)
+
+	s := &Server{logger: buildTestLogger(t)}
+	result := &qrdbsdk.FirstBootResult{AdminCertPEM: certPEM}
+	err = s.enrollFirstBootAdminCert(context.Background(), c, "default", 424242, result)
+	require.Error(t, err)
+	var bootErr *FirstBootBootstrapError
+	require.ErrorAs(t, err, &bootErr)
+	assert.Equal(t, "permit admin certificate login", bootErr.Op)
+}
+
 // writeTestCertPEM issues a self-signed certificate and returns the path of its
 // PEM file.
 func writeTestCertPEM(t *testing.T) string {

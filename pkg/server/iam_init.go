@@ -1338,6 +1338,13 @@ func (s *Server) enrollFirstBootAdminCert(
 	if err := enrollAdminCertLoginFactor(ctx, c, tenantID, userID, cert, adminCertBindingSourceFirstBoot); err != nil {
 		return &FirstBootBootstrapError{Op: "enroll admin mtls login factor", Cause: err}
 	}
+	// The issued certificate is how this admin logs in, so the account's
+	// permitted-method policy must say so, as bindAdminPIVCert does for the
+	// pre-provisioned path: CreateUser left the webauthn default, and the
+	// middleware refuses a request its mtls authenticator observed.
+	if _, err := c.identityStore.PermitCertificateLogin(ctx, tenantID, userID); err != nil {
+		return &FirstBootBootstrapError{Op: "permit admin certificate login", Cause: err}
+	}
 	s.logger.Infof("Bootstrap admin %d enrolled with mTLS certificate (SPKI thumbprint %s)",
 		userID, result.AdminCertThumbprint)
 	return nil
