@@ -1001,9 +1001,11 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	tenantID, targetUserID := setupUserForSessionTests(t, cluster)
 
 	// The acting admin is the authenticated caller, not a name in the
-	// request body, so the impersonation grant goes to the caller's uid and
-	// lists the target tenant explicitly.
-	adminUserID := systemAdminUserID(t, cluster)
+	// request body. tenantctx keeps the system admin out of a tenant's IAM,
+	// so the caller is the tenant's own admin: the impersonation grant goes
+	// to that admin's uid and lists the tenant explicitly.
+	tenantAdmin := createTestTenant(t, cluster, tenantID)
+	adminUserID := tenantAdminUserID(t, cluster, tenantID)
 	createReq := AdminAssignmentRequest{
 		UserID:      adminUserID,
 		AdminRole:   "super_admin",
@@ -1026,7 +1028,7 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	resp, err := cluster.adminClient.Post(
+	resp, err := tenantAdmin.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1059,15 +1061,15 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	assert.True(t, expiresAt.After(startedAt), "ExpiresAt %s should be after StartedAt %s", expiresAt, startedAt)
 }
 
-// systemAdminUserID returns the uid claim of the system admin's bearer, the
-// one cluster.adminClient presents. StartImpersonation takes the acting admin
-// from that claim (pkg/iam/admin.go:573-580), so a grant meant for the caller
-// is keyed by it.
-func systemAdminUserID(t *testing.T, cluster *testCluster) string {
+// tenantAdminUserID returns the uid claim of tenantID's admin bearer, the
+// one createTestTenant's client presents. StartImpersonation takes the
+// acting admin from that claim (pkg/iam/admin.go:573-580), so a grant meant
+// for the caller is keyed by it.
+func tenantAdminUserID(t *testing.T, cluster *testCluster, tenantID string) string {
 	t.Helper()
 
-	parts := strings.Split(helpers.AuthPIV(t, cluster.httpEndpoint), ".")
-	require.Len(t, parts, 3, "the system admin bearer should be a JWT")
+	parts := strings.Split(helpers.AuthTenantAdmin(t, cluster.httpEndpoint, tenantID), ".")
+	require.Len(t, parts, 3, "the tenant admin bearer should be a JWT")
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	require.NoError(t, err)
 
@@ -1075,7 +1077,7 @@ func systemAdminUserID(t *testing.T, cluster *testCluster) string {
 		UserID string `json:"uid"`
 	}
 	require.NoError(t, json.Unmarshal(payload, &claims))
-	require.NotEmpty(t, claims.UserID, "the system admin bearer should carry a uid claim")
+	require.NotEmpty(t, claims.UserID, "the tenant admin bearer should carry a uid claim")
 	return claims.UserID
 }
 

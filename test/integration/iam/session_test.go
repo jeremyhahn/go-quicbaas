@@ -17,9 +17,12 @@
 package iam_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -50,13 +53,10 @@ type SessionListResponse struct {
 
 // setupUserForSessionTests creates a test tenant and user for session tests.
 func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
-	// Create tenant
+	// The system admin provisions the tenant; its own admin creates the user,
+	// because tenantctx keeps the system admin out of a tenant's IAM.
 	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Session Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+	tenantAdmin := createTestTenant(t, cluster, tenantID)
 
 	// Create user
 	email := generateUniqueEmail()
@@ -69,8 +69,19 @@ func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, strin
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	body, err := json.Marshal(createUserReq)
 	require.NoError(t, err)
+	resp, err := tenantAdmin.Post(
+		cluster.httpEndpoint+fmt.Sprintf("/api/v1/tenants/%s/users", tenantID),
+		"application/json",
+		bytes.NewReader(body),
+	)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, resp.StatusCode, "create user: %s", respBody)
+	require.NoError(t, json.Unmarshal(respBody, &user))
 
 	return tenantID, user.ID
 }
