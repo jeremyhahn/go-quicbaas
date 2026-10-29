@@ -61,14 +61,14 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, anyEntity)
 	}
 
 	// Read from all nodes and verify
 	t.Log("Phase 2: Verifying data on all nodes...")
 
 	for i, nodeURL := range nodes {
-		data, err := readEntity(nodeURL, entityType, entityID)
+		data, err := readEntity(failoverHTTPClient, nodeURL, entityType, entityID)
 		if err != nil {
 			t.Errorf("Node %d: Failed to read data: %v", i+1, err)
 			continue
@@ -107,7 +107,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, nodeURL, entityType, entityID, func(data map[string]interface{}) bool {
+		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, func(data map[string]interface{}) bool {
 			version, ok := data["version"].(float64)
 			return ok && version == 2
 		})
@@ -117,7 +117,7 @@ func TestDataConsistencyAcrossNodes(t *testing.T) {
 	t.Log("Phase 4: Verifying updated data on all nodes...")
 
 	for i, nodeURL := range nodes {
-		data, err := readEntity(nodeURL, entityType, entityID)
+		data, err := readEntity(failoverHTTPClient, nodeURL, entityType, entityID)
 		if err != nil {
 			t.Errorf("Node %d: Failed to read updated data: %v", i+1, err)
 			continue
@@ -161,7 +161,7 @@ func TestReadConsistencyLevels(t *testing.T) {
 		t.Skipf("Skipping consistency level test: cluster write unavailable: %v", err)
 	}
 
-	waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
+	waitForEntity(t, failoverHTTPClient, nodes[0], entityType, entityID, anyEntity)
 
 	// Test different consistency levels
 	consistencyLevels := []string{"linearizable", "strong", "eventual"}
@@ -228,7 +228,7 @@ func TestClusterResilience(t *testing.T) {
 	}
 
 	for _, entityID := range written {
-		waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
+		waitForEntity(t, failoverHTTPClient, nodes[0], entityType, entityID, anyEntity)
 	}
 
 	// Verify all data is accessible
@@ -237,7 +237,7 @@ func TestClusterResilience(t *testing.T) {
 	accessibleCount := 0
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
-		if _, err := readEntity(nodes[0], entityType, entityID); err == nil {
+		if _, err := readEntity(failoverHTTPClient, nodes[0], entityType, entityID); err == nil {
 			accessibleCount++
 		}
 	}
@@ -260,7 +260,7 @@ func TestClusterResilience(t *testing.T) {
 	}
 
 	// Verify read
-	if _, err := readEntity(nodes[0], entityType, testID); err != nil {
+	if _, err := readEntity(failoverHTTPClient, nodes[0], entityType, testID); err != nil {
 		t.Errorf("Unable to read newly written data: %v", err)
 	} else {
 		t.Log("SUCCESS: Cluster continues to serve reads")
@@ -309,7 +309,7 @@ func TestDataPersistence(t *testing.T) {
 	t.Logf("Successfully wrote %d/%d entities", writeSuccess, numEntities)
 
 	for _, entityID := range written {
-		waitForEntity(t, nodes[1], entityType, entityID, anyEntity)
+		waitForEntity(t, failoverHTTPClient, nodes[1], entityType, entityID, anyEntity)
 	}
 
 	// Read back all entities
@@ -318,7 +318,7 @@ func TestDataPersistence(t *testing.T) {
 	readSuccess := 0
 	for i := 0; i < numEntities; i++ {
 		entityID := baseID + uint64(i)
-		if data, err := readEntity(nodes[1], entityType, entityID); err == nil {
+		if data, err := readEntity(failoverHTTPClient, nodes[1], entityType, entityID); err == nil {
 			if persisted, ok := data["persisted"].(bool); ok && persisted {
 				readSuccess++
 			}
@@ -363,7 +363,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	}
 
 	for _, nodeURL := range nodes {
-		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+		waitForEntity(t, failoverHTTPClient, nodeURL, entityType, entityID, anyEntity)
 	}
 
 	// Concurrent reads
@@ -382,7 +382,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 			for time.Now().Before(deadline) {
 				nodeIndex := readerID % len(nodes)
-				if _, err := readEntity(nodes[nodeIndex], entityType, entityID); err != nil {
+				if _, err := readEntity(failoverHTTPClient, nodes[nodeIndex], entityType, entityID); err != nil {
 					errors <- &qberrors.WrappedMessageError{Message: "reader " + strconv.Itoa(readerID), Cause: err}
 					done <- false
 					return
@@ -483,11 +483,11 @@ func writeEntity(nodeURL, entityType string, entityID uint64, data map[string]in
 
 // waitForEntity polls nodeURL until the entity is readable there and match
 // accepts its data, failing the test once replicationTimeout elapses.
-func waitForEntity(t *testing.T, nodeURL, entityType string, entityID uint64, match func(map[string]interface{}) bool) {
+func waitForEntity(t *testing.T, client *http.Client, nodeURL, entityType string, entityID uint64, match func(map[string]interface{}) bool) {
 	t.Helper()
 	pollUntil(t, replicationTimeout, fmt.Sprintf("entity %s/%d replicated to %s", entityType, entityID, nodeURL),
 		func(context.Context) (bool, error) {
-			data, err := readEntity(nodeURL, entityType, entityID)
+			data, err := readEntity(client, nodeURL, entityType, entityID)
 			if err != nil {
 				return false, err
 			}
@@ -498,10 +498,10 @@ func waitForEntity(t *testing.T, nodeURL, entityType string, entityID uint64, ma
 // anyEntity accepts any readable entity data.
 func anyEntity(map[string]interface{}) bool { return true }
 
-func readEntity(nodeURL, entityType string, entityID uint64) (map[string]interface{}, error) {
+func readEntity(client *http.Client, nodeURL, entityType string, entityID uint64) (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodeURL, entityType, entityID)
 
-	resp, err := failoverHTTPClient.Get(url)
+	resp, err := client.Get(url)
 	if err != nil {
 		return nil, &qberrors.WrappedMessageError{Message: "get failed", Cause: err}
 	}

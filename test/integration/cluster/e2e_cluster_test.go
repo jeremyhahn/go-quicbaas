@@ -121,7 +121,7 @@ func TestE2EDataConsistency(t *testing.T) {
 	// Step 2: Wait for replication
 	t.Log("Step 2: Waiting for replication...")
 	for _, nodeURL := range nodes {
-		waitForEntity(t, nodeURL, entityType, entityID, anyEntity)
+		waitForEntity(t, e2eHTTPClient, nodeURL, entityType, entityID, anyEntity)
 	}
 
 	// Step 3: Read from all nodes to verify consistency
@@ -329,7 +329,7 @@ func TestE2EBasicCRUD(t *testing.T) {
 	t.Log("CREATE: Success")
 
 	// READ
-	waitForEntity(t, nodes[0], entityType, entityID, anyEntity)
+	waitForEntity(t, e2eHTTPClient, nodes[0], entityType, entityID, anyEntity)
 	t.Log("Testing READ...")
 
 	readURL := fmt.Sprintf("%s/api/v1/entities/%s/%d", nodes[0], entityType, entityID)
