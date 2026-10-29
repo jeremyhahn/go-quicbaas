@@ -1025,12 +1025,15 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	// Assert: Response status is 200 OK
-	assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected 200 OK for impersonation start")
+	// Assert: Response status is 200 OK. A refusal's error envelope decodes
+	// into an empty session, so a wrong status stops here with the body
+	// rather than reporting every session field as missing.
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "impersonation start: %s", respBody)
 
 	var session ImpersonationSessionResponse
-	err = json.NewDecoder(resp.Body).Decode(&session)
-	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(respBody, &session))
 
 	// Assert: Session created with correct fields
 	assert.NotEmpty(t, session.ID, "Session ID should not be empty")
