@@ -22,6 +22,7 @@ import (
 
 	transportTypes "github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -125,6 +126,31 @@ func TestXKMSCertsKeyStore_TenantScope(t *testing.T) {
 		w := serve(acme, http.MethodGet, "/api/v1/xkms/certs", "")
 		require.Equal(t, http.StatusInternalServerError, w.Code, w.Body.String())
 	})
+	t.Run("ownership store failure on the bind path is a server error", func(t *testing.T) {
+		mockService.CertificateSvc = ownershipStoreDownCertificates{}
+		for _, method := range []string{http.MethodGet, http.MethodDelete, http.MethodHead} {
+			w := serve(acme, method, "/api/v1/xkms/certs/acme-leaf", "")
+			require.Equal(t, http.StatusInternalServerError, w.Code, "%s: %s", method, w.Body.String())
+		}
+		require.Contains(t, listIDs(system), "acme-leaf", "a failed bind must not delete the certificate")
+	})
+}
+
+func TestXKMSCertificateLookupStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "ownership read failure is a server error", err: &qberrors.QBError{Code: qberrors.ErrInternal, Op: "certificate.bind_issuing_tenant", Err: ownershipStoreDownError{}}, want: http.StatusInternalServerError},
+		{name: "tenant refusal answers like a missing certificate", err: &service.CertificateTenantError{CallerTenantID: "acme", IssuingTenantID: "globex"}, want: http.StatusNotFound},
+		{name: "other QBError answers like a missing certificate", err: &qberrors.QBError{Code: qberrors.ErrNotFound}, want: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, xkmsCertificateLookupStatus(tt.err))
+		})
+	}
 }
 
 // ownershipStoreDownCertificates is a certificate service whose CA cannot
