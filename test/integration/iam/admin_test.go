@@ -18,10 +18,12 @@ package iam_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -131,8 +133,11 @@ type ListImpersonationsResponse struct {
 }
 
 // generateUniqueUserID generates a unique user ID for testing.
+// User IDs are uint64 values that travel as decimal strings
+// (`json:"user_id,string"`), so the ID must parse as a non-zero uint64.
 func generateUniqueUserID() string {
-	return fmt.Sprintf("user-%s", uuid.New().String()[:8])
+	id := uuid.New()
+	return strconv.FormatUint(binary.BigEndian.Uint64(id[:8])|1, 10)
 }
 
 // createTestAssignment is a helper to create a test admin assignment.
