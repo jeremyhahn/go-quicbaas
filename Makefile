@@ -5606,7 +5606,9 @@ deps-check: ## Fail when a direct dependency is behind its latest release withou
 # a hash of everything the toolchain image is built from, so a commit that
 # changes none of it reuses the image already built, so DEVCONTAINER_INPUTS
 # lists every file the toolchain image copies from the build context
-# (test/buildgates/toolchain_inputs_test.go checks it). The integration image
+# (test/buildgates/toolchain_inputs_test.go checks it). The hash also covers
+# the effective GO_VERSION and GO_IMAGE_DIGEST, the base image's build
+# arguments, so a command-line override of either names a new image (Codex 8189). The integration image
 # holds the whole source tree, so its tag is the commit, plus `-dirty-` and a
 # hash of the uncommitted changes when the tree is not clean: any source change
 # gives a new tag and never reuses a stale image. GO_VERSION and GO_IMAGE_DIGEST reach
@@ -5620,7 +5622,7 @@ DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk g
 	sdk/typescript/package.json sdk/typescript/package-lock.json sdk/typescript/svelte-security/package.json \
 	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json \
 	sdk/javascript/package.json sdk/javascript/package-lock.json
-DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
+DEVCONTAINER_HASH = $(shell { cat $(DEVCONTAINER_INPUTS); printf '%s\n' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)'; } | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
 SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
 	printf -- '-dirty-%s' "$$( { git status --porcelain; git diff HEAD; } | sha256sum | cut -c1-12)"; fi)
