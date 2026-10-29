@@ -1545,19 +1545,31 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 		return nil, err
 	}
 
+	// Jobs record tenant-scoped namespaces: a lookup only sees the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	var job *RebuildJobState
 	var found bool
 
 	v.jobMu.RLock()
 	if req.JobID != "" {
-		// Find by job ID
+		// Find by job ID; another tenant's job answers as not found.
 		job, found = v.rebuildJobs[req.JobID]
+		if found {
+			job.mu.RLock()
+			found = vectorNamespaceBelongsToTenant(tenantID, job.Namespace)
+			job.mu.RUnlock()
+		}
 	} else {
 		// Find by namespace (return most recent job)
+		scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 		var latestStartTime time.Time
 		for _, j := range v.rebuildJobs {
 			j.mu.RLock()
-			if j.Namespace == req.Namespace && j.StartedAt.After(latestStartTime) {
+			if j.Namespace == scopedNamespace && j.StartedAt.After(latestStartTime) {
 				job = j
 				latestStartTime = j.StartedAt
 				found = true
@@ -1629,7 +1641,7 @@ func (v *vectorService) GetRebuildProgress(ctx context.Context, req *GetRebuildP
 
 	return &GetRebuildProgressResponse{
 		JobID:                    job.JobID,
-		Namespace:                job.Namespace,
+		Namespace:                vectorTenantStripNamespace(tenantID, job.Namespace),
 		Status:                   status,
 		VectorsProcessed:         job.VectorsProcessed,
 		TotalVectors:             job.TotalVectors,
@@ -2435,22 +2447,30 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 	v.mu.RUnlock()
 
+	// Jobs record tenant-scoped namespaces: a lookup only sees the caller's own.
+	tenantID, err := prepareTenantContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	v.jobMu.RLock()
 	defer v.jobMu.RUnlock()
 
 	// If operation ID provided, look for specific job
 	if req.OperationID != "" {
 		job, exists := v.compactionJobs[req.OperationID]
-		if !exists {
+		if exists {
+			job.mu.RLock()
+			defer job.mu.RUnlock()
+		}
+		// Another tenant's operation answers exactly as a missing one.
+		if !exists || !vectorNamespaceBelongsToTenant(tenantID, job.Namespace) {
 			return nil, &qbErrors.QBError{
 				Code: qbErrors.ErrNotFound,
 				Op:   "vector.GetCompactionProgress",
 				Err:  &api.NotFoundError{Resource: "compaction operation", ID: req.OperationID},
 			}
 		}
-
-		job.mu.RLock()
-		defer job.mu.RUnlock()
 
 		var completedAt *int64
 		if job.CompletedAt != nil {
@@ -2473,7 +2493,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 		return &GetCompactionProgressResponse{
 			OperationID:     job.OperationID,
-			Namespace:       job.Namespace,
+			Namespace:       vectorTenantStripNamespace(tenantID, job.Namespace),
 			BytesCompacted:  job.BytesCompacted,
 			TotalBytes:      job.TotalBytes,
 			PercentComplete: percentComplete,
@@ -2485,9 +2505,10 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 	}
 
 	// Find the most recent job for the namespace
+	scopedNamespace := vectorTenantScopedNamespace(tenantID, req.Namespace)
 	var latestJob *CompactionJobState
 	for _, job := range v.compactionJobs {
-		if job.Namespace == req.Namespace {
+		if job.Namespace == scopedNamespace {
 			if latestJob == nil || job.StartedAt.After(latestJob.StartedAt) {
 				latestJob = job
 			}
@@ -2526,7 +2547,7 @@ func (v *vectorService) GetCompactionProgress(ctx context.Context, req *GetCompa
 
 	return &GetCompactionProgressResponse{
 		OperationID:     latestJob.OperationID,
-		Namespace:       latestJob.Namespace,
+		Namespace:       vectorTenantStripNamespace(tenantID, latestJob.Namespace),
 		BytesCompacted:  latestJob.BytesCompacted,
 		TotalBytes:      latestJob.TotalBytes,
 		PercentComplete: percentComplete,
