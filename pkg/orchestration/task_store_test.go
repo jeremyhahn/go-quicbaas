@@ -100,6 +100,14 @@ func (k *taskFaultKV) PutIfAbsent(ctx context.Context, key string, value []byte)
 	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
 }
 
+// CompareAndSwap is the record write, so putErr fails it as it fails Put.
+func (k *taskFaultKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	if k.putErr != nil {
+		return false, k.putErr
+	}
+	return forwardCompareAndSwap(ctx, k.KVStore, key, expected, next)
+}
+
 func (k *taskFaultKV) Put(ctx context.Context, key string, value []byte) error {
 	if k.putErr != nil {
 		return k.putErr
@@ -3730,6 +3738,10 @@ type sourceTakeoverFaultKV struct {
 
 func (k *sourceTakeoverFaultKV) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
 	return forwardPutIfAbsent(ctx, k.KVStore, key, value)
+}
+
+func (k *sourceTakeoverFaultKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	return forwardCompareAndSwap(ctx, k.KVStore, key, expected, next)
 }
 
 func (k *sourceTakeoverFaultKV) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
