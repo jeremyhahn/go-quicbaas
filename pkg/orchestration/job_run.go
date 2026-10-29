@@ -82,10 +82,8 @@ type JobRunConfig struct {
 	// PersistFn, which reports nothing.
 	StoreFn func(status *JobStatus) error
 
-	Hooks      JobLifecycleHooks
-	HooksName  string
-	Policy     *JobLifecyclePolicy
-	Validators *ValidatorRegistry
+	Hooks     JobLifecycleHooks
+	HooksName string
 }
 
 // JobRun is one running job: the envelope the engine owns, and the handle a
@@ -312,33 +310,31 @@ func newJobRun(cfg JobRunConfig) *JobRun {
 		leaseTTL = DefaultJobLeaseTTL
 	}
 	run := &JobRun{
-		JobID:             cfg.JobID,
-		TenantID:          tenantID,
-		Runner:            ResolveJobRunnerName(cfg.Runner),
-		Config:            config,
-		Task:              cfg.Task,
-		Project:           cfg.Project,
-		Workflow:          cfg.Workflow,
-		StartState:        cfg.StartState,
-		Resumed:           cfg.Resumed,
-		Prompts:           cfg.Prompts,
-		promptRefs:        cfg.Prompts.Refs(),
-		Agents:            cfg.Agents,
-		Logger:            cfg.Logger,
-		CostTracker:       cfg.CostTracker,
-		events:            make(chan JobEvent, defaultEventBufferSize),
-		leaseSettled:      make(chan struct{}),
-		persistFn:         cfg.PersistFn,
-		storeFn:           cfg.StoreFn,
-		auditFn:           cfg.AuditFn,
-		leases:            cfg.Leases,
-		node:              cfg.Node,
-		leaseTTL:          leaseTTL,
-		hooks:             cfg.Hooks,
-		hooksName:         cfg.HooksName,
-		policy:            cfg.Policy,
-		validatorRegistry: cfg.Validators,
-		memory:            NewJobMemory(),
+		JobID:        cfg.JobID,
+		TenantID:     tenantID,
+		Runner:       ResolveJobRunnerName(cfg.Runner),
+		Config:       config,
+		Task:         cfg.Task,
+		Project:      cfg.Project,
+		Workflow:     cfg.Workflow,
+		StartState:   cfg.StartState,
+		Resumed:      cfg.Resumed,
+		Prompts:      cfg.Prompts,
+		promptRefs:   cfg.Prompts.Refs(),
+		Agents:       cfg.Agents,
+		Logger:       cfg.Logger,
+		CostTracker:  cfg.CostTracker,
+		events:       make(chan JobEvent, defaultEventBufferSize),
+		leaseSettled: make(chan struct{}),
+		persistFn:    cfg.PersistFn,
+		storeFn:      cfg.StoreFn,
+		auditFn:      cfg.AuditFn,
+		leases:       cfg.Leases,
+		node:         cfg.Node,
+		leaseTTL:     leaseTTL,
+		hooks:        cfg.Hooks,
+		hooksName:    cfg.HooksName,
+		memory:       NewJobMemory(),
 	}
 	if run.hooksName == "" && run.hooks != nil {
 		run.hooksName = "explicit"

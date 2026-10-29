@@ -166,6 +166,7 @@ func (r *reviewRunnerRig) jobAs(jobID string, pullRequest int) *orchestration.Jo
 	if err != nil {
 		r.t.Fatal(err)
 	}
+	r.agents.admit(guard)
 	base, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout", Format: "console"})
 	if err != nil {
 		r.t.Fatal(err)
@@ -185,7 +186,6 @@ func (r *reviewRunnerRig) jobAs(jobID string, pullRequest int) *orchestration.Jo
 		Project: project,
 		Agents:  r.agents,
 		Logger:  logger.NewAdapter(base),
-		Policy:  &orchestration.JobLifecyclePolicy{Guard: guard},
 		AuditFn: func(eventType, details string) {
 			r.auditMu.Lock()
 			r.audits = append(r.audits, orchestration.JobAuditEvent{Type: eventType, Details: details})
