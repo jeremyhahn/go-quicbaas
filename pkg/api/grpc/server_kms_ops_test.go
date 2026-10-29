@@ -23,6 +23,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -122,10 +124,13 @@ func newServiceBackedKMSServer(t *testing.T, mgr *mockKMSManager) *KMSServer {
 	t.Helper()
 	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	require.NoError(t, err)
+	// The KMS service records which tenant owns each key in this store.
+	ownershipStore := qrdbsdk.NewMemoryKVStore()
 	svc, err := service.NewServiceBuilder().
 		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
 		WithRaftNode(&importRaftNode{}).
 		WithKMSManager(mgr).
+		WithKVStoreProvider(func(uint64) interface{} { return ownershipStore }).
 		Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

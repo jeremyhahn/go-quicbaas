@@ -36,7 +36,8 @@ func ownerKeyOnly(keyID string) error {
 
 // newTenantScopeCrypto returns a crypto service whose backends hold one key,
 // owned by scopeOwnerTenant under its tenant-scoped id.
-func newTenantScopeCrypto() *cryptoService {
+func newTenantScopeCrypto(t *testing.T) *cryptoService {
+	t.Helper()
 	cryptoMgr := &mockCryptoManager{
 		encryptFn: func(_ context.Context, keyID string, plaintext, _ []byte) ([]byte, error) {
 			return plaintext, ownerKeyOnly(keyID)
@@ -73,7 +74,10 @@ func newTenantScopeCrypto() *cryptoService {
 		}
 		return make([]byte, keyBytes), []byte("wrapped"), nil
 	}
-	return newCryptoService(cryptoMgr, kmsMgr, nil, nil)
+	svc := newCryptoService(cryptoMgr, kmsMgr, nil, nil)
+	svc.kmsSvc = newKMSService(kmsMgr, nil)
+	seedTenantKeyOwners(t, svc.kmsSvc, scopeOwnerTenant, scopeKeyName)
+	return svc
 }
 
 // cryptoScopeVerbs lists every crypto verb that addresses a key.
@@ -136,7 +140,7 @@ func TestCryptoService_EveryKeyVerbIsTenantScoped(t *testing.T) {
 	for verbName, verb := range cryptoScopeVerbs() {
 		for _, tc := range cases {
 			t.Run(verbName+"/"+tc.name, func(t *testing.T) {
-				svc := newTenantScopeCrypto()
+				svc := newTenantScopeCrypto(t)
 				tc.check(t, verb(svc, tc.ctx, scopeKeyName))
 			})
 		}

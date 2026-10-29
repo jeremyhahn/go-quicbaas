@@ -75,6 +75,7 @@ func newTenantScopeKMS(t *testing.T) *kmsServiceImpl {
 	}
 	svc := newKMSService(mgr, nil)
 	svc.keyNames.Store(scopedKeyID, scopedKeyID)
+	seedTenantKeyOwners(t, svc, scopeOwnerTenant, scopeKeyName)
 
 	ownerCtx := tenantctx.WithTenant(context.Background(), scopeOwnerTenant)
 	_, err := svc.CreateDEK(ownerCtx, &CreateDEKRequest{Path: scopeDEKPath, Algorithm: KeyAlgAES256GCM})
@@ -296,7 +297,9 @@ func newTenantScopeWrapKMS(t *testing.T) (*kmsServiceImpl, *mockKMSManager) {
 		}
 		return ciphertext[len(binding):], nil
 	}
-	return newKMSService(mgr, nil), mgr
+	svc := newKMSService(mgr, nil)
+	seedTenantKeyOwners(t, svc, scopeOwnerTenant, scopeKeyName, scopeWrappingKey)
+	return svc, mgr
 }
 
 // exportOwnerKey exports the owner's key under the owner's wrapping key.
@@ -360,6 +363,7 @@ func TestKMSService_UnwrapKey_OtherTenantBlobDoesNotOpen(t *testing.T) {
 	exported := exportOwnerKey(t, svc)
 	otherWrapper := tenantScopedKeyID(scopeOtherTenant, scopeWrappingKey)
 	mgr.keys[otherWrapper] = &mockKeyData{keyID: otherWrapper, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled", createdAt: time.Now()}
+	seedTenantKeyOwners(t, svc, scopeOtherTenant, scopeWrappingKey)
 
 	_, err := svc.UnwrapKey(tenantctx.WithTenant(context.Background(), scopeOtherTenant), &UnwrapKeyRequest{
 		KeyID:             scopeImportedKey,

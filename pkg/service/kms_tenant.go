@@ -26,6 +26,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -168,6 +169,156 @@ func enforceTenantAccess(tenantID, keyID, operation string) error {
 			"key does not belong to the requesting tenant")
 	}
 	return nil
+}
+
+// kmsOwnerRecordPrefix is where the system scope records which tenant owns
+// each tenant-namespaced key. The record, not the name, is the proof of
+// ownership: a key created by the system tenant may carry a "tenant." name
+// (written before rejectReservedKeyName existed), and it has no record.
+const kmsOwnerRecordPrefix = "kms/owner/"
+
+// KeyOwnershipError reports that a tenant asked for a key it does not own:
+// the key has no ownership record, or the record names another tenant.
+type KeyOwnershipError struct {
+	// TenantID is the requesting tenant.
+	TenantID string
+	// Key is the key name the tenant supplied.
+	Key string
+}
+
+func (e *KeyOwnershipError) Error() string {
+	return fmt.Sprintf("tenant %q does not own KMS key %q", e.TenantID, e.Key)
+}
+
+// KeyOwnershipStoreUnsetError reports that a tenant key operation ran
+// without the durable store that holds ownership records.
+type KeyOwnershipStoreUnsetError struct{}
+
+func (e *KeyOwnershipStoreUnsetError) Error() string {
+	return "KMS key ownership store is not configured"
+}
+
+// kmsOwnerRecordKey returns the system-scope key of the ownership record
+// for a tenant-scoped key ID.
+func kmsOwnerRecordKey(scopedID string) string {
+	return kmsOwnerRecordPrefix + scopedID
+}
+
+// ownerStore returns the ownership store, or a typed error when none is set.
+func (k *kmsServiceImpl) ownerStore(operation string) (interfaces.KVStore, error) {
+	if k.kvStore == nil {
+		return nil, &errors.QBError{
+			Code: errors.ErrUnavailable,
+			Op:   "kms." + operation,
+			Err:  &KeyOwnershipStoreUnsetError{},
+		}
+	}
+	return k.kvStore, nil
+}
+
+// readKeyOwner returns the tenant recorded as the owner of scopedID, or ""
+// when there is no record.
+func (k *kmsServiceImpl) readKeyOwner(ctx context.Context, scopedID, operation string) (string, error) {
+	store, err := k.ownerStore(operation)
+	if err != nil {
+		return "", err
+	}
+	owner, err := store.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID))
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", WrapError(err, errors.ErrStorage, "kms."+operation, "failed to read key ownership record")
+	}
+	return string(owner), nil
+}
+
+// claimTenantKey writes the ownership record for a key a tenant is about to
+// create. It must run before the key is created; when creation fails the
+// caller calls releaseTenantKey. The system tenant claims nothing.
+func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, operation string) error {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil
+	}
+	scopedID := tenantScopedKeyID(tenantID, name)
+	owner, err := k.readKeyOwner(ctx, scopedID, operation)
+	if err != nil {
+		return err
+	}
+	if owner != "" {
+		return NewErrorf(errors.ErrAlreadyExists, "kms."+operation, "key %q already exists", name)
+	}
+	if err := k.kvStore.Put(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), []byte(tenantID)); err != nil {
+		return WrapError(err, errors.ErrStorage, "kms."+operation, "failed to write key ownership record")
+	}
+	return nil
+}
+
+// releaseTenantKey deletes the ownership record of a tenant key, after the
+// key is deleted or when its creation failed. The system tenant has none.
+func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, tenantID, name, operation string) error {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return nil
+	}
+	store, err := k.ownerStore(operation)
+	if err != nil {
+		return err
+	}
+	if err := store.Delete(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(tenantID, name))); err != nil && !errors.IsNotFound(err) {
+		return WrapError(err, errors.ErrStorage, "kms."+operation, "failed to delete key ownership record")
+	}
+	return nil
+}
+
+// abandonTenantKeyClaim releases the claim of a key whose creation failed
+// and returns the creation error. A failed release is logged, because the
+// creation error is the one the caller needs. When the key exists anyway, a
+// concurrent create of the same name won, and the record is that key's.
+func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, tenantID, name, operation string, createErr error) error {
+	if _, err := k.kmsManager.GetKey(ctx, tenantScopedKeyID(tenantID, name)); err == nil {
+		return createErr
+	}
+	if err := k.releaseTenantKey(ctx, tenantID, name, operation); err != nil && k.logger != nil {
+		k.logger.Error("failed to release key ownership record after a failed create",
+			"operation", operation, "key", name, "error", err)
+	}
+	return createErr
+}
+
+// resolveTenantKey returns the scoped key ID for a tenant's key name after
+// checking that the tenant owns it. A key without a matching ownership
+// record is refused before the KMS manager is reached. The system tenant
+// resolves every name unchecked.
+func (k *kmsServiceImpl) resolveTenantKey(ctx context.Context, tenantID, name, operation string) (string, error) {
+	scopedID := tenantScopedKeyID(tenantID, name)
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return scopedID, nil
+	}
+	owner, err := k.readKeyOwner(ctx, scopedID, operation)
+	if err != nil {
+		return "", err
+	}
+	if owner != tenantID {
+		return "", &errors.QBError{
+			Code: errors.ErrNotFound,
+			Op:   "kms." + operation,
+			Err:  &KeyOwnershipError{TenantID: tenantID, Key: name},
+		}
+	}
+	return scopedID, nil
+}
+
+// tenantOwnsKey reports whether a tenant's ownership record exists for a
+// scoped key ID. List uses it to hide keys the tenant does not own.
+func (k *kmsServiceImpl) tenantOwnsKey(ctx context.Context, tenantID, scopedID, operation string) (bool, error) {
+	if qrdbsdk.IsSystemTenant(tenantID) {
+		return true, nil
+	}
+	owner, err := k.readKeyOwner(ctx, scopedID, operation)
+	if err != nil {
+		return false, err
+	}
+	return owner == tenantID, nil
 }
 
 // prepareTenantContext reads the request's tenant (tenantctx.FromContext,

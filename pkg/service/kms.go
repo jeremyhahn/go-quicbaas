@@ -478,6 +478,9 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 	if _, exists := k.keyNames.Load(keyID); exists {
 		return nil, NewError(errors.ErrAlreadyExists, "kms.GenerateKey", "key with name '"+req.Name+"' already exists")
 	}
+	if err := k.claimTenantKey(ctx, tenantID, req.Name, "GenerateKey"); err != nil {
+		return nil, err
+	}
 
 	// Prepare attributes with key ID
 	attrs := req.KeyAttributes
@@ -506,7 +509,8 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "generate_key").Inc()
 		}
-		return nil, WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key")
+		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.Name, "GenerateKey",
+			WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key"))
 	}
 
 	// Convert manager response to service response
@@ -630,6 +634,9 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 
 	// Use the provided name as the key ID, scoped by tenant if applicable
 	keyID := tenantScopedKeyID(tenantID, req.Name)
+	if err := k.claimTenantKey(ctx, tenantID, req.Name, "ImportKey"); err != nil {
+		return nil, err
+	}
 
 	// Get algorithm string from attributes
 	algorithm := attrsToAlgorithm(req.KeyAttributes)
@@ -640,7 +647,8 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		if k.metrics != nil {
 			k.metrics.errorsByType.With("kms_error", "import_key").Inc()
 		}
-		return nil, WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key")
+		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.Name, "ImportKey",
+			WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key"))
 	}
 
 	// Convert manager response to service response
@@ -755,7 +763,10 @@ func (k *kmsServiceImpl) GetKey(ctx context.Context, req *GetKeyRequest) (*GetKe
 	}
 
 	// Scope the key ID with tenant prefix for storage lookup
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to get key metadata
 	keyMetadata, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -898,7 +909,10 @@ func (k *kmsServiceImpl) GetPublicKey(ctx context.Context, req *GetPublicKeyRequ
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to get public key
 	publicKeyBytes, err := k.kmsManager.GetPublicKey(ctx, scopedKeyID)
@@ -1053,6 +1067,21 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 		}
 	}
 
+	// Keep only the keys the tenant owns by record: a name in the tenant's
+	// namespace without one (a legacy system key) is not the tenant's.
+	owned := keyHandles[:0]
+	for _, handle := range keyHandles {
+		ok, ownErr := k.tenantOwnsKey(ctx, tenantID, handle.KeyID, "ListKeys")
+		if ownErr != nil {
+			return nil, ownErr
+		}
+		if ok {
+			owned = append(owned, handle)
+		}
+	}
+	keyHandles = owned
+	total := len(keyHandles)
+
 	// Strip tenant prefix from key IDs in the response
 	if tenantID != "" {
 		for _, handle := range keyHandles {
@@ -1072,8 +1101,8 @@ func (k *kmsServiceImpl) ListKeys(ctx context.Context, req *ListKeysRequest) (*L
 	resp := &ListKeysResponse{
 		Keys:       keyHandles,
 		NextCursor: "",
-		HasMore:    len(keys) > limit,
-		TotalCount: len(keys),
+		HasMore:    total > limit,
+		TotalCount: total,
 		Timestamp:  time.Now(),
 	}
 
@@ -1104,7 +1133,10 @@ func (k *kmsServiceImpl) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	}
 
 	// Scope the key ID with tenant prefix for storage lookup
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Get current version before rotation
 	oldResult, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1239,7 +1271,10 @@ func (k *kmsServiceImpl) RevokeKey(ctx context.Context, req *RevokeKeyRequest) (
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to revoke key
 	err = k.kmsManager.RevokeKey(ctx, scopedKeyID)
@@ -1293,7 +1328,10 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	}
 
 	// Scope the key ID with tenant prefix for storage lookup
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to delete key
 	err = k.kmsManager.DeleteKey(ctx, scopedKeyID)
@@ -1306,6 +1344,11 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		// this branch the manager's ErrNotFound would be clobbered with
 		// ErrInternal and deleting an already-deleted key would return 500.
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
+			// The key is gone, so its ownership record must go too; a
+			// retried delete after a failed release lands here.
+			if releaseErr := k.releaseTenantKey(ctx, tenantID, req.KeyID, "DeleteKey"); releaseErr != nil {
+				return nil, releaseErr
+			}
 			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.DeleteKey", "failed to delete key")
@@ -1314,6 +1357,9 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	// Release the name in the caller's tenant only; another tenant's key of
 	// the same name keeps its entry.
 	k.keyNames.Delete(scopedKeyID)
+	if err := k.releaseTenantKey(ctx, tenantID, req.KeyID, "DeleteKey"); err != nil {
+		return nil, err
+	}
 
 	// Calculate deletion date based on pending window
 	pendingDays := req.PendingWindowDays
@@ -1373,7 +1419,10 @@ func (k *kmsServiceImpl) GetKeyMetadata(ctx context.Context, req *GetKeyMetadata
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Call KMS manager to get key metadata
 	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1419,7 +1468,10 @@ func (k *kmsServiceImpl) UpdateKeyMetadata(ctx context.Context, req *UpdateKeyMe
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Retrieve existing key metadata to merge with updates
 	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1505,7 +1557,10 @@ func (k *kmsServiceImpl) SetKeyPolicy(ctx context.Context, req *SetKeyPolicyRequ
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists
 	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1569,7 +1624,10 @@ func (k *kmsServiceImpl) GetKeyPolicy(ctx context.Context, req *GetKeyPolicyRequ
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists
 	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1622,7 +1680,10 @@ func (k *kmsServiceImpl) DeleteKeyPolicy(ctx context.Context, req *DeleteKeyPoli
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists
 	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -1726,7 +1787,10 @@ func (k *kmsServiceImpl) SetKeyRotationPolicy(ctx context.Context, req *SetKeyRo
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Per-key authz gate: key-management operation.
 	if err := k.checkKeyAuthz(ctx, scopedKeyID, "set_rotation_policy"); err != nil {
@@ -1794,7 +1858,10 @@ func (k *kmsServiceImpl) GetKeyRotationPolicy(ctx context.Context, req *GetKeyRo
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Per-key authz gate: read operation.
 	if err := k.checkKeyAuthz(ctx, scopedKeyID, "get_rotation_policy"); err != nil {
@@ -1841,7 +1908,10 @@ func (k *kmsServiceImpl) DeleteKeyRotationPolicy(ctx context.Context, req *Delet
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Per-key authz gate: key-management operation.
 	if err := k.checkKeyAuthz(ctx, scopedKeyID, "delete_rotation_policy"); err != nil {
@@ -2536,7 +2606,10 @@ func (k *kmsServiceImpl) UpdateKeyStatus(ctx context.Context, req *UpdateKeyStat
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists
 	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -2664,7 +2737,10 @@ func (k *kmsServiceImpl) ListKeyVersions(ctx context.Context, req *ListKeyVersio
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Verify key exists and get metadata
 	keyData, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -3296,8 +3372,12 @@ func (k *kmsServiceImpl) SetDefaultKey(ctx context.Context, req *SetDefaultKeyRe
 		return nil, err
 	}
 
-	// Verify the key exists within the caller's tenant.
-	if _, ok := k.keyNames.Load(tenantScopedKeyID(tenantID, req.Name)); !ok {
+	// Verify the key exists within the caller's tenant and the tenant owns it.
+	scopedName, err := k.resolveTenantKey(ctx, tenantID, req.Name, "SetDefaultKey")
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := k.keyNames.Load(scopedName); !ok {
 		return nil, NewError(errors.ErrNotFound, "kms.SetDefaultKey", "key not found: "+req.Name)
 	}
 

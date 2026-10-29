@@ -134,8 +134,14 @@ func (k *kmsServiceImpl) ExportKey(ctx context.Context, req *ExportKeyRequest) (
 	if err != nil {
 		return nil, err
 	}
-	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
-	scopedWrappingKeyID := tenantScopedKeyID(tenantID, req.WrappingKeyID)
+	scopedKeyID, err := k.resolveTenantKey(ctx, tenantID, req.KeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
+	scopedWrappingKeyID, err := k.resolveTenantKey(ctx, tenantID, req.WrappingKeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Get source key metadata to verify it exists and is exportable
 	keyMeta, err := k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -296,7 +302,10 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		return nil, err
 	}
 	scopedKeyID := tenantScopedKeyID(tenantID, req.KeyID)
-	scopedWrappingKeyID := tenantScopedKeyID(tenantID, req.WrappingKeyID)
+	scopedWrappingKeyID, err := k.resolveTenantKey(ctx, tenantID, req.WrappingKeyID, "resolveTenantKey")
+	if err != nil {
+		return nil, err
+	}
 
 	// Check if target key ID already exists
 	_, err = k.kmsManager.GetKey(ctx, scopedKeyID)
@@ -344,11 +353,17 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		return nil, err
 	}
 
-	// Import the unwrapped key into the KMS
+	// Import the unwrapped key into the KMS, after recording the tenant
+	// as its owner
+	if err := k.claimTenantKey(ctx, tenantID, req.KeyID, "UnwrapKey"); err != nil {
+		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
+		return nil, err
+	}
 	_, err = k.kmsManager.ImportKey(ctx, scopedKeyID, unwrappedKeyMaterial, req.Algorithm)
 	if err != nil {
 		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
-		return nil, WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key")
+		return nil, k.abandonTenantKeyClaim(ctx, tenantID, req.KeyID, "UnwrapKey",
+			WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key"))
 	}
 
 	// Log successful import

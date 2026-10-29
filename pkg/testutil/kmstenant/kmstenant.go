@@ -29,6 +29,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
@@ -57,10 +58,13 @@ const (
 // SigningKeyName and DEKPath as OwnerTenant.
 func NewService(t *testing.T) service.KMSService {
 	t.Helper()
+	// The KMS service records which tenant owns each key in this store.
+	ownershipStore := qrdbsdk.NewMemoryKVStore()
 	svc, err := service.NewServiceBuilder().
 		WithConfig(&service.ServiceConfig{NodeID: 1, RequestTimeout: 5 * time.Second}).
 		WithRaftNode(&unusedRaftNode{}).
 		WithKMSManager(NewManager()).
+		WithKVStoreProvider(func(uint64) interface{} { return ownershipStore }).
 		Build()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })

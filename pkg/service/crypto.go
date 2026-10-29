@@ -89,13 +89,19 @@ func (t *cryptoService) checkKeyAuthz(ctx context.Context, keyID, operation stri
 
 // scopeKeyID resolves a caller-supplied key id under the caller's tenant,
 // the same way every KMS verb does, so a crypto verb never addresses
-// another tenant's key.
-func scopeKeyID(ctx context.Context, keyID string) (string, error) {
+// another tenant's key, nor a key with no ownership record.
+func (t *cryptoService) scopeKeyID(ctx context.Context, keyID string) (string, error) {
 	tenantID, err := prepareTenantContext(ctx)
 	if err != nil {
 		return "", err
 	}
-	return tenantScopedKeyID(tenantID, keyID), nil
+	kmsSvc := t.kmsSvc
+	if kmsSvc == nil {
+		// Without the KMS service there is no ownership store, so a tenant
+		// key is refused; the system tenant needs no record.
+		kmsSvc = &kmsServiceImpl{}
+	}
+	return kmsSvc.resolveTenantKey(ctx, tenantID, keyID, "scopeKeyID")
 }
 
 // keyOperationError wraps a failed key operation. A key absent from the
@@ -188,7 +194,7 @@ func (t *cryptoService) Encrypt(ctx context.Context, req *EncryptRequest) (*Encr
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +333,7 @@ func (t *cryptoService) Decrypt(ctx context.Context, req *DecryptRequest) (*Decr
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,7 +411,7 @@ func (t *cryptoService) Rewrap(ctx context.Context, req *RewrapRequest) (*Rewrap
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +493,7 @@ func (t *cryptoService) EncryptBatch(ctx context.Context, req *EncryptBatchReque
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +586,7 @@ func (t *cryptoService) DecryptBatch(ctx context.Context, req *DecryptBatchReque
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -676,7 +682,7 @@ func (t *cryptoService) GenerateDataKey(ctx context.Context, req *GenerateDataKe
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -752,7 +758,7 @@ func (t *cryptoService) GenerateWrappedDataKey(ctx context.Context, req *Generat
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -830,7 +836,7 @@ func (t *cryptoService) Sign(ctx context.Context, req *SignRequest) (*SignRespon
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -895,7 +901,7 @@ func (t *cryptoService) Verify(ctx context.Context, req *VerifyRequest) (*Verify
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -967,7 +973,7 @@ func (t *cryptoService) GenerateHMAC(ctx context.Context, req *HMACRequest) (*HM
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1032,7 +1038,7 @@ func (t *cryptoService) VerifyHMAC(ctx context.Context, req *VerifyHMACRequest) 
 		return nil, err
 	}
 
-	scopedKeyID, err := scopeKeyID(ctx, req.KeyID)
+	scopedKeyID, err := t.scopeKeyID(ctx, req.KeyID)
 	if err != nil {
 		return nil, err
 	}

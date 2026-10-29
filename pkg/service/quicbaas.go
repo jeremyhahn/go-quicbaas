@@ -456,7 +456,14 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	// Initialize KMS service if KMS manager is provided
 	if kmsManager != nil {
 		svc.kmsManager = kmsManager
-		svc.kmsService = newKMSService(kmsManager, logger)
+		kmsImpl := newKMSService(kmsManager, logger)
+		// The KMS service always gets the durable store: it holds tenant
+		// key ownership records and replicated version status, whether or
+		// not the scheduler runs.
+		if svc.kvStoreProvider != nil {
+			kmsImpl.SetKVStore(svc.kvStoreProvider(1))
+		}
+		svc.kmsService = kmsImpl
 	}
 
 	// Initialize Scheduler if enabled
@@ -514,9 +521,6 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 				// Wire scheduler adapter to KMS service for grace period job scheduling
 				kmsImpl.SetScheduler(schedulerAdapter)
 
-				// Wire KVStore for persistent version status replication across cluster nodes
-				kmsImpl.SetKVStore(kvStore)
-
 				// Cryptoperiod enforcement (PCI DSS 3.6) is a scheduler
 				// system job, so a cluster rotates each due key exactly once.
 				if err := registerKMSRotation(schedulerEngine, kmsImpl, b.config.KMSRotationScanInterval); err != nil {
@@ -571,6 +575,13 @@ func newQuicBaaS(b *serviceBuilder) (QuicBaaS, error) {
 	} else if b.cryptoManager != nil {
 		// CryptoManager provided explicitly via builder
 		svc.cryptoService = newCryptoService(b.cryptoManager, kmsManager, logger, nil)
+	}
+	// Crypto verbs resolve tenant key names through the KMS service, which
+	// holds the key ownership records.
+	if crypto, ok := svc.cryptoService.(*cryptoService); ok {
+		if kmsImpl, ok := svc.kmsService.(*kmsServiceImpl); ok {
+			crypto.kmsSvc = kmsImpl
+		}
 	}
 
 	// Initialize Secrets service if secrets manager is provided

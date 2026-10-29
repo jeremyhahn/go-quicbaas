@@ -15,6 +15,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"testing"
 
@@ -25,6 +26,8 @@ import (
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
+	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
@@ -363,4 +366,213 @@ func TestTenantScopedKeyID_IsAValidXKMSKeyReference(t *testing.T) {
 func TestTenantScopedKeyID_XKMSRefusesAnInvalidKeyName(t *testing.T) {
 	_, _, _, _, err := xkmssdk.ServiceParseKeyID(xkmsKeyReference("tenant/acme-corp/my-key"))
 	require.Error(t, err, "xkms must refuse a keyname containing '/'")
+}
+
+// seedTenantKeyOwners gives svc an in-memory ownership store when it has
+// none and records tenantID as the owner of each named key, as a tenant's
+// create would.
+func seedTenantKeyOwners(t *testing.T, svc *kmsServiceImpl, tenantID string, names ...string) {
+	t.Helper()
+	if svc.kvStore == nil {
+		svc.SetKVStore(qrdbsdk.NewMemoryKVStore())
+	}
+	for _, name := range names {
+		require.NoError(t, svc.claimTenantKey(context.Background(), tenantID, name, "seed"))
+	}
+}
+
+// ownershipFailingStore is a KV store whose reads fail, so a test can prove
+// a store fault surfaces as a typed storage error.
+type ownershipFailingStore struct {
+	interfaces.KVStore
+}
+
+func (s *ownershipFailingStore) Get(context.Context, string) ([]byte, error) {
+	return nil, stderrors.New("disk on fire")
+}
+
+const (
+	ownershipTenant      = "acme"
+	ownershipOtherTenant = "globex"
+	ownershipKey         = "k"
+)
+
+// newOwnershipKMS returns a KMS service over a manager that holds the key
+// tenant.acme.k and counts the GetKey calls that reach it.
+func newOwnershipKMS(t *testing.T) (*kmsServiceImpl, *mockKMSManager, *int) {
+	t.Helper()
+	mgr := newMockKMSManager()
+	scoped := tenantScopedKeyID(ownershipTenant, ownershipKey)
+	mgr.keys[scoped] = &mockKeyData{keyID: scoped, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled"}
+	reached := 0
+	mgr.getKeyFn = func(_ context.Context, keyID string) (interface{}, error) {
+		reached++
+		if key, ok := mgr.keys[keyID]; ok {
+			return &KeyMetadata{KeyID: key.keyID, Algorithm: KeyAlgorithm(key.algorithm), Version: key.version, Status: KeyStatusEnabled}, nil
+		}
+		return nil, kms.ErrKeyNotFound
+	}
+	svc := newKMSService(mgr, nil)
+	svc.SetKVStore(qrdbsdk.NewMemoryKVStore())
+	return svc, mgr, &reached
+}
+
+func requireKeyOwnershipError(t *testing.T, err error, tenantID, key string) {
+	t.Helper()
+	require.Error(t, err)
+	var ownErr *KeyOwnershipError
+	require.True(t, stderrors.As(err, &ownErr), "want KeyOwnershipError, got %v", err)
+	require.Equal(t, tenantID, ownErr.TenantID)
+	require.Equal(t, key, ownErr.Key)
+}
+
+func TestKMSOwnership_MatchingRecordSucceeds(t *testing.T) {
+	svc, _, reached := newOwnershipKMS(t)
+	seedTenantKeyOwners(t, svc, ownershipTenant, ownershipKey)
+
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	resp, err := svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+
+	require.NoError(t, err)
+	require.Equal(t, ownershipKey, resp.Key.KeyID)
+	require.Equal(t, 1, *reached)
+}
+
+// TestKMSOwnership_LegacySystemKeyIsRefused proves a key named tenant.acme.k
+// by the system tenant, which has no ownership record, is unreachable from
+// tenant acme and never reaches the manager.
+func TestKMSOwnership_LegacySystemKeyIsRefused(t *testing.T) {
+	svc, _, reached := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+	requireKeyOwnershipError(t, err, ownershipTenant, ownershipKey)
+	require.True(t, IsNotFound(err), "a refused key reads as not found, got %v", err)
+
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: ownershipKey})
+	requireKeyOwnershipError(t, err, ownershipTenant, ownershipKey)
+	require.Zero(t, *reached, "a refused key must never reach the manager")
+}
+
+func TestKMSOwnership_OtherTenantsRecordIsRefused(t *testing.T) {
+	svc, _, reached := newOwnershipKMS(t)
+	scoped := tenantScopedKeyID(ownershipTenant, ownershipKey)
+	require.NoError(t, svc.kvStore.Put(context.Background(), kmsOwnerRecordKey(scoped), []byte(ownershipOtherTenant)))
+
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	_, err := svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+
+	requireKeyOwnershipError(t, err, ownershipTenant, ownershipKey)
+	require.Zero(t, *reached)
+}
+
+func TestKMSOwnership_SystemTenantNeedsNoRecord(t *testing.T) {
+	svc, _, reached := newOwnershipKMS(t)
+
+	_, err := svc.GetKey(tenantctx.WithSystem(context.Background()),
+		&GetKeyRequest{KeyID: tenantScopedKeyID(ownershipTenant, ownershipKey)})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, *reached)
+}
+
+func TestKMSOwnership_CreateRecordsAndDeleteReleases(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "fresh"
+	req := &GenerateKeyRequest{
+		Name:          name,
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	}
+
+	_, err := svc.GenerateKey(ctx, req)
+	require.NoError(t, err)
+	owner, err := svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, name), "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner)
+
+	svc.keyNames.Delete(tenantScopedKeyID(ownershipTenant, name))
+	_, err = svc.GenerateKey(ctx, req)
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrAlreadyExists, qe.Code, "a recorded name must not be created twice")
+
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	require.NoError(t, err)
+	owner, err = svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, name), "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "delete must remove the ownership record")
+}
+
+func TestKMSOwnership_FailedCreateLeavesNoRecord(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	mgr.generateKeyFn = func(context.Context, *xkmssdk.KeyAttributes) (interface{}, error) {
+		return nil, stderrors.New("backend down")
+	}
+	mgr.importKeyFn = func(context.Context, string, []byte, string) (interface{}, error) {
+		return nil, stderrors.New("backend down")
+	}
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, &GenerateKeyRequest{
+		Name:          "gen",
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	})
+	require.ErrorContains(t, err, "failed to generate key")
+
+	_, err = svc.ImportKey(ctx, &ImportKeyRequest{
+		Name:          "imp",
+		KeyMaterial:   make([]byte, 32),
+		KeyAttributes: &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
+		Usage:         []KeyUsage{KeyUsageEncrypt},
+	})
+	require.ErrorContains(t, err, "failed to import key")
+
+	for _, name := range []string{"gen", "imp"} {
+		owner, readErr := svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, name), "test")
+		require.NoError(t, readErr)
+		require.Empty(t, owner, "a failed create of %q must leave no record", name)
+	}
+}
+
+func TestKMSOwnership_StoreFaultsAreTyped(t *testing.T) {
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	t.Run("read error", func(t *testing.T) {
+		svc, _, reached := newOwnershipKMS(t)
+		svc.SetKVStore(&ownershipFailingStore{KVStore: qrdbsdk.NewMemoryKVStore()})
+
+		_, err := svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+
+		require.True(t, IsStorageError(err), "want a storage error, got %v", err)
+		require.Zero(t, *reached)
+	})
+
+	t.Run("no store", func(t *testing.T) {
+		svc, _, reached := newOwnershipKMS(t)
+		svc.SetKVStore(nil)
+
+		_, err := svc.GetKey(ctx, &GetKeyRequest{KeyID: ownershipKey})
+
+		var unset *KeyOwnershipStoreUnsetError
+		require.True(t, stderrors.As(err, &unset), "want KeyOwnershipStoreUnsetError, got %v", err)
+		require.Zero(t, *reached)
+	})
+}
+
+func TestKMSOwnership_ListShowsOnlyOwnedKeys(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	owned := tenantScopedKeyID(ownershipTenant, "mine")
+	mgr.keys[owned] = &mockKeyData{keyID: owned, algorithm: string(KeyAlgAES256GCM), version: 1, status: "enabled"}
+	seedTenantKeyOwners(t, svc, ownershipTenant, "mine")
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	resp, err := svc.ListKeys(ctx, &ListKeysRequest{})
+
+	require.NoError(t, err)
+	require.Len(t, resp.Keys, 1, "the unrecorded tenant.acme.k must be hidden")
+	require.Equal(t, "mine", resp.Keys[0].KeyID)
+	require.Equal(t, 1, resp.TotalCount)
 }
