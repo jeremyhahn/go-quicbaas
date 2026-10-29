@@ -48,8 +48,12 @@ func (e *CertificateTenantError) Unwrap() error {
 // (tenantctx.FromContext: the tenant key, then the qrdb Identity). The system
 // tenant may act on any certificate. A tenant may act only on a certificate
 // issued for it. Everything else is refused with CertificateTenantError: a
-// caller with no tenant, a CA that cannot report the issuing tenant, and a
-// serial the CA cannot attribute.
+// caller with no tenant, a CA that does not implement
+// CertificateTenantResolver, a CA that records no issuing tenant
+// (errCertificateTenantNotSupported), a serial attributed to no tenant, and a
+// serial issued for another tenant. Any other resolver error is a failure to
+// read the CA's ownership store, not a refusal: it is returned as a QBError
+// with ErrInternal so transports report a server error the client may retry.
 func BindToIssuingTenant(ctx context.Context, ca any, serial *big.Int) error {
 	callerTenant, err := tenantctx.FromContext(ctx, "certificate.bind_issuing_tenant")
 	if err != nil {
@@ -65,9 +69,16 @@ func BindToIssuingTenant(ctx context.Context, ca any, serial *big.Int) error {
 		return refusal
 	}
 	issuingTenant, err := resolver.CertificateTenant(ctx, serial)
-	if err != nil {
+	if stderrors.Is(err, errCertificateTenantNotSupported) {
 		refusal.Cause = err
 		return refusal
+	}
+	if err != nil {
+		return &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "certificate.bind_issuing_tenant",
+			Err:  err,
+		}
 	}
 	if issuingTenant != callerTenant {
 		refusal.IssuingTenantID = issuingTenant

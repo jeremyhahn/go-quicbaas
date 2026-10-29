@@ -34,6 +34,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -798,7 +799,7 @@ func (s *Server) HandleXKMSGetCert(w http.ResponseWriter, r *http.Request) {
 
 	cert, err := s.xkmsCertificateForCaller(r.Context(), keyID)
 	if err != nil {
-		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
+		respondXKMSError(w, xkmsCertificateLookupStatus(err), &XKMSOperationError{
 			Op:     "GetCertificate",
 			Detail: err.Error(),
 		})
@@ -832,7 +833,7 @@ func (s *Server) HandleXKMSDeleteCert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
-		respondXKMSError(w, http.StatusNotFound, &XKMSOperationError{
+		respondXKMSError(w, xkmsCertificateLookupStatus(err), &XKMSOperationError{
 			Op:     "DeleteCertificate",
 			Detail: err.Error(),
 		})
@@ -864,7 +865,7 @@ func (s *Server) HandleXKMSCertExists(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.xkmsCertificateForCaller(r.Context(), keyID); err != nil {
-		w.WriteHeader(http.StatusNotFound)
+		w.WriteHeader(xkmsCertificateLookupStatus(err))
 		return
 	}
 
@@ -884,6 +885,18 @@ func (s *Server) xkmsCertificateForCaller(ctx context.Context, keyID string) (*x
 		return nil, err
 	}
 	return cert, nil
+}
+
+// xkmsCertificateLookupStatus maps an xkmsCertificateForCaller error to its
+// HTTP status. A failure to read the CA's ownership records is a server error
+// (500) the client may retry (Codex 8293 P1); every other error, including a
+// tenant refusal, answers like a missing certificate (404).
+func xkmsCertificateLookupStatus(err error) int {
+	var qbErr *qberrors.QBError
+	if errors.As(err, &qbErr) && qbErr.Code == qberrors.ErrInternal {
+		return http.StatusInternalServerError
+	}
+	return http.StatusNotFound
 }
 
 // HandleXKMSSeal handles POST /api/v1/xkms/seal.

@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"testing"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -49,7 +50,7 @@ func TestBindToIssuingTenant(t *testing.T) {
 		{name: "tenant is refused another tenant's certificate", ctx: acme, ca: ca, serial: 2, wantRefuse: true, wantIssuing: "globex"},
 		{name: "tenant is refused a system certificate", ctx: acme, ca: ca, serial: 3, wantRefuse: true},
 		{name: "tenant is refused a serial the CA cannot attribute", ctx: acme, ca: ca, serial: 9, wantRefuse: true},
-		{name: "tenant is refused when the CA cannot read its ownership records", ctx: acme, ca: failingOwnershipCA{}, serial: 1, wantRefuse: true, wantCause: true},
+		{name: "tenant is refused when the CA records no issuing tenants", ctx: acme, ca: unsupportedOwnershipCA{}, serial: 1, wantRefuse: true, wantCause: true},
 		{name: "tenant is refused when the CA cannot report issuing tenants", ctx: acme, ca: struct{}{}, serial: 1, wantRefuse: true},
 		{name: "caller with no tenant is refused", ctx: context.Background(), ca: ca, serial: 1, wantRefuse: true, wantCause: true},
 	}
@@ -76,6 +77,37 @@ func TestBindToIssuingTenant(t *testing.T) {
 				t.Fatalf("refusal cause = %v, want cause %v", refusal.Cause, tt.wantCause)
 			}
 		})
+	}
+}
+
+// unsupportedOwnershipCA is a CA that records no issuing tenant.
+type unsupportedOwnershipCA struct{}
+
+func (unsupportedOwnershipCA) CertificateTenant(context.Context, *big.Int) (string, error) {
+	return "", ErrCertificateTenantNotSupported
+}
+
+// TestBindToIssuingTenantOwnershipReadFailure pins Codex 8293 P1 on the bind
+// path: a CA ownership-store failure is a server error, not a refusal, so a
+// client does not read a backend outage as a final 403.
+func TestBindToIssuingTenantOwnershipReadFailure(t *testing.T) {
+	acme := tenantctx.WithTenant(context.Background(), "acme")
+
+	err := BindToIssuingTenant(acme, failingOwnershipCA{}, big.NewInt(1))
+
+	var refusal *CertificateTenantError
+	if errors.As(err, &refusal) {
+		t.Fatalf("BindToIssuingTenant err = %v, want a server error, not a refusal", err)
+	}
+	var qbErr *qberrors.QBError
+	if !errors.As(err, &qbErr) || qbErr.Code != qberrors.ErrInternal {
+		t.Fatalf("BindToIssuingTenant err = %v, want QBError with ErrInternal", err)
+	}
+	if qbErr.Op != "certificate.bind_issuing_tenant" {
+		t.Fatalf("QBError op = %q, want certificate.bind_issuing_tenant", qbErr.Op)
+	}
+	if !errors.Is(err, errOwnershipStoreDown) {
+		t.Fatalf("server error does not wrap the ownership-store failure")
 	}
 }
 
