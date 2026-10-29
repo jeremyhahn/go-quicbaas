@@ -533,8 +533,9 @@ func TestAdmin_ListAssignments_Empty(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Use a unique filter to ensure empty results
-	uniqueFilter := uuid.New().String()
+	// Filter on a user no one holds. user_id is a qrdb user ID, a positive
+	// integer; anything else is a 400, so the filter is the largest ID.
+	uniqueFilter := "18446744073709551615"
 
 	resp, err := cluster.adminClient.Get(cluster.httpEndpoint + "/api/v1/admin/assignments?user_id=" + uniqueFilter)
 	require.NoError(t, err)
