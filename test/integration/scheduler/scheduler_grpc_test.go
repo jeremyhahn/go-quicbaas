@@ -199,6 +199,23 @@ func cleanupGRPCJob(t *testing.T, client *grpcclient.Client, ctx context.Context
 	_, _ = client.SchedulerDeleteJob(ctx, req)
 }
 
+// tenantOwnedJob makes req a job owned by the tenant the suite authenticates
+// as. An unspecified owner reads as system, which the scheduler refuses from a
+// tenant caller, so a fixture without an owner never reaches the scheduler.
+func tenantOwnedJob(t *testing.T, req *service.CreateSchedulerJobRequest) *service.CreateSchedulerJobRequest {
+	t.Helper()
+	req.OwnerType = service.SchedulerOwnerTypeTenant
+	req.OwnerID = callerTenantID(t)
+	return req
+}
+
+// callerTenantID is the tenant the suite's clients authenticate as: the tenant
+// principal's, which the REST clients' tenant operator shares.
+func callerTenantID(t *testing.T) string {
+	t.Helper()
+	return helpers.TenantPrincipalID(t, helpers.GetRESTEndpoints()[0])
+}
+
 // =============================================================================
 // One-Shot Job Tests
 // =============================================================================
@@ -225,7 +242,7 @@ func testGRPCCreateOneShotJob(t *testing.T, ctx context.Context, client *grpccli
 		},
 	}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+	resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 	require.NoError(t, err, "CreateJob should succeed for one-shot job")
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Job)
@@ -269,7 +286,7 @@ func testGRPCCreateRecurringJob(t *testing.T, ctx context.Context, client *grpcc
 		},
 	}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+	resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 	require.NoError(t, err, "CreateJob should succeed for recurring job")
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Job)
@@ -308,7 +325,7 @@ func testGRPCCreateDelayedJob(t *testing.T, ctx context.Context, client *grpccli
 		},
 	}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+	resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 	require.NoError(t, err, "CreateJob should succeed for delayed job")
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Job)
@@ -343,7 +360,7 @@ func testGRPCGetJob(t *testing.T, ctx context.Context, client *grpcclient.Client
 		Priority:    7,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -390,7 +407,7 @@ func testGRPCListJobsWithPagination(t *testing.T, ctx context.Context, client *g
 				"sequence": fmt.Sprintf("%d", i),
 			},
 		}
-		resp, err := client.SchedulerCreateJob(ctx, req)
+		resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 		require.NoError(t, err)
 		jobIDs = append(jobIDs, resp.Job.ID)
 	}
@@ -502,7 +519,7 @@ func testGRPCUpdateJob(t *testing.T, ctx context.Context, client *grpcclient.Cli
 		MaxRetries:  2,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -561,7 +578,7 @@ func testGRPCTriggerJob(t *testing.T, ctx context.Context, client *grpcclient.Cl
 		Priority:  10,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -598,7 +615,7 @@ func testGRPCPauseJob(t *testing.T, ctx context.Context, client *grpcclient.Clie
 		Priority: 5,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -641,7 +658,7 @@ func testGRPCResumeJob(t *testing.T, ctx context.Context, client *grpcclient.Cli
 		Priority: 5,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -689,7 +706,7 @@ func testGRPCCancelJob(t *testing.T, ctx context.Context, client *grpcclient.Cli
 		Priority:  5,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -736,7 +753,7 @@ func testGRPCGetJobHistory(t *testing.T, ctx context.Context, client *grpcclient
 		Timeout:   1 * time.Minute,
 	}
 
-	createResp, err := client.SchedulerCreateJob(ctx, createReq)
+	createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	require.NotNil(t, createResp.Job)
 
@@ -812,7 +829,7 @@ func testGRPCDeleteJob(t *testing.T, ctx context.Context, client *grpcclient.Cli
 			ExecuteAt: time.Now().Add(6 * time.Hour),
 		}
 
-		createResp, err := client.SchedulerCreateJob(ctx, createReq)
+		createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 		require.NoError(t, err)
 		jobID := createResp.Job.ID
 
@@ -844,7 +861,7 @@ func testGRPCDeleteJob(t *testing.T, ctx context.Context, client *grpcclient.Cli
 			Schedule: "0 0 * * *", // Daily at midnight
 		}
 
-		createResp, err := client.SchedulerCreateJob(ctx, createReq)
+		createResp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, createReq))
 		require.NoError(t, err)
 		jobID := createResp.Job.ID
 
@@ -877,7 +894,7 @@ func testGRPCInvalidJobParameters(t *testing.T, ctx context.Context, client *grp
 			Handler:   "test-handler",
 			ExecuteAt: time.Now().Add(1 * time.Hour),
 		}
-		_, err := client.SchedulerCreateJob(ctx, req)
+		_, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 		assert.Error(t, err, "CreateJob should fail with empty name")
 		t.Logf("[gRPC] Empty name error: %v", err)
 	})
@@ -889,7 +906,7 @@ func testGRPCInvalidJobParameters(t *testing.T, ctx context.Context, client *grp
 			Handler:   "",
 			ExecuteAt: time.Now().Add(1 * time.Hour),
 		}
-		_, err := client.SchedulerCreateJob(ctx, req)
+		_, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 		assert.Error(t, err, "CreateJob should fail with empty handler")
 		t.Logf("[gRPC] Empty handler error: %v", err)
 	})
@@ -901,7 +918,7 @@ func testGRPCInvalidJobParameters(t *testing.T, ctx context.Context, client *grp
 			Handler:  "test-handler",
 			Schedule: "invalid-cron-expression",
 		}
-		_, err := client.SchedulerCreateJob(ctx, req)
+		_, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 		assert.Error(t, err, "CreateJob should fail with invalid cron schedule")
 		t.Logf("[gRPC] Invalid cron error: %v", err)
 	})
@@ -913,7 +930,7 @@ func testGRPCInvalidJobParameters(t *testing.T, ctx context.Context, client *grp
 			Handler:  "test-handler",
 			Schedule: "",
 		}
-		_, err := client.SchedulerCreateJob(ctx, req)
+		_, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 		assert.Error(t, err, "CreateJob should fail for recurring job without schedule")
 		t.Logf("[gRPC] Recurring without schedule error: %v", err)
 	})
@@ -1014,7 +1031,7 @@ func testGRPCConcurrentJobOperations(t *testing.T, ctx context.Context, client *
 				},
 			}
 
-			resp, err := client.SchedulerCreateJob(ctx, req)
+			resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 			if err != nil {
 				errChan <- fmt.Errorf("create error %d: %w", idx, err)
 				return
@@ -1078,7 +1095,7 @@ func testGRPCOneShotWithPayload(t *testing.T, ctx context.Context, client *grpcc
 		Priority:    10,
 	}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+	resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 	require.NoError(t, err)
 	require.NotNil(t, resp.Job)
 
@@ -1125,7 +1142,7 @@ func testGRPCRecurringWithCronSchedule(t *testing.T, ctx context.Context, client
 				},
 			}
 
-			resp, err := client.SchedulerCreateJob(ctx, req)
+			resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 			require.NoError(t, err, "CreateJob should succeed for cron schedule: %s", cs.schedule)
 			require.NotNil(t, resp.Job)
 
@@ -1158,7 +1175,7 @@ func testGRPCJobWithLabels(t *testing.T, ctx context.Context, client *grpcclient
 		Labels:    labels,
 	}
 
-	resp, err := client.SchedulerCreateJob(ctx, req)
+	resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 	require.NoError(t, err)
 	require.NotNil(t, resp.Job)
 
@@ -1199,7 +1216,7 @@ func testGRPCJobWithPriorityAndTimeout(t *testing.T, ctx context.Context, client
 				Timeout:   tc.timeout,
 			}
 
-			resp, err := client.SchedulerCreateJob(ctx, req)
+			resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 			require.NoError(t, err)
 			require.NotNil(t, resp.Job)
 
@@ -1237,7 +1254,7 @@ func testGRPCJobWithMaxRetries(t *testing.T, ctx context.Context, client *grpccl
 				MaxRetries: tc.maxRetries,
 			}
 
-			resp, err := client.SchedulerCreateJob(ctx, req)
+			resp, err := client.SchedulerCreateJob(ctx, tenantOwnedJob(t, req))
 			require.NoError(t, err)
 			require.NotNil(t, resp.Job)
 

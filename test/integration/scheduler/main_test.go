@@ -120,6 +120,8 @@ func testRESTJobLifecycle(t *testing.T, ctx context.Context) {
 		Name:        jobName,
 		Description: "Integration test job lifecycle",
 		Type:        string(scheduler.JobTypeOneShot),
+		OwnerType:   string(scheduler.OwnerTypeTenant),
+		OwnerID:     callerTenantID(t),
 		Handler:     "test.noop",                                        // Use a test handler that does nothing
 		ExecuteAt:   time.Now().Add(1 * time.Hour).Format(time.RFC3339), // Schedule for later (RFC3339 format)
 		Payload:     payload,
@@ -185,6 +187,8 @@ func TestSchedulerRecurringJob(t *testing.T) {
 		Name:        jobName,
 		Description: "Recurring job test",
 		Type:        string(scheduler.JobTypeRecurring),
+		OwnerType:   string(scheduler.OwnerTypeTenant),
+		OwnerID:     callerTenantID(t),
 		Handler:     "test.noop",
 		Schedule:    "*/5 * * * *", // Every 5 minutes
 		Labels: map[string]string{
@@ -221,6 +225,8 @@ func TestSchedulerJobPauseResume(t *testing.T) {
 		Name:        jobName,
 		Description: "Pause/resume integration test",
 		Type:        string(scheduler.JobTypeRecurring),
+		OwnerType:   string(scheduler.OwnerTypeTenant),
+		OwnerID:     callerTenantID(t),
 		Handler:     "test.noop",
 		Schedule:    "0 0 1 1 *", // Once a year (Jan 1 midnight)
 		Labels: map[string]string{

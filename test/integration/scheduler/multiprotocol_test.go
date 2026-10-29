@@ -218,7 +218,7 @@ func testCreateJob(t *testing.T, ctx context.Context, protocol schedulerProtocol
 				},
 			}
 
-			resp, err := protocol.CreateJob(ctx, req)
+			resp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, req))
 			require.NoError(t, err, "CreateJob failed for %s via %s", tt.name, protocol.Name())
 			assert.NotNil(t, resp)
 			assert.NotNil(t, resp.Job)
@@ -257,7 +257,7 @@ func testGetJob(t *testing.T, ctx context.Context, protocol schedulerProtocol, p
 		MaxRetries:  2,
 	}
 
-	createResp, err := protocol.CreateJob(ctx, createReq)
+	createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	jobID := createResp.Job.ID
 	defer func() {
@@ -299,7 +299,7 @@ func testUpdateJob(t *testing.T, ctx context.Context, protocol schedulerProtocol
 		Priority:    5,
 	}
 
-	createResp, err := protocol.CreateJob(ctx, createReq)
+	createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	jobID := createResp.Job.ID
 	defer func() {
@@ -360,7 +360,7 @@ func testListJobs(t *testing.T, ctx context.Context, protocol schedulerProtocol,
 				"batch": prefix,
 			},
 		}
-		resp, err := protocol.CreateJob(ctx, req)
+		resp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, req))
 		require.NoError(t, err)
 		jobIDs = append(jobIDs, resp.Job.ID)
 	}
@@ -440,7 +440,7 @@ func testControlOperations(t *testing.T, ctx context.Context, protocol scheduler
 		Timeout:  5 * time.Minute,
 	}
 
-	createResp, err := protocol.CreateJob(ctx, createReq)
+	createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	jobID := createResp.Job.ID
 	defer func() {
@@ -520,7 +520,7 @@ func testJobHistory(t *testing.T, ctx context.Context, protocol schedulerProtoco
 		Timeout:   1 * time.Minute,
 	}
 
-	createResp, err := protocol.CreateJob(ctx, createReq)
+	createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 	require.NoError(t, err)
 	jobID := createResp.Job.ID
 	defer func() {
@@ -591,7 +591,7 @@ func testDeleteJob(t *testing.T, ctx context.Context, protocol schedulerProtocol
 			ExecuteAt: time.Now().Add(1 * time.Hour),
 		}
 
-		createResp, err := protocol.CreateJob(ctx, createReq)
+		createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 		require.NoError(t, err)
 		jobID := createResp.Job.ID
 
@@ -623,7 +623,7 @@ func testDeleteJob(t *testing.T, ctx context.Context, protocol schedulerProtocol
 			Schedule: "0 * * * *", // Every hour
 		}
 
-		createResp, err := protocol.CreateJob(ctx, createReq)
+		createResp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, createReq))
 		require.NoError(t, err)
 		jobID := createResp.Job.ID
 
@@ -665,7 +665,7 @@ func testConcurrentOperations(t *testing.T, ctx context.Context, protocol schedu
 				},
 			}
 
-			resp, err := protocol.CreateJob(ctx, req)
+			resp, err := protocol.CreateJob(ctx, tenantOwnedJob(t, req))
 			if err != nil {
 				errChan <- fmt.Errorf("create error %d: %w", idx, err)
 				return

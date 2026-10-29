@@ -173,6 +173,8 @@ func NewSchedulerRESTClient(t *testing.T, baseURL string) *SchedulerRESTClient {
 type RESTCreateJobRequest struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"`
+	OwnerType   string            `json:"owner_type,omitempty"`
+	OwnerID     string            `json:"owner_id,omitempty"`
 	Type        string            `json:"type"`
 	Handler     string            `json:"handler"`
 	Schedule    string            `json:"schedule,omitempty"`
