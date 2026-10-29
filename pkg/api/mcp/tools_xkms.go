@@ -1262,6 +1262,9 @@ func (r *ToolRegistry) handleXKMSSaveCert(ctx context.Context, args map[string]i
 		return nil, &XKMSCertificateParseError{Cause: err}
 	}
 
+	if err := service.RequireSystemKeyStoreWriter(ctx, "saveCert"); err != nil {
+		return nil, &XKMSOperationError{Operation: "saveCert", Cause: err}
+	}
 	if err := xkmssdk.ServiceSaveCertificateByID(ctx, keyID, cert); err != nil {
 		return nil, &XKMSOperationError{Operation: "saveCert", Cause: err}
 	}
@@ -1412,6 +1415,9 @@ func (r *ToolRegistry) handleXKMSSaveCertChain(ctx context.Context, args map[str
 		chain = append(chain, cert)
 	}
 
+	if err := service.RequireSystemKeyStoreWriter(ctx, "saveCertChain"); err != nil {
+		return nil, &XKMSOperationError{Operation: "saveCertChain", Cause: err}
+	}
 	if err := xkmssdk.ServiceSaveCertificateChainByID(ctx, keyID, chain); err != nil {
 		return nil, &XKMSOperationError{Operation: "saveCertChain", Cause: err}
 	}
