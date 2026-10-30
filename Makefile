@@ -5632,11 +5632,18 @@ DEVCONTAINER_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile pkg/version/toolchain.mk g
 	cmd/quicbaas/frontend/package.json cmd/quicbaas/frontend/package-lock.json
 DEVCONTAINER_HASH = $(shell cat $(DEVCONTAINER_INPUTS) | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(DEVCONTAINER_REPO):toolchain-$(DEVCONTAINER_HASH)
-SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
-	printf -- '-dirty-%s' "$$( { git status --porcelain; git diff HEAD; } | sha256sum | cut -c1-12)"; fi)
-# CI names the integration image per run (ci-template IT_IMAGE), so its
-# trivy and teardown steps find the image this built.
-INTEGRATION_IMAGE = $(or $(IT_IMAGE),$(DEVCONTAINER_REPO):integration-$(shell git rev-parse HEAD)$(SOURCE_DIRTY))
+# The integration image is named by its content, <repo>-ci-it:<hash>
+# (ci-standard.md section 9): the build arguments that change it, APK_INDEX_SUM
+# (scripts/apk-index-sum.sh in CI, empty when unset) and the build context, which
+# is the commit's tree plus, on a dirty checkout, the diff and every untracked
+# file .gitignore keeps. CI passes `make -s it-image` back as IT_IMAGE, so its
+# lease, trivy and teardown steps name the image this built.
+IT_IMAGE_HASH = $(shell { \
+	printf '%s\n' '$(strip $(INTEGRATION_BUILD_TAGS))' '$(GO_VERSION)' '$(GO_IMAGE_DIGEST)' '$(APK_INDEX_SUM)'; \
+	git rev-parse 'HEAD^{tree}'; git diff HEAD; \
+	git ls-files -o --exclude-standard -z | xargs -0 -r sha256sum; \
+	} | sha256sum | cut -c1-16)
+INTEGRATION_IMAGE = $(or $(IT_IMAGE),$(APP_NAME)-ci-it:$(IT_IMAGE_HASH))
 # CI passes GO_BUILD_PROXY and GO_BUILD_PRIVATE as make arguments, `|`
 # separated (ci-template v1.29.5, devcontainer.md section 6); a local build
 # falls back to the DEVCACHE_* environment. Both stay double quoted, where an
@@ -5654,27 +5661,44 @@ DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 DEVCONTAINER_BUILD = $(if $(strip $(MODULE_ENV_FILE)),,trap '$(GOMODAUTH_CLEAR)' EXIT; \
 	$(MAKE) --no-print-directory stage-gomodauth;) \
 	$(DEVCONTAINER_COMPOSE) build
+# Builds those of $(1), each a compose service=tag pair, whose tag the Docker
+# daemon lacks: a tag is its content, so a held image is this tree's
+# (ci-standard.md section 9). The integration stage takes APK_INDEX_SUM as a
+# build argument, so a new Alpine index rebuilds it from its apk upgrade on.
+DEVCONTAINER_BUILD_MISSING = missing=; \
+	for pair in $(1); do \
+		$(DOCKER) image inspect "$${pair\#*=}" >/dev/null 2>&1 || missing="$$missing $${pair%%=*}"; \
+	done; \
+	if [ -z "$$missing" ]; then \
+		echo "devcontainer images already built: $(foreach pair,$(1),$(lastword $(subst =, ,$(pair))))"; \
+	else \
+		$(DEVCONTAINER_BUILD) --build-arg APK_INDEX_SUM='$(APK_INDEX_SUM)' $$missing; \
+	fi
 
 .PHONY: toolchain-image
 toolchain-image: ## Print the toolchain image tag, hashed from the files it is built from
 	@echo "$(TOOLCHAIN_IMAGE)"
 
+.PHONY: it-image
+it-image: ## Print the integration image tag, hashed from its build arguments and build context
+	@echo "$(INTEGRATION_IMAGE)"
+
 .PHONY: docker-build
-docker-build: ## Build both devcontainer images, toolchain and integration
-	@$(DEVCONTAINER_BUILD) toolchain integration
+docker-build: ## Build the devcontainer images, toolchain and integration, that the daemon lacks
+	@$(call DEVCONTAINER_BUILD_MISSING,toolchain=$(TOOLCHAIN_IMAGE) integration=$(INTEGRATION_IMAGE))
 
 # A docs-only pull request's CI runs lint alone, in the toolchain image
 # (DS-3161).
 .PHONY: docker-build-toolchain-image
-docker-build-toolchain-image: ## Build the toolchain devcontainer image alone
-	@$(DEVCONTAINER_BUILD) toolchain
+docker-build-toolchain-image: ## Build the toolchain devcontainer image alone, unless the daemon holds it
+	@$(call DEVCONTAINER_BUILD_MISSING,toolchain=$(TOOLCHAIN_IMAGE))
 
 # The integration image is the node image of the integration compose stack
 # (go-quicbaas#1383): the targets that drive that stack build it first and hand
 # its tag to compose as QUICBAAS_INTEGRATION_IMAGE.
 .PHONY: docker-build-integration-image
-docker-build-integration-image: ## Build the integration devcontainer image, the integration stack's node image
-	@$(DEVCONTAINER_BUILD) integration
+docker-build-integration-image: ## Build the integration devcontainer image, the integration stack's node image, unless the daemon holds it
+	@$(call DEVCONTAINER_BUILD_MISSING,integration=$(INTEGRATION_IMAGE))
 
 integration-test integration-bench cluster-down-integration: export QUICBAAS_INTEGRATION_IMAGE = $(INTEGRATION_IMAGE)
 
