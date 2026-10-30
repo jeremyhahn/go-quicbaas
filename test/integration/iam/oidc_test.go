@@ -97,8 +97,7 @@ func TestAuthorizationEndpointValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create a valid application for testing
 	appReq := map[string]interface{}{
@@ -109,8 +108,8 @@ func TestAuthorizationEndpointValidation(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	t.Run("MissingClientID", func(t *testing.T) {
 		params := url.Values{}
@@ -206,8 +205,7 @@ func TestPKCEParameterValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application with PKCE support
 	appReq := map[string]interface{}{
@@ -218,8 +216,8 @@ func TestPKCEParameterValidation(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	t.Run("InvalidCodeChallengeMethod", func(t *testing.T) {
 		params := url.Values{}
@@ -274,8 +272,7 @@ func TestClientCredentialsFlow(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application with client credentials grant
 	appReq := map[string]interface{}{
@@ -285,12 +282,12 @@ func TestClientCredentialsFlow(t *testing.T) {
 	}
 
 	var app iam.Application
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 	require.NoError(t, err, "Failed to register application")
 	require.NotEmpty(t, app.ClientID, "ClientID should not be empty")
 	require.NotEmpty(t, app.ClientSecret, "ClientSecret should not be empty")
 
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Request token using client credentials
 	tokenReq := url.Values{}
@@ -351,8 +348,7 @@ func TestClientCredentialsInvalidCredentials(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create valid application first
 	appReq := map[string]interface{}{
@@ -362,8 +358,8 @@ func TestClientCredentialsInvalidCredentials(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	t.Run("InvalidClientSecret", func(t *testing.T) {
 		tokenReq := url.Values{}
@@ -433,8 +429,7 @@ func TestRefreshTokenFlow(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application with refresh_token grant
 	appReq := map[string]interface{}{
@@ -444,9 +439,9 @@ func TestRefreshTokenFlow(t *testing.T) {
 	}
 
 	var app iam.Application
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 	require.NoError(t, err, "Failed to register application")
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Get initial token with client_credentials and request offline_access for refresh token
 	tokenReq := url.Values{}
@@ -536,8 +531,7 @@ func TestTokenRevocation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application with client credentials grant
 	appReq := map[string]interface{}{
@@ -547,9 +541,9 @@ func TestTokenRevocation(t *testing.T) {
 	}
 
 	var app iam.Application
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 	require.NoError(t, err, "Failed to register application")
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Issue a token
 	tokenReq := url.Values{}
@@ -726,18 +720,8 @@ func TestOIDCMultiTenantIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two tenants
-	tenant1ID := generateUniqueTenantID()
-	tenant2ID := generateUniqueTenantID()
-
-	tenant1 := map[string]interface{}{"id": tenant1ID, "name": "Tenant 1"}
-	tenant2 := map[string]interface{}{"id": tenant2ID, "name": "Tenant 2"}
-
-	var t1, t2 iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", tenant1, &t1))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", tenant2, &t2))
-
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant1ID))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))
+	tenant1ID, tenant1Admin := setupTenantForTests(t, cluster)
+	tenant2ID, tenant2Admin := setupTenantForTests(t, cluster)
 
 	// Create apps in each tenant
 	appReq1 := map[string]interface{}{
@@ -752,11 +736,11 @@ func TestOIDCMultiTenantIsolation(t *testing.T) {
 	}
 
 	var app1, app2 iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), appReq1, &app1))
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant2ID), appReq2, &app2))
+	require.NoError(t, tenant1Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), appReq1, &app1))
+	require.NoError(t, tenant2Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant2ID), appReq2, &app2))
 
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenant1ID, app1.ClientID))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenant2ID, app2.ClientID))
+	defer tenant1Admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenant1ID, app1.ClientID))
+	defer tenant2Admin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenant2ID, app2.ClientID))
 
 	// Get token for tenant 1 app
 	tokenReq := url.Values{}
@@ -830,8 +814,7 @@ func TestOIDCScopeValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -841,8 +824,8 @@ func TestOIDCScopeValidation(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	t.Run("RequestedScopesReturned", func(t *testing.T) {
 		tokenReq := url.Values{}
@@ -901,8 +884,7 @@ func TestOIDCStateParameterEchoed(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -913,8 +895,8 @@ func TestOIDCStateParameterEchoed(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Request authorization with state parameter
 	state := "unique-csrf-state-" + generateUniqueTenantID()
@@ -951,8 +933,7 @@ func TestOIDCNonceAcceptedByAuthorizeEndpoint(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -963,8 +944,8 @@ func TestOIDCNonceAcceptedByAuthorizeEndpoint(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Request authorization with nonce parameter
 	// OAuth 2.1 mandates PKCE - include code_challenge for valid request

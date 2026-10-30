@@ -139,25 +139,8 @@ func TestTenantIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two separate tenants
-	tenantA := generateUniqueTenantID()
-	tenantB := generateUniqueTenantID()
-
-	createReqA := map[string]interface{}{
-		"id":   tenantA,
-		"name": "Isolation Tenant A",
-	}
-	createReqB := map[string]interface{}{
-		"id":   tenantB,
-		"name": "Isolation Tenant B",
-	}
-
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReqA, nil))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReqB, nil))
-
-	defer func() {
-		cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantA))
-		cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantB))
-	}()
+	tenantA, tenantAAdmin := setupTenantForTests(t, cluster)
+	tenantB, tenantBAdmin := setupTenantForTests(t, cluster)
 
 	// Create a user in tenant A
 	userReq := map[string]interface{}{
@@ -169,14 +152,14 @@ func TestTenantIsolation(t *testing.T) {
 	var userA struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantA), userReq, &userA)
+	err := tenantAAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantA), userReq, &userA)
 	require.NoError(t, err, "Failed to create user in tenant A")
 
 	// Verify user is not visible in tenant B
 	var usersB struct {
 		Users []map[string]interface{} `json:"users"`
 	}
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantB), &usersB)
+	err = tenantBAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantB), &usersB)
 	require.NoError(t, err, "Failed to list users in tenant B")
 
 	for _, user := range usersB.Users {
@@ -421,14 +404,8 @@ func TestTenantDeletionCascade(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-
 	// Create tenant
-	createReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Cascade Delete Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReq, nil))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create users in the tenant
 	userReq := map[string]interface{}{
@@ -439,7 +416,7 @@ func TestTenantDeletionCascade(t *testing.T) {
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user)
 	require.NoError(t, err, "Failed to create user in tenant")
 	require.NotEmpty(t, user.ID, "User ID should not be empty")
 
@@ -451,7 +428,7 @@ func TestTenantDeletionCascade(t *testing.T) {
 	var group struct {
 		ID string `json:"id"`
 	}
-	err = cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), groupReq, &group)
+	err = tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), groupReq, &group)
 	require.NoError(t, err, "Failed to create group in tenant")
 	require.NotEmpty(t, group.ID, "Group ID should not be empty")
 
@@ -464,11 +441,11 @@ func TestTenantDeletionCascade(t *testing.T) {
 	assert.NoError(t, err, "Deleted tenant should not be found")
 
 	// Verify users are deleted (tenant endpoint should return 404)
-	err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID))
+	err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, user.ID))
 	assert.NoError(t, err, "User should be deleted with tenant")
 
 	// Verify groups are deleted (tenant endpoint should return 404)
-	err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, group.ID))
+	err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/groups/%s", tenantID, group.ID))
 	assert.NoError(t, err, "Group should be deleted with tenant")
 }
 

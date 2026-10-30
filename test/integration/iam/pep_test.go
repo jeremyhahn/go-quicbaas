@@ -35,8 +35,7 @@ func TestPEPSingleCheck(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create a simple policy
 	policy := map[string]interface{}{
@@ -62,7 +61,7 @@ func TestPEPSingleCheck(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	// Perform enforcement check
 	checkReq := map[string]interface{}{
@@ -89,8 +88,7 @@ func TestPEPBatchCheck(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -116,7 +114,7 @@ func TestPEPBatchCheck(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	// Create batch check request
 	batchReq := map[string]interface{}{
@@ -177,8 +175,7 @@ func TestPEPCaching(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -204,7 +201,7 @@ func TestPEPCaching(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	checkReq := map[string]interface{}{
 		"subject": map[string]interface{}{
@@ -241,8 +238,7 @@ func TestPEPPolicySync(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create initial policy (deny)
 	policy := map[string]interface{}{
@@ -268,7 +264,7 @@ func TestPEPPolicySync(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	checkReq := map[string]interface{}{
 		"subject": map[string]interface{}{
@@ -309,7 +305,7 @@ func TestPEPPolicySync(t *testing.T) {
 	}
 
 	var updated iam.Policy
-	require.NoError(t, cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, "sync-test-policy"), updateReq, &updated))
+	require.NoError(t, tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, "sync-test-policy"), updateReq, &updated))
 
 	// Wait for the policy update to propagate to the PEP
 	require.Eventually(t, func() bool {
@@ -332,8 +328,7 @@ func TestPEPPerformance(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -359,7 +354,7 @@ func TestPEPPerformance(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	checkReq := map[string]interface{}{
 		"subject": map[string]interface{}{
@@ -401,8 +396,7 @@ func TestPEPConcurrency(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -428,7 +422,7 @@ func TestPEPConcurrency(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	// Perform concurrent checks
 	const goroutines = 50
@@ -500,11 +494,9 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two separate tenants
-	tenant1ID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant1ID))
+	tenant1ID, tenant1Admin := setupTenantForTests(t, cluster)
 
-	tenant2ID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))
+	tenant2ID, tenant2Admin := setupTenantForTests(t, cluster)
 
 	// Create a policy in tenant1 that allows read on data/**
 	policy1 := map[string]interface{}{
@@ -530,7 +522,7 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 	}
 
 	var created1 iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenant1ID), policy1, &created1))
+	require.NoError(t, tenant1Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenant1ID), policy1, &created1))
 
 	// Create a policy in tenant2 that DENIES read on data/**
 	policy2 := map[string]interface{}{
@@ -556,7 +548,7 @@ func TestPEPMultiTenantPolicyIsolation(t *testing.T) {
 	}
 
 	var created2 iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenant2ID), policy2, &created2))
+	require.NoError(t, tenant2Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenant2ID), policy2, &created2))
 
 	// Check that tenant1 user CAN read data (policy allows)
 	t.Run("Tenant1UserAllowed", func(t *testing.T) {
@@ -626,8 +618,7 @@ func TestPEPFailover(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy
 	policy := map[string]interface{}{
@@ -653,7 +644,7 @@ func TestPEPFailover(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	checkReq := map[string]interface{}{
 		"subject": map[string]interface{}{
@@ -676,7 +667,7 @@ func TestPEPFailover(t *testing.T) {
 
 	// Policy should persist
 	var retrieved iam.Policy
-	require.NoError(t, cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, "failover-test-policy"), &retrieved))
+	require.NoError(t, tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, "failover-test-policy"), &retrieved))
 	assert.Equal(t, "failover-test-policy", retrieved.Metadata.Name)
 }
 
@@ -685,8 +676,7 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create a low-priority allow policy
 	lowPriorityPolicy := map[string]interface{}{
@@ -737,8 +727,8 @@ func TestPEPPolicyPriorityEvaluation(t *testing.T) {
 	}
 
 	var created1, created2 iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), lowPriorityPolicy, &created1))
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), highPriorityPolicy, &created2))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), lowPriorityPolicy, &created1))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), highPriorityPolicy, &created2))
 
 	// Check that regular data is allowed (low priority policy)
 	t.Run("RegularDataAllowed", func(t *testing.T) {
@@ -783,8 +773,7 @@ func TestPEPWildcardResourceMatching(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create policy with various wildcard patterns
 	policy := map[string]interface{}{
@@ -816,7 +805,7 @@ func TestPEPWildcardResourceMatching(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	testCases := []struct {
 		name     string

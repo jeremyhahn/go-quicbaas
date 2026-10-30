@@ -54,13 +54,8 @@ type BackupCodesResponse struct {
 }
 
 // setupUserForMFATests creates a test user and returns tenant ID and user ID.
-func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
-	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
+func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string, *testCluster) {
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	email := generateUniqueEmail()
 	createUserReq := map[string]interface{}{
@@ -72,15 +67,10 @@ func setupUserForMFATests(t *testing.T, cluster *testCluster) (string, string) {
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
-	return tenantID, user.ID
-}
-
-// cleanupMFATests cleans up test resources.
-func cleanupMFATests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	return tenantID, user.ID, tenantAdmin
 }
 
 // TestMFAStatusNotEnrolled tests getting MFA status for a user without MFA.
@@ -88,11 +78,10 @@ func TestMFAStatusNotEnrolled(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	var status MFAStatusResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID), &status)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID), &status)
 	require.NoError(t, err, "Should get MFA status")
 
 	assert.False(t, status.Enabled, "MFA should not be enabled")
@@ -106,15 +95,14 @@ func TestMFAEnrollmentBegin(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	enrollReq := map[string]interface{}{
 		"method": "totp",
 	}
 
 	var enrollment MFAEnrollmentResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
 	require.NoError(t, err, "Should begin enrollment")
 
 	assert.NotEmpty(t, enrollment.EnrollmentID, "EnrollmentID should not be empty")
@@ -128,8 +116,7 @@ func TestMFAEnrollmentCancel(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	// Start enrollment
 	enrollReq := map[string]interface{}{
@@ -137,16 +124,16 @@ func TestMFAEnrollmentCancel(t *testing.T) {
 	}
 
 	var enrollment MFAEnrollmentResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
 	require.NoError(t, err)
 
 	// Cancel enrollment
-	err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll/%s", tenantID, userID, enrollment.EnrollmentID))
+	err = tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll/%s", tenantID, userID, enrollment.EnrollmentID))
 	require.NoError(t, err, "Should cancel enrollment")
 
 	// Verify still not enrolled
 	var status MFAStatusResponse
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID), &status)
+	err = tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID), &status)
 	require.NoError(t, err)
 	assert.False(t, status.Enabled, "MFA should not be enabled after cancel")
 }
@@ -156,12 +143,11 @@ func TestMFABackupCodesBeforeEnrollment(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	// Get backup code status - should return zeros
 	var status BackupCodeStatusResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/backup-codes", tenantID, userID), &status)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/backup-codes", tenantID, userID), &status)
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, status.TotalCodes, "No backup codes should exist")
@@ -173,11 +159,10 @@ func TestMFADisableNotEnrolled(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	// Try to disable MFA when not enrolled
-	err := cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID))
+	err := tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa", tenantID, userID))
 
 	// Should either succeed (no-op) or return error
 	// Implementation dependent - just verify it doesn't crash
@@ -191,15 +176,14 @@ func TestMFAInvalidMethod(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	enrollReq := map[string]interface{}{
 		"method": "invalid-method",
 	}
 
 	var enrollment MFAEnrollmentResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment)
 
 	// Should fail with invalid method
 	if err == nil && enrollment.EnrollmentID != "" {
@@ -212,16 +196,10 @@ func TestMFAStatusNonExistentUser(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := generateUniqueTenantID()
-	createTenantReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "MFA Test Tenant",
-	}
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createTenantReq, nil))
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	var status MFAStatusResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/nonexistent-user/mfa", tenantID), &status)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/nonexistent-user/mfa", tenantID), &status)
 
 	// Either returns error (user not found) or default disabled status
 	if err != nil {
@@ -236,8 +214,7 @@ func TestMFAEnrollmentMultipleAttempts(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	enrollReq := map[string]interface{}{
 		"method": "totp",
@@ -245,12 +222,12 @@ func TestMFAEnrollmentMultipleAttempts(t *testing.T) {
 
 	// Start first enrollment
 	var enrollment1 MFAEnrollmentResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment1)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment1)
 	require.NoError(t, err)
 
 	// Start second enrollment (should either fail or replace first)
 	var enrollment2 MFAEnrollmentResponse
-	err = cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment2)
+	err = tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/mfa/enroll", tenantID, userID), enrollReq, &enrollment2)
 
 	if err != nil {
 		// Expected if concurrent enrollments not allowed
@@ -266,8 +243,7 @@ func TestMFAEndpointPaths(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForMFATests(t, cluster)
-	defer cleanupMFATests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForMFATests(t, cluster)
 
 	tests := []struct {
 		name       string
@@ -292,7 +268,7 @@ func TestMFAEndpointPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := cluster.doHTTPRequest(tt.method, tt.path, tt.body)
+			resp, err := tenantAdmin.doHTTPRequest(tt.method, tt.path, tt.body)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 

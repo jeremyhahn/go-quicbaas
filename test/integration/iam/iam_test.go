@@ -58,7 +58,7 @@ type testCluster struct {
 	quicEndpoint string
 	unixSocket   string
 	client       *http.Client // sends no bearer, or one the caller sets
-	adminClient  *http.Client // presents the system admin's bearer
+	adminClient  *http.Client // presents the bearer the JSON helpers act as: the system admin's, or a tenant admin's (see asTenantAdmin)
 	grpcConn     *grpc.ClientConn
 }
 
@@ -370,6 +370,18 @@ func (tc *testCluster) doRequest(client *http.Client, method, path string, body 
 	}
 
 	return client.Do(req)
+}
+
+// asTenantAdmin has the system admin provision tenantID and returns a copy of
+// tc whose JSON helpers act as that tenant's administrator. Tenant-scoped
+// handlers reject cross-tenant targeting, even by the system admin, so calls
+// on a tenant's users, roles, groups and policies go through the copy while
+// provisioning stays on tc. The tenant is deleted when t ends.
+func (tc *testCluster) asTenantAdmin(t *testing.T, tenantID string) *testCluster {
+	t.Helper()
+	tenantCluster := *tc
+	tenantCluster.adminClient = createTestTenant(t, tc, tenantID)
+	return &tenantCluster
 }
 
 // getJSON performs a GET request and unmarshals the JSON response.

@@ -50,8 +50,7 @@ func TestDPoPSenderConstrainedToken(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// A confidential client for the client-credentials grant.
 	appReq := map[string]interface{}{
@@ -60,10 +59,10 @@ func TestDPoPSenderConstrainedToken(t *testing.T) {
 		"grant_types":   []string{"client_credentials"},
 	}
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app),
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app),
 		"register client-credentials app")
 	require.NotEmpty(t, app.ClientID)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+	defer tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 
 	// Resolve the issuer for the validator; fetch the JWKS from this cluster so
 	// the key source is guaranteed reachable regardless of the configured

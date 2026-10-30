@@ -138,8 +138,7 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create a user to generate more audit events
 	email := generateUniqueEmail()
@@ -151,7 +150,7 @@ func TestAuditEventQueryWithFilters(t *testing.T) {
 	var user struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
@@ -199,8 +198,7 @@ func TestAuditEventQueryPagination(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create multiple users to generate multiple audit events
 	for i := 0; i < 5; i++ {
@@ -210,7 +208,7 @@ func TestAuditEventQueryPagination(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Pagination Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
@@ -242,8 +240,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Record the time before creating a user
 	beforeCreate := time.Now().Add(-1 * time.Second).UTC()
@@ -255,7 +252,7 @@ func TestAuditEventQueryTimeRange(t *testing.T) {
 		"username": generateUniqueUsername(),
 		"name":     "Time Range Test User",
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 	require.NoError(t, err)
 
 	// Wait for the user creation event to become queryable
@@ -350,8 +347,7 @@ func TestAuditEventDelete(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create some users to generate audit events
 	for i := 0; i < 3; i++ {
@@ -361,7 +357,7 @@ func TestAuditEventDelete(t *testing.T) {
 			"username": generateUniqueUsername(),
 			"name":     fmt.Sprintf("Delete Test User %d", i),
 		}
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 		require.NoError(t, err)
 	}
 
@@ -401,8 +397,7 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two separate tenants
-	tenant1ID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenant1ID)
+	tenant1ID, tenant1Admin := setupTenantForTests(t, cluster)
 
 	tenant2ID := generateUniqueTenantID()
 	createTenant2Req := map[string]interface{}{
@@ -422,7 +417,7 @@ func TestAuditEventTenantIsolation(t *testing.T) {
 	var user1 struct {
 		ID string `json:"id"`
 	}
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
+	err := tenant1Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenant1ID), createUserReq, &user1)
 	require.NoError(t, err)
 
 	// Wait for the tenant1 user creation and the tenant2 creation events to become queryable
@@ -468,8 +463,7 @@ func TestAuditEventGeneration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForAuditTests(t, cluster)
-	defer cleanupAuditTests(cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	tests := []struct {
 		name          string
@@ -485,7 +479,7 @@ func TestAuditEventGeneration(t *testing.T) {
 					"username": generateUniqueUsername(),
 					"name":     "Event Gen Test User",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
+				return tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, nil)
 			},
 			expectedEvent: "user_management",
 		},
@@ -496,7 +490,7 @@ func TestAuditEventGeneration(t *testing.T) {
 					"name":        fmt.Sprintf("test-group-%d", time.Now().UnixNano()),
 					"description": "Test group for audit events",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), createGroupReq, nil)
+				return tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/groups", tenantID), createGroupReq, nil)
 			},
 			expectedEvent: "group_management",
 		},
@@ -507,7 +501,7 @@ func TestAuditEventGeneration(t *testing.T) {
 					"name":        fmt.Sprintf("test-role-%d", time.Now().UnixNano()),
 					"description": "Test role for audit events",
 				}
-				return cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
+				return tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createRoleReq, nil)
 			},
 			expectedEvent: "role_management",
 		},

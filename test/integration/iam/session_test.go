@@ -17,12 +17,9 @@
 package iam_test
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"testing"
 	"time"
@@ -52,16 +49,14 @@ type SessionListResponse struct {
 }
 
 // setupUserForSessionTests creates a test tenant and user for session tests.
-func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string) {
+func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, string, *testCluster) {
 	// The system admin provisions the tenant; its own admin creates the user,
 	// because tenantctx keeps the system admin out of a tenant's IAM.
-	tenantID := generateUniqueTenantID()
-	tenantAdmin := createTestTenant(t, cluster, tenantID)
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create user
-	email := generateUniqueEmail()
 	createUserReq := map[string]interface{}{
-		"email":    email,
+		"email":    generateUniqueEmail(),
 		"username": generateUniqueUsername(),
 		"name":     "Session Test User",
 	}
@@ -69,28 +64,13 @@ func setupUserForSessionTests(t *testing.T, cluster *testCluster) (string, strin
 	var user struct {
 		ID string `json:"id"`
 	}
-	body, err := json.Marshal(createUserReq)
-	require.NoError(t, err)
-	resp, err := tenantAdmin.Post(
-		cluster.httpEndpoint+fmt.Sprintf("/api/v1/tenants/%s/users", tenantID),
-		"application/json",
-		bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.Contains(t, []int{http.StatusOK, http.StatusCreated}, resp.StatusCode, "create user: %s", respBody)
-	require.NoError(t, json.Unmarshal(respBody, &user))
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createUserReq, &user)
+	require.NoError(t, err, "create user")
 
-	return tenantID, user.ID
+	return tenantID, user.ID, tenantAdmin
 }
 
 // cleanupSessionTests cleans up test resources.
-func cleanupSessionTests(cluster *testCluster, tenantID string) {
-	cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
-}
-
 // createMockSession creates a mock session for testing purposes.
 // In production, sessions are created via authentication flows.
 func createMockSession(t *testing.T, cluster *testCluster, tenantID, userID string) *SessionResponse {
@@ -162,12 +142,11 @@ func TestSessionListEmpty(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Mock authentication context by using tenant/user-specific endpoint
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	// Should succeed with empty list or not found
 	if err == nil {
@@ -183,11 +162,10 @@ func TestSessionCreate(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a mock session
-	session := createMockSession(t, cluster, tenantID, userID)
+	session := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session)
 	assert.NotEmpty(t, session.ID, "Session ID should not be empty")
 	assert.Equal(t, userID, session.UserID, "User ID should match")
@@ -201,16 +179,15 @@ func TestSessionListAfterCreate(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a mock session
-	session := createMockSession(t, cluster, tenantID, userID)
+	session := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session)
 
 	// List sessions
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	if err == nil {
 		assert.NotNil(t, sessions.Sessions, "Sessions list should not be nil")
@@ -227,11 +204,10 @@ func TestSessionGet(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a mock session
-	session := createMockSession(t, cluster, tenantID, userID)
+	session := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session)
 
 	// Get session by ID
@@ -252,8 +228,7 @@ func TestSessionGetNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	setupUserForSessionTests(t, cluster)
 
 	nonExistentID := uuid.New().String()
 
@@ -269,11 +244,10 @@ func TestSessionRevoke(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a mock session
-	session := createMockSession(t, cluster, tenantID, userID)
+	session := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session)
 
 	// Revoke the session
@@ -294,8 +268,7 @@ func TestSessionRevokeNonExistent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	setupUserForSessionTests(t, cluster)
 
 	nonExistentID := uuid.New().String()
 
@@ -312,12 +285,11 @@ func TestSessionRevokeAll(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create multiple mock sessions
-	session1 := createMockSession(t, cluster, tenantID, userID)
-	session2 := createMockSession(t, cluster, tenantID, userID)
+	session1 := createMockSession(t, tenantAdmin, tenantID, userID)
+	session2 := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session1)
 	require.NotNil(t, session2)
 
@@ -327,7 +299,7 @@ func TestSessionRevokeAll(t *testing.T) {
 	if err == nil {
 		// Verify all sessions are revoked
 		var sessions SessionListResponse
-		listErr := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+		listErr := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 		if listErr == nil {
 			assert.Equal(t, 0, len(sessions.Sessions), "Should have no active sessions")
 		}
@@ -341,13 +313,12 @@ func TestSessionRevokeAllExceptCurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create multiple mock sessions
-	session1 := createMockSession(t, cluster, tenantID, userID)
-	session2 := createMockSession(t, cluster, tenantID, userID)
-	currentSession := createMockSession(t, cluster, tenantID, userID)
+	session1 := createMockSession(t, tenantAdmin, tenantID, userID)
+	session2 := createMockSession(t, tenantAdmin, tenantID, userID)
+	currentSession := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session1)
 	require.NotNil(t, session2)
 	require.NotNil(t, currentSession)
@@ -375,13 +346,12 @@ func TestSessionRevokeOtherSessions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create multiple mock sessions
-	session1 := createMockSession(t, cluster, tenantID, userID)
-	session2 := createMockSession(t, cluster, tenantID, userID)
-	currentSession := createMockSession(t, cluster, tenantID, userID)
+	session1 := createMockSession(t, tenantAdmin, tenantID, userID)
+	session2 := createMockSession(t, tenantAdmin, tenantID, userID)
+	currentSession := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session1)
 	require.NotNil(t, session2)
 	require.NotNil(t, currentSession)
@@ -407,8 +377,7 @@ func TestSessionExpiration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a session with short expiration
 	sessionID := uuid.New().String()
@@ -428,7 +397,7 @@ func TestSessionExpiration(t *testing.T) {
 	}
 
 	var session SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
 
 	if err != nil {
 		t.Logf("Session creation with expiration not supported: %v", err)
@@ -449,24 +418,21 @@ func TestSessionTenantIsolation(t *testing.T) {
 	defer cluster.Close()
 
 	// Create two separate tenants and users
-	tenant1ID, user1ID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenant1ID)
-
-	tenant2ID, user2ID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenant2ID)
+	tenant1ID, user1ID, tenant1Admin := setupUserForSessionTests(t, cluster)
+	tenant2ID, user2ID, tenant2Admin := setupUserForSessionTests(t, cluster)
 
 	// Create session for user in tenant 1
-	session1 := createMockSession(t, cluster, tenant1ID, user1ID)
+	session1 := createMockSession(t, tenant1Admin, tenant1ID, user1ID)
 	require.NotNil(t, session1)
 
 	// Create session for user in tenant 2
-	session2 := createMockSession(t, cluster, tenant2ID, user2ID)
+	session2 := createMockSession(t, tenant2Admin, tenant2ID, user2ID)
 	require.NotNil(t, session2)
 
 	// Try to access tenant1's session from tenant2's user context
 	// This should fail due to tenant isolation
 	var retrievedSession SessionResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions/%s", tenant2ID, user2ID, session1.ID), &retrievedSession)
+	err := tenant2Admin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions/%s", tenant2ID, user2ID, session1.ID), &retrievedSession)
 
 	// Should fail with forbidden or not found
 	assert.Error(t, err, "Should not be able to access session from different tenant")
@@ -477,22 +443,21 @@ func TestSessionMultipleConcurrent(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create multiple concurrent sessions
 	const numSessions = 3
 	sessions := make([]*SessionResponse, numSessions)
 
 	for i := 0; i < numSessions; i++ {
-		session := createMockSession(t, cluster, tenantID, userID)
+		session := createMockSession(t, tenantAdmin, tenantID, userID)
 		require.NotNil(t, session)
 		sessions[i] = session
 	}
 
 	// List all sessions
 	var sessionList SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessionList)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessionList)
 
 	if err == nil {
 		assert.GreaterOrEqual(t, len(sessionList.Sessions), numSessions, "Should have at least the created sessions")
@@ -506,8 +471,7 @@ func TestSessionDeviceInfo(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create session with detailed device info
 	sessionID := uuid.New().String()
@@ -534,7 +498,7 @@ func TestSessionDeviceInfo(t *testing.T) {
 	}
 
 	var session SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &session)
 
 	if err != nil {
 		t.Logf("Session creation with device info not supported: %v", err)
@@ -553,11 +517,10 @@ func TestSessionMFAStatus(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create session without MFA
-	sessionNoMFA := createMockSession(t, cluster, tenantID, userID)
+	sessionNoMFA := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, sessionNoMFA)
 	assert.False(t, sessionNoMFA.MFAVerified, "Session should not have MFA verified")
 
@@ -578,7 +541,7 @@ func TestSessionMFAStatus(t *testing.T) {
 	}
 
 	var sessionMFA SessionResponse
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &sessionMFA)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), sessionReq, &sessionMFA)
 
 	if err == nil {
 		assert.True(t, sessionMFA.MFAVerified, "Session should have MFA verified")
@@ -592,8 +555,7 @@ func TestSessionEndpointAvailability(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, _ := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	setupUserForSessionTests(t, cluster)
 
 	tests := []struct {
 		name       string
@@ -653,16 +615,15 @@ func TestSessionListTenantEndpoint(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID, userID := setupUserForSessionTests(t, cluster)
-	defer cleanupSessionTests(cluster, tenantID)
+	tenantID, userID, tenantAdmin := setupUserForSessionTests(t, cluster)
 
 	// Create a session
-	session := createMockSession(t, cluster, tenantID, userID)
+	session := createMockSession(t, tenantAdmin, tenantID, userID)
 	require.NotNil(t, session)
 
 	// List sessions via tenant-specific endpoint
 	var sessions SessionListResponse
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
+	err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%s/sessions", tenantID, userID), &sessions)
 
 	if err == nil {
 		assert.NotNil(t, sessions.Sessions, "Sessions list should not be nil")

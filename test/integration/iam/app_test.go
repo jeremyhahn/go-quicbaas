@@ -31,8 +31,7 @@ func TestAppRegistration(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Register application
 	t.Run("Register", func(t *testing.T) {
@@ -50,7 +49,7 @@ func TestAppRegistration(t *testing.T) {
 		}
 
 		var app iam.Application
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, app.ClientID)
@@ -67,7 +66,7 @@ func TestAppRegistration(t *testing.T) {
 		var resp struct {
 			Apps []iam.Application `json:"apps"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, resp.Apps)
@@ -86,14 +85,14 @@ func TestAppRegistration(t *testing.T) {
 		var resp struct {
 			Apps []iam.Application `json:"apps"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Apps)
 
 		clientID := resp.Apps[0].ClientID
 
 		var app iam.Application
-		err = cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID), &app)
+		err = tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID), &app)
 		require.NoError(t, err)
 
 		assert.Equal(t, clientID, app.ClientID)
@@ -105,7 +104,7 @@ func TestAppRegistration(t *testing.T) {
 		var resp struct {
 			Apps []iam.Application `json:"apps"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Apps)
 
@@ -121,7 +120,7 @@ func TestAppRegistration(t *testing.T) {
 		}
 
 		var updated iam.Application
-		err = cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID), updateReq, &updated)
+		err = tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated Application Name", updated.Name)
@@ -133,17 +132,17 @@ func TestAppRegistration(t *testing.T) {
 		var resp struct {
 			Apps []iam.Application `json:"apps"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Apps)
 
 		clientID := resp.Apps[0].ClientID
 
-		err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
+		err = tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency
-		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
+		err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
 		assert.NoError(t, err, "Deleted app should not be found")
 	})
 }
@@ -153,8 +152,7 @@ func TestAppSecretRotation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Register application
 	appReq := map[string]interface{}{
@@ -164,12 +162,12 @@ func TestAppSecretRotation(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
 	originalSecret := app.ClientSecret
 
 	// Rotate secret
 	var rotated iam.Application
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s/rotate-secret", tenantID, app.ClientID), nil, &rotated)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s/rotate-secret", tenantID, app.ClientID), nil, &rotated)
 	require.NoError(t, err)
 
 	// New secret should be different
@@ -182,8 +180,7 @@ func TestAppClientValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Register valid application
 	appReq := map[string]interface{}{
@@ -193,7 +190,7 @@ func TestAppClientValidation(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
 
 	// Test validation scenarios
 	tests := []struct {
@@ -261,8 +258,7 @@ func TestAppRedirectURIValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	tests := []struct {
 		name         string
@@ -313,7 +309,7 @@ func TestAppRedirectURIValidation(t *testing.T) {
 			}
 
 			var app iam.Application
-			err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+			err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 
 			if tt.expectError {
 				assert.Error(t, err, "Invalid redirect URI should be rejected")
@@ -321,7 +317,7 @@ func TestAppRedirectURIValidation(t *testing.T) {
 				assert.NoError(t, err, "Valid redirect URI should be accepted")
 				if err == nil {
 					// Clean up
-					cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+					tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 				}
 			}
 		})
@@ -333,8 +329,7 @@ func TestAppGrantTypes(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	tests := []struct {
 		name            string
@@ -384,7 +379,7 @@ func TestAppGrantTypes(t *testing.T) {
 			}
 
 			var app iam.Application
-			err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
+			err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app)
 
 			if tt.valid {
 				assert.NoError(t, err)
@@ -397,7 +392,7 @@ func TestAppGrantTypes(t *testing.T) {
 					} else {
 						assert.Equal(t, tt.grantTypes, app.GrantTypes)
 					}
-					cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
+					tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, app.ClientID))
 				}
 			} else {
 				assert.Error(t, err)
@@ -411,8 +406,7 @@ func TestAppResourcePrefix(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create app with resource prefix
 	appReq := map[string]interface{}{
@@ -423,7 +417,7 @@ func TestAppResourcePrefix(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
 
 	assert.Equal(t, "app/data", app.ResourcePrefix)
 }
@@ -433,8 +427,7 @@ func TestAppDeletion(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create application
 	appReq := map[string]interface{}{
@@ -444,16 +437,16 @@ func TestAppDeletion(t *testing.T) {
 	}
 
 	var app iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenantID), appReq, &app))
 
 	clientID := app.ClientID
 
 	// Delete application
-	err := cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
+	err := tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
 	require.NoError(t, err)
 
 	// Verify cannot get deleted app - use expectNotFound which handles eventual consistency
-	err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
+	err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/apps/%s", tenantID, clientID))
 	assert.NoError(t, err, "Deleted app should not be retrievable")
 }
 
@@ -462,19 +455,9 @@ func TestAppTenantIsolation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenant1ID := generateUniqueTenantID()
-	tenant2ID := generateUniqueTenantID()
-
 	// Create two tenants
-	t1 := map[string]interface{}{"id": tenant1ID, "name": "Tenant 1"}
-	t2 := map[string]interface{}{"id": tenant2ID, "name": "Tenant 2"}
-
-	var tenant1, tenant2 iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", t1, &tenant1))
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", t2, &tenant2))
-
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant1ID))
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenant2ID))
+	tenant1ID, tenant1Admin := setupTenantForTests(t, cluster)
+	tenant2ID, tenant2Admin := setupTenantForTests(t, cluster)
 
 	// Create app in tenant 1
 	appReq := map[string]interface{}{
@@ -484,13 +467,13 @@ func TestAppTenantIsolation(t *testing.T) {
 	}
 
 	var app1 iam.Application
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), appReq, &app1))
+	require.NoError(t, tenant1Admin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), appReq, &app1))
 
 	// Verify app is NOT in tenant 2
 	var tenant2Resp struct {
 		Apps []iam.Application `json:"apps"`
 	}
-	err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant2ID), &tenant2Resp)
+	err := tenant2Admin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant2ID), &tenant2Resp)
 	require.NoError(t, err)
 
 	for _, app := range tenant2Resp.Apps {
@@ -501,7 +484,7 @@ func TestAppTenantIsolation(t *testing.T) {
 	var tenant1Resp struct {
 		Apps []iam.Application `json:"apps"`
 	}
-	err = cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), &tenant1Resp)
+	err = tenant1Admin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/apps", tenant1ID), &tenant1Resp)
 	require.NoError(t, err)
 
 	found := false

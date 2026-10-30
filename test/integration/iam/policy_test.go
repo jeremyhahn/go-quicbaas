@@ -31,8 +31,7 @@ func TestPolicyCRUD(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	policyName := "test-policy"
 
@@ -63,7 +62,7 @@ func TestPolicyCRUD(t *testing.T) {
 		}
 
 		var created iam.Policy
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created)
 		require.NoError(t, err)
 
 		assert.Equal(t, policyName, created.Metadata.Name)
@@ -75,7 +74,7 @@ func TestPolicyCRUD(t *testing.T) {
 	// Get policy
 	t.Run("Get", func(t *testing.T) {
 		var policy iam.Policy
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName), &policy)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName), &policy)
 		require.NoError(t, err)
 
 		assert.Equal(t, policyName, policy.Metadata.Name)
@@ -88,7 +87,7 @@ func TestPolicyCRUD(t *testing.T) {
 			Policies []iam.Policy `json:"policies"`
 			Cursor   string       `json:"cursor"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), &resp)
 		require.NoError(t, err)
 
 		found := false
@@ -134,7 +133,7 @@ func TestPolicyCRUD(t *testing.T) {
 		}
 
 		var updated iam.Policy
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName), updateReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated policy description", updated.Metadata.Description)
@@ -144,11 +143,11 @@ func TestPolicyCRUD(t *testing.T) {
 
 	// Delete policy
 	t.Run("Delete", func(t *testing.T) {
-		err := cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName))
+		err := tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency
-		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName))
+		err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policyName))
 		assert.NoError(t, err, "Deleted policy should not be found")
 	})
 }
@@ -158,8 +157,7 @@ func TestPolicyValidation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	tests := []struct {
 		name        string
@@ -276,7 +274,7 @@ func TestPolicyValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var policy iam.Policy
-			err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), tt.policy, &policy)
+			err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), tt.policy, &policy)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -284,7 +282,7 @@ func TestPolicyValidation(t *testing.T) {
 				assert.NoError(t, err)
 				// Clean up valid policy
 				if err == nil {
-					cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policy.Metadata.Name))
+					tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/policies/%s", tenantID, policy.Metadata.Name))
 				}
 			}
 		})
@@ -296,8 +294,7 @@ func TestPolicyEvaluation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create a policy
 	policy := map[string]interface{}{
@@ -323,7 +320,7 @@ func TestPolicyEvaluation(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	// Test policy evaluation
 	checkReq := map[string]interface{}{
@@ -356,8 +353,7 @@ func TestPolicyPriority(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create high-priority deny policy
 	denyPolicy := map[string]interface{}{
@@ -384,7 +380,7 @@ func TestPolicyPriority(t *testing.T) {
 	}
 
 	var deny iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), denyPolicy, &deny))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), denyPolicy, &deny))
 
 	// Create lower-priority allow policy
 	allowPolicy := map[string]interface{}{
@@ -411,7 +407,7 @@ func TestPolicyPriority(t *testing.T) {
 	}
 
 	var allow iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), allowPolicy, &allow))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), allowPolicy, &allow))
 
 	// Test that deny takes precedence
 	checkReq := map[string]interface{}{
@@ -436,8 +432,7 @@ func TestPolicyConditions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	t.Run("AttributeCondition", func(t *testing.T) {
 		policy := map[string]interface{}{
@@ -468,7 +463,7 @@ func TestPolicyConditions(t *testing.T) {
 		}
 
 		var created iam.Policy
-		require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+		require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 		// Test with matching attribute
 		checkReq := map[string]interface{}{
@@ -504,8 +499,7 @@ func TestPolicyResourcePatterns(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	policy := map[string]interface{}{
 		"apiVersion": "abac.quicbaas.io/v1",
@@ -536,7 +530,7 @@ func TestPolicyResourcePatterns(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	tests := []struct {
 		resource string
@@ -575,8 +569,7 @@ func TestPolicyTimeConditions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	policy := map[string]interface{}{
 		"apiVersion": "abac.quicbaas.io/v1",
@@ -606,7 +599,7 @@ func TestPolicyTimeConditions(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	// Note: Actual time-based evaluation would require passing current time in context
 	// This is a structural test to ensure the policy is created correctly
@@ -620,8 +613,7 @@ func TestPolicyNetworkConditions(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// First, update tenant with named networks
 	tenantUpdate := map[string]interface{}{
@@ -663,7 +655,7 @@ func TestPolicyNetworkConditions(t *testing.T) {
 	}
 
 	var created iam.Policy
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/policies", tenantID), policy, &created))
 
 	assert.Equal(t, "office-network-only", created.Metadata.Name)
 	assert.Len(t, created.Spec.Rules, 1)

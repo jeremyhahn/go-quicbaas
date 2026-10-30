@@ -26,16 +26,12 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
-// setupTenantForTests creates a test tenant and returns its ID.
-func setupTenantForTests(t *testing.T, cluster *testCluster) string {
+// setupTenantForTests provisions a fresh test tenant and returns its ID with
+// the view of cluster that acts as the tenant's administrator (asTenantAdmin).
+func setupTenantForTests(t *testing.T, cluster *testCluster) (string, *testCluster) {
+	t.Helper()
 	tenantID := generateUniqueTenantID()
-	createReq := map[string]interface{}{
-		"id":   tenantID,
-		"name": "Test Tenant for Identity",
-	}
-	var tenant iam.Tenant
-	require.NoError(t, cluster.postJSON("/api/v1/tenants", createReq, &tenant))
-	return tenantID
+	return tenantID, cluster.asTenantAdmin(t, tenantID)
 }
 
 // TestUserCRUD tests complete user lifecycle.
@@ -43,8 +39,7 @@ func TestUserCRUD(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	email := generateUniqueEmail()
 
@@ -61,7 +56,7 @@ func TestUserCRUD(t *testing.T) {
 		}
 
 		var user iam.User
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq, &user)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq, &user)
 		require.NoError(t, err, "Failed to create user")
 
 		assert.Equal(t, email, user.Email)
@@ -78,7 +73,7 @@ func TestUserCRUD(t *testing.T) {
 			Users  []iam.User `json:"users"`
 			Cursor string     `json:"cursor"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Users)
 
@@ -92,7 +87,7 @@ func TestUserCRUD(t *testing.T) {
 		var resp struct {
 			Users []iam.User `json:"users"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Users)
 
@@ -106,7 +101,7 @@ func TestUserCRUD(t *testing.T) {
 		}
 
 		var updated iam.User
-		err = cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID), updateReq, &updated)
+		err = tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated User Name", updated.Name)
@@ -118,16 +113,16 @@ func TestUserCRUD(t *testing.T) {
 		var resp struct {
 			Users []iam.User `json:"users"`
 		}
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), &resp)
 		require.NoError(t, err)
 		require.NotEmpty(t, resp.Users)
 
 		userID := resp.Users[0].ID
-		err = cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
+		err = tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency
-		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
+		err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, userID))
 		assert.NoError(t, err, "Deleted user should not be found")
 	})
 }
@@ -137,8 +132,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	email := generateUniqueEmail()
 
@@ -149,7 +143,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 		"name":     "User 1",
 	}
 	var user1 iam.User
-	err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq, &user1)
+	err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq, &user1)
 	require.NoError(t, err)
 
 	// Attempt to create second user with same email
@@ -159,7 +153,7 @@ func TestUserEmailUniqueness(t *testing.T) {
 		"name":     "User 2",
 	}
 	var user2 iam.User
-	err = cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq2, &user2)
+	err = tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), createReq2, &user2)
 	assert.Error(t, err, "Duplicate email should be rejected")
 }
 
@@ -168,8 +162,7 @@ func TestUserRoleAssignment(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create user
 	userReq := map[string]interface{}{
@@ -178,7 +171,7 @@ func TestUserRoleAssignment(t *testing.T) {
 		"name":     "Test User",
 	}
 	var user iam.User
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user))
 
 	// Create role
 	roleReq := map[string]interface{}{
@@ -187,7 +180,7 @@ func TestUserRoleAssignment(t *testing.T) {
 		"permissions": []string{"kv:get", "kv:put"},
 	}
 	var role iam.Role
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))
 
 	// Assign role to user
 	t.Run("AssignRole", func(t *testing.T) {
@@ -195,7 +188,7 @@ func TestUserRoleAssignment(t *testing.T) {
 			"roles": []string{"developer"},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
 		require.NoError(t, err)
 
 		assert.Contains(t, updated.Roles, "developer")
@@ -207,7 +200,7 @@ func TestUserRoleAssignment(t *testing.T) {
 			"roles": []string{},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), assignReq, &updated)
 		require.NoError(t, err)
 
 		assert.Empty(t, updated.Roles)
@@ -219,8 +212,7 @@ func TestRoleCRUD(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	roleID := "test-role"
 
@@ -234,7 +226,7 @@ func TestRoleCRUD(t *testing.T) {
 		}
 
 		var role iam.Role
-		err := cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createReq, &role)
+		err := tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), createReq, &role)
 		require.NoError(t, err)
 
 		assert.Equal(t, roleID, role.ID)
@@ -247,7 +239,7 @@ func TestRoleCRUD(t *testing.T) {
 	// Get role
 	t.Run("Get", func(t *testing.T) {
 		var role iam.Role
-		err := cluster.getJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID), &role)
+		err := tenantAdmin.getJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID), &role)
 		require.NoError(t, err)
 
 		assert.Equal(t, roleID, role.ID)
@@ -262,7 +254,7 @@ func TestRoleCRUD(t *testing.T) {
 		}
 
 		var updated iam.Role
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID), updateReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Updated Role Name", updated.Name)
@@ -272,11 +264,11 @@ func TestRoleCRUD(t *testing.T) {
 
 	// Delete role
 	t.Run("Delete", func(t *testing.T) {
-		err := cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID))
+		err := tenantAdmin.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID))
 		require.NoError(t, err)
 
 		// Verify deletion - use expectNotFound which handles eventual consistency
-		err = cluster.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID))
+		err = tenantAdmin.getJSONExpectNotFound(fmt.Sprintf("/api/v1/tenants/%s/roles/%s", tenantID, roleID))
 		assert.NoError(t, err, "Deleted role should not be found")
 	})
 }
@@ -286,8 +278,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	tenantID := setupTenantForTests(t, cluster)
-	defer cluster.deleteJSON(fmt.Sprintf("/api/v1/tenants/%s", tenantID))
+	tenantID, tenantAdmin := setupTenantForTests(t, cluster)
 
 	// Create user
 	userReq := map[string]interface{}{
@@ -296,7 +287,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 		"name":     "Test User",
 	}
 	var user iam.User
-	require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user))
+	require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/users", tenantID), userReq, &user))
 
 	// Create multiple roles
 	roles := []string{"viewer", "editor", "admin"}
@@ -314,7 +305,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"permissions": []string{rolePerms[roleID]},
 		}
 		var role iam.Role
-		require.NoError(t, cluster.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))
+		require.NoError(t, tenantAdmin.postJSON(fmt.Sprintf("/api/v1/tenants/%s/roles", tenantID), roleReq, &role))
 	}
 
 	// Assign all roles
@@ -323,7 +314,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": roles,
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Len(t, updated.Roles, 3)
@@ -338,7 +329,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": []string{"viewer", "editor"},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Len(t, updated.Roles, 2)
@@ -351,7 +342,7 @@ func TestRoleAssignmentRevocation(t *testing.T) {
 			"roles": []string{},
 		}
 		var updated iam.User
-		err := cluster.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
+		err := tenantAdmin.putJSON(fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, user.ID), updateReq, &updated)
 		require.NoError(t, err)
 
 		assert.Empty(t, updated.Roles)

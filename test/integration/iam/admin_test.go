@@ -1104,7 +1104,7 @@ type impersonationGrant struct {
 func grantTenantImpersonation(t *testing.T, cluster *testCluster) impersonationGrant {
 	t.Helper()
 
-	tenantID, targetUserID := setupUserForSessionTests(t, cluster)
+	tenantID, targetUserID, _ := setupUserForSessionTests(t, cluster)
 	tenantAdmin := createTestTenant(t, cluster, tenantID)
 	adminUserID := tenantAdminUserID(t, cluster, tenantID)
 	created := createTestAssignmentAs(t, cluster, tenantAdmin, AdminAssignmentRequest{
