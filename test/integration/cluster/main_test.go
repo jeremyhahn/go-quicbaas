@@ -28,6 +28,13 @@ import (
 
 // TestMain sets up and tears down the test environment.
 func TestMain(m *testing.M) {
+	// The readiness probe and the KV helpers authenticate as the fixture
+	// system admin over gRPC; without these the probe can only time out.
+	if missing := missingClusterEnv(); len(missing) > 0 {
+		fmt.Printf("Cluster environment incomplete (run make integration-test-cluster): %v unset\n", missing)
+		os.Exit(1)
+	}
+
 	// Wait for cluster to be ready
 	if !waitForClusterReady() {
 		fmt.Println("Cluster not ready, exiting")
@@ -42,6 +49,26 @@ func TestMain(m *testing.M) {
 
 	// Exit with test result code
 	os.Exit(code)
+}
+
+// clusterEnv is what make integration-test-cluster exports: the https REST
+// URLs, the gRPC endpoints and the certfixture-issued admin PIV material.
+var clusterEnv = []string{
+	"QUICBAAS_NODE1_URL", "QUICBAAS_NODE2_URL", "QUICBAAS_NODE3_URL",
+	"QUICBAAS_NODE1_GRPC", "QUICBAAS_NODE2_GRPC", "QUICBAAS_NODE3_GRPC",
+	"QUICBAAS_TEST_CERTS_DIR",
+	"QUICBAAS_TEST_PIV_CERT", "QUICBAAS_TEST_PIV_KEY", "QUICBAAS_TEST_PIV_CA",
+}
+
+// missingClusterEnv returns the clusterEnv variables that are unset.
+func missingClusterEnv() []string {
+	var missing []string
+	for _, env := range clusterEnv {
+		if os.Getenv(env) == "" {
+			missing = append(missing, env)
+		}
+	}
+	return missing
 }
 
 // waitForClusterReady waits for the QuicBaaS cluster to be ready.

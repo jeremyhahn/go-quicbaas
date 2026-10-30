@@ -2053,6 +2053,7 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local 2>/dev/null || true; \
 	trap '$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true' EXIT; \
 	ABS_CLUSTER_DIR="$$PWD/$$CLUSTER_DIR"; \
+	CERTS_DIR="$$ABS_CLUSTER_DIR/cluster-certs"; \
 	if [ -d "$$ABS_CLUSTER_DIR/cluster-data" ]; then \
 		docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/cleanup" alpine sh -c "rm -rf /cleanup/*" 2>/dev/null || true; \
 	fi; \
@@ -2064,6 +2065,9 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	done; \
 	echo "$(YELLOW)Building cluster-test image...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE build 2>&1 | while IFS= read -r line; do echo "  $$line"; done; \
+	echo "$(YELLOW)Issuing cluster certificates (CA, node1-4, system admin) with certfixture...$(NC)"; \
+	$(GOCMD) run ./test/integration/certfixture/cmd $$CERTS_DIR || exit 1; \
+	export CURL_CA_BUNDLE="$$CERTS_DIR/ca.crt"; \
 	echo "$(YELLOW)Starting 3-node quicbaas cluster (nodes 1-3, bootstrap group)...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE up -d quicbaas-node1 quicbaas-node2 quicbaas-node3; \
 	NODE1_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node1 8080); \
@@ -2072,8 +2076,11 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	NODE1_HTTP_PORT=$${NODE1_HTTP##*:}; \
 	NODE2_HTTP_PORT=$${NODE2_HTTP##*:}; \
 	NODE3_HTTP_PORT=$${NODE3_HTTP##*:}; \
+	NODE1_GRPC=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node1 50051); \
+	NODE2_GRPC=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node2 50051); \
+	NODE3_GRPC=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node3 50051); \
 	echo "$(YELLOW)Waiting for all 3 cluster nodes to become ready (up to 120s)...$(NC)"; \
-	NODE_URLS="http://localhost:$$NODE1_HTTP_PORT http://localhost:$$NODE2_HTTP_PORT http://localhost:$$NODE3_HTTP_PORT"; \
+	NODE_URLS="https://localhost:$$NODE1_HTTP_PORT https://localhost:$$NODE2_HTTP_PORT https://localhost:$$NODE3_HTTP_PORT"; \
 	bash test/integration/wait_stack.sh ready "cluster nodes 1-3" 120 $$NODE_URLS || exit 1; \
 	echo "$(YELLOW)Granting host read access to node data dirs (test runner needs to walk SST files)...$(NC)"; \
 	docker run --rm -v "$$PWD/$$CLUSTER_DIR/cluster-data:/data" alpine sh -c \
@@ -2083,9 +2090,13 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	NODE4_HTTP=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node4 8080); \
 	NODE4_HTTP_PORT=$${NODE4_HTTP##*:}; \
 	echo "$(YELLOW)Adding node4 to the Raft cluster via REST AddNode API (trying all nodes to find the leader)...$(NC)"; \
+	LOGIN=$$(curl -s --max-time 10 --cert "$$CERTS_DIR/admin.crt" --key "$$CERTS_DIR/admin.key" \
+		-X POST "https://localhost:$$NODE1_HTTP_PORT/api/v1/iam/login/piv"); \
+	export WAIT_STACK_BEARER=$$(echo "$$LOGIN" | grep -o '"access_token" *: *"[^"]*"' | cut -d'"' -f4); \
+	if [ -z "$$WAIT_STACK_BEARER" ]; then echo "$(RED)Admin PIV login on node1 failed$(NC)"; exit 1; fi; \
 	bash test/integration/wait_stack.sh add-node 45 $$NODE_URLS || exit 1; \
 	echo "$(YELLOW)Waiting for node4 to become ready (up to 90s)...$(NC)"; \
-	if ! bash test/integration/wait_stack.sh ready node4 90 http://localhost:$$NODE4_HTTP_PORT; then \
+	if ! bash test/integration/wait_stack.sh ready node4 90 https://localhost:$$NODE4_HTTP_PORT; then \
 		$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE logs quicbaas-node4 --tail=50; \
 		exit 1; \
 	fi; \
@@ -2093,15 +2104,24 @@ integration-test-cluster: ## Phase F: Run 3+1-node Raft cluster integration test
 	docker run --rm -v "$$ABS_CLUSTER_DIR/cluster-data:/data" alpine sh -c \
 		"chmod -R a+rX /data 2>/dev/null; true" || true; \
 	echo "$(YELLOW)Running cluster integration tests (including AtRest + DynamicMembership)...$(NC)"; \
-	QUICBAAS_NODE1_URL="http://localhost:$$NODE1_HTTP_PORT" \
-	QUICBAAS_NODE2_URL="http://localhost:$$NODE2_HTTP_PORT" \
-	QUICBAAS_NODE3_URL="http://localhost:$$NODE3_HTTP_PORT" \
-	QUICBAAS_NODE4_URL="http://localhost:$$NODE4_HTTP_PORT" \
+	NODE4_GRPC=$$($(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE port quicbaas-node4 50051); \
+	QUICBAAS_NODE1_URL="https://localhost:$$NODE1_HTTP_PORT" \
+	QUICBAAS_NODE2_URL="https://localhost:$$NODE2_HTTP_PORT" \
+	QUICBAAS_NODE3_URL="https://localhost:$$NODE3_HTTP_PORT" \
+	QUICBAAS_NODE4_URL="https://localhost:$$NODE4_HTTP_PORT" \
+	QUICBAAS_NODE1_GRPC="localhost:$${NODE1_GRPC##*:}" \
+	QUICBAAS_NODE2_GRPC="localhost:$${NODE2_GRPC##*:}" \
+	QUICBAAS_NODE3_GRPC="localhost:$${NODE3_GRPC##*:}" \
+	QUICBAAS_NODE4_GRPC="localhost:$${NODE4_GRPC##*:}" \
+	QUICBAAS_TEST_CERTS_DIR="$$CERTS_DIR" \
+	QUICBAAS_TEST_PIV_CERT="$$CERTS_DIR/admin.crt" \
+	QUICBAAS_TEST_PIV_KEY="$$CERTS_DIR/admin.key" \
+	QUICBAAS_TEST_PIV_CA="$$CERTS_DIR/ca.crt" \
 	QUICBAAS_NODE1_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node1" \
 	QUICBAAS_NODE2_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node2" \
 	QUICBAAS_NODE3_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node3" \
 	QUICBAAS_NODE4_DATADIR="$$PWD/$$CLUSTER_DIR/cluster-data/node4" \
-	$(GOTEST) -v -tags integration -timeout 300s ./test/integration/cluster/...; \
+	$(GOTEST) -v -tags "integration rest" -timeout 300s ./test/integration/cluster/...; \
 	RESULT=$$?; \
 	echo "$(BLUE)Stopping cluster stack...$(NC)"; \
 	$(DOCKER_COMPOSE) -p $$COMPOSE_PROJECT_NAME -f $$COMPOSE_FILE down --volumes --remove-orphans --rmi local; \

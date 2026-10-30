@@ -31,9 +31,10 @@
 #   integration test.
 #
 # Prerequisites:
-#   Cluster certificates must exist at test/integration/cluster-certs/.
-#   Generate them once, from the repository root, with:
-#     go run test/integration/gen-cluster-certs/main.go test/integration/cluster-certs/
+#   Cluster certificates (CA, node1-4 server certs, system admin client cert)
+#   must exist at test/integration/cluster-certs/. make integration-test-cluster
+#   issues them; by hand, from the repository root:
+#     go run ./test/integration/certfixture/cmd test/integration/cluster-certs
 
 services:
   # Node 1 - Initial leader
@@ -63,6 +64,20 @@ services:
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
+      # Server TLS, auth, bootstrap admin and PIV login, as in
+      # docker-compose.integration.yml: the suite authenticates as the
+      # certfixture-issued system admin over gRPC.
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node1.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node1.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -93,7 +108,7 @@ services:
         aliases:
           - node1
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -120,6 +135,20 @@ services:
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
+      # Server TLS, auth, bootstrap admin and PIV login, as in
+      # docker-compose.integration.yml: the suite authenticates as the
+      # certfixture-issued system admin over gRPC.
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node2.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node2.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -151,7 +180,7 @@ services:
       quicbaas-node1:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -178,6 +207,20 @@ services:
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
+      # Server TLS, auth, bootstrap admin and PIV login, as in
+      # docker-compose.integration.yml: the suite authenticates as the
+      # certfixture-issued system admin over gRPC.
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node3.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node3.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -211,7 +254,7 @@ services:
       quicbaas-node2:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -247,6 +290,20 @@ services:
       - QUICBAAS_RAFT_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
       - QUICBAAS_RAFT_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
       - QUICBAAS_RAFT_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
+      # Server TLS, auth, bootstrap admin and PIV login, as in
+      # docker-compose.integration.yml: the suite authenticates as the
+      # certfixture-issued system admin over gRPC.
+      - QUICBAAS_SECURITY_TLS_ENABLED=true
+      - QUICBAAS_SECURITY_TLS_CERT_FILE=/etc/quicbaas/certs/node4.crt
+      - QUICBAAS_SECURITY_TLS_KEY_FILE=/etc/quicbaas/certs/node4.key
+      - QUICBAAS_SECURITY_TLS_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_AUTH_ENABLED=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN=true
+      - QUICBAAS_AUTH_BOOTSTRAP_ADMIN_PIV_CERT_PATH=/etc/quicbaas/certs/admin.crt
+      - QUICBAAS_AUTH_JWT_SECRET=integration-test-secret-key-at-least-32-characters-long
+      - QUICBAAS_IAM_PIV_LOGIN_ENABLED=true
+      - QUICBAAS_IAM_PIV_LOGIN_CA_FILE=/etc/quicbaas/certs/ca.crt
+      - QUICBAAS_IAM_PIV_LOGIN_ALLOW_UNATTESTED=true
       - QUICBAAS_LOGGING_LEVEL=info
       - QUICBAAS_LOGGING_FORMAT=json
       - QUICBAAS_STORAGE_DATA_DIR=/data
@@ -283,7 +340,7 @@ services:
       quicbaas-node3:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v1/health/live"]
+      test: ["CMD", "curl", "-ksf", "https://localhost:8080/api/v1/health/live"]
       interval: 5s
       timeout: 3s
       retries: 20

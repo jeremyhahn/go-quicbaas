@@ -1,7 +1,7 @@
 # QuicBaaS Cluster Integration Test Configuration
 # Minimal config for 3-node Raft cluster tests.
-# Auth and mTLS are disabled so tests can hit the KV API directly
-# without bearer tokens or certificate material.
+# Server TLS, auth and IAM are enabled: tests authenticate as the
+# certfixture-issued system admin, as in the main integration stack.
 
 logging:
   level: info
@@ -31,15 +31,16 @@ server:
   shards:
     - 1
 
-# TLS disabled on the REST/gRPC server surface so tests can reach the API over
-# plain HTTP. The Raft inter-node transport still uses mTLS (required by quicraft).
+# TLS on the REST/gRPC server surface. Per-node certificate paths come from
+# QUICBAAS_SECURITY_TLS_* environment variables (docker-compose.cluster.yml).
 security:
-  tls_enabled: false
+  tls_enabled: true
 
-# Auth disabled: tests hit KV API without bearer tokens.
+# Auth enabled with the bootstrap system admin bound to the certfixture-issued
+# admin.crt, so the suite authenticates exactly as the main integration stack.
 auth:
-  enabled: false
-  bootstrap_admin: false
+  enabled: true
+  bootstrap_admin: true
 
 # Raft: mTLS enabled (quicraft requires it for multi-node QUIC transport).
 # Per-node node_id, raft_address, join_addresses, and TLS cert paths are
@@ -78,9 +79,9 @@ kms:
 secrets:
   enabled: false
 
-# IAM disabled: no PIV cert or CA file needed.
+# IAM enabled: the admin logs in with its PIV certificate (CA from env).
 iam:
-  enabled: false
+  enabled: true
 
 # TimeSeries disabled (not needed for cluster KV tests).
 timeseries:

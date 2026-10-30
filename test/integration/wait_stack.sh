@@ -189,6 +189,7 @@ node4_added() {
     for url in "$@"; do
         code=$(http_status POST "${url}/api/v1/cluster/nodes" \
             -H 'Content-Type: application/json' \
+            ${WAIT_STACK_BEARER:+-H "Authorization: Bearer ${WAIT_STACK_BEARER}"} \
             -d '{"shard_id":1,"node_id":4,"address":"quicbaas-node4:63004"}')
         PROGRESS="${PROGRESS} ${url}=${code}"
         if [ "$code" = 200 ]; then
