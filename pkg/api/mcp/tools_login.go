@@ -17,8 +17,10 @@ package mcp
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
@@ -28,10 +30,11 @@ import (
 // =============================================================================
 // Unified Login Ceremony MCP tools — quicbaas_login_begin / quicbaas_login_finish.
 //
-// Both tools delegate to the QuicBaaS LoginCeremony() facade. The verified
-// mTLS peer certificate is threaded onto the context by the MCP HTTP handler
-// (server.go) from the TLS handshake; the facade derives the mtls factor
-// lookup key from it (never from a client-supplied value).
+// Both tools delegate to the QuicBaaS LoginCeremony() facade. go-qrdb's MCP
+// HTTP transport records the TLS handshake on the context (WithTLSState);
+// quicbaas_login_finish hands the leaf of its verified client chain to the
+// facade (service.WithVerifiedPeerCert), which derives the mtls factor lookup
+// key from it (never from a client-supplied value).
 // =============================================================================
 
 // errLoginServiceUnavailableQB is the canonical QBError returned when the
@@ -130,9 +133,13 @@ func executeLoginBegin(ctx context.Context, login service.LoginServicer, args ma
 	return resp, nil
 }
 
-// executeLoginFinish implements quicbaas_login_finish. The verified peer cert
-// is already on the context; the facade enforces the mTLS security model.
+// executeLoginFinish implements quicbaas_login_finish. It puts the verified
+// peer certificate on the context; the facade enforces the mTLS security model.
 func executeLoginFinish(ctx context.Context, login service.LoginServicer, args map[string]interface{}) (interface{}, error) {
+	// The facade fails closed for an mtls request when this is absent.
+	if cert := verifiedPeerCertFromMCP(ctx); cert != nil {
+		ctx = service.WithVerifiedPeerCert(ctx, cert)
+	}
 	req := &qrdbtransport.FinishLoginRequest{
 		SessionID:      getString(args, "session_id"),
 		Type:           qrdbtransport.FactorType(getString(args, "type")),
@@ -146,6 +153,17 @@ func executeLoginFinish(ctx context.Context, login service.LoginServicer, args m
 		return nil, err
 	}
 	return resp, nil
+}
+
+// verifiedPeerCertFromMCP returns the leaf of the verified client chain the
+// MCP HTTP transport recorded on the context, or nil when the caller
+// presented no certificate the TLS handshake verified.
+func verifiedPeerCertFromMCP(ctx context.Context) *x509.Certificate {
+	state := qrdbsdk.TLSStateFromContext(ctx)
+	if state == nil || len(state.VerifiedChains) == 0 || len(state.VerifiedChains[0]) == 0 {
+		return nil
+	}
+	return state.VerifiedChains[0][0]
 }
 
 // decodeLoginBase64 decodes a base64-encoded byte field from the tool
