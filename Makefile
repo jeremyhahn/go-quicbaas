@@ -5610,11 +5610,16 @@ SOURCE_DIRTY = $(shell if [ -n "$$(git status --porcelain)" ]; then \
 # CI names the integration image per run (ci-template IT_IMAGE), so its
 # trivy and teardown steps find the image this built.
 INTEGRATION_IMAGE = $(or $(IT_IMAGE),$(DEVCONTAINER_REPO):integration-$(shell git rev-parse HEAD)$(SOURCE_DIRTY))
+# CI passes GO_BUILD_PROXY and GO_BUILD_PRIVATE as make arguments, `|`
+# separated (ci-template v1.29.5, devcontainer.md section 6); a local build
+# falls back to the DEVCACHE_* environment. Both stay double quoted, where an
+# unquoted `|` would be a shell pipe.
 DEVCONTAINER_COMPOSE = TOOLCHAIN_IMAGE='$(TOOLCHAIN_IMAGE)' \
 	INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' QUICBAAS_INTEGRATION_IMAGE='$(INTEGRATION_IMAGE)' \
 	INTEGRATION_BUILD_TAGS='$(strip $(INTEGRATION_BUILD_TAGS))' \
 	GO_VERSION='$(GO_VERSION)' GO_IMAGE_DIGEST='$(GO_IMAGE_DIGEST)' \
-	GO_BUILD_PROXY="$${DEVCACHE_GOPROXY:-}" GO_BUILD_PRIVATE="$${DEVCACHE_GOPRIVATE:-}" \
+	GO_BUILD_PROXY="$(or $(GO_BUILD_PROXY),$${DEVCACHE_GOPROXY:-})" \
+	GO_BUILD_PRIVATE="$(or $(GO_BUILD_PRIVATE),$${DEVCACHE_GOPRIVATE:-})" \
 	GOMODAUTH_ENV='$(GOMODAUTH_ENV)' RUN_UID="$$(id -u)" RUN_GID="$$(id -g)" \
 	$(DOCKER) compose -f $(DEVCONTAINER_DIR)/compose.yaml
 # Builds the named compose services with the module credentials staged for the
