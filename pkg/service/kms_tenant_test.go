@@ -760,6 +760,29 @@ func TestKMSOwnership_NonAtomicStoreIsRefused(t *testing.T) {
 	require.Equal(t, errors.ErrUnavailable, qe.Code)
 }
 
+// ownershipServerShapedStore has the method set of the server's guarded KV
+// store: the six interfaces.KVStore verbs and the three guarded writes, and
+// none of go-qrdb's secondary-index methods.
+type ownershipServerShapedStore struct {
+	interfaces.GuardedKVStore
+}
+
+// TestKMSOwnership_ServerShapedGuardedStoreIsAccepted pins the round 34
+// Integration failure on go-quicbaas#1993: a store carrying the guarded writes
+// but not go-qrdb's index methods was refused as "not atomic", so every tenant
+// key create against the real server failed.
+func TestKMSOwnership_ServerShapedGuardedStoreIsAccepted(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	svc.SetKVStore(&ownershipServerShapedStore{GuardedKVStore: qrdbsdk.NewMemoryKVStore()})
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("fresh"))
+	require.NoError(t, err)
+	owner, err := svc.readKeyOwner(ctx, tenantScopedKeyID(ownershipTenant, "fresh"), "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner, "the create must record the tenant's claim")
+}
+
 // ownershipCancelRefusingStore refuses writes on a cancelled context, as a
 // qrdb node refuses a proposal whose request was cancelled.
 type ownershipCancelRefusingStore struct {

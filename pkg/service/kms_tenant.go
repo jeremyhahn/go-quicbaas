@@ -273,15 +273,15 @@ func (k *kmsServiceImpl) ownerStore(operation string) (interfaces.KVStore, error
 	return k.kvStore, nil
 }
 
-// atomicOwnerStore returns the ownership store as an AtomicKVStore. Claims
+// atomicOwnerStore returns the ownership store as a GuardedKVStore. Claims
 // and releases are compare-and-swap operations, so a store that cannot do
 // them atomically is refused rather than raced.
-func (k *kmsServiceImpl) atomicOwnerStore(operation string) (qrdbsdk.AtomicKVStore, error) {
+func (k *kmsServiceImpl) atomicOwnerStore(operation string) (interfaces.GuardedKVStore, error) {
 	store, err := k.ownerStore(operation)
 	if err != nil {
 		return nil, err
 	}
-	atomicStore, ok := store.(qrdbsdk.AtomicKVStore)
+	atomicStore, ok := store.(interfaces.GuardedKVStore)
 	if !ok {
 		return nil, &errors.QBError{
 			Code: errors.ErrUnavailable,
@@ -324,7 +324,7 @@ func (k *kmsServiceImpl) readKeyOwnerRecord(ctx context.Context, scopedID, opera
 // value names the tenant and a random holder unique to the request, so a
 // rollback deletes the record only while it is still this request's.
 type tenantKeyClaim struct {
-	store qrdbsdk.AtomicKVStore
+	store interfaces.GuardedKVStore
 	key   string
 	value []byte
 }
@@ -421,7 +421,7 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 // its claim time is older than kmsClaimStaleAfter, comparing on exactly the
 // value it read. It reports whether the record was removed. A malformed
 // record is never removed.
-func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store qrdbsdk.AtomicKVStore, recordKey, op string) (bool, error) {
+func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store interfaces.GuardedKVStore, recordKey, op string) (bool, error) {
 	record, err := store.Get(tenantctx.WithSystem(ctx), recordKey)
 	if err != nil {
 		if errors.IsNotFound(err) {
