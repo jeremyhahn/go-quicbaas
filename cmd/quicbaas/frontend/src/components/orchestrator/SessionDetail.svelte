@@ -554,12 +554,6 @@
           Session Info
         </div>
         <div class="space-y-3 text-xs">
-          {#if session.tenant_id}
-            <div>
-              <div class="text-base-content/40">Tenant</div>
-              <div class="font-mono break-all">{session.tenant_id}</div>
-            </div>
-          {/if}
           {#if model !== ''}
             <div>
               <div class="text-base-content/40">Model</div>
@@ -607,9 +601,6 @@
     {#if metadataOpen}
       <div class="sm:hidden w-full shrink-0 border-t border-base-300/50 bg-base-200/30 px-4 py-2">
         <div class="flex flex-wrap gap-4 text-xs">
-          {#if session.tenant_id}
-            <span>Tenant: <span class="font-mono">{session.tenant_id}</span></span>
-          {/if}
           {#if model !== ''}
             <span>Model: <span class="font-mono">{model}</span></span>
           {/if}
