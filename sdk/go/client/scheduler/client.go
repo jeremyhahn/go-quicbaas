@@ -31,13 +31,13 @@ type Client interface {
 	CreateJob(ctx context.Context, req *CreateJobRequest) (*CreateJobResponse, error)
 
 	// GetJob retrieves a job by ID.
-	GetJob(ctx context.Context, jobID uint64) (*JobInfo, error)
+	GetJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*JobInfo, error)
 
 	// UpdateJob updates an existing job.
 	UpdateJob(ctx context.Context, req *UpdateJobRequest) (*JobInfo, error)
 
 	// DeleteJob removes a scheduled job.
-	DeleteJob(ctx context.Context, jobID uint64) error
+	DeleteJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) error
 
 	// DeleteJobWithOptions removes a scheduled job, forcing the removal of
 	// a running job when req.Force is set, and reports whether it was
@@ -48,19 +48,19 @@ type Client interface {
 	ListJobs(ctx context.Context, opts *ListJobsOptions) (*ListJobsResponse, error)
 
 	// TriggerJob immediately executes a job.
-	TriggerJob(ctx context.Context, jobID uint64) (*TriggerJobResponse, error)
+	TriggerJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*TriggerJobResponse, error)
 
 	// PauseJob pauses a scheduled job.
-	PauseJob(ctx context.Context, jobID uint64) (*PauseJobResponse, error)
+	PauseJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*PauseJobResponse, error)
 
 	// ResumeJob resumes a paused job.
-	ResumeJob(ctx context.Context, jobID uint64) (*ResumeJobResponse, error)
+	ResumeJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*ResumeJobResponse, error)
 
 	// CancelJob cancels a scheduled job.
-	CancelJob(ctx context.Context, jobID uint64, reason string) (*CancelJobResponse, error)
+	CancelJob(ctx context.Context, jobID uint64, reason string, jobOpts ...JobOption) (*CancelJobResponse, error)
 
 	// GetJobHistory returns execution history for a job.
-	GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryOptions) (*JobHistoryResponse, error)
+	GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryOptions, jobOpts ...JobOption) (*JobHistoryResponse, error)
 
 	// GetStatus returns scheduler status and statistics.
 	GetStatus(ctx context.Context) (*SchedulerStatus, error)
@@ -401,6 +401,35 @@ type SchedulerStatus struct {
 // transport's JSON argument mapping is unaffected.
 
 // GetJobRequest is the transport request of GetJob.
+// jobOptions holds the settings a JobOption applies to a by-ID request.
+type jobOptions struct {
+	scope *OwnerType
+}
+
+// JobOption configures a request that names a job by ID.
+type JobOption func(*jobOptions)
+
+// WithJobScope names the OwnerType the job was listed under. A tenant job
+// and a job delegated to the caller can share an ID, so a delegated job is
+// reached only by naming OwnerTypeDelegated. Without this option the
+// request names the caller's own tenant scope.
+func WithJobScope(scope OwnerType) JobOption {
+	return func(o *jobOptions) {
+		o.scope = &scope
+	}
+}
+
+// jobScope applies opts and returns the scope they name, or nil.
+func jobScope(opts []JobOption) *OwnerType {
+	var o jobOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	return o.scope
+}
+
 type GetJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
@@ -527,7 +556,7 @@ func (c *client) CreateJob(ctx context.Context, req *CreateJobRequest) (*CreateJ
 }
 
 // GetJob retrieves a job by ID.
-func (c *client) GetJob(ctx context.Context, jobID uint64) (*JobInfo, error) {
+func (c *client) GetJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*JobInfo, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.GetJob", "job ID is required")
 	}
@@ -536,7 +565,7 @@ func (c *client) GetJob(ctx context.Context, jobID uint64) (*JobInfo, error) {
 		return nil, errors.NewInvalidInput("scheduler.GetJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetJob", &GetJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "GetJob", &GetJobRequest{JobID: jobID, Scope: jobScope(jobOpts)})
 	if err != nil {
 		return nil, err
 	}
@@ -581,8 +610,8 @@ func (c *client) UpdateJob(ctx context.Context, req *UpdateJobRequest) (*JobInfo
 }
 
 // DeleteJob removes a scheduled job.
-func (c *client) DeleteJob(ctx context.Context, jobID uint64) error {
-	_, err := c.deleteJob(ctx, "scheduler.DeleteJob", &DeleteJobRequest{JobID: jobID}, true)
+func (c *client) DeleteJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) error {
+	_, err := c.deleteJob(ctx, "scheduler.DeleteJob", &DeleteJobRequest{JobID: jobID, Scope: jobScope(jobOpts)}, true)
 	return err
 }
 
@@ -661,7 +690,7 @@ func (c *client) ListJobs(ctx context.Context, opts *ListJobsOptions) (*ListJobs
 }
 
 // TriggerJob immediately executes a job.
-func (c *client) TriggerJob(ctx context.Context, jobID uint64) (*TriggerJobResponse, error) {
+func (c *client) TriggerJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*TriggerJobResponse, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.TriggerJob", "job ID is required")
 	}
@@ -670,7 +699,7 @@ func (c *client) TriggerJob(ctx context.Context, jobID uint64) (*TriggerJobRespo
 		return nil, errors.NewInvalidInput("scheduler.TriggerJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "TriggerJob", &TriggerJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "TriggerJob", &TriggerJobRequest{JobID: jobID, Scope: jobScope(jobOpts)})
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +717,7 @@ func (c *client) TriggerJob(ctx context.Context, jobID uint64) (*TriggerJobRespo
 }
 
 // PauseJob pauses a scheduled job.
-func (c *client) PauseJob(ctx context.Context, jobID uint64) (*PauseJobResponse, error) {
+func (c *client) PauseJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*PauseJobResponse, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.PauseJob", "job ID is required")
 	}
@@ -697,7 +726,7 @@ func (c *client) PauseJob(ctx context.Context, jobID uint64) (*PauseJobResponse,
 		return nil, errors.NewInvalidInput("scheduler.PauseJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "PauseJob", &PauseJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "PauseJob", &PauseJobRequest{JobID: jobID, Scope: jobScope(jobOpts)})
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +744,7 @@ func (c *client) PauseJob(ctx context.Context, jobID uint64) (*PauseJobResponse,
 }
 
 // ResumeJob resumes a paused job.
-func (c *client) ResumeJob(ctx context.Context, jobID uint64) (*ResumeJobResponse, error) {
+func (c *client) ResumeJob(ctx context.Context, jobID uint64, jobOpts ...JobOption) (*ResumeJobResponse, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.ResumeJob", "job ID is required")
 	}
@@ -724,7 +753,7 @@ func (c *client) ResumeJob(ctx context.Context, jobID uint64) (*ResumeJobRespons
 		return nil, errors.NewInvalidInput("scheduler.ResumeJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "ResumeJob", &ResumeJobRequest{JobID: jobID})
+	resp, err := c.transport.Request(ctx, serviceName, "ResumeJob", &ResumeJobRequest{JobID: jobID, Scope: jobScope(jobOpts)})
 	if err != nil {
 		return nil, err
 	}
@@ -742,7 +771,7 @@ func (c *client) ResumeJob(ctx context.Context, jobID uint64) (*ResumeJobRespons
 }
 
 // CancelJob cancels a scheduled job.
-func (c *client) CancelJob(ctx context.Context, jobID uint64, reason string) (*CancelJobResponse, error) {
+func (c *client) CancelJob(ctx context.Context, jobID uint64, reason string, jobOpts ...JobOption) (*CancelJobResponse, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.CancelJob", "job ID is required")
 	}
@@ -751,7 +780,7 @@ func (c *client) CancelJob(ctx context.Context, jobID uint64, reason string) (*C
 		return nil, errors.NewInvalidInput("scheduler.CancelJob", "context is required")
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "CancelJob", &CancelJobRequest{JobID: jobID, Reason: reason})
+	resp, err := c.transport.Request(ctx, serviceName, "CancelJob", &CancelJobRequest{JobID: jobID, Reason: reason, Scope: jobScope(jobOpts)})
 	if err != nil {
 		return nil, err
 	}
@@ -769,7 +798,7 @@ func (c *client) CancelJob(ctx context.Context, jobID uint64, reason string) (*C
 }
 
 // GetJobHistory returns execution history for a job.
-func (c *client) GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryOptions) (*JobHistoryResponse, error) {
+func (c *client) GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryOptions, jobOpts ...JobOption) (*JobHistoryResponse, error) {
 	if jobID == 0 {
 		return nil, errors.NewInvalidInput("scheduler.GetJobHistory", "job ID is required")
 	}
@@ -782,7 +811,7 @@ func (c *client) GetJobHistory(ctx context.Context, jobID uint64, opts *HistoryO
 		return nil, err
 	}
 
-	resp, err := c.transport.Request(ctx, serviceName, "GetJobHistory", &GetJobHistoryRequest{JobID: jobID, Options: opts})
+	resp, err := c.transport.Request(ctx, serviceName, "GetJobHistory", &GetJobHistoryRequest{JobID: jobID, Scope: jobScope(jobOpts), Options: opts})
 	if err != nil {
 		return nil, err
 	}

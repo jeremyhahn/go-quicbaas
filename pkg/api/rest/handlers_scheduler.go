@@ -393,6 +393,7 @@ func (s *Server) HandleGetSchedulerJob(w http.ResponseWriter, r *http.Request) {
 	svcReq := &service.GetSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 	}
 
 	svcResp, err := schedulerService.GetJob(ctx, svcReq)
@@ -457,6 +458,7 @@ func (s *Server) HandleUpdateSchedulerJob(w http.ResponseWriter, r *http.Request
 	svcReq := &service.UpdateSchedulerJobRequest{
 		JobID:       jobID,
 		TenantID:    r.URL.Query().Get("tenant_id"),
+		Scope:       schedulerJobScope(r),
 		Name:        req.Name,
 		Description: req.Description,
 		Schedule:    req.Schedule,
@@ -511,6 +513,7 @@ func (s *Server) HandleDeleteSchedulerJob(w http.ResponseWriter, r *http.Request
 	svcReq := &service.DeleteSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 		Force:    force,
 	}
 
@@ -554,6 +557,7 @@ func (s *Server) HandleTriggerSchedulerJob(w http.ResponseWriter, r *http.Reques
 	svcReq := &service.TriggerSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 	}
 
 	svcResp, err := schedulerService.TriggerJob(ctx, svcReq)
@@ -596,6 +600,7 @@ func (s *Server) HandlePauseSchedulerJob(w http.ResponseWriter, r *http.Request)
 	svcReq := &service.PauseSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 	}
 
 	svcResp, err := schedulerService.PauseJob(ctx, svcReq)
@@ -639,6 +644,7 @@ func (s *Server) HandleResumeSchedulerJob(w http.ResponseWriter, r *http.Request
 	svcReq := &service.ResumeSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 	}
 
 	svcResp, err := schedulerService.ResumeJob(ctx, svcReq)
@@ -693,6 +699,7 @@ func (s *Server) HandleCancelSchedulerJob(w http.ResponseWriter, r *http.Request
 	svcReq := &service.CancelSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 		Reason:   cancelReq.Reason,
 	}
 
@@ -737,6 +744,7 @@ func (s *Server) HandleGetSchedulerJobHistory(w http.ResponseWriter, r *http.Req
 	svcReq := &service.GetSchedulerJobHistoryRequest{
 		JobID:    jobID,
 		TenantID: r.URL.Query().Get("tenant_id"),
+		Scope:    schedulerJobScope(r),
 	}
 
 	// Parse pagination parameters
@@ -813,6 +821,14 @@ func (s *Server) HandleGetSchedulerStatus(w http.ResponseWriter, r *http.Request
 // =============================================================================
 
 // schedulerJobToREST converts a service SchedulerJob to REST response format.
+// schedulerJobScope reads the optional scope query parameter of a by-ID
+// route: the owner_type the job was listed under. An empty value names the
+// caller's own tenant scope. The scheduler service refuses an unknown value
+// with ErrInvalidInput, which handleServiceError answers with 400.
+func schedulerJobScope(r *http.Request) service.SchedulerOwnerType {
+	return service.SchedulerOwnerType(r.URL.Query().Get("scope"))
+}
+
 func schedulerJobToREST(job *service.SchedulerJob) *SchedulerJobRESTResponse {
 	if job == nil {
 		return nil

@@ -48,6 +48,14 @@ func TestDispatch_JobConformance(t *testing.T) {
 	schedulertest.RunJobConformance(t, scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Jobs: jobs}}), jobs)
 }
 
+// TestDispatch_JobScopeConformance proves dispatch, which QUIC, Unix and the
+// embedded transport serve through, hands a by-ID request's scope to the
+// service.
+func TestDispatch_JobScopeConformance(t *testing.T) {
+	jobs := schedulertest.New()
+	schedulertest.RunJobScopeConformance(t, scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Jobs: jobs}}), jobs)
+}
+
 func TestDispatch_PlacementConformance(t *testing.T) {
 	places := service.NewPlacementService(placement.New(placementtest.New()))
 	schedulertest.RunPlacementConformance(t, tenantctx.WithTenant(context.Background(), "acme"), scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Placement: places}}), "")
