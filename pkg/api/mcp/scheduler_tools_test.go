@@ -15,6 +15,7 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
+	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/scheduler/schedulertest"
 )
 
 func newSchedulerRegistry(t *testing.T) *ToolRegistry {
@@ -320,6 +321,39 @@ func TestSchedulerCancelJob_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+}
+
+// TestSchedulerByIDTools_PassTheScope checks every by-ID tool hands its
+// scope argument to the service, so a delegated job is looked up only in the
+// delegated namespace.
+func TestSchedulerByIDTools_PassTheScope(t *testing.T) {
+	tools := map[string]string{
+		"quicbaas_scheduler_get_job":     "GetJob",
+		"quicbaas_scheduler_update_job":  "UpdateJob",
+		"quicbaas_scheduler_delete_job":  "DeleteJob",
+		"quicbaas_scheduler_trigger_job": "TriggerJob",
+		"quicbaas_scheduler_pause_job":   "PauseJob",
+		"quicbaas_scheduler_resume_job":  "ResumeJob",
+		"quicbaas_scheduler_cancel_job":  "CancelJob",
+		"quicbaas_scheduler_job_history": "GetJobHistory",
+	}
+	for tool, method := range tools {
+		t.Run(tool, func(t *testing.T) {
+			jobs := schedulertest.New()
+			registry := NewToolRegistry(&extendedMockService{schedulerSvc: jobs}, newTestLogger(t))
+
+			_, err := registry.ExecuteTool(context.Background(), tool, map[string]interface{}{
+				"job_id": float64(42),
+				"name":   "renamed",
+				"scope":  "delegated",
+			})
+			require.NoError(t, err)
+
+			scope, ok := schedulertest.RequestScope(jobs.Received(method))
+			require.True(t, ok, "service received %T", jobs.Received(method))
+			assert.Equal(t, service.SchedulerOwnerTypeDelegated, scope)
+		})
+	}
 }
 
 func TestSchedulerCancelJob_MissingID(t *testing.T) {

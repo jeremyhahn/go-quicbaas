@@ -206,7 +206,7 @@ func RunJobScopeConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 		if err := c.call(); err != nil {
 			t.Fatalf("%s with the delegated scope: %v", c.method, err)
 		}
-		got, ok := receivedScope(jobs.Received(c.method))
+		got, ok := RequestScope(jobs.Received(c.method))
 		if !ok {
 			t.Fatalf("server received %T for %s", jobs.Received(c.method), c.method)
 		}
@@ -216,9 +216,9 @@ func RunJobScopeConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	}
 }
 
-// receivedScope returns the scope of a by-ID request the server received,
+// RequestScope returns the scope of a by-ID request the server received,
 // or false when req is not one.
-func receivedScope(req any) (service.SchedulerOwnerType, bool) {
+func RequestScope(req any) (service.SchedulerOwnerType, bool) {
 	switch r := req.(type) {
 	case *service.GetSchedulerJobRequest:
 		return r.Scope, true

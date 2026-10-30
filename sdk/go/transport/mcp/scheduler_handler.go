@@ -140,7 +140,7 @@ func updateJobArgs(method string, req interface{}) (map[string]interface{}, erro
 		return nil, invalidSchedulerRequest(method, req)
 	}
 	svc := scheduler.UpdateJobRequestToService(r)
-	args := jobRefArgsFor(svc.JobID, svc.TenantID)
+	args := jobRefArgsFor(svc.JobID, svc.TenantID, svc.Scope)
 	putString(args, "name", svc.Name)
 	putString(args, "description", svc.Description)
 	putString(args, "schedule", svc.Schedule)
@@ -178,19 +178,19 @@ func jobRefArgs(method string, req interface{}) (map[string]interface{}, error) 
 	switch r := req.(type) {
 	case *scheduler.GetJobRequest:
 		if r != nil {
-			return jobRefArgsFor(r.JobID, r.TenantID), nil
+			return jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope)), nil
 		}
 	case *scheduler.TriggerJobRequest:
 		if r != nil {
-			return jobRefArgsFor(r.JobID, r.TenantID), nil
+			return jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope)), nil
 		}
 	case *scheduler.PauseJobRequest:
 		if r != nil {
-			return jobRefArgsFor(r.JobID, r.TenantID), nil
+			return jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope)), nil
 		}
 	case *scheduler.ResumeJobRequest:
 		if r != nil {
-			return jobRefArgsFor(r.JobID, r.TenantID), nil
+			return jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope)), nil
 		}
 	}
 	return nil, invalidSchedulerRequest(method, req)
@@ -203,7 +203,7 @@ func deleteJobArgs(method string, req interface{}) (map[string]interface{}, erro
 	if !ok || r == nil {
 		return nil, invalidSchedulerRequest(method, req)
 	}
-	args := jobRefArgsFor(r.JobID, r.TenantID)
+	args := jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope))
 	if r.Force {
 		args["force"] = true
 	}
@@ -217,7 +217,7 @@ func cancelJobArgs(method string, req interface{}) (map[string]interface{}, erro
 	if !ok || r == nil {
 		return nil, invalidSchedulerRequest(method, req)
 	}
-	args := jobRefArgsFor(r.JobID, r.TenantID)
+	args := jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope))
 	putString(args, "reason", r.Reason)
 	return args, nil
 }
@@ -229,7 +229,7 @@ func jobHistoryArgs(method string, req interface{}) (map[string]interface{}, err
 	if !ok || r == nil {
 		return nil, invalidSchedulerRequest(method, req)
 	}
-	args := jobRefArgsFor(r.JobID, r.TenantID)
+	args := jobRefArgsFor(r.JobID, r.TenantID, scheduler.JobScopeToService(r.Scope))
 	if limit := scheduler.HistoryLimit(r.Options); limit > 0 {
 		args["limit"] = limit
 	}
@@ -244,10 +244,12 @@ func statusArgs(method string, req interface{}) (map[string]interface{}, error) 
 	return map[string]interface{}{}, nil
 }
 
-// jobRefArgsFor returns the arguments that address one job.
-func jobRefArgsFor(jobID uint64, tenantID string) map[string]interface{} {
+// jobRefArgsFor returns the arguments that address one job: its ID, the
+// tenant, and the scope that names the namespace holding it.
+func jobRefArgsFor(jobID uint64, tenantID string, scope service.SchedulerOwnerType) map[string]interface{} {
 	args := map[string]interface{}{"job_id": jobID}
 	putString(args, "tenant_id", tenantID)
+	putString(args, "scope", string(scope))
 	return args
 }
 
