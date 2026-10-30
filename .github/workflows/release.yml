@@ -46,7 +46,7 @@ jobs:
         id: get_version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION}"
 
       # Container images are pushed only on the GitHub path (see the
@@ -58,14 +58,14 @@ jobs:
           PUBLISHES_IMAGES: ${{ github.server_url == 'https://github.com' }}
         run: |
           # Get previous tag
-          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --abbrev=0 --tags "$(git rev-list --tags --skip=1 --max-count=1)" 2>/dev/null || echo "")
 
           if [ -z "$PREV_TAG" ]; then
             echo "First release - generating full changelog"
             CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
           else
             echo "Generating changelog from ${PREV_TAG} to ${GITHUB_REF_NAME}"
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+            CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges)
           fi
 
           # Save changelog to file
@@ -774,13 +774,13 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
 
           # Download all release assets
-          gh release download ${TAG_NAME} --pattern "*.sha256" --dir checksums || true
+          gh release download "${TAG_NAME}" --pattern "*.sha256" --dir checksums || true
 
       - name: Create master checksums file
         run: |
           if [ -d checksums ]; then
             cd checksums
-            cat *.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
+            cat ./*.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
             cd ..
           else
             echo "No checksums directory found" > checksums.txt
@@ -828,41 +828,43 @@ jobs:
         env:
           PUBLISHES_IMAGES: ${{ github.server_url == 'https://github.com' }}
         run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Version: **${{ needs.create-release.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas" >> $GITHUB_STEP_SUMMARY
-          echo "- **FIPS 140-3** (amd64, arm64) - quicbaasd-fips, quicbaas-fips (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${PUBLISHES_IMAGES}" = "true" ]; then
-            echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
-            echo "- Multi-arch (amd64, arm64) daemon and CLI images" >> $GITHUB_STEP_SUMMARY
-            echo "- FIPS 140-3 compliant daemon image (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "#### Container Images" >> $GITHUB_STEP_SUMMARY
-            echo "- None. Images are built and scanned on every server but pushed" >> $GITHUB_STEP_SUMMARY
-            echo "  only from GitHub, which holds the registry credentials." >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All artifacts include SHA256 checksums for verification" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${PUBLISHES_IMAGES}" = "true" ]; then
-            echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
-            echo '```bash' >> $GITHUB_STEP_SUMMARY
-            echo "# QuicBaaS daemon (multi-Raft distributed KV store)" >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "# QuicBaaS CLI tool" >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "# FIPS 140-3 compliant daemon" >> $GITHUB_STEP_SUMMARY
-            echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "## Release Summary"
+            echo ""
+            echo "Version: **${{ needs.create-release.outputs.version }}**"
+            echo ""
+            echo "### Artifacts Published"
+            echo ""
+            echo "#### Linux Binaries"
+            echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas"
+            echo "- **FIPS 140-3** (amd64, arm64) - quicbaasd-fips, quicbaas-fips (GOFIPS140=v1.0.0)"
+            echo ""
+            echo "#### macOS/Darwin Binaries"
+            echo "- **Standard** (amd64, arm64) - quicbaasd, quicbaas"
+            echo ""
+            if [ "${PUBLISHES_IMAGES}" = "true" ]; then
+              echo "#### Docker Images"
+              echo "- Multi-arch (amd64, arm64) daemon and CLI images"
+              echo "- FIPS 140-3 compliant daemon image (GOFIPS140=v1.0.0)"
+            else
+              echo "#### Container Images"
+              echo "- None. Images are built and scanned on every server but pushed"
+              echo "  only from GitHub, which holds the registry credentials."
+            fi
+            echo ""
+            echo "All artifacts include SHA256 checksums for verification"
+            echo ""
+            if [ "${PUBLISHES_IMAGES}" = "true" ]; then
+              echo "### Docker Images"
+              echo '```bash'
+              echo "# QuicBaaS daemon (multi-Raft distributed KV store)"
+              echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}"
+              echo ""
+              echo "# QuicBaaS CLI tool"
+              echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaas:${{ needs.create-release.outputs.version }}"
+              echo ""
+              echo "# FIPS 140-3 compliant daemon"
+              echo "docker pull ${{ env.REGISTRY }}/jeremyhahn/quicbaasd:${{ needs.create-release.outputs.version }}-fips"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
