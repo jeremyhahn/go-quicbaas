@@ -436,6 +436,7 @@ func TestCommittedTopology_IsValidAndAgreesWithAnyNodePin(t *testing.T) {
 	for _, config := range []string{
 		filepath.Join("..", "quicbaas.yaml"),
 		filepath.Join("..", "quicbaas-tenantbarrier.yaml"),
+		filepath.Join("..", "quicbaas-cluster.yaml"),
 	} {
 		data, err := os.ReadFile(config)
 		if err != nil {
