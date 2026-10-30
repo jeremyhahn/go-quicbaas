@@ -610,6 +610,41 @@ func TestKMSGracePeriodHandler_Handle(t *testing.T) {
 	})
 }
 
+func TestKMSGracePeriodHandler_Handle_KeyMustBelongToTargetTenant(t *testing.T) {
+	newJob := func(keyID string) *scheduler.Job {
+		payload, err := json.Marshal(KMSGracePeriodPayload{KeyID: keyID, Version: 2})
+		require.NoError(t, err)
+		return &scheduler.Job{
+			ID:             1,
+			Handler:        HandlerKMSGracePeriod,
+			Payload:        payload,
+			OwnerType:      scheduler.OwnerTypeDelegated,
+			TargetTenantID: "tenant-a",
+		}
+	}
+
+	t.Run("refuses another tenant's key", func(t *testing.T) {
+		updater := newMockKMSKeyStatusUpdater()
+		h := NewKMSGracePeriodHandler(updater)
+
+		_, err := h.Handle(context.Background(), newJob("tenant.tenant-b.k1"))
+		var invalid *scheduler.InvalidJobError
+		require.ErrorAs(t, err, &invalid)
+		assert.Equal(t, "payload.key_id", invalid.Field)
+		assert.Empty(t, updater.calls)
+	})
+
+	t.Run("runs for the target tenant's key", func(t *testing.T) {
+		updater := newMockKMSKeyStatusUpdater()
+		h := NewKMSGracePeriodHandler(updater)
+
+		_, err := h.Handle(context.Background(), newJob("tenant.tenant-a.k1"))
+		require.NoError(t, err)
+		require.Len(t, updater.calls, 1)
+		assert.Equal(t, "tenant.tenant-a.k1", updater.calls[0].KeyID)
+	})
+}
+
 func TestKMSGracePeriodHandler_ImplementsHandlerInterface(t *testing.T) {
 	t.Run("implements Handler interface", func(t *testing.T) {
 		mock := newMockKMSKeyStatusUpdater()

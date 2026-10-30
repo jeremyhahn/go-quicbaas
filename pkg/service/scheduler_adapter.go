@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -30,6 +31,16 @@ import (
 // circular dependencies between the service and scheduler packages.
 type SchedulerAdapter struct {
 	scheduler interfaces.SchedulerEngine
+}
+
+// SchedulerDelegatedFieldError is returned when an update to a delegated job
+// tries to change its Handler or Payload, which only the platform may set.
+type SchedulerDelegatedFieldError struct {
+	JobID uint64
+}
+
+func (e *SchedulerDelegatedFieldError) Error() string {
+	return fmt.Sprintf("scheduler: delegated job %d: handler and payload are platform-controlled", e.JobID)
 }
 
 // NewSchedulerAdapter creates a new adapter for the given scheduler engine.
@@ -191,6 +202,13 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 	tenantID, err := schedulerTenantResolveID(ctx, "UpdateJob", req.TenantID)
 	if err != nil {
 		return nil, err
+	}
+
+	// A delegated job is platform-created: the tenant it targets may tune its
+	// timing and metadata, but its Handler and Payload stay under platform
+	// control so a tenant cannot redirect the job at another tenant's data.
+	if req.Scope == SchedulerOwnerTypeDelegated && (req.Handler != "" || len(req.Payload) > 0) {
+		return nil, &SchedulerDelegatedFieldError{JobID: req.JobID}
 	}
 
 	// Convert request to scheduler.JobUpdateParams

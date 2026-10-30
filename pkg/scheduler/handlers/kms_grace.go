@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
+	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
 // HandlerKMSGracePeriod is the handler name for KMS grace period jobs.
@@ -112,6 +114,13 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 		}
 	}
 
+	if !keyBelongsToTarget(job.TargetTenantID, payload.KeyID) {
+		return nil, &scheduler.InvalidJobError{
+			Field:   "payload.key_id",
+			Message: fmt.Sprintf("key %q is not owned by the job's target tenant %q", payload.KeyID, job.TargetTenantID),
+		}
+	}
+
 	resp, err := h.kmsUpdater.UpdateKeyStatusForGracePeriod(ctx, payload.KeyID, payload.Version)
 	if err != nil {
 		return nil, &scheduler.HandlerFailedError{
@@ -131,4 +140,15 @@ func (h *KMSGracePeriodHandler) Handle(ctx context.Context, job *scheduler.Job) 
 // Handler returns the JobHandler function for registration.
 func (h *KMSGracePeriodHandler) Handler() scheduler.JobHandler {
 	return h.Handle
+}
+
+// keyBelongsToTarget reports whether keyID is a KMS key the target tenant
+// owns. It follows the scoped-ID rule of pkg/service (tenantKeyBelongsTo):
+// a tenant's keys are stored as "tenant.<id>.<key>", and a job targeting the
+// system tenant (or no tenant) may name any key.
+func keyBelongsToTarget(targetTenantID, keyID string) bool {
+	if targetTenantID == "" || tenantctx.IsSystem(targetTenantID) {
+		return true
+	}
+	return strings.HasPrefix(keyID, "tenant."+targetTenantID+".")
 }

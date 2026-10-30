@@ -195,6 +195,35 @@ func TestSchedulerAdapter_CancelJob_DelegatedJobOfCaller(t *testing.T) {
 	})
 }
 
+func TestSchedulerAdapter_UpdateJob_DelegatedRejectsHandlerAndPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *UpdateSchedulerJobRequest
+	}{
+		{
+			name: "payload",
+			req:  &UpdateSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeDelegated, Payload: []byte(`{"key_id":"tenant.tenant-b.k1","version":1}`)},
+		},
+		{
+			name: "handler",
+			req:  &UpdateSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeDelegated, Handler: "other.handler"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eng := newTestMockSchedulerEngine()
+			a := &SchedulerAdapter{scheduler: eng}
+
+			_, err := a.UpdateJob(crossTenantCtx(), tt.req)
+			var fieldErr *SchedulerDelegatedFieldError
+			require.ErrorAs(t, err, &fieldErr)
+			require.Equal(t, uint64(7), fieldErr.JobID)
+			eng.AssertNotCalled(t, "UpdateJob", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
 // A tenant caller naming the system scope names the system tenant, and is
 // refused before the store is reached; the system caller's own jobs are in
 // that scope.
