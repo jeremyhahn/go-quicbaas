@@ -37,6 +37,7 @@
 import { untrack } from 'svelte';
 import type {
   Artifact,
+  HealthCheckReport,
   JobAttemptRecord,
   JobDelivery,
   JobMemory,
@@ -309,11 +310,8 @@ export interface HealthStatus {
   message?: string;
 }
 
-export interface HealthCheckReport {
-  status: string;
-  timestamp: number;
-  checks?: Record<string, HealthStatus>;
-}
+/** The record the SDK's orchestrator healthCheck returns. */
+export type { HealthCheckReport };
 
 // ---------------------------------------------------------------------------
 // Polling constants
