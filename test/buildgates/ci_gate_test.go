@@ -38,16 +38,33 @@ var (
 // `CI / CI Gate (pull_request)`.
 const gateJobName = "ci-gate"
 
-// fullTierIf is the condition every full-tier job carries, and the
-// expression ci-gate evaluates into FULL_TIER (#1272).
-const fullTierIf = `github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')`
+// fullTierExpr is ci-template v1.23's full tier: every event but a pull
+// request, and a pull request labelled ci:full. ci.yml's CI_FULL_TIER is this
+// expression, and a full-tier job's `if:` repeats it, since a job-level `if:`
+// cannot read env.
+const fullTierExpr = `github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')`
+
+// nightlyExpr is ci-template v1.24's nightly tier: schedule and
+// workflow_dispatch only.
+const nightlyExpr = `github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'`
 
 var (
 	jobHeaderRe = regexp.MustCompile(`^  ([a-z0-9][a-z0-9-]*):\s*$`)
 	gateNeedsRe = regexp.MustCompile(`(?m)^    needs: \[([^\]]*)\]\s*$`)
 	checkLineRe = regexp.MustCompile(`(?m)^\s+check\s+(\S+)\s+"[^"]*"\s*(\S*)\s*$`)
-	jobIfRe     = regexp.MustCompile(`(?m)^    if:`)
+	jobIfRe     = regexp.MustCompile(`(?m)^    if: (\$\{\{.*\}\})`)
 )
+
+// prTierIfs are the only job-level `if:` conditions a PR-tier job may carry
+// under ci-template v1.29.5. Each skips the job only where ci-gate fails the
+// run anyway: on a draft pull request (v1.26, the gate's DRAFT check) and on a
+// schedule run the schedule guard did not clear (v1.29.3, the gate's
+// SCHEDULE_GUARD check).
+var prTierIfs = map[string]bool{
+	"${{ !github.event.pull_request.draft }}":                                                                                       true,
+	"${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}":                                       true,
+	"${{ !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}": true,
+}
 
 // nonGatingJobs are the ci.yml jobs that run but deliberately do not gate
 // CI Gate: they are in neither its needs nor a check line.
@@ -237,22 +254,32 @@ func TestNonGatingJobsCannotHideAJob(t *testing.T) {
 // Without `if: always()` the gate is SKIPPED when any dependency fails. A
 // skipped job publishes no status, so the required context never arrives and
 // the merge blocks on silence rather than failing on a verdict.
+//
+// ci-template v1.29.3 (ruling 255(10)/(11)(c)) adds one exception: a schedule
+// run the schedule guard finds `busy` skips the gate, so a nightly that yields
+// to a main push posts `skipped`, never green.
 func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 	_, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
 	gate := bodies[gateJobName]
 	if gate == "" {
 		t.Fatalf("could not isolate the %s job body", gateJobName)
 	}
-	if !regexp.MustCompile(`(?m)^    if: always\(\)\s*$`).MatchString(gate) {
-		t.Errorf("%s is missing `if: always()`:\n%s", gateJobName, gate)
+	const gateIf = "\n    if: ${{ always() && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict != 'busy') }}\n"
+	if !strings.Contains(gate, gateIf) {
+		t.Errorf("%s's `if:` is not the ci-template's:%s", gateJobName, gateIf)
 	}
 	// The ci-template's check(): only success passes, a skip passes only for a
-	// full-tier job below the full tier, and every other result fails.
+	// full-tier job below the full tier or a nightly job off the nightly
+	// events, and every other result fails. A draft, and a schedule run the
+	// guard did not clear, fail outright.
 	for _, line := range []string{
 		"            case \"$2\" in\n              success) echo \"OK   $1\";;\n              skipped)\n",
 		"                if [ \"$3\" = full ] && [ \"${FULL_TIER}\" != true ]; then\n",
+		"                elif [ \"$3\" = nightly ] && [ \"${NIGHTLY}\" != true ]; then\n",
 		"                  echo \"FAIL $1 (skipped)\"; BAD=1\n",
 		"              *) echo \"FAIL $1 ($2)\"; BAD=1;;\n",
+		"          if [ \"${DRAFT}\" = true ]; then\n",
+		"          if [ \"${SCHEDULE}\" = true ] && [ \"${SCHEDULE_GUARD}\" != run ]; then\n",
 		"          exit $BAD\n",
 	} {
 		if !strings.Contains(gate, line) {
@@ -261,19 +288,30 @@ func TestCIGateRunsEvenWhenADependencyFails(t *testing.T) {
 	}
 }
 
-// TestCIGateTiersMatchTheJobs pins the two tiers to the gate.
+// TestCIGateTiersMatchTheJobs pins ci-template v1.29.5's three tiers to the
+// gate.
 //
 // ci-gate passes a skipped job only when its check line tags it `full` and the
-// run did not select the full tier. Two drifts would break that: a job tagged
-// `full` whose `if:` differs from FULL_TIER, so the gate excuses a skip in a
-// run that should have executed it; and a PR-tier job that gains an `if:`, so
-// it skips on some event and fails the gate there.
+// run did not select the full tier (v1.23), or tags it `nightly` and the run
+// is neither schedule nor workflow_dispatch (v1.24). Three drifts would break
+// that: a job tagged `full` whose `if:` differs from CI_FULL_TIER, or one
+// tagged `nightly` whose `if:` misses a nightly event, so the gate excuses a
+// skip in a run that should have executed it; and a PR-tier job that gains an
+// `if:` beyond the draft (v1.26) and schedule-guard (v1.29.3) skips, so it
+// skips on some event and fails the gate there.
 func TestCIGateTiersMatchTheJobs(t *testing.T) {
-	order, bodies := ciJobs(t, readFile(t, ciWorkflowPath))
+	body := readFile(t, ciWorkflowPath)
+	order, bodies := ciJobs(t, body)
 	gate := bodies[gateJobName]
 
-	if !strings.Contains(gate, "FULL_TIER: ${{ "+fullTierIf+" }}") {
-		t.Errorf("%s's FULL_TIER is not the full-tier condition %q", gateJobName, fullTierIf)
+	if !strings.Contains(body, "\n  CI_FULL_TIER: ${{ "+fullTierExpr+" }}\n") {
+		t.Errorf("ci.yml's CI_FULL_TIER is not the full-tier condition %q", fullTierExpr)
+	}
+	if !strings.Contains(gate, "FULL_TIER: ${{ env.CI_FULL_TIER }}\n") {
+		t.Errorf("%s's FULL_TIER does not read env.CI_FULL_TIER", gateJobName)
+	}
+	if !strings.Contains(gate, "NIGHTLY: ${{ "+nightlyExpr+" }}\n") {
+		t.Errorf("%s's NIGHTLY is not the nightly condition %q", gateJobName, nightlyExpr)
 	}
 
 	tiers := gateChecks(gate)
@@ -281,68 +319,97 @@ func TestCIGateTiersMatchTheJobs(t *testing.T) {
 		if j == gateJobName || nonGatingJobs[j] {
 			continue
 		}
-		job := bodies[j]
+		var cond string
+		if m := jobIfRe.FindStringSubmatch(bodies[j]); m != nil {
+			cond = m[1]
+		}
 		switch tiers[j] {
 		case "full":
-			if !strings.Contains(job, "\n    if: "+fullTierIf+"\n") {
-				t.Errorf("job %q is tagged full in %s but lacks `if: %s`", j, gateJobName, fullTierIf)
+			if !strings.Contains(cond, "("+fullTierExpr+")") {
+				t.Errorf("job %q is tagged full in %s but its `if:` (%s) lacks (%s)", j, gateJobName, cond, fullTierExpr)
+			}
+		case "nightly":
+			if !strings.Contains(cond, "github.event_name == 'schedule'") ||
+				!strings.Contains(cond, "github.event_name == 'workflow_dispatch'") {
+				t.Errorf("job %q is tagged nightly in %s but its `if:` (%s) does not select "+
+					"schedule and workflow_dispatch", j, gateJobName, cond)
 			}
 		case "pr":
-			if jobIfRe.MatchString(job) {
-				t.Errorf("job %q is PR tier but carries a job-level `if:`; a PR-tier job "+
-					"must run on every event, and %s fails it when skipped", j, gateJobName)
+			if cond != "" && !prTierIfs[cond] {
+				t.Errorf("job %q is PR tier but its `if:` (%s) is none the ci-template allows; "+
+					"a PR-tier job skips only on a draft or an uncleared schedule run, "+
+					"and %s fails it when skipped anywhere else", j, cond, gateJobName)
 			}
 		default:
-			t.Errorf("job %q's check line in %s has tier %q; want `pr` or `full`",
+			t.Errorf("job %q's check line in %s has tier %q; want `pr`, `full` or `nightly`",
 				j, gateJobName, tiers[j])
 		}
 	}
 }
 
 // TestCIIgnoresLabelChanges pins ci.yml's pull_request types without
-// `labeled` (#1445). Gitea maps every label add and remove to `labeled`, so
-// with it each code-review or task:* change starts a run that cancels the
-// PR's run in flight.
+// `labeled` (#1445; ci-template v1.25.4). Gitea maps every label add and
+// remove to `labeled`, so with it each code-review or task:* change starts a
+// run that cancels the PR's run in flight.
 func TestCIIgnoresLabelChanges(t *testing.T) {
 	body := readFile(t, ciWorkflowPath)
-	// The ci-template's pull_request trigger carries no types list, so it runs
-	// on the default opened, synchronize and reopened, never on a label change.
-	const trigger = "\n  pull_request:\n    branches: [main]\n  workflow_dispatch:"
-	if !strings.Contains(body, trigger) {
-		t.Errorf("ci.yml's pull_request trigger is not the ci-template's:%s", trigger)
+	// The ci-template's pull_request trigger names its types, with comment
+	// lines between branches and types.
+	triggerRe := regexp.MustCompile(`\n  pull_request:\n    branches: \[main\]\n(?:    #[^\n]*\n)*    types: \[([^\]]*)\]\n`)
+	m := triggerRe.FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("ci.yml's pull_request trigger has no `types:` list on main; " +
+			"without one Gitea starts a run on every label change")
 	}
-	if strings.Contains(body, "labeled") {
-		t.Errorf("ci.yml's triggers carry `labeled`; a label change must not start CI")
+	if want := "opened, synchronize, reopened"; m[1] != want {
+		t.Errorf("ci.yml's pull_request types are [%s], want [%s]; a label change must not start CI", m[1], want)
 	}
 }
+
+// cancelsInProgress matches a concurrency key, not a comment, that cancels
+// in-progress runs.
+var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
+
+// mainRunKey is the DS-3161 group-key term that gives each main commit its own
+// group, so a literal cancel-in-progress never cancels a main run.
+const mainRunKey = "github.ref == 'refs/heads/main' && github.sha"
+
+// templateMainRunKey is ci-template v1.26.2's term for the same: a main run's
+// group is its event and commit.
+const templateMainRunKey = "github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha)"
 
 // TestPullRequestWorkflowsCancelSupersededRuns asserts that every workflow
 // triggered on `pull_request` cancels its superseded runs through a ref-keyed
 // group (devops.md §9b). The ref keeps one pull request from cancelling
 // another. `pull_request_target` is out of scope: its github.ref is the base
 // branch, so a ref-keyed group there would span every pull request.
-// cancelsInProgress matches a concurrency key, not a comment, that cancels
-// in-progress runs.
-var cancelsInProgress = regexp.MustCompile(`(?m)^\s*cancel-in-progress:\s*true\s*$`)
-
-// mainRunKey is the group-key term that gives each main commit its own group,
-// so a literal cancel-in-progress never cancels a main run.
-const mainRunKey = "github.ref == 'refs/heads/main' && github.sha"
-
+//
+// ci.yml carries ci-template v1.29.5's block: a schedule run takes the one
+// `schedule-{repository}` group (v1.29.3, ruling 255(10)/(11)(c)), a main run
+// a group of its event and commit (v1.26.2, ruling 145), and any other ref one
+// group per ref. Every other pull_request workflow carries the DS-3161 block.
+// Gitea does not evaluate an expression in cancel-in-progress, so both set a
+// literal true.
 func TestPullRequestWorkflowsCancelSupersededRuns(t *testing.T) {
-	// The DS-3161 block: Gitea does not evaluate an expression in
-	// cancel-in-progress, so it is a literal true. A PR ref shares one group,
-	// so its newer run cancels the older; a main commit has a group of its own.
-	const want = "concurrency:\n" +
+	const ciBlock = "concurrency:\n" +
+		"  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || " +
+		templateMainRunKey + " || github.ref }}\n" +
+		"  cancel-in-progress: true\n"
+	const otherBlock = "concurrency:\n" +
 		"  group: ${{ github.workflow }}-${{ github.ref }}-${{ " + mainRunKey + " || 'latest' }}\n" +
 		"  cancel-in-progress: true\n"
 	for _, path := range workflowFiles(t) {
 		body := readFile(t, path)
-		if strings.Contains(body, "\n  push:\n") && cancelsInProgress.MatchString(body) && !strings.Contains(body, mainRunKey) {
+		if strings.Contains(body, "\n  push:\n") && cancelsInProgress.MatchString(body) &&
+			!strings.Contains(body, mainRunKey) && !strings.Contains(body, templateMainRunKey) {
 			t.Errorf("%s runs on push and sets `cancel-in-progress: true` without a per-commit main group, which cancels main runs", path)
 		}
 		if !strings.Contains(body, "\n  pull_request:\n") {
 			continue
+		}
+		want := otherBlock
+		if path == ciWorkflowPath {
+			want = ciBlock
 		}
 		if !strings.Contains(body, "\n"+want) {
 			t.Errorf("%s runs on pull_request but lacks the concurrency block:\n%s", path, want)
@@ -609,17 +676,63 @@ func TestMakeStageTagCheckCatchesALostTagArgument(t *testing.T) {
 	}
 }
 
-// TestNoWorkflowRunsOnASchedule pins the owner ruling of 2026-10-11: the
-// coordinator dispatches the nightly full tier, no workflow schedules itself.
-// automerge.yml is under owner hold and keeps its sweep.
-func TestNoWorkflowRunsOnASchedule(t *testing.T) {
-	scheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
+// TestCIRunsOneGuardedNightlySchedule pins ci-template v1.29.3 (Company Agent
+// ruling 255(10)/(11)(c)), which supersedes the owner ruling of 2026-10-11
+// that no workflow schedules itself. ci.yml runs main's full tier on one
+// nightly cron; the `schedule-{repository}` concurrency group keeps one
+// schedule run per repository; and the schedule-guard job, which CI Gate
+// needs, lets a schedule run's jobs proceed only while no main push run is in
+// flight. nightly.yml keeps its own cron at another hour (ci.yml's CUSTOMIZE
+// note). No other workflow schedules itself; automerge.yml is under owner
+// hold and keeps its sweep.
+func TestCIRunsOneGuardedNightlySchedule(t *testing.T) {
+	scheduleRe := regexp.MustCompile(`(?m)^  schedule:\n((?:    - cron: '[^']*'\n)+)`)
+	cronHour := func(path string) string {
+		m := scheduleRe.FindStringSubmatch(readFile(t, path))
+		if m == nil {
+			t.Fatalf("%s has no `schedule:` trigger with a cron line", path)
+		}
+		crons := strings.Split(strings.TrimSpace(m[1]), "\n")
+		if len(crons) != 1 {
+			t.Fatalf("%s has %d cron lines, want one nightly", path, len(crons))
+		}
+		fields := strings.Fields(strings.Trim(strings.TrimPrefix(strings.TrimSpace(crons[0]), "- cron: "), "'"))
+		if len(fields) != 5 || fields[2] != "*" || fields[3] != "*" || fields[4] != "*" {
+			t.Fatalf("%s's cron %q is not a daily schedule", path, crons[0])
+		}
+		return fields[1]
+	}
+
+	nightlyPath := filepath.Join(workflowsDir, "nightly.yml")
+	if ci, nightly := cronHour(ciWorkflowPath), cronHour(nightlyPath); ci == nightly {
+		t.Errorf("ci.yml and nightly.yml both run at hour %s; ci.yml's must be off nightly.yml's", ci)
+	}
+
+	body := readFile(t, ciWorkflowPath)
+	if !strings.Contains(body, "\n  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || ") {
+		t.Errorf("ci.yml's concurrency group does not test the schedule event first with " +
+			"`format('schedule-{0}', github.repository)`; two schedule runs could overlap")
+	}
+	_, jobs := ciJobs(t, body)
+	guard, ok := jobs["schedule-guard"]
+	if !ok {
+		t.Fatalf("ci.yml has no schedule-guard job; a schedule run would race a main push run")
+	}
+	if !strings.Contains(guard, "\n      verdict: ${{ steps.guard.outputs.verdict }}\n") {
+		t.Errorf("schedule-guard publishes no `verdict` output for the bigdisk jobs and CI Gate to read")
+	}
+	if missing([]string{"schedule-guard"}, gateNeeds(t, jobs[gateJobName])) != nil {
+		t.Errorf("%s does not need schedule-guard, so it cannot fail an uncleared schedule run", gateJobName)
+	}
+
+	plainScheduleRe := regexp.MustCompile(`(?m)^  schedule:`)
 	for _, path := range workflowFiles(t) {
-		if filepath.Base(path) == "automerge.yml" {
+		switch filepath.Base(path) {
+		case "automerge.yml", "ci.yml", "nightly.yml":
 			continue
 		}
-		if scheduleRe.MatchString(readFile(t, path)) {
-			t.Errorf("%s carries a `schedule:` trigger; dispatch it instead", path)
+		if plainScheduleRe.MatchString(readFile(t, path)) {
+			t.Errorf("%s carries a `schedule:` trigger; only ci.yml and nightly.yml run nightly", path)
 		}
 	}
 }
