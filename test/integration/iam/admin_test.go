@@ -1012,29 +1012,10 @@ func TestAdmin_StartImpersonation_Success(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// The target is a real user in a real tenant: the server refuses to
-	// mint a session for a user it cannot resolve.
-	tenantID, targetUserID := setupUserForSessionTests(t, cluster)
-
-	// The acting admin is the authenticated caller, not a name in the
-	// request body. tenantctx keeps the system admin out of a tenant's IAM,
-	// so the caller is the tenant's own admin: the impersonation grant goes
-	// to that admin's uid and lists the tenant explicitly. Admin
-	// assignments live in the caller's tenant-routed IAM store, so the
-	// tenant admin creates the grant too; one the system admin created
-	// would sit in the system tenant's store, which this check never reads.
-	tenantAdmin := createTestTenant(t, cluster, tenantID)
-	adminUserID := tenantAdminUserID(t, cluster, tenantID)
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		TenantIDs:   []string{tenantID},
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
-
-	created := createTestAssignmentAs(t, cluster, tenantAdmin, createReq)
-	defer deleteTestAssignmentAs(t, cluster, tenantAdmin, created.ID)
+	grant := grantTenantImpersonation(t, cluster)
+	defer deleteTestAssignmentAs(t, cluster, grant.tenantAdmin, grant.assignmentID)
+	tenantAdmin, tenantID := grant.tenantAdmin, grant.tenantID
+	adminUserID, targetUserID := grant.adminUserID, grant.targetUserID
 
 	// Start impersonation
 	impersonationReq := ImpersonationRequest{
@@ -1098,6 +1079,49 @@ func tenantAdminUserID(t *testing.T, cluster *testCluster, tenantID string) stri
 	require.NoError(t, json.Unmarshal(payload, &claims))
 	require.NotEmpty(t, claims.UserID, "the tenant admin bearer should carry a uid claim")
 	return claims.UserID
+}
+
+// impersonationGrant is a tenant admin allowed to impersonate a real user
+// in its own tenant.
+type impersonationGrant struct {
+	tenantAdmin  *http.Client
+	tenantID     string
+	adminUserID  string
+	targetUserID string
+	assignmentID string
+}
+
+// grantTenantImpersonation sets up an impersonation the server accepts.
+// The target is a real user in a real tenant: the server refuses to mint a
+// session for a user it cannot resolve. The acting admin is the
+// authenticated caller, not a name in the request body. tenantctx keeps the
+// system admin out of a tenant's IAM, so the caller is the tenant's own
+// admin: the impersonation grant goes to that admin's uid and lists the
+// tenant explicitly. Admin assignments live in the caller's tenant-routed
+// IAM store, so the tenant admin creates the grant too; one the system admin
+// created would sit in the system tenant's store, which the check never
+// reads. The caller deletes the assignment with deleteTestAssignmentAs.
+func grantTenantImpersonation(t *testing.T, cluster *testCluster) impersonationGrant {
+	t.Helper()
+
+	tenantID, targetUserID := setupUserForSessionTests(t, cluster)
+	tenantAdmin := createTestTenant(t, cluster, tenantID)
+	adminUserID := tenantAdminUserID(t, cluster, tenantID)
+	created := createTestAssignmentAs(t, cluster, tenantAdmin, AdminAssignmentRequest{
+		UserID:      adminUserID,
+		AdminRole:   "super_admin",
+		TenantIDs:   []string{tenantID},
+		Permissions: []string{"user:impersonate"},
+		GrantedBy:   "system",
+	})
+
+	return impersonationGrant{
+		tenantAdmin:  tenantAdmin,
+		tenantID:     tenantID,
+		adminUserID:  adminUserID,
+		targetUserID: targetUserID,
+		assignmentID: created.ID,
+	}
 }
 
 // TestAdmin_StartImpersonation_NotAllowed tests starting impersonation without permission.
@@ -1183,23 +1207,13 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	cluster := setupTestCluster(t)
 	defer cluster.Close()
 
-	// Create super admin
-	adminUserID := generateUniqueUserID()
-	createReq := AdminAssignmentRequest{
-		UserID:      adminUserID,
-		AdminRole:   "super_admin",
-		Permissions: []string{"user:impersonate"},
-		GrantedBy:   "system",
-	}
-
-	created := createTestAssignment(t, cluster, createReq)
-	defer deleteTestAssignment(t, cluster, created.ID)
+	grant := grantTenantImpersonation(t, cluster)
+	defer deleteTestAssignmentAs(t, cluster, grant.tenantAdmin, grant.assignmentID)
 
 	// Start impersonation
 	impersonationReq := ImpersonationRequest{
-		AdminUserID:  adminUserID,
-		TargetUserID: generateUniqueUserID(),
-		TenantID:     "test-tenant",
+		TargetUserID: grant.targetUserID,
+		TenantID:     grant.tenantID,
 		Reason:       "Testing impersonation flow",
 		Duration:     "1h",
 	}
@@ -1207,7 +1221,7 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	body, err := json.Marshal(impersonationReq)
 	require.NoError(t, err)
 
-	startResp, err := cluster.adminClient.Post(
+	startResp, err := grant.tenantAdmin.Post(
 		cluster.httpEndpoint+"/api/v1/admin/impersonation/start",
 		"application/json",
 		bytes.NewReader(body),
@@ -1215,11 +1229,13 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	require.NoError(t, err)
 	defer startResp.Body.Close()
 
-	require.Equal(t, http.StatusOK, startResp.StatusCode)
+	startBody, err := io.ReadAll(startResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, startResp.StatusCode, "impersonation start: %s", startBody)
 
 	var session ImpersonationSessionResponse
-	err = json.NewDecoder(startResp.Body).Decode(&session)
-	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(startBody, &session))
+	require.NotEmpty(t, session.ID, "the started session should carry an ID")
 
 	// End impersonation
 	endReq, err := http.NewRequest(
@@ -1229,18 +1245,20 @@ func TestAdmin_EndImpersonation_Success(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	endResp, err := cluster.adminClient.Do(endReq)
+	endResp, err := grant.tenantAdmin.Do(endReq)
 	require.NoError(t, err)
 	defer endResp.Body.Close()
 
 	// Assert: Response status is 200 OK
-	assert.Equal(t, http.StatusOK, endResp.StatusCode, "Expected 200 OK for ending impersonation")
+	endBody, err := io.ReadAll(endResp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, endResp.StatusCode, "impersonation end: %s", endBody)
 
 	var endedSession ImpersonationSessionResponse
-	err = json.NewDecoder(endResp.Body).Decode(&endedSession)
-	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(endBody, &endedSession))
 
 	// Assert: Session is ended
+	assert.Equal(t, session.ID, endedSession.ID, "the ended session should be the one started")
 	assert.NotNil(t, endedSession.EndedAt, "EndedAt should be set")
 }
 
