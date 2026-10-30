@@ -156,10 +156,8 @@ func TestVectorHandlers_ResponseOutOfRange(t *testing.T) {
 			name:  "ListVectors total count",
 			field: "total_count",
 			setup: func(m *testutil.MockQuicBaaS) {
-				m.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-					Return(&service.GetNamespaceInfoResponse{Namespace: "ns1", Dimension: 1}, nil)
-				m.On("SearchByMetadata", mock.Anything, mock.Anything).
-					Return(&service.SearchByMetadataResponse{TotalCount: math.MaxUint64}, nil)
+				m.On("ListVectors", mock.Anything, mock.Anything).
+					Return(&service.ListVectorsResponse{TotalCount: math.MaxUint64}, nil)
 			},
 			call: func(srv *Server) error {
 				return srv.ListVectors(&pb.ListVectorsRequest{Namespace: "ns1", PageSize: 10}, NewMockListVectorsStream(ctx))

@@ -1335,45 +1335,39 @@ func (s *Server) ListVectors(req *pb.ListVectorsRequest, stream pb.VectorDB_List
 		return status.Error(codes.Unimplemented, "vector service not available")
 	}
 
-	// Check if namespace exists first
-	nsInfoReq := &service.GetNamespaceInfoRequest{
-		Namespace: req.Namespace,
-	}
-	_, err := vectorService.GetNamespaceInfo(stream.Context(), nsInfoReq)
-	if err != nil {
-		return toProtoError(err)
+	// The service cursor is the decimal offset of the next page. The service
+	// reads a malformed cursor as the first page, which would repeat it, so
+	// reject the token here.
+	if req.PageToken != "" {
+		if _, err := strconv.ParseUint(req.PageToken, 10, 63); err != nil {
+			return status.Error(codes.InvalidArgument, "page token is malformed")
+		}
 	}
 
-	// For now, use SearchByMetadata with no filters to list all vectors
-	// This is a simplified implementation
 	pageSize := int(req.PageSize)
 	if pageSize <= 0 {
 		pageSize = 100
 	}
 
-	consistency := convertProtoConsistencyLevel(req.Consistency)
-
-	serviceReq := &service.SearchByMetadataRequest{
+	serviceReq := &service.ListVectorsRequest{
 		Namespace:       req.Namespace,
-		Filters:         make(map[string]interface{}),
-		FilterOperator:  "AND",
 		Limit:           pageSize,
-		Offset:          0,
+		Cursor:          req.PageToken,
 		IncludeVectors:  req.IncludeVectors,
 		IncludeMetadata: req.IncludeMetadata,
 		ShardID:         s.vectorShardID,
-		Consistency:     consistency,
+		Consistency:     convertProtoConsistencyLevel(req.Consistency),
 	}
 
-	// Call service
-	resp, err := vectorService.SearchByMetadata(stream.Context(), serviceReq)
+	// The service reports a missing namespace as not found.
+	resp, err := vectorService.ListVectors(stream.Context(), serviceReq)
 	if err != nil {
 		return toProtoError(err)
 	}
 
 	// Convert results
-	vectors := make([]*pb.VectorEntity, 0, len(resp.Results))
-	for _, vec := range resp.Results {
+	vectors := make([]*pb.VectorEntity, 0, len(resp.Vectors))
+	for _, vec := range resp.Vectors {
 		// Extract original ID before filtering metadata
 		originalID := ""
 		if vec.Metadata != nil {

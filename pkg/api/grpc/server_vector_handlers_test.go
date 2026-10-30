@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -1882,8 +1883,8 @@ func TestListVectors_PageSizeExceedsMax(t *testing.T) {
 func TestListVectors_NamespaceNotFound(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "GetNamespaceInfo"})
+	mockSvc.On("ListVectors", mock.Anything, mock.Anything).
+		Return(nil, &errors.QBError{Code: errors.ErrNotFound, Op: "vector.ListVectors"})
 
 	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
@@ -1897,21 +1898,17 @@ func TestListVectors_NamespaceNotFound(t *testing.T) {
 func TestListVectors_Success(t *testing.T) {
 	srv, mockSvc := newMockTestServer(t)
 
-	mockSvc.On("GetNamespaceInfo", mock.Anything, mock.Anything).
-		Return(&service.GetNamespaceInfoResponse{
-			Namespace: "test-ns",
-			Dimension: 128,
-		}, nil)
-
-	mockSvc.On("SearchByMetadata", mock.Anything, mock.Anything).
-		Return(&service.SearchByMetadataResponse{
-			Results: []*service.VectorData{
-				{ID: 1, Vector: []float32{1.0}, Metadata: map[string]interface{}{"cat": "A"}, Version: 1},
-				{ID: 2, Vector: []float32{2.0}, Metadata: map[string]interface{}{"cat": "B"}, Version: 1},
-			},
-			TotalCount: 2,
-			NextCursor: "next_page",
-		}, nil)
+	mockSvc.On("ListVectors", mock.Anything, mock.MatchedBy(func(r *service.ListVectorsRequest) bool {
+		return r.Namespace == "test-ns" && r.Limit == 100 && r.Cursor == "" &&
+			r.IncludeVectors && r.IncludeMetadata
+	})).Return(&service.ListVectorsResponse{
+		Vectors: []*service.VectorData{
+			{ID: 1, Vector: []float32{1.0}, Metadata: map[string]interface{}{"cat": "A"}, Version: 1},
+			{ID: 2, Vector: []float32{2.0}, Metadata: map[string]interface{}{"cat": "B"}, Version: 1},
+		},
+		TotalCount: 2,
+		NextCursor: "next_page",
+	}, nil)
 
 	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
 	err := srv.ListVectors(&pb.ListVectorsRequest{
@@ -1928,6 +1925,83 @@ func TestListVectors_Success(t *testing.T) {
 	assert.Equal(t, int64(2), msgs[0].TotalCount)
 	assert.Equal(t, "next_page", msgs[0].NextPageToken)
 	mockSvc.AssertExpectations(t)
+}
+
+// TestListVectors_PagesWithToken walks a namespace larger than one page
+// through PageToken and asserts every vector is returned exactly once.
+func TestListVectors_PagesWithToken(t *testing.T) {
+	srv, mockSvc := newMockTestServer(t)
+
+	const total, pageSize = 5, 2
+	for offset := 0; offset < total; offset += pageSize {
+		cursor := ""
+		if offset > 0 {
+			cursor = strconv.Itoa(offset)
+		}
+		page := make([]*service.VectorData, 0, pageSize)
+		for id := offset; id < total && id < offset+pageSize; id++ {
+			page = append(page, &service.VectorData{ID: uint64(id + 1)})
+		}
+		next := ""
+		if offset+pageSize < total {
+			next = strconv.Itoa(offset + pageSize)
+		}
+		mockSvc.On("ListVectors", mock.Anything, mock.MatchedBy(func(r *service.ListVectorsRequest) bool {
+			return r.Namespace == "paged-ns" && r.Limit == pageSize && r.Cursor == cursor
+		})).Return(&service.ListVectorsResponse{
+			Vectors:    page,
+			NextCursor: next,
+			TotalCount: total,
+		}, nil).Once()
+	}
+
+	seen := make(map[string]int)
+	token := ""
+	for pages := 0; ; pages++ {
+		require.Less(t, pages, total, "pagination did not terminate")
+		stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
+		err := srv.ListVectors(&pb.ListVectorsRequest{
+			Namespace: "paged-ns",
+			PageSize:  pageSize,
+			PageToken: token,
+		}, stream)
+		require.NoError(t, err)
+		msgs := stream.GetMessages()
+		require.Len(t, msgs, 1)
+		assert.Equal(t, int64(total), msgs[0].TotalCount)
+		for _, vec := range msgs[0].Vectors {
+			seen[vec.Id]++
+		}
+		token = msgs[0].NextPageToken
+		if token == "" {
+			break
+		}
+	}
+
+	require.Len(t, seen, total)
+	for id, count := range seen {
+		assert.Equal(t, 1, count, "vector %s returned more than once", id)
+	}
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListVectors_MalformedPageToken(t *testing.T) {
+	for _, token := range []string{"not-a-cursor", "-2", "1.5"} {
+		t.Run(token, func(t *testing.T) {
+			srv, mockSvc := newMockTestServer(t)
+
+			stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.ListVectors(&pb.ListVectorsRequest{
+				Namespace: "test-ns",
+				PageToken: token,
+			}, stream)
+
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Empty(t, stream.GetMessages())
+			mockSvc.AssertNotCalled(t, "ListVectors", mock.Anything, mock.Anything)
+		})
+	}
 }
 
 // =============================================================================
