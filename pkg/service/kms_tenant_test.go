@@ -835,6 +835,76 @@ func TestKMSOwnership_CancelledCreateReleasesClaim(t *testing.T) {
 	require.NoError(t, err, "a retry must be able to create the name")
 }
 
+// TestKMSOwnership_DeleteLeavesPendingClaim pauses a create after it has
+// reserved the name and deletes the name in that window: the backend has no
+// key yet, but the reservation belongs to the create in flight, so the delete
+// must leave it and the create must finish with a reachable key.
+func TestKMSOwnership_DeleteLeavesPendingClaim(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "in-flight"
+	scopedID := tenantScopedKeyID(ownershipTenant, name)
+
+	reserved := make(chan struct{})
+	release := make(chan struct{})
+	mgr.generateKeyFn = func(_ context.Context, attrs *xkmssdk.KeyAttributes) (interface{}, error) {
+		close(reserved)
+		<-release
+		mgr.keys[attrs.CN] = &mockKeyData{keyID: attrs.CN, algorithm: string(attrs.SymmetricAlgorithm), version: 1, status: "enabled"}
+		return mgr.keys[attrs.CN], nil
+	}
+	mgr.deleteKeyFn = func(context.Context, string) error {
+		return kms.ErrKeyNotFound
+	}
+
+	generated := make(chan error, 1)
+	go func() {
+		_, err := svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+		generated <- err
+	}()
+	<-reserved
+
+	_, err := svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrNotFound, qe.Code)
+
+	close(release)
+	require.NoError(t, <-generated)
+
+	_, err = svc.GetKey(ctx, &GetKeyRequest{KeyID: name})
+	require.NoError(t, err, "the created key must stay reachable")
+	record, err := svc.readKeyOwnerRecord(ctx, scopedID, "test")
+	require.NoError(t, err)
+	_, completed, err := tenantKeyClaimTime(record)
+	require.NoError(t, err)
+	require.True(t, completed, "the create must complete its claim")
+}
+
+// TestKMSOwnership_DeleteReleasesCompletedRecordOfMissingKey shows that a
+// completed record whose backend key is gone is still released, so the name
+// can be created again.
+func TestKMSOwnership_DeleteReleasesCompletedRecordOfMissingKey(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "vanished"
+	scopedID := tenantScopedKeyID(ownershipTenant, name)
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+	require.NoError(t, err)
+	delete(mgr.keys, scopedID)
+	mgr.deleteKeyFn = func(context.Context, string) error {
+		return kms.ErrKeyNotFound
+	}
+
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrNotFound, qe.Code)
+	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "a completed record of a missing key must be released")
+}
+
 // seedOwnershipClaim writes a claim record for name, stamped at claimedAt,
 // with no key behind it, as a failed cleanup leaves one.
 func seedOwnershipClaim(t *testing.T, svc *kmsServiceImpl, name string, claimedAt time.Time) []byte {
@@ -977,6 +1047,24 @@ func TestTenantKeyClaimTime(t *testing.T) {
 		var malformed *KeyOwnershipRecordMalformedError
 		require.ErrorAs(t, err, &malformed, bad)
 	}
+}
+
+func TestTenantKeyClaimPending(t *testing.T) {
+	pending, err := tenantKeyClaimPending(nil)
+	require.NoError(t, err)
+	require.False(t, pending, "a system key has no record and nothing pending")
+
+	pending, err = tenantKeyClaimPending([]byte("t:h:42"))
+	require.NoError(t, err)
+	require.True(t, pending)
+
+	pending, err = tenantKeyClaimPending([]byte("t:h:" + kmsOwnerRecordCompleted))
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	_, err = tenantKeyClaimPending([]byte("garbage"))
+	var malformed *KeyOwnershipRecordMalformedError
+	require.True(t, stderrors.As(err, &malformed), "want a malformed-record error, got %v", err)
 }
 
 func TestKMSOwnership_StaleClaimIsReclaimed(t *testing.T) {

@@ -473,6 +473,21 @@ func tenantKeyClaimTime(record []byte) (claimedAt time.Time, completed bool, err
 	return time.Unix(0, nanos).UTC(), false, nil
 }
 
+// tenantKeyClaimPending reports whether record is a claim a create has not
+// yet completed. Such a claim belongs to the create in flight, not to a key,
+// so a delete that finds no key behind it must leave it in place. A nil
+// record, as a system key has, is never pending.
+func tenantKeyClaimPending(record []byte) (bool, error) {
+	if record == nil {
+		return false, nil
+	}
+	_, completed, err := tenantKeyClaimTime(record)
+	if err != nil {
+		return false, err
+	}
+	return !completed, nil
+}
+
 // now returns the service clock, which tests replace to age claims.
 func (k *kmsServiceImpl) now() time.Time {
 	if k.clock != nil {

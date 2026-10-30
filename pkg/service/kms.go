@@ -1355,6 +1355,17 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		// this branch the manager's ErrNotFound would be clobbered with
 		// ErrInternal and deleting an already-deleted key would return 500.
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
+			// A pending claim is a create in flight that has not reached
+			// the backend yet: releasing it would strand the key that
+			// create is about to make, so it is left for the create to
+			// complete or abandon.
+			pending, pendingErr := tenantKeyClaimPending(ownerRecord)
+			if pendingErr != nil {
+				return nil, WrapError(pendingErr, errors.ErrStorage, "kms.DeleteKey", "failed to parse key ownership record")
+			}
+			if pending {
+				return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
+			}
 			// The key is gone, so its ownership record must go too; a
 			// retried delete after a failed release lands here.
 			if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); releaseErr != nil {
