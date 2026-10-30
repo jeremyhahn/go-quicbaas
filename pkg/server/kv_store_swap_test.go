@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 )
 
 // swapper is the guarded-edit capability consumers discover by assertion.
@@ -102,5 +104,51 @@ func TestSDKKVStore_EmbeddedNodeArbitratesASwap(t *testing.T) {
 func TestSDKKVStore_BaseStoreDoesNotPromoteTheSwap(t *testing.T) {
 	if _, ok := any(&sdkKVStore{}).(swapper); ok {
 		t.Fatal("the unguarded sdkKVStore exposes CompareAndSwap")
+	}
+}
+
+// TestGuardedSDKKVStore_SatisfiesTheGuardedKVStore pins the round 34
+// Integration failure on go-quicbaas#1993: KMS refused this store as "not
+// atomic" because it asserted go-qrdb's AtomicKVStore, whose embedded KVStore
+// carries secondary-index methods this store has no reason to offer. The
+// guarded store must satisfy the capability KMS asserts, and the unguarded one
+// must not.
+func TestGuardedSDKKVStore_SatisfiesTheGuardedKVStore(t *testing.T) {
+	var store interfaces.KVStore = &guardedSDKKVStore{guarded: &recordingGuardedKV{}}
+	if _, ok := store.(interfaces.GuardedKVStore); !ok {
+		t.Fatalf("%T does not satisfy interfaces.GuardedKVStore", store)
+	}
+	if _, ok := any(&sdkKVStore{}).(interfaces.GuardedKVStore); ok {
+		t.Fatal("the unguarded sdkKVStore satisfies interfaces.GuardedKVStore")
+	}
+}
+
+// TestSDKKVStore_EmbeddedNodeArbitratesAClaim runs a KMS-style claim and
+// release through newSDKKVStore on a real standalone node, asserting the store
+// the same way KMS does: the first claim wins, a second loses, and a release
+// against a stale value leaves the claim in place.
+func TestSDKKVStore_EmbeddedNodeArbitratesAClaim(t *testing.T) {
+	store := createTestSDKKVStore(t)
+	guarded, ok := store.(interfaces.GuardedKVStore)
+	if !ok {
+		t.Fatalf("%T over the embedded transport does not satisfy interfaces.GuardedKVStore", store)
+	}
+	ctx := context.Background()
+
+	stored, err := guarded.PutIfAbsent(ctx, "claim-k", []byte("mine"))
+	if err != nil || !stored {
+		t.Fatalf("first claim = (%v, %v), want (true, nil)", stored, err)
+	}
+	stored, err = guarded.PutIfAbsent(ctx, "claim-k", []byte("theirs"))
+	if err != nil || stored {
+		t.Fatalf("second claim = (%v, %v), want (false, nil)", stored, err)
+	}
+	deleted, err := guarded.CompareAndDelete(ctx, "claim-k", []byte("theirs"))
+	if err != nil || deleted {
+		t.Fatalf("stale release = (%v, %v), want (false, nil)", deleted, err)
+	}
+	deleted, err = guarded.CompareAndDelete(ctx, "claim-k", []byte("mine"))
+	if err != nil || !deleted {
+		t.Fatalf("owner release = (%v, %v), want (true, nil)", deleted, err)
 	}
 }

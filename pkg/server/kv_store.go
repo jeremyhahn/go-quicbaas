@@ -92,6 +92,10 @@ type guardedSDKKVStore struct {
 	guarded transport.GuardedKVClient
 }
 
+// The guarded store is what KMS key claims and every other guarded-write
+// consumer assert for (round 34 Integration on go-quicbaas#1993).
+var _ interfaces.GuardedKVStore = (*guardedSDKKVStore)(nil)
+
 // CompareAndSwap replaces key's value with next only while it still holds
 // expected, arbitrated in the store. An absent key is left absent.
 func (s *guardedSDKKVStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {

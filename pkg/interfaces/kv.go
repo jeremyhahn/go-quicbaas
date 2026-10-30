@@ -28,3 +28,23 @@ type KVStore interface {
 	List(ctx context.Context, prefix string) ([]string, error)
 	Exists(ctx context.Context, key string) (bool, error)
 }
+
+// GuardedKVStore is a KVStore that also performs the three guarded writes,
+// PutIfAbsent, CompareAndSwap and CompareAndDelete, whose outcomes are
+// defined under concurrency.
+//
+// It is the counterpart of go-qrdb's sdk.AtomicKVStore over the six-verb
+// KVStore. go-qrdb's interface embeds its twelve-method KVStore, secondary
+// indexes included, which the server's stores do not carry, so asserting it
+// refuses a store that can do the guarded work.
+//
+// Discover it by type assertion and fail closed when it is absent; a read
+// followed by a write is never a substitute. The three verbs are one
+// capability, as go-qrdb defines them: a store that offers a subset does not
+// satisfy it.
+type GuardedKVStore interface {
+	KVStore
+	PutIfAbsent(ctx context.Context, key string, value []byte) (stored bool, err error)
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (swapped bool, err error)
+	CompareAndDelete(ctx context.Context, key string, expected []byte) (deleted bool, err error)
+}
