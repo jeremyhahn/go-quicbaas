@@ -728,6 +728,38 @@ func TestVecListVectors_Success(t *testing.T) {
 	assert.Equal(t, "v", resp.Vectors[0].Metadata["k"])
 }
 
+// TestVecListVectors_ForwardsPayloadFlags verifies the storage scan is asked
+// for the embeddings the caller requested and always for metadata, which
+// carries the original string ID.
+func TestVecListVectors_ForwardsPayloadFlags(t *testing.T) {
+	tests := []struct {
+		name           string
+		includeVectors bool
+	}{
+		{name: "vectors requested", includeVectors: true},
+		{name: "vectors not requested", includeVectors: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "list-ns", 1)
+			var got *interfaces.VectorScanOptions
+			storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				got = opts
+				return nil, nil
+			}
+
+			_, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
+				Namespace:      "list-ns",
+				IncludeVectors: tt.includeVectors,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.includeVectors, got.IncludeVectors)
+			assert.True(t, got.IncludeMetadata)
+		})
+	}
+}
+
 func TestVecListVectors_NamespaceNotFound(t *testing.T) {
 	svc, _ := newBasicVecSvc(t)
 

@@ -2739,9 +2739,13 @@ func (v *vectorService) ListVectors(ctx context.Context, req *ListVectorsRequest
 	}
 
 	// List vectors from storage using scan
+	// Metadata is always fetched: it carries the original string ID the
+	// transports map back from the numeric storage ID.
 	scanOpts := &interfaces.VectorScanOptions{
-		Limit:  limit + 1, // Request one extra to determine if there's a next page
-		Offset: offset,
+		Limit:           limit + 1, // Request one extra to determine if there's a next page
+		Offset:          offset,
+		IncludeVectors:  req.IncludeVectors,
+		IncludeMetadata: true,
 	}
 	vectors, err := v.storage.ScanNamespace(ctx, scopedNamespace, scanOpts)
 	if err != nil {

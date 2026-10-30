@@ -37,6 +37,7 @@ type pagedVectorTransport struct {
 	qrdbtransport.VectorClient
 	total   int
 	listErr error
+	lastReq *qrdbtransport.ListVectorsRequest
 }
 
 func (p *pagedVectorTransport) Connect(context.Context) error { return nil }
@@ -47,6 +48,7 @@ func (p *pagedVectorTransport) Request(context.Context, string, any, any) error 
 }
 
 func (p *pagedVectorTransport) ListVectors(_ context.Context, req *qrdbtransport.ListVectorsRequest) (*qrdbtransport.ListVectorsResponse, error) {
+	p.lastReq = req
 	if p.listErr != nil {
 		return nil, p.listErr
 	}
@@ -103,6 +105,32 @@ func TestNodeVectorStorage_ScanNamespacePage_WalksEveryVector(t *testing.T) {
 		opts.Cursor = page.NextCursor
 	}
 	assert.Len(t, seen, total)
+}
+
+// TestNodeVectorStorage_ScanNamespacePage_ForwardsPayloadFlags verifies the
+// adapter copies the scan's include flags into the qrdb ListVectors request.
+func TestNodeVectorStorage_ScanNamespacePage_ForwardsPayloadFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		opts *interfaces.VectorScanOptions
+		want [2]bool
+	}{
+		{name: "both requested", opts: &interfaces.VectorScanOptions{Limit: 1, IncludeVectors: true, IncludeMetadata: true}, want: [2]bool{true, true}},
+		{name: "metadata only", opts: &interfaces.VectorScanOptions{Limit: 1, IncludeMetadata: true}, want: [2]bool{false, true}},
+		{name: "nil options fetch both", opts: nil, want: [2]bool{true, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &pagedVectorTransport{total: 1}
+			storage := newPagedNodeVectorStorage(t, fake)
+
+			_, err := storage.ScanNamespacePage(context.Background(), "ns", tt.opts)
+			require.NoError(t, err)
+			require.NotNil(t, fake.lastReq)
+			assert.Equal(t, tt.want[0], fake.lastReq.IncludeVectors)
+			assert.Equal(t, tt.want[1], fake.lastReq.IncludeMetadata)
+		})
+	}
 }
 
 // TestNodeVectorStorage_ScanNamespacePage_ListError verifies a ListVectors
