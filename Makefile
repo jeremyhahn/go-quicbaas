@@ -3328,28 +3328,55 @@ vet-integration: ## Typecheck every integration- and hardware-tagged package (th
 # an API change broke surfaced only in CI's `make vet` (go-quicbaas#572, the
 # stage-4 validator registry). A lane that runs `make lint` now typechecks it.
 #
-# verify-naming after it: the gate is a text scan of the tracked files
-# (milliseconds, no build, no network), so a naming regression reports before
-# the 20-minute golangci-lint pass rather than after it. This is why CI's Lint
-# job needs no separate step for the gate. check-nolint is the same kind of
-# text scan and runs early for the same reason.
+# The repository's own gates (naming, nolint, secure-analyzer, credential
+# literals) are lint-gates, not prerequisites of lint: from ci-template v1.27
+# CI runs `make lint-gates` as its own job beside `make lint`, so Lint's wall
+# time is the longer of the two and not their sum.
 #
 # The gate is split in two (#1416) so each half fits inside one bounded call
 # on a loaded node: `lint-pre` runs the prerequisites, `lint-go` runs
 # golangci-lint alone. `lint` is their composition, in that order, with the
 # same output and exit codes, so CI keeps calling `make lint`. Both halves
 # share GOLANGCI_LINT_RECIPE below, so the timeout and the triage live once.
-lint: lint-pre ## Run linters (naming gate + golangci-lint)
+lint: lint-pre ## Run linters (gofmt, vet, actionlint, golangci-lint)
 	$(GOLANGCI_LINT_RECIPE)
 
 .PHONY: lint-pre
-# 718 s wall on a lane node on 2026-10-16 (load average 52-95, warm build
-# cache) -- still above one 600 s call there, so poll it rather than wait on
-# it. Each prerequisite fits in one call on its own; measured one at a time on
-# 2026-10-16 (load average 70-217): vet-integration 153 s, verify-naming and
-# check-nolint about 1 s each, secure-analyzer-self-test 89 s. secure-analyzer
-# took 616 s, so it is split per tag set; see the times above its targets.
-lint-pre: fmt-check vet-integration verify-naming check-nolint secure-analyzer secure-analyzer-self-test actionlint ## Run the lint prerequisites (fmt-check, vet-integration, naming, nolint, secure-analyzer, actionlint)
+# vet-integration took 153 s on a lane node on 2026-10-16 (load average
+# 70-217), so poll it on a loaded node rather than wait on it.
+lint-pre: fmt-check vet-integration actionlint ## Run the lint prerequisites (fmt-check, vet-integration, actionlint)
+
+.PHONY: lint-gates
+# The ci-template v1.27 lint-gates job runs this without -k, so the first
+# failing gate ends it. verify-naming, check-nolint and check-public-literals
+# are text scans of the tracked files (about a second each) and run first;
+# secure-analyzer took 616 s and secure-analyzer-self-test 89 s on 2026-10-16
+# (load average 70-217), so secure-analyzer is split per tag set; see the
+# times above its targets.
+lint-gates: verify-naming check-nolint check-public-literals secure-analyzer secure-analyzer-self-test ## Run the repository's own gates (naming, nolint, credential literals, secure-analyzer)
+
+.PHONY: check-public-literals
+# No tracked file carries a credential (ci-standard.md section 5): no env
+# file, no forge credential variable with a literal value, and outside test
+# fixtures no token, password or secret set to a 40-hex literal (the forge
+# token's form). A finding prints as path, line and rule only, never the
+# matched text, because CI logs are read by every agent with repository access.
+PUBLIC_LITERAL_FIXTURES := ':!*_test.go' ':!**/testdata/**' ':!test/**' ':!**/test/**' \
+	':!*.test.js' ':!*.test.ts' ':!*.spec.ts'
+FORGE_CREDENTIAL_RE := (GIT_CONFIG_VALUE_[0-9]+|GOMODAUTH[A-Z_]*|GITEA_TOKEN|GOAUTH)[[:space:]]*[:=][^[:alnum:]]{0,3}[A-Za-z0-9_]{20}
+FORGE_TOKEN_RE := (token|passw(or)?d|secret)[^[:alnum:]]{0,2}[:=][^[:alnum:]]{0,3}[0-9a-f]{40}
+check-public-literals: ## Fail when a tracked file carries a credential literal (reports path, line and rule only)
+	@found=$$( { \
+		git ls-files -- '*.env' | sed 's/$$/:0:env-file/'; \
+		git grep -n -I -E -e '$(FORGE_CREDENTIAL_RE)' -- . | cut -d: -f1,2 | sed 's/$$/:forge-credential/'; \
+		git grep -n -I -i -E -e '$(FORGE_TOKEN_RE)' -- . $(PUBLIC_LITERAL_FIXTURES) | cut -d: -f1,2 | sed 's/$$/:forge-token/'; \
+	} ); \
+	if [ -n "$$found" ]; then \
+		printf '%s\n' "$$found"; \
+		echo "$(RED)check-public-literals: tracked files carry credential literals$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)check-public-literals: no credential literals$(NC)"
 
 .PHONY: actionlint
 # actionlint with shellcheck over the workflows (ci-template v1.21 make lint;
