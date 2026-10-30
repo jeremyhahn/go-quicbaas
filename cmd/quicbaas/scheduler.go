@@ -53,7 +53,46 @@ var (
 	schedulerForce       bool
 	schedulerReason      string
 	schedulerCursor      string
+	schedulerScope       string
 )
+
+// schedulerJobScopes maps the --scope flag values to SDK owner types. The
+// values are the ones the REST scope query parameter accepts.
+var schedulerJobScopes = map[string]scheduler.OwnerType{
+	"tenant":    scheduler.OwnerTypeTenant,
+	"delegated": scheduler.OwnerTypeDelegated,
+	"system":    scheduler.OwnerTypeSystem,
+}
+
+// addSchedulerScopeFlag adds the --scope flag to a by-ID job command.
+func addSchedulerScopeFlag(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&schedulerScope, "scope", "",
+		"Scope the job is listed under (tenant, delegated, system); default is the tenant's own jobs")
+}
+
+// parseSchedulerScope returns the scope named by --scope, or nil when the
+// flag is unset so the request keeps the tenant scope.
+func parseSchedulerScope(op string) (*scheduler.OwnerType, error) {
+	if schedulerScope == "" {
+		return nil, nil
+	}
+	scope, ok := schedulerJobScopes[schedulerScope]
+	if !ok {
+		return nil, errors.Newf(errors.ErrInvalidInput, op,
+			"invalid job scope %q (tenant, delegated, system)", schedulerScope)
+	}
+	return &scope, nil
+}
+
+// parseSchedulerJobOptions returns the by-ID job options for --scope: none
+// when the flag is unset, otherwise WithJobScope.
+func parseSchedulerJobOptions(op string) ([]scheduler.JobOption, error) {
+	scope, err := parseSchedulerScope(op)
+	if err != nil || scope == nil {
+		return nil, err
+	}
+	return []scheduler.JobOption{scheduler.WithJobScope(*scope)}, nil
+}
 
 // schedulerJobTypes maps the --type flag values to SDK job types.
 var schedulerJobTypes = map[string]scheduler.JobType{
@@ -331,6 +370,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerGetCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	return cmd
 }
@@ -341,8 +381,12 @@ func runSchedulerGetCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.get")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		job, err := client.GetJob(ctx, jobID)
+		job, err := client.GetJob(ctx, jobID, opts...)
 		if err != nil {
 			return formatError(err)
 		}
@@ -367,6 +411,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerDeleteCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	cmd.Flags().BoolVar(&schedulerForce, "force", false, "Force deletion even if job is running")
 
@@ -379,10 +424,15 @@ func runSchedulerDeleteCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	scope, err := parseSchedulerScope("scheduler.delete")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
 		resp, err := client.DeleteJobWithOptions(ctx, &scheduler.DeleteJobRequest{
 			JobID:    jobID,
 			TenantID: globalTenantID,
+			Scope:    scope,
 			Force:    schedulerForce,
 		})
 		if err != nil {
@@ -408,6 +458,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerTriggerCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	return cmd
 }
@@ -418,8 +469,12 @@ func runSchedulerTriggerCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.trigger")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		resp, err := client.TriggerJob(ctx, jobID)
+		resp, err := client.TriggerJob(ctx, jobID, opts...)
 		if err != nil {
 			return formatError(err)
 		}
@@ -443,6 +498,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerPauseCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	return cmd
 }
@@ -453,8 +509,12 @@ func runSchedulerPauseCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.pause")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		resp, err := client.PauseJob(ctx, jobID)
+		resp, err := client.PauseJob(ctx, jobID, opts...)
 		if err != nil {
 			return formatError(err)
 		}
@@ -478,6 +538,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerResumeCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	return cmd
 }
@@ -488,8 +549,12 @@ func runSchedulerResumeCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.resume")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		resp, err := client.ResumeJob(ctx, jobID)
+		resp, err := client.ResumeJob(ctx, jobID, opts...)
 		if err != nil {
 			return formatError(err)
 		}
@@ -514,6 +579,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerCancelCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	cmd.Flags().StringVar(&schedulerReason, "reason", "", "Cancellation reason")
 
@@ -526,8 +592,12 @@ func runSchedulerCancelCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.cancel")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		resp, err := client.CancelJob(ctx, jobID, schedulerReason)
+		resp, err := client.CancelJob(ctx, jobID, schedulerReason, opts...)
 		if err != nil {
 			return formatError(err)
 		}
@@ -552,6 +622,7 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: runSchedulerHistoryCommand,
 	}
+	addSchedulerScopeFlag(cmd)
 
 	cmd.Flags().IntVar(&schedulerLimit, "limit", 50, "Maximum number of executions to return")
 
@@ -564,8 +635,12 @@ func runSchedulerHistoryCommand(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	opts, err := parseSchedulerJobOptions("scheduler.history")
+	if err != nil {
+		return err
+	}
 	return runSchedulerCall(func(ctx stdcontext.Context, client scheduler.Client) error {
-		resp, err := client.GetJobHistory(ctx, jobID, &scheduler.HistoryOptions{Limit: schedulerLimit})
+		resp, err := client.GetJobHistory(ctx, jobID, &scheduler.HistoryOptions{Limit: schedulerLimit}, opts...)
 		if err != nil {
 			return formatError(err)
 		}
