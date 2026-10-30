@@ -520,7 +520,9 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		return nil, k.abandonTenantKeyClaim(ctx, claim, "GenerateKey",
 			WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key"))
 	}
-	k.completeTenantKeyClaim(ctx, claim, "GenerateKey")
+	if err := k.completeTenantKeyClaim(ctx, claim, "GenerateKey"); err != nil {
+		return nil, err
+	}
 
 	// Convert manager response to service response
 	// Return the original (unscoped) key name to callers
@@ -660,7 +662,9 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		return nil, k.abandonTenantKeyClaim(ctx, claim, "ImportKey",
 			WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key"))
 	}
-	k.completeTenantKeyClaim(ctx, claim, "ImportKey")
+	if err := k.completeTenantKeyClaim(ctx, claim, "ImportKey"); err != nil {
+		return nil, err
+	}
 
 	// Convert manager response to service response
 	// Return the original (unscoped) key name to callers
@@ -1344,6 +1348,14 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		return nil, err
 	}
 
+	// Record the intent to delete before the backend delete, so a delete
+	// whose release never runs (a cancelled request, a failed release, a
+	// crash) leaves a record its retry can release.
+	intent, marked, err := k.markTenantKeyDeleting(ctx, scopedKeyID, ownerRecord, "DeleteKey")
+	if err != nil {
+		return nil, err
+	}
+
 	// Call KMS manager to delete key
 	err = k.kmsManager.DeleteKey(ctx, scopedKeyID)
 	if err != nil {
@@ -1355,19 +1367,23 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		// this branch the manager's ErrNotFound would be clobbered with
 		// ErrInternal and deleting an already-deleted key would return 500.
 		//
-		// Only a tombstone, written after this service's own backend delete
-		// succeeded, proves the key is gone: a retry whose release failed
-		// lands here and releases it. Any other record is kept. The backend
-		// folds lookup failures (a cold metadata cache after restart, a
-		// transient HSM or key-store error) into ErrKeyNotFound, so releasing
-		// a completed record could orphan a surviving key, and a pending
-		// claim belongs to a create in flight.
-		if stderrors.Is(err, kms.ErrKeyNotFound) {
-			if tenantKeyRecordDeleted(ownerRecord) {
-				if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); releaseErr != nil {
-					return nil, releaseErr
-				}
+		// Only an intent left by an earlier delete proves the key is gone:
+		// that delete reached the backend, so a retry whose release failed
+		// lands here and releases it. A record this request marked itself is
+		// restored. The backend folds lookup failures (a cold metadata cache
+		// after restart, a transient HSM or key-store error) into
+		// ErrKeyNotFound, so releasing a completed record could orphan a
+		// surviving key, and a pending claim belongs to a create in flight.
+		if stderrors.Is(err, kms.ErrKeyNotFound) && !marked && tenantKeyRecordDeleting(intent) {
+			if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, intent, "DeleteKey"); releaseErr != nil {
+				return nil, releaseErr
 			}
+			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
+		}
+		if marked {
+			k.restoreTenantKeyRecord(ctx, scopedKeyID, intent, ownerRecord, "DeleteKey")
+		}
+		if stderrors.Is(err, kms.ErrKeyNotFound) {
 			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
 		}
 		return nil, WrapError(err, errors.ErrInternal, "kms.DeleteKey", "failed to delete key")
@@ -1376,13 +1392,7 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	// Release the name in the caller's tenant only; another tenant's key of
 	// the same name keeps its entry.
 	k.keyNames.Delete(scopedKeyID)
-	// Mark the record deleted before releasing it, so a retry after a
-	// failed release can tell a confirmed absence from a failed lookup.
-	tombstone, err := k.markTenantKeyDeleted(ctx, scopedKeyID, ownerRecord, "DeleteKey")
-	if err != nil {
-		return nil, err
-	}
-	if err := k.releaseTenantKey(ctx, scopedKeyID, tombstone, "DeleteKey"); err != nil {
+	if err := k.releaseTenantKey(ctx, scopedKeyID, intent, "DeleteKey"); err != nil {
 		return nil, err
 	}
 

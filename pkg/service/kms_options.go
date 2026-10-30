@@ -366,7 +366,10 @@ func (k *kmsServiceImpl) UnwrapKey(ctx context.Context, req *UnwrapKeyRequest) (
 		return nil, k.abandonTenantKeyClaim(ctx, claim, "UnwrapKey",
 			WrapError(err, errors.ErrInternal, "kms.UnwrapKey", "failed to import unwrapped key"))
 	}
-	k.completeTenantKeyClaim(ctx, claim, "UnwrapKey")
+	if err := k.completeTenantKeyClaim(ctx, claim, "UnwrapKey"); err != nil {
+		k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, false)
+		return nil, err
+	}
 
 	// Log successful import
 	k.logAuditImport(ctx, req.KeyID, req.Name, req.Algorithm, true)

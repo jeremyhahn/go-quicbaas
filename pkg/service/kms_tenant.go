@@ -19,6 +19,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -221,11 +222,19 @@ const kmsClaimStaleAfter = 10 * time.Minute
 // can go stale.
 const kmsOwnerRecordCompleted = "completed"
 
-// kmsOwnerRecordDeleted replaces the claim time in an ownership record once
-// the service's own backend delete of its key has succeeded. Only such a
-// tombstone proves the key is gone: a later not-found releases it, and a
-// create of the same name reclaims it at once.
-const kmsOwnerRecordDeleted = "deleted"
+// kmsOwnerRecordDeleting replaces the state of an ownership record before
+// the service deletes its key. It records the intent ahead of the backend
+// delete, so a delete whose finalization never ran (a cancelled request, a
+// failed release, a crash) leaves a record its retry can release: a later
+// not-found on a record already in this state releases it, and a create
+// that finds the name free reclaims it. A delete that fails, or meets an
+// unconfirmed not-found on a record it marked itself, restores the record.
+const kmsOwnerRecordDeleting = "deleting"
+
+// kmsClaimCompleteAttempts bounds the writes that mark a claim completed. A
+// create reports success only once its record is completed, so a transient
+// store fault is retried before the create gives up and rolls its key back.
+const kmsClaimCompleteAttempts = 3
 
 // KeyOwnershipRecordMalformedError reports an ownership record that does not
 // parse as tenant, holder and claim time. It is never reclaimed.
@@ -235,6 +244,16 @@ type KeyOwnershipRecordMalformedError struct {
 
 func (e *KeyOwnershipRecordMalformedError) Error() string {
 	return fmt.Sprintf("service: malformed key ownership record %q", e.Record)
+}
+
+// KeyOwnershipRecordChangedError reports an ownership record that another
+// request replaced while this one was moving it to a new state.
+type KeyOwnershipRecordChangedError struct {
+	Record string
+}
+
+func (e *KeyOwnershipRecordChangedError) Error() string {
+	return fmt.Sprintf("service: key ownership record %q changed concurrently", e.Record)
 }
 
 // KeyOwnershipError reports that a tenant asked for a key it does not own:
@@ -338,9 +357,10 @@ func (k *kmsServiceImpl) readKeyOwnerRecord(ctx context.Context, scopedID, opera
 // value names the tenant and a random holder unique to the request, so a
 // rollback deletes the record only while it is still this request's.
 type tenantKeyClaim struct {
-	store interfaces.GuardedKVStore
-	key   string
-	value []byte
+	store    interfaces.GuardedKVStore
+	scopedID string
+	key      string
+	value    []byte
 }
 
 // newTenantKeyClaimHolder returns a random holder that tells one create
@@ -399,8 +419,9 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 		return nil, WrapError(err, errors.ErrInternal, op, "failed to generate key ownership claim holder")
 	}
 	claim := &tenantKeyClaim{
-		store: atomicStore,
-		key:   kmsOwnerRecordKey(scopedID),
+		store:    atomicStore,
+		scopedID: scopedID,
+		key:      kmsOwnerRecordKey(scopedID),
 		value: []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator +
 			strconv.FormatInt(k.now().UTC().UnixNano(), 10)),
 	}
@@ -443,7 +464,7 @@ func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store i
 		}
 		return false, WrapError(err, errors.ErrStorage, op, "failed to read key ownership record")
 	}
-	if !tenantKeyRecordDeleted(record) {
+	if !tenantKeyRecordDeleting(record) {
 		claimedAt, completed, err := tenantKeyClaimTime(record)
 		if err != nil {
 			return false, WrapError(err, errors.ErrStorage, op, "failed to parse key ownership record")
@@ -481,37 +502,49 @@ func tenantKeyClaimTime(record []byte) (claimedAt time.Time, completed bool, err
 	return time.Unix(0, nanos).UTC(), false, nil
 }
 
-// tenantKeyRecordDeleted reports whether record is a tombstone, written once
-// the backend confirmed the delete of its key.
-func tenantKeyRecordDeleted(record []byte) bool {
+// tenantKeyRecordDeleting reports whether record carries the intent of a
+// delete of its key, written before the backend delete was issued.
+func tenantKeyRecordDeleting(record []byte) bool {
 	fields := strings.Split(string(record), kmsOwnerRecordSeparator)
-	return len(fields) == 3 && fields[0] != "" && fields[1] != "" && fields[2] == kmsOwnerRecordDeleted
+	return len(fields) == 3 && fields[0] != "" && fields[1] != "" && fields[2] == kmsOwnerRecordDeleting
 }
 
-// markTenantKeyDeleted swaps record for its tombstone after the backend
-// deleted the key, and returns the tombstone for the release that follows.
-// A nil record, as a system key has, has nothing to mark. A lost compare
-// means another delete already marked or released the record, so nothing
-// is left to release.
-func (k *kmsServiceImpl) markTenantKeyDeleted(ctx context.Context, scopedID string, record []byte, operation string) ([]byte, error) {
-	if record == nil || tenantKeyRecordDeleted(record) {
-		return record, nil
+// tenantKeyRecordWithState returns record, keeping its owner and holder,
+// with its claim time or state replaced by state.
+func tenantKeyRecordWithState(record []byte, state string) []byte {
+	tenantID, rest, _ := strings.Cut(string(record), kmsOwnerRecordSeparator)
+	holder, _, _ := strings.Cut(rest, kmsOwnerRecordSeparator)
+	return []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator + state)
+}
+
+// markTenantKeyDeleting records the intent to delete the key before the
+// backend delete runs, and returns the record the delete then finalizes.
+// marked reports whether this call wrote the intent, so the caller knows to
+// restore the record if the delete does not go through. A nil record, as a
+// system key has, has nothing to mark, and a record already carrying the
+// intent, left by an earlier delete, is returned as it is. No key has been
+// touched yet, so the request's own context bounds the write.
+func (k *kmsServiceImpl) markTenantKeyDeleting(ctx context.Context, scopedID string, record []byte, operation string) (intent []byte, marked bool, err error) {
+	if record == nil || tenantKeyRecordDeleting(record) {
+		return record, false, nil
 	}
 	atomicStore, err := k.atomicOwnerStore(operation)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	tenantID, rest, _ := strings.Cut(string(record), kmsOwnerRecordSeparator)
-	holder, _, _ := strings.Cut(rest, kmsOwnerRecordSeparator)
-	tombstone := []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator + kmsOwnerRecordDeleted)
-	swapped, err := atomicStore.CompareAndSwap(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), record, tombstone)
+	intent = tenantKeyRecordWithState(record, kmsOwnerRecordDeleting)
+	swapped, err := atomicStore.CompareAndSwap(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), record, intent)
 	if err != nil {
-		return nil, WrapError(err, errors.ErrStorage, "kms."+operation, "failed to mark key ownership record deleted")
+		return nil, false, WrapError(err, errors.ErrStorage, "kms."+operation, "failed to mark key ownership record for deletion")
 	}
 	if !swapped {
-		return nil, nil
+		return nil, false, &errors.QBError{
+			Code: errors.ErrConflict,
+			Op:   "kms." + operation,
+			Err:  &KeyOwnershipRecordChangedError{Record: kmsOwnerRecordKey(scopedID)},
+		}
 	}
-	return tombstone, nil
+	return intent, true, nil
 }
 
 func (k *kmsServiceImpl) now() time.Time {
@@ -521,9 +554,32 @@ func (k *kmsServiceImpl) now() time.Time {
 	return time.Now()
 }
 
-// releaseTenantKey deletes the ownership record a delete resolved, only if
+// restoreTenantKeyRecord puts back the record a delete marked when the key
+// may still exist: the backend delete failed, or its not-found is not
+// confirmed. It compares on the intent, so a record another request has
+// since replaced is left alone. It runs detached from the request, bounded,
+// and a failed restore is logged: the delete's own error is the one the
+// caller needs, and the intent still names the owner.
+func (k *kmsServiceImpl) restoreTenantKeyRecord(ctx context.Context, scopedID string, intent, original []byte, operation string) {
+	atomicStore, err := k.atomicOwnerStore(operation)
+	if err != nil {
+		return
+	}
+	restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
+	defer cancel()
+	swapped, err := atomicStore.CompareAndSwap(tenantctx.WithSystem(restoreCtx), kmsOwnerRecordKey(scopedID), intent, original)
+	if (err != nil || !swapped) && k.logger != nil {
+		k.logger.Error("failed to restore key ownership record after an unfinished delete",
+			"operation", operation, "record", kmsOwnerRecordKey(scopedID), "restored", swapped, "error", err)
+	}
+}
+
+// releaseTenantKey deletes the ownership record of a deleted key, provided
 // the store still holds that exact record. A nil record (a system-tenant key)
-// releases nothing.
+// releases nothing. The backend delete has already happened, so the release
+// runs detached from the request, bounded: a request cancelled after the
+// delete still frees the name, and a release that fails anyway leaves the
+// intent for the retry to release.
 func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, scopedID string, record []byte, operation string) error {
 	if record == nil {
 		return nil
@@ -532,9 +588,11 @@ func (k *kmsServiceImpl) releaseTenantKey(ctx context.Context, scopedID string, 
 	if err != nil {
 		return err
 	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
+	defer cancel()
 	// A lost compare is not an error: the record now belongs to a newer
 	// key of the same name, created after this delete resolved its own.
-	if _, err := atomicStore.CompareAndDelete(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), record); err != nil {
+	if _, err := atomicStore.CompareAndDelete(tenantctx.WithSystem(releaseCtx), kmsOwnerRecordKey(scopedID), record); err != nil {
 		return WrapError(err, errors.ErrStorage, "kms."+operation, "failed to delete key ownership record")
 	}
 	return nil
@@ -594,29 +652,80 @@ func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, claim *tenan
 }
 
 // completeTenantKeyClaim marks the claim's ownership record completed once
-// its key has been created, so the record is never reclaimed as stale. The
-// key exists either way, so a failed mark is logged and not returned: the
-// record still names the owner, and only stays reclaimable. Like the
-// rollback, the mark outlives a request cancelled after the create.
-func (k *kmsServiceImpl) completeTenantKeyClaim(ctx context.Context, claim *tenantKeyClaim, operation string) {
+// its key has been created, so the record is never reclaimed as stale. A
+// create may report success only on a completed record: a pending one whose
+// key exists is reclaimed once old by a create whose backend lookup folds an
+// outage into not-found, and the tenant loses its live key. So the mark is
+// retried, bounded, and if it still fails the create is rolled back and the
+// error returned. Like the rollback, the mark outlives a request cancelled
+// after the create.
+func (k *kmsServiceImpl) completeTenantKeyClaim(ctx context.Context, claim *tenantKeyClaim, operation string) error {
 	if claim == nil {
-		return
+		return nil
 	}
-	tenantID, rest, _ := strings.Cut(string(claim.value), kmsOwnerRecordSeparator)
-	holder, _, _ := strings.Cut(rest, kmsOwnerRecordSeparator)
-	completed := []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator + kmsOwnerRecordCompleted)
-
+	completed := tenantKeyRecordWithState(claim.value, kmsOwnerRecordCompleted)
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
 	defer cancel()
-	swapped, err := claim.store.CompareAndSwap(tenantctx.WithSystem(markCtx), claim.key, claim.value, completed)
-	if err != nil || !swapped {
-		if k.logger != nil {
-			k.logger.Error("failed to mark key ownership record completed after a create",
-				"operation", operation, "record", claim.key, "marked", swapped, "error", err)
-		}
-		return
+	if err := markTenantKeyClaimCompleted(markCtx, claim, completed, operation); err != nil {
+		return k.rollBackTenantKey(ctx, claim, operation, err)
 	}
 	claim.value = completed
+	return nil
+}
+
+// markTenantKeyClaimCompleted swaps the claim's pending record for
+// completed, retrying a store fault up to kmsClaimCompleteAttempts times.
+// A lost compare is success when the store already holds completed, as when
+// an earlier attempt applied but its reply was lost; otherwise another
+// request replaced the record and the claim is lost.
+func markTenantKeyClaimCompleted(ctx context.Context, claim *tenantKeyClaim, completed []byte, operation string) error {
+	op := "kms." + operation
+	var lastErr error
+	for attempt := 0; attempt < kmsClaimCompleteAttempts && ctx.Err() == nil; attempt++ {
+		swapped, err := claim.store.CompareAndSwap(tenantctx.WithSystem(ctx), claim.key, claim.value, completed)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if swapped {
+			return nil
+		}
+		stored, err := claim.store.Get(tenantctx.WithSystem(ctx), claim.key)
+		if err != nil && !errors.IsNotFound(err) {
+			lastErr = err
+			continue
+		}
+		if err == nil && bytes.Equal(stored, completed) {
+			return nil
+		}
+		return &errors.QBError{
+			Code: errors.ErrConflict,
+			Op:   op,
+			Err:  &KeyOwnershipRecordChangedError{Record: claim.key},
+		}
+	}
+	if lastErr == nil {
+		lastErr = ctx.Err()
+	}
+	return WrapError(lastErr, errors.ErrStorage, op, "failed to mark key ownership record completed")
+}
+
+// rollBackTenantKey undoes a create whose ownership record could not be
+// completed, and returns cause. The key is deleted first and the claim
+// released only once that delete succeeded: a key that survives keeps its
+// pending claim, so it stays its tenant's to delete rather than becoming a
+// key nobody owns. The rollback runs detached from the request, bounded.
+func (k *kmsServiceImpl) rollBackTenantKey(ctx context.Context, claim *tenantKeyClaim, operation string, cause error) error {
+	deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
+	defer cancel()
+	if err := k.kmsManager.DeleteKey(deleteCtx, claim.scopedID); err != nil {
+		if k.logger != nil {
+			k.logger.Error("failed to delete a created key whose ownership record could not be completed",
+				"operation", operation, "record", claim.key, "error", err)
+		}
+		return cause
+	}
+	return k.abandonTenantKeyClaim(ctx, claim, operation, cause)
 }
 
 // resolveTenantKey returns the scoped key ID for a tenant's key name after
