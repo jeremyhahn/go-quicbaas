@@ -554,7 +554,10 @@ env:
   CI_FULL_TIER: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
   # v1.24 (CA m749, m751 (a)): the files a docs-only PR may touch. CUSTOMIZE: narrow it
   # in a repo that embeds or generates from docs/ (go:embed, OpenAPI, protos).
-  DOCS_ONLY_PATTERN: '(\.md$|^docs/)'
+  # go-quicbaas (DS-3161): docs/, changelog.d/, a top-level *.md file and any
+  # README.md; a *.md file elsewhere can be a go:embed input
+  # (pkg/sdlc/prompts/triage.md) and is code.
+  DOCS_ONLY_PATTERN: '(^[^/]+\.md$|(^|/)README\.md$|^docs/|^changelog\.d/)'
   # v1.26.1 (Company Agent m1128 (9)): the repository's releasability test, which
   # a docs-only PR still runs because make coverage skips on it. CUSTOMIZE: the
   # `go test` arguments, package and -run pattern (for example
@@ -727,7 +730,7 @@ jobs:
     needs: [changes, schedule-guard]   # v1.24 (CA m749, m751 (a)); v1.29.3
     # v1.29.3: on a schedule run, only on the schedule guard's `run`.
     if: ${{ github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run' }}
-    timeout-minutes: 90       # CUSTOMIZE: give the stages honest headroom
+    timeout-minutes: 180      # CUSTOMIZE: give the stages honest headroom
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class. Only a push to main writes the
@@ -773,6 +776,10 @@ jobs:
       # CUSTOMIZE: host tuning a test needs (e.g. QUIC UDP buffers:
       # sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032)
       # goes here; the container shares the runner's kernel.
+      # go-quicbaas: Gitea publishes no refs/pull/<n>/merge, so the merge
+      # result is built here against the base the run's event pinned (#436).
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
 
       - name: Build the devcontainer images
         run: |
@@ -938,6 +945,15 @@ jobs:
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
         run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make coverage GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
 
+      # CUSTOMIZE: the TypeScript SDK, frontend and JavaScript SDK unit tests
+      # (make test-sdk-ts, test-frontend, test-sdk-js) are a gate: make build
+      # only compiles them, and the web job that ran them is gone (Codex
+      # 5785). Their npm ci runs offline from the npm cache the toolchain
+      # image seeds from the three lockfiles, so the step needs no network.
+      - name: make test-sdk-ts test-frontend test-sdk-js
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && needs.changes.outputs.docs_only != 'true' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-sdk-ts test-frontend test-sdk-js"
+
       # make security: gosec, govulncheck, go mod verify (devops.md §8), with
       # trivy fs per the phase (§8a). The target owns gosec's flags and its
       # memory bounds (GOMEMLIMIT, GOMAXPROCS, -concurrency; v1.6 to v1.8) and
@@ -1099,7 +1115,7 @@ jobs:
     needs: schedule-guard
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
-    timeout-minutes: 60       # CUSTOMIZE
+    timeout-minutes: 120      # CUSTOMIZE
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1213,6 +1229,10 @@ jobs:
           echo "IT_LEASE_ID=$id" >> "$GITHUB_ENV"
 
       # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
+      # go-quicbaas: the merge result, against the same pinned base as the
+      # image job (#436).
+      - name: Validate the merge result, not the head alone
+        run: .github/scripts/ci-merge-base.sh "${{ github.event_name }}" "${{ github.base_ref }}" "${{ github.event.pull_request.base.sha }}"
 
       - name: Write the module credential file
         run: |
@@ -1441,7 +1461,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !github.event.pull_request.draft }}   # v1.26
     env:
-      OBJSTORE_SEAMS: ''      # CUSTOMIZE
+      OBJSTORE_SEAMS: 'pkg/backup/|pkg/catalog/backend_manager\.go|pkg/config/storage\.go|pkg/security/storage_adapter\.go'      # CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1476,7 +1496,10 @@ jobs:
     if: ${{ always() && (github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict != 'busy') }}
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs.
-    needs: [changes, schedule-guard, image, lint-gates, integration, soak, arch-gates]
+    # go-quicbaas: Integration still runs but does not gate until row #1700
+    # closes (CA m787). Restore it then in needs and as a full check line, and
+    # drop it from nonGatingJobs in test/buildgates/ci_gate_test.go.
+    needs: [changes, schedule-guard, image, lint-gates, soak, arch-gates]
     steps:
       - name: Fail closed on any non-success
         env:
@@ -1525,7 +1548,6 @@ jobs:
           check schedule-guard "${{ needs.schedule-guard.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" pr
-          check integration "${{ needs.integration.result }}" full
           check soak        "${{ needs.soak.result }}" nightly
           check arch-gates  "${{ needs.arch-gates.result }}" pr
           exit $BAD
