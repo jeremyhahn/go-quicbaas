@@ -68,7 +68,7 @@ func testGRPCGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 
 	// Scheduler operations via REST
 	restEndpoints := getRESTEndpoints()
-	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0])
+	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0], WithSchedulerScope(schedulerScopeDelegated))
 
 	// Verify scheduler is available
 	_, err = schedulerClient.GetStatus(ctx)
@@ -188,7 +188,7 @@ func testRESTGracePeriodWorkflow(t *testing.T, ctx context.Context) {
 	requireKMSAvailable(t, grpcClient, ctx)
 
 	restEndpoints := getRESTEndpoints()
-	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0])
+	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0], WithSchedulerScope(schedulerScopeDelegated))
 
 	// Verify scheduler is available via REST
 	_, err = schedulerClient.GetStatus(ctx)
@@ -278,7 +278,7 @@ func TestGracePeriodJobCancellation(t *testing.T) {
 	// Scheduler operations via REST
 	restEndpoints := getRESTEndpoints()
 	require.NotEmpty(t, restEndpoints, "REST endpoints must be available")
-	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0])
+	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0], WithSchedulerScope(schedulerScopeDelegated))
 
 	// Verify scheduler is available
 	_, err = schedulerClient.GetStatus(ctx)
@@ -381,7 +381,7 @@ func TestMultipleGracePeriodRotations(t *testing.T) {
 
 	// Scheduler via REST
 	restEndpoints := getRESTEndpoints()
-	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0])
+	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0], WithSchedulerScope(schedulerScopeDelegated))
 
 	_, err = schedulerClient.GetStatus(ctx)
 	require.NoError(t, err, "Scheduler must be available via REST")
@@ -492,7 +492,7 @@ func TestGracePeriodWithEncryption(t *testing.T) {
 
 	// Scheduler via REST
 	restEndpoints := getRESTEndpoints()
-	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0])
+	schedulerClient := NewSchedulerRESTClient(t, restEndpoints[0], WithSchedulerScope(schedulerScopeDelegated))
 
 	_, err = schedulerClient.GetStatus(ctx)
 	require.NoError(t, err, "Scheduler must be available via REST")

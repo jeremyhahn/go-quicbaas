@@ -156,17 +156,49 @@ func generateUniqueKeyName(prefix string) string {
 type SchedulerRESTClient struct {
 	baseURL    string
 	httpClient *http.Client
+	// scope selects the job namespace of the per-job endpoints. Empty is
+	// the caller's tenant namespace; "delegated" is the system namespace
+	// where KMS.RotateKey schedules its grace-period jobs.
+	scope string
+}
+
+// SchedulerRESTClientOption configures a SchedulerRESTClient.
+type SchedulerRESTClientOption func(*SchedulerRESTClient)
+
+// schedulerScopeDelegated is the scope of jobs a service schedules in the
+// system namespace on a tenant's behalf.
+const schedulerScopeDelegated = "delegated"
+
+// WithSchedulerScope sets the scope the client passes to the per-job
+// endpoints.
+func WithSchedulerScope(scope string) SchedulerRESTClientOption {
+	return func(c *SchedulerRESTClient) {
+		c.scope = scope
+	}
+}
+
+// jobURL returns the URL of a per-job endpoint, with the client's scope.
+func (c *SchedulerRESTClient) jobURL(jobID uint64, action string) string {
+	jobURL := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d%s", c.baseURL, jobID, action)
+	if c.scope != "" {
+		jobURL += "?scope=" + c.scope
+	}
+	return jobURL
 }
 
 // NewSchedulerRESTClient creates a new scheduler REST client that acts as the
 // tenant operator: go-qrdb grants the scheduler:* job verbs to the built-in
 // Operator role and to no other built-in role.
-func NewSchedulerRESTClient(t *testing.T, baseURL string) *SchedulerRESTClient {
+func NewSchedulerRESTClient(t *testing.T, baseURL string, opts ...SchedulerRESTClientOption) *SchedulerRESTClient {
 	t.Helper()
-	return &SchedulerRESTClient{
+	client := &SchedulerRESTClient{
 		baseURL:    baseURL,
 		httpClient: helpers.NewTenantOperatorHTTPClient(t, 30*time.Second),
 	}
+	for _, opt := range opts {
+		opt(client)
+	}
+	return client
 }
 
 // RESTCreateJobRequest represents the REST API request for creating a job.
@@ -324,7 +356,7 @@ func (c *SchedulerRESTClient) CreateJob(ctx context.Context, req *RESTCreateJobR
 
 // GetJob retrieves a job via REST API.
 func (c *SchedulerRESTClient) GetJob(ctx context.Context, jobID uint64) (*RESTJobResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d", c.baseURL, jobID)
+	url := c.jobURL(jobID, "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -404,7 +436,7 @@ func (c *SchedulerRESTClient) ListJobs(ctx context.Context, limit int, cursor st
 
 // DeleteJob deletes a job via REST API.
 func (c *SchedulerRESTClient) DeleteJob(ctx context.Context, jobID uint64) error {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d", c.baseURL, jobID)
+	url := c.jobURL(jobID, "")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
@@ -427,7 +459,7 @@ func (c *SchedulerRESTClient) DeleteJob(ctx context.Context, jobID uint64) error
 
 // TriggerJob triggers immediate execution of a job via REST API.
 func (c *SchedulerRESTClient) TriggerJob(ctx context.Context, jobID uint64) error {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/trigger", c.baseURL, jobID)
+	url := c.jobURL(jobID, "/trigger")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -450,7 +482,7 @@ func (c *SchedulerRESTClient) TriggerJob(ctx context.Context, jobID uint64) erro
 
 // PauseJob pauses a job via REST API.
 func (c *SchedulerRESTClient) PauseJob(ctx context.Context, jobID uint64) (*RESTPauseJobResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/pause", c.baseURL, jobID)
+	url := c.jobURL(jobID, "/pause")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -482,7 +514,7 @@ func (c *SchedulerRESTClient) PauseJob(ctx context.Context, jobID uint64) (*REST
 
 // ResumeJob resumes a paused job via REST API.
 func (c *SchedulerRESTClient) ResumeJob(ctx context.Context, jobID uint64) (*RESTResumeJobResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/resume", c.baseURL, jobID)
+	url := c.jobURL(jobID, "/resume")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
@@ -514,7 +546,7 @@ func (c *SchedulerRESTClient) ResumeJob(ctx context.Context, jobID uint64) (*RES
 
 // CancelJob cancels a job via REST API.
 func (c *SchedulerRESTClient) CancelJob(ctx context.Context, jobID uint64, reason string) (*RESTCancelJobResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/scheduler/jobs/%d/cancel", c.baseURL, jobID)
+	url := c.jobURL(jobID, "/cancel")
 
 	var body io.Reader
 	if reason != "" {
