@@ -1354,22 +1354,19 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 		// GetKey path. WrapError always stamps the supplied code, so without
 		// this branch the manager's ErrNotFound would be clobbered with
 		// ErrInternal and deleting an already-deleted key would return 500.
+		//
+		// Only a tombstone, written after this service's own backend delete
+		// succeeded, proves the key is gone: a retry whose release failed
+		// lands here and releases it. Any other record is kept. The backend
+		// folds lookup failures (a cold metadata cache after restart, a
+		// transient HSM or key-store error) into ErrKeyNotFound, so releasing
+		// a completed record could orphan a surviving key, and a pending
+		// claim belongs to a create in flight.
 		if stderrors.Is(err, kms.ErrKeyNotFound) {
-			// A pending claim is a create in flight that has not reached
-			// the backend yet: releasing it would strand the key that
-			// create is about to make, so it is left for the create to
-			// complete or abandon.
-			pending, pendingErr := tenantKeyClaimPending(ownerRecord)
-			if pendingErr != nil {
-				return nil, WrapError(pendingErr, errors.ErrStorage, "kms.DeleteKey", "failed to parse key ownership record")
-			}
-			if pending {
-				return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
-			}
-			// The key is gone, so its ownership record must go too; a
-			// retried delete after a failed release lands here.
-			if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); releaseErr != nil {
-				return nil, releaseErr
+			if tenantKeyRecordDeleted(ownerRecord) {
+				if releaseErr := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); releaseErr != nil {
+					return nil, releaseErr
+				}
 			}
 			return nil, WrapError(err, errors.ErrNotFound, "kms.DeleteKey", "key not found")
 		}
@@ -1379,7 +1376,13 @@ func (k *kmsServiceImpl) DeleteKey(ctx context.Context, req *DeleteKeyRequest) (
 	// Release the name in the caller's tenant only; another tenant's key of
 	// the same name keeps its entry.
 	k.keyNames.Delete(scopedKeyID)
-	if err := k.releaseTenantKey(ctx, scopedKeyID, ownerRecord, "DeleteKey"); err != nil {
+	// Mark the record deleted before releasing it, so a retry after a
+	// failed release can tell a confirmed absence from a failed lookup.
+	tombstone, err := k.markTenantKeyDeleted(ctx, scopedKeyID, ownerRecord, "DeleteKey")
+	if err != nil {
+		return nil, err
+	}
+	if err := k.releaseTenantKey(ctx, scopedKeyID, tombstone, "DeleteKey"); err != nil {
 		return nil, err
 	}
 

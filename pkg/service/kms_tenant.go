@@ -221,6 +221,12 @@ const kmsClaimStaleAfter = 10 * time.Minute
 // can go stale.
 const kmsOwnerRecordCompleted = "completed"
 
+// kmsOwnerRecordDeleted replaces the claim time in an ownership record once
+// the service's own backend delete of its key has succeeded. Only such a
+// tombstone proves the key is gone: a later not-found releases it, and a
+// create of the same name reclaims it at once.
+const kmsOwnerRecordDeleted = "deleted"
+
 // KeyOwnershipRecordMalformedError reports an ownership record that does not
 // parse as tenant, holder and claim time. It is never reclaimed.
 type KeyOwnershipRecordMalformedError struct {
@@ -437,12 +443,14 @@ func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store i
 		}
 		return false, WrapError(err, errors.ErrStorage, op, "failed to read key ownership record")
 	}
-	claimedAt, completed, err := tenantKeyClaimTime(record)
-	if err != nil {
-		return false, WrapError(err, errors.ErrStorage, op, "failed to parse key ownership record")
-	}
-	if completed || k.now().Sub(claimedAt) < kmsClaimStaleAfter {
-		return false, nil
+	if !tenantKeyRecordDeleted(record) {
+		claimedAt, completed, err := tenantKeyClaimTime(record)
+		if err != nil {
+			return false, WrapError(err, errors.ErrStorage, op, "failed to parse key ownership record")
+		}
+		if completed || k.now().Sub(claimedAt) < kmsClaimStaleAfter {
+			return false, nil
+		}
 	}
 	deleted, err := store.CompareAndDelete(tenantctx.WithSystem(ctx), recordKey, record)
 	if err != nil {
@@ -473,22 +481,39 @@ func tenantKeyClaimTime(record []byte) (claimedAt time.Time, completed bool, err
 	return time.Unix(0, nanos).UTC(), false, nil
 }
 
-// tenantKeyClaimPending reports whether record is a claim a create has not
-// yet completed. Such a claim belongs to the create in flight, not to a key,
-// so a delete that finds no key behind it must leave it in place. A nil
-// record, as a system key has, is never pending.
-func tenantKeyClaimPending(record []byte) (bool, error) {
-	if record == nil {
-		return false, nil
-	}
-	_, completed, err := tenantKeyClaimTime(record)
-	if err != nil {
-		return false, err
-	}
-	return !completed, nil
+// tenantKeyRecordDeleted reports whether record is a tombstone, written once
+// the backend confirmed the delete of its key.
+func tenantKeyRecordDeleted(record []byte) bool {
+	fields := strings.Split(string(record), kmsOwnerRecordSeparator)
+	return len(fields) == 3 && fields[0] != "" && fields[1] != "" && fields[2] == kmsOwnerRecordDeleted
 }
 
-// now returns the service clock, which tests replace to age claims.
+// markTenantKeyDeleted swaps record for its tombstone after the backend
+// deleted the key, and returns the tombstone for the release that follows.
+// A nil record, as a system key has, has nothing to mark. A lost compare
+// means another delete already marked or released the record, so nothing
+// is left to release.
+func (k *kmsServiceImpl) markTenantKeyDeleted(ctx context.Context, scopedID string, record []byte, operation string) ([]byte, error) {
+	if record == nil || tenantKeyRecordDeleted(record) {
+		return record, nil
+	}
+	atomicStore, err := k.atomicOwnerStore(operation)
+	if err != nil {
+		return nil, err
+	}
+	tenantID, rest, _ := strings.Cut(string(record), kmsOwnerRecordSeparator)
+	holder, _, _ := strings.Cut(rest, kmsOwnerRecordSeparator)
+	tombstone := []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator + kmsOwnerRecordDeleted)
+	swapped, err := atomicStore.CompareAndSwap(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), record, tombstone)
+	if err != nil {
+		return nil, WrapError(err, errors.ErrStorage, "kms."+operation, "failed to mark key ownership record deleted")
+	}
+	if !swapped {
+		return nil, nil
+	}
+	return tombstone, nil
+}
+
 func (k *kmsServiceImpl) now() time.Time {
 	if k.clock != nil {
 		return k.clock()

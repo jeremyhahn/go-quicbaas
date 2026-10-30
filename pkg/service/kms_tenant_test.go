@@ -881,28 +881,123 @@ func TestKMSOwnership_DeleteLeavesPendingClaim(t *testing.T) {
 	require.True(t, completed, "the create must complete its claim")
 }
 
-// TestKMSOwnership_DeleteReleasesCompletedRecordOfMissingKey shows that a
-// completed record whose backend key is gone is still released, so the name
-// can be created again.
-func TestKMSOwnership_DeleteReleasesCompletedRecordOfMissingKey(t *testing.T) {
+// TestKMSOwnership_DeleteKeepsCompletedRecordOnUnconfirmedMiss shows that a
+// not-found from the backend does not release a completed record, since the
+// backend folds lookup failures into it, and that a later delete does.
+func TestKMSOwnership_DeleteKeepsCompletedRecordOnUnconfirmedMiss(t *testing.T) {
 	svc, mgr, _ := newOwnershipKMS(t)
 	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
-	const name = "vanished"
+	const name = "cold-cache"
 	scopedID := tenantScopedKeyID(ownershipTenant, name)
 	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest(name))
 	require.NoError(t, err)
-	delete(mgr.keys, scopedID)
+
+	// After a restart the backend's metadata cache is cold, and a transient
+	// key-store failure surfaces as ErrKeyNotFound although the key survives.
 	mgr.deleteKeyFn = func(context.Context, string) error {
 		return kms.ErrKeyNotFound
 	}
-
 	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
 	var qe *errors.QBError
 	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
 	require.Equal(t, errors.ErrNotFound, qe.Code)
 	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
 	require.NoError(t, err)
-	require.Empty(t, owner, "a completed record of a missing key must be released")
+	require.Equal(t, ownershipTenant, owner, "an unconfirmed miss must keep the ownership record")
+	_, err = svc.GetKey(ctx, &GetKeyRequest{KeyID: name})
+	require.NoError(t, err, "the surviving key must stay reachable by its tenant")
+
+	// Once the backend recovers, the retried delete removes the key and
+	// releases the name for reuse.
+	mgr.deleteKeyFn = nil
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	require.NoError(t, err)
+	owner, err = svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "a confirmed delete must release the ownership record")
+	_, err = svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+	require.NoError(t, err, "the released name must be reusable")
+}
+
+// ownershipReleaseFailingStore fails CompareAndDelete while fail is set, as a
+// store outage between a backend delete and the release of its record would.
+type ownershipReleaseFailingStore struct {
+	qrdbsdk.AtomicKVStore
+	fail bool
+}
+
+func (s *ownershipReleaseFailingStore) CompareAndDelete(ctx context.Context, key string, expected []byte) (bool, error) {
+	if s.fail {
+		return false, stderrors.New("store unavailable")
+	}
+	return s.AtomicKVStore.CompareAndDelete(ctx, key, expected)
+}
+
+// TestKMSOwnership_DeleteRetryReleasesTombstone shows that when the release
+// fails after a successful backend delete, the retry, which meets
+// ErrKeyNotFound, releases the tombstoned record and the name is reusable.
+func TestKMSOwnership_DeleteRetryReleasesTombstone(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	store := &ownershipReleaseFailingStore{AtomicKVStore: qrdbsdk.NewMemoryKVStore()}
+	svc.SetKVStore(store)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "half-deleted"
+	scopedID := tenantScopedKeyID(ownershipTenant, name)
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+	require.NoError(t, err)
+
+	store.fail = true
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	require.Error(t, err, "a failed release must surface")
+	record, err := svc.readKeyOwnerRecord(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.True(t, tenantKeyRecordDeleted(record), "a confirmed backend delete must tombstone the record, got %q", record)
+
+	// The backend no longer has the key and reports it as the real one does.
+	store.fail = false
+	mgr.deleteKeyFn = func(context.Context, string) error {
+		return kms.ErrKeyNotFound
+	}
+	_, err = svc.DeleteKey(ctx, &DeleteKeyRequest{KeyID: name})
+	require.Error(t, err)
+	mgr.deleteKeyFn = nil
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrNotFound, qe.Code)
+	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Empty(t, owner, "the retry must release the tombstoned record")
+	_, err = svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+	require.NoError(t, err, "the released name must be reusable")
+}
+
+// TestKMSOwnership_TombstoneIsReclaimed shows that a create reclaims a
+// tombstoned record at once, however fresh it is.
+func TestKMSOwnership_TombstoneIsReclaimed(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	const name = "tombstoned"
+	scopedID := tenantScopedKeyID(ownershipTenant, name)
+	store, err := svc.atomicOwnerStore("test")
+	require.NoError(t, err)
+	tombstone := []byte(ownershipTenant + kmsOwnerRecordSeparator + "cafe" + kmsOwnerRecordSeparator + kmsOwnerRecordDeleted)
+	stored, err := store.PutIfAbsent(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(scopedID), tombstone)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	_, err = svc.GenerateKey(ctx, ownershipGenerateRequest(name))
+	require.NoError(t, err, "a tombstone must not block a new key of the same name")
+	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner)
+}
+
+func TestTenantKeyRecordDeleted(t *testing.T) {
+	require.True(t, tenantKeyRecordDeleted([]byte("t:h:"+kmsOwnerRecordDeleted)))
+	require.False(t, tenantKeyRecordDeleted([]byte("t:h:"+kmsOwnerRecordCompleted)))
+	require.False(t, tenantKeyRecordDeleted([]byte("t:h:42")))
+	require.False(t, tenantKeyRecordDeleted(nil))
+	require.False(t, tenantKeyRecordDeleted([]byte(":h:"+kmsOwnerRecordDeleted)))
 }
 
 // seedOwnershipClaim writes a claim record for name, stamped at claimedAt,
@@ -1047,24 +1142,6 @@ func TestTenantKeyClaimTime(t *testing.T) {
 		var malformed *KeyOwnershipRecordMalformedError
 		require.ErrorAs(t, err, &malformed, bad)
 	}
-}
-
-func TestTenantKeyClaimPending(t *testing.T) {
-	pending, err := tenantKeyClaimPending(nil)
-	require.NoError(t, err)
-	require.False(t, pending, "a system key has no record and nothing pending")
-
-	pending, err = tenantKeyClaimPending([]byte("t:h:42"))
-	require.NoError(t, err)
-	require.True(t, pending)
-
-	pending, err = tenantKeyClaimPending([]byte("t:h:" + kmsOwnerRecordCompleted))
-	require.NoError(t, err)
-	require.False(t, pending)
-
-	_, err = tenantKeyClaimPending([]byte("garbage"))
-	var malformed *KeyOwnershipRecordMalformedError
-	require.True(t, stderrors.As(err, &malformed), "want a malformed-record error, got %v", err)
 }
 
 func TestKMSOwnership_StaleClaimIsReclaimed(t *testing.T) {
