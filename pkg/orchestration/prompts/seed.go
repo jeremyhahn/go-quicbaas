@@ -16,6 +16,7 @@ package prompts
 import (
 	"context"
 	"errors"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
@@ -28,6 +29,10 @@ const (
 	reconcileNote = "the embedded default changed"
 	firstBootNote = "the embedded default"
 )
+
+// undoTimeout bounds the deletes that undo a failed seed. They run detached
+// from the caller's context, which may be the one whose end failed the seed.
+const undoTimeout = 30 * time.Second
 
 // SeedReport lists the records one seeding or reconcile pass wrote.
 type SeedReport struct {
@@ -131,6 +136,9 @@ func (s *Seeder) systemBody(ctx context.Context, ref Ref) (string, error) {
 // joined onto the cause rather than hidden, so the operator learns the
 // tenant was left partly seeded.
 func (s *Seeder) undo(ctx context.Context, created []Ref, failure *SeedError) error {
+	// The seed may have failed because ctx ended; the deletes still run.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
+	defer cancel()
 	for _, ref := range created {
 		if err := s.store.Delete(ctx, ref); err != nil {
 			failure.Cause = errors.Join(failure.Cause, err)

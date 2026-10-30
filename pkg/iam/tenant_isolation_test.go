@@ -26,6 +26,8 @@ import (
 type recordingQRDBProvisioner struct {
 	createIsolation string
 	createCalled    bool
+	deleteCalled    bool
+	deleteCtxErr    error
 }
 
 func (p *recordingQRDBProvisioner) CreateTenant(_ context.Context, _, _, isolationType string) error {
@@ -34,7 +36,11 @@ func (p *recordingQRDBProvisioner) CreateTenant(_ context.Context, _, _, isolati
 	return nil
 }
 
-func (p *recordingQRDBProvisioner) DeleteTenant(_ context.Context, _ string) error { return nil }
+func (p *recordingQRDBProvisioner) DeleteTenant(ctx context.Context, _ string) error {
+	p.deleteCalled = true
+	p.deleteCtxErr = ctx.Err()
+	return nil
+}
 
 func (p *recordingQRDBProvisioner) UpdateQuotas(_ context.Context, _ string, _ qrdbsdk.Quotas) error {
 	return nil
