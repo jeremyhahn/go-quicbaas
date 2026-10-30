@@ -77,7 +77,7 @@ func (c *enableEncryptionCapture) service(t *testing.T) *fakeBarrierService {
 	}
 }
 
-// scopeDecision is one call the handler made to its scope authorizer.
+// scopeDecision is one call the handler made to its tenant authorizer.
 type scopeDecision struct {
 	// tenant is the target tenant bound to the context ("" = system).
 	tenant   string
@@ -114,13 +114,13 @@ func (a *scopeAuthorizerStub) made() []scopeDecision {
 // the request context before the handler runs.
 var wireCaller = &qrdbsdk.Identity{Subject: "operator", TenantID: "acme", Roles: []string{"admin"}}
 
-// wireServer is barrierServer plus the scope authorizer the wire mount
+// wireServer is barrierServer plus the tenant authorizer the wire mount
 // consults, admitting every decision unless the test sets its err.
 func wireServer(t *testing.T, svc *fakeBarrierService) (*Server, *scopeAuthorizerStub) {
 	t.Helper()
 	s := barrierServer(t, svc)
 	authz := &scopeAuthorizerStub{}
-	s.SetBarrierScopeAuthorizer(authz)
+	s.SetTenantAuthorizer(authz)
 	return s, authz
 }
 
@@ -332,7 +332,7 @@ func TestBarrierWire_EnableEncryptionScopeRefusals(t *testing.T) {
 		{name: "denied scope is 403", authzErr: errors.New("insufficient permissions"), identity: wireCaller, want: http.StatusForbidden},
 		{
 			name:     "authorizer unable to decide is 503",
-			authzErr: &BarrierScopeAuthorizerUnavailableError{Reason: "node composing"},
+			authzErr: &TenantAuthorizerUnavailableError{Reason: "node composing"},
 			identity: wireCaller, want: http.StatusServiceUnavailable,
 		},
 		{name: "unwired authorizer fails closed with 503", unwired: true, identity: wireCaller, want: http.StatusServiceUnavailable},
@@ -344,7 +344,7 @@ func TestBarrierWire_EnableEncryptionScopeRefusals(t *testing.T) {
 			s, authz := wireServer(t, got.service(t))
 			authz.err = tc.authzErr
 			if tc.unwired {
-				s.SetBarrierScopeAuthorizer(nil)
+				s.SetTenantAuthorizer(nil)
 			}
 			var h http.Handler = s.router
 			if tc.identity != nil {

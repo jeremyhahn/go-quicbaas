@@ -418,14 +418,14 @@ type Server struct {
 	// available. Nil before wiring; the handlers report 503.
 	tenantBarrierSvc service.TenantBarrierServicer
 
-	// barrierScopeAuthz decides POST /v1/barrier/enable-encryption, the one
-	// barrier route whose scope comes from its body rather than its path, so
-	// no single registration-site permission can gate it (go-quicbaas#990).
-	// It also decides roles:assign for user creates and updates that set
-	// roles, which their users:* route permission does not cover.
-	// Wired by lifecycle via SetBarrierScopeAuthorizer to go-qrdb's RBAC
-	// authorizer. Nil before wiring; the handler fails closed with 503.
-	barrierScopeAuthz qrdbsdk.Authorizer
+	// tenantAuthz renders the in-tenant permission checks a route's
+	// registration-site permission cannot cover. It decides POST
+	// /v1/barrier/enable-encryption, whose scope comes from its body rather
+	// than its path (go-quicbaas#990), and roles:assign for user creates and
+	// updates that set roles, which their users:* route permission does not
+	// cover. Wired by lifecycle via SetTenantAuthorizer to go-qrdb's RBAC
+	// authorizer. Nil before wiring; those requests fail closed with 503.
+	tenantAuthz qrdbsdk.Authorizer
 
 	// ceremonySvc serves /api/v1/init endpoints. Wired by lifecycle via
 	// SetCeremonyService once the qrdb SDK CeremonyClient is available.
@@ -884,25 +884,26 @@ func (s *Server) SetTenantBarrierService(svc service.TenantBarrierServicer) {
 	s.tenantBarrierSvc = svc
 }
 
-// SetBarrierScopeAuthorizer installs the authorizer
-// HandleBarrierWireEnableEncryption consults for the scope a request selects:
-// seal:enable_encryption against the system tenant for the system barrier,
-// tenant_barrier:enable_encryption against the named tenant for a tenant's.
-// Lifecycle wiring passes go-qrdb's RBAC authorizer — the same decision point
-// every registration-site permission is rendered by. Passing nil makes the
-// route fail closed (503).
-func (s *Server) SetBarrierScopeAuthorizer(authz qrdbsdk.Authorizer) {
+// SetTenantAuthorizer installs the authorizer for in-tenant permission checks.
+// HandleBarrierWireEnableEncryption consults it for the scope a request
+// selects: seal:enable_encryption against the system tenant for the system
+// barrier, tenant_barrier:enable_encryption against the named tenant for a
+// tenant's. User creates and updates that set roles consult it for
+// roles:assign in the target tenant. Lifecycle wiring passes go-qrdb's RBAC
+// authorizer — the same decision point every registration-site permission is
+// rendered by. Passing nil makes those requests fail closed (503).
+func (s *Server) SetTenantAuthorizer(authz qrdbsdk.Authorizer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.barrierScopeAuthz = authz
+	s.tenantAuthz = authz
 }
 
-// barrierScopeAuthorizer returns the wired scope authorizer under the read
+// tenantAuthorizer returns the wired tenant authorizer under the read
 // lock, or nil when not yet wired.
-func (s *Server) barrierScopeAuthorizer() qrdbsdk.Authorizer {
+func (s *Server) tenantAuthorizer() qrdbsdk.Authorizer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.barrierScopeAuthz
+	return s.tenantAuthz
 }
 
 // barrierService returns the wired system barrier facade under the read lock,

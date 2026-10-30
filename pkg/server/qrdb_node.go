@@ -894,7 +894,7 @@ func (s *Server) initStandaloneQRDBNode() error {
 		// undecorated and ABACPolicyReloader would return nil.
 		qrdbnode.WithABACLiveReload(),
 		// Record the node's composed authorizer (returned unchanged) for the
-		// REST barrier scope authorizer (go-quicbaas#990).
+		// REST tenant authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
 		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
 	}
@@ -1100,7 +1100,7 @@ func (s *Server) initClusteredQRDBNode() error {
 		// initStandaloneQRDBNode for rationale).
 		qrdbnode.WithABACLiveReload(),
 		// Record the node's composed authorizer (returned unchanged) for the
-		// REST barrier scope authorizer (go-quicbaas#990).
+		// REST tenant authorizer (go-quicbaas#990).
 		s.nodeAuthorizerCapture(),
 		qrdbnode.WithAuthenticators(newPlatformBearerAuthenticator(s)),
 	}

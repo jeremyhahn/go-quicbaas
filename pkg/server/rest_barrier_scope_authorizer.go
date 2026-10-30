@@ -36,7 +36,7 @@ import (
 //
 // The authorizer is resolved per call because the node is built later in the
 // lifecycle than the REST server. Until it exists the decision fails closed
-// with restapi.BarrierScopeAuthorizerUnavailableError (503).
+// with restapi.TenantAuthorizerUnavailableError (503).
 type restBarrierScopeAuthorizer struct {
 	server *Server
 }
@@ -49,7 +49,7 @@ var _ qrdbsdk.Authorizer = (*restBarrierScopeAuthorizer)(nil)
 func (a *restBarrierScopeAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.Identity, resource, action string) error {
 	authz := a.server.capturedNodeAuthorizer()
 	if authz == nil {
-		return &restapi.BarrierScopeAuthorizerUnavailableError{Reason: "qrdb node authorizer is not yet available"}
+		return &restapi.TenantAuthorizerUnavailableError{Reason: "qrdb node authorizer is not yet available"}
 	}
 	return authz.Authorize(ctx, identity, resource, action)
 }

@@ -865,15 +865,12 @@ func TestIAMMiddleware_TenantContext(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a
-// "roles" list and forwards it through the shared IdentityStore seam: the
-// created user carries the role and the persisted record matches.
 // asRoleCaller authenticates req as a tenant1 caller and wires the RBAC
 // authorizer the handler consults for roles:assign, answering deny to every
 // decision (nil admits).
 func asRoleCaller(server *Server, req *http.Request, deny error) (*http.Request, *scopeAuthorizerStub) {
 	authz := &scopeAuthorizerStub{err: deny}
-	server.SetBarrierScopeAuthorizer(authz)
+	server.SetTenantAuthorizer(authz)
 	caller := &qrdbsdk.Identity{Subject: "operator", TenantID: "tenant1"}
 	return req.WithContext(qrdbsdk.WithIdentity(req.Context(), caller)), authz
 }
@@ -881,6 +878,9 @@ func asRoleCaller(server *Server, req *http.Request, deny error) (*http.Request,
 // roleAssignDecision is the decision a user write that sets roles must ask for.
 var roleAssignDecision = scopeDecision{tenant: "tenant1", resource: "roles", action: "assign"}
 
+// TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a
+// "roles" list and forwards it through the shared IdentityStore seam: the
+// created user carries the role and the persisted record matches.
 func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
@@ -933,6 +933,32 @@ func TestIAMHandler_CreateUser_RolesWithoutRoleAssign_Forbidden(t *testing.T) {
 
 	_, err := memStorage.GetUserByEmail(ctx, "tenant1", "escalate@example.com")
 	require.Error(t, err, "a refused create must not leave a user behind")
+}
+
+// TestIAMHandler_CreateUser_RolesWithoutTenantAuthorizer_Unavailable proves a
+// create that sets roles fails closed when no tenant authorizer is wired: 503
+// naming the tenant authorizer, and no user is written.
+func TestIAMHandler_CreateUser_RolesWithoutTenantAuthorizer_Unavailable(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"}))
+
+	body := `{"email": "unwired@example.com", "username": "unwired", "roles": ["admin"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req, _ = asRoleCaller(server, req, nil)
+	server.SetTenantAuthorizer(nil)
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "tenant authorizer is not available")
+
+	_, err := memStorage.GetUserByEmail(ctx, "tenant1", "unwired@example.com")
+	require.Error(t, err, "a create with no authorizer must not leave a user behind")
 }
 
 // TestIAMHandler_UpdateUser_RolesWithoutRoleAssign_Forbidden proves users:update

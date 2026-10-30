@@ -312,7 +312,7 @@ func (s *Server) buildRESTServer() (*restapi.Server, error) {
 	// POST /v1/barrier/enable-encryption takes its scope from the body, so it
 	// is registered identity-gated and authorized per scope in the handler
 	// through this authorizer (go-quicbaas#990).
-	restServer.SetBarrierScopeAuthorizer(&restBarrierScopeAuthorizer{server: s})
+	restServer.SetTenantAuthorizer(&restBarrierScopeAuthorizer{server: s})
 	s.logger.Info("Barrier and ceremony services wired into REST server")
 
 	// Wire the trust-bootstrap service into the REST server so the

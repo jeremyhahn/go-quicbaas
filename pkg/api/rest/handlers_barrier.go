@@ -771,10 +771,6 @@ const (
 	barrierEnableAction         = "enable_encryption"
 )
 
-// BarrierScopeAuthorizerUnavailableError reports that the scope authorizer
-// POST /v1/barrier/enable-encryption depends on is not wired or not yet able
-// to decide. The route fails closed on it (503) rather than admit a caller
-// no decision was rendered for.
 // BarrierCredentialEncodingError reports that a barrier credential field in a
 // REST request body is not well-formed base64. Every barrier credential on
 // this surface is bytes, so JSON carries it base64-encoded. The error names
@@ -786,17 +782,21 @@ func (e *BarrierCredentialEncodingError) Error() string {
 	return "barrier credential must be base64-encoded bytes"
 }
 
-type BarrierScopeAuthorizerUnavailableError struct {
+// TenantAuthorizerUnavailableError reports that the tenant authorizer is not
+// wired or not yet able to decide. POST /v1/barrier/enable-encryption and user
+// creates and updates that set roles depend on it, and fail closed on it (503)
+// rather than admit a caller no decision was rendered for.
+type TenantAuthorizerUnavailableError struct {
 	// Reason says why no decision could be made.
 	Reason string
 }
 
 // Error returns a human-readable description.
-func (e *BarrierScopeAuthorizerUnavailableError) Error() string {
+func (e *TenantAuthorizerUnavailableError) Error() string {
 	if e.Reason == "" {
-		return "barrier scope authorizer is not available"
+		return "tenant authorizer is not available"
 	}
-	return "barrier scope authorizer is not available: " + e.Reason
+	return "tenant authorizer is not available: " + e.Reason
 }
 
 // authorizeBarrierScope authorizes the go-qrdb wire enable-encryption request
@@ -828,10 +828,10 @@ func (s *Server) authorizeBarrierScope(w http.ResponseWriter, r *http.Request, t
 // from the request context. It fails closed: 503 when no authorizer is
 // wired or it cannot yet decide, 401 without an authenticated identity.
 func (s *Server) authorizeInTenant(w http.ResponseWriter, r *http.Request, tenantID, resource, action string) bool {
-	authz := s.barrierScopeAuthorizer()
+	authz := s.tenantAuthorizer()
 	if authz == nil {
 		RespondError(w, r, http.StatusServiceUnavailable,
-			&BarrierScopeAuthorizerUnavailableError{Reason: "not configured"})
+			&TenantAuthorizerUnavailableError{Reason: "not configured"})
 		return false
 	}
 	identity := qrdbsdk.IdentityFromContext(r.Context())
@@ -842,7 +842,7 @@ func (s *Server) authorizeInTenant(w http.ResponseWriter, r *http.Request, tenan
 
 	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
 	if err := authz.Authorize(ctx, identity, resource, action); err != nil {
-		var unavailable *BarrierScopeAuthorizerUnavailableError
+		var unavailable *TenantAuthorizerUnavailableError
 		if errors.As(err, &unavailable) {
 			RespondError(w, r, http.StatusServiceUnavailable, unavailable)
 			return false

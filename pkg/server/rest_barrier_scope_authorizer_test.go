@@ -41,9 +41,9 @@ func TestRESTBarrierScopeAuthorizer_NoNodeFailsClosed(t *testing.T) {
 		&qrdbsdk.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}},
 		"seal", "enable_encryption")
 
-	var unavailable *restapi.BarrierScopeAuthorizerUnavailableError
+	var unavailable *restapi.TenantAuthorizerUnavailableError
 	if !errors.As(err, &unavailable) {
-		t.Fatalf("Authorize without a node = %v, want *BarrierScopeAuthorizerUnavailableError", err)
+		t.Fatalf("Authorize without a node = %v, want *TenantAuthorizerUnavailableError", err)
 	}
 }
 
@@ -116,7 +116,7 @@ func TestRESTBarrierScopeAuthorizer_DenialPassesThrough(t *testing.T) {
 	if !errors.Is(err, denial) {
 		t.Fatalf("Authorize = %v, want the node authorizer's denial", err)
 	}
-	var unavailable *restapi.BarrierScopeAuthorizerUnavailableError
+	var unavailable *restapi.TenantAuthorizerUnavailableError
 	if errors.As(err, &unavailable) {
 		t.Fatalf("a node denial was reported as the authorizer unavailable: %v", err)
 	}
@@ -130,9 +130,9 @@ func TestRESTBarrierScopeAuthorizer_ResolvesNodePerCall(t *testing.T) {
 	authz := &restBarrierScopeAuthorizer{server: s}
 	identity := &qrdbsdk.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}}
 
-	var unavailable *restapi.BarrierScopeAuthorizerUnavailableError
+	var unavailable *restapi.TenantAuthorizerUnavailableError
 	if err := authz.Authorize(context.Background(), identity, "seal", "enable_encryption"); !errors.As(err, &unavailable) {
-		t.Fatalf("Authorize before the node = %v, want *BarrierScopeAuthorizerUnavailableError", err)
+		t.Fatalf("Authorize before the node = %v, want *TenantAuthorizerUnavailableError", err)
 	}
 
 	inner := &recordingAuthorizer{}
