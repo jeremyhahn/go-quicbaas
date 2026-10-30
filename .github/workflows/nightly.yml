@@ -155,6 +155,10 @@ jobs:
 
       # CUSTOMIZE: skip-dirs — benchmark harnesses, examples, vendored
       # adapters; nothing that ships in a release may be skipped.
+      # go-quicbaas: scoping mirrors the Makefile's `trivy` target; bin/,
+      # build/ and data/ are local build output, and the skip-files entry keeps
+      # the secret scanner off the committed test TLS material in
+      # pkg/server/certs.
       #
       # trivy-action is PINNED TO A FULL COMMIT SHA (v1.4). Through v1.3 this
       # template shipped `@master`: a mutable ref on a third-party action means
@@ -183,7 +187,8 @@ jobs:
           format: sarif
           output: trivy-results.sarif
           exit-code: 0
-          skip-dirs: test,examples
+          skip-dirs: test,examples,bin,build,data
+          skip-files: pkg/server/certs/*.key
           trivyignores: .trivyignore
 
       - name: Upload Trivy SARIF
@@ -204,7 +209,8 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: 1
           format: table
-          skip-dirs: test,examples
+          skip-dirs: test,examples,bin,build,data
+          skip-files: pkg/server/certs/*.key
           trivyignores: .trivyignore
 
       # Same gate on Gitea, via the trivy CLI installed from the release
@@ -224,7 +230,7 @@ jobs:
 
       - name: Trivy gate (Gitea)
         if: github.server_url != 'https://github.com'
-        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table --skip-dirs test,examples --ignorefile .trivyignore .
+        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table --skip-dirs test,examples,bin,build,data --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
 
       # Misconfiguration scanning (owner ruling 2026-08-20, task #27): devops.md
       # §8 promises it portfolio-wide. It runs HERE in nightly — advisory exit
@@ -246,10 +252,55 @@ jobs:
           scanners: misconfig
           exit-code: 0
           format: table
-          skip-dirs: test,examples
+          skip-dirs: test,examples,bin,build,data
+          skip-files: pkg/server/certs/*.key
           trivyignores: .trivyignore
 
       - name: Trivy misconfiguration scan (advisory, Gitea)
         if: github.server_url != 'https://github.com'
-        run: trivy fs --scanners misconfig --exit-code 0 --format table --skip-dirs test,examples --ignorefile .trivyignore .
+        run: trivy fs --scanners misconfig --exit-code 0 --format table --skip-dirs test,examples,bin,build,data --skip-files 'pkg/server/certs/*.key' --ignorefile .trivyignore .
+
+  # CUSTOMIZE (go-quicbaas): every worker-image toolchain pin at its
+  # upstream's latest release (devops.md: track the latest). The pins move by
+  # hand, so this is what notices when one falls behind; it names each stale
+  # pin and its latest release. A slow-moving property, so nightly rather
+  # than per push.
+  worker-toolchain-currency:
+    name: Worker toolchain currency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Check every worker-image pin against upstream
+        run: make check-worker-toolchain-currency
+
+  # CUSTOMIZE (go-quicbaas): the sdk/go docker-compose harness
+  # (sdk/go/test/integration). Its compose file builds the server from
+  # test/integration/Dockerfile.dev, which resolves first-party modules from
+  # published tags (no sibling checkouts), so the image builds on a runner.
+  # The harness is excluded from ci.yml's `make test-sdk-go` and runs here so
+  # it is never out of sight. Moving it into ci.yml is deliberate, not
+  # automatic.
+  sdk-go-integration:
+    name: SDK Go integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The harness's TestMain exits 0 when `docker info` fails, so a runner
+      # without Docker would report green and run nothing. This step turns that
+      # into a failure.
+      - name: Require Docker and Compose
+        run: |
+          docker info
+          docker compose version
+
+      - name: Run the Go SDK integration harness
+        run: make integration-test-sdk-go
 

@@ -84,7 +84,10 @@ jobs:
           # extended regex over ci.yml's step names. Add the repo's CUSTOMIZE
           # lint, build, unit, race and integration-class steps; never a
           # security, deps-check, trivy or setup step.
-          REVERT_STEPS: '^(make lint|make lint-gates|Assert every build tag selects code|make build|make coverage.*|make integration-test.*|Soak.*|No direct go-objstore import.*)$'
+          # go-quicbaas: the SDK/frontend unit-test step joins; make
+          # integration-test stays out while Integration is non-gating in CI
+          # Gate (row #1700, CA m787), so its red never reverts a merge.
+          REVERT_STEPS: '^(make lint|make lint-gates|Assert every build tag selects code|make build|make coverage.*|make test-sdk-ts test-frontend test-sdk-js|Soak.*|No direct go-objstore import.*)$'
           INFRA_MARKERS: 'Cannot connect to the Docker daemon|no space left on device|signal: killed|exit status 137|exit code 137|OOMKilled|toomanyrequests|lost communication with the server|The runner has received a shutdown signal'
         run: |
           set -euo pipefail
