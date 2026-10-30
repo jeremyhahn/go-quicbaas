@@ -67,8 +67,10 @@ type ImageBuildSpec struct {
 	// Dockerfile declares.
 	Labels map[string]string
 
-	// Pull re-resolves the base images (--pull), so a rebuild takes the base
-	// image's security updates rather than whatever this host cached.
+	// Pull re-resolves the base images, so a rebuild takes the base image's
+	// security updates rather than whatever this host cached. Each base is
+	// pulled into the engine's image store before the build, so the built
+	// image's base layers can be pushed.
 	Pull bool
 }
 
@@ -210,7 +212,28 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 	}
 	iidFile := filepath.Join(workDir, "iid")
 
-	args := buildImageArgs(spec, iidFile, contextDir)
+	// A Pull build pulls its bases into the engine's image store first. A
+	// `build --pull` alone fetches them into the builder's cache only, and on
+	// the containerd image store the builder may keep just the unpacked
+	// snapshot: the build succeeds, but the push then fails with "content
+	// digest ... not found" for every base layer.
+	buildSpec := spec
+	if spec.Pull {
+		allPulled, err := r.pullBaseImages(ctx, spec)
+		if err != nil {
+			return "", err
+		}
+		if allPulled {
+			// Every base is now fresh in the image store; building from it,
+			// rather than re-resolving each tag, keeps the built image's base
+			// layers exactly the blobs the pull stored.
+			withoutPull := *spec
+			withoutPull.Pull = false
+			buildSpec = &withoutPull
+		}
+	}
+
+	args := buildImageArgs(buildSpec, iidFile, contextDir)
 	r.logger.Infof("container build: %s %s", r.command, strings.Join(spec.Tags, " "))
 	result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: args, Stdin: spec.Dockerfile})
 	if err != nil {
@@ -231,6 +254,68 @@ func (r *ExecContainerRuntime) BuildImage(ctx context.Context, spec *ImageBuildS
 		return "", &ImageBuildError{Tags: spec.Tags, Cause: errImageBuildNoID}
 	}
 	return imageID, nil
+}
+
+// pullBaseImages pulls each base image the Dockerfile names into the engine's
+// image store. It reports whether every base was pulled: a base only the build
+// can resolve (see dockerfileBaseImages) still needs --pull.
+func (r *ExecContainerRuntime) pullBaseImages(ctx context.Context, spec *ImageBuildSpec) (bool, error) {
+	bases, allLiteral := dockerfileBaseImages(spec.Dockerfile)
+	for _, base := range bases {
+		r.logger.Infof("container build: %s pull %s", r.command, base)
+		result, err := r.imageRunner()(ctx, r.command, imageCommand{Args: []string{"pull", base}})
+		if err != nil {
+			return false, &ImageBuildError{Tags: spec.Tags, Cause: err}
+		}
+		if result.ExitCode != 0 {
+			return false, &ImageBuildError{
+				Tags:  spec.Tags,
+				Cause: &CommandError{Command: r.command, Op: "pull", Output: strings.TrimSpace(result.Stderr)},
+			}
+		}
+	}
+	return allLiteral, nil
+}
+
+// dockerfileBaseImages returns the distinct registry images the Dockerfile's
+// FROM instructions name, in order. It leaves out `scratch` and earlier build
+// stages, which are not pulled. It reports false when a FROM carries a flag
+// such as --platform or spells its image with a build argument: only the build
+// itself can resolve that base.
+func dockerfileBaseImages(dockerfile []byte) ([]string, bool) {
+	var bases []string
+	allLiteral := true
+	seen := map[string]bool{"scratch": true}
+	for _, line := range strings.Split(string(dockerfile), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {
+			continue
+		}
+		operands := fields[1:]
+		flagged := false
+		for len(operands) > 0 && strings.HasPrefix(operands[0], "--") {
+			flagged = true
+			operands = operands[1:]
+		}
+		if len(operands) == 0 {
+			continue
+		}
+		image := operands[0]
+		switch {
+		case flagged || strings.Contains(image, "$"):
+			// A --platform base or one spelled with a build argument is
+			// resolved by the build, not by a plain pull.
+			allLiteral = false
+		case !seen[strings.ToLower(image)]:
+			seen[strings.ToLower(image)] = true
+			bases = append(bases, image)
+		}
+		if len(operands) >= 3 && strings.EqualFold(operands[1], "AS") {
+			// A later FROM naming this stage builds on it, not on an image.
+			seen[strings.ToLower(operands[2])] = true
+		}
+	}
+	return bases, allLiteral
 }
 
 // errImageBuildNoID reports an engine that succeeded without naming the image

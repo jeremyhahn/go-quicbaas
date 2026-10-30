@@ -73,7 +73,6 @@ func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
 		Tags:       []string{"worker:1-cc2-cx3"},
 		BuildArgs:  map[string]string{"B": "2", "A": "1"},
 		Labels:     map[string]string{"io.example.v": "1"},
-		Pull:       true,
 	})
 	if err != nil {
 		t.Fatalf("BuildImage: %v", err)
@@ -81,16 +80,120 @@ func TestBuildImage_PassesDockerfileOnStdinAndReadsTheIIDFile(t *testing.T) {
 	if got != imageID {
 		t.Fatalf("image ID = %q, want %q", got, imageID)
 	}
+	if len(engine.calls) != 1 {
+		t.Fatalf("a build without Pull runs only the build, ran %v", engine.calls)
+	}
 	call := engine.calls[0]
 	if call.Stdin != "FROM alpine\n" {
 		t.Fatalf("the Dockerfile must travel on stdin, got %q", call.Stdin)
 	}
 	joined := strings.Join(call.Args, " ")
-	for _, want := range []string{"build --file -", "--pull", "--tag worker:1-cc2-cx3",
+	if strings.Contains(joined, "--pull") {
+		t.Errorf("argv %q re-resolves bases without Pull", joined)
+	}
+	for _, want := range []string{"build --file -", "--tag worker:1-cc2-cx3",
 		"--build-arg A=1 --build-arg B=2", "--label io.example.v=1"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("argv %q lacks %q", joined, want)
 		}
+	}
+}
+
+// writeIIDFile answers a build by writing an image ID to its --iidfile, and
+// every other command with success.
+func writeIIDFile(args []string) (imageCommandResult, error) {
+	if args[0] != "build" {
+		return imageCommandResult{}, nil
+	}
+	const imageID = "sha256:" + "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12"
+	if err := os.WriteFile(argAfter(args, "--iidfile"), []byte(imageID), 0o600); err != nil {
+		return imageCommandResult{}, err
+	}
+	return imageCommandResult{}, nil
+}
+
+// TestBuildImage_PullPullsEachBaseIntoTheStoreBeforeBuilding pins the fix for
+// "content digest ... not found" on push (#2017): a `build --pull` alone left
+// the base layers' blobs out of the engine's image store, so a Pull build must
+// `pull` every base first and then build from the store.
+func TestBuildImage_PullPullsEachBaseIntoTheStoreBeforeBuilding(t *testing.T) {
+	engine := &fakeImageEngine{answer: writeIIDFile}
+	rt := newImageTestRuntime(t, RuntimeDocker, engine)
+	dockerfile := "# syntax comment\n" +
+		"FROM golang:1.27 AS build\n" +
+		"RUN true\n" +
+		"from build as test\n" +
+		"FROM alpine:3.21\n" +
+		"COPY --from=build /x /x\n" +
+		"FROM scratch\n" +
+		"FROM alpine:3.21\n"
+
+	if _, err := rt.BuildImage(t.Context(), &ImageBuildSpec{
+		Dockerfile: []byte(dockerfile), Tags: []string{"worker:1"}, Pull: true,
+	}); err != nil {
+		t.Fatalf("BuildImage: %v", err)
+	}
+	want := []string{"pull golang:1.27", "pull alpine:3.21", "build"}
+	if len(engine.calls) != len(want) {
+		t.Fatalf("commands = %v, want %v", engine.calls, want)
+	}
+	for i, prefix := range want {
+		if got := strings.Join(engine.calls[i].Args, " "); !strings.HasPrefix(got, prefix) {
+			t.Errorf("command %d = %q, want %q", i, got, prefix)
+		}
+	}
+	if build := strings.Join(engine.calls[2].Args, " "); strings.Contains(build, "--pull") {
+		t.Errorf("with every base pulled the build must use the store, got %q", build)
+	}
+}
+
+// TestBuildImage_PullLeavesUnresolvableBasesToBuildPull checks that a base the
+// pull cannot resolve on its own — one spelled with a build argument, or one
+// for another platform — keeps --pull on the build.
+func TestBuildImage_PullLeavesUnresolvableBasesToBuildPull(t *testing.T) {
+	engine := &fakeImageEngine{answer: writeIIDFile}
+	rt := newImageTestRuntime(t, RuntimeDocker, engine)
+	dockerfile := "ARG BASE=alpine\nFROM $BASE\nFROM --platform=linux/arm64 debian:12\nFROM alpine:3.21\n"
+
+	if _, err := rt.BuildImage(t.Context(), &ImageBuildSpec{
+		Dockerfile: []byte(dockerfile), Tags: []string{"worker:1"}, Pull: true,
+	}); err != nil {
+		t.Fatalf("BuildImage: %v", err)
+	}
+	if len(engine.calls) != 2 {
+		t.Fatalf("commands = %v, want one pull and the build", engine.calls)
+	}
+	if got := strings.Join(engine.calls[0].Args, " "); got != "pull alpine:3.21" {
+		t.Errorf("first command = %q, want the literal base's pull", got)
+	}
+	if build := strings.Join(engine.calls[1].Args, " "); !strings.Contains(build, "--pull") {
+		t.Errorf("a build with unresolved bases must keep --pull, got %q", build)
+	}
+}
+
+func TestBuildImage_PullFailureStopsBeforeTheBuild(t *testing.T) {
+	cases := map[string]func([]string) (imageCommandResult, error){
+		"pull exits non-zero": func([]string) (imageCommandResult, error) {
+			return imageCommandResult{ExitCode: 1, Stderr: "manifest unknown"}, nil
+		},
+		"pull cannot run": func([]string) (imageCommandResult, error) {
+			return imageCommandResult{}, errors.New("exec failed")
+		},
+	}
+	for name, answer := range cases {
+		t.Run(name, func(t *testing.T) {
+			engine := &fakeImageEngine{answer: answer}
+			rt := newImageTestRuntime(t, RuntimeDocker, engine)
+			_, err := rt.BuildImage(t.Context(), &ImageBuildSpec{
+				Dockerfile: []byte("FROM alpine:3.21\n"), Tags: []string{"worker:1"}, Pull: true,
+			})
+			if !errors.Is(err, ErrImageBuild) {
+				t.Fatalf("err = %v, want %v", err, ErrImageBuild)
+			}
+			if len(engine.calls) != 1 || engine.calls[0].Args[0] != "pull" {
+				t.Fatalf("a failed pull must not build, ran %v", engine.calls)
+			}
+		})
 	}
 }
 

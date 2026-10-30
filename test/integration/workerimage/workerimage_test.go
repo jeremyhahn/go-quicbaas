@@ -118,9 +118,9 @@ func TestE2E_BuildInspectTagPushAndPullByDigest(t *testing.T) {
 	labels := map[string]string{softwarefactoryworker.LabelClaudeCodeVersion: "2.1.280"}
 
 	// Pull as the refresher does: a push needs the base layers' compressed
-	// blobs, and a base image already on the runner may hold only its
-	// unpacked snapshot, which builds fine but pushes "content digest not
-	// found".
+	// blobs in the engine's image store. A base that holds only its unpacked
+	// snapshot builds fine but pushes "content digest not found", so a Pull
+	// build pulls each base into the store before building (#2017).
 	id, err := rt.BuildImage(ctx, &orchestration.ImageBuildSpec{Dockerfile: []byte(tinyDockerfile), Tags: []string{local}, Labels: labels, Pull: true})
 	require.NoError(t, err)
 	removeImages(t, local)
