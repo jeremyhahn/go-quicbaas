@@ -292,10 +292,10 @@ func TestExecuteIAMAuditDelete_Success(t *testing.T) {
 	assert.Equal(t, float64(5), resultMap["deleted"])
 }
 
-// TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the route
-// permission (audit:query) is not enough to prune audit history: the
-// executor refuses a subject lacking audit:delete, as REST and embedded do,
-// and never reaches DeleteOlderThan.
+// TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the executor's
+// own check, behind the audit:delete route permission: it refuses a subject
+// lacking audit:delete on the target tenant, as REST and embedded do, and
+// never reaches DeleteOlderThan.
 func TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused(t *testing.T) {
 	deleteCalled := false
 	auditLog := &mockAuditLogger{
