@@ -101,8 +101,6 @@ func loginSession() SessionRefreshOptions {
 			Email:       "user42@example.com",
 			AuthMethod:  "fido2",
 			MFAVerified: true,
-			AMR:         []string{"webauthn", "hwk"},
-			ACR:         ACRHardwareAttested,
 		},
 	}
 }
@@ -138,7 +136,7 @@ func TestIssueSessionRefresh_MintsResolvableCredential(t *testing.T) {
 	if stored.Subject != "user-42" || stored.TenantID != "acme" {
 		t.Fatalf("stored principal = %s/%s, want user-42/acme", stored.TenantID, stored.Subject)
 	}
-	if stored.Session == nil || stored.Session.ACR != ACRHardwareAttested {
+	if stored.Session == nil || stored.Session.AuthMethod != "fido2" || !stored.Session.MFAVerified {
 		t.Fatal("stored record did not freeze the login's authentication context")
 	}
 	// The secret itself must never be persisted verbatim.

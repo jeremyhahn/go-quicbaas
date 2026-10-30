@@ -789,8 +789,6 @@ func (s *TokenService) IssueHardwareTokens(ctx context.Context, opts HardwareTok
 			// record, so a true here would resurrect the assertion the login
 			// never earned for the whole refresh lifetime.
 			MFAVerified: mfaVerified,
-			AMR:         opts.AMR,
-			ACR:         opts.ACR,
 			// Frozen from the same verified evidence the bearer above carries,
 			// so a renewal of this login asserts the provenance the login
 			// proved instead of dropping to an unattested session.

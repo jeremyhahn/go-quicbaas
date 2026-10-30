@@ -588,11 +588,6 @@ type TokenSessionContext struct {
 	// MFAVerified reports whether the login satisfied multi-factor assurance.
 	MFAVerified bool `json:"mfa_verified,omitempty" yaml:"mfa_verified,omitempty"`
 
-	// AMR / ACR are the RFC 8176 authentication method references and the
-	// authentication context class of the originating login.
-	AMR []string `json:"amr,omitempty" yaml:"amr,omitempty"`
-	ACR string   `json:"acr,omitempty" yaml:"acr,omitempty"`
-
 	// AttestLevel and AttestAAGUID are the provenance a verifier PROVED about
 	// the credential that performed the login (see Claims.AttestLevel).
 	//
