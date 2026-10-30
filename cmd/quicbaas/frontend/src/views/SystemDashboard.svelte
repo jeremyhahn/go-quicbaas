@@ -26,7 +26,7 @@
 <script lang="ts">
   import { connectionStore } from '../stores/connection.svelte.ts';
   import { orchestratorStore } from '../stores/orchestrator.svelte.ts';
-  import type { JobStatus, SessionInfo } from '../stores/orchestrator.svelte.ts';
+  import type { JobStatus, SessionStatusResponse } from '../stores/orchestrator.svelte.ts';
   import { sessionStore } from '../stores/sessionStore.svelte.ts';
   import { fleetStore } from '../stores/fleetStore.svelte.ts';
   import { attentionStore } from '../stores/attentionStore.svelte.ts';
@@ -37,7 +37,7 @@
   import StatCard from '../components/core/StatCard.svelte';
   import PageHeader from '../components/core/PageHeader.svelte';
   import { formatDateTime } from '../lib/time.ts';
-  import { countLiveSessions } from '../lib/sessions.ts';
+  import { countLiveSessions, sessionLifecycleState } from '../lib/sessions.ts';
   import StatusBadge from '../components/core/StatusBadge.svelte';
   import StartJobDialog from '../components/orchestrator/StartJobDialog.svelte';
   import SpawnDialog from '../components/orchestrator/SpawnDialog.svelte';
@@ -492,11 +492,11 @@
       .slice(0, 5),
   );
 
-  const allSessions = $derived<SessionInfo[]>(
+  const allSessions = $derived<SessionStatusResponse[]>(
     Array.isArray(orchestratorStore.sessions) ? orchestratorStore.sessions : [],
   );
 
-  const recentSessions = $derived<SessionInfo[]>(
+  const recentSessions = $derived<SessionStatusResponse[]>(
     [...allSessions]
       .filter((s) => Boolean(s.session_id))
       .sort((a, b) => b.created_at - a.created_at)
@@ -874,7 +874,7 @@
                     {(session.session_id ?? '').slice(0, 10)}
                   </span>
                 </div>
-                <StatusBadge text={session.state} variant="ghost" />
+                <StatusBadge text={sessionLifecycleState(session) ?? ''} variant="ghost" />
               </li>
             {/each}
           </ul>

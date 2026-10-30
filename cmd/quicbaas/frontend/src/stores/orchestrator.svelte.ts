@@ -43,6 +43,7 @@ import type {
   JobMemory,
   JobStageRecord,
   JobVerificationResult,
+  SessionStatusResponse,
   TaskBlockKind,
   TaskConclusionReason,
   TaskFaultOrigin,
@@ -235,17 +236,9 @@ export interface FleetNode {
   metadata?: Record<string, string>;
 }
 
-export interface SessionInfo {
-  session_id: string;
-  project_id: string;
-  backend: string;
-  model?: string;
-  state: SessionState;
-  created_at: number;
-  last_activity: number;
-  /** job_id names the orchestration job this session works for, if any. */
-  job_id?: string;
-}
+// SessionStatusResponse is the SDK's session record: the store holds the list
+// listSessions returns, not a second shape that names its fields differently.
+export type { SessionStatusResponse };
 
 export interface Task {
   id: string;
@@ -305,11 +298,6 @@ export interface AgentBackendInfo {
   default_model?: string;
 }
 
-export interface HealthStatus {
-  status: string;
-  message?: string;
-}
-
 /** The record the SDK's orchestrator healthCheck returns. */
 export type { HealthCheckReport };
 
@@ -360,7 +348,7 @@ let taskJobsLoading = $state(false);
 let fleetNodes: FleetNode[] = $state([]);
 let fleetNodesLoading = $state(false);
 
-let sessions: SessionInfo[] = $state([]);
+let sessions: SessionStatusResponse[] = $state([]);
 let sessionsLoading = $state(false);
 
 let tasks: Task[] = $state([]);
@@ -498,7 +486,7 @@ onSessionScopeChange(() => {
  */
 const NO_JOBS: JobStatus[] = [];
 const NO_FLEET_NODES: FleetNode[] = [];
-const NO_SESSIONS: SessionInfo[] = [];
+const NO_SESSIONS: SessionStatusResponse[] = [];
 const NO_TASKS: Task[] = [];
 const NO_EVENTS: JobEvent[] = [];
 
@@ -688,7 +676,7 @@ export function setFleetNodes(a: FleetNode[] | null | undefined): void {
   fleetNodes = Array.isArray(a) ? dedupeBy(a, (x) => x.id) : [];
   _fleetFetchedAt = Date.now();
 }
-export function setSessions(s: SessionInfo[] | null | undefined): void {
+export function setSessions(s: SessionStatusResponse[] | null | undefined): void {
   sessions = Array.isArray(s) ? dedupeBy(s, (x) => x.session_id) : [];
   _sessionsFetchedAt = Date.now();
 }

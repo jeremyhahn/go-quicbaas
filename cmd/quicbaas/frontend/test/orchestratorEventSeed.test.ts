@@ -32,7 +32,9 @@ import {
   orchestratorStore,
   refresh,
   resetOrchestratorStore,
+  setSessions,
   type JobStatus,
+  type SessionStatusResponse,
 } from '../src/stores/orchestrator.svelte.ts';
 
 // ---------------------------------------------------------------------------
@@ -196,5 +198,35 @@ describe('orchestrator store — the event log is seeded from the job records', 
     await refresh('jobs');
 
     expect(orchestratorStore.events.map((e) => e.message)).toEqual(['kept']);
+  });
+});
+
+describe('orchestrator store — the session list holds the SDK session record', () => {
+  beforeEach(async () => {
+    resetOrchestratorStore();
+    mockListJobs.mockReset();
+    mockListJobs.mockResolvedValue([]);
+    await refresh('jobs'); // claims the scope, as a signed-in console does
+  });
+
+  it('keeps SDK records with status and last_active, one per session_id', () => {
+    const record = (id: string, status: string): SessionStatusResponse => ({
+      session_id: id,
+      backend: 'claude',
+      status,
+      created_at: 100,
+      last_active: 200,
+    });
+
+    setSessions([record('s1', 'running'), record('s2', 'idle'), record('s1', 'running')]);
+
+    expect(orchestratorStore.sessions.map((s) => s.session_id)).toEqual(['s1', 's2']);
+    expect(orchestratorStore.sessions[0].status).toBe('running');
+    expect(orchestratorStore.sessions[0].last_active).toBe(200);
+  });
+
+  it('gives an empty list for a null response', () => {
+    setSessions(null);
+    expect(orchestratorStore.sessions).toEqual([]);
   });
 });
