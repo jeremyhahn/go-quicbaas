@@ -277,13 +277,6 @@ func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *t
 		return &IssueDeviceIdentityRequest{Type: DeviceIdentityTypeEK, DeviceID: "dev-tenant", EKPub: []byte("ek"), TenantID: "tenant-a"}
 	}
 
-	stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
-	svc := newExtService(t, stub)
-	_, err := svc.IssueDeviceIdentity(tenantctx.WithTenant(context.Background(), "tenant-a"), req())
-	require.NoError(t, err, "the caller's own tenant is accepted")
-	require.NotNil(t, stub.issuedReq)
-	assert.Equal(t, "tenant-a", stub.issuedReq.TenantID)
-
 	for name, ctx := range map[string]context.Context{
 		"system caller":  systemTenantCtx(),
 		"another tenant": tenantctx.WithTenant(context.Background(), "tenant-b"),
@@ -296,6 +289,32 @@ func TestCertificateService_IssueDeviceIdentity_IsConfinedToTheCallerTenant(t *t
 			"%s issuing in tenant-a = %v, want ErrForbidden wrapping *tenantctx.CrossTenantError", name, err)
 		assert.Nilf(t, stub.issuedReq, "%s: nothing may reach the CA", name)
 	}
+}
+
+// The pinned go-xkms device issuance records no certificate owner, so a
+// tenant could never revoke a device identity it was issued. Until go-xkms
+// records the owner, a tenant caller is refused before the CA is reached.
+func TestCertificateService_IssueDeviceIdentity_IsPlatformOnly(t *testing.T) {
+	for name, req := range map[string]*IssueDeviceIdentityRequest{
+		"own tenant named": {Type: DeviceIdentityTypeEK, DeviceID: "dev-tenant", EKPub: []byte("ek"), TenantID: "tenant-a"},
+		"no tenant named":  {Type: DeviceIdentityTypeAK, DeviceID: "dev-tenant", AKPub: []byte("ak")},
+	} {
+		stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
+		_, err := newExtService(t, stub).IssueDeviceIdentity(tenantctx.WithTenant(context.Background(), "tenant-a"), req)
+		require.ErrorIsf(t, err, ErrCertExtDeviceIdentityPlatformOnly, "%s", name)
+		var qb *errors.QBError
+		require.Truef(t, stderrors.As(err, &qb) && qb.Code == errors.ErrForbidden, "%s: code = %v, want ErrForbidden", name, err)
+		assert.Nilf(t, stub.issuedReq, "%s: nothing may reach the CA", name)
+	}
+
+	stub := &extCAStub{issued: &IssuedDeviceIdentity{CertificatePEM: []byte("cert")}}
+	resp, err := newExtService(t, stub).IssueDeviceIdentity(systemTenantCtx(), &IssueDeviceIdentityRequest{
+		Type: DeviceIdentityTypeEK, DeviceID: "dev-platform", EKPub: []byte("ek"),
+	})
+	require.NoError(t, err, "the system tenant still issues device identities")
+	assert.Equal(t, []byte("cert"), resp.CertificatePEM)
+	require.NotNil(t, stub.issuedReq)
+	assert.Empty(t, stub.issuedReq.TenantID, "the system tenant is forwarded to the CA as the empty owner")
 }
 
 func TestCertificateService_IssueDeviceIdentity_Errors(t *testing.T) {

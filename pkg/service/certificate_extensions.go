@@ -274,6 +274,17 @@ var (
 		Op:   "CertificateService.IssueDeviceIdentity",
 		Err:  errCertExtMissingTCGCSR,
 	}
+	// ErrCertExtDeviceIdentityPlatformOnly is returned when a tenant caller
+	// asks for a device identity certificate. The pinned go-xkms device
+	// issuance records no owner for the certificate, so CertificateTenant
+	// would report it as the system's and the issuing tenant could never
+	// revoke it. Device identities stay platform-only until go-xkms records
+	// their owner.
+	ErrCertExtDeviceIdentityPlatformOnly = &errors.QBError{
+		Code: errors.ErrForbidden,
+		Op:   "CertificateService.IssueDeviceIdentity",
+		Err:  errCertExtDeviceIdentityPlatformOnly,
+	}
 )
 
 var (
@@ -287,6 +298,9 @@ var (
 	errCertExtMissingEKPub  = stderrors.New("EK public key is required for EK certificates")
 	errCertExtMissingAKPub  = stderrors.New("AK public key is required for AK certificates")
 	errCertExtMissingTCGCSR = stderrors.New("TCG-CSR-IDEVID is required for IDevID certificates")
+
+	errCertExtDeviceIdentityPlatformOnly = stderrors.New(
+		"device identity certificates are issued to the system tenant only")
 )
 
 // =============================================================================
@@ -420,11 +434,18 @@ func (s *certificateService) IssueDeviceIdentity(ctx context.Context, req *Issue
 	if err != nil {
 		return nil, err
 	}
-	// A device identity is issued in the caller's own tenant only. A request
-	// naming another tenant is refused, the system tenant included: go-qrdb
-	// v0.28 lets no caller mint another tenant's certificates.
+	// A request naming another tenant is refused, the system tenant
+	// included: go-qrdb v0.28 lets no caller mint another tenant's
+	// certificates.
 	if _, err := tenantctx.Target(ctx, "CertificateService.IssueDeviceIdentity", req.TenantID); err != nil {
 		return nil, err
+	}
+	// Device identities are platform-only: the pinned go-xkms device
+	// issuance records no owner, so a tenant could not revoke what it was
+	// issued. prepareTenantContext reports the system tenant as "". TenantID
+	// is still forwarded below for when go-xkms records it.
+	if tenantID != "" {
+		return nil, ErrCertExtDeviceIdentityPlatformOnly
 	}
 
 	ca, err := s.extensionsCA()
