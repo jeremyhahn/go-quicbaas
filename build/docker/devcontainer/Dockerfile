@@ -219,6 +219,8 @@ RUN set -eu; \
 # (go-quicbaas#1383, option B): base plus the node binaries, the node
 # entrypoint and the node config. No source and no dev tools.
 FROM base AS integration
+# Part of the image tag's hash (ci-template v1.29); base and toolchain do not take it.
+ARG APK_INDEX_SUM
 
 # The paths the node writes. Compose mounts a named volume (or, for /covdata, a
 # bind) on each; the image creates them so a fresh volume starts with them.

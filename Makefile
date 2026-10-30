@@ -3381,8 +3381,8 @@ check-public-literals: ## Fail when a tracked file carries a credential literal 
 .PHONY: actionlint
 # actionlint with shellcheck over the workflows (ci-template v1.21 make lint;
 # both ship in the devcontainer toolchain image). ACTIONLINT_FILES names
-# ci.yml alone until release.yml's shellcheck findings are fixed.
-ACTIONLINT_FILES ?= .github/workflows/ci.yml
+# every workflow under .github/workflows.
+ACTIONLINT_FILES ?= $(wildcard .github/workflows/*.yml)
 actionlint: ## Lint the GitHub Actions workflows with actionlint and shellcheck
 	@actionlint $(ACTIONLINT_FILES)
 
