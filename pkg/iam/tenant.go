@@ -323,7 +323,9 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 	// leaving behind a tenant nothing can be provisioned into.
 	if m.roleSeeder != nil {
 		if err := m.roleSeeder.SeedBuiltInRoles(ctx, tenantID); err != nil {
-			return nil, dberrors.Wrapf(errors.Join(err, m.rollbackCreate(ctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant built-in roles")
+			rctx, cancel := rollbackContext(ctx)
+			defer cancel()
+			return nil, dberrors.Wrapf(errors.Join(err, m.rollbackCreate(rctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant built-in roles")
 		}
 	}
 
@@ -335,15 +337,29 @@ func (m *DefaultTenantManager) CreateTenant(ctx context.Context, opts CreateTena
 		if err := m.promptSeeder.SeedTenant(ctx, tenantID); err != nil {
 			// The roles seeded above are this creation's own step to undo,
 			// innermost first: the tenant's deletion would not remove them.
+			rctx, cancel := rollbackContext(ctx)
+			defer cancel()
 			var unseed error
 			if m.roleSeeder != nil {
-				unseed = m.roleSeeder.DeleteBuiltInRoles(ctx, tenantID)
+				unseed = m.roleSeeder.DeleteBuiltInRoles(rctx, tenantID)
 			}
-			return nil, dberrors.Wrapf(errors.Join(err, unseed, m.rollbackCreate(ctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant prompt set")
+			return nil, dberrors.Wrapf(errors.Join(err, unseed, m.rollbackCreate(rctx, tenantID)), dberrors.ErrInternal, "iam.CreateTenant", "failed to seed tenant prompt set")
 		}
 	}
 
 	return tenant, nil
+}
+
+// createRollbackTimeout bounds the compensation of a failed tenant creation.
+// The compensation runs detached from the request, so a client that drops the
+// connection mid-create still leaves no partial tenant behind.
+const createRollbackTimeout = 30 * time.Second
+
+// rollbackContext returns the context a failed creation's compensation runs
+// on: it keeps ctx's values but not its cancellation, and is bounded by
+// createRollbackTimeout.
+func rollbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), createRollbackTimeout)
 }
 
 // rollbackCreate undoes every provisioning step CreateTenant took before a

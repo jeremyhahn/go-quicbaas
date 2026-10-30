@@ -23,6 +23,8 @@ import (
 // seedOrder records which seeding steps ran, in order.
 type seedOrder struct {
 	steps []string
+	// unseedCtxErr is the error of the context DeleteBuiltInRoles ran on.
+	unseedCtxErr error
 }
 
 type orderedRoleSeeder struct{ order *seedOrder }
@@ -32,18 +34,25 @@ func (s orderedRoleSeeder) SeedBuiltInRoles(_ context.Context, tenantID string) 
 	return nil
 }
 
-func (s orderedRoleSeeder) DeleteBuiltInRoles(_ context.Context, tenantID string) error {
+func (s orderedRoleSeeder) DeleteBuiltInRoles(ctx context.Context, tenantID string) error {
 	s.order.steps = append(s.order.steps, "unroles:"+tenantID)
+	s.order.unseedCtxErr = ctx.Err()
 	return nil
 }
 
 type orderedPromptSeeder struct {
 	order *seedOrder
 	err   error
+	// cancel, when set, ends the request context before the seed fails, as a
+	// client that drops the connection mid-seed does.
+	cancel context.CancelFunc
 }
 
 func (s orderedPromptSeeder) SeedTenant(_ context.Context, tenantID string) error {
 	s.order.steps = append(s.order.steps, "prompts:"+tenantID)
+	if s.cancel != nil {
+		s.cancel()
+	}
 	return s.err
 }
 
@@ -99,6 +108,37 @@ func TestCreateTenant_PromptSeedFailureUnseedsRoles(t *testing.T) {
 	want := []string{"roles:burnin", "prompts:burnin", "unroles:burnin"}
 	if !slices.Equal(order.steps, want) {
 		t.Fatalf("seeding steps = %v, want %v", order.steps, want)
+	}
+}
+
+// TestCreateTenant_RollbackOutlivesACanceledRequest proves a client that
+// drops the connection mid-seed still gets the creation fully undone: the
+// compensations run on a context the request's cancellation does not reach.
+func TestCreateTenant_RollbackOutlivesACanceledRequest(t *testing.T) {
+	mgr := newTestTenantManager()
+	order := &seedOrder{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr.SetRoleSeeder(orderedRoleSeeder{order: order})
+	mgr.SetPromptSeeder(orderedPromptSeeder{order: order, err: context.Canceled, cancel: cancel})
+	engine := &recordingQRDBProvisioner{}
+	mgr.SetQRDBTenantProvisioner(engine)
+
+	if _, err := mgr.CreateTenant(ctx, CreateTenantOptions{ID: "burnin", Name: "Burn-in"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CreateTenant error = %v, want the seed's cancellation", err)
+	}
+	want := []string{"roles:burnin", "prompts:burnin", "unroles:burnin"}
+	if !slices.Equal(order.steps, want) {
+		t.Fatalf("seeding steps = %v, want %v", order.steps, want)
+	}
+	if order.unseedCtxErr != nil {
+		t.Fatalf("DeleteBuiltInRoles ran on an ended context: %v", order.unseedCtxErr)
+	}
+	if !engine.deleteCalled || engine.deleteCtxErr != nil {
+		t.Fatalf("engine rollback: called=%v ctx err=%v, want called on a live context", engine.deleteCalled, engine.deleteCtxErr)
+	}
+	if _, err := mgr.GetTenant(context.Background(), "burnin"); err == nil {
+		t.Fatal("tenant survived a canceled prompt seed; the creation was not rolled back")
 	}
 }
 
