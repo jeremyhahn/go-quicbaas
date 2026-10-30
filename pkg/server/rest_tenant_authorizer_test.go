@@ -34,8 +34,8 @@ import (
 
 // Before the qrdb node is up, no decision can be made: the authorizer must
 // say so with the typed error the REST handler maps to 503, never admit.
-func TestRESTBarrierScopeAuthorizer_NoNodeFailsClosed(t *testing.T) {
-	authz := &restBarrierScopeAuthorizer{server: &Server{}}
+func TestRESTTenantAuthorizer_NoNodeFailsClosed(t *testing.T) {
+	authz := &restTenantAuthorizer{server: &Server{}}
 
 	err := authz.Authorize(context.Background(),
 		&qrdbsdk.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}},
@@ -79,9 +79,9 @@ func serverWithNodeAuthorizer(authz qrdbsdk.Authorizer) *Server {
 // resource and action verbatim: the identity pointer itself, so an app
 // token's scp-derived ScopePermissions reach the decision, and the context
 // carrying the tenant the REST handler bound.
-func TestRESTBarrierScopeAuthorizer_DelegatesVerbatim(t *testing.T) {
+func TestRESTTenantAuthorizer_DelegatesVerbatim(t *testing.T) {
 	inner := &recordingAuthorizer{}
-	authz := &restBarrierScopeAuthorizer{server: serverWithNodeAuthorizer(inner)}
+	authz := &restTenantAuthorizer{server: serverWithNodeAuthorizer(inner)}
 
 	ctx := qrdbsdk.ContextWithTenant(context.Background(), "acme")
 	identity := &qrdbsdk.Identity{Subject: "app", TenantID: "acme",
@@ -106,10 +106,10 @@ func TestRESTBarrierScopeAuthorizer_DelegatesVerbatim(t *testing.T) {
 
 // A node denial is returned unchanged — the REST handler maps it to 403 — and
 // is never reported as the authorizer being unavailable (503).
-func TestRESTBarrierScopeAuthorizer_DenialPassesThrough(t *testing.T) {
+func TestRESTTenantAuthorizer_DenialPassesThrough(t *testing.T) {
 	denial := errors.New("permission denied: seal:enable_encryption")
 	inner := &recordingAuthorizer{err: denial}
-	authz := &restBarrierScopeAuthorizer{server: serverWithNodeAuthorizer(inner)}
+	authz := &restTenantAuthorizer{server: serverWithNodeAuthorizer(inner)}
 
 	err := authz.Authorize(context.Background(),
 		&qrdbsdk.Identity{Subject: "nobody", TenantID: "acme"}, "seal", "enable_encryption")
@@ -125,9 +125,9 @@ func TestRESTBarrierScopeAuthorizer_DenialPassesThrough(t *testing.T) {
 // The node is resolved per call, not at construction: an adapter built before
 // the node (as lifecycle builds it) fails closed until the capture records the
 // node's authorizer, and delegates from then on.
-func TestRESTBarrierScopeAuthorizer_ResolvesNodePerCall(t *testing.T) {
+func TestRESTTenantAuthorizer_ResolvesNodePerCall(t *testing.T) {
 	s := &Server{}
-	authz := &restBarrierScopeAuthorizer{server: s}
+	authz := &restTenantAuthorizer{server: s}
 	identity := &qrdbsdk.Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}}
 
 	var unavailable *restapi.TenantAuthorizerUnavailableError

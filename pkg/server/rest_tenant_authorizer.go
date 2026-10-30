@@ -23,9 +23,11 @@ import (
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 )
 
-// restBarrierScopeAuthorizer is the qrdbsdk.Authorizer the REST server
-// consults for POST /v1/barrier/enable-encryption, whose scope is chosen by a
-// body tenant_id (go-quicbaas#990). It delegates to the embedded qrdb node's
+// restTenantAuthorizer is the qrdbsdk.Authorizer the REST server
+// consults for its in-tenant permission checks: POST
+// /v1/barrier/enable-encryption, whose scope is chosen by a body tenant_id
+// (go-quicbaas#990), and roles:assign on user creates and updates that set
+// roles. It delegates to the embedded qrdb node's
 // composed RBAC[+ABAC] authorizer, recorded at node construction by
 // nodeAuthorizerCapture — the same instance qrdb's REST middleware renders
 // every registration-site permission with — so the decision honours
@@ -37,16 +39,16 @@ import (
 // The authorizer is resolved per call because the node is built later in the
 // lifecycle than the REST server. Until it exists the decision fails closed
 // with restapi.TenantAuthorizerUnavailableError (503).
-type restBarrierScopeAuthorizer struct {
+type restTenantAuthorizer struct {
 	server *Server
 }
 
 // Compile-time interface check.
-var _ qrdbsdk.Authorizer = (*restBarrierScopeAuthorizer)(nil)
+var _ qrdbsdk.Authorizer = (*restTenantAuthorizer)(nil)
 
 // Authorize implements qrdbsdk.Authorizer. The target tenant is the one
 // bound to ctx (qrdbsdk.ContextWithTenant); the REST handler binds it.
-func (a *restBarrierScopeAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.Identity, resource, action string) error {
+func (a *restTenantAuthorizer) Authorize(ctx context.Context, identity *qrdbsdk.Identity, resource, action string) error {
 	authz := a.server.capturedNodeAuthorizer()
 	if authz == nil {
 		return &restapi.TenantAuthorizerUnavailableError{Reason: "qrdb node authorizer is not yet available"}
