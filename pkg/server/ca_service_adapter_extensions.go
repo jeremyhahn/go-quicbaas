@@ -327,6 +327,10 @@ func (a *caServiceAdapter) IssueDeviceIdentityCert(ctx context.Context, req *ser
 		},
 		Valid:       req.ValidityDays,
 		PermanentID: req.DeviceID,
+		// The issuing tenant rides on the request, as it does on the
+		// CSR-signing path, so the CA can record it as the certificate's
+		// owner for revocation and inventory.
+		TenantID: req.TenantID,
 	}
 
 	cert, err := handler(ctx, tcg, req, certReq)

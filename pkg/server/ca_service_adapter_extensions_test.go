@@ -27,6 +27,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -342,6 +343,55 @@ func TestIssueDeviceIdentityCert_EK_RealCA(t *testing.T) {
 	require.NoError(t, cert.CheckSignatureFrom(caCert),
 		"the EK certificate must be signed by the real CA")
 	assert.False(t, issued.NotAfter.IsZero())
+}
+
+// tenantRecordingTCGCA wraps the real CA and records the tenant on each TCG
+// issuance request it forwards.
+type tenantRecordingTCGCA struct {
+	xkmssdk.TrustedCA
+	tcg     tcgIssuer
+	tenants []string
+}
+
+func (c *tenantRecordingTCGCA) IssueEKCertificate(ctx context.Context, request *xkmssdk.TrustedCACertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
+	c.tenants = append(c.tenants, request.TenantID)
+	return c.tcg.IssueEKCertificate(ctx, request, ekPubKey)
+}
+
+func (c *tenantRecordingTCGCA) IssueAKCertificate(ctx context.Context, request *xkmssdk.TrustedCACertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+	c.tenants = append(c.tenants, request.TenantID)
+	return c.tcg.IssueAKCertificate(ctx, request, pubKey)
+}
+
+func (c *tenantRecordingTCGCA) SignTCGCSRIDevID(ctx context.Context, tcgCSR *xkmssdk.TCG_CSR_IDEVID, request *xkmssdk.TrustedCACertificateRequest) ([]byte, []byte, error) {
+	c.tenants = append(c.tenants, request.TenantID)
+	return c.tcg.SignTCGCSRIDevID(ctx, tcgCSR, request)
+}
+
+func TestIssueDeviceIdentityCert_ForwardsIssuingTenant(t *testing.T) {
+	real := newRealSoftwareCA(t)
+	tcg, ok := real.(tcgIssuer)
+	require.True(t, ok, "the real CA must implement the TCG surface")
+	recorder := &tenantRecordingTCGCA{TrustedCA: real, tcg: tcg}
+	adapter, err := newCAServiceAdapter(recorder)
+	require.NoError(t, err)
+
+	_, err = adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
+		Type:     service.DeviceIdentityTypeEK,
+		DeviceID: "device-ek-acme",
+		EKPub:    newPKIXPublicKeyPEM(t),
+		TenantID: "acme",
+	})
+	require.NoError(t, err)
+	_, err = adapter.IssueDeviceIdentityCert(context.Background(), &service.DeviceIdentityIssuance{
+		Type:     service.DeviceIdentityTypeAK,
+		DeviceID: "device-ak-system",
+		AKPub:    newPKIXPublicKeyPEM(t),
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"acme", ""}, recorder.tenants,
+		"each issuance must carry its issuing tenant, empty for the system scope")
 }
 
 // bundleFailingTCGCA pairs the fakeTrustedCA double, whose CABundle read
