@@ -520,6 +520,7 @@ func (k *kmsServiceImpl) GenerateKey(ctx context.Context, req *GenerateKeyReques
 		return nil, k.abandonTenantKeyClaim(ctx, claim, "GenerateKey",
 			WrapError(err, errors.ErrInternal, "kms.GenerateKey", "failed to generate key"))
 	}
+	k.completeTenantKeyClaim(ctx, claim, "GenerateKey")
 
 	// Convert manager response to service response
 	// Return the original (unscoped) key name to callers
@@ -659,6 +660,7 @@ func (k *kmsServiceImpl) ImportKey(ctx context.Context, req *ImportKeyRequest) (
 		return nil, k.abandonTenantKeyClaim(ctx, claim, "ImportKey",
 			WrapError(err, importKeyErrorCode(err), "kms.ImportKey", "failed to import key"))
 	}
+	k.completeTenantKeyClaim(ctx, claim, "ImportKey")
 
 	// Convert manager response to service response
 	// Return the original (unscoped) key name to callers

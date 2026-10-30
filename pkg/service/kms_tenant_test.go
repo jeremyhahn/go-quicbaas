@@ -29,6 +29,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
+	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
 	"github.com/jeremyhahn/go-quicbaas/pkg/kms"
@@ -843,6 +844,139 @@ func seedOwnershipClaim(t *testing.T, svc *kmsServiceImpl, name string, claimedA
 	require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(context.Background()),
 		kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, name)), record))
 	return record
+}
+
+// errRestartedBackendOutage is the create failure of a restartedBackend in
+// an outage.
+var errRestartedBackendOutage = stderrors.New("backend unavailable")
+
+// restartedBackend behaves as the production XKMSBackend does after a
+// restart: in an outage its metadata lookup reports kms.ErrKeyNotFound even
+// for a live key. It embeds kms.Backend and defines only the methods the
+// production KMSService calls on the generate path.
+type restartedBackend struct {
+	kms.Backend
+	mu     sync.Mutex
+	keys   map[string]*kms.KeyMetadata
+	outage bool
+}
+
+func (b *restartedBackend) Type() config.BackendType { return config.BackendTypeSoftware }
+
+func (b *restartedBackend) IsAvailable(context.Context) bool { return true }
+
+func (b *restartedBackend) SupportedAlgorithms(context.Context) []string {
+	return []string{kms.AlgAES256GCM}
+}
+
+func (b *restartedBackend) setOutage(outage bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.outage = outage
+}
+
+func (b *restartedBackend) CreateKey(_ context.Context, attrs *xkmssdk.KeyAttributes) (*kms.KeyMetadata, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.outage {
+		return nil, errRestartedBackendOutage
+	}
+	meta := &kms.KeyMetadata{KeyID: attrs.CN, Name: attrs.CN, Algorithm: kms.AlgAES256GCM, State: kms.KeyStateEnabled, Version: 1}
+	b.keys[attrs.CN] = meta
+	return meta, nil
+}
+
+func (b *restartedBackend) GetKeyMetadata(_ context.Context, keyID string) (*kms.KeyMetadata, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	meta, ok := b.keys[keyID]
+	if b.outage || !ok {
+		return nil, fmt.Errorf("signer lookup: %w", kms.ErrKeyNotFound)
+	}
+	return meta, nil
+}
+
+// newProductionChainKMS wires the KMS service to the production
+// kms.KMSService, with a fresh metadata cache, over backend and the
+// ownership store kv.
+func newProductionChainKMS(t *testing.T, backend kms.Backend, kv interfaces.KVStore) *kmsServiceImpl {
+	t.Helper()
+	registry := kms.NewBackendRegistry(nil)
+	require.NoError(t, registry.Register("software", backend, 1))
+	mgr, err := kms.NewKMSService(&kms.KMSServiceOptions{Registry: registry})
+	require.NoError(t, err)
+	svc := newKMSService(mgr, nil)
+	svc.SetKVStore(kv)
+	return svc
+}
+
+func TestKMSOwnership_CompletedRecordSurvivesBackendMissAfterRestart(t *testing.T) {
+	backend := &restartedBackend{keys: map[string]*kms.KeyMetadata{}}
+	kv := qrdbsdk.NewMemoryKVStore()
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	scopedID := tenantScopedKeyID(ownershipTenant, "durable")
+	recordKey := kmsOwnerRecordKey(scopedID)
+
+	_, err := newProductionChainKMS(t, backend, kv).GenerateKey(ctx, ownershipGenerateRequest("durable"))
+	require.NoError(t, err)
+	completed, err := kv.Get(tenantctx.WithSystem(ctx), recordKey)
+	require.NoError(t, err)
+	_, done, err := tenantKeyClaimTime(completed)
+	require.NoError(t, err)
+	require.True(t, done, "a successful create must mark its ownership record completed")
+
+	// After a restart the metadata cache is empty, the backend reports the
+	// live key as not found, and the record is far past the stale age.
+	backend.setOutage(true)
+	restarted := newProductionChainKMS(t, backend, kv)
+	later := time.Now().Add(kmsClaimStaleAfter + time.Hour)
+	restarted.clock = func() time.Time { return later }
+
+	_, err = restarted.GenerateKey(ctx, ownershipGenerateRequest("durable"))
+	require.Error(t, err)
+
+	stored, err := kv.Get(tenantctx.WithSystem(ctx), recordKey)
+	require.NoError(t, err, "a backend miss must not delete a completed ownership record")
+	require.Equal(t, completed, stored)
+	backend.setOutage(false)
+	owner, err := restarted.readKeyOwner(ctx, scopedID, "test")
+	require.NoError(t, err)
+	require.Equal(t, ownershipTenant, owner, "the tenant must keep its key once the backend recovers")
+}
+
+func TestKMSOwnership_CompleteClaimLeavesReplacedRecord(t *testing.T) {
+	svc, _, _ := newOwnershipKMS(t)
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+	claim, err := svc.claimTenantKey(ctx, ownershipTenant, "replaced", "test")
+	require.NoError(t, err)
+	pending := claim.value
+	other := []byte("other" + kmsOwnerRecordSeparator + "cafe" + kmsOwnerRecordSeparator + kmsOwnerRecordCompleted)
+	require.NoError(t, svc.kvStore.Put(tenantctx.WithSystem(ctx), claim.key, other))
+
+	svc.completeTenantKeyClaim(ctx, claim, "test")
+
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), claim.key)
+	require.NoError(t, err)
+	require.Equal(t, other, stored, "a lost compare must not overwrite the record")
+	require.Equal(t, pending, claim.value, "a failed mark must leave the claim pending")
+}
+
+func TestTenantKeyClaimTime(t *testing.T) {
+	claimedAt := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	got, done, err := tenantKeyClaimTime([]byte("t:h:" + strconv.FormatInt(claimedAt.UnixNano(), 10)))
+	require.NoError(t, err)
+	require.False(t, done)
+	require.Equal(t, claimedAt, got)
+
+	_, done, err = tenantKeyClaimTime([]byte("t:h:" + kmsOwnerRecordCompleted))
+	require.NoError(t, err)
+	require.True(t, done)
+
+	for _, bad := range []string{"t:h", "t:h:soon", ":h:1", "t::1"} {
+		_, _, err = tenantKeyClaimTime([]byte(bad))
+		var malformed *KeyOwnershipRecordMalformedError
+		require.ErrorAs(t, err, &malformed, bad)
+	}
 }
 
 func TestKMSOwnership_StaleClaimIsReclaimed(t *testing.T) {

@@ -213,6 +213,14 @@ const kmsClaimCleanupTimeout = 5 * time.Second
 // any key creation, so a live create never loses its claim.
 const kmsClaimStaleAfter = 10 * time.Minute
 
+// kmsOwnerRecordCompleted replaces the claim time in an ownership record once
+// the key it reserves has been created. A completed record proves ownership
+// of a live key and is never reclaimed, whatever its age: a backend that
+// reports a live key as not found, as during an outage, cannot strip the
+// owner of its key. Only a pending record, one whose create never finished,
+// can go stale.
+const kmsOwnerRecordCompleted = "completed"
+
 // KeyOwnershipRecordMalformedError reports an ownership record that does not
 // parse as tenant, holder and claim time. It is never reclaimed.
 type KeyOwnershipRecordMalformedError struct {
@@ -429,11 +437,11 @@ func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store i
 		}
 		return false, WrapError(err, errors.ErrStorage, op, "failed to read key ownership record")
 	}
-	claimedAt, err := tenantKeyClaimTime(record)
+	claimedAt, completed, err := tenantKeyClaimTime(record)
 	if err != nil {
 		return false, WrapError(err, errors.ErrStorage, op, "failed to parse key ownership record")
 	}
-	if k.now().Sub(claimedAt) < kmsClaimStaleAfter {
+	if completed || k.now().Sub(claimedAt) < kmsClaimStaleAfter {
 		return false, nil
 	}
 	deleted, err := store.CompareAndDelete(tenantctx.WithSystem(ctx), recordKey, record)
@@ -448,16 +456,21 @@ func (k *kmsServiceImpl) reclaimStaleTenantKeyClaim(ctx context.Context, store i
 
 // tenantKeyClaimTime parses the claim time of an ownership record of the form
 // tenant, holder and UTC unix nanoseconds, joined with kmsOwnerRecordSeparator.
-func tenantKeyClaimTime(record []byte) (time.Time, error) {
+// It reports completed, with no time, when the last field is
+// kmsOwnerRecordCompleted.
+func tenantKeyClaimTime(record []byte) (claimedAt time.Time, completed bool, err error) {
 	fields := strings.Split(string(record), kmsOwnerRecordSeparator)
 	if len(fields) != 3 || fields[0] == "" || fields[1] == "" {
-		return time.Time{}, &KeyOwnershipRecordMalformedError{Record: string(record)}
+		return time.Time{}, false, &KeyOwnershipRecordMalformedError{Record: string(record)}
+	}
+	if fields[2] == kmsOwnerRecordCompleted {
+		return time.Time{}, true, nil
 	}
 	nanos, err := strconv.ParseInt(fields[2], 10, 64)
 	if err != nil {
-		return time.Time{}, &KeyOwnershipRecordMalformedError{Record: string(record)}
+		return time.Time{}, false, &KeyOwnershipRecordMalformedError{Record: string(record)}
 	}
-	return time.Unix(0, nanos).UTC(), nil
+	return time.Unix(0, nanos).UTC(), false, nil
 }
 
 // now returns the service clock, which tests replace to age claims.
@@ -538,6 +551,32 @@ func (k *kmsServiceImpl) abandonTenantKeyClaim(ctx context.Context, claim *tenan
 		}
 	}
 	return createErr
+}
+
+// completeTenantKeyClaim marks the claim's ownership record completed once
+// its key has been created, so the record is never reclaimed as stale. The
+// key exists either way, so a failed mark is logged and not returned: the
+// record still names the owner, and only stays reclaimable. Like the
+// rollback, the mark outlives a request cancelled after the create.
+func (k *kmsServiceImpl) completeTenantKeyClaim(ctx context.Context, claim *tenantKeyClaim, operation string) {
+	if claim == nil {
+		return
+	}
+	tenantID, rest, _ := strings.Cut(string(claim.value), kmsOwnerRecordSeparator)
+	holder, _, _ := strings.Cut(rest, kmsOwnerRecordSeparator)
+	completed := []byte(tenantID + kmsOwnerRecordSeparator + holder + kmsOwnerRecordSeparator + kmsOwnerRecordCompleted)
+
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), kmsClaimCleanupTimeout)
+	defer cancel()
+	swapped, err := claim.store.CompareAndSwap(tenantctx.WithSystem(markCtx), claim.key, claim.value, completed)
+	if err != nil || !swapped {
+		if k.logger != nil {
+			k.logger.Error("failed to mark key ownership record completed after a create",
+				"operation", operation, "record", claim.key, "marked", swapped, "error", err)
+		}
+		return
+	}
+	claim.value = completed
 }
 
 // resolveTenantKey returns the scoped key ID for a tenant's key name after
