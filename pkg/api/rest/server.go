@@ -421,6 +421,8 @@ type Server struct {
 	// barrierScopeAuthz decides POST /v1/barrier/enable-encryption, the one
 	// barrier route whose scope comes from its body rather than its path, so
 	// no single registration-site permission can gate it (go-quicbaas#990).
+	// It also decides roles:assign for user creates and updates that set
+	// roles, which their users:* route permission does not cover.
 	// Wired by lifecycle via SetBarrierScopeAuthorizer to go-qrdb's RBAC
 	// authorizer. Nil before wiring; the handler fails closed with 503.
 	barrierScopeAuthz qrdbsdk.Authorizer

@@ -812,6 +812,22 @@ func (e *BarrierScopeAuthorizerUnavailableError) Error() string {
 // target tenant bound explicitly — never inherited from the request context —
 // so a tenant principal cannot reach the system barrier or another tenant's.
 func (s *Server) authorizeBarrierScope(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+	resource := barrierSystemEnableResource
+	if tenantID != "" {
+		resource = barrierTenantEnableResource
+	}
+	// An empty tenantID binds the system tenant (qrdbsdk.ContextWithTenant).
+	return s.authorizeInTenant(w, r, tenantID, resource, barrierEnableAction)
+}
+
+// authorizeInTenant asks go-qrdb's RBAC authorizer whether the caller holds
+// resource:action in tenantID, writing the refusal and returning false when
+// it does not. It is the same decision point every registration-site
+// permission is rendered by, for a request whose body asks for more than its
+// route's permission covers. The tenant is bound explicitly, never inherited
+// from the request context. It fails closed: 503 when no authorizer is
+// wired or it cannot yet decide, 401 without an authenticated identity.
+func (s *Server) authorizeInTenant(w http.ResponseWriter, r *http.Request, tenantID, resource, action string) bool {
 	authz := s.barrierScopeAuthorizer()
 	if authz == nil {
 		RespondError(w, r, http.StatusServiceUnavailable,
@@ -824,20 +840,15 @@ func (s *Server) authorizeBarrierScope(w http.ResponseWriter, r *http.Request, t
 		return false
 	}
 
-	resource := barrierSystemEnableResource
-	if tenantID != "" {
-		resource = barrierTenantEnableResource
-	}
-	// An empty tenantID binds the system tenant (qrdbsdk.ContextWithTenant).
 	ctx := qrdbsdk.ContextWithTenant(r.Context(), tenantID)
-	if err := authz.Authorize(ctx, identity, resource, barrierEnableAction); err != nil {
+	if err := authz.Authorize(ctx, identity, resource, action); err != nil {
 		var unavailable *BarrierScopeAuthorizerUnavailableError
 		if errors.As(err, &unavailable) {
 			RespondError(w, r, http.StatusServiceUnavailable, unavailable)
 			return false
 		}
 		RespondError(w, r, http.StatusForbidden, &ForbiddenError{
-			Reason: resource + ":" + barrierEnableAction + " is required for the requested scope",
+			Reason: resource + ":" + action + " is required",
 		})
 		return false
 	}

@@ -29,6 +29,15 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 )
 
+// The permission POST /api/v1/tenants/{tenant_id}/users/{user_id}/roles
+// carries at registration. A user create or update that sets roles requires
+// it too: without it, users:update alone could grant its holder any role in
+// the tenant, its own account included.
+const (
+	roleAssignResource = "roles"
+	roleAssignAction   = "assign"
+)
+
 // ListUsers handles GET /api/v1/tenants/{tenant_id}/users - List users in a tenant.
 func (h *IAMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -161,6 +170,11 @@ func (h *IAMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Email == "" {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "email is required"))
+		return
+	}
+
+	// users:create admits the account, not the roles it is given.
+	if len(req.Roles) > 0 && !h.server.authorizeInTenant(w, r, tenantID, roleAssignResource, roleAssignAction) {
 		return
 	}
 
@@ -394,6 +408,12 @@ func (h *IAMHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		RespondIAMError(w, r, http.StatusBadRequest,
 			NewIAMAPIError(ErrBadRequest, "invalid JSON body"))
+		return
+	}
+
+	// users:update changes the account, not its roles. Any roles field,
+	// even an empty one that clears them, is a role assignment.
+	if req.Roles != nil && !h.server.authorizeInTenant(w, r, tenantID, roleAssignResource, roleAssignAction) {
 		return
 	}
 

@@ -868,8 +868,21 @@ func TestIAMMiddleware_TenantContext(t *testing.T) {
 // TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a
 // "roles" list and forwards it through the shared IdentityStore seam: the
 // created user carries the role and the persisted record matches.
+// asRoleCaller authenticates req as a tenant1 caller and wires the RBAC
+// authorizer the handler consults for roles:assign, answering deny to every
+// decision (nil admits).
+func asRoleCaller(server *Server, req *http.Request, deny error) (*http.Request, *scopeAuthorizerStub) {
+	authz := &scopeAuthorizerStub{err: deny}
+	server.SetBarrierScopeAuthorizer(authz)
+	caller := &qrdbsdk.Identity{Subject: "operator", TenantID: "tenant1"}
+	return req.WithContext(qrdbsdk.WithIdentity(req.Context(), caller)), authz
+}
+
+// roleAssignDecision is the decision a user write that sets roles must ask for.
+var roleAssignDecision = scopeDecision{tenant: "tenant1", resource: "roles", action: "assign"}
+
 func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -880,6 +893,7 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req, authz := asRoleCaller(server, req, nil)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)
@@ -893,13 +907,119 @@ func TestIAMHandler_CreateUser_WithRoles(t *testing.T) {
 	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "withroles@example.com")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"role-auditor"}, stored.Roles)
+	assert.Equal(t, []scopeDecision{roleAssignDecision}, authz.made())
+}
+
+// TestIAMHandler_CreateUser_RolesWithoutRoleAssign_Forbidden proves users:create
+// does not let its holder hand out roles: without roles:assign the create is
+// refused before anything is written.
+func TestIAMHandler_CreateUser_RolesWithoutRoleAssign_Forbidden(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"}))
+
+	body := `{"email": "escalate@example.com", "username": "escalate", "roles": ["admin"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req, authz := asRoleCaller(server, req, &ForbiddenError{Reason: "denied"})
+	w := httptest.NewRecorder()
+
+	handler.CreateUser(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, []scopeDecision{roleAssignDecision}, authz.made())
+
+	_, err := memStorage.GetUserByEmail(ctx, "tenant1", "escalate@example.com")
+	require.Error(t, err, "a refused create must not leave a user behind")
+}
+
+// TestIAMHandler_UpdateUser_RolesWithoutRoleAssign_Forbidden proves users:update
+// alone cannot grant roles, its caller's own account included: the update is
+// refused and the stored roles are unchanged.
+func TestIAMHandler_UpdateUser_RolesWithoutRoleAssign_Forbidden(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"}))
+	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{ID: 11, TenantID: "tenant1", Email: "user1@example.com", Roles: []string{"viewer"}}))
+
+	body := `{"name": "Escalated", "roles": ["admin"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/users/11", bytes.NewReader([]byte(body)))
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
+	req, authz := asRoleCaller(server, req, &ForbiddenError{Reason: "denied"})
+	w := httptest.NewRecorder()
+
+	handler.UpdateUser(w, req)
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, []scopeDecision{roleAssignDecision}, authz.made())
+
+	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "user1@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"viewer"}, stored.Roles, "a refused update must not change roles")
+	assert.Empty(t, stored.Name, "a refused update must write nothing")
+}
+
+// TestIAMHandler_UpdateUser_RolesWithRoleAssign proves a caller holding
+// roles:assign still sets roles through the update.
+func TestIAMHandler_UpdateUser_RolesWithRoleAssign(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateRole(ctx, &iam.Role{ID: "admin", TenantID: "tenant1", Name: "Admin"}))
+	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{ID: 11, TenantID: "tenant1", Email: "user1@example.com"}))
+
+	body := `{"roles": ["admin"]}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/users/11", bytes.NewReader([]byte(body)))
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
+	req, authz := asRoleCaller(server, req, nil)
+	w := httptest.NewRecorder()
+
+	handler.UpdateUser(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, []scopeDecision{roleAssignDecision}, authz.made())
+
+	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "user1@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"admin"}, stored.Roles)
+}
+
+// TestIAMHandler_UpdateUser_NoRoles_NoRoleAssignCheck proves an update that
+// leaves roles alone stays under users:update alone: roles:assign is never
+// asked for, so a caller without it still succeeds.
+func TestIAMHandler_UpdateUser_NoRoles_NoRoleAssignCheck(t *testing.T) {
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
+	require.NoError(t, memStorage.CreateUser(ctx, &iam.User{ID: 11, TenantID: "tenant1", Email: "user1@example.com"}))
+
+	body := `{"name": "Renamed"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/users/11", bytes.NewReader([]byte(body)))
+	req = withChiParams(req, map[string]string{"tenant_id": "tenant1", "user_id": "11"})
+	req, authz := asRoleCaller(server, req, &ForbiddenError{Reason: "denied"})
+	w := httptest.NewRecorder()
+
+	handler.UpdateUser(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Empty(t, authz.made(), "an update without roles must not ask for roles:assign")
+
+	stored, err := memStorage.GetUserByEmail(ctx, "tenant1", "user1@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", stored.Name)
 }
 
 // TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser proves the REST
 // transport inherits the validate-before-create contract: an unknown role
 // reference returns 404 and NO user record is written (retry-safe).
 func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
+	server, _, memStorage, handler, cleanup := setupIAMTestServer(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -909,6 +1029,7 @@ func TestIAMHandler_CreateUser_UnknownRole_NotFoundNoUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
+	req, _ = asRoleCaller(server, req, nil)
 	w := httptest.NewRecorder()
 
 	handler.CreateUser(w, req)
