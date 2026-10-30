@@ -22,32 +22,32 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// pairedReadStore holds every read until a second read has also been made,
-// so two writers are guaranteed to observe the same state before either
-// writes: the interleaving a version guard exists to decide.
+// pairedReadStore holds every call of the armed verb until a second call of
+// it has also been made, so two writers are guaranteed to reach the same
+// point before either writes: the interleaving a version guard exists to
+// decide. An edit is paired at its read; a create, which reads nothing
+// first, at its guarded create.
 type pairedReadStore struct {
 	qrdbsdk.AtomicKVStore
 
 	mu      sync.Mutex
-	armed   bool
+	armed   string
 	waiting int
 	release chan struct{}
 }
 
-func (s *pairedReadStore) arm(armed bool) {
+func (s *pairedReadStore) arm(verb string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.armed = armed
+	s.armed = verb
 }
 
-// Get reads first and then waits for its partner, so neither caller can
-// write before both have read.
-func (s *pairedReadStore) Get(ctx context.Context, key string) ([]byte, error) {
-	value, err := s.AtomicKVStore.Get(ctx, key)
+// meet waits for the partner call of verb when verb is armed.
+func (s *pairedReadStore) meet(ctx context.Context, verb string) error {
 	s.mu.Lock()
-	if !s.armed {
+	if s.armed != verb {
 		s.mu.Unlock()
-		return value, err
+		return nil
 	}
 	if s.release == nil {
 		s.release = make(chan struct{})
@@ -61,10 +61,29 @@ func (s *pairedReadStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.mu.Unlock()
 	select {
 	case <-release:
-		return value, err
+		return nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
+}
+
+// Get reads first and then waits for its partner, so neither caller can
+// write before both have read.
+func (s *pairedReadStore) Get(ctx context.Context, key string) ([]byte, error) {
+	value, err := s.AtomicKVStore.Get(ctx, key)
+	if meetErr := s.meet(ctx, "Get"); meetErr != nil {
+		return nil, meetErr
+	}
+	return value, err
+}
+
+// PutIfAbsent waits for its partner before it writes, so both creates reach
+// the store's guard together.
+func (s *pairedReadStore) PutIfAbsent(ctx context.Context, key string, value []byte) (bool, error) {
+	if err := s.meet(ctx, "PutIfAbsent"); err != nil {
+		return false, err
+	}
+	return s.AtomicKVStore.PutIfAbsent(ctx, key, value)
 }
 
 // TestStore_ConcurrentSavesAgainstOneVersion races two writers holding the
@@ -76,9 +95,10 @@ func TestStore_ConcurrentSavesAgainstOneVersion(t *testing.T) {
 		name     string
 		existing bool
 		expected int64
+		pair     string
 	}{
-		{name: "create", expected: 0},
-		{name: "edit", existing: true, expected: 1},
+		{name: "create", expected: 0, pair: "PutIfAbsent"},
+		{name: "edit", existing: true, expected: 1, pair: "Get"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -92,7 +112,7 @@ func TestStore_ConcurrentSavesAgainstOneVersion(t *testing.T) {
 				}
 			}
 
-			paired.arm(true)
+			paired.arm(tc.pair)
 			bodies := []string{"alice STOP:", "bob STOP:"}
 			errs := make([]error, len(bodies))
 			var wg sync.WaitGroup
@@ -104,7 +124,7 @@ func TestStore_ConcurrentSavesAgainstOneVersion(t *testing.T) {
 				}()
 			}
 			wg.Wait()
-			paired.arm(false)
+			paired.arm("")
 
 			won, conflicted := 0, 0
 			for _, err := range errs {

@@ -92,15 +92,17 @@ func (s *Seeder) seedTenant(ctx context.Context, tenantID string) (*SeedReport, 
 	if tenantID == "" || tenantID == qrdbsdk.SystemTenantID {
 		return report, nil
 	}
-	for _, ref := range s.refs(tenantID) {
-		content, err := s.systemBody(ctx, ref)
-		if err == nil {
-			_, err = s.store.Save(ctx, ref, Change{
-				Stamp:        Stamp{Author: SeedAuthor, Note: seedNote},
-				Content:      content,
-				FollowParent: true,
-			})
-		}
+	refs := s.refs(tenantID)
+	bodies, err := s.systemBodies(ctx, refs)
+	if err != nil {
+		return nil, &SeedError{TenantID: tenantID, Cause: err}
+	}
+	for _, ref := range refs {
+		_, err := s.store.Save(ctx, ref, Change{
+			Stamp:        Stamp{Author: SeedAuthor, Note: seedNote},
+			Content:      bodies[ref],
+			FollowParent: true,
+		})
 		if errors.Is(err, ErrVersionConflict) {
 			// The tenant already holds this prompt.
 			continue
@@ -113,18 +115,32 @@ func (s *Seeder) seedTenant(ctx context.Context, tenantID string) (*SeedReport, 
 	return report, nil
 }
 
-// systemBody is the body a tenant's copy starts from: the system record's,
-// or the embedded default before the system set was ever written.
-func (s *Seeder) systemBody(ctx context.Context, ref Ref) (string, error) {
-	record, err := s.store.Get(ctx, Ref{TenantID: qrdbsdk.SystemTenantID, Set: ref.Set, Name: ref.Name})
-	if errors.Is(err, ErrNotFound) {
-		spec, specErr := s.store.spec(ref)
-		return spec.Default, specErr
-	}
+// systemBodies maps each ref to the body a tenant's copy starts from: the
+// system record's, or the embedded default before the system set was ever
+// written. One scan reads the whole system set, so the cost of a seed does
+// not grow by a round trip per prompt.
+func (s *Seeder) systemBodies(ctx context.Context, refs []Ref) (map[Ref]string, error) {
+	held, err := s.store.List(ctx, qrdbsdk.SystemTenantID, "", "")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return record.Content, nil
+	system := make(map[Ref]string, len(held))
+	for _, record := range held {
+		system[Ref{Set: record.Set, Name: record.Name}] = record.Content
+	}
+	bodies := make(map[Ref]string, len(refs))
+	for _, ref := range refs {
+		body, ok := system[Ref{Set: ref.Set, Name: ref.Name}]
+		if !ok {
+			spec, err := s.store.spec(ref)
+			if err != nil {
+				return nil, err
+			}
+			body = spec.Default
+		}
+		bodies[ref] = body
+	}
+	return bodies, nil
 }
 
 // undo deletes what a failed seed wrote. A record that will not delete is

@@ -380,9 +380,16 @@ func (s *Store) write(ctx context.Context, op, action string, ref Ref, stamp Sta
 	if err != nil {
 		return nil, err
 	}
-	current, raw, err := held(ctx, op, store, ref)
-	if err != nil {
-		return nil, err
+	// A create Save reads nothing first: whatever the slot holds, the
+	// guarded create below refuses it, so a read would only add a round trip.
+	create := op == "Save" && stamp.ExpectedVersion == 0
+	var current *Record
+	var raw []byte
+	if !create {
+		current, raw, err = held(ctx, op, store, ref)
+		if err != nil {
+			return nil, err
+		}
 	}
 	switch {
 	case current == nil && stamp.ExpectedVersion != 0 && op != "Save":
@@ -436,6 +443,13 @@ func (s *Store) write(ctx context.Context, op, action string, ref Ref, stamp Sta
 	}
 	if err != nil {
 		return nil, backendError(op, err)
+	}
+	if !applied && create {
+		// The refused create says only that the slot is taken; reading it
+		// tells a hash collision with another prompt from this prompt.
+		if _, _, err := held(ctx, op, store, ref); err != nil {
+			return nil, err
+		}
 	}
 	if !applied {
 		return nil, &VersionConflictError{Ref: ref, Expected: stamp.ExpectedVersion}
