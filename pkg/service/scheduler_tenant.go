@@ -125,3 +125,19 @@ func schedulerTenantResolveID(ctx context.Context, op, requested string) (string
 	}
 	return schedulerEngineTenant(tenantID), nil
 }
+
+// schedulerJobNamespace returns the store namespace that holds a job of the
+// named scope. A caller's own jobs live in its namespace (tenantID, already
+// mapped by schedulerTenantResolveID); a job delegated to it lives in the
+// system namespace. An empty scope names the caller's own jobs.
+func schedulerJobNamespace(op, tenantID string, scope SchedulerOwnerType) (string, error) {
+	switch scope {
+	case "", SchedulerOwnerTypeTenant:
+		return tenantID, nil
+	case SchedulerOwnerTypeDelegated:
+		return "", nil
+	default:
+		return "", NewError(errors.ErrInvalidInput, "scheduler."+op,
+			"job scope must be tenant or delegated")
+	}
+}

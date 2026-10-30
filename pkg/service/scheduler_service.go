@@ -263,6 +263,9 @@ type CreateSchedulerJobResponse struct {
 type GetSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope SchedulerOwnerType `json:"scope,omitempty"`
 }
 
 // GetSchedulerJobResponse contains the result of retrieving a job.
@@ -273,18 +276,21 @@ type GetSchedulerJobResponse struct {
 
 // UpdateSchedulerJobRequest contains parameters for updating a job.
 type UpdateSchedulerJobRequest struct {
-	JobID       uint64            `json:"job_id"`
-	TenantID    string            `json:"tenant_id,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Schedule    string            `json:"schedule,omitempty"`
-	ExecuteAt   time.Time         `json:"execute_at,omitempty"`
-	Handler     string            `json:"handler,omitempty"`
-	Payload     []byte            `json:"payload,omitempty"`
-	Priority    int32             `json:"priority,omitempty"`
-	Timeout     time.Duration     `json:"timeout,omitempty"`
-	MaxRetries  int32             `json:"max_retries,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	JobID    uint64 `json:"job_id"`
+	TenantID string `json:"tenant_id,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope       SchedulerOwnerType `json:"scope,omitempty"`
+	Name        string             `json:"name,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Schedule    string             `json:"schedule,omitempty"`
+	ExecuteAt   time.Time          `json:"execute_at,omitempty"`
+	Handler     string             `json:"handler,omitempty"`
+	Payload     []byte             `json:"payload,omitempty"`
+	Priority    int32              `json:"priority,omitempty"`
+	Timeout     time.Duration      `json:"timeout,omitempty"`
+	MaxRetries  int32              `json:"max_retries,omitempty"`
+	Labels      map[string]string  `json:"labels,omitempty"`
 }
 
 // UpdateSchedulerJobResponse contains the result of updating a job.
@@ -297,7 +303,10 @@ type UpdateSchedulerJobResponse struct {
 type DeleteSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
-	Force    bool   `json:"force,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope SchedulerOwnerType `json:"scope,omitempty"`
+	Force bool               `json:"force,omitempty"`
 }
 
 // DeleteSchedulerJobResponse contains the result of deleting a job.
@@ -332,6 +341,9 @@ type ListSchedulerJobsResponse struct {
 type TriggerSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope SchedulerOwnerType `json:"scope,omitempty"`
 }
 
 // TriggerSchedulerJobResponse contains the result of triggering a job.
@@ -345,6 +357,9 @@ type TriggerSchedulerJobResponse struct {
 type PauseSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope SchedulerOwnerType `json:"scope,omitempty"`
 }
 
 // PauseSchedulerJobResponse contains the result of pausing a job.
@@ -359,6 +374,9 @@ type PauseSchedulerJobResponse struct {
 type ResumeSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope SchedulerOwnerType `json:"scope,omitempty"`
 }
 
 // ResumeSchedulerJobResponse contains the result of resuming a job.
@@ -373,7 +391,10 @@ type ResumeSchedulerJobResponse struct {
 type CancelSchedulerJobRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope  SchedulerOwnerType `json:"scope,omitempty"`
+	Reason string             `json:"reason,omitempty"`
 }
 
 // CancelSchedulerJobResponse contains the result of canceling a job.
@@ -388,8 +409,11 @@ type CancelSchedulerJobResponse struct {
 type GetSchedulerJobHistoryRequest struct {
 	JobID    uint64 `json:"job_id"`
 	TenantID string `json:"tenant_id,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
-	Cursor   string `json:"cursor,omitempty"`
+	// Scope names the namespace that holds the job: empty or tenant for the
+	// caller's own jobs, delegated for a job delegated to the caller.
+	Scope  SchedulerOwnerType `json:"scope,omitempty"`
+	Limit  int                `json:"limit,omitempty"`
+	Cursor string             `json:"cursor,omitempty"`
 }
 
 // GetSchedulerJobHistoryResponse contains the result of retrieving job history.
