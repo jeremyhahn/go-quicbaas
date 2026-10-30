@@ -22,6 +22,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -353,7 +354,14 @@ func (k *kmsServiceImpl) claimTenantKey(ctx context.Context, tenantID, name, ope
 	// A key that already exists under the scoped name is never claimed: it
 	// is either this tenant's own key or one the tenant does not own, such
 	// as a legacy system key in the tenant namespace.
-	if existing, err := k.kmsManager.GetKey(ctx, scopedID); err == nil && existing != nil {
+	existing, err := k.kmsManager.GetKey(ctx, scopedID)
+	if err != nil && !stderrors.Is(err, kms.ErrKeyNotFound) {
+		// Only a confirmed not-found proves the name is free. Any other
+		// lookup failure, such as a backend outage, may hide a live key,
+		// so no record is claimed or reclaimed on it.
+		return nil, WrapError(err, errors.ErrStorage, op, "failed to look up key before claiming its name")
+	}
+	if err == nil && existing != nil {
 		owner, ownerErr := k.readKeyOwner(ctx, scopedID, operation)
 		if ownerErr != nil {
 			return nil, ownerErr
