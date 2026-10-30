@@ -246,7 +246,6 @@ export interface SessionInfo {
   job_id?: string;
 }
 
-
 export interface Task {
   id: string;
   tenant_id: string;
