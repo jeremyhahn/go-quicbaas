@@ -18,7 +18,9 @@ package iam_test
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -320,14 +322,10 @@ type GRPCClient struct {
 }
 
 // NewGRPCClient creates a new gRPC protocol client.
-func NewGRPCClient(endpoint string) (*GRPCClient, error) {
+func NewGRPCClient(endpoint string, tlsCfg *tls.Config) (*GRPCClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tlsCfg, err := helpers.SystemAdminTLSConfig()
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
-	}
 	conn, err := grpc.DialContext(ctx, endpoint,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
@@ -811,14 +809,10 @@ type UnixSocketClient struct {
 }
 
 // NewUnixSocketClient creates a new Unix socket protocol client.
-func NewUnixSocketClient(socketPath string) (*UnixSocketClient, error) {
+func NewUnixSocketClient(socketPath string, tlsCfg *tls.Config) (*UnixSocketClient, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	tlsCfg, err := helpers.SystemAdminTLSConfig()
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
-	}
 	conn, err := grpc.DialContext(ctx, "unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithBlock(),
@@ -851,11 +845,7 @@ type QUICClient struct {
 }
 
 // NewQUICClient creates a new QUIC protocol client.
-func NewQUICClient(endpoint string) (*QUICClient, error) {
-	tlsCfg, err := helpers.SystemAdminTLSConfig()
-	if err != nil {
-		return nil, &qberrors.WrappedMessageError{Message: "load system admin TLS config", Cause: err}
-	}
+func NewQUICClient(endpoint string, tlsCfg *tls.Config) (*QUICClient, error) {
 	// The ALPN is left for quictransport.New to default to "h3" (RFC 9114);
 	// the "quicbaas-quic" opcode protocol is retired.
 	cfg := &transport.Config{
@@ -1643,6 +1633,74 @@ func convertQUICResponseToPolicyList(resp interface{}, tenantID string) ([]iam.P
 func requireProtocolClient(t *testing.T, protocol Protocol, cluster *testCluster) ProtocolClient {
 	t.Helper()
 
+	tlsCfg, err := helpers.SystemAdminTLSConfig()
+	require.NoError(t, err, "load system admin TLS config")
+	return requireClientAs(t, protocol, cluster, tlsCfg)
+}
+
+// requireTenantAdminClient provisions tenantID as the system admin and returns
+// a protocol client that authenticates as that tenant's own administrator,
+// with the provisioned tenant's ID. Tenant-scoped IAM routes refuse a system
+// caller acting on another tenant, so data operations must run as the target
+// tenant's admin. The embedded server is a separate in-process node, so the
+// embedded client creates the tenant there itself.
+func requireTenantAdminClient(t *testing.T, protocol Protocol, cluster *testCluster, tenantID string) (ProtocolClient, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	if protocol == ProtocolEmbedded {
+		client := requireProtocolClient(t, protocol, cluster)
+		_, err := client.CreateTenant(ctx, tenantID, "Multiprotocol Test Tenant", nil)
+		require.NoError(t, err, "create embedded tenant")
+		t.Cleanup(func() {
+			if err := client.DeleteTenant(ctx, tenantID); err != nil {
+				t.Logf("delete embedded tenant %s: %v", tenantID, err)
+			}
+		})
+		return client, tenantID
+	}
+
+	session := helpers.TenantAdmin(t, cluster.httpEndpoint, tenantID)
+	tenant := session.Tenant()
+
+	tlsCfg, err := helpers.IntegrationTLSConfig()
+	require.NoError(t, err, "load integration TLS config")
+	tlsCfg = tlsCfg.Clone()
+	adminCert, err := tls.X509KeyPair(tenant.AdminCertPEM, tenant.AdminKeyPEM)
+	require.NoError(t, err, "load tenant admin certificate")
+	tlsCfg.Certificates = []tls.Certificate{adminCert}
+
+	bearer, err := session.Bearer(ctx)
+	require.NoError(t, err, "log in as tenant admin")
+
+	// The REST client sends through the cluster's admin HTTP client, so the
+	// tenant admin's copy of the cluster carries the tenant admin's bearer.
+	tenantCluster := *cluster
+	tenantCluster.adminClient = &http.Client{
+		Timeout:   defaultTimeout,
+		Transport: &bearerTransport{base: cluster.client.Transport, bearer: bearer},
+	}
+	return requireClientAs(t, protocol, &tenantCluster, tlsCfg), tenant.TenantID
+}
+
+// bearerTransport sets a fixed bearer on every request it sends.
+type bearerTransport struct {
+	base   http.RoundTripper
+	bearer string
+}
+
+// RoundTrip sends a copy of req carrying the bearer.
+func (b *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+b.bearer)
+	return b.base.RoundTrip(req)
+}
+
+// requireClientAs returns a protocol client whose mTLS transports present
+// tlsCfg and whose REST client sends through cluster's admin HTTP client.
+func requireClientAs(t *testing.T, protocol Protocol, cluster *testCluster, tlsCfg *tls.Config) ProtocolClient {
+	t.Helper()
+
 	switch protocol {
 	case ProtocolEmbedded:
 		// Use embedded service from TestMain if available
@@ -1661,21 +1719,21 @@ func requireProtocolClient(t *testing.T, protocol Protocol, cluster *testCluster
 
 	case ProtocolGRPC:
 		// Try to create gRPC client - fail if not available
-		grpcClient, err := NewGRPCClient(cluster.grpcEndpoint)
+		grpcClient, err := NewGRPCClient(cluster.grpcEndpoint, tlsCfg)
 		require.NoError(t, err, "gRPC protocol must be available - ensure the test cluster is properly configured with gRPC endpoint")
 		return grpcClient
 
 	case ProtocolQUIC:
 		// QUIC client - uses SDK QUIC transport
 		require.NotEmpty(t, cluster.quicEndpoint, "QUIC endpoint must be configured for test cluster")
-		quicClient, err := NewQUICClient(cluster.quicEndpoint)
+		quicClient, err := NewQUICClient(cluster.quicEndpoint, tlsCfg)
 		require.NoError(t, err, "QUIC protocol must be available - ensure the test cluster is properly configured with QUIC endpoint")
 		return quicClient
 
 	case ProtocolUnixSocket:
 		// Unix socket client - gRPC over Unix domain socket
 		require.NotEmpty(t, cluster.unixSocket, "Unix socket must be configured for test cluster")
-		unixClient, err := NewUnixSocketClient(cluster.unixSocket)
+		unixClient, err := NewUnixSocketClient(cluster.unixSocket, tlsCfg)
 		require.NoError(t, err, "Unix socket protocol must be available - ensure the test cluster is properly configured with Unix socket")
 		return unixClient
 
@@ -1802,16 +1860,13 @@ func TestUserCRUD_AllProtocols(t *testing.T) {
 
 	for _, protocol := range allProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
-			client := requireProtocolClient(t, protocol, cluster)
-			defer client.Close()
-
 			ctx := context.Background()
 			tenantID := fmt.Sprintf("tenant-user-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
-			// Setup: Create tenant
-			_, err := client.CreateTenant(ctx, tenantID, "User Test Tenant", nil)
-			require.NoError(t, err)
-			defer client.DeleteTenant(ctx, tenantID)
+			// Setup: the system admin provisions the tenant, and the
+			// tenant's own admin runs the data operations against it.
+			client, tenantID := requireTenantAdminClient(t, protocol, cluster, tenantID)
+			defer client.Close()
 
 			email := fmt.Sprintf("user-%s-%d@test.local", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
@@ -1877,16 +1932,13 @@ func TestRoleCRUD_AllProtocols(t *testing.T) {
 
 	for _, protocol := range allProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
-			client := requireProtocolClient(t, protocol, cluster)
-			defer client.Close()
-
 			ctx := context.Background()
 			tenantID := fmt.Sprintf("tenant-role-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
-			// Setup: Create tenant
-			_, err := client.CreateTenant(ctx, tenantID, "Role Test Tenant", nil)
-			require.NoError(t, err)
-			defer client.DeleteTenant(ctx, tenantID)
+			// Setup: the system admin provisions the tenant, and the
+			// tenant's own admin runs the data operations against it.
+			client, tenantID := requireTenantAdminClient(t, protocol, cluster, tenantID)
+			defer client.Close()
 
 			roleID := fmt.Sprintf("role-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
@@ -1949,16 +2001,13 @@ func TestPolicyCRUD_AllProtocols(t *testing.T) {
 
 	for _, protocol := range allProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
-			client := requireProtocolClient(t, protocol, cluster)
-			defer client.Close()
-
 			ctx := context.Background()
 			tenantID := fmt.Sprintf("tenant-policy-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
-			// Setup: Create tenant
-			_, err := client.CreateTenant(ctx, tenantID, "Policy Test Tenant", nil)
-			require.NoError(t, err)
-			defer client.DeleteTenant(ctx, tenantID)
+			// Setup: the system admin provisions the tenant, and the
+			// tenant's own admin runs the data operations against it.
+			client, tenantID := requireTenantAdminClient(t, protocol, cluster, tenantID)
+			defer client.Close()
 
 			policyName := fmt.Sprintf("policy-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
@@ -2012,16 +2061,13 @@ func TestMFAOperations_AllProtocols(t *testing.T) {
 
 	for _, protocol := range allProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
-			client := requireProtocolClient(t, protocol, cluster)
-			defer client.Close()
-
 			ctx := context.Background()
 			tenantID := fmt.Sprintf("tenant-mfa-%s-%d", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
-			// Setup: Create tenant and user
-			_, err := client.CreateTenant(ctx, tenantID, "MFA Test Tenant", nil)
-			require.NoError(t, err)
-			defer client.DeleteTenant(ctx, tenantID)
+			// Setup: the system admin provisions the tenant, and the
+			// tenant's own admin runs the data operations against it.
+			client, tenantID := requireTenantAdminClient(t, protocol, cluster, tenantID)
+			defer client.Close()
 
 			email := fmt.Sprintf("mfa-user-%s-%d@test.local", strings.ToLower(string(protocol)), time.Now().UnixNano())
 
