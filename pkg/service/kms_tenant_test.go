@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -870,6 +871,44 @@ func TestKMSOwnership_MalformedClaimIsRefused(t *testing.T) {
 	owner, err := svc.readKeyOwner(ctx, scopedID, "test")
 	require.NoError(t, err)
 	require.Equal(t, ownershipTenant, owner, "a malformed record must never be reclaimed")
+}
+
+func TestKMSOwnership_LookupFailureNeverReclaims(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	svc.clock = func() time.Time { return now }
+	stale := seedOwnershipClaim(t, svc, "unreachable", now.Add(-kmsClaimStaleAfter-time.Second))
+	mgr.getKeyFn = func(context.Context, string) (interface{}, error) {
+		return nil, stderrors.New("backend unavailable")
+	}
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("unreachable"))
+
+	var qe *errors.QBError
+	require.True(t, stderrors.As(err, &qe), "want a QBError, got %v", err)
+	require.Equal(t, errors.ErrStorage, qe.Code, "a failed lookup must not read as absence")
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, "unreachable")))
+	require.NoError(t, err)
+	require.Equal(t, stale, stored, "a failed lookup must leave the record untouched")
+}
+
+func TestKMSOwnership_ConfirmedAbsenceReclaims(t *testing.T) {
+	svc, mgr, _ := newOwnershipKMS(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	svc.clock = func() time.Time { return now }
+	stale := seedOwnershipClaim(t, svc, "absent", now.Add(-kmsClaimStaleAfter-time.Second))
+	mgr.getKeyFn = func(context.Context, string) (interface{}, error) {
+		return nil, fmt.Errorf("lookup: %w", kms.ErrKeyNotFound)
+	}
+	ctx := tenantctx.WithTenant(context.Background(), ownershipTenant)
+
+	_, err := svc.GenerateKey(ctx, ownershipGenerateRequest("absent"))
+
+	require.NoError(t, err, "a confirmed not-found must let a stale claim be reclaimed")
+	stored, err := svc.kvStore.Get(tenantctx.WithSystem(ctx), kmsOwnerRecordKey(tenantScopedKeyID(ownershipTenant, "absent")))
+	require.NoError(t, err)
+	require.NotEqual(t, stale, stored)
 }
 
 func TestKMSOwnership_ListShowsOnlyOwnedKeys(t *testing.T) {
