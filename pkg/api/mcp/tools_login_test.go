@@ -17,12 +17,15 @@ package mcp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -203,6 +206,46 @@ func TestExecuteLoginFinish_DecodesFieldsAndError(t *testing.T) {
 		}
 		_, err := executeLoginFinish(context.Background(), login, map[string]interface{}{"session_id": "s", "type": "mtls"})
 		require.Error(t, err)
+	})
+}
+
+// The MCP HTTP transport records the TLS handshake with qrdb's WithTLSState;
+// quicbaas_login_finish must hand the leaf of the verified chain to the
+// facade, which refuses an mtls login without it.
+func TestExecuteLoginFinish_ThreadsVerifiedPeerCert(t *testing.T) {
+	leaf := &x509.Certificate{Raw: []byte("verified-leaf")}
+
+	t.Run("verified_chain_reaches_facade", func(t *testing.T) {
+		ctx := qrdbsdk.WithTLSState(context.Background(), &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{leaf},
+			VerifiedChains:   [][]*x509.Certificate{{leaf}},
+		})
+		login := &fakeLoginServicer{
+			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
+				assert.Same(t, leaf, service.VerifiedPeerCertFromContext(ctx))
+				return &service.FinishLoginResult{FinishLoginResponse: &qrdbtransport.FinishLoginResponse{Bearer: "b"}}, nil
+			},
+		}
+		_, err := executeLoginFinish(ctx, login, map[string]interface{}{"session_id": "s", "type": "mtls"})
+		require.NoError(t, err)
+	})
+
+	t.Run("unverified_peer_cert_is_not_threaded", func(t *testing.T) {
+		ctx := qrdbsdk.WithTLSState(context.Background(), &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{leaf},
+		})
+		login := &fakeLoginServicer{
+			finishFunc: func(ctx context.Context, req *qrdbtransport.FinishLoginRequest) (*service.FinishLoginResult, error) {
+				assert.Nil(t, service.VerifiedPeerCertFromContext(ctx))
+				return nil, &service.MTLSPeerCertRequiredError{}
+			},
+		}
+		_, err := executeLoginFinish(ctx, login, map[string]interface{}{"session_id": "s", "type": "mtls"})
+		require.Error(t, err)
+	})
+
+	t.Run("no_tls_state", func(t *testing.T) {
+		assert.Nil(t, verifiedPeerCertFromMCP(context.Background()))
 	})
 }
 
