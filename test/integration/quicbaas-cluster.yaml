@@ -82,6 +82,9 @@ secrets:
 # IAM enabled: the admin logs in with its PIV certificate (CA from env).
 iam:
   enabled: true
+  # Matches the trust domain certfixture stamps into issued identities
+  # (test/integration/certfixture/topology.json).
+  spiffe_trust_domain: quicbaas.integration
 
 # TimeSeries disabled (not needed for cluster KV tests).
 timeseries:

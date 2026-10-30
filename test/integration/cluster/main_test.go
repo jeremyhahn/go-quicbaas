@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 	// The readiness probe and the KV helpers authenticate as the fixture
 	// system admin over gRPC; without these the probe can only time out.
 	if missing := missingClusterEnv(); len(missing) > 0 {
-		fmt.Printf("Cluster environment incomplete (run make integration-test-cluster): %v unset\n", missing)
+		fmt.Printf("Cluster environment incomplete (run make integration-test-cluster): %v unset or missing\n", missing)
 		os.Exit(1)
 	}
 
@@ -51,21 +52,52 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// clusterEnv is what make integration-test-cluster exports: the https REST
-// URLs, the gRPC endpoints and the certfixture-issued admin PIV material.
+// clusterEnv names the https REST URLs and gRPC endpoints every runner of
+// this package (make integration-test-cluster, docker-compose.integration.yml)
+// exports; the helpers have no default for them.
 var clusterEnv = []string{
 	"QUICBAAS_NODE1_URL", "QUICBAAS_NODE2_URL", "QUICBAAS_NODE3_URL",
 	"QUICBAAS_NODE1_GRPC", "QUICBAAS_NODE2_GRPC", "QUICBAAS_NODE3_GRPC",
-	"QUICBAAS_TEST_CERTS_DIR",
-	"QUICBAAS_TEST_PIV_CERT", "QUICBAAS_TEST_PIV_KEY", "QUICBAAS_TEST_PIV_CA",
 }
 
-// missingClusterEnv returns the clusterEnv variables that are unset.
+// fixtureFile is certfixture material the helpers read: the path in the
+// override variable when it is set, else the file under the mounted
+// /etc/quicbaas/certs directory.
+type fixtureFile struct {
+	env  string
+	path string
+}
+
+// clusterFixtures mirrors the helpers' resolution of the admin PIV material
+// and the fixture CA's keystore directory.
+var clusterFixtures = []fixtureFile{
+	{env: "QUICBAAS_TEST_PIV_CERT", path: filepath.Join(filepath.Dir(helpers.IntegrationCAPath), "admin.crt")},
+	{env: "QUICBAAS_TEST_PIV_KEY", path: filepath.Join(filepath.Dir(helpers.IntegrationCAPath), "admin.key")},
+	{env: "QUICBAAS_TEST_PIV_CA", path: helpers.IntegrationCAPath},
+	{env: "QUICBAAS_TEST_CERTS_DIR", path: helpers.FixtureCertsDir()},
+}
+
+// resolve returns the override when it is set, else the default path.
+func (f fixtureFile) resolve() string {
+	if v := os.Getenv(f.env); v != "" {
+		return v
+	}
+	return f.path
+}
+
+// missingClusterEnv lists the unset endpoint variables and every fixture
+// path that does not resolve to an existing file or directory.
 func missingClusterEnv() []string {
 	var missing []string
 	for _, env := range clusterEnv {
 		if os.Getenv(env) == "" {
 			missing = append(missing, env)
+		}
+	}
+	for _, f := range clusterFixtures {
+		path := f.resolve()
+		if _, err := os.Stat(path); err != nil {
+			missing = append(missing, f.env+"="+path)
 		}
 	}
 	return missing

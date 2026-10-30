@@ -37,12 +37,6 @@ import (
 // operator's for entity and batch routes, which need go-qrdb's KV grants, and
 // the system admin's for cluster status and metrics.
 
-// e2eTenantClient returns a client that calls as the tenant operator.
-func e2eTenantClient(t *testing.T) *http.Client {
-	t.Helper()
-	return helpers.NewTenantOperatorHTTPClient(t, 30*time.Second)
-}
-
 // e2eCleanup sends a cleanup request, with body as JSON when it is non-nil,
 // and fails the test if the request cannot be sent.
 func e2eCleanup(t *testing.T, method, url string, body []byte) {
