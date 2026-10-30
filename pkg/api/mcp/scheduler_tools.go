@@ -25,6 +25,15 @@ import (
 )
 
 // registerSchedulerTools registers all scheduler tools with the registry.
+// schedulerJobScopeProperty is the optional scope argument of every by-ID
+// scheduler tool. A tenant job and a job delegated to the caller can share
+// an ID, so a delegated job is reached only by naming its scope.
+var schedulerJobScopeProperty = map[string]interface{}{
+	"type":        "string",
+	"enum":        []string{"tenant", "delegated", "system"},
+	"description": "The owner_type the job was listed under: tenant (default) for the caller's own job, delegated for a job delegated to the caller",
+}
+
 func (r *ToolRegistry) registerSchedulerTools() {
 	r.addTool(ToolDefinition{
 		Name:        "quicbaas_scheduler_create_job",
@@ -117,6 +126,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 			},
 			"required": []string{"job_id"},
 		},
@@ -136,6 +146,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 				"name": map[string]interface{}{
 					"type":        "string",
 					"description": "Updated human-readable job name (optional)",
@@ -239,6 +250,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 				"force": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Force delete even if job is running (default: false)",
@@ -262,6 +274,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 			},
 			"required": []string{"job_id"},
 		},
@@ -281,6 +294,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 			},
 			"required": []string{"job_id"},
 		},
@@ -300,6 +314,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 			},
 			"required": []string{"job_id"},
 		},
@@ -319,6 +334,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 				"reason": map[string]interface{}{
 					"type":        "string",
 					"description": "Reason for cancellation (optional)",
@@ -342,6 +358,7 @@ func (r *ToolRegistry) registerSchedulerTools() {
 					"type":        "string",
 					"description": "Tenant ID for access control (optional)",
 				},
+				"scope": schedulerJobScopeProperty,
 				"limit": map[string]interface{}{
 					"type":        "integer",
 					"description": "Maximum number of execution records to return (default: 100)",
@@ -481,6 +498,7 @@ func (r *ToolRegistry) executeSchedulerGetJob(ctx context.Context, args map[stri
 	req := &service.GetSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 	}
 
 	resp, err := schedulerSvc.GetJob(ctx, req)
@@ -508,6 +526,7 @@ func (r *ToolRegistry) executeSchedulerUpdateJob(ctx context.Context, args map[s
 	req := &service.UpdateSchedulerJobRequest{
 		JobID:       jobID,
 		TenantID:    getString(args, "tenant_id"),
+		Scope:       service.SchedulerOwnerType(getString(args, "scope")),
 		Name:        getString(args, "name"),
 		Description: getString(args, "description"),
 		Schedule:    getString(args, "schedule"),
@@ -633,6 +652,7 @@ func (r *ToolRegistry) executeSchedulerDeleteJob(ctx context.Context, args map[s
 	req := &service.DeleteSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 		Force:    getBool(args, "force"),
 	}
 
@@ -662,6 +682,7 @@ func (r *ToolRegistry) executeSchedulerTriggerJob(ctx context.Context, args map[
 	req := &service.TriggerSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 	}
 
 	resp, err := schedulerSvc.TriggerJob(ctx, req)
@@ -690,6 +711,7 @@ func (r *ToolRegistry) executeSchedulerPauseJob(ctx context.Context, args map[st
 	req := &service.PauseSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 	}
 
 	resp, err := schedulerSvc.PauseJob(ctx, req)
@@ -719,6 +741,7 @@ func (r *ToolRegistry) executeSchedulerResumeJob(ctx context.Context, args map[s
 	req := &service.ResumeSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 	}
 
 	resp, err := schedulerSvc.ResumeJob(ctx, req)
@@ -748,6 +771,7 @@ func (r *ToolRegistry) executeSchedulerCancelJob(ctx context.Context, args map[s
 	req := &service.CancelSchedulerJobRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 		Reason:   getString(args, "reason"),
 	}
 
@@ -783,6 +807,7 @@ func (r *ToolRegistry) executeSchedulerJobHistory(ctx context.Context, args map[
 	req := &service.GetSchedulerJobHistoryRequest{
 		JobID:    jobID,
 		TenantID: getString(args, "tenant_id"),
+		Scope:    service.SchedulerOwnerType(getString(args, "scope")),
 		Limit:    limit,
 		Cursor:   getString(args, "cursor"),
 	}

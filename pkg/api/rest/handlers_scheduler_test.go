@@ -1131,6 +1131,47 @@ func TestHandleCancelSchedulerJob_Success(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
+// TestHandleCancelSchedulerJob_Scope checks the scope query parameter
+// reaches the service, and that the service's refusal of an unknown scope
+// is answered with 400.
+func TestHandleCancelSchedulerJob_Scope(t *testing.T) {
+	cancel := func(server *Server, scope string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/7/cancel?scope="+scope, nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "7")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		server.HandleCancelSchedulerJob(w, req)
+		return w
+	}
+
+	t.Run("delegated", func(t *testing.T) {
+		server, mockSvc, cleanup := setupSchedulerMockServer(t)
+		defer cleanup()
+		mockSvc.schedulerService.On("CancelJob", mock.Anything, mock.MatchedBy(func(req *service.CancelSchedulerJobRequest) bool {
+			return req.JobID == 7 && req.Scope == service.SchedulerOwnerTypeDelegated
+		})).Return(&service.CancelSchedulerJobResponse{JobID: 7, NewStatus: service.SchedulerJobStatusCanceled}, nil).Once()
+
+		w := cancel(server, "delegated")
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockSvc.schedulerService.AssertExpectations(t)
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		server, mockSvc, cleanup := setupSchedulerMockServer(t)
+		defer cleanup()
+		mockSvc.schedulerService.On("CancelJob", mock.Anything, mock.MatchedBy(func(req *service.CancelSchedulerJobRequest) bool {
+			return req.Scope == "bogus"
+		})).Return(nil, service.NewError(errors.ErrInvalidInput, "scheduler.CancelJob", "job scope must be tenant, delegated or system")).Once()
+
+		w := cancel(server, "bogus")
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		mockSvc.schedulerService.AssertExpectations(t)
+	})
+}
+
 func TestHandleCancelSchedulerJob_NoBody(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()

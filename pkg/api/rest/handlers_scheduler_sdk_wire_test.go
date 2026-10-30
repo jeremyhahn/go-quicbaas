@@ -71,6 +71,14 @@ func TestSDKRESTScheduler_JobsReachTheService(t *testing.T) {
 	schedulertest.RunJobConformance(t, newSchedulerWireClient(t, jobs, nil), jobs)
 }
 
+// TestSDKRESTScheduler_JobScopeReachesTheService proves the SDK REST
+// transport sends a by-ID request's scope as the scope query parameter and
+// the handler hands it to the service.
+func TestSDKRESTScheduler_JobScopeReachesTheService(t *testing.T) {
+	jobs := schedulertest.New()
+	schedulertest.RunJobScopeConformance(t, newSchedulerWireClient(t, jobs, nil), jobs)
+}
+
 func TestSDKRESTScheduler_PlacementReachesTheEngine(t *testing.T) {
 	places := service.NewPlacementService(placement.New(placementtest.New()))
 	schedulertest.RunPlacementConformance(t, context.Background(), newSchedulerWireClient(t, nil, places), "")

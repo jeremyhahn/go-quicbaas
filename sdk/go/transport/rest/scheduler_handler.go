@@ -70,13 +70,18 @@ func (h *schedulerRESTHandler) call(ctx context.Context, method, id string, quer
 	return h.t.doJSONRequest(ctx, verb, path, body, result)
 }
 
-// schedulerTenantQuery carries a request's explicit tenant, which the server reads
-// as tenant_id when the authenticated context carries none.
-func schedulerTenantQuery(tenantID string) url.Values {
-	if tenantID == "" {
-		return nil
+// schedulerJobQuery carries a by-ID request's explicit tenant, which the
+// server reads as tenant_id when the authenticated context carries none, and
+// the scope that names the namespace holding the job.
+func schedulerJobQuery(tenantID string, scope service.SchedulerOwnerType) url.Values {
+	query := url.Values{}
+	if tenantID != "" {
+		query.Set("tenant_id", tenantID)
 	}
-	return url.Values{"tenant_id": {tenantID}}
+	if scope != "" {
+		query.Set("scope", string(scope))
+	}
+	return query
 }
 
 // jsonPayload renders a job payload for the REST body, whose payload field
@@ -181,7 +186,7 @@ func (h *schedulerRESTHandler) CreateJob(ctx context.Context, req *service.Creat
 // GetJob calls GET /api/v1/scheduler/jobs/{id}.
 func (h *schedulerRESTHandler) GetJob(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
 	var out restJobEnvelope
-	if err := h.call(ctx, "GetJob", strconv.FormatUint(req.JobID, 10), schedulerTenantQuery(req.TenantID), nil, &out); err != nil {
+	if err := h.call(ctx, "GetJob", strconv.FormatUint(req.JobID, 10), schedulerJobQuery(req.TenantID, req.Scope), nil, &out); err != nil {
 		return nil, err
 	}
 	return &service.GetSchedulerJobResponse{Job: out.Job.toService(), Timestamp: out.Timestamp}, nil
@@ -195,7 +200,7 @@ func (h *schedulerRESTHandler) UpdateJob(ctx context.Context, req *service.Updat
 		return nil, err
 	}
 	var out restJobEnvelope
-	if err := h.call(ctx, "UpdateJob", strconv.FormatUint(req.JobID, 10), schedulerTenantQuery(req.TenantID), &restJobBody{
+	if err := h.call(ctx, "UpdateJob", strconv.FormatUint(req.JobID, 10), schedulerJobQuery(req.TenantID, req.Scope), &restJobBody{
 		Name:           req.Name,
 		Description:    req.Description,
 		Schedule:       req.Schedule,
@@ -214,11 +219,8 @@ func (h *schedulerRESTHandler) UpdateJob(ctx context.Context, req *service.Updat
 
 // DeleteJob calls DELETE /api/v1/scheduler/jobs/{id}.
 func (h *schedulerRESTHandler) DeleteJob(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-	query := schedulerTenantQuery(req.TenantID)
+	query := schedulerJobQuery(req.TenantID, req.Scope)
 	if req.Force {
-		if query == nil {
-			query = url.Values{}
-		}
 		query.Set("force", "true")
 	}
 	var out service.DeleteSchedulerJobResponse
@@ -274,9 +276,9 @@ type statusTransition struct {
 }
 
 // transition posts a job status change.
-func (h *schedulerRESTHandler) transition(ctx context.Context, method string, jobID uint64, tenantID string, body interface{}) (*statusTransition, error) {
+func (h *schedulerRESTHandler) transition(ctx context.Context, method string, jobID uint64, query url.Values, body interface{}) (*statusTransition, error) {
 	var out statusTransition
-	if err := h.call(ctx, method, strconv.FormatUint(jobID, 10), schedulerTenantQuery(tenantID), body, &out); err != nil {
+	if err := h.call(ctx, method, strconv.FormatUint(jobID, 10), query, body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -284,7 +286,7 @@ func (h *schedulerRESTHandler) transition(ctx context.Context, method string, jo
 
 // TriggerJob calls POST /api/v1/scheduler/jobs/{id}/trigger.
 func (h *schedulerRESTHandler) TriggerJob(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-	out, err := h.transition(ctx, "TriggerJob", req.JobID, req.TenantID, nil)
+	out, err := h.transition(ctx, "TriggerJob", req.JobID, schedulerJobQuery(req.TenantID, req.Scope), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +295,7 @@ func (h *schedulerRESTHandler) TriggerJob(ctx context.Context, req *service.Trig
 
 // PauseJob calls POST /api/v1/scheduler/jobs/{id}/pause.
 func (h *schedulerRESTHandler) PauseJob(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-	out, err := h.transition(ctx, "PauseJob", req.JobID, req.TenantID, nil)
+	out, err := h.transition(ctx, "PauseJob", req.JobID, schedulerJobQuery(req.TenantID, req.Scope), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +304,7 @@ func (h *schedulerRESTHandler) PauseJob(ctx context.Context, req *service.PauseS
 
 // ResumeJob calls POST /api/v1/scheduler/jobs/{id}/resume.
 func (h *schedulerRESTHandler) ResumeJob(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-	out, err := h.transition(ctx, "ResumeJob", req.JobID, req.TenantID, nil)
+	out, err := h.transition(ctx, "ResumeJob", req.JobID, schedulerJobQuery(req.TenantID, req.Scope), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +313,7 @@ func (h *schedulerRESTHandler) ResumeJob(ctx context.Context, req *service.Resum
 
 // CancelJob calls POST /api/v1/scheduler/jobs/{id}/cancel.
 func (h *schedulerRESTHandler) CancelJob(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-	out, err := h.transition(ctx, "CancelJob", req.JobID, req.TenantID, map[string]string{"reason": req.Reason})
+	out, err := h.transition(ctx, "CancelJob", req.JobID, schedulerJobQuery(req.TenantID, req.Scope), map[string]string{"reason": req.Reason})
 	if err != nil {
 		return nil, err
 	}
@@ -320,10 +322,7 @@ func (h *schedulerRESTHandler) CancelJob(ctx context.Context, req *service.Cance
 
 // GetJobHistory calls GET /api/v1/scheduler/jobs/{id}/history.
 func (h *schedulerRESTHandler) GetJobHistory(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-	query := schedulerTenantQuery(req.TenantID)
-	if query == nil {
-		query = url.Values{}
-	}
+	query := schedulerJobQuery(req.TenantID, req.Scope)
 	if req.Limit > 0 {
 		query.Set("limit", strconv.Itoa(req.Limit))
 	}

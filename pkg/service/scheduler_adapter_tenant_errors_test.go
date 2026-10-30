@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/scheduler"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
@@ -111,8 +112,6 @@ func TestSchedulerAdapter_CrossTenantJob_Denied(t *testing.T) {
 // system namespace, so the tenant that owns the data reads it there; any
 // other tenant, or a plain system job, stays not found.
 func TestSchedulerAdapter_GetJob_DelegatedJobOfCaller(t *testing.T) {
-	notFound := scheduler.ErrStorageError{Op: "GetJob", Cause: &scheduler.JobNotFoundError{JobID: 1}}
-
 	cases := []struct {
 		name    string
 		system  *scheduler.Job
@@ -125,59 +124,150 @@ func TestSchedulerAdapter_GetJob_DelegatedJobOfCaller(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			eng := newTestMockSchedulerEngine()
-			eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
 			eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(tc.system, nil)
 			a := &SchedulerAdapter{scheduler: eng}
 
-			resp, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1})
+			resp, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1, Scope: SchedulerOwnerTypeDelegated})
 			if tc.wantErr {
-				require.Error(t, err)
+				require.True(t, isSchedulerJobNotFound(err), "got %v", err)
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, uint64(1), resp.Job.ID)
+			require.Equal(t, SchedulerOwnerTypeDelegated, resp.Job.OwnerType)
+			eng.AssertNotCalled(t, "GetJobWithTenant", mock.Anything, uint64(1), "tenant-a")
 		})
 	}
 
-	t.Run("tenant store error is not retried in the system namespace", func(t *testing.T) {
+	t.Run("tenant scope does not fall back to the system namespace", func(t *testing.T) {
+		notFound := scheduler.ErrStorageError{Op: "GetJob", Cause: &scheduler.JobNotFoundError{JobID: 1}}
 		eng := newTestMockSchedulerEngine()
-		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, errors.New("engine boom"))
+		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
 		a := &SchedulerAdapter{scheduler: eng}
 
 		_, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1})
-		require.Error(t, err)
+		require.True(t, isSchedulerJobNotFound(err), "got %v", err)
 		eng.AssertNotCalled(t, "GetJobWithTenant", mock.Anything, uint64(1), "")
 	})
 }
 
 func TestSchedulerAdapter_CancelJob_DelegatedJobOfCaller(t *testing.T) {
-	notFound := scheduler.ErrStorageError{Op: "GetJob", Cause: &scheduler.JobNotFoundError{JobID: 1}}
-
-	t.Run("cancels in the delegated job's namespace", func(t *testing.T) {
+	// Both namespaces hold job 7: the tenant's own and one delegated to it.
+	sameID := func() *testMockSchedulerEngine {
 		eng := newTestMockSchedulerEngine()
-		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
-		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(
-			&scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-a"}, nil)
-		eng.On("CancelJobWithTenant", mock.Anything, uint64(1), "", "done").Return(scheduler.JobStatusPending, nil)
+		eng.On("GetJobWithTenant", mock.Anything, uint64(7), "tenant-a").Return(
+			&scheduler.Job{ID: 7, OwnerType: scheduler.OwnerTypeTenant, TargetTenantID: "tenant-a"}, nil)
+		eng.On("GetJobWithTenant", mock.Anything, uint64(7), "").Return(
+			&scheduler.Job{ID: 7, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-a"}, nil)
+		eng.On("CancelJobWithTenant", mock.Anything, uint64(7), mock.Anything, "done").Return(scheduler.JobStatusPending, nil)
+		return eng
+	}
+
+	t.Run("delegated scope cancels the delegated job only", func(t *testing.T) {
+		eng := sameID()
 		a := &SchedulerAdapter{scheduler: eng}
 
-		resp, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Reason: "done"})
+		resp, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeDelegated, Reason: "done"})
 		require.NoError(t, err)
 		require.Equal(t, SchedulerJobStatusCanceled, resp.NewStatus)
-		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, uint64(1), "tenant-a", "done")
+		eng.AssertCalled(t, "CancelJobWithTenant", mock.Anything, uint64(7), "", "done")
+		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, uint64(7), "tenant-a", "done")
+	})
+
+	t.Run("tenant scope cancels the tenant job only", func(t *testing.T) {
+		eng := sameID()
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeTenant, Reason: "done"})
+		require.NoError(t, err)
+		eng.AssertCalled(t, "CancelJobWithTenant", mock.Anything, uint64(7), "tenant-a", "done")
+		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, uint64(7), "", "done")
 	})
 
 	t.Run("refuses a job delegated to another tenant", func(t *testing.T) {
 		eng := newTestMockSchedulerEngine()
-		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "tenant-a").Return(nil, notFound)
 		eng.On("GetJobWithTenant", mock.Anything, uint64(1), "").Return(
 			&scheduler.Job{ID: 1, OwnerType: scheduler.OwnerTypeDelegated, TargetTenantID: "tenant-b"}, nil)
 		a := &SchedulerAdapter{scheduler: eng}
 
-		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Reason: "done"})
-		require.Error(t, err)
+		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Scope: SchedulerOwnerTypeDelegated, Reason: "done"})
+		require.True(t, isSchedulerJobNotFound(err), "got %v", err)
 		eng.AssertNotCalled(t, "CancelJobWithTenant", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
+}
+
+// A tenant caller naming the system scope names the system tenant, and is
+// refused before the store is reached; the system caller's own jobs are in
+// that scope.
+func TestSchedulerAdapter_SystemScope(t *testing.T) {
+	t.Run("tenant caller is refused", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeSystem})
+		require.Error(t, err)
+		require.Empty(t, eng.Calls)
+	})
+
+	t.Run("system caller cancels its own job", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(7), "").Return(
+			&scheduler.Job{ID: 7, OwnerType: scheduler.OwnerTypeSystem}, nil)
+		eng.On("CancelJobWithTenant", mock.Anything, uint64(7), "", "").Return(scheduler.JobStatusPending, nil)
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(tenantctx.WithSystem(context.Background()), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeSystem})
+		require.NoError(t, err)
+	})
+}
+
+// Every request that names a job by ID refuses a scope that is not tenant,
+// delegated or system, before the store is reached.
+func TestSchedulerAdapter_UnknownScope_Refused(t *testing.T) {
+	const bad = SchedulerOwnerType("bogus")
+	calls := map[string]func(a *SchedulerAdapter) error{
+		"GetJob": func(a *SchedulerAdapter) error {
+			_, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"UpdateJob": func(a *SchedulerAdapter) error {
+			_, err := a.UpdateJob(crossTenantCtx(), &UpdateSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"DeleteJob": func(a *SchedulerAdapter) error {
+			_, err := a.DeleteJob(crossTenantCtx(), &DeleteSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"TriggerJob": func(a *SchedulerAdapter) error {
+			_, err := a.TriggerJob(crossTenantCtx(), &TriggerSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"PauseJob": func(a *SchedulerAdapter) error {
+			_, err := a.PauseJob(crossTenantCtx(), &PauseSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"ResumeJob": func(a *SchedulerAdapter) error {
+			_, err := a.ResumeJob(crossTenantCtx(), &ResumeSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"CancelJob": func(a *SchedulerAdapter) error {
+			_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 1, Scope: bad})
+			return err
+		},
+		"GetJobHistory": func(a *SchedulerAdapter) error {
+			_, err := a.GetJobHistory(crossTenantCtx(), &GetSchedulerJobHistoryRequest{JobID: 1, Scope: bad})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			eng := newTestMockSchedulerEngine()
+			err := call(&SchedulerAdapter{scheduler: eng})
+			var qbErr *qberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			require.Equal(t, qberrors.ErrInvalidInput, qbErr.Code)
+			require.Empty(t, eng.Calls)
+		})
+	}
 }
 
 func TestSchedulerAdapter_EngineErrors(t *testing.T) {

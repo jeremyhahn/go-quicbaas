@@ -175,6 +175,71 @@ func RunJobConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
 	}
 }
 
+// RunJobScopeConformance checks that a transport carries the scope a by-ID
+// request names to the scheduler service. A tenant job and a job delegated
+// to the caller can share an ID, so every by-ID request naming the
+// delegated scope must arrive with it.
+func RunJobScopeConformance(t *testing.T, client scheduler.Client, jobs *Jobs) {
+	t.Helper()
+	ctx := context.Background()
+	delegated := scheduler.OwnerTypeDelegated
+	scope := scheduler.WithJobScope(delegated)
+
+	calls := []struct {
+		method string
+		call   func() error
+	}{
+		{"GetJob", func() error { _, err := client.GetJob(ctx, 42, scope); return err }},
+		{"UpdateJob", func() error {
+			_, err := client.UpdateJob(ctx, &scheduler.UpdateJobRequest{JobID: 42, Name: "renamed", Scope: &delegated})
+			return err
+		}},
+		{"TriggerJob", func() error { _, err := client.TriggerJob(ctx, 42, scope); return err }},
+		{"PauseJob", func() error { _, err := client.PauseJob(ctx, 42, scope); return err }},
+		{"ResumeJob", func() error { _, err := client.ResumeJob(ctx, 42, scope); return err }},
+		{"CancelJob", func() error { _, err := client.CancelJob(ctx, 42, "maintenance", scope); return err }},
+		{"GetJobHistory", func() error { _, err := client.GetJobHistory(ctx, 42, nil, scope); return err }},
+		{"DeleteJob", func() error { return client.DeleteJob(ctx, 42, scope) }},
+	}
+
+	for _, c := range calls {
+		if err := c.call(); err != nil {
+			t.Fatalf("%s with the delegated scope: %v", c.method, err)
+		}
+		got, ok := RequestScope(jobs.Received(c.method))
+		if !ok {
+			t.Fatalf("server received %T for %s", jobs.Received(c.method), c.method)
+		}
+		if got != service.SchedulerOwnerTypeDelegated {
+			t.Errorf("server received %s with scope %q, want %q", c.method, got, service.SchedulerOwnerTypeDelegated)
+		}
+	}
+}
+
+// RequestScope returns the scope of a by-ID request the server received,
+// or false when req is not one.
+func RequestScope(req any) (service.SchedulerOwnerType, bool) {
+	switch r := req.(type) {
+	case *service.GetSchedulerJobRequest:
+		return r.Scope, true
+	case *service.UpdateSchedulerJobRequest:
+		return r.Scope, true
+	case *service.DeleteSchedulerJobRequest:
+		return r.Scope, true
+	case *service.TriggerSchedulerJobRequest:
+		return r.Scope, true
+	case *service.PauseSchedulerJobRequest:
+		return r.Scope, true
+	case *service.ResumeSchedulerJobRequest:
+		return r.Scope, true
+	case *service.CancelSchedulerJobRequest:
+		return r.Scope, true
+	case *service.GetSchedulerJobHistoryRequest:
+		return r.Scope, true
+	}
+	return "", false
+}
+
 // RunPlacementConformance drives every placement method of client, which
 // must reach a real placement engine through the transport under test, and
 // checks the engine's state after each write by reading it back. Every node

@@ -123,13 +123,8 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 		return nil, err
 	}
 
-	job, err := a.lookupJob(ctx, req.JobID, tenantID)
+	job, _, err := a.lookupJob(ctx, "GetJob", req.JobID, tenantID, req.Scope)
 	if err != nil {
-		return nil, err
-	}
-
-	// Enforce tenant access on the returned job
-	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "GetJob"); err != nil {
 		return nil, err
 	}
 
@@ -139,28 +134,45 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 	}, nil
 }
 
-// lookupJob reads jobID in tenantID's namespace. A delegated job, a system
-// job acting on one tenant's data such as the KMS grace-period disable a
-// tenant's RotateKey schedules, is filed in the system namespace. So a tenant
-// caller whose own namespace has no such job reads the system one, and gets
-// the job only when it is delegated to that tenant.
-func (a *SchedulerAdapter) lookupJob(ctx context.Context, jobID uint64, tenantID string) (*scheduler.Job, error) {
-	job, err := a.scheduler.GetJobWithTenant(ctx, jobID, tenantID)
-	if tenantID == "" || !isSchedulerJobNotFound(err) {
-		return job, err
+// lookupJob reads jobID in the namespace its scope names and returns the job
+// with that namespace. ListJobs merges a tenant's own jobs with the jobs
+// delegated to it (system jobs acting on its data, such as the KMS
+// grace-period disable a tenant's RotateKey schedules), and job IDs are unique
+// only within one namespace. So the caller names the scope it listed the job
+// under, and only that namespace is read: a delegated job is found only when
+// it is delegated to the caller.
+func (a *SchedulerAdapter) lookupJob(ctx context.Context, op string, jobID uint64, tenantID string, scope SchedulerOwnerType) (*scheduler.Job, string, error) {
+	namespace, err := schedulerJobNamespace(ctx, op, tenantID, scope)
+	if err != nil {
+		return nil, "", err
 	}
-
-	delegated, sysErr := a.scheduler.GetJobWithTenant(ctx, jobID, "")
-	if sysErr != nil {
-		if isSchedulerJobNotFound(sysErr) {
-			return nil, err
+	job, err := a.scheduler.GetJobWithTenant(ctx, jobID, namespace)
+	if err != nil {
+		return nil, "", err
+	}
+	if scope == SchedulerOwnerTypeDelegated {
+		// The system namespace also holds system jobs and jobs delegated to
+		// other tenants: neither is a job delegated to this caller.
+		delegatedToCaller := tenantID == "" || job.TargetTenantID == tenantID
+		if job.OwnerType != scheduler.OwnerTypeDelegated || !delegatedToCaller {
+			return nil, "", scheduler.JobNotFoundError{JobID: jobID}
 		}
-		return nil, sysErr
 	}
-	if delegated.OwnerType != scheduler.OwnerTypeDelegated || delegated.TargetTenantID != tenantID {
-		return nil, err
+	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, op); err != nil {
+		return nil, "", err
 	}
-	return delegated, nil
+	return job, namespace, nil
+}
+
+// jobNamespace returns the namespace a change to jobID acts in. The store
+// itself confines a change to the caller's own namespace; a delegated job is
+// read first (lookupJob), so only a job delegated to the caller is changed.
+func (a *SchedulerAdapter) jobNamespace(ctx context.Context, op string, jobID uint64, tenantID string, scope SchedulerOwnerType) (string, error) {
+	if scope != SchedulerOwnerTypeDelegated {
+		return schedulerJobNamespace(ctx, op, tenantID, scope)
+	}
+	_, namespace, err := a.lookupJob(ctx, op, jobID, tenantID, scope)
+	return namespace, err
 }
 
 // isSchedulerJobNotFound reports whether err is the scheduler's missing-job
@@ -195,7 +207,12 @@ func (a *SchedulerAdapter) UpdateJob(ctx context.Context, req *UpdateSchedulerJo
 		Labels:      req.Labels,
 	}
 
-	job, err := a.scheduler.UpdateJob(ctx, req.JobID, tenantID, updates)
+	namespace, err := a.jobNamespace(ctx, "UpdateJob", req.JobID, tenantID, req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	job, err := a.scheduler.UpdateJob(ctx, req.JobID, namespace, updates)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +235,12 @@ func (a *SchedulerAdapter) DeleteJob(ctx context.Context, req *DeleteSchedulerJo
 		return nil, err
 	}
 
-	if err := a.scheduler.DeleteJob(ctx, req.JobID, tenantID, req.Force); err != nil {
+	namespace, err := a.jobNamespace(ctx, "DeleteJob", req.JobID, tenantID, req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.scheduler.DeleteJob(ctx, req.JobID, namespace, req.Force); err != nil {
 		return nil, err
 	}
 
@@ -290,17 +312,12 @@ func (a *SchedulerAdapter) TriggerJob(ctx context.Context, req *TriggerScheduler
 	}
 
 	// Get the job first to verify it exists and get its current status
-	job, err := a.scheduler.GetJobWithTenant(ctx, req.JobID, tenantID)
+	job, namespace, err := a.lookupJob(ctx, "TriggerJob", req.JobID, tenantID, req.Scope)
 	if err != nil {
 		return nil, err
 	}
 
-	// Enforce tenant access on the returned job
-	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "TriggerJob"); err != nil {
-		return nil, err
-	}
-
-	if err := a.scheduler.TriggerJob(ctx, req.JobID, tenantID); err != nil {
+	if err := a.scheduler.TriggerJob(ctx, req.JobID, namespace); err != nil {
 		return nil, err
 	}
 
@@ -319,7 +336,12 @@ func (a *SchedulerAdapter) PauseJob(ctx context.Context, req *PauseSchedulerJobR
 		return nil, err
 	}
 
-	oldStatus, err := a.scheduler.PauseJobWithStatus(ctx, req.JobID, tenantID)
+	namespace, err := a.jobNamespace(ctx, "PauseJob", req.JobID, tenantID, req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	oldStatus, err := a.scheduler.PauseJobWithStatus(ctx, req.JobID, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +361,12 @@ func (a *SchedulerAdapter) ResumeJob(ctx context.Context, req *ResumeSchedulerJo
 		return nil, err
 	}
 
-	oldStatus, err := a.scheduler.ResumeJobWithStatus(ctx, req.JobID, tenantID)
+	namespace, err := a.jobNamespace(ctx, "ResumeJob", req.JobID, tenantID, req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	oldStatus, err := a.scheduler.ResumeJobWithStatus(ctx, req.JobID, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -359,21 +386,12 @@ func (a *SchedulerAdapter) CancelJob(ctx context.Context, req *CancelSchedulerJo
 		return nil, err
 	}
 
-	// A delegated job lives in the system namespace, so it is found and
-	// cancelled there, the way GetJob finds it.
-	job, err := a.lookupJob(ctx, req.JobID, tenantID)
+	_, namespace, err := a.lookupJob(ctx, "CancelJob", req.JobID, tenantID, req.Scope)
 	if err != nil {
 		return nil, err
 	}
-	if err := schedulerTenantEnforceAccess(tenantID, job.TargetTenantID, "CancelJob"); err != nil {
-		return nil, err
-	}
-	jobNamespace := tenantID
-	if job.OwnerType == scheduler.OwnerTypeDelegated {
-		jobNamespace = ""
-	}
 
-	oldStatus, err := a.scheduler.CancelJobWithTenant(ctx, req.JobID, jobNamespace, req.Reason)
+	oldStatus, err := a.scheduler.CancelJobWithTenant(ctx, req.JobID, namespace, req.Reason)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +416,12 @@ func (a *SchedulerAdapter) GetJobHistory(ctx context.Context, req *GetSchedulerJ
 		limit = 100
 	}
 
-	executions, err := a.scheduler.GetJobHistory(ctx, req.JobID, tenantID, limit)
+	namespace, err := a.jobNamespace(ctx, "GetJobHistory", req.JobID, tenantID, req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
+	executions, err := a.scheduler.GetJobHistory(ctx, req.JobID, namespace, limit)
 	if err != nil {
 		return nil, err
 	}

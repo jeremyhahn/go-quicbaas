@@ -62,6 +62,7 @@ func withSchedulerCLI(t *testing.T, tenantID string) *schedulertest.Jobs {
 		schedulerPayload, schedulerTimeout, schedulerDelay, schedulerExecuteAt = "", "5m", "", ""
 		schedulerPriority, schedulerMaxRetries, schedulerLimit = 0, 3, 100
 		schedulerStatus, schedulerCursor, schedulerReason, schedulerForce = "", "", "", false
+		schedulerScope = ""
 	})
 	return jobs
 }
@@ -265,6 +266,58 @@ func TestSchedulerJobCancel(t *testing.T) {
 	req, ok := jobs.Received("CancelJob").(*service.CancelSchedulerJobRequest)
 	require.True(t, ok)
 	assert.Equal(t, "retired", req.Reason)
+}
+
+// schedulerByIDCommands maps each by-ID job command to the service method
+// it reaches.
+var schedulerByIDCommands = map[string]string{
+	"get":     "GetJob",
+	"delete":  "DeleteJob",
+	"trigger": "TriggerJob",
+	"pause":   "PauseJob",
+	"resume":  "ResumeJob",
+	"cancel":  "CancelJob",
+	"history": "GetJobHistory",
+}
+
+func TestSchedulerJobByID_ScopeReachesTheService(t *testing.T) {
+	for command, method := range schedulerByIDCommands {
+		t.Run(command, func(t *testing.T) {
+			jobs := withSchedulerCLI(t, "acme")
+			_, err := runScheduler(t, "job", command, "42", "--scope", "delegated")
+			require.NoError(t, err)
+
+			scope, ok := schedulertest.RequestScope(jobs.Received(method))
+			require.True(t, ok, "service received %T", jobs.Received(method))
+			assert.Equal(t, service.SchedulerOwnerTypeDelegated, scope)
+		})
+	}
+}
+
+func TestSchedulerJobByID_NoScopeFlagKeepsTheTenantScope(t *testing.T) {
+	for command, method := range schedulerByIDCommands {
+		t.Run(command, func(t *testing.T) {
+			jobs := withSchedulerCLI(t, "acme")
+			_, err := runScheduler(t, "job", command, "42")
+			require.NoError(t, err)
+
+			scope, ok := schedulertest.RequestScope(jobs.Received(method))
+			require.True(t, ok, "service received %T", jobs.Received(method))
+			assert.Empty(t, scope, "no --scope must leave the scope unset")
+		})
+	}
+}
+
+func TestSchedulerJobByID_InvalidScope(t *testing.T) {
+	for command, method := range schedulerByIDCommands {
+		t.Run(command, func(t *testing.T) {
+			jobs := withSchedulerCLI(t, "acme")
+			_, err := runScheduler(t, "job", command, "42", "--scope", "everyone")
+			require.Error(t, err)
+			assert.True(t, errors.IsInvalidInput(err), "want invalid input, got %v", err)
+			assert.Nil(t, jobs.Received(method), "an invalid scope must not reach the service")
+		})
+	}
 }
 
 func TestSchedulerJobHistory(t *testing.T) {

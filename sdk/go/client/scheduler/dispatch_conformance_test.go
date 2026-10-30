@@ -48,6 +48,14 @@ func TestDispatch_JobConformance(t *testing.T) {
 	schedulertest.RunJobConformance(t, scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Jobs: jobs}}), jobs)
 }
 
+// TestDispatch_JobScopeConformance proves dispatch, which QUIC, Unix and the
+// embedded transport serve through, hands a by-ID request's scope to the
+// service.
+func TestDispatch_JobScopeConformance(t *testing.T) {
+	jobs := schedulertest.New()
+	schedulertest.RunJobScopeConformance(t, scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Jobs: jobs}}), jobs)
+}
+
 func TestDispatch_PlacementConformance(t *testing.T) {
 	places := service.NewPlacementService(placement.New(placementtest.New()))
 	schedulertest.RunPlacementConformance(t, tenantctx.WithTenant(context.Background(), "acme"), scheduler.NewClient(&dispatchTransport{b: scheduler.Backends{Placement: places}}), "")
@@ -77,6 +85,28 @@ func TestDispatch_JobServiceErrorsPassThrough(t *testing.T) {
 	for name, call := range calls {
 		if err := call(); err != context.DeadlineExceeded {
 			t.Errorf("%s: err = %v, want the service's error", name, err)
+		}
+	}
+}
+
+// A request's scope reaches the service by its service name; no scope is
+// the caller's own jobs, and a value with no name is passed on for the
+// service to refuse, never read as the caller's own namespace.
+func TestJobScopeToService(t *testing.T) {
+	delegated := scheduler.OwnerTypeDelegated
+	unknown := scheduler.OwnerType(9)
+	cases := []struct {
+		name  string
+		scope *scheduler.OwnerType
+		want  service.SchedulerOwnerType
+	}{
+		{"nil is the caller's own", nil, ""},
+		{"delegated", &delegated, service.SchedulerOwnerTypeDelegated},
+		{"unknown is passed on", &unknown, "9"},
+	}
+	for _, tc := range cases {
+		if got := scheduler.JobScopeToService(tc.scope); got != tc.want {
+			t.Errorf("%s: JobScopeToService = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }

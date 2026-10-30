@@ -1230,6 +1230,91 @@ func TestClient_CancelJob(t *testing.T) {
 	}
 }
 
+// TestClient_ByIDMethods_JobScope checks that WithJobScope reaches the
+// request each by-ID method hands to the transport, and that a call with
+// no option leaves Scope nil, which names the caller's own tenant scope.
+func TestClient_ByIDMethods_JobScope(t *testing.T) {
+	calls := map[string]func(c Client, opts ...JobOption) error{
+		"GetJob": func(c Client, opts ...JobOption) error {
+			_, err := c.GetJob(context.Background(), 7, opts...)
+			return err
+		},
+		"DeleteJob": func(c Client, opts ...JobOption) error {
+			return c.DeleteJob(context.Background(), 7, opts...)
+		},
+		"TriggerJob": func(c Client, opts ...JobOption) error {
+			_, err := c.TriggerJob(context.Background(), 7, opts...)
+			return err
+		},
+		"PauseJob": func(c Client, opts ...JobOption) error {
+			_, err := c.PauseJob(context.Background(), 7, opts...)
+			return err
+		},
+		"ResumeJob": func(c Client, opts ...JobOption) error {
+			_, err := c.ResumeJob(context.Background(), 7, opts...)
+			return err
+		},
+		"CancelJob": func(c Client, opts ...JobOption) error {
+			_, err := c.CancelJob(context.Background(), 7, "", opts...)
+			return err
+		},
+		"GetJobHistory": func(c Client, opts ...JobOption) error {
+			_, err := c.GetJobHistory(context.Background(), 7, nil, opts...)
+			return err
+		},
+	}
+
+	requestScope := func(t *testing.T, req interface{}) *OwnerType {
+		t.Helper()
+		switch r := req.(type) {
+		case *GetJobRequest:
+			return r.Scope
+		case *DeleteJobRequest:
+			return r.Scope
+		case *TriggerJobRequest:
+			return r.Scope
+		case *PauseJobRequest:
+			return r.Scope
+		case *ResumeJobRequest:
+			return r.Scope
+		case *CancelJobRequest:
+			return r.Scope
+		case *GetJobHistoryRequest:
+			return r.Scope
+		}
+		t.Fatalf("unexpected request type %T", req)
+		return nil
+	}
+
+	for method, call := range calls {
+		t.Run(method, func(t *testing.T) {
+			var got interface{}
+			transport := &mockTransport{
+				requestFn: func(ctx context.Context, service, m string, req interface{}) (interface{}, error) {
+					got = req
+					return nil, errors.NewNotFound("test", "job not found")
+				},
+			}
+			c := NewClient(transport)
+
+			if err := call(c, WithJobScope(OwnerTypeDelegated)); errors.Code(err) != errors.CodeNotFound {
+				t.Fatalf("error = %v, want the transport's not-found", err)
+			}
+			scope := requestScope(t, got)
+			if scope == nil || *scope != OwnerTypeDelegated {
+				t.Fatalf("Scope = %v, want OwnerTypeDelegated", scope)
+			}
+
+			if err := call(c); errors.Code(err) != errors.CodeNotFound {
+				t.Fatalf("error = %v, want the transport's not-found", err)
+			}
+			if scope := requestScope(t, got); scope != nil {
+				t.Fatalf("Scope = %v with no option, want nil", *scope)
+			}
+		})
+	}
+}
+
 func TestClient_GetJobHistory_Validation(t *testing.T) {
 	mockT := &mockTransport{
 		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {

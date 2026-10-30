@@ -164,6 +164,7 @@ func TestSchedulerGetJobEndToEnd(t *testing.T) {
 		assertArgs: func(t *testing.T, args map[string]interface{}) {
 			assertArg(t, args, "job_id", float64(42))
 			assertNoArg(t, args, "tenant_id")
+			assertNoArg(t, args, "scope")
 		},
 		result: map[string]interface{}{"job": serverJob(nextRun)},
 	})
@@ -322,6 +323,70 @@ func TestSchedulerCancelJobEndToEnd(t *testing.T) {
 	if canceled.JobID != 42 || canceled.Reason != "maintenance" || !canceled.CanceledAt.Equal(canceledAt) ||
 		canceled.OldStatus != scheduler.JobStatusPending || canceled.NewStatus != scheduler.JobStatusCanceled {
 		t.Errorf("CancelJob decoded %+v", canceled)
+	}
+}
+
+// TestSchedulerByIDToolsSendTheJobScope checks every by-ID tool call carries
+// the scope WithJobScope names, so the server looks the job up in the
+// delegated namespace rather than the caller's own.
+func TestSchedulerByIDToolsSendTheJobScope(t *testing.T) {
+	nextRun := time.Date(2026, 10, 2, 2, 0, 0, 0, time.UTC)
+	transition := map[string]interface{}{"job_id": float64(42), "status": "running", "old_status": "pending", "new_status": "paused"}
+	scope := scheduler.WithJobScope(scheduler.OwnerTypeDelegated)
+	delegated := scheduler.OwnerTypeDelegated
+
+	tests := []struct {
+		tool   string
+		result map[string]interface{}
+		call   func(c scheduler.Client) error
+	}{
+		{"quicbaas_scheduler_get_job", map[string]interface{}{"job": serverJob(nextRun)}, func(c scheduler.Client) error {
+			_, err := c.GetJob(context.Background(), 42, scope)
+			return err
+		}},
+		{"quicbaas_scheduler_update_job", map[string]interface{}{"job": serverJob(nextRun)}, func(c scheduler.Client) error {
+			_, err := c.UpdateJob(context.Background(), &scheduler.UpdateJobRequest{JobID: 42, Name: "renamed", Scope: &delegated})
+			return err
+		}},
+		{"quicbaas_scheduler_delete_job", map[string]interface{}{"job_id": float64(42), "deleted": true}, func(c scheduler.Client) error {
+			return c.DeleteJob(context.Background(), 42, scope)
+		}},
+		{"quicbaas_scheduler_trigger_job", transition, func(c scheduler.Client) error {
+			_, err := c.TriggerJob(context.Background(), 42, scope)
+			return err
+		}},
+		{"quicbaas_scheduler_pause_job", transition, func(c scheduler.Client) error {
+			_, err := c.PauseJob(context.Background(), 42, scope)
+			return err
+		}},
+		{"quicbaas_scheduler_resume_job", transition, func(c scheduler.Client) error {
+			_, err := c.ResumeJob(context.Background(), 42, scope)
+			return err
+		}},
+		{"quicbaas_scheduler_cancel_job", transition, func(c scheduler.Client) error {
+			_, err := c.CancelJob(context.Background(), 42, "maintenance", scope)
+			return err
+		}},
+		{"quicbaas_scheduler_job_history", map[string]interface{}{"executions": []interface{}{}}, func(c scheduler.Client) error {
+			_, err := c.GetJobHistory(context.Background(), 42, nil, scope)
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			client := schedulerClientFor(t, mcpToolExpectation{
+				wantTool: tt.tool,
+				assertArgs: func(t *testing.T, args map[string]interface{}) {
+					assertArg(t, args, "job_id", float64(42))
+					assertArg(t, args, "scope", "delegated")
+				},
+				result: tt.result,
+			})
+			if err := tt.call(client); err != nil {
+				t.Fatalf("%s: %v", tt.tool, err)
+			}
+		})
 	}
 }
 
