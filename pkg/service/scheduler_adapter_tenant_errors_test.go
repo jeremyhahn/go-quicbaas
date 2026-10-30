@@ -195,10 +195,35 @@ func TestSchedulerAdapter_CancelJob_DelegatedJobOfCaller(t *testing.T) {
 	})
 }
 
-// Every request that names a job by ID refuses a scope that is neither
-// tenant nor delegated, before the store is reached.
+// A tenant caller naming the system scope names the system tenant, and is
+// refused before the store is reached; the system caller's own jobs are in
+// that scope.
+func TestSchedulerAdapter_SystemScope(t *testing.T) {
+	t.Run("tenant caller is refused", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(crossTenantCtx(), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeSystem})
+		require.Error(t, err)
+		require.Empty(t, eng.Calls)
+	})
+
+	t.Run("system caller cancels its own job", func(t *testing.T) {
+		eng := newTestMockSchedulerEngine()
+		eng.On("GetJobWithTenant", mock.Anything, uint64(7), "").Return(
+			&scheduler.Job{ID: 7, OwnerType: scheduler.OwnerTypeSystem}, nil)
+		eng.On("CancelJobWithTenant", mock.Anything, uint64(7), "", "").Return(scheduler.JobStatusPending, nil)
+		a := &SchedulerAdapter{scheduler: eng}
+
+		_, err := a.CancelJob(tenantctx.WithSystem(context.Background()), &CancelSchedulerJobRequest{JobID: 7, Scope: SchedulerOwnerTypeSystem})
+		require.NoError(t, err)
+	})
+}
+
+// Every request that names a job by ID refuses a scope that is not tenant,
+// delegated or system, before the store is reached.
 func TestSchedulerAdapter_UnknownScope_Refused(t *testing.T) {
-	const bad = SchedulerOwnerType("system")
+	const bad = SchedulerOwnerType("bogus")
 	calls := map[string]func(a *SchedulerAdapter) error{
 		"GetJob": func(a *SchedulerAdapter) error {
 			_, err := a.GetJob(crossTenantCtx(), &GetSchedulerJobRequest{JobID: 1, Scope: bad})

@@ -14,6 +14,7 @@
 package scheduler
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -50,6 +51,20 @@ var ownerTypeToService = map[OwnerType]service.SchedulerOwnerType{
 }
 
 // ownerTypeFromService maps a service owner type to the SDK type.
+// JobScopeToService maps a request's job scope onto the service's. A nil
+// scope names the caller's own jobs. A value with no service name is passed
+// on as its number, so the service refuses it rather than reading it as the
+// caller's own namespace.
+func JobScopeToService(scope *OwnerType) service.SchedulerOwnerType {
+	if scope == nil {
+		return ""
+	}
+	if s, ok := ownerTypeToService[*scope]; ok {
+		return s
+	}
+	return service.SchedulerOwnerType(strconv.Itoa(int(*scope)))
+}
+
 var ownerTypeFromService = map[service.SchedulerOwnerType]OwnerType{
 	service.SchedulerOwnerTypeSystem:    OwnerTypeSystem,
 	service.SchedulerOwnerTypeTenant:    OwnerTypeTenant,
@@ -102,6 +117,7 @@ func CreateJobRequestToService(req *CreateJobRequest) *service.CreateSchedulerJo
 func UpdateJobRequestToService(req *UpdateJobRequest) *service.UpdateSchedulerJobRequest {
 	return &service.UpdateSchedulerJobRequest{
 		JobID:       req.JobID,
+		Scope:       JobScopeToService(req.Scope),
 		Name:        req.Name,
 		Description: req.Description,
 		Schedule:    req.Schedule,

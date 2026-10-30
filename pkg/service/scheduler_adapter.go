@@ -142,7 +142,7 @@ func (a *SchedulerAdapter) GetJob(ctx context.Context, req *GetSchedulerJobReque
 // under, and only that namespace is read: a delegated job is found only when
 // it is delegated to the caller.
 func (a *SchedulerAdapter) lookupJob(ctx context.Context, op string, jobID uint64, tenantID string, scope SchedulerOwnerType) (*scheduler.Job, string, error) {
-	namespace, err := schedulerJobNamespace(op, tenantID, scope)
+	namespace, err := schedulerJobNamespace(ctx, op, tenantID, scope)
 	if err != nil {
 		return nil, "", err
 	}
@@ -169,7 +169,7 @@ func (a *SchedulerAdapter) lookupJob(ctx context.Context, op string, jobID uint6
 // read first (lookupJob), so only a job delegated to the caller is changed.
 func (a *SchedulerAdapter) jobNamespace(ctx context.Context, op string, jobID uint64, tenantID string, scope SchedulerOwnerType) (string, error) {
 	if scope != SchedulerOwnerTypeDelegated {
-		return schedulerJobNamespace(op, tenantID, scope)
+		return schedulerJobNamespace(ctx, op, tenantID, scope)
 	}
 	_, namespace, err := a.lookupJob(ctx, op, jobID, tenantID, scope)
 	return namespace, err

@@ -129,7 +129,7 @@ func dispatchGetJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.GetJob(ctx, &service.GetSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID})
+	resp, err := jobs.GetJob(ctx, &service.GetSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope)})
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func dispatchDeleteJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.DeleteJob(ctx, &service.DeleteSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Force: r.Force})
+	resp, err := jobs.DeleteJob(ctx, &service.DeleteSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope), Force: r.Force})
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func dispatchTriggerJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.TriggerJob(ctx, &service.TriggerSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID})
+	resp, err := jobs.TriggerJob(ctx, &service.TriggerSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope)})
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func dispatchPauseJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.PauseJob(ctx, &service.PauseSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID})
+	resp, err := jobs.PauseJob(ctx, &service.PauseSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope)})
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +225,7 @@ func dispatchResumeJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.ResumeJob(ctx, &service.ResumeSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID})
+	resp, err := jobs.ResumeJob(ctx, &service.ResumeSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope)})
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +241,7 @@ func dispatchCancelJob(ctx context.Context, b Backends, req any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := jobs.CancelJob(ctx, &service.CancelSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Reason: r.Reason})
+	resp, err := jobs.CancelJob(ctx, &service.CancelSchedulerJobRequest{JobID: r.JobID, TenantID: r.TenantID, Scope: JobScopeToService(r.Scope), Reason: r.Reason})
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +260,7 @@ func dispatchGetJobHistory(ctx context.Context, b Backends, req any) (any, error
 	resp, err := jobs.GetJobHistory(ctx, &service.GetSchedulerJobHistoryRequest{
 		JobID:    r.JobID,
 		TenantID: r.TenantID,
+		Scope:    JobScopeToService(r.Scope),
 		Limit:    HistoryLimit(r.Options),
 	})
 	if err != nil {

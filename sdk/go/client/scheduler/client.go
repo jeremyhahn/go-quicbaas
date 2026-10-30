@@ -270,7 +270,11 @@ type CreateJobResponse struct {
 
 // UpdateJobRequest is a request to update an existing job.
 type UpdateJobRequest struct {
-	JobID       uint64            `json:"job_id"`
+	JobID uint64 `json:"job_id"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope       *OwnerType        `json:"scope,omitempty"`
 	Name        string            `json:"name,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Schedule    string            `json:"schedule,omitempty"`
@@ -400,12 +404,20 @@ type SchedulerStatus struct {
 type GetJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope *OwnerType `json:"scope,omitempty"`
 }
 
 // DeleteJobRequest is the transport request of DeleteJob.
 type DeleteJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope *OwnerType `json:"scope,omitempty"`
 	// Force deletes the job even while it is running.
 	Force bool `json:"force,omitempty"`
 }
@@ -421,32 +433,52 @@ type DeleteJobResponse struct {
 type TriggerJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope *OwnerType `json:"scope,omitempty"`
 }
 
 // PauseJobRequest is the transport request of PauseJob.
 type PauseJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope *OwnerType `json:"scope,omitempty"`
 }
 
 // ResumeJobRequest is the transport request of ResumeJob.
 type ResumeJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope *OwnerType `json:"scope,omitempty"`
 }
 
 // CancelJobRequest is the transport request of CancelJob.
 type CancelJobRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
-	Reason   string
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope  *OwnerType `json:"scope,omitempty"`
+	Reason string
 }
 
 // GetJobHistoryRequest is the transport request of GetJobHistory.
 type GetJobHistoryRequest struct {
 	JobID    uint64
 	TenantID string `json:"tenant_id,omitempty"`
-	Options  *HistoryOptions
+	// Scope is the OwnerType the job was listed under: nil or
+	// OwnerTypeTenant for the caller's own job, OwnerTypeDelegated for a
+	// job delegated to the caller. The two can share an ID.
+	Scope   *OwnerType `json:"scope,omitempty"`
+	Options *HistoryOptions
 }
 
 // GetStatusRequest is the transport request of GetStatus.

@@ -80,3 +80,25 @@ func TestDispatch_JobServiceErrorsPassThrough(t *testing.T) {
 		}
 	}
 }
+
+// A request's scope reaches the service by its service name; no scope is
+// the caller's own jobs, and a value with no name is passed on for the
+// service to refuse, never read as the caller's own namespace.
+func TestJobScopeToService(t *testing.T) {
+	delegated := scheduler.OwnerTypeDelegated
+	unknown := scheduler.OwnerType(9)
+	cases := []struct {
+		name  string
+		scope *scheduler.OwnerType
+		want  service.SchedulerOwnerType
+	}{
+		{"nil is the caller's own", nil, ""},
+		{"delegated", &delegated, service.SchedulerOwnerTypeDelegated},
+		{"unknown is passed on", &unknown, "9"},
+	}
+	for _, tc := range cases {
+		if got := scheduler.JobScopeToService(tc.scope); got != tc.want {
+			t.Errorf("%s: JobScopeToService = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
