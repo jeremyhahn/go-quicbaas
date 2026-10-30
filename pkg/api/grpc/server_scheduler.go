@@ -113,9 +113,15 @@ func (s *SchedulerServer) GetJob(ctx context.Context, req *pb.GetJobRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.GetSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 	}
 
 	jobSvc, err := s.jobService()
@@ -141,9 +147,15 @@ func (s *SchedulerServer) UpdateJob(ctx context.Context, req *pb.UpdateJobReques
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.UpdateSchedulerJobRequest{
 		JobID:       req.JobId,
 		TenantID:    req.TenantId,
+		Scope:       scope,
 		Name:        req.Name,
 		Description: req.Description,
 		Schedule:    req.Schedule,
@@ -179,9 +191,15 @@ func (s *SchedulerServer) DeleteJob(ctx context.Context, req *pb.DeleteJobReques
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.DeleteSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 		Force:    req.Force,
 	}
 
@@ -252,9 +270,15 @@ func (s *SchedulerServer) TriggerJob(ctx context.Context, req *pb.TriggerJobRequ
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.TriggerSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 	}
 
 	jobSvc, err := s.jobService()
@@ -281,9 +305,15 @@ func (s *SchedulerServer) PauseJob(ctx context.Context, req *pb.PauseJobRequest)
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.PauseSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 	}
 
 	jobSvc, err := s.jobService()
@@ -311,9 +341,15 @@ func (s *SchedulerServer) ResumeJob(ctx context.Context, req *pb.ResumeJobReques
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.ResumeSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 	}
 
 	jobSvc, err := s.jobService()
@@ -341,9 +377,15 @@ func (s *SchedulerServer) CancelJob(ctx context.Context, req *pb.CancelJobReques
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.CancelSchedulerJobRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 		Reason:   req.Reason,
 	}
 
@@ -372,9 +414,15 @@ func (s *SchedulerServer) GetJobHistory(ctx context.Context, req *pb.GetJobHisto
 		return nil, status.Error(codes.InvalidArgument, "job_id is required")
 	}
 
+	scope, err := protoJobScopeToService(req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	svcReq := &service.GetSchedulerJobHistoryRequest{
 		JobID:    req.JobId,
 		TenantID: req.TenantId,
+		Scope:    scope,
 		Limit:    int(req.Limit),
 		Cursor:   req.Cursor,
 	}
@@ -437,6 +485,26 @@ func protoOwnerTypeToService(ot pb.OwnerType) service.SchedulerOwnerType {
 	default:
 		return service.SchedulerOwnerTypeSystem
 	}
+}
+
+// protoJobScopes maps the scope a by-ID request names onto the service's.
+// An unspecified scope names the caller's own jobs.
+var protoJobScopes = map[pb.OwnerType]service.SchedulerOwnerType{
+	pb.OwnerType_OWNER_TYPE_UNSPECIFIED: "",
+	pb.OwnerType_OWNER_TYPE_SYSTEM:      service.SchedulerOwnerTypeSystem,
+	pb.OwnerType_OWNER_TYPE_TENANT:      service.SchedulerOwnerTypeTenant,
+	pb.OwnerType_OWNER_TYPE_DELEGATED:   service.SchedulerOwnerTypeDelegated,
+}
+
+// protoJobScopeToService converts a by-ID request's job scope. A value the
+// enum does not define is refused rather than read as the caller's own
+// namespace.
+func protoJobScopeToService(scope pb.OwnerType) (service.SchedulerOwnerType, error) {
+	s, ok := protoJobScopes[scope]
+	if !ok {
+		return "", status.Error(codes.InvalidArgument, "scope must be tenant, delegated or system")
+	}
+	return s, nil
 }
 
 // protoJobTypeToService converts pb.JobType to service.SchedulerJobType.

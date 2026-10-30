@@ -252,6 +252,10 @@ message CreateJobResponse {
 message GetJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 3;
 }
 
 message GetJobResponse {
@@ -273,6 +277,10 @@ message UpdateJobRequest {
     int64 timeout_seconds = 10;
     int32 max_retries = 11;
     map<string, string> labels = 12;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 13;
 }
 
 message UpdateJobResponse {
@@ -285,6 +293,10 @@ message DeleteJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
     bool force = 3;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 4;
 }
 
 message DeleteJobResponse {
@@ -317,6 +329,10 @@ message ListJobsResponse {
 message TriggerJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 3;
 }
 
 message TriggerJobResponse {
@@ -329,6 +345,10 @@ message TriggerJobResponse {
 message PauseJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 3;
 }
 
 message PauseJobResponse {
@@ -342,6 +362,10 @@ message PauseJobResponse {
 message ResumeJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 3;
 }
 
 message ResumeJobResponse {
@@ -356,6 +380,10 @@ message CancelJobRequest {
     uint64 job_id = 1;
     string tenant_id = 2;
     string reason = 3;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 4;
 }
 
 message CancelJobResponse {
@@ -371,6 +399,10 @@ message GetJobHistoryRequest {
     string tenant_id = 2;
     int32 limit = 3;
     string cursor = 4;
+    // scope names the namespace that holds the job: unspecified or tenant
+    // for the caller's own jobs, delegated for a job delegated to it, system
+    // for a system job.
+    OwnerType scope = 5;
 }
 
 message GetJobHistoryResponse {

@@ -182,6 +182,107 @@ func setupConnectedSchedulerClient(t *testing.T) (*Client, *grpc.Server) {
 	return client, server
 }
 
+// setupScopeRecordingSchedulerClient connects a client to the real
+// SchedulerServer over a service that records the job scope it receives.
+func setupScopeRecordingSchedulerClient(t *testing.T, got *service.SchedulerOwnerType) *Client {
+	t.Helper()
+	lis := bufconn.Listen(schedulerBufSize)
+	server := grpc.NewServer()
+	pb.RegisterSchedulerServiceServer(server, newTestSchedulerServer(scopeRecordingSchedulerService(got)))
+	go func() {
+		if err := server.Serve(lis); err != nil {
+			// Server stopped
+		}
+	}()
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.DialContext(
+		context.Background(),
+		"bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	return &Client{conn: conn, opts: &clientOptions{timeout: 5 * time.Second, maxRetries: 1}, connected: true}
+}
+
+// schedulerClientByIDCalls calls each by-ID client method with the given scope.
+var schedulerClientByIDCalls = []struct {
+	method string
+	call   func(c *Client, scope service.SchedulerOwnerType) error
+}{
+	{"GetJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerGetJob(context.Background(), &service.GetSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"UpdateJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerUpdateJob(context.Background(), &service.UpdateSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"DeleteJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerDeleteJob(context.Background(), &service.DeleteSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"TriggerJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerTriggerJob(context.Background(), &service.TriggerSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"PauseJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerPauseJob(context.Background(), &service.PauseSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"ResumeJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerResumeJob(context.Background(), &service.ResumeSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"CancelJob", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerCancelJob(context.Background(), &service.CancelSchedulerJobRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+	{"GetJobHistory", func(c *Client, scope service.SchedulerOwnerType) error {
+		_, err := c.SchedulerGetJobHistory(context.Background(), &service.GetSchedulerJobHistoryRequest{JobID: 7, Scope: scope})
+		return err
+	}},
+}
+
+func TestClientScheduler_ByIDRequestsSendTheJobScope(t *testing.T) {
+	scopes := []service.SchedulerOwnerType{
+		service.SchedulerOwnerTypeDelegated,
+		service.SchedulerOwnerTypeSystem,
+		service.SchedulerOwnerTypeTenant,
+		"",
+	}
+	for _, m := range schedulerClientByIDCalls {
+		for _, scope := range scopes {
+			t.Run(m.method+"/"+string(scope), func(t *testing.T) {
+				got := service.SchedulerOwnerType("unset")
+				client := setupScopeRecordingSchedulerClient(t, &got)
+
+				err := m.call(client, scope)
+				require.Error(t, err, "the recording service answers NotFound")
+				assert.Equal(t, scope, got)
+			})
+		}
+	}
+}
+
+func TestClientScheduler_ByIDRequestsRefuseAnUnknownJobScope(t *testing.T) {
+	for _, m := range schedulerClientByIDCalls {
+		t.Run(m.method, func(t *testing.T) {
+			got := service.SchedulerOwnerType("unset")
+			client := setupScopeRecordingSchedulerClient(t, &got)
+
+			err := m.call(client, "99")
+			require.ErrorIs(t, err, ErrSchedulerJobScopeInvalid)
+			assert.Equal(t, service.SchedulerOwnerType("unset"), got, "nothing must be sent")
+		})
+	}
+}
+
 // =============================================================================
 // Scheduler Client Connected Tests
 // =============================================================================

@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	stderrors "errors"
 	"time"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -74,11 +75,17 @@ func (c *Client) SchedulerGetJob(ctx context.Context, req *service.GetSchedulerJ
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerGetJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.GetJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 	}
 
 	pbResp, err := schedulerClient.GetJob(ctx, pbReq)
@@ -102,11 +109,17 @@ func (c *Client) SchedulerUpdateJob(ctx context.Context, req *service.UpdateSche
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerUpdateJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.UpdateJobRequest{
 		JobId:          req.JobID,
 		TenantId:       req.TenantID,
+		Scope:          scope,
 		Name:           req.Name,
 		Description:    req.Description,
 		Schedule:       req.Schedule,
@@ -140,11 +153,17 @@ func (c *Client) SchedulerDeleteJob(ctx context.Context, req *service.DeleteSche
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerDeleteJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.DeleteJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 		Force:    req.Force,
 	}
 
@@ -213,11 +232,17 @@ func (c *Client) SchedulerTriggerJob(ctx context.Context, req *service.TriggerSc
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerTriggerJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.TriggerJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 	}
 
 	pbResp, err := schedulerClient.TriggerJob(ctx, pbReq)
@@ -242,11 +267,17 @@ func (c *Client) SchedulerPauseJob(ctx context.Context, req *service.PauseSchedu
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerPauseJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.PauseJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 	}
 
 	pbResp, err := schedulerClient.PauseJob(ctx, pbReq)
@@ -272,11 +303,17 @@ func (c *Client) SchedulerResumeJob(ctx context.Context, req *service.ResumeSche
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerResumeJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.ResumeJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 	}
 
 	pbResp, err := schedulerClient.ResumeJob(ctx, pbReq)
@@ -302,11 +339,17 @@ func (c *Client) SchedulerCancelJob(ctx context.Context, req *service.CancelSche
 		}
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerCancelJob", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.CancelJobRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 		Reason:   req.Reason,
 	}
 
@@ -338,11 +381,17 @@ func (c *Client) SchedulerGetJobHistory(ctx context.Context, req *service.GetSch
 		return nil, err
 	}
 
+	scope, err := serviceJobScopeToProto("Client.SchedulerGetJobHistory", req.Scope)
+	if err != nil {
+		return nil, err
+	}
+
 	schedulerClient := pb.NewSchedulerServiceClient(c.conn)
 
 	pbReq := &pb.GetJobHistoryRequest{
 		JobId:    req.JobID,
 		TenantId: req.TenantID,
+		Scope:    scope,
 		Limit:    limit,
 		Cursor:   req.Cursor,
 	}
@@ -570,4 +619,31 @@ func convertServiceToProtoOwnerType(ot service.SchedulerOwnerType) pb.OwnerType 
 	default:
 		return pb.OwnerType_OWNER_TYPE_UNSPECIFIED
 	}
+}
+
+// ErrSchedulerJobScopeInvalid indicates a by-ID request named a job scope
+// that is not tenant, delegated or system.
+var ErrSchedulerJobScopeInvalid = stderrors.New("job scope must be tenant, delegated or system")
+
+// serviceJobScopes maps a by-ID request's job scope onto the wire enum. An
+// empty scope names the caller's own jobs and leaves the field unspecified.
+var serviceJobScopes = map[service.SchedulerOwnerType]pb.OwnerType{
+	"":                                  pb.OwnerType_OWNER_TYPE_UNSPECIFIED,
+	service.SchedulerOwnerTypeSystem:    pb.OwnerType_OWNER_TYPE_SYSTEM,
+	service.SchedulerOwnerTypeTenant:    pb.OwnerType_OWNER_TYPE_TENANT,
+	service.SchedulerOwnerTypeDelegated: pb.OwnerType_OWNER_TYPE_DELEGATED,
+}
+
+// serviceJobScopeToProto converts a by-ID request's job scope. A scope the
+// wire enum cannot carry is refused rather than sent as the caller's own.
+func serviceJobScopeToProto(op string, scope service.SchedulerOwnerType) (pb.OwnerType, error) {
+	ot, ok := serviceJobScopes[scope]
+	if !ok {
+		return pb.OwnerType_OWNER_TYPE_UNSPECIFIED, &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   op,
+			Err:  ErrSchedulerJobScopeInvalid,
+		}
+	}
+	return ot, nil
 }
