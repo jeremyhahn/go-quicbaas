@@ -1659,6 +1659,123 @@ func TestSchedulerServer_GetJobHistory(t *testing.T) {
 	}
 }
 
+// scopeRecordingSchedulerService records the job scope each by-ID method
+// receives and answers NotFound, which proves the request reached it.
+func scopeRecordingSchedulerService(got *service.SchedulerOwnerType) *mockSchedulerService {
+	notFound := errors.New(errors.ErrNotFound, "scheduler", "job not found")
+	return &mockSchedulerService{
+		getJobFunc: func(_ context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		updateJobFunc: func(_ context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		deleteJobFunc: func(_ context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		triggerJobFunc: func(_ context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		pauseJobFunc: func(_ context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		resumeJobFunc: func(_ context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		cancelJobFunc: func(_ context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+		getJobHistoryFunc: func(_ context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
+			*got = req.Scope
+			return nil, notFound
+		},
+	}
+}
+
+// schedulerByIDCalls calls each by-ID method with the given scope.
+var schedulerByIDCalls = []struct {
+	method string
+	call   func(s *SchedulerServer, scope pb.OwnerType) error
+}{
+	{"GetJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.GetJob(context.Background(), &pb.GetJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"UpdateJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.UpdateJob(context.Background(), &pb.UpdateJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"DeleteJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.DeleteJob(context.Background(), &pb.DeleteJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"TriggerJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.TriggerJob(context.Background(), &pb.TriggerJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"PauseJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.PauseJob(context.Background(), &pb.PauseJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"ResumeJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.ResumeJob(context.Background(), &pb.ResumeJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"CancelJob", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.CancelJob(context.Background(), &pb.CancelJobRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+	{"GetJobHistory", func(s *SchedulerServer, scope pb.OwnerType) error {
+		_, err := s.GetJobHistory(context.Background(), &pb.GetJobHistoryRequest{JobId: 7, Scope: scope})
+		return err
+	}},
+}
+
+func TestSchedulerServer_ByIDRequestsCarryTheJobScope(t *testing.T) {
+	scopes := []struct {
+		name  string
+		scope pb.OwnerType
+		want  service.SchedulerOwnerType
+	}{
+		{"delegated", pb.OwnerType_OWNER_TYPE_DELEGATED, service.SchedulerOwnerTypeDelegated},
+		{"system", pb.OwnerType_OWNER_TYPE_SYSTEM, service.SchedulerOwnerTypeSystem},
+		{"tenant", pb.OwnerType_OWNER_TYPE_TENANT, service.SchedulerOwnerTypeTenant},
+		{"unspecified_is_own", pb.OwnerType_OWNER_TYPE_UNSPECIFIED, ""},
+	}
+	for _, m := range schedulerByIDCalls {
+		for _, sc := range scopes {
+			t.Run(m.method+"/"+sc.name, func(t *testing.T) {
+				got := service.SchedulerOwnerType("unset")
+				server := newTestSchedulerServer(scopeRecordingSchedulerService(&got))
+
+				err := m.call(server, sc.scope)
+				assert.Equal(t, codes.NotFound, status.Code(err))
+				assert.Equal(t, sc.want, got)
+			})
+		}
+	}
+}
+
+func TestSchedulerServer_ByIDRequestsRefuseAnUnknownJobScope(t *testing.T) {
+	for _, m := range schedulerByIDCalls {
+		t.Run(m.method, func(t *testing.T) {
+			got := service.SchedulerOwnerType("unset")
+			server := newTestSchedulerServer(scopeRecordingSchedulerService(&got))
+
+			err := m.call(server, pb.OwnerType(99))
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Equal(t, service.SchedulerOwnerType("unset"), got, "the service must not be reached")
+		})
+	}
+}
+
 // =============================================================================
 // GetSchedulerStatus Tests
 // =============================================================================
