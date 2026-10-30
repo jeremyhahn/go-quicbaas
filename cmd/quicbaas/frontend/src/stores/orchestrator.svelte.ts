@@ -39,11 +39,13 @@ import type {
   Artifact,
   JobAttemptRecord,
   JobDelivery,
+  JobMemory,
   JobStageRecord,
   JobVerificationResult,
   TaskBlockKind,
   TaskConclusionReason,
   TaskFaultOrigin,
+  TaskResult,
   TaskSource,
 } from '@quicbaas/sdk';
 import { getSDKClient } from './sdkClient.ts';
@@ -121,9 +123,9 @@ export interface WorkItem {
   fallback_backend?: string;
 }
 
-export interface JobMemory {
-  [key: string]: unknown;
-}
+// JobMemory and TaskResult are the SDK's declarations: the store holds the
+// records the SDK returns, so a second copy here could only disagree with them.
+export type { JobMemory, TaskResult };
 
 export interface JobConfig {
   tenant_id: string;
@@ -156,8 +158,8 @@ export interface JobStatus {
   error?: string;
   events?: JobAuditEvent[];
   work_items?: WorkItem[];
-  config?: JobConfig;
-  memory?: JobMemory;
+  config?: JobConfig | null;
+  memory?: JobMemory | null;
   workflow_name?: string;
   /** task_id is the Task this job is an attempt at; absent for lead-driven jobs. */
   task_id?: string;
@@ -244,11 +246,6 @@ export interface SessionInfo {
   job_id?: string;
 }
 
-export interface TaskResult {
-  success: boolean;
-  output?: string;
-  error?: string;
-}
 
 export interface Task {
   id: string;
@@ -261,7 +258,7 @@ export interface Task {
   created_by?: string;
   dependencies?: string[];
   blocks?: string[];
-  result?: TaskResult;
+  result?: TaskResult | null;
   metadata?: Record<string, string>;
   created_at: number;
   updated_at: number;
