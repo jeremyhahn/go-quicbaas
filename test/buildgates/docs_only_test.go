@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -243,35 +244,91 @@ func stepIf(step string) string {
 	return ""
 }
 
-func TestChangesJobRunsTheDocsOnlyScript(t *testing.T) {
+// TestChangesJobClassifiesTheDiffInline pins ci-template v1.24's `changes`
+// job (CA m749, m751 (a); --no-renames from v1.24.1): it classifies the
+// pull request's diff inline against DOCS_ONLY_PATTERN, and only a
+// pull_request below the full tier can be docs-only. docs_only starts false,
+// so a failed diff or an empty list runs the tests.
+func TestChangesJobClassifiesTheDiffInline(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
 	changes, ok := jobs["changes"]
 	if !ok {
 		t.Fatalf("%s has no changes job. Every docs-only skip reads its output.", ciWorkflowPath)
 	}
 	for _, want := range []string{
-		"docs_only: ${{ steps.filter.outputs.docs_only }}",
-		"id: filter",
+		"docs_only: ${{ steps.diff.outputs.docs_only }}",
+		"id: diff",
+		"BASE: ${{ github.event.pull_request.base.sha }}",
+		"HEAD: ${{ github.event.pull_request.head.sha }}",
 		"EVENT: ${{ github.event_name }}",
-		"BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-		`run: scripts/docs-only.sh >> "$GITHUB_OUTPUT"`,
+		"docs_only=false\n",
+		`if [ "$EVENT" = pull_request ] && [ "$CI_FULL_TIER" != true ]; then`,
+		`if files=$(git diff --name-only --no-renames "$BASE...$HEAD") && [ -n "$files" ]; then`,
+		`if ! printf '%s\n' "$files" | grep -qvE "$DOCS_ONLY_PATTERN"; then`,
+		`echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"`,
 	} {
 		if !strings.Contains(changes, want) {
-			t.Errorf("changes job lacks %q. The classification is tested in "+
-				"scripts/docs-only.sh; a filter written inline in the job, or one "+
-				"fed other inputs, is not the one the tests prove.", want)
+			t.Errorf("changes job lacks %q. The docs-only classification is the "+
+				"ci-template's inline diff; a filter fed other inputs, or one that "+
+				"defaults to docs-only, skips tests on a code change.", want)
 		}
 	}
 }
 
+// TestDocsOnlyPatternMatchesOnlyDocs pins go-quicbaas's DOCS_ONLY_PATTERN
+// customization (DS-3161): docs/, changelog.d/, a top-level *.md file and any
+// README.md are docs; a *.md file elsewhere can be a go:embed input and is
+// code.
+func TestDocsOnlyPatternMatchesOnlyDocs(t *testing.T) {
+	m := regexp.MustCompile(`(?m)^  DOCS_ONLY_PATTERN: '([^']*)'$`).FindStringSubmatch(readFile(t, ciWorkflowPath))
+	if m == nil {
+		t.Fatalf("%s sets no single-quoted DOCS_ONLY_PATTERN in its env", ciWorkflowPath)
+	}
+	pattern, err := regexp.Compile(m[1])
+	if err != nil {
+		t.Fatalf("DOCS_ONLY_PATTERN %q does not compile: %v", m[1], err)
+	}
+	for path, docs := range map[string]bool{
+		"README.md":                  true,
+		"ROADMAP.md":                 true,
+		"docs/reference/README.md":   true,
+		"docs/sdk/go.md":             true,
+		"changelog.d/2125.md":        true,
+		"pkg/iam/README.md":          true,
+		"pkg/sdlc/prompts/triage.md": false,
+		"pkg/iam/invite.go":          false,
+		"Makefile":                   false,
+		".github/workflows/ci.yml":   false,
+		"mydocs/notes.txt":           false,
+		"docs.go":                    false,
+		"scripts/docs-only.sh":       false,
+	} {
+		if got := pattern.MatchString(path); got != docs {
+			t.Errorf("DOCS_ONLY_PATTERN matches %q = %v, want %v", path, got, docs)
+		}
+	}
+}
+
+// TestOnlyLintRunsForADocsOnlyPullRequest pins which image-job stages a
+// docs-only pull request runs under ci-template v1.29.5: make lint, make
+// deps-check (v1.28, ruling 219(3)) and the releasability test (v1.26.1,
+// m1128 (9)), which runs only there because make coverage skips. Every other
+// stage carries `needs.changes.outputs.docs_only != 'true'` or is full tier,
+// and a full-tier run is never docs-only.
 func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
 	image := jobs["image"]
-	if !strings.Contains(image, "DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}") {
-		t.Errorf("image job does not set DOCS_ONLY from the changes job; every " +
-			"stage guard below would compare an empty value and never skip")
+	if !strings.Contains(image, "\n    needs: [changes, schedule-guard]") {
+		t.Errorf("image job does not need the changes job; every docs-only guard " +
+			"below would compare an empty value and never skip")
 	}
-	const guard = "env.DOCS_ONLY != 'true'"
+	const (
+		skip     = "needs.changes.outputs.docs_only != 'true'"
+		only     = "needs.changes.outputs.docs_only == 'true'"
+		fullTier = "env.CI_FULL_TIER == 'true'"
+	)
+	everyRun := map[string]bool{"make lint": true, "make deps-check": true}
+	docsOnlyRun := map[string]bool{"Releasability test (docs-only PR)": true}
 	stages := 0
 	for _, step := range ciSteps(image) {
 		if !strings.Contains(step, "scripts/in-toolchain-image.sh") {
@@ -279,17 +336,20 @@ func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 		}
 		stages++
 		name, cond := stepName(step), stepIf(step)
-		if name == "make lint" {
-			if strings.Contains(cond, "DOCS_ONLY") {
-				t.Errorf("make lint is guarded by DOCS_ONLY (if: %s). Lint is the "+
-					"one stage a docs-only pull request still runs.", cond)
+		switch {
+		case everyRun[name]:
+			if strings.Contains(cond, "docs_only") || strings.Contains(cond, "CI_FULL_TIER") {
+				t.Errorf("%s is guarded (if: %s). It runs on every event, a docs-only "+
+					"pull request included.", name, cond)
 			}
-			continue
-		}
-		if !strings.Contains(cond, guard) {
-			t.Errorf("step %q runs in the toolchain image without %q in its if: "+
-				"(if: %s). A docs-only pull request builds only the toolchain "+
-				"image, so the stage would fail, or run for nothing.", name, guard, cond)
+		case docsOnlyRun[name]:
+			if !strings.Contains(cond, only) {
+				t.Errorf("step %q lacks %q in its if: (if: %s); it stands in for make "+
+					"coverage on a docs-only pull request only", name, only, cond)
+			}
+		case !strings.Contains(cond, skip) && !strings.Contains(cond, fullTier):
+			t.Errorf("step %q runs in the toolchain image without %q or %q in its if: "+
+				"(if: %s). A docs-only pull request runs lint alone.", name, skip, fullTier, cond)
 		}
 	}
 	if stages < 2 {
@@ -298,7 +358,13 @@ func TestOnlyLintRunsForADocsOnlyPullRequest(t *testing.T) {
 	}
 }
 
-func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
+// TestImageJobBuildsBothImagesOnEveryRun pins ci-template v1.29.5's build
+// step, which supersedes the local toolchain-image-only build for a
+// docs-only pull request: the image job runs `make docker-build` on every
+// run and takes the toolchain image from `make -s toolchain-image`, so every
+// stage, the releasability test and deps-check included, has the images it
+// runs in.
+func TestImageJobBuildsBothImagesOnEveryRun(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
 	var build string
 	for _, step := range ciSteps(jobs["image"]) {
@@ -309,25 +375,35 @@ func TestDocsOnlyBuildsTheToolchainImageAlone(t *testing.T) {
 	if build == "" {
 		t.Fatalf("image job has no \"Build the devcontainer images\" step")
 	}
-	const choice = `if [ "$DOCS_ONLY" = true ]; then target=docker-build-toolchain-image; fi`
-	if !strings.Contains(build, "target=docker-build\n") || !strings.Contains(build, choice) {
-		t.Errorf("the build step must default to docker-build and choose "+
-			"docker-build-toolchain-image only through %q: any other pull request "+
-			"needs the integration image its stages scan and test", choice)
+	if cond := stepIf(build); cond != "" {
+		t.Errorf("the build step carries `if: %s`; it must run on every run", cond)
 	}
-	if n := strings.Count(build, "docker-build-toolchain-image"); n != 1 {
-		t.Errorf("docker-build-toolchain-image appears %d times in the build step, "+
-			"want 1 (the DOCS_ONLY branch). A second use could build the "+
-			"toolchain image alone for a code change.", n)
+	for _, want := range []string{
+		"\n          make docker-build ",
+		"\n          echo \"TOOLCHAIN_IMAGE=$(make -s toolchain-image)\" >> \"$GITHUB_ENV\"",
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("the build step lacks %q", want)
+		}
+	}
+	if strings.Contains(build, "DOCS_ONLY") || strings.Contains(build, "docker-build-toolchain-image") {
+		t.Errorf("the build step chooses its target by docs-only; the ci-template " +
+			"builds both images on every run")
 	}
 }
 
-func TestIntegrationSkipsOnlyForADocsOnlyPullRequest(t *testing.T) {
+// TestIntegrationRunsOnlyOnTheFullTier pins ci-template v1.23's integration
+// job, which supersedes the local rule that it ran on every pull request but
+// a docs-only one: Integration runs on the full tier only (every event but a
+// pull request, and a ci:full pull request), never on a draft, and on a
+// schedule run only on the schedule guard's `run` (v1.29.3). A docs-only
+// pull request is below the full tier, so it never runs Integration.
+func TestIntegrationRunsOnlyOnTheFullTier(t *testing.T) {
 	_, jobs := ciJobs(t, readFile(t, ciWorkflowPath))
-	const cond = "if: ${{ needs.changes.outputs.docs_only != 'true' }}"
+	const cond = "if: ${{ (" + fullTierExpr + ") && !github.event.pull_request.draft && " +
+		"(github.event_name != 'schedule' || needs.schedule-guard.outputs.verdict == 'run') }}"
 	if !strings.Contains(jobs["integration"], "\n    "+cond+"\n") {
-		t.Errorf("integration job lacks %q. It must skip for a docs-only pull "+
-			"request and run for every other change.", cond)
+		t.Errorf("integration job lacks %q. It must run on the full tier alone.", cond)
 	}
 	needs := gateNeeds(t, jobs[gateJobName])
 	if missing([]string{"changes"}, needs) != nil {
