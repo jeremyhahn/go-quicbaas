@@ -51,6 +51,9 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*; \
     useradd --uid 1000 --user-group --create-home --home-dir /home/dev dev
 
+# CVE-2026-111497: take the fixed libbrotli1 even when the base digest lags it.
+RUN apt-get update && apt-get install -y --only-upgrade libbrotli1 && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY sdk/go/go.mod sdk/go/go.sum sdk/go/

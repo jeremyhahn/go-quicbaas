@@ -451,6 +451,35 @@ func TestCommittedTopology_IsValidAndAgreesWithAnyNodePin(t *testing.T) {
 	}
 }
 
+// The committed system-tenant client is the credential the suite calls as the
+// system admin, so its common name must be the bootstrap admin's username.
+// qrdb's mTLS authentication resolves the caller's user record with
+// GetUserByUsername(tenant, CN) and takes its roles from that record; first-boot
+// creates the admin as go-qrdb's user.BootstrapAdminUsername, "admin". With any
+// other common name no user resolves and every call is refused by RBAC.
+func TestCommittedTopology_SystemClientIsTheBootstrapAdmin(t *testing.T) {
+	const bootstrapAdminUsername = "admin"
+
+	topo, err := LoadTopology("topology.json")
+	if err != nil {
+		t.Fatalf("the committed topology is not loadable: %v", err)
+	}
+	found := false
+	for _, client := range topo.Clients {
+		if client.TenantID != "system" {
+			continue
+		}
+		found = true
+		if client.CommonName != bootstrapAdminUsername {
+			t.Errorf("system client %q has common name %q, want the bootstrap admin username %q",
+				client.File, client.CommonName, bootstrapAdminUsername)
+		}
+	}
+	if !found {
+		t.Fatal("the committed topology declares no system-tenant client; the suite has no system admin")
+	}
+}
+
 // pinnedTrustDomain returns the iam.spiffe_trust_domain a node configuration
 // pins, and whether it pins one at all. The match is on a line whose only
 // leading content is the key, so a commented-out mention is not read as a pin.
