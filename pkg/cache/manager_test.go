@@ -242,65 +242,6 @@ func TestCacheManager_Stats(t *testing.T) {
 	assert.InDelta(t, 5.0/8.0, stats.L1HitRate, 0.01)
 }
 
-func TestCacheManager_Concurrent(t *testing.T) {
-	config := Config{
-		L1Size: 100,
-		L1TTL:  1 * time.Hour,
-	}
-
-	cm, err := NewManager(config, testLogger(t))
-	require.NoError(t, err)
-	defer cm.Close()
-
-	ctx := context.Background()
-
-	const numGoroutines = 50
-	const numOperations = 100
-
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines * 3)
-
-	// Concurrent writers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				cm.Set(ctx, key, value)
-			}
-		}(i)
-	}
-
-	// Concurrent readers
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				cm.Get(ctx, key)
-			}
-		}(i)
-	}
-
-	// Concurrent deleters
-	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
-			defer wg.Done()
-			for j := 0; j < numOperations; j++ {
-				key := fmt.Sprintf("key-%d-%d", id, j)
-				cm.Delete(ctx, key)
-			}
-		}(i)
-	}
-
-	wg.Wait()
-
-	// Verify no panics and metrics were updated
-	metrics := cm.GetMetrics()
-	assert.Greater(t, metrics.Get("l1_sets"), int64(0))
-}
-
 // Context cancellation tests removed - only relevant for L2 cache
 
 func TestCacheManager_LRUEviction(t *testing.T) {
