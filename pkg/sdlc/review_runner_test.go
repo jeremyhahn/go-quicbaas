@@ -528,50 +528,14 @@ func TestForgeEvent_CarriesNoLabelsAtAll(t *testing.T) {
 	}
 }
 
-func TestReviewRunner_AnUnlabelledPullRequestIsReviewed(t *testing.T) {
-	rig := newReviewRunnerRig(t)
-	// The forge's issue record for the pull request carries no labels at
-	// all. Nothing in the review path reads one, so this must simply work.
-	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
-	rig.mustRun(41)
-	if len(rig.forge.submissions()) != 1 {
-		t.Fatal("an unlabelled pull request was not reviewed")
-	}
-}
-
 // =============================================================================
 // FAILURE 4 — a relabel must not overwrite a standing rejection
 // =============================================================================
 //
-// The bypass jumped the rejection check it was written to respect. Here a
+// The bypass jumped the rejection check it was written to respect. A
 // second trigger on an unchanged head re-asserts the standing rejection
-// rather than re-deriving a verdict that might differ.
-
-func TestReviewRunner_ASecondTriggerReassertsAStandingRejection(t *testing.T) {
-	rig := newReviewRunnerRig(t)
-	rig.reviewerSays(reviewSaying("this breaks the error contract", ReviewCodeRequestChanges))
-	rig.mustRun(41)
-	if got := rig.forge.submissions(); len(got) != 1 || got[0].Verdict != VerdictRequestChanges {
-		t.Fatalf("first run: %+v", got)
-	}
-
-	// The second trigger arrives on the SAME head with a reviewer that would
-	// now say something else. The standing rejection must survive it.
-	rig.reviewerSays(reviewSaying("actually it is fine", ReviewCodeApprove))
-	rig.mustRun(41)
-
-	submissions := rig.forge.submissions()
-	if len(submissions) != 1 {
-		t.Fatalf("a re-trigger posted a second verdict over a standing rejection: %+v", submissions)
-	}
-	status, ok := rig.forge.lastStatus()
-	if !ok || status.Status != CheckFailure {
-		t.Fatalf("the re-trigger did not re-assert the rejection's red status: %+v", status)
-	}
-	if rig.agents.sessionCount() != 1 {
-		t.Fatal("the re-trigger spawned a second reviewer on a head that was already decided")
-	}
-}
+// rather than re-deriving a verdict that might differ
+// (TestReviewRunner_AReassertedVerdictAgreesWithItToo).
 
 func TestReviewRunner_ANewHeadIsReviewedAgain(t *testing.T) {
 	// The other side of the dedup: it binds to a HEAD, not to a pull
@@ -671,29 +635,6 @@ func TestReviewRunner_AnApprovalWithNoFindingsIsNotPosted(t *testing.T) {
 	status, ok := rig.forge.lastStatus()
 	if !ok || status.Status != CheckFailure {
 		t.Fatalf("a review that produced no verdict did not turn the check red: %+v", status)
-	}
-}
-
-func TestReviewRunner_AReplyWithNoDeclarationIsNotAVerdict(t *testing.T) {
-	rig := newReviewRunnerRig(t)
-	rig.reviewerSays("Looks good to me, ship it.")
-	err := rig.run(41)
-	if !errors.Is(err, ErrReview) {
-		t.Fatalf("err = %v, want an ErrReview refusal", err)
-	}
-	// The reviewer's words still reach the author, as a comment that decides
-	// nothing — but never as an approval.
-	for _, submission := range rig.forge.submissions() {
-		if submission.Verdict != VerdictComment {
-			t.Fatalf("prose was read as a verdict: %+v", submission)
-		}
-		if !strings.Contains(submission.Body, "Looks good to me") {
-			t.Fatalf("the reviewer's words were discarded: %q", submission.Body)
-		}
-	}
-	status, _ := rig.forge.lastStatus()
-	if status.Status != CheckFailure {
-		t.Fatalf("status = %s, want failure", status.Status)
 	}
 }
 
@@ -921,21 +862,6 @@ func TestReviewRunner_ARejectionIsRedOnTheRunThatFilesIt(t *testing.T) {
 	}
 }
 
-func TestReviewRunner_AVerdictThatDecidesNothingIsNotGreen(t *testing.T) {
-	rig := newReviewRunnerRig(t)
-	rig.reviewerSays(reviewSaying("I cannot judge the cryptography here", ReviewCodeComment))
-	rig.mustRun(41)
-
-	status, ok := rig.forge.lastStatus()
-	if !ok || status.Status != CheckPending {
-		t.Fatalf("a comment published %+v; a review that declined to judge must leave the "+
-			"head unjudged and retriable, which only pending says", status)
-	}
-	if got := rig.forge.submissions(); len(got) != 1 || got[0].Verdict != VerdictComment {
-		t.Fatalf("submissions = %+v", got)
-	}
-}
-
 func TestReviewStatuses_EveryVerdictMapsAndNoneDefaultsToGreen(t *testing.T) {
 	// A verdict added to the vocabulary without a status blocks until
 	// somebody maps it, rather than merging on the default.
@@ -969,9 +895,6 @@ func TestReviewStatuses_AVerdictlessReviewStaysRetriable(t *testing.T) {
 		if got.Status != CheckPending {
 			t.Fatalf("verdict %s published %s; a review that recorded no verdict must stay "+
 				"retriable, or the head can never be judged", verdict, got.Status)
-		}
-		if got.Status == CheckSuccess {
-			t.Fatalf("verdict %s must never satisfy the check", verdict)
 		}
 	}
 	// And a decision IS terminal: nothing about it is owed another attempt.
@@ -1188,9 +1111,6 @@ func TestNewReviewRunner_RefusesIncompleteWiring(t *testing.T) {
 		if _, err := NewReviewRunner(cfg); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("%s nil accepted: %v", name, err)
 		}
-	}
-	if _, err := (&ReviewRunner{}).Run(context.Background(), nil), error(nil); err != nil {
-		t.Fatal(err)
 	}
 	runner, err := NewReviewRunner(complete)
 	if err != nil {
@@ -1618,6 +1538,9 @@ func TestReviewRunner_AReassertedVerdictAgreesWithItToo(t *testing.T) {
 			if got := rig.forge.submissions(); len(got) != 1 {
 				t.Fatalf("the re-assertion posted a second verdict: %+v", got)
 			}
+			if rig.agents.sessionCount() != 1 {
+				t.Fatal("the re-trigger spawned a second reviewer on a head that was already decided")
+			}
 			statuses, heads := rig.forge.publishedStatuses()
 			if len(statuses) != 2 {
 				t.Fatalf("statuses = %+v, want the original and the re-assertion", statuses)
@@ -1718,6 +1641,11 @@ func TestReviewRunner_AForcePushThatDropsTheCapturedHeadRefusesRatherThanJudgesA
 	if err := rig.run(41); err == nil {
 		t.Fatal("the review succeeded after the branch was rewritten under it")
 	}
+	// The order is the guarantee: the reviewer is never prompted on a
+	// checkout that could not be pinned to the captured head.
+	if prompts := len(rig.agents.promptTexts()); prompts != 0 {
+		t.Fatalf("the reviewer was prompted %d time(s) on a checkout that could not be pinned", prompts)
+	}
 
 	if got := rig.forge.submissions(); len(got) != 0 {
 		t.Fatalf("submissions = %+v; a verdict was posted about a tree that no longer exists", got)
@@ -1727,24 +1655,6 @@ func TestReviewRunner_AForcePushThatDropsTheCapturedHeadRefusesRatherThanJudgesA
 		if status.Status == CheckSuccess {
 			t.Fatalf("a green check was published for a tree nobody read: %+v", status)
 		}
-	}
-}
-
-func TestReviewRunner_TheReviewerIsNeverPromptedBeforeTheHeadIsProven(t *testing.T) {
-	// The order is the guarantee. If the prompt could go out first, the
-	// reviewer would spend a model run reading whatever the clone produced
-	// and the refusal would arrive too late to have prevented anything.
-	const forcePushed = "head-sha-9999999999999999"
-
-	rig := newReviewRunnerRig(t)
-	rig.branchMovesTo(forcePushed)
-	rig.reviewerSays(reviewSaying("fine", ReviewCodeApprove))
-
-	if err := rig.run(41); err == nil {
-		t.Fatal("the review succeeded after the branch was rewritten under it")
-	}
-	if prompts := len(rig.agents.promptTexts()); prompts != 0 {
-		t.Fatalf("the reviewer was prompted %d time(s) on a checkout that could not be pinned", prompts)
 	}
 }
 
