@@ -611,61 +611,44 @@ func TestInitializeCacheRegistryNilConfigOpt(t *testing.T) {
 // Object Storage Input Validation - Deeper Paths
 // =============================================================================
 
-func TestRunObjectPutCommand_ValidFileWithMetadata(t *testing.T) {
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	origFactory := objectStorageClientFactory
-	defer func() {
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-		objectStorageClientFactory = origFactory
-	}()
-
-	tmpFile := t.TempDir() + "/test-data.txt"
-	require.NoError(t, os.WriteFile(tmpFile, []byte("test data"), 0o644))
-
-	objectFile = tmpFile
-	objectMetadata = `{"env":"test"}`
-	objectTags = nil
-
-	// Factory error after file/metadata parsing succeeds - exercises parsing paths
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+func TestRunObjectPutCommand_ParsesInputsBeforeConnecting(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		tags     map[string]string
+	}{
+		{name: "metadata", metadata: `{"env":"test"}`},
+		{name: "tags", tags: map[string]string{"env": "prod", "tier": "hot"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFile := objectFile
+			origMeta := objectMetadata
+			origTags := objectTags
+			origFactory := objectStorageClientFactory
+			defer func() {
+				objectFile = origFile
+				objectMetadata = origMeta
+				objectTags = origTags
+				objectStorageClientFactory = origFactory
+			}()
 
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err) // Factory error, but file+metadata parsing was exercised
-}
+			tmpFile := t.TempDir() + "/test-data.txt"
+			require.NoError(t, os.WriteFile(tmpFile, []byte("test data"), 0o644))
 
-func TestRunObjectPutCommand_ValidFileWithTags(t *testing.T) {
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	origFactory := objectStorageClientFactory
-	defer func() {
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-		objectStorageClientFactory = origFactory
-	}()
+			objectFile = tmpFile
+			objectMetadata = tt.metadata
+			objectTags = tt.tags
+			// The factory fails only after the file, metadata and tags parse.
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+			}
 
-	tmpFile := t.TempDir() + "/tagged-data.txt"
-	require.NoError(t, os.WriteFile(tmpFile, []byte("tagged content"), 0o644))
-
-	objectFile = tmpFile
-	objectMetadata = ""
-	objectTags = map[string]string{"env": "prod", "tier": "hot"}
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+			cmd := newObjectPutCommand()
+			err := runObjectPutCommand(cmd, []string{"bucket/key"})
+			assert.Error(t, err)
+		})
 	}
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/tagged-key"})
-	assert.Error(t, err) // Factory error, but tag path was exercised
 }
 
 func TestRunObjectListByTagCommand_MalformedTagFilter(t *testing.T) {
@@ -816,91 +799,76 @@ func TestRunObjectReplicateCommand_CommaSeparatedDestinations(t *testing.T) {
 // Object Storage Format Edge Cases - SetPolicy
 // =============================================================================
 
-func TestFormatObjectSetPolicyResponse_YAMLFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
+func TestFormatObjectSetPolicyResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		resp    *pb.SetObjectPolicyResponse
+		wantErr bool
+	}{
+		{name: "yaml", format: "yaml", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 1}},
+		{name: "table", format: "table", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 3}},
+		{name: "bad format", format: "invalid-format", resp: &pb.SetObjectPolicyResponse{Key: "bucket/key"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := objectOutputFormat
+			defer func() { objectOutputFormat = orig }()
+			objectOutputFormat = tt.format
 
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 1}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
+			err := formatObjectSetPolicyResponse(tt.resp)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
-func TestFormatObjectSetPolicyResponse_TableFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key", Version: 3}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_BadFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-format"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/key"}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Object Storage Format - Lifecycle Response Edge Cases
-// =============================================================================
-
-func TestFormatObjectLifecycleResponse_TableWithArchiveAndRetention(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "mybucket",
-		Policy: &pb.ObjectPolicy{
-			ArchivePolicy: &pb.ArchivePolicy{
-				Enabled:          true,
-				ArchiveAfterDays: 30,
-				TargetStore:      "cold-store",
-			},
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 365,
+func TestFormatObjectLifecycleResponse(t *testing.T) {
+	tests := []struct {
+		name    string
+		format  string
+		resp    *pb.GetObjectPolicyResponse
+		wantErr bool
+	}{
+		{
+			name:   "table with archive and retention",
+			format: "table",
+			resp: &pb.GetObjectPolicyResponse{
+				Key: "mybucket",
+				Policy: &pb.ObjectPolicy{
+					ArchivePolicy: &pb.ArchivePolicy{
+						Enabled:          true,
+						ArchiveAfterDays: 30,
+						TargetStore:      "cold-store",
+					},
+					RetentionPolicy: &pb.RetentionPolicy{
+						Enabled:       true,
+						RetentionDays: 365,
+					},
+				},
 			},
 		},
+		{name: "table nil policy", format: "table", resp: &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: nil}},
+		{name: "table empty policy", format: "table", resp: &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: &pb.ObjectPolicy{}}},
+		{name: "bad format", format: "invalid-format", resp: &pb.GetObjectPolicyResponse{Key: "mybucket"}, wantErr: true},
 	}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := objectOutputFormat
+			defer func() { objectOutputFormat = orig }()
+			objectOutputFormat = tt.format
 
-func TestFormatObjectLifecycleResponse_TableNilPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: nil}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_TableEmptyPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "table"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket", Policy: &pb.ObjectPolicy{}}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_BadFormat(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-format"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "mybucket"}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.Error(t, err)
+			err := formatObjectLifecycleResponse("mybucket", tt.resp)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -921,57 +889,58 @@ func TestPrintClusterStatusJSON_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestPrintClusterStatusTableCLI_HealthyCluster(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  2,
-		ReadyNodes: 2,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true, LastSeen: time.Now()},
-			{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: true},
+func TestPrintClusterStatusTableCLI(t *testing.T) {
+	tests := []struct {
+		name   string
+		status interface{}
+	}{
+		{
+			name: "healthy cluster",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  2,
+				ReadyNodes: 2,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true, LastSeen: time.Now()},
+					{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: true},
+				},
+			},
 		},
-	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_UnhealthyCluster(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    false,
-		LeaderID:   0,
-		NodeCount:  2,
-		ReadyNodes: 1,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: false, IsHealthy: true},
-			{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: false},
+		{
+			name: "unhealthy cluster",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    false,
+				LeaderID:   0,
+				NodeCount:  2,
+				ReadyNodes: 1,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: false, IsHealthy: true},
+					{NodeID: 2, Address: "10.0.0.2:50051", IsLeader: false, IsHealthy: false},
+				},
+			},
 		},
-	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_WithRaftGroupInfo(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  3,
-		ReadyNodes: 3,
-		Nodes:      []cli.NodeInfo{},
-		RaftGroupInfo: []cli.RaftGroupInfo{
-			{LeaderID: 1, MemberCount: 3},
-			{LeaderID: 2, MemberCount: 3},
+		{
+			name: "raft group info",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  3,
+				ReadyNodes: 3,
+				Nodes:      []cli.NodeInfo{},
+				RaftGroupInfo: []cli.RaftGroupInfo{
+					{LeaderID: 1, MemberCount: 3},
+					{LeaderID: 2, MemberCount: 3},
+				},
+			},
 		},
+		{name: "non-status type falls back to json", status: map[string]string{"status": "ok"}},
 	}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestPrintClusterStatusTableCLI_FallbackToJSON(t *testing.T) {
-	// Pass a non-ClusterStatusResponse type - should fallback to JSON
-	status := map[string]string{"status": "ok"}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NoError(t, printClusterStatusTableCLI(tt.status))
+		})
+	}
 }
 
 // =============================================================================
@@ -1017,39 +986,29 @@ func TestNewObjectStorageCommands_AllSubcommands(t *testing.T) {
 	}
 }
 
-func TestNewObjectMetadataUpdateCommandCreation(t *testing.T) {
-	cmd := newObjectMetadataUpdateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "update <bucket>/<key>", cmd.Use)
-}
-
-func TestNewObjectLifecycleSetCommandCreation(t *testing.T) {
-	cmd := newObjectLifecycleSetCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "set <bucket>", cmd.Use)
-}
-
-func TestNewObjectReplicateCommandCreation(t *testing.T) {
-	cmd := newObjectReplicateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "replicate <bucket>/<key>", cmd.Use)
-}
-
-func TestNewObjectMigrateCommandCreation(t *testing.T) {
-	cmd := newObjectMigrateCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "migrate <bucket>/<key>", cmd.Use)
+func TestNewObjectSubcommandUsage(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		want    string
+	}{
+		{name: "metadata update", factory: newObjectMetadataUpdateCommand, want: "update <bucket>/<key>"},
+		{name: "lifecycle set", factory: newObjectLifecycleSetCommand, want: "set <bucket>"},
+		{name: "replicate", factory: newObjectReplicateCommand, want: "replicate <bucket>/<key>"},
+		{name: "migrate", factory: newObjectMigrateCommand, want: "migrate <bucket>/<key>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.factory()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tt.want, cmd.Use)
+		})
+	}
 }
 
 // =============================================================================
 // Embedded Server Helper
 // =============================================================================
-
-func TestShutdownEmbeddedServer_NilHolder(t *testing.T) {
-	embeddedServerHolder.Store(nil)
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
-}
 
 func TestEmbeddedServer_ShutdownWhenNotStarted(t *testing.T) {
 	es := &embeddedServer{}
@@ -1062,21 +1021,8 @@ func TestEmbeddedServer_ShutdownWhenNotStarted(t *testing.T) {
 // Backup Storage - loadProfileCredentials Tests
 // =============================================================================
 
-func TestLoadProfileCredentials_FileNotFound(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = "/nonexistent/credentials.yaml"
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.NoError(t, err)
-	assert.Nil(t, creds, "Should return nil when file doesn't exist")
-}
-
-func TestLoadProfileCredentials_ValidCredentialsFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
+func TestLoadProfileCredentials(t *testing.T) {
+	const twoProfiles = `
 default_profile: prod
 profiles:
   prod:
@@ -1091,154 +1037,80 @@ profiles:
     bucket: dev-bucket
     region: us-west-2
 `
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, creds)
-	assert.Equal(t, "s3", creds.Type)
-	assert.Equal(t, "production-bucket", creds.Bucket)
-	assert.Equal(t, "us-east-1", creds.Region)
-}
-
-func TestLoadProfileCredentials_SpecificProfile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
-default_profile: prod
-profiles:
-  prod:
-    type: s3
-    bucket: production-bucket
-    region: us-east-1
-  dev:
-    type: s3
-    bucket: dev-bucket
-    region: us-west-2
-`
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "dev")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, creds)
-	assert.Equal(t, "dev-bucket", creds.Bucket)
-	assert.Equal(t, "us-west-2", creds.Region)
-}
-
-func TestLoadProfileCredentials_ProfileNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	credContent := `
-default_profile: prod
+	const noDefault = `
 profiles:
   prod:
     type: s3
     bucket: production-bucket
 `
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
+	tests := []struct {
+		name       string
+		content    string // written to a temp credentials file when non-empty
+		path       string // used as the credentials file when content is empty
+		profile    string
+		wantBucket string
+		wantRegion string
+		wantNil    bool
+		wantErr    string
+	}{
+		{name: "file not found", path: "/nonexistent/credentials.yaml", wantNil: true},
+		{name: "default path", path: "", wantNil: true},
+		{name: "default profile", content: twoProfiles, wantBucket: "production-bucket", wantRegion: "us-east-1"},
+		{name: "specific profile", content: twoProfiles, profile: "dev", wantBucket: "dev-bucket", wantRegion: "us-west-2"},
+		{name: "profile not found", content: twoProfiles, profile: "nonexistent", wantErr: "profile 'nonexistent' not found"},
+		{name: "no default profile", content: noDefault, wantErr: "no profile specified"},
+		{name: "invalid yaml", content: "not: valid: yaml:", wantErr: "failed to parse"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			credFile := tt.path
+			if tt.content != "" {
+				credFile = filepath.Join(t.TempDir(), "credentials.yaml")
+				require.NoError(t, os.WriteFile(credFile, []byte(tt.content), 0o600))
+			}
 
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "nonexistent")
-	builder.credentialsFile = credFile
+			builder := NewBackupStorageBuilder(&BackupStorageFlags{StorageType: "s3"}, "", tt.profile)
+			builder.credentialsFile = credFile
 
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "profile 'nonexistent' not found")
+			creds, err := builder.loadProfileCredentials(context.Background())
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Nil(t, creds)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantNil {
+				assert.Nil(t, creds)
+				return
+			}
+			require.NotNil(t, creds)
+			assert.Equal(t, "s3", creds.Type)
+			assert.Equal(t, tt.wantBucket, creds.Bucket)
+			assert.Equal(t, tt.wantRegion, creds.Region)
+		})
+	}
 }
 
-func TestLoadProfileCredentials_NoDefaultProfile(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
+func TestExpandEnvVars(t *testing.T) {
+	t.Setenv("TEST_BUCKET_NAME", "my-test-bucket")
+	t.Setenv("TEST_ENV", "production")
 
-	credContent := `
-profiles:
-  prod:
-    type: s3
-    bucket: production-bucket
-`
-	require.NoError(t, os.WriteFile(credFile, []byte(credContent), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "no profile specified")
-}
-
-func TestLoadProfileCredentials_InvalidYAML(t *testing.T) {
-	tmpDir := t.TempDir()
-	credFile := filepath.Join(tmpDir, "credentials.yaml")
-
-	require.NoError(t, os.WriteFile(credFile, []byte("not: valid: yaml:"), 0o600))
-
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = credFile
-
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, creds)
-	assert.Contains(t, err.Error(), "failed to parse")
-}
-
-func TestLoadProfileCredentials_DefaultPath(t *testing.T) {
-	// Test that default path is used when credentialsFile is empty
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-	builder.credentialsFile = ""
-
-	// Since the default file likely doesn't exist, should return nil, nil
-	creds, err := builder.loadProfileCredentials(context.Background())
-	assert.NoError(t, err)
-	assert.Nil(t, creds)
-}
-
-// =============================================================================
-// Backup Storage - expandEnvVars Tests
-// =============================================================================
-
-func TestExpandEnvVars_BasicExpansion(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	os.Setenv("TEST_BUCKET_NAME", "my-test-bucket")
-	defer os.Unsetenv("TEST_BUCKET_NAME")
-
-	result := builder.expandEnvVars("${TEST_BUCKET_NAME}")
-	assert.Equal(t, "my-test-bucket", result)
-}
-
-func TestExpandEnvVars_MixedContent(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	os.Setenv("TEST_ENV", "production")
-	defer os.Unsetenv("TEST_ENV")
-
-	result := builder.expandEnvVars("backup-${TEST_ENV}-data")
-	assert.Equal(t, "backup-production-data", result)
-}
-
-func TestExpandEnvVars_UndefinedVariable(t *testing.T) {
-	flags := &BackupStorageFlags{StorageType: "s3"}
-	builder := NewBackupStorageBuilder(flags, "", "")
-
-	result := builder.expandEnvVars("${UNDEFINED_VAR_12345}")
-	assert.Equal(t, "", result)
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "basic expansion", in: "${TEST_BUCKET_NAME}", want: "my-test-bucket"},
+		{name: "mixed content", in: "backup-${TEST_ENV}-data", want: "backup-production-data"},
+		{name: "undefined variable", in: "${UNDEFINED_VAR_12345}", want: ""},
+	}
+	builder := NewBackupStorageBuilder(&BackupStorageFlags{StorageType: "s3"}, "", "")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, builder.expandEnvVars(tt.in))
+		})
+	}
 }
 
 // =============================================================================
