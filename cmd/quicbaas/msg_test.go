@@ -1117,44 +1117,35 @@ func TestExpandEnvVars_Inputs(t *testing.T) {
 // createObjectStorageGRPCClient Tests - TLS Error Paths
 // =============================================================================
 
-func TestCreateObjectStorageGRPCClient_TLSEnabled_MissingCert(t *testing.T) {
-	origTLSEnabled := objectTLSEnabled
-	origTLSCert := objectTLSCert
-	origTLSKey := objectTLSKey
-	defer func() {
-		objectTLSEnabled = origTLSEnabled
-		objectTLSCert = origTLSCert
-		objectTLSKey = origTLSKey
-	}()
+func TestCreateObjectStorageGRPCClient_TLSEnabledMissingMaterial(t *testing.T) {
+	tests := []struct {
+		name string
+		cert string
+	}{
+		{name: "missing cert and key", cert: ""},
+		{name: "missing key", cert: "/path/to/cert.pem"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origTLSEnabled := objectTLSEnabled
+			origTLSCert := objectTLSCert
+			origTLSKey := objectTLSKey
+			defer func() {
+				objectTLSEnabled = origTLSEnabled
+				objectTLSCert = origTLSCert
+				objectTLSKey = origTLSKey
+			}()
 
-	objectTLSEnabled = true
-	objectTLSCert = ""
-	objectTLSKey = ""
+			objectTLSEnabled = true
+			objectTLSCert = tt.cert
+			objectTLSKey = ""
 
-	client, err := createObjectStorageGRPCClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
-}
-
-func TestCreateObjectStorageGRPCClient_TLSEnabled_MissingKey(t *testing.T) {
-	origTLSEnabled := objectTLSEnabled
-	origTLSCert := objectTLSCert
-	origTLSKey := objectTLSKey
-	defer func() {
-		objectTLSEnabled = origTLSEnabled
-		objectTLSCert = origTLSCert
-		objectTLSKey = origTLSKey
-	}()
-
-	objectTLSEnabled = true
-	objectTLSCert = "/path/to/cert.pem"
-	objectTLSKey = ""
-
-	client, err := createObjectStorageGRPCClient()
-	assert.Error(t, err)
-	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+			client, err := createObjectStorageGRPCClient()
+			require.Error(t, err)
+			assert.Nil(t, client)
+			assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+		})
+	}
 }
 
 // =============================================================================
@@ -1244,112 +1235,43 @@ func validCacheConfig() config.EnhancedCacheConfig {
 
 // upgrade.go coverage
 
-func TestRemaining91_RunUpgradeStart_DefaultAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
+func TestRemaining91_RunUpgradeCommands_AddressResolution(t *testing.T) {
+	start := func(cmd *cobra.Command) error { return runUpgradeStart(cmd, []string{"v2.0.0"}) }
+	status := func(cmd *cobra.Command) error { return runUpgradeStatus(cmd, []string{}) }
 
-	upgradeServerAddress = ""
-	address = ""
-	globalTimeout = 1 * time.Second
+	tests := []struct {
+		name          string
+		factory       func() *cobra.Command
+		run           func(*cobra.Command) error
+		serverAddress string
+		globalAddress string
+	}{
+		{name: "start default address", factory: newUpgradeStartCommand, run: start},
+		{name: "start custom server address", factory: newUpgradeStartCommand, run: start, serverAddress: "localhost:19999"},
+		{name: "start falls back to global address", factory: newUpgradeStartCommand, run: start, globalAddress: "localhost:19998"},
+		{name: "status default address", factory: newUpgradeStatusCommand, run: status},
+		{name: "status custom server address", factory: newUpgradeStatusCommand, run: status, serverAddress: "localhost:19997"},
+		{name: "status falls back to global address", factory: newUpgradeStatusCommand, run: status, globalAddress: "localhost:19996"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origAddr := upgradeServerAddress
+			origGlobal := address
+			origTimeout := globalTimeout
+			defer func() {
+				upgradeServerAddress = origAddr
+				address = origGlobal
+				globalTimeout = origTimeout
+			}()
 
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v2.0.0"})
-	require.Error(t, err)
-}
+			upgradeServerAddress = tt.serverAddress
+			address = tt.globalAddress
+			globalTimeout = 1 * time.Second
 
-func TestRemaining91_RunUpgradeStart_CustomServerAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = "localhost:19999"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v3.0.0"})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStart_FallbackToGlobalAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = "localhost:19998"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStartCommand()
-	err := runUpgradeStart(cmd, []string{"v2.1.0"})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_DefaultAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = ""
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_CustomAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = "localhost:19997"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
-}
-
-func TestRemaining91_RunUpgradeStatus_FallbackToGlobalAddress(t *testing.T) {
-	origAddr := upgradeServerAddress
-	origGlobal := address
-	origTimeout := globalTimeout
-	defer func() {
-		upgradeServerAddress = origAddr
-		address = origGlobal
-		globalTimeout = origTimeout
-	}()
-
-	upgradeServerAddress = ""
-	address = "localhost:19996"
-	globalTimeout = 1 * time.Second
-
-	cmd := newUpgradeStatusCommand()
-	err := runUpgradeStatus(cmd, []string{})
-	require.Error(t, err)
+			// No server listens on any of these addresses.
+			require.Error(t, tt.run(tt.factory()))
+		})
+	}
 }
 
 func TestRemaining91_FollowUpgradeProgress_ContextCancelled(t *testing.T) {
