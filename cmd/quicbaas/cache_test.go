@@ -690,42 +690,22 @@ func TestRunCacheStatsCommand(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
+	origFmt := cacheOutputFmt
+	origDetails := cacheShowDetails
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
+		cacheOutputFmt = origFmt
+		cacheShowDetails = origDetails
 	}()
 
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
+	log = createTestLoggerForCoveragePlus(t)
 
 	tests := []struct {
 		name         string
 		args         []string
+		disabledPost bool
 		outputFormat string
 		showDetails  bool
 		expectError  bool
@@ -734,41 +714,73 @@ func TestRunCacheStatsCommand(t *testing.T) {
 			name:         "stats for all entities with table format",
 			args:         []string{},
 			outputFormat: "table",
-			showDetails:  false,
-			expectError:  false,
+		},
+		{
+			name:         "stats for all entities with a disabled entity",
+			args:         []string{},
+			disabledPost: true,
+			outputFormat: "table",
 		},
 		{
 			name:         "stats for specific entity",
 			args:         []string{"user"},
 			outputFormat: "table",
-			showDetails:  false,
-			expectError:  false,
 		},
 		{
 			name:         "stats with json format",
 			args:         []string{},
 			outputFormat: "json",
-			showDetails:  false,
-			expectError:  false,
 		},
 		{
 			name:         "stats with yaml format",
 			args:         []string{},
 			outputFormat: "yaml",
-			showDetails:  false,
-			expectError:  false,
 		},
 		{
 			name:         "stats with details",
 			args:         []string{"user"},
 			outputFormat: "table",
 			showDetails:  true,
-			expectError:  false,
+		},
+		{
+			name:         "stats with details json",
+			args:         []string{"user"},
+			outputFormat: "json",
+			showDetails:  true,
+		},
+		{
+			name:         "invalid output format",
+			args:         []string{},
+			outputFormat: "invalid-format",
+			expectError:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			entities := map[string]config.EntityCacheConfig{
+				"user": {
+					Enabled: true,
+					TTL:     10 * time.Minute,
+					MaxSize: 500,
+				},
+			}
+			if tt.disabledPost {
+				entities["post"] = config.EntityCacheConfig{
+					Enabled: false,
+					TTL:     5 * time.Minute,
+					MaxSize: 200,
+				}
+			}
+			cfg = &config.Config{
+				Cache: config.EnhancedCacheConfig{
+					Enabled:         true,
+					DefaultTTL:      5 * time.Minute,
+					MaxSize:         1000,
+					CleanupInterval: 1 * time.Minute,
+					Entities:        entities,
+				},
+			}
 			cmd := newCacheStatsCommand()
 
 			cacheOutputFmt = tt.outputFormat
@@ -790,80 +802,106 @@ func TestRunCacheClearCommand(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
+	origFmt := cacheOutputFmt
+	origForce := cacheForce
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
+		cacheOutputFmt = origFmt
+		cacheForce = origForce
 	}()
 
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
+	log = createTestLoggerForCoveragePlus(t)
 
 	tests := []struct {
 		name         string
 		args         []string
-		force        bool
+		postDisabled bool
 		outputFormat string
 		expectError  bool
+		errorMsg     string
 	}{
 		{
 			name:         "clear all with force",
 			args:         []string{},
-			force:        true,
 			outputFormat: "table",
-			expectError:  false,
 		},
 		{
 			name:         "clear specific entity with force",
 			args:         []string{"user"},
-			force:        true,
 			outputFormat: "table",
-			expectError:  false,
+		},
+		{
+			name:         "clear specific entity json",
+			args:         []string{"user"},
+			outputFormat: "json",
+		},
+		{
+			name:         "clear second entity json",
+			args:         []string{"post"},
+			outputFormat: "json",
 		},
 		{
 			name:         "clear with json output",
 			args:         []string{},
-			force:        true,
 			outputFormat: "json",
-			expectError:  false,
+		},
+		{
+			name:         "clear with yaml output",
+			args:         []string{},
+			outputFormat: "yaml",
+		},
+		{
+			name:         "clear disabled entity",
+			args:         []string{"post"},
+			postDisabled: true,
+			outputFormat: "table",
+			expectError:  true,
+			errorMsg:     "caching is not enabled",
+		},
+		{
+			name:         "invalid output format",
+			args:         []string{},
+			outputFormat: "invalid-format",
+			expectError:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cfg = &config.Config{
+				Cache: config.EnhancedCacheConfig{
+					Enabled:         true,
+					DefaultTTL:      5 * time.Minute,
+					MaxSize:         1000,
+					CleanupInterval: 1 * time.Minute,
+					Entities: map[string]config.EntityCacheConfig{
+						"user": {
+							Enabled: true,
+							TTL:     10 * time.Minute,
+							MaxSize: 500,
+						},
+						"post": {
+							Enabled: !tt.postDisabled,
+							TTL:     5 * time.Minute,
+							MaxSize: 200,
+						},
+					},
+				},
+			}
 			cmd := newCacheClearCommand()
 
-			cacheForce = tt.force
+			cacheForce = true
 			cacheOutputFmt = tt.outputFormat
 
 			err := cmd.RunE(cmd, tt.args)
 
 			if tt.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
 			} else {
 				assert.NoError(t, err)
 			}
@@ -1494,106 +1532,7 @@ func TestRunCacheClearCommandWithoutConfirmation(t *testing.T) {
 }
 
 // TestRunCacheClearCommandDisabledEntity tests clearing cache for disabled entity.
-func TestRunCacheClearCommandDisabledEntity(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	cmd := newCacheClearCommand()
-
-	cacheForce = true
-	cacheOutputFmt = "table"
-
-	err = cmd.RunE(cmd, []string{"post"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "caching is not enabled")
-}
-
 // TestRunCacheClearCommandOutputFormats tests different output formats.
-func TestRunCacheClearCommandOutputFormats(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	formats := []string{"table", "json", "yaml"}
-
-	for _, format := range formats {
-		t.Run("format_"+format, func(t *testing.T) {
-			cmd := newCacheClearCommand()
-
-			cacheForce = true
-			cacheOutputFmt = format
-
-			err := cmd.RunE(cmd, []string{})
-			assert.NoError(t, err)
-		})
-	}
-}
-
 // TestRunCacheClearCommandStdoutCapture tests that output is written correctly.
 func TestRunCacheClearCommandStdoutCapture(t *testing.T) {
 	// Save original values
@@ -1717,63 +1656,6 @@ func TestRunCacheClearCommandReadError(t *testing.T) {
 }
 
 // TestRunCacheClearCommandSpecificEntity tests clearing specific entity.
-func TestRunCacheClearCommandSpecificEntity(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-				"post": {
-					Enabled: true,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	entities := []string{"user", "post"}
-
-	for _, entity := range entities {
-		t.Run("clear_"+entity, func(t *testing.T) {
-			cmd := newCacheClearCommand()
-
-			cacheForce = true
-			cacheOutputFmt = "json"
-
-			err := cmd.RunE(cmd, []string{entity})
-			assert.NoError(t, err)
-		})
-	}
-}
-
 // =============================================================================
 // Cache Command Tests - Testing nil config checks (no args required)
 // =============================================================================
@@ -2504,269 +2386,9 @@ func TestBuildSDKClientOptions(t *testing.T) {
 // Cache Stats Command Coverage Tests
 // =============================================================================
 
-func TestRunCacheStatsCommand_SpecificEntityCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origDetails := cacheShowDetails
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheShowDetails = origDetails
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "json"
-	cacheShowDetails = true
-
-	cmd := &cobra.Command{}
-	err := runCacheStatsCommand(cmd, []string{"user"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheStatsCommand_AllEntitiesCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origDetails := cacheShowDetails
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheShowDetails = origDetails
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "table"
-	cacheShowDetails = false
-
-	cmd := &cobra.Command{}
-	err := runCacheStatsCommand(cmd, []string{})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheStatsCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "invalid-format"
-
-	cmd := &cobra.Command{}
-	err := runCacheStatsCommand(cmd, []string{})
-
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Cache Clear Command Coverage Tests
 // =============================================================================
-
-func TestRunCacheClearCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origForce := cacheForce
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheForce = origForce
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "invalid-format"
-	cacheForce = true
-
-	cmd := &cobra.Command{}
-	err := runCacheClearCommand(cmd, []string{})
-
-	require.Error(t, err)
-}
-
-func TestRunCacheClearCommand_ClearAllCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origForce := cacheForce
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheForce = origForce
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-				"post": {
-					Enabled: true,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "json"
-	cacheForce = true
-
-	cmd := &cobra.Command{}
-	err := runCacheClearCommand(cmd, []string{})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheClearCommand_ClearSpecificEntityCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origForce := cacheForce
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheForce = origForce
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "table"
-	cacheForce = true
-
-	cmd := &cobra.Command{}
-	err := runCacheClearCommand(cmd, []string{"user"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheClearCommand_ClearDisabledEntityCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	origForce := cacheForce
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-		cacheForce = origForce
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "json"
-	cacheForce = true
-
-	cmd := &cobra.Command{}
-	err := runCacheClearCommand(cmd, []string{"post"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not enabled")
-}
 
 // =============================================================================
 // Helper Functions
