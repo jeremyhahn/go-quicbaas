@@ -515,30 +515,69 @@ func TestMetricsHelpText(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
-	// Initialize metrics
-	m1 := InitMetrics()
-	require.NotNil(t, m1)
+	tests := []struct {
+		name   string
+		record func(m *Metrics)
+		count  func(m *Metrics) float64
+	}{
+		{
+			name:   "counter",
+			record: func(m *Metrics) { m.IncrementTransactionConflicts() },
+			count:  func(m *Metrics) float64 { return testutil.ToFloat64(m.TransactionConflicts) },
+		},
+		{
+			name:   "gauge",
+			record: func(m *Metrics) { m.IncrementConcurrentRequests() },
+			count:  func(m *Metrics) float64 { return testutil.ToFloat64(m.ConcurrentRequests) },
+		},
+		{
+			name:   "histogram",
+			record: func(m *Metrics) { m.RecordRequestDuration("get", "success", 0.01) },
+			count:  func(m *Metrics) float64 { return requestDurationSampleCount(t) },
+		},
+	}
 
-	// Record some values
-	m1.IncrementConcurrentRequests()
-	m1.IncrementTransactionConflicts()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Repeated resets must each yield a fresh, working instance.
+			for round := 0; round < 3; round++ {
+				Reset()
+				m1 := InitMetrics()
+				require.NotNil(t, m1)
+				for i := 0; i < 100; i++ {
+					tt.record(m1)
+				}
+				assert.Equal(t, 100.0, tt.count(m1), "round %d: values before reset", round)
 
-	// Reset metrics
-	Reset()
+				Reset()
+				m2 := GetMetrics()
+				require.NotNil(t, m2)
+				assert.NotSame(t, m1, m2, "Reset should create a new instance")
 
-	// Get new instance
-	m2 := GetMetrics()
-	require.NotNil(t, m2)
+				tt.record(m2)
+				assert.Equal(t, 1.0, tt.count(m2), "round %d: only post-reset values", round)
+			}
+		})
+	}
+}
 
-	// Should be a different instance
-	assert.NotEqual(t, m1, m2, "Reset should create new instance")
+// requestDurationSampleCount returns the total number of observations of the
+// request duration histogram in the current Registry.
+func requestDurationSampleCount(t *testing.T) float64 {
+	t.Helper()
+	metricFamilies, err := Registry.Gather()
+	require.NoError(t, err)
 
-	// Values should be reset
-	value := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, value, "ConcurrentRequests should be reset to 0")
-
-	conflictsValue := testutil.ToFloat64(m2.TransactionConflicts)
-	assert.Equal(t, 0.0, conflictsValue, "TransactionConflicts should be reset to 0")
+	var count uint64
+	for _, mf := range metricFamilies {
+		if mf.GetName() != "quicbaas_request_duration_seconds" {
+			continue
+		}
+		for _, metric := range mf.GetMetric() {
+			count += metric.GetHistogram().GetSampleCount()
+		}
+	}
+	return float64(count)
 }
 
 func TestConcurrentAccess(t *testing.T) {
@@ -1276,216 +1315,68 @@ func TestConcurrency_RaceConditionDetection(t *testing.T) {
 	// If we reach here without race detector complaints, test passes
 }
 
-// TestEdgeCase_NegativeValues tests recording negative values where they make sense.
-func TestEdgeCase_NegativeValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("negative duration values", func(t *testing.T) {
-		// Negative durations don't make sense but Prometheus allows them
-		// The system should handle them without panicking
-		m.RecordRequestDuration("test", "success", -0.5)
-		m.RecordTransactionDuration(-1.0)
-		m.RecordRaftProposalLatency("1", -0.1)
-
-		// Should not panic and metrics should be recorded
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("negative size values", func(t *testing.T) {
-		// Negative sizes don't make sense but should be handled
-		m.RecordRequestSize("test", -1024)
-		m.RecordTransactionSize(-10)
-		m.SetRaftSnapshotSize("1", -2048)
-
-		// Should not panic
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("gauge can go negative", func(t *testing.T) {
-		// Gauges can legitimately go negative
-		m.DecrementConcurrentRequests()
-		m.DecrementConcurrentRequests()
-
-		value := testutil.ToFloat64(m.ConcurrentRequests)
-		assert.Equal(t, -2.0, value, "Gauge should handle negative values")
-	})
-}
-
-// TestEdgeCase_ZeroValues tests recording zero values.
-func TestEdgeCase_ZeroValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("zero durations", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", 0)
-		m.RecordTransactionDuration(0)
-		m.RecordRaftProposalLatency("1", 0)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("zero sizes", func(t *testing.T) {
-		m.RecordRequestSize("test", 0)
-		m.RecordTransactionSize(0)
-		m.SetRaftSnapshotSize("1", 0)
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_ExtremeValues tests recording extremely large values.
-func TestEdgeCase_ExtremeValues(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("very large durations", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", 1000000.0) // 1M seconds
-		m.RecordTransactionDuration(999999.999)
-		m.RecordRaftProposalLatency("1", 86400.0) // 1 day in seconds
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("very large sizes", func(t *testing.T) {
-		m.RecordRequestSize("test", 1e15) // Petabyte scale
-		m.RecordTransactionSize(1e9)      // Billion operations
-		m.SetRaftSnapshotSize("1", 1e12)  // Terabyte
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("max float64 values", func(t *testing.T) {
-		m.RecordRequestDuration("test", "success", math.MaxFloat64)
-		m.RecordRequestSize("test", math.MaxFloat64)
-
-		// Should handle without overflow
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_EmptyLabels tests metrics with empty label values.
-func TestEdgeCase_EmptyLabels(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	t.Run("empty operation and status labels", func(t *testing.T) {
-		m.RecordRequestDuration("", "", 0.01)
-		m.RecordRequestSize("", 1024)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0)
-	})
-
-	t.Run("empty shard label", func(t *testing.T) {
-		m.RecordRaftProposalLatency("", 0.005)
-		m.SetRaftSnapshotSize("", 2048)
-
-		count := testutil.CollectAndCount(m.RaftProposalLatency)
-		assert.Greater(t, count, 0)
-	})
-}
-
-// TestEdgeCase_SpecialCharactersInLabels tests labels with special characters.
-func TestEdgeCase_SpecialCharactersInLabels(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	specialLabels := []string{
-		"test-with-dashes",
-		"test_with_underscores",
-		"test.with.dots",
-		"test/with/slashes",
-		"test:with:colons",
-		"test with spaces",
-		"测试中文",
-		"test\nwith\nnewlines",
+// TestEdgeCases records boundary values and unusual label values on every
+// recording method.
+func TestEdgeCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		value float64
+	}{
+		{name: "negative value", label: "test", value: -1024},
+		{name: "zero value", label: "test", value: 0},
+		{name: "large value", label: "test", value: 1e15},
+		{name: "max float64", label: "test", value: math.MaxFloat64},
+		{name: "empty label", label: "", value: 0.01},
+		{name: "dashes in label", label: "test-with-dashes", value: 0.01},
+		{name: "dots in label", label: "test.with.dots", value: 0.01},
+		{name: "slashes in label", label: "test/with/slashes", value: 0.01},
+		{name: "colons in label", label: "test:with:colons", value: 0.01},
+		{name: "spaces in label", label: "test with spaces", value: 0.01},
+		{name: "unicode label", label: "测试中文", value: 0.01},
+		{name: "newlines in label", label: "test\nwith\nnewlines", value: 0.01},
 	}
 
-	for _, label := range specialLabels {
-		t.Run(fmt.Sprintf("label_%s", label), func(t *testing.T) {
-			m.RecordRequestDuration(label, "success", 0.01)
-			m.RecordRequestSize(label, 1024)
-			m.RecordRaftProposalLatency(label, 0.005)
-			m.SetRaftSnapshotSize(label, 2048)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Reset()
+			m := InitMetrics()
 
-			// Should not panic
-			count := testutil.CollectAndCount(m.RequestDuration)
-			assert.Greater(t, count, 0)
+			m.RecordRequestDuration(tt.label, "success", tt.value)
+			m.RecordRequestSize(tt.label, tt.value)
+			m.RecordTransactionDuration(tt.value)
+			m.RecordTransactionSize(tt.value)
+			m.RecordRaftProposalLatency(tt.label, tt.value)
+			m.SetRaftSnapshotSize(tt.label, tt.value)
+
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RequestDuration))
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RequestSize))
+			assert.Equal(t, 1, testutil.CollectAndCount(m.RaftProposalLatency))
+			assert.Equal(t, tt.value, testutil.ToFloat64(m.RaftSnapshotSize.WithLabelValues(tt.label)))
 		})
 	}
-}
 
-// TestEdgeCase_LargeLabelCardinality tests many unique label values.
-func TestEdgeCase_LargeLabelCardinality(t *testing.T) {
-	Reset()
-	m := InitMetrics()
+	t.Run("gauge can go negative", func(t *testing.T) {
+		Reset()
+		m := InitMetrics()
+		m.DecrementConcurrentRequests()
+		m.DecrementConcurrentRequests()
+		assert.Equal(t, -2.0, testutil.ToFloat64(m.ConcurrentRequests))
+	})
 
-	// Create high cardinality by using many unique label values
-	const numUniqueLabels = 1000
-
-	for i := 0; i < numUniqueLabels; i++ {
-		operation := fmt.Sprintf("operation_%d", i)
-		status := fmt.Sprintf("status_%d", i%10)
-		shard := fmt.Sprintf("shard_%d", i)
-
-		m.RecordRequestDuration(operation, status, 0.01)
-		m.RecordRequestSize(operation, 1024)
-		m.RecordRaftProposalLatency(shard, 0.005)
-		m.SetRaftSnapshotSize(shard, float64(i*1024))
-	}
-
-	// Verify metrics were recorded
-	count := testutil.CollectAndCount(m.RequestDuration)
-	assert.Greater(t, count, 0)
-
-	// Verify we can still gather metrics without issues
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-	assert.NotEmpty(t, metricFamilies)
-}
-
-// TestCollector_EmptyRegistry tests collecting from empty registry.
-func TestCollector_EmptyRegistry(t *testing.T) {
-	// Create a new empty registry
-	emptyRegistry := prometheus.NewRegistry()
-
-	metricFamilies, err := emptyRegistry.Gather()
-	require.NoError(t, err, "Should be able to gather from empty registry")
-	assert.Empty(t, metricFamilies, "Empty registry should return no metrics")
-}
-
-// TestCollector_AfterReset tests collecting metrics after reset.
-func TestCollector_AfterReset(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record some metrics
-	m.RecordRequestDuration("get", "success", 0.01)
-	m.IncrementConcurrentRequests()
-	m.IncrementTransactionConflicts()
-
-	// Verify metrics exist
-	beforeValue := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 1.0, beforeValue)
-
-	// Reset
-	Reset()
-
-	// Get new metrics instance
-	m2 := GetMetrics()
-
-	// Old instance should still have values (they're just disconnected)
-	// New instance should have fresh values
-	afterValue := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, afterValue, "New instance should have reset values")
+	t.Run("large label cardinality", func(t *testing.T) {
+		Reset()
+		m := InitMetrics()
+		const numUniqueLabels = 1000
+		for i := 0; i < numUniqueLabels; i++ {
+			shard := fmt.Sprintf("shard_%d", i)
+			m.RecordRequestDuration(fmt.Sprintf("operation_%d", i), "success", 0.01)
+			m.RecordRaftProposalLatency(shard, 0.005)
+			m.SetRaftSnapshotSize(shard, float64(i))
+		}
+		assert.Equal(t, numUniqueLabels, testutil.CollectAndCount(m.RequestDuration))
+		assert.Equal(t, numUniqueLabels, testutil.CollectAndCount(m.RaftSnapshotSize))
+	})
 }
 
 // TestCollector_NoMetricsRegistered tests gathering when no QuicBaaS metrics registered.
@@ -1504,100 +1395,6 @@ func TestCollector_NoMetricsRegistered(t *testing.T) {
 	for _, mf := range metricFamilies {
 		name := mf.GetName()
 		assert.NotContains(t, name, "quicbaas_", "Should not have QuicBaaS metrics yet")
-	}
-}
-
-// TestReset_VerifyMetricsCleared tests that reset truly clears all metrics.
-func TestReset_VerifyMetricsCleared(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record various metrics with significant values
-	for i := 0; i < 100; i++ {
-		m.RecordRequestDuration("get", "success", 0.01)
-		m.RecordRequestSize("put", 1024)
-		m.IncrementConcurrentRequests()
-		m.RecordTransactionDuration(0.1)
-		m.RecordTransactionSize(10)
-		m.IncrementTransactionConflicts()
-		m.RecordRaftProposalLatency("1", 0.005)
-		m.SetRaftSnapshotSize("1", 2048)
-	}
-
-	// Verify metrics have values
-	beforeConflicts := testutil.ToFloat64(m.TransactionConflicts)
-	assert.Equal(t, 100.0, beforeConflicts)
-
-	beforeConcurrent := testutil.ToFloat64(m.ConcurrentRequests)
-	assert.Equal(t, 100.0, beforeConcurrent)
-
-	// Reset
-	Reset()
-	m2 := GetMetrics()
-
-	// All metrics should be at zero/empty
-	afterConflicts := testutil.ToFloat64(m2.TransactionConflicts)
-	assert.Equal(t, 0.0, afterConflicts, "Counter should reset to 0")
-
-	afterConcurrent := testutil.ToFloat64(m2.ConcurrentRequests)
-	assert.Equal(t, 0.0, afterConcurrent, "Gauge should reset to 0")
-
-	// Histograms should have no observations
-	count := testutil.CollectAndCount(m2.RequestDuration)
-	// Count includes the descriptor, so it's > 0, but no observations yet
-	assert.Greater(t, count, -1, "Histogram should be initialized")
-}
-
-// TestReset_HistogramsCleared tests that histograms clear observations after reset.
-func TestReset_HistogramsCleared(t *testing.T) {
-	Reset()
-	m1 := InitMetrics()
-
-	// Record many observations
-	for i := 0; i < 1000; i++ {
-		m1.RecordRequestDuration("get", "success", float64(i)*0.001)
-		m1.RecordRequestSize("put", float64(i*100))
-		m1.RecordTransactionDuration(float64(i) * 0.01)
-		m1.RecordTransactionSize(float64(i))
-		m1.RecordRaftProposalLatency("1", float64(i)*0.002)
-	}
-
-	// Reset
-	Reset()
-	m2 := GetMetrics()
-
-	// New histograms should have no observations
-	// Record one new observation
-	m2.RecordRequestDuration("get", "success", 0.5)
-
-	// Gather and check that we don't have 1000+ observations
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err)
-
-	for _, mf := range metricFamilies {
-		if mf.GetName() == "quicbaas_request_duration_seconds" {
-			for _, metric := range mf.GetMetric() {
-				if metric.Histogram != nil {
-					// Should have only 1 observation, not 1000+
-					count := metric.Histogram.GetSampleCount()
-					assert.Equal(t, uint64(1), count, "Histogram should have only new observations")
-				}
-			}
-		}
-	}
-}
-
-// TestReset_MultipleResets tests calling Reset multiple times.
-func TestReset_MultipleResets(t *testing.T) {
-	for i := 0; i < 5; i++ {
-		Reset()
-		m := InitMetrics()
-		require.NotNil(t, m, "Should initialize metrics after reset %d", i)
-
-		// Record some values
-		m.IncrementConcurrentRequests()
-		value := testutil.ToFloat64(m.ConcurrentRequests)
-		assert.Equal(t, 1.0, value)
 	}
 }
 
