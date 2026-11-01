@@ -362,19 +362,149 @@ func TestRunEmbeddingGenerateCommand_InvalidMetadata(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid metadata JSON")
 }
 
-func TestRunEmbeddingGenerateCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+func TestRunEmbeddingCommands_Errors(t *testing.T) {
+	// A nil embed means the SDK client factory itself fails; otherwise the
+	// embedding service returns the error.
+	tests := []struct {
+		name  string
+		embed *mockEmbeddingClient
+		run   func() error
+		want  string
+	}{
+		{
+			name: "generate client error",
+			run:  func() error { return runEmbeddingGenerateCommand(&cobra.Command{}, []string{"test text"}) },
+			want: "connection refused",
+		},
+		{
+			name: "generate service error",
+			embed: &mockEmbeddingClient{
+				GenerateEmbeddingFunc: func(ctx context.Context, req *embedding.GenerateEmbeddingRequest) (*embedding.GenerateEmbeddingResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "embedding.generate", "service unavailable")
+				},
+			},
+			run:  func() error { return runEmbeddingGenerateCommand(&cobra.Command{}, []string{"test text"}) },
+			want: "service unavailable",
+		},
+		{
+			name: "batch client error",
+			run: func() error {
+				return runBatchGenerate([]*embedding.BatchEmbeddingItem{{ID: "item-1", Text: "test text"}})
+			},
+			want: "connection refused",
+		},
+		{
+			name: "batch service error",
+			embed: &mockEmbeddingClient{
+				BatchGenerateEmbeddingsFunc: func(ctx context.Context, req *embedding.BatchGenerateEmbeddingsRequest) (*embedding.BatchGenerateEmbeddingsResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "embedding.batch", "service unavailable")
+				},
+			},
+			run:  func() error { return runEmbeddingBatchCommand(&cobra.Command{}, []string{`["text1", "text2"]`}) },
+			want: "service unavailable",
+		},
+		{
+			name: "providers client error",
+			run:  func() error { return runEmbeddingProvidersCommand(&cobra.Command{}, []string{}) },
+			want: "connection refused",
+		},
+		{
+			name: "providers service error",
+			embed: &mockEmbeddingClient{
+				ListProvidersFunc: func(ctx context.Context, req *embedding.ListProvidersRequest) (*embedding.ListProvidersResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "embedding.providers", "service unavailable")
+				},
+			},
+			run:  func() error { return runEmbeddingProvidersCommand(&cobra.Command{}, []string{}) },
+			want: "service unavailable",
+		},
+		{
+			name: "provider info client error",
+			run:  func() error { return runEmbeddingProviderInfoCommand(&cobra.Command{}, []string{"voyage"}) },
+			want: "connection refused",
+		},
+		{
+			name: "provider info service error",
+			embed: &mockEmbeddingClient{
+				GetProviderInfoFunc: func(ctx context.Context, req *embedding.GetProviderInfoRequest) (*embedding.GetProviderInfoResponse, error) {
+					return nil, errors.Newf(errors.ErrNotFound, "embedding.provider", "provider not found")
+				},
+			},
+			run:  func() error { return runEmbeddingProviderInfoCommand(&cobra.Command{}, []string{"unknown"}) },
+			want: "provider not found",
+		},
+		{
+			name: "set default client error",
+			run:  func() error { return runEmbeddingProviderSetDefaultCommand(&cobra.Command{}, []string{"openai"}) },
+			want: "connection refused",
+		},
+		{
+			name: "set default service error",
+			embed: &mockEmbeddingClient{
+				SetDefaultProviderFunc: func(ctx context.Context, req *embedding.SetDefaultProviderRequest) (*embedding.SetDefaultProviderResponse, error) {
+					return nil, errors.Newf(errors.ErrNotFound, "embedding.setDefault", "provider not found")
+				},
+			},
+			run:  func() error { return runEmbeddingProviderSetDefaultCommand(&cobra.Command{}, []string{"unknown"}) },
+			want: "provider not found",
+		},
+		{
+			name: "cache stats client error",
+			run:  func() error { return runEmbeddingCacheStatsCommand(&cobra.Command{}, []string{}) },
+			want: "connection refused",
+		},
+		{
+			name: "cache stats service error",
+			embed: &mockEmbeddingClient{
+				GetCacheStatsFunc: func(ctx context.Context, req *embedding.GetEmbeddingCacheStatsRequest) (*embedding.GetEmbeddingCacheStatsResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "embedding.cacheStats", "service unavailable")
+				},
+			},
+			run:  func() error { return runEmbeddingCacheStatsCommand(&cobra.Command{}, []string{}) },
+			want: "service unavailable",
+		},
+		{
+			name: "cache clear client error",
+			run:  func() error { return runEmbeddingCacheClearCommand(&cobra.Command{}, []string{}) },
+			want: "connection refused",
+		},
+		{
+			name: "cache clear service error",
+			embed: &mockEmbeddingClient{
+				ClearCacheFunc: func(ctx context.Context, req *embedding.ClearEmbeddingCacheRequest) (*embedding.ClearEmbeddingCacheResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "embedding.cacheClear", "service unavailable")
+				},
+			},
+			run:  func() error { return runEmbeddingCacheClearCommand(&cobra.Command{}, []string{}) },
+			want: "service unavailable",
+		},
 	}
 
-	cmd := &cobra.Command{}
-	err := runEmbeddingGenerateCommand(cmd, []string{"test text"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
+	origFactory := sdkClientFactory
+	oldTimeout := globalTimeout
+	defer func() {
+		sdkClientFactory = origFactory
+		globalTimeout = oldTimeout
+	}()
+	globalTimeout = 30 * time.Second
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sdkClientFactory = func() (quicbaas.Client, error) {
+				if tt.embed == nil {
+					return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+				}
+				return &mockSDKClientWithEmbedding{
+					mockSDKClient:   &mockSDKClient{},
+					embeddingClient: tt.embed,
+				}, nil
+			}
+
+			err := tt.run()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
 }
 
 func TestRunEmbeddingBatchCommand_Success(t *testing.T) {
@@ -448,23 +578,6 @@ func TestRunBatchGenerate_EmptyItems(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one text item is required")
 }
 
-func TestRunBatchGenerate_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	items := []*embedding.BatchEmbeddingItem{
-		{ID: "item-1", Text: "test text"},
-	}
-	err := runBatchGenerate(items)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
 func TestRunEmbeddingProvidersCommand_Success(t *testing.T) {
 	// Save original factory and restore after test
 	origFactory := sdkClientFactory
@@ -492,21 +605,6 @@ func TestRunEmbeddingProvidersCommand_Success(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runEmbeddingProvidersCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestRunEmbeddingProvidersCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProvidersCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 func TestRunEmbeddingProviderInfoCommand_Success(t *testing.T) {
@@ -537,21 +635,6 @@ func TestRunEmbeddingProviderInfoCommand_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunEmbeddingProviderInfoCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProviderInfoCommand(cmd, []string{"voyage"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
 func TestRunEmbeddingProviderSetDefaultCommand_Success(t *testing.T) {
 	// Save original factory and restore after test
 	origFactory := sdkClientFactory
@@ -580,21 +663,6 @@ func TestRunEmbeddingProviderSetDefaultCommand_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunEmbeddingProviderSetDefaultCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProviderSetDefaultCommand(cmd, []string{"openai"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
 func TestRunEmbeddingCacheStatsCommand_Success(t *testing.T) {
 	// Save original factory and restore after test
 	origFactory := sdkClientFactory
@@ -621,21 +689,6 @@ func TestRunEmbeddingCacheStatsCommand_Success(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheStatsCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestRunEmbeddingCacheStatsCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 func TestRunEmbeddingCacheClearCommand_Success(t *testing.T) {
@@ -695,21 +748,6 @@ func TestRunEmbeddingCacheClearCommand_WithProvider(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runEmbeddingCacheClearCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestRunEmbeddingCacheClearCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheClearCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 // =============================================================================
@@ -1219,216 +1257,6 @@ func TestEmbeddingBatchCommandHelp(t *testing.T) {
 // =============================================================================
 // Error Path Tests
 // =============================================================================
-
-func TestRunEmbeddingGenerateCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		GenerateEmbeddingFunc: func(ctx context.Context, req *embedding.GenerateEmbeddingRequest) (*embedding.GenerateEmbeddingResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "embedding.generate", "service unavailable")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingGenerateCommand(cmd, []string{"test text"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service unavailable")
-}
-
-func TestRunEmbeddingBatchCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		BatchGenerateEmbeddingsFunc: func(ctx context.Context, req *embedding.BatchGenerateEmbeddingsRequest) (*embedding.BatchGenerateEmbeddingsResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "embedding.batch", "service unavailable")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingBatchCommand(cmd, []string{`["text1", "text2"]`})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service unavailable")
-}
-
-func TestRunEmbeddingProvidersCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		ListProvidersFunc: func(ctx context.Context, req *embedding.ListProvidersRequest) (*embedding.ListProvidersResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "embedding.providers", "service unavailable")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProvidersCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service unavailable")
-}
-
-func TestRunEmbeddingProviderInfoCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		GetProviderInfoFunc: func(ctx context.Context, req *embedding.GetProviderInfoRequest) (*embedding.GetProviderInfoResponse, error) {
-			return nil, errors.Newf(errors.ErrNotFound, "embedding.provider", "provider not found")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProviderInfoCommand(cmd, []string{"unknown"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "provider not found")
-}
-
-func TestRunEmbeddingProviderSetDefaultCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		SetDefaultProviderFunc: func(ctx context.Context, req *embedding.SetDefaultProviderRequest) (*embedding.SetDefaultProviderResponse, error) {
-			return nil, errors.Newf(errors.ErrNotFound, "embedding.setDefault", "provider not found")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingProviderSetDefaultCommand(cmd, []string{"unknown"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "provider not found")
-}
-
-func TestRunEmbeddingCacheStatsCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		GetCacheStatsFunc: func(ctx context.Context, req *embedding.GetEmbeddingCacheStatsRequest) (*embedding.GetEmbeddingCacheStatsResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "embedding.cacheStats", "service unavailable")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service unavailable")
-}
-
-func TestRunEmbeddingCacheClearCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{
-		ClearCacheFunc: func(ctx context.Context, req *embedding.ClearEmbeddingCacheRequest) (*embedding.ClearEmbeddingCacheResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "embedding.cacheClear", "service unavailable")
-		},
-	}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() {
-		globalTimeout = oldTimeout
-	}()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheClearCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service unavailable")
-}
 
 // =============================================================================
 // createEmbeddingClient Tests
