@@ -2811,150 +2811,125 @@ func withStdinInput(t *testing.T, input string) func() {
 }
 
 // =============================================================================
-// App Delete - Confirmation Prompt Paths
+// Destructive Commands - Confirmation Prompt Paths
 // =============================================================================
 
-func TestIAMAppDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
+// TestIAMCommands_ConfirmPrompt runs each destructive IAM command without
+// --force and answers its confirmation prompt on stdin, so both the confirmed
+// and the declined branch of every prompt run.
+func TestIAMCommands_ConfirmPrompt(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		run   func() error
+	}{
+		{"app delete yes", "y\n", func() error {
+			return runIAMAppDeleteCommand(newIAMAppDeleteCommand(), []string{"app_test123"})
+		}},
+		{"app delete no", "n\n", func() error {
+			return runIAMAppDeleteCommand(newIAMAppDeleteCommand(), []string{"app_test123"})
+		}},
+		{"policy delete yes", "yes\n", func() error {
+			return runIAMPolicyDeleteCommand(newIAMPolicyDeleteCommand(), []string{"test-policy"})
+		}},
+		{"policy delete no", "n\n", func() error {
+			return runIAMPolicyDeleteCommand(newIAMPolicyDeleteCommand(), []string{"test-policy"})
+		}},
+		{"session revoke yes", "y\n", func() error {
+			return runIAMSessionRevokeCommand(newIAMSessionRevokeCommand(), []string{"sess_001"})
+		}},
+		{"session revoke no", "no\n", func() error {
+			return runIAMSessionRevokeCommand(newIAMSessionRevokeCommand(), []string{"sess_001"})
+		}},
+		{"session revoke-all no", "n\n", func() error {
+			sessionKeepCurrent = false
+			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
+		}},
+		{"session revoke-all keep-current no", "n\n", func() error {
+			sessionKeepCurrent = true
+			defer func() { sessionKeepCurrent = false }()
+			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
+		}},
+		{"gdpr consent withdraw yes", "y\n", func() error {
+			gdprUserID = "user_001"
+			gdprPurpose = "marketing"
+			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+		}},
+		{"gdpr consent withdraw no", "n\n", func() error {
+			gdprUserID = "user_001"
+			gdprPurpose = "marketing"
+			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+		}},
+		{"gdpr deletion request yes", "yes\n", func() error {
+			gdprUserID = "user_001"
+			gdprDeletionReason = "user request"
+			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+		}},
+		{"gdpr deletion request no", "n\n", func() error {
+			gdprUserID = "user_001"
+			gdprDeletionReason = "user request"
+			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+		}},
+		{"admin assignment delete yes", "y\n", func() error {
+			adminAssignmentID = "adm_test123"
+			return runIAMAdminAssignmentDeleteCommand(newIAMAdminAssignmentDeleteCommand(), []string{})
+		}},
+		{"admin assignment delete no", "n\n", func() error {
+			adminAssignmentID = "adm_test123"
+			return runIAMAdminAssignmentDeleteCommand(newIAMAdminAssignmentDeleteCommand(), []string{})
+		}},
+		{"mfa disable yes", "y\n", func() error {
+			mfaUserID = "user_001"
+			return runMFADisableCommand(newMFADisableCommand(), []string{})
+		}},
+		{"mfa disable no", "n\n", func() error {
+			mfaUserID = "user_001"
+			return runMFADisableCommand(newMFADisableCommand(), []string{})
+		}},
+		{"mfa backup-codes generate yes", "y\n", func() error {
+			mfaUserID = "user_001"
+			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+		}},
+		{"mfa backup-codes generate no", "n\n", func() error {
+			mfaUserID = "user_001"
+			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+		}},
+		{"provider delete yes", "y\n", func() error {
+			providerID = "provider_test"
+			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+		}},
+		{"provider delete no", "n\n", func() error {
+			providerID = "provider_test"
+			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+		}},
+		{"identity unlink yes", "y\n", func() error {
+			identityUserID = "user_001"
+			identityProviderID = "provider_test"
+			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+		}},
+		{"identity unlink no", "n\n", func() error {
+			identityUserID = "user_001"
+			identityProviderID = "provider_test"
+			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+		}},
+	}
 
-	cmd := newIAMAppDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, cleanup := setupIAMMock(t)
+			defer cleanup()
+			cleanupLog := testInitLogger(t)
+			defer cleanupLog()
+			restoreStdin := withStdinInput(t, tt.input)
+			defer restoreStdin()
 
-	err := runIAMAppDeleteCommand(cmd, []string{"app_test123"})
-	assert.NoError(t, err)
-}
+			globalTenantID = "tenant_test"
+			iamOutputFormat = "table"
+			iamForce = false
 
-func TestIAMAppDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMAppDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMAppDeleteCommand(cmd, []string{"app_test123"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Policy Delete - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMPolicyDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "yes\n")
-	defer restoreStdin()
-
-	cmd := newIAMPolicyDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMPolicyDeleteCommand(cmd, []string{"test-policy"})
-	assert.NoError(t, err)
-}
-
-func TestIAMPolicyDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMPolicyDeleteCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMPolicyDeleteCommand(cmd, []string{"test-policy"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Session Revoke - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMSessionRevoke_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMSessionRevokeCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMSessionRevokeCommand(cmd, []string{"sess_001"})
-	assert.NoError(t, err)
-}
-
-func TestIAMSessionRevoke_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "no\n")
-	defer restoreStdin()
-
-	cmd := newIAMSessionRevokeCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMSessionRevokeCommand(cmd, []string{"sess_001"})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Session RevokeAll - Confirmation + User ID Paths
-// =============================================================================
-
-func TestIAMSessionRevokeAll_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMSessionRevokeAllCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-	sessionKeepCurrent = false
-
-	err := runIAMSessionRevokeAllCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMSessionRevokeAll_KeepCurrentConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMSessionRevokeAllCommand()
-	globalTenantID = "tenant_test"
-	iamForce = false
-	sessionKeepCurrent = true
-
-	err := runIAMSessionRevokeAllCommand(cmd, []string{})
-	assert.NoError(t, err)
-	sessionKeepCurrent = false
+			assert.NoError(t, tt.run())
+		})
+	}
 }
 
 func TestIAMSessionRevokeAll_WithExplicitUserID(t *testing.T) {
@@ -2975,156 +2950,27 @@ func TestIAMSessionRevokeAll_WithExplicitUserID(t *testing.T) {
 }
 
 // =============================================================================
-// GDPR Consent Withdraw - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMGDPRConsentWithdraw_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMGDPRConsentWithdrawCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "marketing"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMGDPRConsentWithdrawCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGDPRConsentWithdraw_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMGDPRConsentWithdrawCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "marketing"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMGDPRConsentWithdrawCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// GDPR Deletion Request - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMGDPRDeletionRequest_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "yes\n")
-	defer restoreStdin()
-
-	cmd := newIAMGDPRDeletionRequestCommand()
-	gdprUserID = "user_001"
-	gdprDeletionReason = "user request"
-	globalTenantID = "tenant_test"
-	iamForce = false
-	iamOutputFormat = "table"
-
-	err := runIAMGDPRDeletionRequestCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGDPRDeletionRequest_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMGDPRDeletionRequestCommand()
-	gdprUserID = "user_001"
-	gdprDeletionReason = "user request"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMGDPRDeletionRequestCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
 // GDPR Consent Grant - Additional Purpose Paths
 // =============================================================================
 
-func TestIAMGDPRConsentGrant_DataProcessing(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
+func TestIAMGDPRConsentGrant_ValidPurposes(t *testing.T) {
+	for _, purpose := range []string{"data_processing", "personalization"} {
+		t.Run(purpose, func(t *testing.T) {
+			_, cleanup := setupIAMMock(t)
+			defer cleanup()
+			cleanupLog := testInitLogger(t)
+			defer cleanupLog()
 
-	cmd := newIAMGDPRConsentGrantCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "data_processing"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
+			cmd := newIAMGDPRConsentGrantCommand()
+			gdprUserID = "user_001"
+			gdprPurpose = purpose
+			globalTenantID = "tenant_test"
+			iamOutputFormat = "table"
 
-	err := runIAMGDPRConsentGrantCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMGDPRConsentGrant_Personalization(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRConsentGrantCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "personalization"
-	globalTenantID = "tenant_test"
-	iamOutputFormat = "table"
-
-	err := runIAMGDPRConsentGrantCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// Admin Assignment Delete - Confirmation Prompt Paths
-// =============================================================================
-
-func TestIAMAdminAssignmentDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMAdminAssignmentDeleteCommand()
-	adminAssignmentID = "adm_test123"
-	iamForce = false
-
-	err := runIAMAdminAssignmentDeleteCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMAdminAssignmentDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMAdminAssignmentDeleteCommand()
-	adminAssignmentID = "adm_test123"
-	iamForce = false
-
-	err := runIAMAdminAssignmentDeleteCommand(cmd, []string{})
-	assert.NoError(t, err)
+			err := runIAMGDPRConsentGrantCommand(cmd, []string{})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -3358,82 +3204,6 @@ func TestIAMAppList_EmptyResults(t *testing.T) {
 }
 
 // =============================================================================
-// MFA Disable - Confirmation Prompt Paths
-// =============================================================================
-
-func TestMFADisable_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newMFADisableCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runMFADisableCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestMFADisable_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newMFADisableCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runMFADisableCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// MFA Backup Codes Generate - Confirmation Prompt
-// =============================================================================
-
-func TestMFABackupCodesGenerate_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newMFABackupCodesGenerateCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runMFABackupCodesGenerateCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestMFABackupCodesGenerate_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newMFABackupCodesGenerateCommand()
-	mfaUserID = "user_001"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runMFABackupCodesGenerateCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-// =============================================================================
 // MFA Status - JSON Output
 // =============================================================================
 
@@ -3471,40 +3241,6 @@ func TestMFABackupCodesStatus_JSONOutput(t *testing.T) {
 // Federation Provider Delete - Confirmation Prompt Paths
 // =============================================================================
 
-func TestIAMProviderDelete_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMProviderDeleteCommand()
-	providerID = "provider_test"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMProviderDeleteCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMProviderDelete_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMProviderDeleteCommand()
-	providerID = "provider_test"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMProviderDeleteCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
 func TestIAMProviderDelete_MissingTenant(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -3524,42 +3260,6 @@ func TestIAMProviderDelete_MissingTenant(t *testing.T) {
 // =============================================================================
 // Federation Identity Unlink - Confirmation Prompt
 // =============================================================================
-
-func TestIAMIdentityUnlink_ConfirmYes(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "y\n")
-	defer restoreStdin()
-
-	cmd := newIAMIdentityUnlinkCommand()
-	identityUserID = "user_001"
-	identityProviderID = "provider_test"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMIdentityUnlinkCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestIAMIdentityUnlink_ConfirmNo(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-	restoreStdin := withStdinInput(t, "n\n")
-	defer restoreStdin()
-
-	cmd := newIAMIdentityUnlinkCommand()
-	identityUserID = "user_001"
-	identityProviderID = "provider_test"
-	globalTenantID = "tenant_test"
-	iamForce = false
-
-	err := runIAMIdentityUnlinkCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
 
 func TestIAMIdentityUnlink_MissingTenant(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
