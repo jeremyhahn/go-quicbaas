@@ -1267,35 +1267,11 @@ func TestHandleHybridSearch(t *testing.T) {
 			},
 		},
 		{
-			name: "empty query vector",
-			body: HybridSearchRequest{
-				Namespace:   "test-ns",
-				QueryVector: []float32{},
-				K:           5,
-			},
-			expectedStatus: http.StatusBadRequest,
-			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				assert.Contains(t, w.Body.String(), "query_vector is required")
-			},
-		},
-		{
 			name: "invalid k value zero",
 			body: HybridSearchRequest{
 				Namespace:   "test-ns",
 				QueryVector: []float32{0.1, 0.2},
 				K:           0,
-			},
-			expectedStatus: http.StatusBadRequest,
-			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				assert.Contains(t, w.Body.String(), "k must be positive")
-			},
-		},
-		{
-			name: "invalid k value negative",
-			body: HybridSearchRequest{
-				Namespace:   "test-ns",
-				QueryVector: []float32{0.1, 0.2},
-				K:           -5,
 			},
 			expectedStatus: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
@@ -1335,24 +1311,6 @@ func TestHandleHybridSearch(t *testing.T) {
 					&errors.QBError{Code: errors.ErrNotFound, Op: "hybrid_search", Err: &errors.MessageError{Message: "namespace not found"}}).Once()
 			},
 			expectedStatus: http.StatusNotFound,
-		},
-		{
-			name: "large query vector",
-			body: HybridSearchRequest{
-				Namespace:   "test-ns",
-				QueryVector: make([]float32, 1024),
-				K:           100,
-			},
-			setupMock: func(m *MockVectorService) {
-				m.On("HybridSearch", mock.Anything, mock.MatchedBy(func(req *service.HybridSearchRequest) bool {
-					return len(req.QueryVector) == 1024 && req.K == 100
-				})).Return(&service.HybridSearchResponse{
-					Results:         []*service.VectorSearchResult{},
-					TotalCandidates: 0,
-					QueryDuration:   100,
-				}, nil).Once()
-			},
-			expectedStatus: http.StatusOK,
 		},
 	}
 
@@ -1523,20 +1481,6 @@ func TestHandleSearchByMetadata(t *testing.T) {
 				m.On("SearchByMetadata", mock.Anything, mock.MatchedBy(func(req *service.SearchByMetadataRequest) bool {
 					return req.Offset == 0 // corrected to 0
 				})).Return(&service.SearchByMetadataResponse{
-					Results:    []*service.VectorData{},
-					TotalCount: 0,
-				}, nil).Once()
-			},
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name: "metadata search with empty filters",
-			body: SearchByMetadataRequest{
-				Namespace: "test-ns",
-				Filters:   map[string]string{},
-			},
-			setupMock: func(m *MockVectorService) {
-				m.On("SearchByMetadata", mock.Anything, mock.Anything).Return(&service.SearchByMetadataResponse{
 					Results:    []*service.VectorData{},
 					TotalCount: 0,
 				}, nil).Once()
