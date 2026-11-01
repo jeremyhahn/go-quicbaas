@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	stderrors "errors"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -82,7 +83,28 @@ func (s *recordingKeystoreServer) ListKeys(_ context.Context, req *xkmssdk.Proto
 	if s.err != nil {
 		return nil, s.err
 	}
-	return &xkmssdk.ProtoListKeysResponse{Keys: s.listKeys, Total: s.total}, nil
+	total := s.total
+	if total == 0 {
+		total = int32(len(s.listKeys))
+	}
+	return &xkmssdk.ProtoListKeysResponse{Keys: xkmsPage(s.listKeys, int(req.GetLimit()), int(req.GetOffset())), Total: total}, nil
+}
+
+// xkmsPage pages keys the way the pinned go-xkms gRPC ListKeys handler does:
+// grpcPageRequest turns limit/offset into page = offset/limit + 1, a zero
+// limit lists every key, and transport.PageRequest.Normalize caps the page
+// size at transport.MaxPageSize (1000).
+func xkmsPage(keys []*xkmssdk.ProtoKeyInfo, limit, offset int) []*xkmssdk.ProtoKeyInfo {
+	if limit <= 0 {
+		return keys
+	}
+	page := offset/limit + 1
+	size := min(limit, 1000)
+	start := (page - 1) * size
+	if start >= len(keys) {
+		return nil
+	}
+	return keys[start:min(start+size, len(keys))]
 }
 
 func (s *recordingKeystoreServer) DeleteKey(_ context.Context, req *xkmssdk.ProtoDeleteKeyRequest) (*xkmssdk.ProtoDeleteKeyResponse, error) {
@@ -181,15 +203,15 @@ func TestClientKMSGenerateKey_XKMSKeystore(t *testing.T) {
 			wantServAlg:   service.KeyAlgEd25519,
 		},
 		{
-			name: "named backend",
+			name: "default backend named",
 			attrs: &xkmssdk.KeyAttributes{
-				StoreType:          xkmssdk.StorePKCS11,
+				StoreType:          xkmssdk.StoreSoftware,
 				SymmetricAlgorithm: xkmssdk.SymmetricAES128GCM,
 			},
 			wantKeyType:   "secret",
 			wantKeySize:   128,
 			wantAlgorithm: "aes128-gcm",
-			wantBackend:   string(xkmssdk.StorePKCS11),
+			wantBackend:   string(xkmssdk.StoreSoftware),
 			wantServAlg:   service.KeyAlgAES128GCM,
 		},
 	}
@@ -227,6 +249,33 @@ func TestClientKMSGenerateKey_XKMSKeystore(t *testing.T) {
 			assert.False(t, resp.Metadata.Exportable)
 		})
 	}
+}
+
+// TestClientKMSGenerateKey_XKMSKeystoreNonDefaultBackend: service.DeleteKeyRequest
+// names no backend, so KMSDeleteKey can only reach the default one. A key
+// generated in any other backend could never be deleted again, so the client
+// refuses to create it.
+func TestClientKMSGenerateKey_XKMSKeystoreNonDefaultBackend(t *testing.T) {
+	fake := &recordingKeystoreServer{}
+	client := newXKMSKeystoreClient(t, fake)
+
+	resp, err := client.KMSGenerateKey(context.Background(), &service.GenerateKeyRequest{
+		Name: "hsm-key",
+		KeyAttributes: &xkmssdk.KeyAttributes{
+			StoreType:          xkmssdk.StorePKCS11,
+			SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+		},
+	})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var qbErr *errors.QBError
+	require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
+	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+	assert.Contains(t, err.Error(), string(xkmssdk.StorePKCS11))
+
+	fake.mu.Lock()
+	assert.Nil(t, fake.generateReq, "no key may be generated in a backend KMSDeleteKey cannot reach")
+	fake.mu.Unlock()
 }
 
 func TestClientKMSGenerateKey_XKMSKeystoreAlreadyExists(t *testing.T) {
@@ -285,7 +334,7 @@ func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	// The cursor is the xkms.v1 offset of the next page.
 	// A backend the caller names in the filter is the one listed.
 	_, err = client.KMSListKeys(context.Background(), &service.ListKeysRequest{
-		Limit:  2,
+		Limit:  5,
 		Cursor: resp.NextCursor,
 		Filter: map[string]string{"backend": string(xkmssdk.StorePKCS11)},
 	})
@@ -316,6 +365,65 @@ func TestClientKMSListKeys_XKMSKeystoreErrors(t *testing.T) {
 		require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
 		assert.Equal(t, errors.ErrForbidden, qbErr.Code)
 	})
+}
+
+// TestClientKMSListKeys_XKMSKeystorePaging walks every page of a listing
+// larger than the server's page-size cap: a limit above the cap must not make
+// the client re-read a page or skip keys.
+func TestClientKMSListKeys_XKMSKeystorePaging(t *testing.T) {
+	const keyCount = 2500
+	keys := make([]*xkmssdk.ProtoKeyInfo, keyCount)
+	for i := range keys {
+		keys[i] = &xkmssdk.ProtoKeyInfo{KeyId: "k" + strconv.Itoa(i), KeyType: "SECRET", Algorithm: "aes256-gcm"}
+	}
+	client := newXKMSKeystoreClient(t, &recordingKeystoreServer{listKeys: keys})
+
+	seen := make(map[string]int, keyCount)
+	cursor := ""
+	for pages := 0; ; pages++ {
+		require.Less(t, pages, keyCount, "the listing never ends")
+		resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Limit: 2000, Cursor: cursor})
+		require.NoError(t, err)
+		for _, key := range resp.Keys {
+			seen[key.KeyID]++
+		}
+		if resp.NextCursor == "" {
+			assert.False(t, resp.HasMore)
+			break
+		}
+		cursor = resp.NextCursor
+	}
+
+	for _, key := range keys {
+		assert.Equal(t, 1, seen[key.GetKeyId()], "key %s must be listed exactly once", key.GetKeyId())
+	}
+	assert.Len(t, seen, keyCount)
+}
+
+func TestClientKMSListKeys_XKMSKeystoreUnalignedCursor(t *testing.T) {
+	tests := []struct {
+		name   string
+		limit  int
+		cursor string
+	}{
+		{name: "offset not a multiple of the limit", limit: 300, cursor: "1000"},
+		{name: "offset with an unpaginated listing", limit: 0, cursor: "10"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &recordingKeystoreServer{}
+			client := newXKMSKeystoreClient(t, fake)
+			resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Limit: tt.limit, Cursor: tt.cursor})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *errors.QBError
+			require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			fake.mu.Lock()
+			assert.Nil(t, fake.listReq, "an unaligned cursor must not reach the server")
+			fake.mu.Unlock()
+		})
+	}
 }
 
 func TestClientKMSDeleteKey_XKMSKeystore(t *testing.T) {
