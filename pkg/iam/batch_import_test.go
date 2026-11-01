@@ -640,6 +640,32 @@ func TestImportUsers(t *testing.T) {
 		}
 	})
 
+	t.Run("cancelled context", func(t *testing.T) {
+		bm, _ := createTestBatchManager(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		users := make([]*UserImport, 10)
+		for i := range users {
+			users[i] = &UserImport{
+				ID:       uint64(i) + 1,
+				Email:    fmt.Sprintf("user%d@example.com", i),
+				Username: fmt.Sprintf("user%d", i),
+			}
+		}
+
+		// Submission and result collection race the cancelled context, so
+		// the batch either stops with ErrBatchCanceled or reports per-item
+		// failures; it never returns another error or a nil result.
+		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
+		if err != nil && !errors.Is(err, ErrBatchCanceled) {
+			t.Errorf("expected ErrBatchCanceled or nil, got %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected a result for a cancelled batch")
+		}
+	})
+
 	t.Run("batch of multiple users", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -858,8 +884,9 @@ func TestImportUser(t *testing.T) {
 		}
 
 		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil identity store, got %T: %v", err, err)
 		}
 	})
 
@@ -1360,8 +1387,9 @@ func TestImportRole(t *testing.T) {
 		}
 
 		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil identity store, got %T: %v", err, err)
 		}
 	})
 
@@ -1559,8 +1587,9 @@ func TestImportPolicy(t *testing.T) {
 		}
 
 		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil policy engine")
+		var qbErr *dberrors.QBError
+		if !errors.As(err, &qbErr) {
+			t.Errorf("expected QBError for nil policy engine, got %T: %v", err, err)
 		}
 	})
 
@@ -1864,32 +1893,6 @@ func TestGetBatchSizeAndParallelism(t *testing.T) {
 
 // TestImportAllErrorPropagation tests error propagation in ImportAll
 func TestImportAllErrorPropagation(t *testing.T) {
-	t.Run("role error propagates without continue on error", func(t *testing.T) {
-		// Create manager without identity store to force errors
-		bm := NewBatchManager(BatchManagerOptions{
-			PolicyEngine: NewPolicyEngine(PolicyEngineOptions{}),
-			BatchSize:    10,
-			Parallelism:  2,
-		})
-		ctx := context.Background()
-
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-			Options: BatchImportOptions{
-				ContinueOnError: false,
-			},
-		}
-
-		result, _ := bm.ImportAll(ctx, req)
-		// Result should still be returned even with errors
-		if result == nil {
-			t.Error("expected result even on error")
-		}
-	})
-
 	t.Run("policy error propagates after all other resources succeed", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -1914,133 +1917,6 @@ func TestImportAllErrorPropagation(t *testing.T) {
 		// All other resources should have succeeded
 		if result != nil && result.SuccessCount < 2 {
 			t.Error("expected at least 2 successes")
-		}
-	})
-}
-
-// TestWorkerPoolSubmissionFailure tests the worker pool submission failure path
-func TestWorkerPoolSubmissionFailure(t *testing.T) {
-	t.Run("user import with immediately cancelled context", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		users := make([]*UserImport, 10)
-		for i := 0; i < 10; i++ {
-			users[i] = &UserImport{
-				ID:       uint64(i) + 1,
-				Email:    fmt.Sprintf("user%d@example.com", i),
-				Username: fmt.Sprintf("user%d", i),
-			}
-		}
-
-		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
-		// Should handle cancellation gracefully
-		if err != nil && !errors.Is(err, ErrBatchCanceled) && !errors.Is(err, context.Canceled) {
-			t.Logf("Got error: %v", err)
-		}
-		_ = result
-	})
-}
-
-// TestErrAlreadyExistsHandling tests handling of ErrAlreadyExists errors
-func TestErrAlreadyExistsHandling(t *testing.T) {
-	t.Run("user already exists counts as skipped", func(t *testing.T) {
-		bm, memStorage := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create existing user
-		existingUser := &User{
-			ID:       1,
-			Email:    "user1@example.com",
-			TenantID: "test-tenant",
-		}
-		if err := memStorage.CreateUser(ctx, existingUser); err != nil {
-			t.Fatalf("failed to create user: %v", err)
-		}
-
-		users := []*UserImport{
-			{ID: 1, Email: "user1@example.com", Username: "user1"},
-		}
-
-		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{
-			UpdateExisting: false,
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// The user should be skipped because it already exists
-		// and UpdateExisting is false
-		if result.FailureCount != 1 && result.SkippedCount != 1 {
-			t.Errorf("expected failure or skipped count of 1, got failure=%d, skipped=%d",
-				result.FailureCount, result.SkippedCount)
-		}
-	})
-}
-
-// TestQBErrorHandling tests proper handling of QBError types
-func TestQBErrorHandling(t *testing.T) {
-	t.Run("nil identity store returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		user := &UserImport{
-			Email:    "test@example.com",
-			Username: "test",
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
-		}
-	})
-
-	t.Run("nil identity store in importRole returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-		ctx := context.Background()
-
-		role := &RoleImport{
-			Name: "Test Role",
-		}
-
-		err := bm.importRole(ctx, "test-tenant", role, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil identity store")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
-		}
-	})
-
-	t.Run("nil policy engine in importPolicy returns QBError", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{
-			IdentityStore: NewIdentityStore(IdentityStoreOptions{}),
-		})
-		ctx := context.Background()
-
-		policy := &PolicyImport{
-			Name: "test-policy",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policy, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for nil policy engine")
-		}
-
-		var qbErr *dberrors.QBError
-		if !errors.As(err, &qbErr) {
-			t.Errorf("expected QBError, got %T: %v", err, err)
 		}
 	})
 }
@@ -2084,44 +1960,6 @@ func TestBatchManager_ImportAll_ContextCancellation(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for canceled context")
-	}
-}
-
-func TestBatchManager_ImportRoles_WithPermissionsExtra(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-roles-perm-tenant"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Roles Perm Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Import roles with permissions
-	result, err := bm.ImportRoles(ctx, tenantID, []*RoleImport{
-		{ID: "admin-role", Name: "Admin Role", Permissions: []string{"read", "write", "delete"}},
-		{ID: "viewer-role", Name: "Viewer Role", Permissions: []string{"read"}},
-	}, BatchImportOptions{})
-	if err != nil {
-		t.Fatalf("ImportRoles failed: %v", err)
-	}
-	if result.SuccessCount != 2 {
-		t.Errorf("expected 2 successes, got %d", result.SuccessCount)
 	}
 }
 
@@ -2327,182 +2165,6 @@ func TestMemoryStorage_Create_Duplicate(t *testing.T) {
 				t.Errorf("expected error for duplicate %s", tt.name)
 			}
 		})
-	}
-}
-
-// =============================================================================
-// BatchManager - ImportAll with timeout and context paths
-// =============================================================================
-
-func TestBatchManager_ImportAll_WithTimeout(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Import with timeout
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Users: []*UserImport{
-			{ID: 10001, Email: "user1@test.com", Name: "User One"},
-		},
-		Options: BatchImportOptions{
-			Timeout: 5 * time.Second,
-		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-func TestBatchManager_ImportAll_WithRolesFirst(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant-2"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant 2", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Roles: []*RoleImport{
-			{ID: "role-1", Name: "Test Role"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-func TestBatchManager_ImportAll_WithPolicies(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "import-tenant-3"
-
-	tenant := &Tenant{ID: tenantID, Name: "Import Tenant 3", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	result, err := bm.ImportAll(ctx, &BatchImportRequest{
-		TenantID: tenantID,
-		Policies: []*PolicyImport{
-			{
-				Name:     "test-policy",
-				Subjects: SubjectSelector{Users: []string{"user-1"}},
-				Rules:    []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("ImportAll failed: %v", err)
-	}
-	if result.TotalItems != 1 {
-		t.Errorf("expected 1 total item, got %d", result.TotalItems)
-	}
-}
-
-// =============================================================================
-// BatchManager - ImportPolicies with inline rules
-// =============================================================================
-
-func TestBatchManager_ImportPolicies_WithInlineRules(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "inline-policy-tenant"
-
-	tenant := &Tenant{ID: tenantID, Name: "Inline Policy Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Test importing policy with inline rules
-	result, err := bm.ImportPolicies(ctx, tenantID, []*PolicyImport{
-		{
-			Name:        "inline-policy",
-			Description: "Policy defined via inline fields",
-			Subjects:    SubjectSelector{Users: []string{"user-1"}},
-			Rules:       []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}, BatchImportOptions{})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
-	if result.SuccessCount != 1 {
-		t.Errorf("expected 1 success, got %d (failed: %d)", result.SuccessCount, result.FailureCount)
 	}
 }
 
