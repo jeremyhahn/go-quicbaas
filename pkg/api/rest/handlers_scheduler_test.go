@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -587,38 +588,6 @@ func TestHandleGetSchedulerJob_Success(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
-func TestHandleGetSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/invalid", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid job ID")
-}
-
-func TestHandleGetSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
 func TestHandleGetSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
@@ -685,26 +654,6 @@ func TestHandleUpdateSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, "updated-job", resp.Job.Name)
 
 	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleUpdateSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	reqBody := UpdateSchedulerJobRESTRequest{Name: "updated"}
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/invalid", bytes.NewReader(body))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleUpdateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid job ID")
 }
 
 func TestHandleUpdateSchedulerJob_InvalidJSON(t *testing.T) {
@@ -830,22 +779,6 @@ func TestHandleDeleteSchedulerJob_WithForce(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
-func TestHandleDeleteSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/invalid", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid job ID")
-}
-
 func TestHandleDeleteSchedulerJob_NotFound(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
@@ -901,21 +834,6 @@ func TestHandleTriggerSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, "running", resp.Status)
 
 	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleTriggerSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/abc/trigger", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "abc")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleTriggerSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandleTriggerSchedulerJob_NotFound(t *testing.T) {
@@ -977,21 +895,6 @@ func TestHandlePauseSchedulerJob_Success(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
-func TestHandlePauseSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/xyz/pause", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "xyz")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandlePauseSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestHandlePauseSchedulerJob_ServiceError(t *testing.T) {
 	server, mockSvc, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
@@ -1049,21 +952,6 @@ func TestHandleResumeSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, "pending", resp.NewStatus)
 
 	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleResumeSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/invalid/resume", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleResumeSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandleResumeSchedulerJob_NotFound(t *testing.T) {
@@ -1154,21 +1042,6 @@ func TestHandleCancelSchedulerJob_NoBody(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleCancelSchedulerJob_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/bad/cancel", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "bad")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleCancelSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandleCancelSchedulerJob_InvalidJSON(t *testing.T) {
@@ -1275,21 +1148,6 @@ func TestHandleGetSchedulerJobHistory_WithPagination(t *testing.T) {
 	assert.True(t, resp.HasMore)
 
 	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleGetSchedulerJobHistory_InvalidID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/invalid/history", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "invalid")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestHandleGetSchedulerJobHistory_NotFound(t *testing.T) {
@@ -1406,183 +1264,47 @@ func TestHandleGetSchedulerStatus_ServiceError(t *testing.T) {
 // Scheduler Service Nil Tests
 // =============================================================================
 
-func TestHandleCreateSchedulerJob_SchedulerServiceNil(t *testing.T) {
+func TestSchedulerHandlers_SchedulerServiceNil(t *testing.T) {
 	server, cleanup := setupNilSchedulerMockServer(t)
 	defer cleanup()
 
-	reqBody := CreateSchedulerJobRESTRequest{
-		Name:    "test-job",
-		Type:    "recurring",
-		Handler: "test-handler",
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		body    string
+		id      string
+		handler func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{"Create", http.MethodPost, "/api/v1/scheduler/jobs", `{"name":"test-job","type":"recurring","handler":"test-handler"}`, "", (*Server).HandleCreateSchedulerJob},
+		{"List", http.MethodGet, "/api/v1/scheduler/jobs", "", "", (*Server).HandleListSchedulerJobs},
+		{"Get", http.MethodGet, "/api/v1/scheduler/jobs/123", "", "123", (*Server).HandleGetSchedulerJob},
+		{"Update", http.MethodPut, "/api/v1/scheduler/jobs/123", `{"name":"updated"}`, "123", (*Server).HandleUpdateSchedulerJob},
+		{"Delete", http.MethodDelete, "/api/v1/scheduler/jobs/123", "", "123", (*Server).HandleDeleteSchedulerJob},
+		{"Trigger", http.MethodPost, "/api/v1/scheduler/jobs/123/trigger", "", "123", (*Server).HandleTriggerSchedulerJob},
+		{"Pause", http.MethodPost, "/api/v1/scheduler/jobs/123/pause", "", "123", (*Server).HandlePauseSchedulerJob},
+		{"Resume", http.MethodPost, "/api/v1/scheduler/jobs/123/resume", "", "123", (*Server).HandleResumeSchedulerJob},
+		{"Cancel", http.MethodPost, "/api/v1/scheduler/jobs/123/cancel", "", "123", (*Server).HandleCancelSchedulerJob},
+		{"History", http.MethodGet, "/api/v1/scheduler/jobs/123/history", "", "123", (*Server).HandleGetSchedulerJobHistory},
+		{"Status", http.MethodGet, "/api/v1/scheduler/status", "", "", (*Server).HandleGetSchedulerStatus},
 	}
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader(body))
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
+			if tt.id != "" {
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("id", tt.id)
+				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			}
+			w := httptest.NewRecorder()
 
-	server.HandleCreateSchedulerJob(w, req)
+			tt.handler(server, w, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleListSchedulerJobs_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListSchedulerJobs(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleGetSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/123", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleUpdateSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	reqBody := UpdateSchedulerJobRESTRequest{Name: "updated"}
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/123", bytes.NewReader(body))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleUpdateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleDeleteSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/123", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleTriggerSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/123/trigger", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleTriggerSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandlePauseSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/123/pause", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandlePauseSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleResumeSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/123/resume", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleResumeSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleCancelSchedulerJob_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs/123/cancel", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleCancelSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleGetSchedulerJobHistory_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/123/history", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "123")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
-}
-
-func TestHandleGetSchedulerStatus_SchedulerServiceNil(t *testing.T) {
-	server, cleanup := setupNilSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/status", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerStatus(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "scheduler service not available")
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Contains(t, w.Body.String(), "scheduler service not available")
+		})
+	}
 }
 
 // =============================================================================
@@ -1827,120 +1549,52 @@ func TestHandleGetSchedulerJobHistory_InvalidLimit(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
-func TestHandleUpdateSchedulerJob_MissingID(t *testing.T) {
+func TestSchedulerHandlers_JobIDValidation(t *testing.T) {
 	server, _, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	reqBody := UpdateSchedulerJobRESTRequest{Name: "updated"}
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
+	handlers := []struct {
+		name    string
+		method  string
+		suffix  string
+		body    string
+		handler func(*Server, http.ResponseWriter, *http.Request)
+	}{
+		{"Get", http.MethodGet, "", "", (*Server).HandleGetSchedulerJob},
+		{"Update", http.MethodPut, "", `{"name":"updated"}`, (*Server).HandleUpdateSchedulerJob},
+		{"Delete", http.MethodDelete, "", "", (*Server).HandleDeleteSchedulerJob},
+		{"Trigger", http.MethodPost, "/trigger", "", (*Server).HandleTriggerSchedulerJob},
+		{"Pause", http.MethodPost, "/pause", "", (*Server).HandlePauseSchedulerJob},
+		{"Resume", http.MethodPost, "/resume", "", (*Server).HandleResumeSchedulerJob},
+		{"Cancel", http.MethodPost, "/cancel", "", (*Server).HandleCancelSchedulerJob},
+		{"History", http.MethodGet, "/history", "", (*Server).HandleGetSchedulerJobHistory},
+	}
+	cases := []struct {
+		name    string
+		id      string
+		wantMsg string
+	}{
+		{"InvalidID", "invalid", "invalid job ID"},
+		{"MissingID", "", "job ID is required"},
+	}
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/", bytes.NewReader(body))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
+	for _, h := range handlers {
+		for _, tc := range cases {
+			t.Run(h.name+"_"+tc.name, func(t *testing.T) {
+				path := "/api/v1/scheduler/jobs/" + tc.id + h.suffix
+				req := httptest.NewRequest(h.method, path, strings.NewReader(h.body))
+				rctx := chi.NewRouteContext()
+				rctx.URLParams.Add("id", tc.id)
+				req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+				w := httptest.NewRecorder()
 
-	server.HandleUpdateSchedulerJob(w, req)
+				h.handler(server, w, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandleDeleteSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandleTriggerSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs//trigger", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleTriggerSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandlePauseSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs//pause", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandlePauseSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandleResumeSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs//resume", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleResumeSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandleCancelSchedulerJob_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs//cancel", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleCancelSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
-}
-
-func TestHandleGetSchedulerJobHistory_MissingID(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs//history", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "job ID is required")
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Contains(t, w.Body.String(), tc.wantMsg)
+			})
+		}
+	}
 }
 
 // =============================================================================
