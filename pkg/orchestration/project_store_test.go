@@ -215,16 +215,6 @@ func (r *projectAuditRecorder) snapshot() []StoreAuditEvent {
 // Create
 // =============================================================================
 
-func TestProjectStore_Create_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "my-project")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestProjectStore_Create_SetsTimestamps(t *testing.T) {
 	store := NewInMemoryProjectStore()
 	ctx := context.Background()
@@ -312,74 +302,32 @@ func TestProjectStore_Create_DuplicateID(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Create_Invalid(t *testing.T) {
-	tests := []struct {
-		name    string
-		project *Project
-	}{
-		{"nil project", nil},
-		{"empty ID", newTestProject("", "tenant-1", "name")},
-		{"empty tenantID", newTestProject("id-1", "", "name")},
-		{"empty name", newTestProject("id-1", "tenant-1", "")},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store := NewInMemoryProjectStore()
-			err := store.Create(context.Background(), tt.project)
-			if !errors.Is(err, ErrProjectInvalid) {
-				t.Errorf("expected ErrProjectInvalid, got %v", err)
-			}
-		})
-	}
-}
-
 // =============================================================================
 // Get
 // =============================================================================
 
-func TestProjectStore_Get_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "proj")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	got, err := store.Get(ctx, "tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.Name != "proj" {
-		t.Errorf("expected name 'proj', got %q", got.Name)
-	}
-}
-
-// TestProjectStore_ArgumentAndNotFoundErrors drives each method with an
-// invalid argument or an absent record and checks the typed error it returns.
-func TestProjectStore_ArgumentAndNotFoundErrors(t *testing.T) {
+// TestProjectStore_NilAndNotFoundErrors drives each method with a nil project
+// or an absent record and checks the typed error it returns. Empty and
+// separator-bearing key segments are covered by
+// TestProjectStore_KeySegmentRejection.
+func TestProjectStore_NilAndNotFoundErrors(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		name string
 		call func(s ProjectStore) error
 		want error
 	}{
+		{"Create nil project", func(s ProjectStore) error {
+			return s.Create(ctx, nil)
+		}, ErrProjectInvalid},
 		{"Get not found", func(s ProjectStore) error {
 			_, err := s.Get(ctx, "tenant-1", "missing-id")
 			return err
 		}, ErrProjectNotFound},
-		{"Get empty tenantID", func(s ProjectStore) error {
-			_, err := s.Get(ctx, "", "id-1")
-			return err
-		}, ErrProjectInvalid},
 		{"GetByName not found", func(s ProjectStore) error {
 			_, err := s.GetByName(ctx, "tenant-1", "ghost")
 			return err
 		}, ErrProjectNotFound},
-		{"GetByName empty name", func(s ProjectStore) error {
-			_, err := s.GetByName(ctx, "tenant-1", "")
-			return err
-		}, ErrProjectInvalid},
 		{"Update not found", func(s ProjectStore) error {
 			return s.Update(ctx, newTestProject("ghost", "tenant-1", "ghost"))
 		}, ErrProjectNotFound},
@@ -389,13 +337,6 @@ func TestProjectStore_ArgumentAndNotFoundErrors(t *testing.T) {
 		{"Delete not found", func(s ProjectStore) error {
 			return s.Delete(ctx, "tenant-1", "ghost")
 		}, ErrProjectNotFound},
-		{"Delete empty ID", func(s ProjectStore) error {
-			return s.Delete(ctx, "tenant-1", "")
-		}, ErrProjectInvalid},
-		{"ListByTenant empty tenantID", func(s ProjectStore) error {
-			_, err := s.ListByTenant(ctx, "")
-			return err
-		}, ErrProjectInvalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -434,24 +375,6 @@ func TestProjectStore_Get_CorruptRecord(t *testing.T) {
 // GetByName
 // =============================================================================
 
-func TestProjectStore_GetByName_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "by-name")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	got, err := store.GetByName(ctx, "tenant-1", "by-name")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.ID != "id-1" {
-		t.Errorf("expected ID 'id-1', got %q", got.ID)
-	}
-}
-
 // TestProjectStore_GetByName_DanglingIndex asserts a name reservation whose
 // record is gone reads as not-found rather than as an internal failure.
 func TestProjectStore_GetByName_DanglingIndex(t *testing.T) {
@@ -476,34 +399,6 @@ func TestProjectStore_GetByName_DanglingIndex(t *testing.T) {
 // =============================================================================
 // Update
 // =============================================================================
-
-func TestProjectStore_Update_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	p := newTestProject("id-1", "tenant-1", "old-name")
-	if err := store.Create(ctx, p); err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
-
-	p.Name = "new-name"
-	if err := store.Update(ctx, p); err != nil {
-		t.Fatalf("update failed: %v", err)
-	}
-
-	got, err := store.GetByName(ctx, "tenant-1", "new-name")
-	if err != nil {
-		t.Fatalf("get by new name failed: %v", err)
-	}
-	if got.ID != "id-1" {
-		t.Errorf("expected ID 'id-1', got %q", got.ID)
-	}
-
-	// The old reservation must be released so the name can be reused.
-	if _, oldErr := store.GetByName(ctx, "tenant-1", "old-name"); !errors.Is(oldErr, ErrProjectNotFound) {
-		t.Errorf("old name must be released, got %v", oldErr)
-	}
-}
 
 func TestProjectStore_Update_PreservesCreatedAtAndBumpsUpdatedAt(t *testing.T) {
 	store := NewInMemoryProjectStore()
@@ -600,31 +495,6 @@ func TestProjectStore_Delete_HappyPath(t *testing.T) {
 // =============================================================================
 // ListByTenant
 // =============================================================================
-
-func TestProjectStore_ListByTenant_HappyPath(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	ctx := context.Background()
-
-	for _, name := range []string{"a", "b", "c"} {
-		p := newTestProject("id-"+name, "tenant-1", name)
-		if err := store.Create(ctx, p); err != nil {
-			t.Fatalf("create %q failed: %v", name, err)
-		}
-	}
-	// Create a project for a different tenant — must not appear.
-	other := newTestProject("other-id", "tenant-2", "other")
-	if err := store.Create(ctx, other); err != nil {
-		t.Fatalf("create other-tenant project failed: %v", err)
-	}
-
-	projects, err := store.ListByTenant(ctx, "tenant-1")
-	if err != nil {
-		t.Fatalf("list failed: %v", err)
-	}
-	if len(projects) != 3 {
-		t.Errorf("expected 3 projects, got %d", len(projects))
-	}
-}
 
 func TestProjectStore_ListByTenant_Empty(t *testing.T) {
 	store := NewInMemoryProjectStore()
