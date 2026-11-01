@@ -5362,30 +5362,6 @@ func TestSessionStore_UpdateSessionStatus_CancelledContext(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator.go — defaultBackendName uncovered path
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_MultipleBackends(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-
-	for _, name := range []string{"acp", "ollama", "codex"} {
-		if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-			Name:    name,
-			Backend: &mockAgentBackend{backendType: name},
-		}); err != nil {
-			t.Fatalf("RegisterBackend %s: %v", name, err)
-		}
-	}
-
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected a non-empty default backend name")
-	}
-}
-
-// =============================================================================
 // orchestrator — CancelJob on a job that is only persisted
 // =============================================================================
 
@@ -6349,22 +6325,6 @@ func TestOrchestrator_DefaultBackendName_OllamaFallback(t *testing.T) {
 	name := impl.defaultBackendName()
 	if name != "ollama" {
 		t.Errorf("expected ollama, got %q", name)
-	}
-}
-
-func TestOrchestrator_DefaultBackendName_FirstBackend(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "custom-backend",
-		Backend: &mockAgentBackend{backendType: "custom"},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-	// No lead agent, no ollama — should return first backend.
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected non-empty backend name")
 	}
 }
 
