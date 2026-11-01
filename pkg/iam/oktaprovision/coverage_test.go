@@ -585,184 +585,234 @@ func TestConfigureGroupsScope(t *testing.T) {
 
 // -------------------- configureGroupsClaim --------------------
 
-func TestConfigureGroupsClaim_CreateWhenMissing(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims", okJSON([]interface{}{}))
-	posted := false
-	r.on("POST", "/api/v1/authorizationServers/default/claims", func(w http.ResponseWriter, _ *http.Request) {
-		posted = true
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "c1"})
-	})
-	p := newTestProvisioner(t, r)
-	if err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "STARTS_WITH", Value: "Acme"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestConfigureGroupsClaim(t *testing.T) {
+	const claimsPath = "/api/v1/authorizationServers/default/claims"
+	existing := okJSON([]map[string]interface{}{{"id": "c-existing", "name": "groups", "valueType": "GROUPS"}})
+	tests := []struct {
+		name        string
+		list        http.HandlerFunc
+		writeMethod string
+		writePath   string
+		write       http.HandlerFunc
+		baseURL     string
+		filter      GroupsClaimFilter
+		wantWritten bool
+		wantOp      string
+	}{
+		{
+			name:        "creates when missing",
+			list:        okJSON([]interface{}{}),
+			writeMethod: "POST",
+			writePath:   claimsPath,
+			write: func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "c1"})
+			},
+			filter:      GroupsClaimFilter{Type: "STARTS_WITH", Value: "Acme"},
+			wantWritten: true,
+		},
+		{
+			name:        "updates existing via PUT",
+			list:        existing,
+			writeMethod: "PUT",
+			writePath:   claimsPath + "/c-existing",
+			write:       okJSON(map[string]interface{}{"id": "c-existing"}),
+			filter:      GroupsClaimFilter{Type: "EQUALS", Value: "Acme"},
+			wantWritten: true,
+		},
+		{
+			name:        "update error",
+			list:        existing,
+			writeMethod: "PUT",
+			writePath:   claimsPath + "/c-existing",
+			write:       errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			filter:      GroupsClaimFilter{Type: "EQUALS", Value: "Acme"},
+			wantWritten: true,
+			wantOp:      "update_claim",
+		},
+		{
+			name:   "list error",
+			list:   errStatus(http.StatusForbidden, "E0000006", "denied"),
+			filter: GroupsClaimFilter{Type: "EQUALS", Value: "x"},
+			wantOp: "list_claims",
+		},
+		{
+			name:   "list decode error",
+			list:   rawBody(http.StatusOK, "nope"),
+			filter: GroupsClaimFilter{Type: "EQUALS", Value: "x"},
+			wantOp: "list_claims",
+		},
+		{
+			name:        "create error",
+			list:        okJSON([]interface{}{}),
+			writeMethod: "POST",
+			writePath:   claimsPath,
+			write:       errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			filter:      GroupsClaimFilter{Type: "EQUALS", Value: "x"},
+			wantWritten: true,
+			wantOp:      "create_claim",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			filter:  GroupsClaimFilter{Type: "EQUALS", Value: "x"},
+			wantOp:  "list_claims",
+		},
 	}
-	if !posted {
-		t.Error("expected claim to be created")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.list != nil {
+				r.on("GET", claimsPath, tc.list)
+			}
+			written := false
+			if tc.write != nil {
+				r.on(tc.writeMethod, tc.writePath, func(w http.ResponseWriter, req *http.Request) {
+					written = true
+					tc.write(w, req)
+				})
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			err := p.configureGroupsClaim(context.Background(), baseURL, "tok", tc.filter)
+			if written != tc.wantWritten {
+				t.Errorf("%s %s hit = %v, want %v", tc.writeMethod, tc.writePath, written, tc.wantWritten)
+			}
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
-}
-
-func TestConfigureGroupsClaim_UpdateExisting(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims",
-		okJSON([]map[string]interface{}{{"id": "c-existing", "name": "groups", "valueType": "GROUPS"}}))
-	putHit := false
-	r.on("PUT", "/api/v1/authorizationServers/default/claims/c-existing", func(w http.ResponseWriter, _ *http.Request) {
-		putHit = true
-		writeJSON(w, http.StatusOK, map[string]interface{}{"id": "c-existing"})
-	})
-	p := newTestProvisioner(t, r)
-	if err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "Acme"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !putHit {
-		t.Error("expected existing claim to be updated via PUT")
-	}
-}
-
-func TestConfigureGroupsClaim_UpdateError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims",
-		okJSON([]map[string]interface{}{{"id": "c-existing", "name": "groups", "valueType": "GROUPS"}}))
-	r.on("PUT", "/api/v1/authorizationServers/default/claims/c-existing", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "Acme"})
-	assertProvOp(t, err, "update_claim")
-}
-
-func TestConfigureGroupsClaim_ListError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "x"})
-	assertProvOp(t, err, "list_claims")
-}
-
-func TestConfigureGroupsClaim_ListDecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "x"})
-	assertProvOp(t, err, "list_claims")
-}
-
-func TestConfigureGroupsClaim_CreateError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/claims", okJSON([]interface{}{}))
-	r.on("POST", "/api/v1/authorizationServers/default/claims", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsClaim(context.Background(), "https://acme.okta.com", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "x"})
-	assertProvOp(t, err, "create_claim")
-}
-
-func TestConfigureGroupsClaim_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	err := p.configureGroupsClaim(context.Background(), "://bad", "tok", GroupsClaimFilter{Type: "EQUALS", Value: "x"})
-	assertProvOp(t, err, "list_claims")
 }
 
 // -------------------- configureAccessPolicy --------------------
 
-func TestConfigureAccessPolicy_CreatesPolicyAndRule(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies", okJSON([]interface{}{}))
-	r.on("POST", "/api/v1/authorizationServers/default/policies", okJSON(map[string]interface{}{"id": "pol-new"}))
-	r.onPrefix("GET", "/api/v1/authorizationServers/default/policies/pol-new/rules", okJSON([]interface{}{}))
-	ruleCreated := false
-	r.onPrefix("POST", "/api/v1/authorizationServers/default/policies/pol-new/rules", func(w http.ResponseWriter, _ *http.Request) {
-		ruleCreated = true
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "rule-new"})
-	})
-	p := newTestProvisioner(t, r)
-	if err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestConfigureAccessPolicy(t *testing.T) {
+	const policiesPath = "/api/v1/authorizationServers/default/policies"
+	existingPolicy := okJSON([]map[string]interface{}{{"id": "pol-1", "name": "Acme App Access Policy"}})
+	tests := []struct {
+		name            string
+		listPolicies    http.HandlerFunc
+		createPolicy    http.HandlerFunc
+		policyID        string
+		listRules       http.HandlerFunc
+		createRule      http.HandlerFunc
+		baseURL         string
+		wantRuleCreated bool
+		wantOp          string
+	}{
+		{
+			name:         "creates policy and rule",
+			listPolicies: okJSON([]interface{}{}),
+			createPolicy: okJSON(map[string]interface{}{"id": "pol-new"}),
+			policyID:     "pol-new",
+			listRules:    okJSON([]interface{}{}),
+			createRule: func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "rule-new"})
+			},
+			wantRuleCreated: true,
+		},
+		{
+			name:         "reuses existing policy and rule",
+			listPolicies: existingPolicy,
+			policyID:     "pol-1",
+			listRules:    okJSON([]map[string]interface{}{{"id": "r1", "name": "Acme App Default Rule"}}),
+		},
+		{
+			name:         "list policies error",
+			listPolicies: errStatus(http.StatusForbidden, "E0000006", "denied"),
+			wantOp:       "list_policies",
+		},
+		{
+			name:         "list policies decode error",
+			listPolicies: rawBody(http.StatusOK, "nope"),
+			wantOp:       "list_policies",
+		},
+		{
+			name:         "create policy error",
+			listPolicies: okJSON([]interface{}{}),
+			createPolicy: errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			wantOp:       "create_policy",
+		},
+		{
+			name:         "create policy decode error",
+			listPolicies: okJSON([]interface{}{}),
+			createPolicy: rawBody(http.StatusOK, "nope"),
+			wantOp:       "create_policy",
+		},
+		{
+			name:         "list rules error",
+			listPolicies: existingPolicy,
+			policyID:     "pol-1",
+			listRules:    errStatus(http.StatusForbidden, "E0000006", "denied"),
+			wantOp:       "list_policy_rules",
+		},
+		{
+			name:         "list rules decode error",
+			listPolicies: existingPolicy,
+			policyID:     "pol-1",
+			listRules:    rawBody(http.StatusOK, "nope"),
+			wantOp:       "list_policy_rules",
+		},
+		{
+			name:            "create rule error",
+			listPolicies:    existingPolicy,
+			policyID:        "pol-1",
+			listRules:       okJSON([]interface{}{}),
+			createRule:      errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			wantRuleCreated: true,
+			wantOp:          "create_policy_rule",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			wantOp:  "list_policies",
+		},
 	}
-	if !ruleCreated {
-		t.Error("expected policy rule to be created")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.listPolicies != nil {
+				r.on("GET", policiesPath, tc.listPolicies)
+			}
+			if tc.createPolicy != nil {
+				r.on("POST", policiesPath, tc.createPolicy)
+			}
+			rulesPath := policiesPath + "/" + tc.policyID + "/rules"
+			if tc.listRules != nil {
+				r.onPrefix("GET", rulesPath, tc.listRules)
+			}
+			ruleCreated := false
+			if tc.createRule != nil {
+				r.onPrefix("POST", rulesPath, func(w http.ResponseWriter, req *http.Request) {
+					ruleCreated = true
+					tc.createRule(w, req)
+				})
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			err := p.configureAccessPolicy(context.Background(), baseURL, "tok", "Acme App")
+			if ruleCreated != tc.wantRuleCreated {
+				t.Errorf("rule created = %v, want %v", ruleCreated, tc.wantRuleCreated)
+			}
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
-}
-
-func TestConfigureAccessPolicy_ReusesExistingPolicyAndRule(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies",
-		okJSON([]map[string]interface{}{{"id": "pol-1", "name": "Acme App Access Policy"}}))
-	r.onPrefix("GET", "/api/v1/authorizationServers/default/policies/pol-1/rules",
-		okJSON([]map[string]interface{}{{"id": "r1", "name": "Acme App Default Rule"}}))
-	p := newTestProvisioner(t, r)
-	if err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestConfigureAccessPolicy_ListPoliciesError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "list_policies")
-}
-
-func TestConfigureAccessPolicy_ListPoliciesDecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "list_policies")
-}
-
-func TestConfigureAccessPolicy_CreatePolicyError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies", okJSON([]interface{}{}))
-	r.on("POST", "/api/v1/authorizationServers/default/policies", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "create_policy")
-}
-
-func TestConfigureAccessPolicy_CreatePolicyDecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies", okJSON([]interface{}{}))
-	r.on("POST", "/api/v1/authorizationServers/default/policies", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "create_policy")
-}
-
-func TestConfigureAccessPolicy_ListRulesError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies",
-		okJSON([]map[string]interface{}{{"id": "pol-1", "name": "Acme App Access Policy"}}))
-	r.onPrefix("GET", "/api/v1/authorizationServers/default/policies/pol-1/rules", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "list_policy_rules")
-}
-
-func TestConfigureAccessPolicy_ListRulesDecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies",
-		okJSON([]map[string]interface{}{{"id": "pol-1", "name": "Acme App Access Policy"}}))
-	r.onPrefix("GET", "/api/v1/authorizationServers/default/policies/pol-1/rules", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "list_policy_rules")
-}
-
-func TestConfigureAccessPolicy_CreateRuleError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/policies",
-		okJSON([]map[string]interface{}{{"id": "pol-1", "name": "Acme App Access Policy"}}))
-	r.onPrefix("GET", "/api/v1/authorizationServers/default/policies/pol-1/rules", okJSON([]interface{}{}))
-	r.onPrefix("POST", "/api/v1/authorizationServers/default/policies/pol-1/rules", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.configureAccessPolicy(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "create_policy_rule")
-}
-
-func TestConfigureAccessPolicy_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	err := p.configureAccessPolicy(context.Background(), "://bad", "tok", "Acme App")
-	assertProvOp(t, err, "list_policies")
 }
 
 // -------------------- findAppByLabel / findGroupByName --------------------
