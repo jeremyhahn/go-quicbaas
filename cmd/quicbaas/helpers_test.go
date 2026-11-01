@@ -723,184 +723,114 @@ func TestFormatVectorIndexStatsResponse(t *testing.T) {
 	}
 }
 
+// The UpdateMetadata, HybridSearch and SearchByMetadata formatters print
+// plain text and do not read outputFormat.
 func TestFormatVectorUpdateMetadataResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.UpdateMetadataResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.UpdateMetadataResponse
 	}{
-		{
-			name: "success table format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   true,
-				Version:   1,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name: "failure table format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   false,
-				Version:   0,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name: "json format",
-			response: &vector.UpdateMetadataResponse{
-				Success:   true,
-				Version:   2,
-				Timestamp: time.Now(),
-			},
-			outputFormat: "json",
-			expectError:  false,
-		},
+		{"success", &vector.UpdateMetadataResponse{Success: true, Version: 1, Timestamp: time.Now()}},
+		{"failure", &vector.UpdateMetadataResponse{Success: false}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorUpdateMetadataResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorUpdateMetadataResponse(tt.response))
 		})
 	}
 }
 
-func TestFormatVectorUpdateMetadataResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.UpdateMetadataResponse{
-		Success:   true,
-		Version:   1,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
 func TestFormatVectorHybridSearchResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.HybridSearchResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.HybridSearchResponse
 	}{
 		{
-			name: "with results table format",
+			name: "with results",
 			response: &vector.HybridSearchResponse{
 				Results: []*vector.SearchResult{
 					{
-						Vector:   &vector.VectorEntity{ID: "vec-1", Metadata: map[string]string{"key": "value"}},
-						Score:    0.95,
-						Distance: 0.05,
-						Rank:     1,
+						Vector: &vector.VectorEntity{
+							ID:       "vec-1",
+							Vector:   []float32{0.1, 0.2},
+							Metadata: map[string]string{"key": "val"},
+						},
+						Score: 0.95,
+						Rank:  1,
 					},
 				},
-				SearchTimeMs: 25,
-				Timestamp:    time.Now(),
+				TotalCandidates:  10,
+				TotalFiltered:    5,
+				RerankingApplied: true,
+				SearchTimeMs:     15,
+				Timestamp:        time.Now(),
 			},
-			outputFormat: "table",
-			expectError:  false,
 		},
 		{
-			name: "json format",
+			name: "result without vector",
+			response: &vector.HybridSearchResponse{
+				Results:         []*vector.SearchResult{{Score: 0.5, Rank: 1}},
+				TotalCandidates: 5,
+				TotalFiltered:   1,
+				SearchTimeMs:    10,
+				Timestamp:       time.Now(),
+			},
+		},
+		{
+			name: "no results",
 			response: &vector.HybridSearchResponse{
 				Results:      []*vector.SearchResult{},
 				SearchTimeMs: 10,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "json",
-			expectError:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorHybridSearchResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorHybridSearchResponse(tt.response))
 		})
 	}
 }
 
-func TestFormatVectorHybridSearchResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.HybridSearchResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
 func TestFormatVectorSearchByMetadataResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		response     *vector.SearchByMetadataResponse
-		outputFormat string
-		expectError  bool
+		name     string
+		response *vector.SearchByMetadataResponse
 	}{
 		{
-			name: "with results table format",
+			name: "with results",
 			response: &vector.SearchByMetadataResponse{
 				Results: []*vector.VectorEntity{
-					{ID: "vec-1", Metadata: map[string]string{"key": "value"}, Version: 1, CreatedAt: time.Now()},
+					{
+						ID:        "vec-1",
+						Vector:    []float32{0.1, 0.2, 0.3},
+						Metadata:  map[string]string{"key": "value"},
+						Version:   1,
+						CreatedAt: time.Now(),
+					},
 				},
 				TotalCount:   1,
 				SearchTimeMs: 25,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "table",
-			expectError:  false,
 		},
 		{
-			name: "json format",
+			name: "no results",
 			response: &vector.SearchByMetadataResponse{
 				Results:      []*vector.VectorEntity{},
-				TotalCount:   0,
 				SearchTimeMs: 10,
 				Timestamp:    time.Now(),
 			},
-			outputFormat: "json",
-			expectError:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outputFormat = tt.outputFormat
-			err := formatVectorSearchByMetadataResponse(tt.response)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.NoError(t, formatVectorSearchByMetadataResponse(tt.response))
 		})
 	}
-}
-
-func TestFormatVectorSearchByMetadataResponseFallback(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchByMetadataResponse{
-		Results:    []*vector.VectorEntity{},
-		TotalCount: 0,
-		Timestamp:  time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -1384,71 +1314,4 @@ func TestFormatVectorResponses_InvalidFormat(t *testing.T) {
 			testWithInvalidOutputFormat(t, tt.format)
 		})
 	}
-}
-
-// =============================================================================
-// Vector Format Functions - UpdateMetadata, HybridSearch, SearchByMetadata
-// These format functions do not use ParseOutputFormat but have uncovered paths
-// =============================================================================
-
-func TestFormatVectorUpdateMetadataResponse_FailedPath(t *testing.T) {
-	resp := &vector.UpdateMetadataResponse{
-		Success: false,
-	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorHybridSearchResponse_WithResults(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector: &vector.VectorEntity{
-					ID:       "vec-1",
-					Vector:   []float32{0.1, 0.2},
-					Metadata: map[string]string{"key": "val"},
-				},
-				Score: 0.95,
-				Rank:  1,
-			},
-		},
-		TotalCandidates:  10,
-		TotalFiltered:    5,
-		RerankingApplied: true,
-		SearchTimeMs:     15,
-		Timestamp:        time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorHybridSearchResponse_NilVector(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results: []*vector.SearchResult{
-			{Score: 0.5, Rank: 1},
-		},
-		TotalCandidates: 5,
-		TotalFiltered:   1,
-		SearchTimeMs:    10,
-		Timestamp:       time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByMetadataResponse_WithResults(t *testing.T) {
-	resp := &vector.SearchByMetadataResponse{
-		Results: []*vector.VectorEntity{
-			{
-				ID:       "vec-1",
-				Vector:   []float32{0.1, 0.2, 0.3},
-				Metadata: map[string]string{"type": "test"},
-			},
-		},
-		TotalCount:   1,
-		SearchTimeMs: 5,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
 }
