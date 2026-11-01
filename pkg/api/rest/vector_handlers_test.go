@@ -389,6 +389,14 @@ func TestHandleListNamespaces(t *testing.T) {
 			},
 			expectedStatus: http.StatusOK,
 		},
+		{
+			name: "service error",
+			setupMock: func(m *MockVectorService) {
+				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
+					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1616,9 +1624,10 @@ func TestHandleSearchByMetadata(t *testing.T) {
 // Global Stats Handler Tests (Cluster Stats Alias)
 // ========================================
 
-func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
+func TestHandleGetGlobalStats(t *testing.T) {
 	tests := []struct {
 		name           string
+		path           string
 		setupMock      func(*MockVectorService)
 		expectedStatus int
 		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
@@ -1668,6 +1677,8 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 				assert.Equal(t, int64(61440), resp.TotalStorageBytes)
 				assert.Equal(t, int64(61440), resp.TotalIndexBytes)
 				assert.Len(t, resp.NamespaceStats, 3)
+				assert.False(t, resp.Timestamp.IsZero())
+				assert.Empty(t, resp.NodeStats) // Empty slice returned, omitempty causes nil after JSON round-trip
 			},
 		},
 		{
@@ -1728,18 +1739,19 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 			expectedStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "cluster stats response structure validation",
+			name: "global stats route serves the same handler",
+			path: "/api/v1/vector/admin/stats/global",
 			setupMock: func(m *MockVectorService) {
 				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(&service.ListNamespacesResponse{
 					Namespaces: []*service.NamespaceInfo{
-						{Namespace: "production", VectorCount: 50000},
+						{Namespace: "ns1", VectorCount: 100},
 					},
 					TotalCount: 1,
 				}, nil).Once()
 				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(&service.GetIndexStatsResponse{
-					Namespace:      "production",
-					VectorCount:    50000,
-					IndexSizeBytes: 512000000,
+					Namespace:      "ns1",
+					VectorCount:    100,
+					IndexSizeBytes: 1024,
 				}, nil).Once()
 			},
 			expectedStatus: http.StatusOK,
@@ -1747,11 +1759,8 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 				var resp ClusterStatsResponse
 				err := json.NewDecoder(w.Body).Decode(&resp)
 				require.NoError(t, err)
-				assert.NotEmpty(t, resp.ClusterID)
-				assert.NotZero(t, resp.TotalNodes)
-				assert.False(t, resp.Timestamp.IsZero())
-				assert.NotNil(t, resp.NamespaceStats)
-				assert.Empty(t, resp.NodeStats) // Empty slice returned, omitempty causes nil after JSON round-trip
+				assert.Equal(t, int64(100), resp.TotalVectors)
+				assert.Equal(t, 1, resp.TotalNamespaces)
 			},
 		},
 	}
@@ -1768,8 +1777,11 @@ func TestHandleGetGlobalStatsClusterEndpoint(t *testing.T) {
 				tt.setupMock(mockVectorSvc)
 			}
 
-			// Test the /api/v1/vector/cluster/stats endpoint
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/cluster/stats", nil)
+			path := tt.path
+			if path == "" {
+				path = "/api/v1/vector/cluster/stats"
+			}
+			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 
 			server.GetRouter().ServeHTTP(w, req)
@@ -1926,104 +1938,6 @@ func TestHandleGetIndexProgress(t *testing.T) {
 // ========================================
 // Admin Handler Tests
 // ========================================
-
-func TestHandleGetGlobalStats(t *testing.T) {
-	tests := []struct {
-		name           string
-		setupMock      func(*MockVectorService)
-		expectedStatus int
-		checkResponse  func(*testing.T, *httptest.ResponseRecorder)
-	}{
-		{
-			name: "successful global stats",
-			setupMock: func(m *MockVectorService) {
-				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(&service.ListNamespacesResponse{
-					Namespaces: []*service.NamespaceInfo{
-						{Namespace: "ns1", VectorCount: 100},
-						{Namespace: "ns2", VectorCount: 200},
-					},
-					TotalCount: 2,
-				}, nil).Once()
-				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(&service.GetIndexStatsResponse{
-					Namespace:      "ns1",
-					VectorCount:    100,
-					IndexSizeBytes: 1024,
-				}, nil).Once()
-				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(&service.GetIndexStatsResponse{
-					Namespace:      "ns2",
-					VectorCount:    200,
-					IndexSizeBytes: 2048,
-				}, nil).Once()
-			},
-			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp ClusterStatsResponse
-				err := json.NewDecoder(w.Body).Decode(&resp)
-				require.NoError(t, err)
-				assert.Equal(t, int64(300), resp.TotalVectors)
-				assert.Equal(t, 2, resp.TotalNamespaces)
-			},
-		},
-		{
-			name: "list namespaces error",
-			setupMock: func(m *MockVectorService) {
-				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
-					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
-			},
-			expectedStatus: http.StatusInternalServerError,
-		},
-		{
-			name: "partial stats failure",
-			setupMock: func(m *MockVectorService) {
-				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(&service.ListNamespacesResponse{
-					Namespaces: []*service.NamespaceInfo{
-						{Namespace: "ns1", VectorCount: 100},
-						{Namespace: "ns2", VectorCount: 200},
-					},
-					TotalCount: 2,
-				}, nil).Once()
-				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(&service.GetIndexStatsResponse{
-					Namespace:      "ns1",
-					VectorCount:    100,
-					IndexSizeBytes: 1024,
-				}, nil).Once()
-				m.On("GetIndexStats", mock.Anything, mock.Anything).Return(nil,
-					&errors.QBError{Code: errors.ErrInternal, Op: "stats", Err: &errors.MessageError{Message: "error"}}).Once()
-			},
-			expectedStatus: http.StatusOK,
-			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
-				var resp ClusterStatsResponse
-				err := json.NewDecoder(w.Body).Decode(&resp)
-				require.NoError(t, err)
-				assert.Equal(t, int64(100), resp.TotalVectors)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server, mockSvc, cleanup := setupMockServer(t)
-			defer cleanup()
-
-			mockVectorSvc := &MockVectorService{}
-			mockSvc.VectorService = mockVectorSvc
-
-			if tt.setupMock != nil {
-				tt.setupMock(mockVectorSvc)
-			}
-
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/admin/stats/global", nil)
-			w := httptest.NewRecorder()
-
-			server.GetRouter().ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-			if tt.checkResponse != nil {
-				tt.checkResponse(t, w)
-			}
-		})
-	}
-}
 
 func TestHandleCompactNamespace(t *testing.T) {
 	tests := []struct {
@@ -2562,44 +2476,6 @@ func (m *MockVectorService) SearchByID(ctx context.Context, req *service.SearchB
 // ========================================
 // Additional Edge Case Tests
 // ========================================
-
-func TestHandleListNamespacesErrors(t *testing.T) {
-	tests := []struct {
-		name           string
-		setupMock      func(*MockVectorService)
-		expectedStatus int
-	}{
-		{
-			name: "service error",
-			setupMock: func(m *MockVectorService) {
-				m.On("ListNamespaces", mock.Anything, mock.Anything).Return(nil,
-					&errors.QBError{Code: errors.ErrInternal, Op: "list", Err: &errors.MessageError{Message: "internal error"}}).Once()
-			},
-			expectedStatus: http.StatusInternalServerError,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server, mockSvc, cleanup := setupMockServer(t)
-			defer cleanup()
-
-			mockVectorSvc := &MockVectorService{}
-			mockSvc.VectorService = mockVectorSvc
-
-			if tt.setupMock != nil {
-				tt.setupMock(mockVectorSvc)
-			}
-
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces", nil)
-			w := httptest.NewRecorder()
-
-			server.GetRouter().ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-		})
-	}
-}
 
 func TestHandleListVectorsErrors(t *testing.T) {
 	tests := []struct {
