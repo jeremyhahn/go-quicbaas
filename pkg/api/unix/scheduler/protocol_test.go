@@ -433,197 +433,49 @@ func TestEncodeDecodePayload(t *testing.T) {
 	}
 }
 
-func TestErrorToStatus(t *testing.T) {
+func TestErrorStatusMapping(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      error
-		expected byte
+		name   string
+		code   dberrors.ErrorCode
+		status byte
+		// toStatus and toError name the directions the pair holds in; the
+		// status set is wider than the error set, so some pairs are one-way.
+		toStatus bool
+		toError  bool
 	}{
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: StatusOK,
-		},
-		{
-			name: "not found",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-			},
-			expected: StatusNotFound,
-		},
-		{
-			name: "unauthorized",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnauthorized,
-			},
-			expected: StatusUnauthorized,
-		},
-		{
-			name: "invalid input",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrInvalidInput,
-			},
-			expected: StatusInvalidArgument,
-		},
-		{
-			name: "already exists",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrAlreadyExists,
-			},
-			expected: StatusAlreadyExists,
-		},
-		{
-			name: "timeout",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrTimeout,
-			},
-			expected: StatusTimeout,
-		},
-		{
-			name: "forbidden",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrForbidden,
-			},
-			expected: StatusForbidden,
-		},
-		{
-			name: "resource exhausted",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrResourceExhausted,
-			},
-			expected: StatusResourceExhausted,
-		},
-		{
-			name: "unavailable",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnavailable,
-			},
-			expected: StatusUnavailable,
-		},
-		{
-			name: "internal error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrInternal,
-			},
-			expected: StatusInternalError,
-		},
-		{
-			name:     "non-qb error",
-			err:      io.EOF,
-			expected: StatusInternalError,
-		},
+		{name: "not found", code: dberrors.ErrNotFound, status: StatusNotFound, toStatus: true, toError: true},
+		{name: "unauthorized", code: dberrors.ErrUnauthorized, status: StatusUnauthorized, toStatus: true, toError: true},
+		{name: "invalid argument", code: dberrors.ErrInvalidInput, status: StatusInvalidArgument, toStatus: true, toError: true},
+		{name: "already exists", code: dberrors.ErrAlreadyExists, status: StatusAlreadyExists, toStatus: true, toError: true},
+		{name: "timeout", code: dberrors.ErrTimeout, status: StatusTimeout, toStatus: true, toError: true},
+		{name: "forbidden", code: dberrors.ErrForbidden, status: StatusForbidden, toStatus: true, toError: true},
+		{name: "resource exhausted", code: dberrors.ErrResourceExhausted, status: StatusResourceExhausted, toStatus: true, toError: true},
+		{name: "unavailable", code: dberrors.ErrUnavailable, status: StatusUnavailable, toStatus: true, toError: true},
+		{name: "internal error", code: dberrors.ErrInternal, status: StatusInternalError, toStatus: true, toError: true},
+		{name: "invalid request", code: dberrors.ErrInvalidInput, status: StatusInvalidRequest, toError: true},
+		{name: "permission denied", code: dberrors.ErrForbidden, status: StatusPermissionDenied, toError: true},
+		{name: "unknown status", code: dberrors.ErrInternal, status: 0xFE, toError: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ErrorToStatus(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestStatusToError(t *testing.T) {
-	tests := []struct {
-		name         string
-		status       byte
-		message      string
-		expectedCode dberrors.ErrorCode
-	}{
-		{
-			name:         "OK returns nil",
-			status:       StatusOK,
-			message:      "success",
-			expectedCode: 0, // nil error
-		},
-		{
-			name:         "not found",
-			status:       StatusNotFound,
-			message:      "job not found",
-			expectedCode: dberrors.ErrNotFound,
-		},
-		{
-			name:         "unauthorized",
-			status:       StatusUnauthorized,
-			message:      "unauthorized",
-			expectedCode: dberrors.ErrUnauthorized,
-		},
-		{
-			name:         "invalid argument",
-			status:       StatusInvalidArgument,
-			message:      "invalid input",
-			expectedCode: dberrors.ErrInvalidInput,
-		},
-		{
-			name:         "invalid request",
-			status:       StatusInvalidRequest,
-			message:      "invalid request",
-			expectedCode: dberrors.ErrInvalidInput,
-		},
-		{
-			name:         "already exists",
-			status:       StatusAlreadyExists,
-			message:      "job exists",
-			expectedCode: dberrors.ErrAlreadyExists,
-		},
-		{
-			name:         "timeout",
-			status:       StatusTimeout,
-			message:      "timed out",
-			expectedCode: dberrors.ErrTimeout,
-		},
-		{
-			name:         "permission denied",
-			status:       StatusPermissionDenied,
-			message:      "permission denied",
-			expectedCode: dberrors.ErrForbidden,
-		},
-		{
-			name:         "forbidden",
-			status:       StatusForbidden,
-			message:      "forbidden",
-			expectedCode: dberrors.ErrForbidden,
-		},
-		{
-			name:         "resource exhausted",
-			status:       StatusResourceExhausted,
-			message:      "quota exceeded",
-			expectedCode: dberrors.ErrResourceExhausted,
-		},
-		{
-			name:         "unavailable",
-			status:       StatusUnavailable,
-			message:      "service unavailable",
-			expectedCode: dberrors.ErrUnavailable,
-		},
-		{
-			name:         "internal error",
-			status:       StatusInternalError,
-			message:      "internal error",
-			expectedCode: dberrors.ErrInternal,
-		},
-		{
-			name:         "unknown status",
-			status:       0xFE,
-			message:      "unknown error",
-			expectedCode: dberrors.ErrInternal,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := StatusToError(tt.status, tt.message)
-
-			if tt.status == StatusOK {
-				assert.Nil(t, err)
-				return
+			if tt.toStatus {
+				assert.Equal(t, tt.status, ErrorToStatus(&dberrors.QBError{Code: tt.code}))
 			}
-
-			require.NotNil(t, err)
-			var qbErr *dberrors.QBError
-			require.True(t, dberrors.As(err, &qbErr))
-			assert.Equal(t, tt.expectedCode, qbErr.Code)
+			if tt.toError {
+				assertErrorCode(t, StatusToError(tt.status, tt.name), tt.code)
+			}
 		})
 	}
+
+	t.Run("nil error and StatusOK", func(t *testing.T) {
+		assert.Equal(t, StatusOK, ErrorToStatus(nil))
+		assert.NoError(t, StatusToError(StatusOK, "success"))
+	})
+
+	t.Run("non-QBError maps to internal error", func(t *testing.T) {
+		assert.Equal(t, StatusInternalError, ErrorToStatus(io.EOF))
+	})
 }
 
 // errorWriter is a writer that always returns an error.
