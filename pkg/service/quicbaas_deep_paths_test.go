@@ -29,47 +29,29 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-func TestWriteBatch_NilPointInBatch_Validation(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "cpu.usage", Value: 75.5},
-			nil, // nil point should return validation error
-		},
+func TestWriteBatch_InvalidPoint(t *testing.T) {
+	tests := []struct {
+		name   string
+		points []*WritePointRequest
+	}{
+		{name: "nil point", points: []*WritePointRequest{{Metric: "cpu.usage", Value: 75.5}, nil}},
+		{name: "empty metric", points: []*WritePointRequest{{Metric: "", Value: 100.0}}},
 	}
 
-	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			tsSvc := &timeSeriesService{svc: svc, tsStorage: newTestMockTimeSeriesStorage()}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), &WriteBatchRequest{Points: tt.points})
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "", Value: 100.0}, // empty metric
-		},
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+		})
 	}
-
-	resp, err := tsSvc.WriteBatch(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 // =============================================================================
@@ -565,72 +547,74 @@ func listOnePage(t *testing.T, svc QuicBaaS, ctx context.Context, req *ListReque
 // ListMetrics - Storage error, default limit
 // =============================================================================
 
-func TestListMetrics_StorageError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
+func TestListMetrics(t *testing.T) {
+	tests := []struct {
+		name       string
+		req        *TSListMetricsRequest
+		noStorage  bool
+		wantPrefix string
+		wantLimit  int
+		metrics    []string
+		storageErr error
+		wantErr    bool
+		wantCode   errors.ErrorCode
+	}{
+		{
+			name:      "nil request uses defaults",
+			req:       nil,
+			wantLimit: 1000,
+			metrics:   []string{"cpu.usage", "memory.used"},
+		},
+		{
+			name:       "prefix and limit are passed through",
+			req:        &TSListMetricsRequest{Prefix: "cpu.", Limit: 50},
+			wantPrefix: "cpu.",
+			wantLimit:  50,
+			metrics:    []string{"cpu.usage", "cpu.idle"},
+		},
+		{
+			name:       "storage error",
+			req:        &TSListMetricsRequest{},
+			wantLimit:  1000,
+			storageErr: stderrors.New("storage read error"),
+			wantErr:    true,
+			wantCode:   errors.ErrInternal,
+		},
+		{
+			name:      "storage not configured",
+			req:       &TSListMetricsRequest{},
+			noStorage: true,
+			wantErr:   true,
+			wantCode:  errors.ErrNotImplemented,
+		},
+	}
 
-	mockTS.On("ListMetrics", "", 1000).
-		Return(nil, stderrors.New("storage read error")).Once()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			tsSvc := &timeSeriesService{svc: svc}
+			mockTS := newTestMockTimeSeriesStorage()
+			if !tt.noStorage {
+				tsSvc.tsStorage = mockTS
+				mockTS.On("ListMetrics", tt.wantPrefix, tt.wantLimit).
+					Return(tt.metrics, tt.storageErr).Once()
+			}
 
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	mockTS.On("ListMetrics", "", 1000).
-		Return([]string{"cpu.usage", "memory.used"}, nil).Once()
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), nil)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Metrics, 2)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_WithPrefixAndLimit(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	mockTS.On("ListMetrics", "cpu.", 50).
-		Return([]string{"cpu.usage", "cpu.idle"}, nil).Once()
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{
-		Prefix: "cpu.",
-		Limit:  50,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Metrics, 2)
-	mockTS.AssertExpectations(t)
-}
-
-func TestListMetrics_StorageNotConfigured(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), &TSListMetricsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
+			resp, err := tsSvc.ListMetrics(tenantctx.WithSystem(context.Background()), tt.req)
+			mockTS.AssertExpectations(t)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, tt.wantCode, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, tt.metrics, resp.Metrics)
+		})
+	}
 }
 
 // =============================================================================
