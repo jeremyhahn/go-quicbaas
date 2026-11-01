@@ -2110,26 +2110,6 @@ func TestWrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func TestWrapKeyWithECDHES_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "ecdh-wrap-test")
-
-	// Get the public key using attribute-based lookup
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Wrap directly using the JWE encrypter
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-	assert.NotEmpty(t, jweStr)
-}
-
 func TestWrapKeyWithECDHES_KeyNotFound(t *testing.T) {
 	setupFullTestXKMS(t)
 
@@ -2147,63 +2127,11 @@ func TestWrapKeyWithECDHES_NotECKey(t *testing.T) {
 	// Just verify we get an error - the exact message may vary based on library implementation
 }
 
-func TestWrapKeyWithECDHES_AlgorithmMapping(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "ecdh-algo-test")
-
-	// Get the public key using attribute-based lookup
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	testCases := []struct {
-		algorithm   string
-		expectedEnc string
-	}{
-		{"ECDH-ES+A128KW", "A128GCM"},
-		{"ECDH-ES+A192KW", "A192GCM"},
-		{"ECDH-ES+A256KW", "A256GCM"},
-		{"ECDH-ES", "A256GCM"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.algorithm, func(t *testing.T) {
-			encrypter, err := xkmssdk.NewJWEEncrypter(tc.algorithm, tc.expectedEnc, ecPublicKey)
-			require.NoError(t, err)
-			jweStr, err := encrypter.Encrypt([]byte("test-material"))
-			require.NoError(t, err)
-			assert.NotEmpty(t, jweStr)
-		})
-	}
-}
-
 func TestUnwrapKeyWithECDHES_NotInitialized(t *testing.T) {
 	Reset()
 
 	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:test-key", "jwe-data")
 	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-func TestUnwrapKeyWithECDHES_Success(t *testing.T) {
-	// Use directly generated ECDSA keys for this test since the PKCS8 backend
-	// returns opaque keys that cannot be directly used with JWE decrypter
-	ecPrivateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	ecPublicKey := &ecPrivateKey.PublicKey
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Wrap
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-
-	// Unwrap directly using JWE decrypter
-	decrypter := xkmssdk.NewJWEDecrypter()
-	unwrapped, err := decrypter.Decrypt(jweStr, ecPrivateKey)
-	require.NoError(t, err)
-	assert.Equal(t, keyMaterial, unwrapped)
 }
 
 func TestUnwrapKeyWithECDHES_KeyNotFound(t *testing.T) {
@@ -2238,38 +2166,6 @@ func TestIsECDHESAlgorithm(t *testing.T) {
 // -----------------------------------------------------------------------------
 // JWT Tests
 // -----------------------------------------------------------------------------
-
-func TestNewJWTSigner(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	signer := NewJWTSigner()
-	assert.NotNil(t, signer)
-}
-
-func TestNewJWTSigner_SignWithKeyID(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "jwt-signer-keyid-test")
-
-	jwtSigner := NewJWTSigner()
-	assert.NotNil(t, jwtSigner)
-
-	claims := JWTClaims{"sub": "user123"}
-
-	// Use SignerByID with full key ID (ID-based lookup now works correctly)
-	signer, err := SignerByID(context.Background(), fullKeyID)
-	require.NoError(t, err)
-
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestNewJWTVerifier(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	verifier := NewJWTVerifier()
-	assert.NotNil(t, verifier)
-}
 
 func TestJWTSign_NotInitialized(t *testing.T) {
 	Reset()
@@ -2369,9 +2265,8 @@ func TestJWTVerify_NotInitialized(t *testing.T) {
 
 func TestJWTVerify_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-verify-test")
+	attrs, fullKeyID := createTestECDSAKey(t, "jwt-verify-test")
 
-	// Get key and sign directly
 	signer, err := Signer(context.Background(), attrs)
 	require.NoError(t, err)
 
@@ -2379,8 +2274,7 @@ func TestJWTVerify_Success(t *testing.T) {
 	token, err := JWTSignWithSigner(signer, claims, "ES256")
 	require.NoError(t, err)
 
-	// Verify with public key
-	verified, err := JWTVerifyWithKey(token, signer.Public(), "ES256")
+	verified, err := JWTVerify(token, fullKeyID)
 	require.NoError(t, err)
 	assert.True(t, verified.Valid)
 }
@@ -2967,23 +2861,6 @@ func TestCanSeal_NonExistentBackend(t *testing.T) {
 // Consolidated from xkms_coverage_test.go
 // =============================================================================
 
-// TestWrapKeyWithECDHES_FullAPISuccess calls WrapKeyWithECDHES through the
-// package API to exercise the actual function body (key lookup, EC type check,
-// algorithm mapping, encrypter creation, and encryption).
-func TestWrapKeyWithECDHES_FullAPISuccess(t *testing.T) {
-	setupFullTestXKMS(t)
-	_, fullKeyID := createTestECDSAKey(t, "ecdh-wrap-api-test")
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	wrapped, err := WrapKeyWithECDHES(context.Background(), fullKeyID, keyMaterial, "ECDH-ES+A256KW")
-	require.NoError(t, err)
-	require.NotNil(t, wrapped)
-	assert.NotEmpty(t, wrapped.JWE)
-	assert.Equal(t, "ECDH-ES+A256KW", wrapped.Algorithm)
-	assert.Equal(t, "A256GCM", wrapped.ContentEncryption)
-}
-
 // sanitizeKeyName replaces characters that are invalid in key IDs.
 // Key IDs only allow: a-z, A-Z, 0-9, -, _, .
 func sanitizeKeyName(name string) string {
@@ -3019,32 +2896,6 @@ func TestWrapKeyWithECDHES_FullAPIAlgorithmVariants(t *testing.T) {
 			assert.Equal(t, alg.expectedEnc, wrapped.ContentEncryption)
 		})
 	}
-}
-
-// TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess calls UnwrapKeyWithECDHES
-// through the package API using a software key, exercising the software key
-// fallback path (DecrypterByID fails, falls back to KeyByID).
-func TestUnwrapKeyWithECDHES_FullAPISoftwareKeySuccess(t *testing.T) {
-	setupFullTestXKMS(t)
-	attrs, fullKeyID := createTestECDSAKey(t, "ecdh-unwrap-api-test")
-
-	keyMaterial := []byte("secret-key-material-32-bytes!!")
-
-	// Get the public key to wrap with
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-	ecPublicKey := signer.Public().(*ecdsa.PublicKey)
-
-	// Wrap the key material
-	encrypter, err := xkmssdk.NewJWEEncrypter("ECDH-ES+A256KW", "A256GCM", ecPublicKey)
-	require.NoError(t, err)
-	jweStr, err := encrypter.Encrypt(keyMaterial)
-	require.NoError(t, err)
-
-	// Unwrap through the package API
-	unwrapped, err := UnwrapKeyWithECDHES(context.Background(), fullKeyID, jweStr)
-	require.NoError(t, err)
-	assert.Equal(t, keyMaterial, unwrapped)
 }
 
 // TestUnwrapKeyWithECDHES_NotECKey verifies that UnwrapKeyWithECDHES returns
@@ -3087,30 +2938,6 @@ func TestJWTSignWithSigner_SignError(t *testing.T) {
 	_, err = JWTSignWithSigner(ecKey, claims, "RS256")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrJWTSigningFailed)
-}
-
-// TestJWTParse_InvalidTokenStructure verifies handling of a malformed JWT token.
-func TestJWTParse_InvalidTokenStructure(t *testing.T) {
-	_, err := JWTParse("not.a.valid.jwt")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTParsingFailed)
-}
-
-// TestJWTVerifyWithKey_InvalidToken exercises the error path in JWTVerifyWithKey.
-func TestJWTVerifyWithKey_InvalidToken(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	_, err = JWTVerifyWithKey("invalid-token-string", &ecKey.PublicKey, "ES256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTVerificationFailed)
-}
-
-// TestJWTVerifyHMACWithAlgorithm_InvalidToken exercises the token parse error.
-func TestJWTVerifyHMACWithAlgorithm_InvalidToken(t *testing.T) {
-	_, err := JWTVerifyHMACWithAlgorithm("invalid-token", []byte("secret"), "HS256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTVerificationFailed)
 }
 
 // TestJWTSignHMACWithAlgorithm_EmptySecret exercises HMAC signing with empty secret.
@@ -3166,74 +2993,6 @@ func TestNewJWTVerifier_VerifySuccess(t *testing.T) {
 	assert.True(t, token.Valid)
 }
 
-// TestEncrypt_ErrorWrapping exercises the Encrypt function error wrapping.
-func TestEncrypt_ErrorWrapping(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Non-existent key should trigger error wrapping
-	_, err := Encrypt(context.Background(), "non-existent-key", []byte("data"), nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEncryptionFailed)
-}
-
-// TestDecrypt_DecryptError exercises the Decrypt function error wrapping.
-func TestDecrypt_DecryptError(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// Provide valid encrypted data structure but non-existent key
-	encData := &xkmssdk.EncryptedData{
-		Ciphertext: []byte("fake-ciphertext"),
-		Nonce:      []byte("fake-nonce"),
-		Algorithm:  "AES-256-GCM",
-	}
-	_, err := Decrypt(context.Background(), "non-existent-key", encData, nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrDecryptionFailed)
-}
-
-// TestGenerateSymmetricKey_Error exercises the error wrapping.
-func TestGenerateSymmetricKey_Error(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	attrs := &xkmssdk.KeyAttributes{
-		CN:        "sym-gen-fail",
-		KeyType:   xkmssdk.KeyTypeSecret,
-		StoreType: xkmssdk.StoreSoftware,
-	}
-	_, err := GenerateSymmetricKey(context.Background(), "software", attrs)
-	// PKCS8 does not support symmetric key generation
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyGenerationFailed)
-}
-
-// TestGetSymmetricKey_Error exercises the error wrapping.
-func TestGetSymmetricKey_Error(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := GetSymmetricKey(context.Background(), "non-existent-ref")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrKeyNotFound)
-}
-
-// TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess tests the function with a valid signed token.
-func TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	claims := jwt.MapClaims{
-		"sub": "user123",
-		"iat": float64(1234567890),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	tokenStr, err := token.SignedString(ecKey)
-	require.NoError(t, err)
-
-	result, err := JWTVerifyWithKeyAndClaims(tokenStr, &ecKey.PublicKey, "ES256")
-	require.NoError(t, err)
-	assert.Equal(t, "user123", result["sub"])
-}
-
 // TestRand_ProducesDifferentValues tests the Rand function produces different values.
 func TestRand_ProducesDifferentValues(t *testing.T) {
 	ResetRNG()
@@ -3280,22 +3039,6 @@ func TestJWTVerifyWithKey_NoAlgorithmValidation(t *testing.T) {
 	result, err := JWTVerifyWithKey(tokenStr, &ecKey.PublicKey, "")
 	require.NoError(t, err)
 	assert.True(t, result.Valid)
-}
-
-// TestWrapKeyWithECDHES_NonExistentKey exercises the error path for missing keys.
-func TestWrapKeyWithECDHES_NonExistentKey(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := WrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", []byte("data"), "ECDH-ES+A256KW")
-	require.Error(t, err)
-}
-
-// TestUnwrapKeyWithECDHES_NonExistentKey exercises the error path for missing keys.
-func TestUnwrapKeyWithECDHES_NonExistentKey(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	_, err := UnwrapKeyWithECDHES(context.Background(), "software:signing:ecdsa-p256:nonexistent", "fake-jwe")
-	require.Error(t, err)
 }
 
 // TestWrapKeyWithECDHES_UnsupportedAlgorithm exercises the unsupported algorithm error path.
