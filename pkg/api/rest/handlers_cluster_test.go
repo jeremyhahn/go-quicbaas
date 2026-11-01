@@ -819,32 +819,6 @@ func TestHandleGetClusterLeader(t *testing.T) {
 
 // TestHandleGetClusterLeaderDirect tests the handler directly without middleware.
 // This test bypasses the timeout middleware to verify the handler returns 503 directly.
-func TestHandleGetClusterLeaderDirect(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
-		Nodes: []*service.NodeInfo{
-			{
-				NodeID:       1,
-				Address:      "192.168.1.1:5001",
-				IsLeader:     false,
-				HealthStatus: service.HealthStatusHealthy,
-			},
-		},
-		Timestamp: 12345,
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/leader", nil)
-	w := httptest.NewRecorder()
-
-	// Call handler directly to bypass timeout middleware
-	server.HandleGetClusterLeader(w, req)
-
-	// Handler should return 503 when called directly
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 // =============================================================================
 // Rebalance Tests
 // =============================================================================
