@@ -1442,10 +1442,12 @@ func init() {
 }
 
 // =============================================================================
-// IAM App Command Tests - Factory Error Paths
+// IAM Command Tests - Factory Error Paths
 // =============================================================================
 
-func TestIAMAppRegisterCommand_FactoryError(t *testing.T) {
+// TestIAMCommands_FactoryError runs every IAM command with a client factory
+// that fails and checks that the factory error reaches the caller.
+func TestIAMCommands_FactoryError(t *testing.T) {
 	cleanup := testInitLogger(t)
 	defer cleanup()
 
@@ -1456,966 +1458,240 @@ func TestIAMAppRegisterCommand_FactoryError(t *testing.T) {
 		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
 	}
 
-	cmd := newIAMAppRegisterCommand()
-	iamAppName = "test-app"
-	globalTenantID = "tenant_test"
+	tests := []struct {
+		name   string
+		newCmd func() *cobra.Command
+		run    func(*cobra.Command, []string) error
+		args   []string
+		// setup sets the flag variables after the command is built,
+		// because building a command resets them to their defaults.
+		setup func()
+	}{
+		// App
+		{"app register", newIAMAppRegisterCommand, runIAMAppRegisterCommand, nil, func() {
+			iamAppName = "test-app"
+			globalTenantID = "tenant_test"
+		}},
+		{"app get", newIAMAppGetCommand, runIAMAppGetCommand, []string{"app_test123"}, nil},
+		{"app update", newIAMAppUpdateCommand, runIAMAppUpdateCommand, []string{"app_test123"}, nil},
+		{"app delete", newIAMAppDeleteCommand, runIAMAppDeleteCommand, []string{"app_test123"}, func() {
+			iamForce = true
+		}},
+		{"app list", newIAMAppListCommand, runIAMAppListCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"app rotate-secret", newIAMAppRotateSecretCommand, runIAMAppRotateSecretCommand, []string{"app_test123"}, nil},
 
-	err := runIAMAppRegisterCommand(cmd, []string{})
-	assert.Error(t, err)
-}
+		// Audit
+		{"audit query", newIAMAuditQueryCommand, runIAMAuditQueryCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"audit get", newIAMAuditGetCommand, runIAMAuditGetCommand, []string{"event_test123"}, nil},
 
-func TestIAMAppGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
+		// GDPR
+		{"gdpr consent grant", newIAMGDPRConsentGrantCommand, runIAMGDPRConsentGrantCommand, nil, func() {
+			gdprUserID = "user_test123"
+			gdprPurpose = "marketing"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr consent withdraw", newIAMGDPRConsentWithdrawCommand, runIAMGDPRConsentWithdrawCommand, nil, func() {
+			gdprUserID = "user_test123"
+			gdprPurpose = "marketing"
+			globalTenantID = "tenant_test"
+			iamForce = true
+		}},
+		{"gdpr consent get", newIAMGDPRConsentGetCommand, runIAMGDPRConsentGetCommand, nil, func() {
+			gdprUserID = "user_test123"
+			gdprPurpose = "marketing"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr consent list", newIAMGDPRConsentListCommand, runIAMGDPRConsentListCommand, nil, func() {
+			gdprUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr export request", newIAMGDPRExportRequestCommand, runIAMGDPRExportRequestCommand, nil, func() {
+			gdprUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr export status", newIAMGDPRExportStatusCommand, runIAMGDPRExportStatusCommand, nil, func() {
+			gdprExportID = "req_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr deletion request", newIAMGDPRDeletionRequestCommand, runIAMGDPRDeletionRequestCommand, nil, func() {
+			gdprUserID = "user_test123"
+			globalTenantID = "tenant_test"
+			iamForce = true
+		}},
+		{"gdpr deletion cancel", newIAMGDPRDeletionCancelCommand, runIAMGDPRDeletionCancelCommand, nil, func() {
+			gdprDeletionID = "req_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"gdpr deletion status", newIAMGDPRDeletionStatusCommand, runIAMGDPRDeletionStatusCommand, nil, func() {
+			gdprDeletionID = "req_test123"
+			globalTenantID = "tenant_test"
+		}},
 
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
+		// Role
+		{"role create", newIAMRoleCreateCommand, runIAMRoleCreateCommand, []string{"role_test"}, func() {
+			iamRoleName = "test-role"
+			globalTenantID = "tenant_test"
+		}},
+		{"role get", newIAMRoleGetCommand, runIAMRoleGetCommand, []string{"role_test123"}, func() {
+			iamRoleID = "role_test123"
+		}},
+		{"role update", newIAMRoleUpdateCommand, runIAMRoleUpdateCommand, []string{"role_test123"}, func() {
+			iamRoleID = "role_test123"
+		}},
+		{"role delete", newIAMRoleDeleteCommand, runIAMRoleDeleteCommand, []string{"role_test123"}, func() {
+			iamRoleID = "role_test123"
+		}},
+		{"role list", newIAMRoleListCommand, runIAMRoleListCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"role assign", newIAMRoleAssignCommand, runIAMRoleAssignCommand, []string{"role_test123", "user_test123"}, func() {
+			iamRoleID = "role_test123"
+			iamRoleUserID = "user_test123"
+		}},
+		{"role revoke", newIAMRoleRevokeCommand, runIAMRoleRevokeCommand, []string{"role_test123", "user_test123"}, func() {
+			iamRoleID = "role_test123"
+			iamRoleUserID = "user_test123"
+		}},
 
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+		// Policy
+		{"policy apply", newIAMPolicyApplyCommand, runIAMPolicyApplyCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"policy get", newIAMPolicyGetCommand, runIAMPolicyGetCommand, []string{"policy_test123"}, nil},
+		{"policy delete", newIAMPolicyDeleteCommand, runIAMPolicyDeleteCommand, []string{"policy_test123"}, nil},
+		{"policy list", newIAMPolicyListCommand, runIAMPolicyListCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"policy validate", newIAMPolicyValidateCommand, runIAMPolicyValidateCommand, []string{`{"effect": "allow"}`}, nil},
+		{"policy test", newIAMPolicyTestCommand, runIAMPolicyTestCommand, []string{"policy_test123"}, func() {
+			iamPolicySubject = "user_test123"
+			iamPolicyAction = "read"
+			iamPolicyResource = "document/123"
+			globalTenantID = "tenant_test"
+		}},
+
+		// Session
+		{"session list", newIAMSessionListCommand, runIAMSessionListCommand, nil, func() {
+			sessionUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"session get", newIAMSessionGetCommand, runIAMSessionGetCommand, []string{"session_test123"}, nil},
+		{"session revoke", newIAMSessionRevokeCommand, runIAMSessionRevokeCommand, []string{"session_test123"}, nil},
+		{"session revoke-all", newIAMSessionRevokeAllCommand, runIAMSessionRevokeAllCommand, nil, func() {
+			sessionUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+
+		// MFA
+		{"mfa status", newMFAStatusCommand, runMFAStatusCommand, nil, func() {
+			mfaUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"mfa enroll", newMFAEnrollCommand, runMFAEnrollCommand, nil, func() {
+			mfaUserID = "user_test123"
+			mfaMethod = "totp"
+			globalTenantID = "tenant_test"
+		}},
+		{"mfa verify", newMFAVerifyCommand, runMFAVerifyCommand, []string{"enroll_test123"}, func() {
+			mfaCode = "123456"
+		}},
+		{"mfa disable", newMFADisableCommand, runMFADisableCommand, nil, func() {
+			mfaUserID = "user_test123"
+			globalTenantID = "tenant_test"
+			iamForce = true
+		}},
+		{"mfa backup-codes status", newMFABackupCodesStatusCommand, runMFABackupCodesStatusCommand, nil, func() {
+			mfaUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"mfa backup-codes generate", newMFABackupCodesGenerateCommand, runMFABackupCodesGenerateCommand, nil, func() {
+			mfaUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
+
+		// PEP
+		{"pep check", newIAMPEPCheckCommand, runIAMPEPCheckCommand, nil, func() {
+			pepSubject = "user_test123"
+			pepAction = "read"
+			pepResource = "document/123"
+			globalTenantID = "tenant_test"
+		}},
+		{"pep check-batch", newIAMPEPCheckBatchCommand, runIAMPEPCheckBatchCommand, nil, func() {
+			pepFile = ""
+			globalTenantID = "tenant_test"
+		}},
+
+		// Federation
+		{"provider create", newIAMProviderCreateCommand, runIAMProviderCreateCommand, nil, func() {
+			providerName = "test-provider"
+			providerType = "oidc"
+			globalTenantID = "tenant_test"
+		}},
+		{"provider get", newIAMProviderGetCommand, runIAMProviderGetCommand, nil, func() {
+			providerID = "provider_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"provider update", newIAMProviderUpdateCommand, runIAMProviderUpdateCommand, nil, func() {
+			providerID = "provider_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"provider delete", newIAMProviderDeleteCommand, runIAMProviderDeleteCommand, nil, func() {
+			providerID = "provider_test123"
+			globalTenantID = "tenant_test"
+			iamForce = true
+		}},
+		{"provider list", newIAMProviderListCommand, runIAMProviderListCommand, nil, func() {
+			globalTenantID = "tenant_test"
+		}},
+		{"identity link", newIAMIdentityLinkCommand, runIAMIdentityLinkCommand, nil, func() {
+			identityUserID = "user_test123"
+			identityProviderID = "provider_test123"
+			globalTenantID = "tenant_test"
+		}},
+		{"identity unlink", newIAMIdentityUnlinkCommand, runIAMIdentityUnlinkCommand, nil, func() {
+			identityUserID = "user_test123"
+			identityProviderID = "provider_test123"
+			globalTenantID = "tenant_test"
+			iamForce = true
+		}},
+		{"identity list", newIAMIdentityListCommand, runIAMIdentityListCommand, nil, func() {
+			identityUserID = "user_test123"
+			globalTenantID = "tenant_test"
+		}},
 	}
 
-	cmd := newIAMAppGetCommand()
-
-	err := runIAMAppGetCommand(cmd, []string{"app_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMAppUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+	// These commands reject their input before they build a client, so the
+	// row checks the input error instead of the factory error.
+	inputErrors := map[string]string{
+		"app update":      "at least one of --name, --redirect-uri, or --redirect-uris must be specified",
+		"role update":     "at least one of --name or --description must be specified",
+		"policy apply":    "failed to read policy file",
+		"policy validate": "failed to read policy file",
+		"policy test":     "failed to parse subject JSON",
+		"pep check":       "failed to parse subject JSON",
+		"pep check-batch": "failed to read batch file",
+		"provider create": "either --provider or --provider-id is required",
+		"provider update": "at least one update flag must be specified",
 	}
 
-	cmd := newIAMAppUpdateCommand()
-
-	err := runIAMAppUpdateCommand(cmd, []string{"app_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMAppDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.newCmd()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			wantErr, ok := inputErrors[tt.name]
+			if !ok {
+				wantErr = "connection failed"
+			}
+			err := tt.run(cmd, tt.args)
+			assert.ErrorContains(t, err, wantErr)
+		})
 	}
-
-	cmd := newIAMAppDeleteCommand()
-	iamForce = true
-
-	err := runIAMAppDeleteCommand(cmd, []string{"app_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMAppListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAppListCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMAppListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAppRotateSecretCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAppRotateSecretCommand()
-
-	err := runIAMAppRotateSecretCommand(cmd, []string{"app_test123"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Audit Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMAuditQueryCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAuditQueryCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMAuditQueryCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAuditGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAuditGetCommand()
-
-	err := runIAMAuditGetCommand(cmd, []string{"event_test123"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM GDPR Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMGDPRConsentGrantCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRConsentGrantCommand()
-	gdprUserID = "user_test123"
-	gdprPurpose = "marketing"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRConsentGrantCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRConsentWithdrawCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRConsentWithdrawCommand()
-	gdprUserID = "user_test123"
-	gdprPurpose = "marketing"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMGDPRConsentWithdrawCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRConsentGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRConsentGetCommand()
-	gdprUserID = "user_test123"
-	gdprPurpose = "marketing"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRConsentGetCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRConsentListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRConsentListCommand()
-	gdprUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRConsentListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRExportRequestCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRExportRequestCommand()
-	gdprUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRExportRequestCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRExportStatusCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRExportStatusCommand()
-	gdprExportID = "req_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRExportStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRDeletionRequestCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRDeletionRequestCommand()
-	gdprUserID = "user_test123"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMGDPRDeletionRequestCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRDeletionCancelCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRDeletionCancelCommand()
-	gdprDeletionID = "req_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRDeletionCancelCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMGDPRDeletionStatusCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMGDPRDeletionStatusCommand()
-	gdprDeletionID = "req_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMGDPRDeletionStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Group Command Tests - Factory Error Paths
-// =============================================================================
-
-// =============================================================================
-// IAM Role Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMRoleCreateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleCreateCommand()
-	iamRoleName = "test-role"
-	globalTenantID = "tenant_test"
-
-	err := runIAMRoleCreateCommand(cmd, []string{"role_test"})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleGetCommand()
-	iamRoleID = "role_test123"
-
-	err := runIAMRoleGetCommand(cmd, []string{"role_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleUpdateCommand()
-	iamRoleID = "role_test123"
-
-	err := runIAMRoleUpdateCommand(cmd, []string{"role_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleDeleteCommand()
-	iamRoleID = "role_test123"
-
-	err := runIAMRoleDeleteCommand(cmd, []string{"role_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleListCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMRoleListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleAssignCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleAssignCommand()
-	iamRoleID = "role_test123"
-	iamRoleUserID = "user_test123"
-
-	err := runIAMRoleAssignCommand(cmd, []string{"role_test123", "user_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMRoleRevokeCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMRoleRevokeCommand()
-	iamRoleID = "role_test123"
-	iamRoleUserID = "user_test123"
-
-	err := runIAMRoleRevokeCommand(cmd, []string{"role_test123", "user_test123"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Policy Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMPolicyApplyCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyApplyCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMPolicyApplyCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMPolicyGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyGetCommand()
-
-	err := runIAMPolicyGetCommand(cmd, []string{"policy_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMPolicyDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyDeleteCommand()
-
-	err := runIAMPolicyDeleteCommand(cmd, []string{"policy_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMPolicyListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyListCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMPolicyListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMPolicyValidateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyValidateCommand()
-
-	err := runIAMPolicyValidateCommand(cmd, []string{`{"effect": "allow"}`})
-	assert.Error(t, err)
-}
-
-func TestIAMPolicyTestCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPolicyTestCommand()
-	iamPolicySubject = "user_test123"
-	iamPolicyAction = "read"
-	iamPolicyResource = "document/123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMPolicyTestCommand(cmd, []string{"policy_test123"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Session Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMSessionListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMSessionListCommand()
-	sessionUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMSessionListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMSessionGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMSessionGetCommand()
-
-	err := runIAMSessionGetCommand(cmd, []string{"session_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMSessionRevokeCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMSessionRevokeCommand()
-
-	err := runIAMSessionRevokeCommand(cmd, []string{"session_test123"})
-	assert.Error(t, err)
-}
-
-func TestIAMSessionRevokeAllCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMSessionRevokeAllCommand()
-	sessionUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMSessionRevokeAllCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM MFA Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestMFAStatusCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFAStatusCommand()
-	mfaUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runMFAStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestMFAEnrollCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFAEnrollCommand()
-	mfaUserID = "user_test123"
-	mfaMethod = "totp"
-	globalTenantID = "tenant_test"
-
-	err := runMFAEnrollCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestMFAVerifyCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFAVerifyCommand()
-	mfaCode = "123456"
-
-	err := runMFAVerifyCommand(cmd, []string{"enroll_test123"})
-	assert.Error(t, err)
-}
-
-func TestMFADisableCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFADisableCommand()
-	mfaUserID = "user_test123"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runMFADisableCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestMFABackupCodesStatusCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFABackupCodesStatusCommand()
-	mfaUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runMFABackupCodesStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestMFABackupCodesGenerateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newMFABackupCodesGenerateCommand()
-	mfaUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runMFABackupCodesGenerateCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM PEP Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMPEPCheckCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPEPCheckCommand()
-	pepSubject = "user_test123"
-	pepAction = "read"
-	pepResource = "document/123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMPEPCheckCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMPEPCheckBatchCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMPEPCheckBatchCommand()
-	pepFile = ""
-	globalTenantID = "tenant_test"
-
-	err := runIAMPEPCheckBatchCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Federation Command Tests - Factory Error Paths
-// =============================================================================
-
-func TestIAMProviderCreateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMProviderCreateCommand()
-	providerName = "test-provider"
-	providerType = "oidc"
-	globalTenantID = "tenant_test"
-
-	err := runIAMProviderCreateCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMProviderGetCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMProviderGetCommand()
-	providerID = "provider_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMProviderGetCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMProviderUpdateCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMProviderUpdateCommand()
-	providerID = "provider_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMProviderUpdateCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMProviderDeleteCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMProviderDeleteCommand()
-	providerID = "provider_test123"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMProviderDeleteCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMProviderListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMProviderListCommand()
-	globalTenantID = "tenant_test"
-
-	err := runIAMProviderListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMIdentityLinkCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMIdentityLinkCommand()
-	identityUserID = "user_test123"
-	identityProviderID = "provider_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMIdentityLinkCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMIdentityUnlinkCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMIdentityUnlinkCommand()
-	identityUserID = "user_test123"
-	identityProviderID = "provider_test123"
-	globalTenantID = "tenant_test"
-	iamForce = true
-
-	err := runIAMIdentityUnlinkCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMIdentityListCommand_FactoryError(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMIdentityListCommand()
-	identityUserID = "user_test123"
-	globalTenantID = "tenant_test"
-
-	err := runIAMIdentityListCommand(cmd, []string{})
-	assert.Error(t, err)
 }
 
 // =============================================================================
