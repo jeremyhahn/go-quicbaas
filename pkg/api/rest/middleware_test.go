@@ -762,41 +762,6 @@ func BenchmarkMetricsMiddleware(b *testing.B) {
 	}
 }
 
-func TestRateLimitMiddlewareDisabledZero(t *testing.T) {
-	// Test with rate limit disabled (0)
-	middleware := RateLimitMiddleware(0)
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRateLimitMiddlewareNegativeValue(t *testing.T) {
-	middleware := RateLimitMiddleware(-1)
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCORSMiddlewareOptionsPreflightRequest(t *testing.T) {
 	middleware := CORSMiddleware([]string{"https://example.com"})
 
@@ -815,108 +780,6 @@ func TestCORSMiddlewareOptionsPreflightRequest(t *testing.T) {
 	// OPTIONS should return 204 No Content
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestGetClientIPWithVariousHeaders(t *testing.T) {
-	tests := []struct {
-		name       string
-		headers    map[string]string
-		remoteAddr string
-		expected   string
-	}{
-		{
-			name: "X-Forwarded-For with multiple IPs",
-			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.1, 10.0.0.1, 172.16.0.1",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.168.1.1",
-		},
-		{
-			name: "X-Forwarded-For single IP",
-			headers: map[string]string{
-				"X-Forwarded-For": "192.168.1.100",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "192.168.1.100",
-		},
-		{
-			name: "X-Real-IP header",
-			headers: map[string]string{
-				"X-Real-IP": "10.10.10.10",
-			},
-			remoteAddr: "127.0.0.1:8080",
-			expected:   "10.10.10.10",
-		},
-		{
-			name:       "RemoteAddr with port",
-			headers:    map[string]string{},
-			remoteAddr: "192.168.2.1:54321",
-			expected:   "192.168.2.1",
-		},
-		{
-			name:       "RemoteAddr without port",
-			headers:    map[string]string{},
-			remoteAddr: "192.168.3.1",
-			expected:   "192.168.3.1",
-		},
-		{
-			name:       "IPv6 address",
-			headers:    map[string]string{},
-			remoteAddr: "[::1]:8080",
-			// Bare, not "[::1]". net/http brackets an IPv6 peer; the brackets
-			// are transport syntax, not part of the address, and the old
-			// expectation kept them -- so this value reached the rate limiter
-			// as a key no IP parser accepts, and audit records as a
-			// non-address.
-			expected: "::1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-			req.RemoteAddr = tt.remoteAddr
-
-			// See resolvedViaOwnPeer: this table is about header parsing, not
-			// about which peers are believed.
-			assert.Equal(t, tt.expected, resolvedViaOwnPeer(t, req))
-		})
-	}
-}
-
-func TestRateLimiterAllowAndDenyBehavior(t *testing.T) {
-	// Create a rate limiter with 2 requests per second
-	rl := newRateLimiter(2)
-
-	// First two requests should be allowed
-	assert.True(t, rl.Allow("client1"))
-	assert.True(t, rl.Allow("client1"))
-
-	// Third request should be denied (bucket empty)
-	assert.False(t, rl.Allow("client1"))
-
-	// Different client should be allowed
-	assert.True(t, rl.Allow("client2"))
-}
-
-func TestTokenBucketConsumeLogic(t *testing.T) {
-	tb := &tokenBucket{
-		tokens:   2.0,
-		capacity: 5.0,
-		rate:     1.0,
-	}
-
-	// Should consume successfully
-	assert.True(t, tb.consume())
-	assert.True(t, tb.consume())
-
-	// Should fail when no tokens
-	tb.tokens = 0.5
-	assert.False(t, tb.consume())
 }
 
 func TestRateLimitErrorMessageFormatting(t *testing.T) {
@@ -1108,38 +971,6 @@ func TestCORSMiddlewareOptionsWithDisallowedOrigin(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
-func TestRateLimiterDoubleCheckLocking(t *testing.T) {
-	rl := newRateLimiter(10)
-
-	// First call creates the bucket
-	rl.Allow("test-client")
-
-	// Second call uses existing bucket
-	rl.Allow("test-client")
-
-	// Verify bucket exists
-	rl.mu.RLock()
-	_, exists := rl.buckets["test-client"]
-	rl.mu.RUnlock()
-
-	assert.True(t, exists)
-}
-
-func TestTokenBucketRefill(t *testing.T) {
-	now := time.Now()
-	tb := &tokenBucket{
-		tokens:    0.0,
-		capacity:  5.0,
-		rate:      10.0, // 10 tokens per second
-		lastCheck: now.Add(-1 * time.Second),
-	}
-
-	// After 1 second with rate of 10/sec, should have ~10 tokens (capped at capacity)
-	result := tb.consume()
-	assert.True(t, result, "Should have tokens after refill")
-	assert.LessOrEqual(t, tb.tokens, tb.capacity)
-}
-
 func TestRateLimiterAllowNewClient(t *testing.T) {
 	t.Run("allows first request from new client", func(t *testing.T) {
 		rl := newRateLimiter(10)
@@ -1179,48 +1010,6 @@ func TestRateLimiterAllowNewClient(t *testing.T) {
 	})
 }
 
-func TestTokenBucketConsumeViaRateLimiter(t *testing.T) {
-	t.Run("consume returns true when tokens available", func(t *testing.T) {
-		// Use the rate limiter to properly initialize the bucket
-		rl := newRateLimiter(5)
-		defer rl.cleanup.Stop()
-
-		// First call creates bucket with tokens = capacity
-		allowed := rl.Allow("test-client")
-		assert.True(t, allowed)
-
-		// Check remaining tokens via subsequent allows
-		for i := 0; i < 4; i++ {
-			assert.True(t, rl.Allow("test-client"))
-		}
-
-		// Should be denied now
-		assert.False(t, rl.Allow("test-client"))
-	})
-
-	t.Run("consume returns false when no tokens", func(t *testing.T) {
-		rl := newRateLimiter(1)
-		defer rl.cleanup.Stop()
-
-		// Use the only token
-		assert.True(t, rl.Allow("test-client"))
-
-		// Should be denied
-		assert.False(t, rl.Allow("test-client"))
-	})
-
-	t.Run("tokens cap at capacity", func(t *testing.T) {
-		rl := newRateLimiter(3)
-		defer rl.cleanup.Stop()
-
-		// Use all tokens
-		assert.True(t, rl.Allow("test-client"))
-		assert.True(t, rl.Allow("test-client"))
-		assert.True(t, rl.Allow("test-client"))
-		assert.False(t, rl.Allow("test-client"))
-	})
-}
-
 // TestGetClientIP covers header parsing FROM A TRUSTED PROXY. The subtests
 // below used to call getClientIP on a request from an arbitrary peer and assert
 // the header won; that is the #156 defect, and it is now covered from the other
@@ -1228,114 +1017,118 @@ func TestTokenBucketConsumeViaRateLimiter(t *testing.T) {
 // X-Real-IP fallback, precedence between the two -- is still real logic, so it
 // is exercised the way a deployment reaches it: through a configured proxy.
 func TestGetClientIP(t *testing.T) {
-	t.Run("extracts from X-Forwarded-For", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "203.0.113.195")
-
-		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("extracts first IP from X-Forwarded-For chain", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
-
-		assert.Equal(t, "203.0.113.195", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("extracts from X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "192.168.1.100")
-
-		assert.Equal(t, "192.168.1.100", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("prefers X-Forwarded-For over X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "10.0.0.1")
-		req.Header.Set("X-Real-IP", "10.0.0.2")
-
-		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("falls back to RemoteAddr", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = "127.0.0.1:12345"
-
-		ip := getClientIP(req)
-		assert.Equal(t, "127.0.0.1", ip)
-	})
-
-	t.Run("handles RemoteAddr without port", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = "127.0.0.1"
-
-		ip := getClientIP(req)
-		assert.Equal(t, "127.0.0.1", ip)
-	})
-
-	t.Run("trims whitespace from headers", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Forwarded-For", "  10.0.0.1  ")
-
-		assert.Equal(t, "10.0.0.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-
-	t.Run("trims whitespace from X-Real-IP", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.RemoteAddr = trustedPeer
-		req.Header.Set("X-Real-IP", "  192.168.1.1  ")
-
-		assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, req))
-	})
-}
-
-func TestRateLimitMiddlewareDisabled(t *testing.T) {
-	t.Run("disabled with zero rate", func(t *testing.T) {
-		middleware := RateLimitMiddleware(0)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		for i := 0; i < 100; i++ {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			w := httptest.NewRecorder()
-			wrappedHandler.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusOK, w.Code)
-		}
-	})
-
-	t.Run("disabled with negative rate", func(t *testing.T) {
-		middleware := RateLimitMiddleware(-1)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		w := httptest.NewRecorder()
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-}
-
-func TestRateLimitErrorType(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
+	tests := []struct {
+		name       string
+		headers    map[string]string
+		remoteAddr string
+		// direct calls getClientIP with no ClientIPMiddleware in front, the
+		// fallback a handler sees when no resolver ran.
+		direct   bool
+		expected string
+	}{
+		{
+			name:       "X-Forwarded-For single IP",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.195"},
+			remoteAddr: trustedPeer,
+			expected:   "203.0.113.195",
+		},
+		{
+			name:       "X-Forwarded-For chain yields first IP",
+			headers:    map[string]string{"X-Forwarded-For": "203.0.113.195, 70.41.3.18, 150.172.238.178"},
+			remoteAddr: trustedPeer,
+			expected:   "203.0.113.195",
+		},
+		{
+			name:       "X-Real-IP",
+			headers:    map[string]string{"X-Real-IP": "192.168.1.100"},
+			remoteAddr: trustedPeer,
+			expected:   "192.168.1.100",
+		},
+		{
+			name:       "X-Forwarded-For preferred over X-Real-IP",
+			headers:    map[string]string{"X-Forwarded-For": "10.0.0.1", "X-Real-IP": "10.0.0.2"},
+			remoteAddr: trustedPeer,
+			expected:   "10.0.0.1",
+		},
+		{
+			name:       "X-Forwarded-For whitespace trimmed",
+			headers:    map[string]string{"X-Forwarded-For": "  10.0.0.1  "},
+			remoteAddr: trustedPeer,
+			expected:   "10.0.0.1",
+		},
+		{
+			name:       "X-Real-IP whitespace trimmed",
+			headers:    map[string]string{"X-Real-IP": "  192.168.1.1  "},
+			remoteAddr: trustedPeer,
+			expected:   "192.168.1.1",
+		},
+		{
+			name:       "RemoteAddr with port",
+			remoteAddr: "127.0.0.1:12345",
+			direct:     true,
+			expected:   "127.0.0.1",
+		},
+		{
+			name:       "RemoteAddr without port",
+			remoteAddr: "127.0.0.1",
+			direct:     true,
+			expected:   "127.0.0.1",
+		},
+		{
+			name:       "IPv6 RemoteAddr",
+			remoteAddr: "[::1]:8080",
+			// Bare, not "[::1]". net/http brackets an IPv6 peer; the brackets
+			// are transport syntax, not part of the address, and the old
+			// expectation kept them -- so this value reached the rate limiter
+			// as a key no IP parser accepts, and audit records as a
+			// non-address.
+			expected: "::1",
+		},
 	}
 
-	assert.Equal(t, "rate limit exceeded: 100 requests per 1s", err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			req.RemoteAddr = tt.remoteAddr
+
+			if tt.direct {
+				assert.Equal(t, tt.expected, getClientIP(req))
+				return
+			}
+			// See resolvedViaOwnPeer: this table is about header parsing, not
+			// about which peers are believed.
+			assert.Equal(t, tt.expected, resolvedViaOwnPeer(t, req))
+		})
+	}
+}
+
+// TestRateLimitMiddlewareDisabled checks that a zero or negative rate turns
+// the limiter off: a burst far past any bucket is served in full.
+func TestRateLimitMiddlewareDisabled(t *testing.T) {
+	tests := []struct {
+		name string
+		rate int
+	}{
+		{name: "zero rate", rate: 0},
+		{name: "negative rate", rate: -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrappedHandler := RateLimitMiddleware(tt.rate)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			for i := 0; i < 100; i++ {
+				req := httptest.NewRequest(http.MethodGet, "/test", nil)
+				w := httptest.NewRecorder()
+				wrappedHandler.ServeHTTP(w, req)
+				assert.Equal(t, http.StatusOK, w.Code)
+			}
+		})
+	}
 }
 
 func TestTokenBucketDirectConsume(t *testing.T) {
@@ -1453,52 +1246,4 @@ func TestCORSMiddlewarePreflightRequest(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, w.Code)
 		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 	})
-}
-
-func TestRateLimitError_Error(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
-	}
-
-	errMsg := err.Error()
-	assert.Contains(t, errMsg, "rate limit exceeded")
-	assert.Contains(t, errMsg, "100")
-	assert.Contains(t, errMsg, "1s")
-}
-
-// Header parsing, reached from a configured proxy — see TestGetClientIP.
-func TestGetClientIP_XForwardedFor(t *testing.T) {
-	// Test X-Forwarded-For with single IP
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.168.1.1")
-	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
-
-	// Test X-Forwarded-For with multiple IPs
-	r = httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Forwarded-For", "192.168.1.1, 10.0.0.1, 172.16.0.1")
-	assert.Equal(t, "192.168.1.1", resolvedVia(t, []string{trustedProxyCIDR}, r))
-}
-
-func TestGetClientIP_XRealIP(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = trustedPeer
-	r.Header.Set("X-Real-IP", "192.168.1.2")
-	assert.Equal(t, "192.168.1.2", resolvedVia(t, []string{trustedProxyCIDR}, r))
-}
-
-func TestGetClientIP_RemoteAddr(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.168.1.3:54321"
-	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.3", ip)
-}
-
-func TestGetClientIP_RemoteAddrNoPort(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/test", nil)
-	r.RemoteAddr = "192.168.1.4"
-	ip := getClientIP(r)
-	assert.Equal(t, "192.168.1.4", ip)
 }
