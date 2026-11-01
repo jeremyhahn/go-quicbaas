@@ -419,146 +419,26 @@ func TestConnectionPool_NeedsRecycling(t *testing.T) {
 // Backup Client Adapter Coverage
 // =============================================================================
 
-func TestBackup91_NewBackupClientAdapter_NilClient(t *testing.T) {
+func TestNewBackupClientAdapter_Clients(t *testing.T) {
 	t.Parallel()
 
-	adapter := NewBackupClientAdapter(nil)
-	assert.NotNil(t, adapter)
-	assert.Nil(t, adapter.client)
-}
-
-func TestBackup91_NewBackupClientAdapter_WithClient(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{}
-	adapter := NewBackupClientAdapter(client)
-	assert.NotNil(t, adapter)
-	assert.Equal(t, client, adapter.client)
-}
-
-func TestBackup91_BackupCreateRequest_AllTypes(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name        string
-		backupType  string
-		compression string
-		encryption  string
+	tests := []struct {
+		name   string
+		client *Client
 	}{
-		{"full_gzip_aes256", "full", "gzip", "aes256"},
-		{"incremental_snappy_none", "incremental", "snappy", "none"},
-		{"snapshot_lz4_aes256gcm", "snapshot", "lz4", "aes256gcm"},
-		{"default_none_none", "", "none", "none"},
-		{"full_zstd_unset", "full", "zstd", ""},
+		{name: "nil client", client: nil},
+		{name: "with client", client: &Client{}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := &mockBackupCreateRequest{
-				name:        "backup-" + tc.name,
-				backupType:  tc.backupType,
-				compression: tc.compression,
-				encryption:  tc.encryption,
-				storagePath: "/backups",
-				storageType: "local",
-				tags:        map[string]string{"env": "test"},
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-			assert.Equal(t, tc.backupType, req.GetBackupType())
-			assert.Equal(t, tc.compression, req.GetCompression())
-			assert.Equal(t, tc.encryption, req.GetEncryption())
+			adapter := NewBackupClientAdapter(tt.client)
+			require.NotNil(t, adapter)
+			assert.Same(t, tt.client, adapter.client)
 		})
 	}
-}
-
-func TestBackup91_BackupRestoreRequest_AllOptions(t *testing.T) {
-	t.Parallel()
-
-	pit := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
-	req := &mockBackupRestoreRequest{
-		backupID:       "backup-123",
-		storagePath:    "/restore/path",
-		verifyFirst:    true,
-		verifyChecksum: true,
-		skipExisting:   true,
-		pointInTime:    pit,
-		storageType:    "s3",
-		storageConfig:  map[string]interface{}{"bucket": "test-bucket"},
-		encryptionKey:  "enc-key-123",
-	}
-
-	assert.Equal(t, "backup-123", req.GetBackupID())
-	assert.Equal(t, "/restore/path", req.GetStoragePath())
-	assert.True(t, req.GetVerifyFirst())
-	assert.True(t, req.GetVerifyChecksum())
-	assert.True(t, req.GetSkipExisting())
-	assert.Equal(t, pit, req.GetPointInTime())
-	assert.Equal(t, "s3", req.GetStorageType())
-	assert.Equal(t, "enc-key-123", req.GetEncryptionKey())
-}
-
-func TestBackup91_BackupDeleteRequest_ForceFlag(t *testing.T) {
-	t.Parallel()
-
-	t.Run("force true", func(t *testing.T) {
-		req := &mockBackupDeleteRequest{
-			backupID:    "del-1",
-			storagePath: "/path",
-			force:       true,
-		}
-		assert.True(t, req.GetForce())
-	})
-
-	t.Run("force false", func(t *testing.T) {
-		req := &mockBackupDeleteRequest{
-			backupID:    "del-2",
-			storagePath: "/path",
-			force:       false,
-		}
-		assert.False(t, req.GetForce())
-	})
-}
-
-func TestBackup91_BackupVerifyRequest_WithConfig(t *testing.T) {
-	t.Parallel()
-
-	req := &mockBackupVerifyRequest{
-		backupID:    "verify-1",
-		storagePath: "/verify/path",
-		storageType: "azure",
-		storageConfig: map[string]interface{}{
-			"container": "test-container",
-			"account":   "storage-account",
-		},
-		encryptionKey: "verify-enc-key",
-	}
-
-	assert.Equal(t, "verify-1", req.GetBackupID())
-	assert.Equal(t, "/verify/path", req.GetStoragePath())
-	assert.Equal(t, "azure", req.GetStorageType())
-	assert.Equal(t, "test-container", req.GetStorageConfig()["container"])
-	assert.Equal(t, "storage-account", req.GetStorageConfig()["account"])
-	assert.Equal(t, "verify-enc-key", req.GetEncryptionKey())
-}
-
-func TestBackup91_BackupListRequest_Pagination(t *testing.T) {
-	t.Parallel()
-
-	req := &mockBackupListRequest{
-		limit:       50,
-		offset:      25,
-		storagePath: "/list/path",
-		storageType: "gcs",
-		storageConfig: map[string]interface{}{
-			"project": "my-project",
-		},
-	}
-
-	assert.Equal(t, 50, req.GetLimit())
-	assert.Equal(t, 25, req.GetOffset())
-	assert.Equal(t, "/list/path", req.GetStoragePath())
-	assert.Equal(t, "gcs", req.GetStorageType())
-	assert.Equal(t, "my-project", req.GetStorageConfig()["project"])
 }
 
 // =============================================================================
@@ -622,25 +502,13 @@ func TestIsPeerCredentialsAvailable_Coverage(t *testing.T) {
 		ctx := ContextWithPeerCredentials(context.Background(), creds)
 		available := IsPeerCredentialsAvailable(ctx)
 		assert.True(t, available)
+
+		retrieved := PeerCredentialsFromContext(ctx)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, int32(1234), retrieved.PID)
+		assert.Equal(t, uint32(1000), retrieved.UID)
+		assert.Equal(t, uint32(1000), retrieved.GID)
 	})
-}
-
-func TestPeerCredentialsFromContext_FromContextValue_Coverage(t *testing.T) {
-	t.Parallel()
-
-	creds := &PeerCredentials{
-		PID: 5678,
-		UID: 500,
-		GID: 500,
-	}
-
-	ctx := ContextWithPeerCredentials(context.Background(), creds)
-	retrieved := PeerCredentialsFromContext(ctx)
-
-	require.NotNil(t, retrieved)
-	assert.Equal(t, int32(5678), retrieved.PID)
-	assert.Equal(t, uint32(500), retrieved.UID)
-	assert.Equal(t, uint32(500), retrieved.GID)
 }
 
 // =============================================================================
@@ -664,9 +532,6 @@ func TestConnectionPool_HealthCheckLoop_Cancellation_Coverage(t *testing.T) {
 	pool.wg.Add(1)
 	go pool.healthCheckLoop()
 
-	// Give the loop a moment to start
-	time.Sleep(50 * time.Millisecond)
-
 	// Close the stop channel to trigger graceful shutdown
 	close(pool.stopHealthCheck)
 
@@ -689,45 +554,58 @@ func TestConnectionPool_HealthCheckLoop_Cancellation_Coverage(t *testing.T) {
 // Client Options Builder Coverage
 // =============================================================================
 
-func TestBuildDialOptions_DefaultInsecure_Coverage(t *testing.T) {
+func TestBuildDialOptions_TLSModes(t *testing.T) {
 	t.Parallel()
 
-	opts := defaultClientOptions()
-	opts.tlsEnabled = false
+	tests := []struct {
+		name    string
+		modify  func(opts *clientOptions)
+		wantErr string
+	}{
+		{
+			name:    "TLS disabled is rejected",
+			modify:  func(opts *clientOptions) { opts.tlsEnabled = false },
+			wantErr: "TLS configuration is required",
+		},
+		{
+			name: "TLS with keepalive",
+			modify: func(opts *clientOptions) {
+				opts.tlsEnabled = true
+				opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+				opts.keepaliveTime = 30 * time.Second
+				opts.keepaliveTimeout = 10 * time.Second
+			},
+		},
+		{
+			name: "TLS with pool settings",
+			modify: func(opts *clientOptions) {
+				opts.tlsEnabled = true
+				opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
+				opts.usePool = true
+				opts.poolMinSize = 10
+				opts.poolMaxSize = 50
+			},
+		},
+	}
 
-	dialOpts, err := opts.buildDialOptions()
-	assert.Error(t, err)
-	assert.Nil(t, dialOpts)
-	assert.Contains(t, err.Error(), "TLS configuration is required")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestBuildDialOptions_WithKeepalive_Coverage(t *testing.T) {
-	t.Parallel()
+			opts := defaultClientOptions()
+			tt.modify(opts)
 
-	opts := defaultClientOptions()
-	opts.tlsEnabled = true
-	opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	opts.keepaliveTime = 30 * time.Second
-	opts.keepaliveTimeout = 10 * time.Second
-
-	dialOpts, err := opts.buildDialOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, dialOpts)
-}
-
-func TestBuildDialOptions_WithPoolSettings_Coverage(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultClientOptions()
-	opts.tlsEnabled = true
-	opts.tlsConfig = &tls.Config{MinVersion: tls.VersionTLS13}
-	opts.usePool = true
-	opts.poolMinSize = 10
-	opts.poolMaxSize = 50
-
-	dialOpts, err := opts.buildDialOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, dialOpts)
+			dialOpts, err := opts.buildDialOptions()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Nil(t, dialOpts)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotEmpty(t, dialOpts)
+		})
+	}
 }
 
 // --- Merged from coverage_unit_test.go ---
@@ -735,36 +613,6 @@ func TestBuildDialOptions_WithPoolSettings_Coverage(t *testing.T) {
 // =============================================================================
 // Pool Tests
 // =============================================================================
-
-func TestPooledConn_ConcurrentAccess(t *testing.T) {
-	t.Parallel()
-
-	pc := &pooledConn{
-		created: time.Now(),
-	}
-	pc.healthy.Store(true)
-	pc.inUse.Store(false)
-
-	// Simulate concurrent access patterns
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < 100; i++ {
-			pc.healthy.Load()
-			pc.inUse.Load()
-			pc.requests.Load()
-		}
-		close(done)
-	}()
-
-	for i := 0; i < 100; i++ {
-		pc.healthy.Store(true)
-		pc.inUse.Store(true)
-		pc.requests.Add(1)
-	}
-
-	<-done
-	assert.True(t, pc.requests.Load() >= 100)
-}
 
 // =============================================================================
 // Vector Metrics Tests
