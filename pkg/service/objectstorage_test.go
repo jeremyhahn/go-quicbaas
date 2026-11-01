@@ -1363,29 +1363,6 @@ func TestListObjects_Success(t *testing.T) {
 	assert.GreaterOrEqual(t, len(resp.Objects), 5)
 }
 
-func TestListObjects_WithLimit(t *testing.T) {
-	svc, catalogMgr, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	// Create multiple objects
-	for i := 0; i < 10; i++ {
-		entry := catalog.NewCatalogEntry("test:limit:"+string(rune('a'+i)), 100, nil)
-		entry.PrimaryStore = catalog.StoreLocation{Store: "local", Status: catalog.LocationStatusActive}
-		err := catalogMgr.Put(ctx, entry)
-		require.NoError(t, err)
-	}
-
-	req := &ListObjectsRequest{
-		Prefix: "test:limit:",
-		Limit:  5,
-	}
-	resp, err := svc.ListObjects(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.LessOrEqual(t, len(resp.Objects), 10) // May be filtered
-}
-
 func TestListObjects_EmptyResult(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
@@ -2385,18 +2362,6 @@ func TestGetObjectPolicy_CrossTenantDenied(t *testing.T) {
 // ListBackends Tests
 // =============================================================================
 
-func TestListBackends_Success(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &ListBackendsRequest{}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.GreaterOrEqual(t, len(resp.Backends), 1)
-}
-
 func TestListBackends_MultipleBackends(t *testing.T) {
 	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
@@ -2412,11 +2377,12 @@ func TestListBackends_MultipleBackends(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := tenantctx.WithSystem(context.Background())
-	req := &ListBackendsRequest{}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.GreaterOrEqual(t, len(resp.Backends), 2)
+	for _, includeHealth := range []bool{false, true} {
+		resp, err := svc.ListBackends(ctx, &ListBackendsRequest{IncludeHealth: includeHealth})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.GreaterOrEqual(t, len(resp.Backends), 2)
+	}
 }
 
 // =============================================================================
@@ -3384,28 +3350,6 @@ func TestMigrateObject_CrossTenantDenied(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestListBackends_WithHealthChecks(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	storage1 := newObjstoreMockStorage()
-	storage2 := newObjstoreMockStorage()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	backendMgr.AddBackend("local", storage1, &catalog.BackendConfig{Type: "local", Enabled: true})
-	backendMgr.AddBackend("s3", storage2, &catalog.BackendConfig{Type: "s3", Enabled: true})
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
-	require.NoError(t, err)
-
-	ctx := tenantctx.WithSystem(context.Background())
-	req := &ListBackendsRequest{IncludeHealth: true}
-	resp, err := svc.ListBackends(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.GreaterOrEqual(t, len(resp.Backends), 2)
-}
-
 func TestCopyObject_WithOverwrite(t *testing.T) {
 	svc, catalogMgr, _, storage := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
@@ -3731,24 +3675,7 @@ func TestSetTenantQuotas_Success(t *testing.T) {
 	assert.Equal(t, int64(10000), tenantCfg.Quotas.MaxObjectCount)
 }
 
-func TestSetTenantQuotas_EmptyTenantID(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &SetTenantQuotasRequest{
-		TenantID:        "",
-		MaxStorageBytes: 1024,
-	}
-	resp, err := svc.SetTenantQuotas(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestSetTenantQuotas_NegativeValues(t *testing.T) {
+func TestSetTenantQuotas_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
@@ -3756,6 +3683,13 @@ func TestSetTenantQuotas_NegativeValues(t *testing.T) {
 		name string
 		req  *SetTenantQuotasRequest
 	}{
+		{
+			name: "empty tenant ID",
+			req: &SetTenantQuotasRequest{
+				TenantID:        "",
+				MaxStorageBytes: 1024,
+			},
+		},
 		{
 			name: "negative max storage bytes",
 			req: &SetTenantQuotasRequest{
@@ -4291,6 +4225,10 @@ func TestListByTag_TenantFiltering(t *testing.T) {
 	resp, err := svc.ListByTag(ctx, req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
+
+	for _, obj := range resp.Objects {
+		assert.NotEqual(t, "test:bytag:b", obj.Key, "tenant2 objects should be filtered out")
+	}
 }
 
 func TestSetObjectPolicyRequest_Validate(t *testing.T) {
