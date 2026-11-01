@@ -3229,71 +3229,38 @@ func TestBuildWorkerPrompt_WithoutToolGuidance(t *testing.T) {
 // Tests: WorkItem.HostAffinity and filterFleetNodesByHostAffinity
 // =============================================================================
 
-// TestWorkItem_HostAffinity_ProvidesToSpawn verifies that a WorkItem carrying
-// a HostAffinity value is correctly represented and that filterFleetNodesByHostAffinity
-// restricts the candidate list to agents whose Name or Host field matches.
-func TestWorkItem_HostAffinity_ProvidesToSpawn(t *testing.T) {
+// TestFilterFleetNodesByHostAffinity verifies that the filter keeps only the
+// nodes whose Name or Host matches the affinity, and returns the original
+// unfiltered slice when no node matches (warn-only semantics: hard failure is
+// at dispatch time).
+func TestFilterFleetNodesByHostAffinity(t *testing.T) {
 	t.Parallel()
 
-	item := &WorkItem{
-		ID:           "item-1",
-		Title:        "GPU inference task",
-		HostAffinity: "gpu-host",
-	}
-
-	// Three agents: only the one named "gpu-host" or hosted at "gpu-host" should match.
 	agents := []*FleetNode{
-		{ID: "a1", Name: "general-1", Host: "server-a", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a1", Name: "general-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
 		{ID: "a2", Name: "gpu-host", Host: "gpu-host.local", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a3", Name: "general-2", Host: "server-c", Backend: "ollama", Status: FleetNodeStatusIdle},
+		{ID: "a3", Name: "general-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
+	}
+	tests := []struct {
+		name     string
+		affinity string
+		wantIDs  []string
+	}{
+		{name: "name match", affinity: "gpu-host", wantIDs: []string{"a2"}},
+		{name: "host field match", affinity: "beta", wantIDs: []string{"a3"}},
+		{name: "no match returns the full list", affinity: "nonexistent-host", wantIDs: []string{"a1", "a2", "a3"}},
 	}
 
-	filtered, _ := filterFleetNodesByHostAffinity(agents, item.HostAffinity, false)
-
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
-	}
-	if filtered[0].ID != "a2" {
-		t.Errorf("expected agent a2 (gpu-host), got %q", filtered[0].ID)
-	}
-}
-
-// TestWorkItem_HostAffinity_HostFieldMatch verifies that filterFleetNodesByHostAffinity
-// also matches on the Host field (not just Name).
-func TestWorkItem_HostAffinity_HostFieldMatch(t *testing.T) {
-	t.Parallel()
-
-	agents := []*FleetNode{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
-	}
-
-	filtered, _ := filterFleetNodesByHostAffinity(agents, "beta", false)
-
-	if len(filtered) != 1 {
-		t.Fatalf("expected 1 matching agent, got %d", len(filtered))
-	}
-	if filtered[0].ID != "a2" {
-		t.Errorf("expected agent a2, got %q", filtered[0].ID)
-	}
-}
-
-// TestWorkItem_HostAffinity_NoMatch_ReturnsFull verifies that
-// filterFleetNodesByHostAffinity returns the original unfiltered slice when no
-// agent matches (warn-only semantics: hard failure is at dispatch time).
-func TestWorkItem_HostAffinity_NoMatch_ReturnsFull(t *testing.T) {
-	t.Parallel()
-
-	agents := []*FleetNode{
-		{ID: "a1", Name: "worker-1", Host: "alpha", Backend: "ollama", Status: FleetNodeStatusIdle},
-		{ID: "a2", Name: "worker-2", Host: "beta", Backend: "ollama", Status: FleetNodeStatusIdle},
-	}
-
-	filtered, _ := filterFleetNodesByHostAffinity(agents, "nonexistent-host", false)
-
-	// Should fall through to original list, not return empty.
-	if len(filtered) != len(agents) {
-		t.Fatalf("expected %d agents (unfiltered fallback), got %d", len(agents), len(filtered))
+	for _, tt := range tests {
+		filtered, _ := filterFleetNodesByHostAffinity(agents, tt.affinity, false)
+		if len(filtered) != len(tt.wantIDs) {
+			t.Fatalf("%s: expected %d agents, got %d", tt.name, len(tt.wantIDs), len(filtered))
+		}
+		for i, id := range tt.wantIDs {
+			if filtered[i].ID != id {
+				t.Fatalf("%s: expected agent %q at %d, got %q", tt.name, id, i, filtered[i].ID)
+			}
+		}
 	}
 }
 
@@ -3320,57 +3287,6 @@ func TestControlLoop_HostAffinityFromWorkflow_FiltersAgents(t *testing.T) {
 
 	if agentID != "a-gpu" {
 		t.Errorf("expected host-affinity to select agent a-gpu, got %q", agentID)
-	}
-}
-
-// TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq verifies that
-// when a workflow AgentRoleSpec carries HostAffinity, the control loop copies
-// it onto the SpawnSessionRequest before calling SpawnSession.
-func TestControlLoop_AgentSpec_HostAffinityPropagatedToSpawnReq(t *testing.T) {
-	t.Parallel()
-
-	var capturedSpawnReq *SpawnSessionRequest
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents: []*FleetNode{
-			{ID: "a-gpu-host", Name: "gpu-host", Host: "gpu-host", Backend: "ollama", Status: FleetNodeStatusIdle},
-		},
-	}
-	// Override SpawnSession to capture what the control loop sends.
-	type spawnCapture struct {
-		controlLoopMockService
-		spawnFn func(*SpawnSessionRequest) (*SpawnSessionResponse, error)
-	}
-
-	// Use a custom mock that captures the spawn request.
-	capturingSvc := struct {
-		*controlLoopMockService
-		capturedReq *SpawnSessionRequest
-	}{
-		controlLoopMockService: svc,
-	}
-	_ = capturingSvc // unused, use direct assertion below
-
-	// Build a simpler assertion by using filterFleetNodesByHostAffinity directly
-	// and checking the spawnReq fields are copied as documented in the
-	// implementation. This tests the data flow from AgentRoleSpec → SpawnReq.
-	agentSpec := &AgentRoleSpec{
-		Role:         "worker",
-		Backend:      "ollama",
-		HostAffinity: "gpu-host",
-	}
-
-	spawnReq := &SpawnSessionRequest{
-		Backend: agentSpec.Backend,
-	}
-	if agentSpec.HostAffinity != "" {
-		spawnReq.HostAffinity = agentSpec.HostAffinity
-	}
-
-	capturedSpawnReq = spawnReq
-
-	if capturedSpawnReq.HostAffinity != "gpu-host" {
-		t.Errorf("expected HostAffinity 'gpu-host' on SpawnSessionRequest, got %q", capturedSpawnReq.HostAffinity)
 	}
 }
 
