@@ -593,49 +593,29 @@ func TestEmbeddingService_SetDefaultProvider_Success(t *testing.T) {
 	assert.False(t, resp.Timestamp.IsZero())
 }
 
-func TestEmbeddingService_SetDefaultProvider_NilRequest(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	resp, err := svc.SetDefaultProvider(systemTenantCtx(), nil)
-	assert.Error(t, err, "nil request must return a validation error, not panic")
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingService_SetDefaultProvider_EmptyProvider(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &SetDefaultProviderRequest{
-		Provider: "",
+func TestEmbeddingService_SetDefaultProvider_Errors(t *testing.T) {
+	tests := []struct {
+		name         string
+		req          *SetDefaultProviderRequest
+		expectedCode quicbaasErrors.ErrorCode
+	}{
+		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "EmptyProvider", req: &SetDefaultProviderRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "NotFound", req: &SetDefaultProviderRequest{Provider: "nonexistent"}, expectedCode: quicbaasErrors.ErrNotFound},
 	}
 
-	resp, err := svc.SetDefaultProvider(systemTenantCtx(), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, _ := createTestManager(t, "openai")
+			svc := NewEmbeddingService(mgr, newMockEmbeddingLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "provider is required")
-}
+			resp, err := svc.SetDefaultProvider(systemTenantCtx(), tt.req)
 
-func TestEmbeddingService_SetDefaultProvider_NotFound(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &SetDefaultProviderRequest{
-		Provider: "nonexistent",
-	}
-
-	resp, err := svc.SetDefaultProvider(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
+			assert.Nil(t, resp)
+			var dErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &dErr))
+			assert.Equal(t, tt.expectedCode, dErr.Code)
+		})
 	}
 }
 
@@ -1210,63 +1190,6 @@ func TestEmbeddingSvc_ListProviders_IncludesUnavailable(t *testing.T) {
 	for _, p := range resp.Providers {
 		assert.Equal(t, EmbeddingStatusUnavailable, p.Status)
 	}
-}
-
-func TestEmbeddingSvc_SetDefaultProvider_Success(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	mockProvider := newCoverageEmbeddingProvider()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetProvider", "openai").Return(mockProvider, nil)
-
-	req := &SetDefaultProviderRequest{
-		Provider: "openai",
-	}
-
-	resp, err := svc.SetDefaultProvider(ctx, req)
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, EmbeddingProvider("openai"), resp.Provider)
-}
-
-func TestEmbeddingSvc_SetDefaultProvider_EmptyProvider(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &SetDefaultProviderRequest{
-		Provider: "",
-	}
-
-	resp, err := svc.SetDefaultProvider(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingSvc_SetDefaultProvider_ProviderNotFound(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	mockManager.On("GetProvider", "nonexistent").Return(nil, embedding.ErrProviderNotFound)
-
-	req := &SetDefaultProviderRequest{
-		Provider: "nonexistent",
-	}
-
-	resp, err := svc.SetDefaultProvider(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestEmbeddingSvc_GetCacheStats_Success(t *testing.T) {
