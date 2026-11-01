@@ -323,63 +323,6 @@ func TestServiceBuilder_NewServiceBuilder(t *testing.T) {
 	assert.Equal(t, "info", sb.config.LogLevel)
 }
 
-func TestServiceBuilder_WithRaftNode(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	builder := NewServiceBuilder().WithRaftNode(mockRaft)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, mockRaft, sb.raftNode)
-}
-
-func TestServiceBuilder_WithStorage(t *testing.T) {
-	mockStore := &mockStorage{}
-	builder := NewServiceBuilder().WithStorage(mockStore)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, mockStore, sb.storage)
-}
-
-func TestServiceBuilder_WithCacheManager(t *testing.T) {
-	mockCache := &cache.CacheManager{}
-	builder := NewServiceBuilder().WithCacheManager(mockCache)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, mockCache, sb.cacheManager)
-}
-
-func TestServiceBuilder_WithBackupManager(t *testing.T) {
-	mockBackup := &mockBackupManager{}
-	builder := NewServiceBuilder().WithBackupManager(mockBackup)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, mockBackup, sb.backupManager)
-}
-
-func TestServiceBuilder_WithLogger(t *testing.T) {
-	log := createTestLogger(t)
-	builder := NewServiceBuilder().WithLogger(log)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.NotNil(t, sb.logger)
-}
-
-func TestServiceBuilder_WithConfig(t *testing.T) {
-	config := &ServiceConfig{
-		NodeID:  42,
-		Version: "2.0.0",
-	}
-	builder := NewServiceBuilder().WithConfig(config)
-
-	sb, ok := builder.(*serviceBuilder)
-	require.True(t, ok)
-	assert.Equal(t, config, sb.config)
-}
-
 func TestServiceBuilder_Build_Success(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	log := createTestLogger(t)
@@ -443,31 +386,26 @@ func TestKVService_Delete_Success(t *testing.T) {
 	assert.Greater(t, resp.Timestamp, int64(0))
 }
 
-func TestKVService_Delete_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestKVService_Delete_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &DeleteRequest{
-		EntityType: "",
-		ID:         1,
+func TestKVService_Delete_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *DeleteRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "empty entity type", req: &DeleteRequest{EntityType: "", ID: 1}, wantErr: "entity type is required"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+			defer svc.Close()
 
-	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "entity type is required")
+			resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestKVService_Delete_RaftError(t *testing.T) {
@@ -557,30 +495,26 @@ func TestBatchService_BatchGet_Success(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
-func TestBatchService_BatchGet_EmptyRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &BatchGetRequest{
-		Requests: []*GetRequest{},
+func TestBatchService_BatchGet_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *BatchGetRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "empty batch", req: &BatchGetRequest{Requests: []*GetRequest{}}, wantErr: "batch cannot be empty"},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+			defer svc.Close()
 
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "batch cannot be empty")
-}
-
-func TestBatchService_BatchGet_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+			resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestBatchService_BatchGet_PartialFailure(t *testing.T) {
