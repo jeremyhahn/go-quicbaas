@@ -86,117 +86,185 @@ func TestHandleBatchUpsertVectorsValidation(t *testing.T) {
 	})
 }
 
-// TestHandleGetVector tests get vector operation
+// batchIDsJSON returns a JSON array of n vector IDs.
+func batchIDsJSON(t *testing.T, n int) string {
+	t.Helper()
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = "vec" + string(rune('a'+i%26))
+	}
+	idsJSON, err := json.Marshal(ids)
+	require.NoError(t, err)
+	return string(idsJSON)
+}
+
+// assertToolResult checks that resp is a successful tool result whose JSON
+// body carries every field in want.
+func assertToolResult(t *testing.T, resp *ToolResponse, want map[string]interface{}) {
+	t.Helper()
+	require.NotNil(t, resp)
+	assert.False(t, resp.IsError)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &result))
+	for key, value := range want {
+		assert.Equal(t, value, result[key], key)
+	}
+}
+
+// TestHandleGetVector tests get vector with default and explicit options
 func TestHandleGetVector(t *testing.T) {
 	server := newTestVectorServer(t)
 	ctx := context.Background()
 
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"id":        "test-vector-1",
+	tests := []struct {
+		name   string
+		params map[string]interface{}
+		want   map[string]interface{}
+	}{
+		{
+			name:   "Defaults",
+			params: map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"},
+			want:   map[string]interface{}{"id": "test-vector-1", "namespace": "test-namespace", "found": true},
+		},
+		{
+			name: "MetadataAndVectorOff",
+			params: map[string]interface{}{
+				"namespace":        "test-namespace",
+				"id":               "test-vector-1",
+				"include_metadata": "false",
+				"include_vector":   "false",
+				"consistency":      "ONE",
+			},
+			want: map[string]interface{}{"id": "test-vector-1", "found": true},
+		},
+		{
+			name: "AllOptions",
+			params: map[string]interface{}{
+				"namespace":        "test-ns",
+				"id":               "vec-123",
+				"include_metadata": "true",
+				"include_vector":   "true",
+				"consistency":      "QUORUM",
+				"timeout_ms":       float64(5000),
+			},
+			want: map[string]interface{}{"id": "vec-123", "namespace": "test-ns", "found": true},
+		},
 	}
 
-	resp, err := server.handleGetVector(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-vector-1", result["id"])
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, true, result["found"])
-	assert.NotNil(t, result["vector"])
-}
-
-// TestHandleGetVectorWithOptions tests get vector with various options
-func TestHandleGetVectorWithOptions(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":        "test-namespace",
-		"id":               "test-vector-1",
-		"include_metadata": "false",
-		"include_vector":   "false",
-		"consistency":      "ONE",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := server.handleGetVector(ctx, tt.params)
+			require.NoError(t, err)
+			assertToolResult(t, resp, tt.want)
+		})
 	}
 
-	resp, err := server.handleGetVector(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
+	t.Run("DefaultsReturnVector", func(t *testing.T) {
+		resp, err := server.handleGetVector(ctx, map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"})
+		require.NoError(t, err)
+		var result map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &result))
+		assert.NotNil(t, result["vector"])
+	})
 }
 
-// TestHandleDeleteVector tests delete vector operation
+// TestHandleDeleteVector tests delete vector with default and explicit options
 func TestHandleDeleteVector(t *testing.T) {
 	server := newTestVectorServer(t)
 	ctx := context.Background()
 
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"id":        "test-vector-1",
+	tests := []struct {
+		name   string
+		params map[string]interface{}
+		want   map[string]interface{}
+	}{
+		{
+			name:   "Defaults",
+			params: map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"},
+			want:   map[string]interface{}{"id": "test-vector-1", "deleted": true},
+		},
+		{
+			name: "WithOptionalParams",
+			params: map[string]interface{}{
+				"namespace":   "test-ns",
+				"id":          "vec-123",
+				"consistency": "ALL",
+				"timeout_ms":  float64(10000),
+			},
+			want: map[string]interface{}{"id": "vec-123", "consistency": "ALL", "timeout_ms": float64(10000)},
+		},
 	}
 
-	resp, err := server.handleDeleteVector(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-vector-1", result["id"])
-	assert.Equal(t, true, result["deleted"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := server.handleDeleteVector(ctx, tt.params)
+			require.NoError(t, err)
+			assertToolResult(t, resp, tt.want)
+		})
+	}
 }
 
-// TestHandleBatchDeleteVectors tests batch delete operation
+// TestHandleBatchDeleteVectors tests batch delete results and validation
 func TestHandleBatchDeleteVectors(t *testing.T) {
 	server := newTestVectorServer(t)
 	ctx := context.Background()
 
-	ids := []string{"vec1", "vec2", "vec3"}
-	idsJSON, _ := json.Marshal(ids)
-
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"ids":       string(idsJSON),
+	tests := []struct {
+		name    string
+		params  map[string]interface{}
+		want    map[string]interface{}
+		wantErr string
+	}{
+		{
+			name:   "ThreeIDs",
+			params: map[string]interface{}{"namespace": "test-namespace", "ids": `["vec1","vec2","vec3"]`},
+			want:   map[string]interface{}{"ids_total": float64(3), "deleted_count": float64(3)},
+		},
+		{
+			name:   "ExactlyMaxBatchSize",
+			params: map[string]interface{}{"namespace": "test-ns", "ids": batchIDsJSON(t, 10000)},
+			want:   map[string]interface{}{"ids_total": float64(10000)},
+		},
+		{
+			name:    "TooManyIDs",
+			params:  map[string]interface{}{"namespace": "test-ns", "ids": batchIDsJSON(t, 10001)},
+			wantErr: "maximum 10000 IDs allowed",
+		},
+		{
+			name:    "MissingNamespace",
+			params:  map[string]interface{}{"ids": `["id1","id2"]`},
+			wantErr: "namespace is required",
+		},
+		{
+			name:    "EmptyNamespace",
+			params:  map[string]interface{}{"namespace": "", "ids": `["id1"]`},
+			wantErr: "namespace is required",
+		},
+		{
+			name:    "MissingIDs",
+			params:  map[string]interface{}{"namespace": "test-ns"},
+			wantErr: "ids is required",
+		},
+		{
+			name:    "InvalidIDsJSON",
+			params:  map[string]interface{}{"namespace": "test-ns", "ids": "not-valid-json["},
+			wantErr: "invalid ids format",
+		},
 	}
 
-	resp, err := server.handleBatchDeleteVectors(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, float64(3), result["ids_total"])
-	assert.Equal(t, float64(3), result["deleted_count"])
-}
-
-// TestHandleBatchDeleteVectorsValidation tests batch delete validation
-func TestHandleBatchDeleteVectorsValidation(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("TooManyIDs", func(t *testing.T) {
-		// Create >10000 IDs
-		ids := make([]string, 10001)
-		for i := range ids {
-			ids[i] = "vec" + string(rune(i))
-		}
-		idsJSON, _ := json.Marshal(ids)
-
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-			"ids":       string(idsJSON),
-		}
-		_, err := server.handleBatchDeleteVectors(ctx, params)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "maximum 10000 IDs allowed")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := server.handleBatchDeleteVectors(ctx, tt.params)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assertToolResult(t, resp, tt.want)
+		})
+	}
 }
 
 // TestHandleSearchByID tests search by ID operation
@@ -931,76 +999,6 @@ func TestHandleUpdateNamespaceEdgeCases(t *testing.T) {
 	})
 }
 
-// TestHandleBatchDeleteVectorsEdgeCases tests batch delete edge cases
-func TestHandleBatchDeleteVectorsEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("MissingNamespace", func(t *testing.T) {
-		ids := []string{"id1", "id2"}
-		idsJSON, _ := json.Marshal(ids)
-		params := map[string]interface{}{
-			"ids": string(idsJSON),
-		}
-		_, err := server.handleBatchDeleteVectors(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("MissingIDs", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		_, err := server.handleBatchDeleteVectors(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ids is required")
-	})
-
-	t.Run("InvalidIDsJSON", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-			"ids":       "not-valid-json[",
-		}
-		_, err := server.handleBatchDeleteVectors(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid ids format")
-	})
-
-	t.Run("ExactlyMaxBatchSize", func(t *testing.T) {
-		// Test exactly 10000 IDs (boundary condition)
-		ids := make([]string, 10000)
-		for i := range ids {
-			ids[i] = "vec" + string(rune('a'+i%26))
-		}
-		idsJSON, _ := json.Marshal(ids)
-
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-			"ids":       string(idsJSON),
-		}
-		resp, err := server.handleBatchDeleteVectors(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, float64(10000), result["ids_total"])
-	})
-
-	t.Run("EmptyNamespace", func(t *testing.T) {
-		ids := []string{"id1"}
-		idsJSON, _ := json.Marshal(ids)
-		params := map[string]interface{}{
-			"namespace": "",
-			"ids":       string(idsJSON),
-		}
-		_, err := server.handleBatchDeleteVectors(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-}
-
 // TestHandleGetIndexProgressEdgeCases tests index progress edge cases
 func TestHandleGetIndexProgressEdgeCases(t *testing.T) {
 	server := newTestVectorServer(t)
@@ -1074,55 +1072,6 @@ func TestHandleGetCompactionProgressEdgeCases(t *testing.T) {
 		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
 		require.NoError(t, err)
 		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleDeleteVectorEdgeCases tests delete vector edge cases
-func TestHandleDeleteVectorEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithOptionalParams", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace":   "test-ns",
-			"id":          "vec-123",
-			"consistency": "ALL",
-			"timeout_ms":  float64(10000),
-		}
-		resp, err := server.handleDeleteVector(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "ALL", result["consistency"])
-		assert.Equal(t, float64(10000), result["timeout_ms"])
-	})
-}
-
-// TestHandleGetVectorEdgeCases tests get vector edge cases
-func TestHandleGetVectorEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithAllOptions", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace":        "test-ns",
-			"id":               "vec-123",
-			"include_metadata": "true",
-			"include_vector":   "true",
-			"consistency":      "QUORUM",
-			"timeout_ms":       float64(5000),
-		}
-		resp, err := server.handleGetVector(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "vec-123", result["id"])
 	})
 }
 
