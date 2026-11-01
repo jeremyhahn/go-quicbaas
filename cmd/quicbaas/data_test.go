@@ -16,7 +16,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -1422,6 +1421,46 @@ func TestRunQueryCommand(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "successful query with multiple results",
+			args: []string{"user"},
+			flags: map[string]interface{}{
+				"index": "email",
+				"value": "@example.com",
+			},
+			mockSetup: func(m *mockQueryClient) {
+				m.ExecuteFunc = func(ctx context.Context, req *query.QueryRequest) (*query.QueryResponse, error) {
+					return &query.QueryResponse{
+						Results: []query.QueryResult{
+							{Key: "john", Value: []byte(`{"email":"john@example.com"}`)},
+							{Key: "jane", Value: []byte(`{"email":"jane@example.com"}`)},
+						},
+						HasMore: false,
+					}, nil
+				}
+			},
+			expectError: false,
+		},
+		{
+			name: "missing index",
+			args: []string{"user"},
+			flags: map[string]interface{}{
+				"value": "john@example.com",
+			},
+			mockSetup:     func(m *mockQueryClient) {},
+			expectError:   true,
+			errorContains: "index field is required",
+		},
+		{
+			name: "missing value",
+			args: []string{"user"},
+			flags: map[string]interface{}{
+				"index": "email",
+			},
+			mockSetup:     func(m *mockQueryClient) {},
+			expectError:   true,
+			errorContains: "query value is required",
+		},
+		{
 			name: "successful query with custom limit",
 			args: []string{"user"},
 			flags: map[string]interface{}{
@@ -1590,52 +1629,6 @@ func TestRunQueryCommand(t *testing.T) {
 	}
 }
 
-// TestQueryCommandWithMultipleResults tests query returning multiple items.
-func TestQueryCommandWithMultipleResults(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	// Reset the SDK client singleton
-	resetSDKClient()
-
-	mockQuery := &mockQueryClient{
-		ExecuteFunc: func(ctx context.Context, req *query.QueryRequest) (*query.QueryResponse, error) {
-			return &query.QueryResponse{
-				Results: []query.QueryResult{
-					{
-						Key:   "john",
-						Value: []byte(`{"email":"john@example.com"}`),
-					},
-					{
-						Key:   "jane",
-						Value: []byte(`{"email":"jane@example.com"}`),
-					},
-				},
-				HasMore: false,
-			}, nil
-		},
-	}
-
-	mockClient := &mockSDKClient{
-		queryClient: mockQuery,
-	}
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return mockClient, nil
-	}
-
-	queryIndex = "email"
-	queryValue = "@example.com"
-	defer func() {
-		queryIndex = ""
-		queryValue = ""
-	}()
-
-	cmd := &cobra.Command{}
-	err := runQueryCommand(cmd, []string{"user"})
-	assert.NoError(t, err)
-}
-
 // BenchmarkParseServiceConsistency benchmarks consistency parsing.
 func BenchmarkParseServiceConsistency(b *testing.B) {
 	for i := 0; i < b.N; i++ {
@@ -1650,58 +1643,6 @@ func BenchmarkFormatError(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = formatError(err)
 	}
-}
-
-// TestQueryCommandMissingIndex tests query command with missing index flag.
-func TestQueryCommandMissingIndex(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	// Reset the SDK client singleton
-	resetSDKClient()
-
-	mockClient := &mockSDKClient{}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return mockClient, nil
-	}
-
-	queryIndex = ""
-	queryValue = "john@example.com"
-	defer func() {
-		queryIndex = ""
-		queryValue = ""
-	}()
-
-	cmd := &cobra.Command{}
-	err := runQueryCommand(cmd, []string{"user"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "index field is required")
-}
-
-// TestQueryCommandMissingValue tests query command with missing value flag.
-func TestQueryCommandMissingValue(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	// Reset the SDK client singleton
-	resetSDKClient()
-
-	mockClient := &mockSDKClient{}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return mockClient, nil
-	}
-
-	queryIndex = "email"
-	queryValue = ""
-	defer func() {
-		queryIndex = ""
-		queryValue = ""
-	}()
-
-	cmd := &cobra.Command{}
-	err := runQueryCommand(cmd, []string{"user"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "query value is required")
 }
 
 func TestDataCommandsExecution(t *testing.T) {
