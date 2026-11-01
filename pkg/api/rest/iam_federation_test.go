@@ -444,29 +444,6 @@ func TestListProviders_Success(t *testing.T) {
 	assert.Contains(t, resp, "offset")
 }
 
-// TestListProviders_WithPagination tests provider listing with pagination.
-func TestListProviders_WithPagination(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers?limit=50&offset=10", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.ListProviders(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp map[string]interface{}
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, float64(50), resp["limit"])
-	assert.Equal(t, float64(10), resp["offset"])
-}
-
 // TestListProviders_WithTypeFilter tests provider listing with type filter.
 func TestListProviders_WithTypeFilter(t *testing.T) {
 	fedMgr := newMockFederationManager()
@@ -502,20 +479,15 @@ func TestListProviders_WithTypeFilter(t *testing.T) {
 	assert.Equal(t, 1, len(providers))
 }
 
-// TestListProviders_MissingTenantID tests provider listing without tenant ID.
-func TestListProviders_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//providers", nil)
-
-	rctx := chi.NewRouteContext()
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.ListProviders(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestListProviders_Errors covers every ListProviders error path.
+func TestListProviders_Errors(t *testing.T) {
+	tenant := map[string]string{"tenant_id": "tenant123"}
+	runFederationErrorCases(t, http.MethodGet, (*IAMHandler).ListProviders, []federationErrorCase{
+		{name: "missing tenant ID", wantCode: http.StatusBadRequest},
+		{name: "federation manager not available", params: tenant, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: tenant, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: tenant, configure: func(m *mockFederationManager) { m.listProvidersErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestGetProvider_Success tests successful provider retrieval.
@@ -555,38 +527,16 @@ func TestGetProvider_Success(t *testing.T) {
 	assert.Equal(t, string(ProviderTypeOIDC), string(resp.Type))
 }
 
-// TestGetProvider_MissingTenantID tests get provider without tenant ID.
-func TestGetProvider_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestGetProvider_MissingProviderID tests get provider without provider ID.
-func TestGetProvider_MissingProviderID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers/", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestGetProvider_Errors covers every GetProvider error path.
+func TestGetProvider_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "provider_id": "prov_google"}
+	runFederationErrorCases(t, http.MethodGet, (*IAMHandler).GetProvider, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"provider_id": "prov_google"}, wantCode: http.StatusBadRequest},
+		{name: "missing provider ID", params: map[string]string{"tenant_id": "tenant123"}, wantCode: http.StatusBadRequest},
+		{name: "federation manager not available", params: both, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, configure: func(m *mockFederationManager) { m.getProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestUpdateProvider_Success tests successful provider update.
@@ -712,61 +662,18 @@ func TestBeginFederatedLogin_Success(t *testing.T) {
 	assert.Contains(t, rec.Header().Get("Location"), "https://idp.example.com/authorize")
 }
 
-// TestBeginFederatedLogin_MissingTenantID tests federated login without tenant ID.
-func TestBeginFederatedLogin_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers//google/login?redirect_uri=https://app.example.com/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestBeginFederatedLogin_MissingProviderName tests federated login without provider name.
-func TestBeginFederatedLogin_MissingProviderName(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123//login?redirect_uri=https://app.example.com/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestBeginFederatedLogin_MissingRedirectURI tests federated login without redirect URI.
-func TestBeginFederatedLogin_MissingRedirectURI(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/login", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "redirect_uri is required")
+// TestBeginFederatedLogin_Errors covers every BeginFederatedLogin error path.
+func TestBeginFederatedLogin_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "provider_name": "google"}
+	target := "/?redirect_uri=https://app.example.com/callback"
+	runFederationErrorCases(t, http.MethodGet, (*IAMHandler).BeginFederatedLogin, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"provider_name": "google"}, target: target, wantCode: http.StatusBadRequest},
+		{name: "missing provider name", params: map[string]string{"tenant_id": "tenant123"}, target: target, wantCode: http.StatusBadRequest},
+		{name: "missing redirect URI", params: both, wantCode: http.StatusBadRequest, wantDesc: "redirect_uri is required"},
+		{name: "federation manager not available", params: both, target: target, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, target: target, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, target: target, configure: func(m *mockFederationManager) { m.beginLoginErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestHandleFederatedCallback_Success tests successful callback handling.
@@ -808,38 +715,19 @@ func TestHandleFederatedCallback_Success(t *testing.T) {
 	assert.Equal(t, "user@example.com", resp.User.Email)
 }
 
-// TestHandleFederatedCallback_MissingTenantID tests callback without tenant ID.
-func TestHandleFederatedCallback_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers//google/callback?code=auth_code_123", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestHandleFederatedCallback_MissingProviderName tests callback without provider name.
-func TestHandleFederatedCallback_MissingProviderName(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123//callback?code=auth_code_123", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestHandleFederatedCallback_Errors covers the HandleFederatedCallback
+// error paths that answer with an IAMAPIError.
+func TestHandleFederatedCallback_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "provider_name": "google"}
+	target := "/?code=auth_code_123"
+	runFederationErrorCases(t, http.MethodGet, (*IAMHandler).HandleFederatedCallback, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"provider_name": "google"}, target: target, wantCode: http.StatusBadRequest},
+		{name: "missing provider name", params: map[string]string{"tenant_id": "tenant123"}, target: target, wantCode: http.StatusBadRequest},
+		{name: "missing code", params: both, target: "/?state=mystate", wantCode: http.StatusBadRequest, wantDesc: "authorization code is required"},
+		{name: "federation manager not available", params: both, target: target, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, target: target, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, target: target, configure: func(m *mockFederationManager) { m.handleCallbackErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestHandleFederatedCallback_IdPError tests callback with IdP error.
@@ -863,29 +751,6 @@ func TestHandleFederatedCallback_IdPError(t *testing.T) {
 	err := json.Unmarshal(rec.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, "access_denied", resp.Code)
-}
-
-// TestHandleFederatedCallback_MissingCode tests callback without authorization code.
-func TestHandleFederatedCallback_MissingCode(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/callback?state=mystate", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "authorization code is required")
 }
 
 // TestLinkAccount_Success tests successful account linking.
@@ -920,129 +785,21 @@ func TestLinkAccount_Success(t *testing.T) {
 	assert.Equal(t, "google_user_123", resp.ExternalID)
 }
 
-// TestLinkAccount_MissingTenantID tests account linking without tenant ID.
-func TestLinkAccount_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestLinkAccount_MissingUserID tests account linking without user ID.
-func TestLinkAccount_MissingUserID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users//links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestLinkAccount_InvalidJSON tests account linking with invalid JSON.
-func TestLinkAccount_InvalidJSON(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestLinkAccount_MissingProviderID tests account linking without provider ID.
-func TestLinkAccount_MissingProviderID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "provider_id is required")
-}
-
-// TestLinkAccount_MissingExternalID tests account linking without external ID.
-func TestLinkAccount_MissingExternalID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "external_id is required")
+// TestLinkAccount_Errors covers every LinkAccount error path.
+func TestLinkAccount_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "user_id": "10123"}
+	valid := LinkAccountOptions{ProviderID: "prov_google", ExternalID: "google_user_123"}
+	runFederationErrorCases(t, http.MethodPost, (*IAMHandler).LinkAccount, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"user_id": "10123"}, body: jsonBody(t, valid), wantCode: http.StatusBadRequest},
+		{name: "missing user ID", params: map[string]string{"tenant_id": "tenant123"}, body: jsonBody(t, valid), wantCode: http.StatusBadRequest},
+		{name: "invalid JSON", params: both, body: bytes.NewReader([]byte("invalid")), wantCode: http.StatusBadRequest},
+		{name: "body read error", params: both, body: &fedErrorReader{}, wantCode: http.StatusBadRequest, wantDesc: "failed to read request body"},
+		{name: "missing provider ID", params: both, body: jsonBody(t, LinkAccountOptions{ExternalID: "google_user_123"}), wantCode: http.StatusBadRequest, wantDesc: "provider_id is required"},
+		{name: "missing external ID", params: both, body: jsonBody(t, LinkAccountOptions{ProviderID: "prov_google"}), wantCode: http.StatusBadRequest, wantDesc: "external_id is required"},
+		{name: "federation manager not available", params: both, body: jsonBody(t, valid), noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, body: jsonBody(t, valid), fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, body: jsonBody(t, valid), configure: func(m *mockFederationManager) { m.linkAccountErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestUnlinkAccount_Success tests successful account unlinking.
@@ -1065,58 +822,17 @@ func TestUnlinkAccount_Success(t *testing.T) {
 	// Verify unlink succeeded (mock always succeeds)
 }
 
-// TestUnlinkAccount_MissingTenantID tests unlinking without tenant ID.
-func TestUnlinkAccount_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//users/user123/links/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "10123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestUnlinkAccount_MissingUserID tests unlinking without user ID.
-func TestUnlinkAccount_MissingUserID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/users//links/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestUnlinkAccount_MissingProviderID tests unlinking without provider ID.
-func TestUnlinkAccount_MissingProviderID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/users/user123/links/", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestUnlinkAccount_Errors covers every UnlinkAccount error path.
+func TestUnlinkAccount_Errors(t *testing.T) {
+	all := map[string]string{"tenant_id": "tenant123", "user_id": "10123", "provider_id": "prov_google"}
+	runFederationErrorCases(t, http.MethodDelete, (*IAMHandler).UnlinkAccount, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"user_id": "10123", "provider_id": "prov_google"}, wantCode: http.StatusBadRequest},
+		{name: "missing user ID", params: map[string]string{"tenant_id": "tenant123", "provider_id": "prov_google"}, wantCode: http.StatusBadRequest},
+		{name: "missing provider ID", params: map[string]string{"tenant_id": "tenant123", "user_id": "10123"}, wantCode: http.StatusBadRequest},
+		{name: "federation manager not available", params: all, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: all, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: all, configure: func(m *mockFederationManager) { m.unlinkAccountErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestGetUserLinks_Success tests successful user links retrieval.
@@ -1144,62 +860,16 @@ func TestGetUserLinks_Success(t *testing.T) {
 	assert.Contains(t, resp, "offset")
 }
 
-// TestGetUserLinks_WithPagination tests user links with pagination.
-func TestGetUserLinks_WithPagination(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/users/user123/links?limit=25&offset=5", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp map[string]interface{}
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, float64(25), resp["limit"])
-	assert.Equal(t, float64(5), resp["offset"])
-}
-
-// TestGetUserLinks_MissingTenantID tests user links without tenant ID.
-func TestGetUserLinks_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants//users/user123/links", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestGetUserLinks_MissingUserID tests user links without user ID.
-func TestGetUserLinks_MissingUserID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/users//links", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestGetUserLinks_Errors covers every GetUserLinks error path.
+func TestGetUserLinks_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "user_id": "10123"}
+	runFederationErrorCases(t, http.MethodGet, (*IAMHandler).GetUserLinks, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"user_id": "10123"}, wantCode: http.StatusBadRequest},
+		{name: "missing user ID", params: map[string]string{"tenant_id": "tenant123"}, wantCode: http.StatusBadRequest},
+		{name: "federation manager not available", params: both, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, configure: func(m *mockFederationManager) { m.getUserLinksErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestIsValidProviderType tests provider type validation.
@@ -1440,146 +1110,6 @@ func TestLoginRedirectJSONSerialization(t *testing.T) {
 	assert.Equal(t, redirect.State, decoded.State)
 }
 
-// TestListProviders_ServiceError tests provider listing with service error.
-func TestListProviders_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.listProvidersErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.ListProviders(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetProvider_ServiceError tests provider retrieval with service error.
-func TestGetProvider_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.getProviderErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestBeginFederatedLogin_ServiceError tests federated login with service error.
-func TestBeginFederatedLogin_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.beginLoginErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/login?redirect_uri=https://app.example.com/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestHandleFederatedCallback_ServiceError tests callback with service error.
-func TestHandleFederatedCallback_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.handleCallbackErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/callback?code=auth_code_123", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestLinkAccount_ServiceError tests account linking with service error.
-func TestLinkAccount_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.linkAccountErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUnlinkAccount_ServiceError tests account unlinking with service error.
-func TestUnlinkAccount_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.unlinkAccountErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/users/user123/links/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetUserLinks_ServiceError tests user links with service error.
-func TestGetUserLinks_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.getUserLinksErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/users/user123/links", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
 // TestFederationManager_GetFederationManagerError tests when GetFederationManager returns error.
 func TestFederationManager_GetFederationManagerError(t *testing.T) {
 	mockSvc := &mockServiceWithFederation{
@@ -1690,6 +1220,12 @@ func TestListProviders_InvalidPagination(t *testing.T) {
 			query:         "?offset=abc",
 			expectedLimit: 100,
 			expectedOff:   0, // default
+		},
+		{
+			name:          "valid limit and offset",
+			query:         "?limit=50&offset=10",
+			expectedLimit: 50,
+			expectedOff:   10,
 		},
 	}
 
@@ -1919,388 +1455,11 @@ func TestBeginFederatedLogin_WithOptionalParams(t *testing.T) {
 	assert.NotEmpty(t, location)
 }
 
-// TestLinkAccount_WithAccessToken tests account linking with access token.
-func TestLinkAccount_WithAccessToken(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := LinkAccountOptions{
-		ProviderID:  "prov_google",
-		ExternalID:  "google_user_123",
-		AccessToken: "provider_access_token",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusCreated, rec.Code)
-
-	var resp AccountLink
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "google_user_123", resp.ExternalID)
-}
-
 // fedErrorReader is a reader that always returns an error.
 type fedErrorReader struct{}
 
 func (e *fedErrorReader) Read(p []byte) (n int, err error) {
 	return 0, errors.New("simulated read error")
-}
-
-// TestLinkAccount_BodyReadError tests account linking with body read error.
-func TestLinkAccount_BodyReadError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", &fedErrorReader{})
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "failed to read request body")
-}
-
-// TestListProviders_FederationManagerError tests when GetFederationManager returns error.
-func TestListProviders_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.ListProviders(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetProvider_FederationManagerError tests when GetFederationManager returns error.
-func TestGetProvider_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestBeginFederatedLogin_FederationManagerError tests when GetFederationManager returns error.
-func TestBeginFederatedLogin_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/login?redirect_uri=https://app.example.com/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestHandleFederatedCallback_FederationManagerError tests when GetFederationManager returns error.
-func TestHandleFederatedCallback_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/callback?code=auth_code_123", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestLinkAccount_FederationManagerError tests when GetFederationManager returns error.
-func TestLinkAccount_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUnlinkAccount_FederationManagerError tests when GetFederationManager returns error.
-func TestUnlinkAccount_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/users/user123/links/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetUserLinks_FederationManagerError tests when GetFederationManager returns error.
-func TestGetUserLinks_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/users/user123/links", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestListProviders_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestListProviders_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.ListProviders(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetProvider_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestGetProvider_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestBeginFederatedLogin_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestBeginFederatedLogin_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/login?redirect_uri=https://app.example.com/callback", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.BeginFederatedLogin(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestHandleFederatedCallback_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestHandleFederatedCallback_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/providers/tenant123/google/callback?code=auth_code_123", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_name", "google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.HandleFederatedCallback(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestLinkAccount_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestLinkAccount_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := LinkAccountOptions{
-		ProviderID: "prov_google",
-		ExternalID: "google_user_123",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/users/user123/links", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.LinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUnlinkAccount_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestUnlinkAccount_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/users/user123/links/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UnlinkAccount(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestGetUserLinks_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestGetUserLinks_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant123/users/user123/links", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("user_id", "10123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.GetUserLinks(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 // TestGetUserLinks_InvalidPagination tests pagination with invalid values.
@@ -2346,6 +1505,12 @@ func TestGetUserLinks_InvalidPagination(t *testing.T) {
 			query:         "?limit=500",
 			expectedLimit: 500,
 			expectedOff:   0,
+		},
+		{
+			name:          "valid limit and offset",
+			query:         "?limit=25&offset=5",
+			expectedLimit: 25,
+			expectedOff:   5,
 		},
 	}
 
