@@ -187,19 +187,28 @@ func TestCreateJob_Success(t *testing.T) {
 	}
 }
 
-func TestCreateJob_NilJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.CreateJob(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil job")
+func TestStorage_NilInput(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, s *Storage) error
+	}{
+		{"CreateJob", func(ctx context.Context, s *Storage) error { return s.CreateJob(ctx, nil) }},
+		{"UpdateJob", func(ctx context.Context, s *Storage) error { return s.UpdateJob(ctx, nil) }},
+		{"SaveExecution", func(ctx context.Context, s *Storage) error { return s.SaveExecution(ctx, nil) }},
 	}
 
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(context.Background(), NewStorage(newMockKVStore()))
+			if err == nil {
+				t.Fatal("expected error for nil input")
+			}
+
+			var storageErr *scheduler.ErrStorageError
+			if !errors.As(err, &storageErr) {
+				t.Fatalf("expected ErrStorageError, got %T", err)
+			}
+		})
 	}
 }
 
@@ -267,22 +276,74 @@ func TestCreateJob_DelegatedJob(t *testing.T) {
 	}
 }
 
-func TestCreateJob_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.putErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-
-	err := storage.CreateJob(ctx, job)
-	if err == nil {
-		t.Fatal("expected error")
+func TestStorage_StoreFaults(t *testing.T) {
+	storeErr := errors.New("storage unavailable")
+	execution := func() *scheduler.JobExecution {
+		return &scheduler.JobExecution{JobID: 1, Status: scheduler.JobStatusCompleted, StartedAt: time.Now()}
 	}
 
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
+	tests := []struct {
+		name   string
+		inject func(kv *mockKVStore)
+		call   func(ctx context.Context, s *Storage) error
+	}{
+		{
+			name:   "CreateJob put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				return s.CreateJob(ctx, createTestJob("test-job", scheduler.OwnerTypeSystem, ""))
+			},
+		},
+		{
+			name:   "UpdateJob put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				return s.UpdateJob(ctx, createTestJob("test-job", scheduler.OwnerTypeSystem, ""))
+			},
+		},
+		{
+			name:   "DeleteJob delete",
+			inject: func(kv *mockKVStore) { kv.deleteErr = storeErr },
+			call:   func(ctx context.Context, s *Storage) error { return s.DeleteJob(ctx, 1, "") },
+		},
+		{
+			name:   "ListJobs scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, _, err := s.ListJobs(ctx, nil)
+				return err
+			},
+		},
+		{
+			name:   "GetJobsDueForExecution scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, err := s.GetJobsDueForExecution(ctx, time.Now(), 10)
+				return err
+			},
+		},
+		{
+			name:   "SaveExecution put",
+			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
+			call:   func(ctx context.Context, s *Storage) error { return s.SaveExecution(ctx, execution()) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := newMockKVStore()
+			tt.inject(kv)
+
+			err := tt.call(context.Background(), NewStorage(kv))
+			if !errors.Is(err, storeErr) {
+				t.Fatalf("expected the store error, got %v", err)
+			}
+
+			var storageErr *scheduler.ErrStorageError
+			if !errors.As(err, &storageErr) {
+				t.Fatalf("expected ErrStorageError, got %T", err)
+			}
+		})
 	}
 }
 
@@ -407,43 +468,6 @@ func TestUpdateJob_Success(t *testing.T) {
 	}
 }
 
-func TestUpdateJob_NilJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.UpdateJob(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil job")
-	}
-
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
-	}
-}
-
-func TestUpdateJob_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("failed to create job: %v", err)
-	}
-
-	// Inject error for update
-	kv.putErr = errors.New("storage unavailable")
-
-	job.Name = "updated"
-	err = storage.UpdateJob(ctx, job)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestDeleteJob_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -464,18 +488,6 @@ func TestDeleteJob_Success(t *testing.T) {
 	_, err = storage.GetJob(ctx, job.ID, "")
 	if err == nil {
 		t.Fatal("expected error for deleted job")
-	}
-}
-
-func TestDeleteJob_DeleteError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.deleteErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	err := storage.DeleteJob(ctx, 1, "")
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
 
@@ -655,18 +667,6 @@ func TestListJobs_TenantJobs(t *testing.T) {
 	}
 }
 
-func TestListJobs_ScanError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.scanErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	_, _, err := storage.ListJobs(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestGetJobsDueForExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -752,18 +752,6 @@ func TestGetJobsDueForExecution_DefaultLimit(t *testing.T) {
 	}
 }
 
-func TestGetJobsDueForExecution_ScanError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.scanErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	_, err := storage.GetJobsDueForExecution(ctx, time.Now(), 10)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestSaveExecution_Success(t *testing.T) {
 	ctx := context.Background()
 	kv := newMockKVStore()
@@ -809,40 +797,6 @@ func TestSaveExecution_WithExistingID(t *testing.T) {
 	// Verify ID was preserved
 	if exec.ID != 12345 {
 		t.Errorf("expected execution ID 12345, got %d", exec.ID)
-	}
-}
-
-func TestSaveExecution_NilExecution(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	err := storage.SaveExecution(ctx, nil)
-	if err == nil {
-		t.Fatal("expected error for nil execution")
-	}
-
-	var storageErr *scheduler.ErrStorageError
-	if !errors.As(err, &storageErr) {
-		t.Fatalf("expected ErrStorageError, got %T", err)
-	}
-}
-
-func TestSaveExecution_PutError(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	kv.putErr = errors.New("storage unavailable")
-	storage := NewStorage(kv)
-
-	exec := &scheduler.JobExecution{
-		JobID:     1,
-		Status:    scheduler.JobStatusCompleted,
-		StartedAt: time.Now(),
-	}
-
-	err := storage.SaveExecution(ctx, exec)
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
 
