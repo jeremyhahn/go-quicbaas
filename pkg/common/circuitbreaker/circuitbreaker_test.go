@@ -15,6 +15,7 @@ package circuitbreaker
 
 import (
 	stderrors "errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -178,30 +179,6 @@ func TestTransition_ClosedToOpen(t *testing.T) {
 	}
 }
 
-func TestTransition_ClosedStaysClosedBelowThreshold(t *testing.T) {
-	cfg := Config{
-		Name:             "test",
-		FailureThreshold: 5,
-		SuccessThreshold: 2,
-		OpenTimeout:      30 * time.Second,
-	}
-	cb, err := New(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	testErr := &stubError{message: "fail"}
-
-	// 4 failures (below threshold of 5)
-	for i := 0; i < 4; i++ {
-		_ = cb.Execute(func() error { return testErr })
-	}
-
-	if cb.State() != StateClosed {
-		t.Fatalf("expected state Closed with 4 failures (threshold 5), got: %s", cb.State())
-	}
-}
-
 func TestTransition_OpenToHalfOpenAfterTimeout(t *testing.T) {
 	clock := newFakeClock(time.Now())
 
@@ -354,52 +331,6 @@ func TestTransition_HalfOpenToOpenOnFailure(t *testing.T) {
 	}
 }
 
-func TestTransition_FullCycle_ClosedOpenHalfOpenClosed(t *testing.T) {
-	clock := newFakeClock(time.Now())
-
-	cfg := Config{
-		Name:             "cycle",
-		FailureThreshold: 2,
-		SuccessThreshold: 2,
-		OpenTimeout:      5 * time.Second,
-	}
-	cb, err := New(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	cb.nowFunc = clock.Now
-
-	testErr := &stubError{message: "fail"}
-
-	// 1. Closed -> Open
-	for i := int32(0); i < cfg.FailureThreshold; i++ {
-		_ = cb.Execute(func() error { return testErr })
-	}
-	if cb.State() != StateOpen {
-		t.Fatalf("step 1: expected Open, got: %s", cb.State())
-	}
-
-	// 2. Open -> HalfOpen (after timeout)
-	clock.Advance(6 * time.Second)
-	if cb.State() != StateHalfOpen {
-		t.Fatalf("step 2: expected HalfOpen, got: %s", cb.State())
-	}
-
-	// 3. HalfOpen -> Closed (after success threshold)
-	for i := int32(0); i < cfg.SuccessThreshold; i++ {
-		_ = cb.Execute(func() error { return nil })
-	}
-	if cb.State() != StateClosed {
-		t.Fatalf("step 3: expected Closed, got: %s", cb.State())
-	}
-
-	// 4. Verify it works normally again
-	execErr := cb.Execute(func() error { return nil })
-	if execErr != nil {
-		t.Fatalf("step 4: expected no error, got: %v", execErr)
-	}
-}
-
 // --- Failure Counting ---
 
 func TestFailureCount_ResetsOnSuccess(t *testing.T) {
@@ -456,6 +387,9 @@ func TestFailureCount_AccumulatesConsecutive(t *testing.T) {
 	failures, _ := cb.Counts()
 	if failures != 7 {
 		t.Fatalf("expected 7 consecutive failures, got: %d", failures)
+	}
+	if cb.State() != StateClosed {
+		t.Fatalf("expected Closed with 7 failures (threshold 10), got: %s", cb.State())
 	}
 }
 
@@ -527,21 +461,6 @@ func TestCounts_ReturnsCorrectValues(t *testing.T) {
 	failures, successes := cb.Counts()
 	if failures != 0 || successes != 0 {
 		t.Fatalf("expected zero counts initially, got failures=%d successes=%d", failures, successes)
-	}
-}
-
-func TestCounts_InvalidInitialState(t *testing.T) {
-	cb, err := New(DefaultConfig("test"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	testErr := &stubError{message: "fail"}
-	_ = cb.Execute(func() error { return testErr })
-
-	failures, _ := cb.Counts()
-	if failures != 1 {
-		t.Fatalf("expected 1 failure, got: %d", failures)
 	}
 }
 
@@ -665,6 +584,11 @@ func TestExecute_CircuitOpenError_IsTyped(t *testing.T) {
 		t.Fatalf("expected ErrCircuitOpen code, got: %v", execErr)
 	}
 
+	// Verify the message names the breaker
+	if !strings.Contains(execErr.Error(), "typed-error") {
+		t.Fatalf("expected error to name the breaker, got: %v", execErr)
+	}
+
 	// Verify it's retryable
 	if !errors.IsRetryable(execErr) {
 		t.Fatal("expected circuit open error to be retryable")
@@ -678,33 +602,6 @@ func TestExecute_CircuitOpenError_IsTyped(t *testing.T) {
 	if de.Code.HTTPStatus() != 503 {
 		t.Fatalf("expected HTTP status 503, got: %d", de.Code.HTTPStatus())
 	}
-}
-
-func TestExecute_CircuitOpenError_ContainsName(t *testing.T) {
-	cfg := Config{
-		Name:             "my-breaker",
-		FailureThreshold: 1,
-		SuccessThreshold: 1,
-		OpenTimeout:      30 * time.Second,
-	}
-	cb, err := New(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	_ = cb.Execute(func() error { return &stubError{message: "fail"} })
-	execErr := cb.Execute(func() error { return nil })
-
-	if execErr == nil {
-		t.Fatal("expected error")
-	}
-
-	errMsg := execErr.Error()
-	if !stderrors.Is(execErr, &errors.QBError{Code: errors.ErrCircuitOpen}) {
-		t.Fatalf("expected QBError with ErrCircuitOpen, got: %v", execErr)
-	}
-	// The error message should reference the circuit breaker name
-	_ = errMsg // error message format is tested via the QBError type
 }
 
 // --- State String ---
@@ -852,45 +749,6 @@ func TestExecute_OpenedAtZeroNotElapsed(t *testing.T) {
 	}
 	if !errors.Is(execErr, errors.ErrCircuitOpen) {
 		t.Fatalf("expected ErrCircuitOpen, got: %v", execErr)
-	}
-}
-
-func TestExecute_SuccessInClosedClearsFailures(t *testing.T) {
-	cfg := Config{
-		Name:             "clear-on-success",
-		FailureThreshold: 5,
-		SuccessThreshold: 1,
-		OpenTimeout:      30 * time.Second,
-	}
-	cb, err := New(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	testErr := &stubError{message: "fail"}
-
-	// Accumulate 4 failures (below threshold)
-	for i := 0; i < 4; i++ {
-		_ = cb.Execute(func() error { return testErr })
-	}
-	failures, _ := cb.Counts()
-	if failures != 4 {
-		t.Fatalf("expected 4 failures, got: %d", failures)
-	}
-
-	// Success resets failures
-	_ = cb.Execute(func() error { return nil })
-	failures, _ = cb.Counts()
-	if failures != 0 {
-		t.Fatalf("expected 0 failures after success, got: %d", failures)
-	}
-
-	// 4 more failures should still not trip (need 5 consecutive)
-	for i := 0; i < 4; i++ {
-		_ = cb.Execute(func() error { return testErr })
-	}
-	if cb.State() != StateClosed {
-		t.Fatalf("expected Closed, got: %s", cb.State())
 	}
 }
 
