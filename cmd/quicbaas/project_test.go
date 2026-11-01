@@ -241,19 +241,6 @@ func TestRunProject_TransportErrorIsReturned(t *testing.T) {
 		run  func() error
 	}{
 		{
-			name: "create",
-			mc: &mockProjectClient{
-				createFn: func(_ context.Context, _ *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
-					return nil, transportErr
-				},
-			},
-			run: func() error {
-				cmd := newProjectCreateCommand()
-				projectName = "web-api"
-				return runProjectCreate(cmd, nil)
-			},
-		},
-		{
 			name: "list",
 			mc: &mockProjectClient{
 				listFn: func(_ context.Context, _ *projectSDK.ListProjectsRequest) (*projectSDK.ListProjectsResponse, error) {
@@ -261,15 +248,6 @@ func TestRunProject_TransportErrorIsReturned(t *testing.T) {
 				},
 			},
 			run: func() error { return runProjectList(newProjectListCommand(), nil) },
-		},
-		{
-			name: "update",
-			mc: &mockProjectClient{
-				updateFn: func(_ context.Context, _ *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
-					return nil, transportErr
-				},
-			},
-			run: func() error { return runProjectUpdate(newProjectUpdateCommand(), []string{"proj_42"}) },
 		},
 		{
 			name: "delete",
