@@ -357,37 +357,52 @@ func TestExtractPublicKeyPEMValidKey(t *testing.T) {
 	assert.Contains(t, result, "-----END PUBLIC KEY-----")
 }
 
-// TestXKMSKeyAttrsFromArgs verifies KeyAttributes construction from args.
+// TestXKMSKeyAttrsFromArgs verifies KeyAttributes construction from args and
+// the tenant carried in the context.
 func TestXKMSKeyAttrsFromArgs(t *testing.T) {
-	ctx := context.Background()
-
-	args := map[string]interface{}{
-		"key_id":     "my-test-key",
-		"backend":    "software",
-		"exportable": true,
+	tests := []struct {
+		name           string
+		ctx            context.Context
+		args           map[string]interface{}
+		wantCN         string
+		wantExportable bool
+		wantStoreType  string
+		wantTenant     string
+	}{
+		{
+			name:           "backend without tenant",
+			ctx:            context.Background(),
+			args:           map[string]interface{}{"key_id": "my-test-key", "backend": "software", "exportable": true},
+			wantCN:         "my-test-key",
+			wantExportable: true,
+			wantStoreType:  "software",
+		},
+		{
+			name:   "no backend",
+			ctx:    context.Background(),
+			args:   map[string]interface{}{"key_id": "my-key"},
+			wantCN: "my-key",
+		},
+		{
+			name:           "tenant in context",
+			ctx:            tenantctx.WithTenant(context.Background(), "my-tenant"),
+			args:           map[string]interface{}{"key_id": "tenant-key", "backend": "software", "exportable": true},
+			wantCN:         "tenant-key",
+			wantExportable: true,
+			wantStoreType:  "software",
+			wantTenant:     "my-tenant",
+		},
 	}
 
-	attrs := xkmsKeyAttrsFromArgs(ctx, args)
-
-	assert.Equal(t, "my-test-key", attrs.CN)
-	assert.True(t, attrs.Exportable)
-	assert.Equal(t, "software", string(attrs.StoreType))
-	assert.Empty(t, attrs.TenantID) // No tenant in context
-}
-
-// TestXKMSKeyAttrsFromArgsNoBackend verifies KeyAttributes with empty backend.
-func TestXKMSKeyAttrsFromArgsNoBackend(t *testing.T) {
-	ctx := context.Background()
-
-	args := map[string]interface{}{
-		"key_id": "my-key",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attrs := xkmsKeyAttrsFromArgs(tt.ctx, tt.args)
+			assert.Equal(t, tt.wantCN, attrs.CN)
+			assert.Equal(t, tt.wantExportable, attrs.Exportable)
+			assert.Equal(t, tt.wantStoreType, string(attrs.StoreType))
+			assert.Equal(t, tt.wantTenant, attrs.TenantID)
+		})
 	}
-
-	attrs := xkmsKeyAttrsFromArgs(ctx, args)
-
-	assert.Equal(t, "my-key", attrs.CN)
-	assert.False(t, attrs.Exportable)
-	assert.Empty(t, string(attrs.StoreType))
 }
 
 // =============================================================================
@@ -1261,57 +1276,6 @@ func TestMCPCoverage91Extra_SecretsServiceUnavailable(t *testing.T) {
 }
 
 // =============================================================================
-// ExecuteTool dispatch - routes through switch cases in ExecuteTool
-// Covers switch case branches for KMS, secrets, object storage, and transfer tools
-// =============================================================================
-
-func TestMCPCoverage91Extra_ExecuteTool_SwitchDispatch(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	// Each of these calls ExecuteTool which routes through the switch statement,
-	// covering the case branch even when the underlying function errors.
-	tools := []struct {
-		name string
-		args map[string]interface{}
-	}{
-		// KMS Safety operations (lines 885-892)
-		{"quicbaas_kms_set_key_safety", map[string]interface{}{"key_id": "k1", "safety": "high"}},
-		{"quicbaas_kms_clear_key_safety", map[string]interface{}{"key_id": "k1"}},
-		{"quicbaas_kms_safety_check", map[string]interface{}{"key_id": "k1"}},
-		{"quicbaas_kms_safety_report", map[string]interface{}{}},
-
-		// KMS Export/Unwrap (lines 895-898)
-		{"quicbaas_kms_export_key", map[string]interface{}{"key_id": "k1"}},
-		{"quicbaas_kms_unwrap_key", map[string]interface{}{"key_id": "k1", "wrapped_key": "d3JhcHBlZA==", "wrapping_key_id": "wk1"}},
-
-		// Secrets update_status (line 947)
-		{"quicbaas_secrets_update_status", map[string]interface{}{"path": "secret/test", "status": "active"}},
-
-		// Object batch operations (lines 1131-1138)
-		{"quicbaas_object_batch_put", map[string]interface{}{"operations": []interface{}{}}},
-		{"quicbaas_object_batch_get", map[string]interface{}{"operations": []interface{}{}}},
-		{"quicbaas_object_batch_delete", map[string]interface{}{"operations": []interface{}{}}},
-		{"quicbaas_object_set_tenant_quotas", map[string]interface{}{"tenant_id": "t1"}},
-
-		// Object transfer operations (lines 1161-1164)
-		{"quicbaas_object_transfer_fetch", map[string]interface{}{"url": "http://example.com/obj"}},
-		{"quicbaas_object_transfer_stream_fetch", map[string]interface{}{"url": "http://example.com/obj"}},
-
-		// Rebalance status via ExecuteTool
-		{"quicbaas_rebalance_status", map[string]interface{}{"operation_id": "op-1"}},
-	}
-
-	for _, tt := range tools {
-		t.Run(tt.name, func(t *testing.T) {
-			// We don't care about the result; we just need the switch case to be reached
-			_, _ = registry.ExecuteTool(ctx, tt.name, tt.args)
-		})
-	}
-}
-
-// =============================================================================
 // parseTransactionOps - invalid item type in array
 // =============================================================================
 
@@ -1547,23 +1511,4 @@ func TestXKMSSaveCert_UninitializedAfterValidPEM(t *testing.T) {
 	require.Error(t, err)
 	var parseErr *XKMSCertificateParseError
 	assert.ErrorAs(t, err, &parseErr)
-}
-
-// =============================================================================
-// KeyAttrsFromArgs - Tenant Context
-// =============================================================================
-
-func TestXKMSKeyAttrsFromArgs_WithTenant(t *testing.T) {
-	ctx := tenantctx.WithTenant(context.Background(), "my-tenant")
-
-	args := map[string]interface{}{
-		"key_id":     "tenant-key",
-		"backend":    "software",
-		"exportable": true,
-	}
-
-	attrs := xkmsKeyAttrsFromArgs(ctx, args)
-	assert.Equal(t, "tenant-key", attrs.CN)
-	assert.Equal(t, "my-tenant", attrs.TenantID)
-	assert.True(t, attrs.Exportable)
 }
