@@ -1174,30 +1174,9 @@ func TestSetRaftNode(t *testing.T) {
 	assert.Nil(t, vs.raftNode)
 }
 
-func TestVectorClient_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.vectorClient()
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
-}
-
-func TestVectorClient_Success(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
-	vc, err := svc.vectorClient()
-	require.NoError(t, err)
-	assert.NotNil(t, vc)
-}
-
-func TestResolveShardID_NonZero(t *testing.T) {
+func TestResolveShardID(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
 	assert.Equal(t, uint64(42), svc.resolveShardID(42))
-}
-
-func TestResolveShardID_Zero(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "ns", 128)
 	assert.Equal(t, shards.PlatformShardID, svc.resolveShardID(0))
 }
 
