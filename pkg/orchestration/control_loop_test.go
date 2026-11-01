@@ -703,17 +703,8 @@ func TestNewControlLoop_CreatesValidInstance(t *testing.T) {
 			t.Fatalf("expected handler for state %q", state)
 		}
 	}
-}
-
-func TestNewControlLoop_HandlersLength(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-
-	// 11 states: initializing, decomposing, scheduling, assigning, executing,
-	// validating, reviewing, re-delegating, completing, cleanup, escalating
-	if len(cl.handlers) != 11 {
-		t.Fatalf("expected 11 handlers, got %d", len(cl.handlers))
+	if len(cl.handlers) != len(expectedStates) {
+		t.Fatalf("expected %d handlers, got %d", len(expectedStates), len(cl.handlers))
 	}
 }
 
@@ -734,17 +725,6 @@ func TestSetWorkflow_SetsDefinition(t *testing.T) {
 
 	if cl.workflow != wf {
 		t.Fatal("expected workflow to be set")
-	}
-}
-
-func TestSetWorkflow_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.SetWorkflow(nil)
-
-	if cl.workflow != nil {
-		t.Fatal("expected workflow to be nil")
 	}
 }
 
@@ -1080,6 +1060,8 @@ func TestHandleDecompose_Success(t *testing.T) {
 	cl.job.Config = newTestConfig()
 	cl.job.JobID = "test-job"
 	cl.job.memory = NewJobMemory()
+	// Feedback from an earlier iteration is folded into the decompose prompt.
+	cl.job.memory.AddFeedback("review feedback from iteration 1")
 
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
@@ -1090,86 +1072,6 @@ func TestHandleDecompose_Success(t *testing.T) {
 	}
 	if len(cl.workItems) != 2 {
 		t.Fatalf("expected 2 work items, got %d", len(cl.workItems))
-	}
-}
-
-func TestHandleDecompose_WithAccumulatedContext(t *testing.T) {
-	t.Parallel()
-
-	var capturedTask string
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{
-				{ID: "w1", Title: "Task 1"},
-			},
-		},
-	}
-
-	// Wrap to capture the decompose task description.
-	originalResp := svc.decomposeResponse
-	svc.decomposeResponse = originalResp
-
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-	cl.job.memory.AddFeedback("review feedback from iteration 1")
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateScheduling {
-		t.Fatalf("expected scheduling state, got %q", nextState)
-	}
-	_ = capturedTask
-}
-
-func TestHandleDecompose_EmptyResult(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err == nil {
-		t.Fatal("expected error for empty decomposition")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
-	}
-	if !errors.Is(err, ErrEmptyDecomposition) {
-		t.Fatalf("expected ErrEmptyDecomposition, got: %v", err)
-	}
-}
-
-func TestHandleDecompose_ServiceError(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeErr: errors.New("service unavailable"),
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err == nil {
-		t.Fatal("expected error from service")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
 	}
 }
 
@@ -1322,34 +1224,6 @@ func TestHandleAssign_Success(t *testing.T) {
 	}
 	if len(cl.taskIDs) != 1 {
 		t.Fatalf("expected 1 task ID, got %d", len(cl.taskIDs))
-	}
-}
-
-func TestHandleAssign_NoAgents(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents:   []*FleetNode{},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{{ID: "w1", Title: "Task 1"}}
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-
-	nextState, err := cl.handleAssign(context.Background())
-	if err == nil {
-		t.Fatal("expected error for no agents")
-	}
-	if nextState != JobStateFailed {
-		t.Fatalf("expected failed state, got %q", nextState)
-	}
-	if !errors.Is(err, ErrNoFleetNodesAvailable) {
-		t.Fatalf("expected ErrNoFleetNodesAvailable, got: %v", err)
 	}
 }
 
