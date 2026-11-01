@@ -15,7 +15,7 @@ package filter
 
 import (
 	"errors"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/interfaces"
@@ -139,212 +139,102 @@ func TestIndexedEvaluator_NilExpr(t *testing.T) {
 	}
 }
 
-func TestIndexedEvaluator_AND_BothResolved(t *testing.T) {
-	colorIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1, 2, 3, 5}, nil
-		},
-	}
-	sizeIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{2, 3, 4}, nil
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"color": colorIdx,
-		"size":  sizeIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "color", Op: OpEqual, Value: "red"},
-		Right: &TermExpr{Field: "size", Op: OpEqual, Value: "large"},
-	}
-	ids, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !resolved {
-		t.Error("expected fullyResolved=true")
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	if len(ids) != 2 || ids[0] != 2 || ids[1] != 3 {
-		t.Errorf("ids = %v, want [2, 3]", ids)
-	}
+// sideIndex is what the index of one side of a logical expression returns.
+// A nil *sideIndex leaves that side's field unindexed.
+type sideIndex struct {
+	ids []uint64
+	err error
 }
 
-func TestIndexedEvaluator_AND_OneResolved(t *testing.T) {
-	colorIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1, 2, 3}, nil
+func TestIndexedEvaluator_Logical(t *testing.T) {
+	leftErr := errors.New("left error")
+	rightErr := errors.New("right error")
+	tests := []struct {
+		name         string
+		op           LogicalOp
+		left, right  *sideIndex
+		wantIDs      []uint64
+		wantResolved bool
+		wantErr      error
+	}{
+		{
+			name: "AND both resolved intersects", op: LogicalAND,
+			left: &sideIndex{ids: []uint64{1, 2, 3, 5}}, right: &sideIndex{ids: []uint64{2, 3, 4}},
+			wantIDs: []uint64{2, 3}, wantResolved: true,
+		},
+		{
+			name: "AND left only resolved returns left", op: LogicalAND,
+			left: &sideIndex{ids: []uint64{1, 2, 3}}, wantIDs: []uint64{1, 2, 3},
+		},
+		{
+			name: "AND right only resolved returns right", op: LogicalAND,
+			right: &sideIndex{ids: []uint64{4, 5}}, wantIDs: []uint64{4, 5},
+		},
+		{name: "AND neither resolved", op: LogicalAND},
+		{
+			name: "AND left error", op: LogicalAND,
+			left: &sideIndex{err: leftErr}, wantErr: leftErr,
+		},
+		{
+			name: "AND right error", op: LogicalAND,
+			left: &sideIndex{ids: []uint64{1}}, right: &sideIndex{err: rightErr}, wantErr: rightErr,
+		},
+		{
+			name: "OR both resolved unions", op: LogicalOR,
+			left: &sideIndex{ids: []uint64{1, 2}}, right: &sideIndex{ids: []uint64{2, 3}},
+			wantIDs: []uint64{1, 2, 3}, wantResolved: true,
+		},
+		{
+			name: "OR one side unresolved", op: LogicalOR,
+			left: &sideIndex{ids: []uint64{1, 2}},
+		},
+		{
+			name: "OR left error", op: LogicalOR,
+			left: &sideIndex{err: leftErr}, wantErr: leftErr,
+		},
+		{
+			name: "OR right error", op: LogicalOR,
+			left: &sideIndex{ids: []uint64{1}}, right: &sideIndex{err: rightErr}, wantErr: rightErr,
+		},
+		{
+			name: "NOT resolved inner is not resolved", op: LogicalNOT,
+			left: &sideIndex{ids: []uint64{1, 2}},
+		},
+		{name: "NOT unresolved inner", op: LogicalNOT},
+		{
+			name: "NOT inner error", op: LogicalNOT,
+			left: &sideIndex{err: leftErr}, wantErr: leftErr,
 		},
 	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"color": colorIdx,
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			indexes := map[string]interfaces.ScalarIndex{}
+			for field, side := range map[string]*sideIndex{"left": tt.left, "right": tt.right} {
+				if side == nil {
+					continue
+				}
+				indexes[field] = &mockScalarIndex{
+					queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
+						return side.ids, side.err
+					},
+				}
+			}
+			expr := &LogicalExpr{Op: tt.op, Left: &TermExpr{Field: "left", Op: OpEqual, Value: "x"}}
+			if tt.op != LogicalNOT {
+				expr.Right = &TermExpr{Field: "right", Op: OpEqual, Value: "y"}
+			}
 
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "color", Op: OpEqual, Value: "red"},
-		Right: &TermExpr{Field: "unindexed", Op: OpEqual, Value: "val"},
-	}
-	ids, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("expected fullyResolved=false when one side is unresolved")
-	}
-	if len(ids) != 3 {
-		t.Errorf("ids = %v, want 3 results from resolved side", ids)
-	}
-}
-
-func TestIndexedEvaluator_AND_LeftError(t *testing.T) {
-	queryErr := errors.New("left error")
-	idx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return nil, queryErr
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{"left": idx})
-
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "left", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "right", Op: OpEqual, Value: "y"},
-	}
-	_, _, err := eval.EvaluateWithIndexes(expr)
-	if !errors.Is(err, queryErr) {
-		t.Errorf("err = %v, want %v", err, queryErr)
-	}
-}
-
-func TestIndexedEvaluator_AND_RightError(t *testing.T) {
-	queryErr := errors.New("right error")
-	goodIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1}, nil
-		},
-	}
-	badIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return nil, queryErr
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"left":  goodIdx,
-		"right": badIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "left", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "right", Op: OpEqual, Value: "y"},
-	}
-	_, _, err := eval.EvaluateWithIndexes(expr)
-	if !errors.Is(err, queryErr) {
-		t.Errorf("err = %v, want %v", err, queryErr)
-	}
-}
-
-func TestIndexedEvaluator_OR_BothResolved(t *testing.T) {
-	colorIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1, 2}, nil
-		},
-	}
-	sizeIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{2, 3}, nil
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"color": colorIdx,
-		"size":  sizeIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalOR,
-		Left:  &TermExpr{Field: "color", Op: OpEqual, Value: "red"},
-		Right: &TermExpr{Field: "size", Op: OpEqual, Value: "large"},
-	}
-	ids, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !resolved {
-		t.Error("expected fullyResolved=true")
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	if len(ids) != 3 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 {
-		t.Errorf("ids = %v, want [1, 2, 3]", ids)
-	}
-}
-
-func TestIndexedEvaluator_OR_PartialResolution(t *testing.T) {
-	colorIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1, 2}, nil
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"color": colorIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalOR,
-		Left:  &TermExpr{Field: "color", Op: OpEqual, Value: "red"},
-		Right: &TermExpr{Field: "unindexed", Op: OpEqual, Value: "val"},
-	}
-	_, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("expected fullyResolved=false for partially resolved OR")
-	}
-}
-
-func TestIndexedEvaluator_NOT_CannotResolve(t *testing.T) {
-	colorIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1, 2}, nil
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"color": colorIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:   LogicalNOT,
-		Left: &TermExpr{Field: "color", Op: OpEqual, Value: "red"},
-	}
-	_, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("NOT should never be fully resolved via indexes alone")
-	}
-}
-
-func TestIndexedEvaluator_NOT_InnerError(t *testing.T) {
-	queryErr := errors.New("inner error")
-	idx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return nil, queryErr
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{"field": idx})
-
-	expr := &LogicalExpr{
-		Op:   LogicalNOT,
-		Left: &TermExpr{Field: "field", Op: OpEqual, Value: "x"},
-	}
-	_, _, err := eval.EvaluateWithIndexes(expr)
-	if !errors.Is(err, queryErr) {
-		t.Errorf("err = %v, want %v", err, queryErr)
+			ids, resolved, err := NewIndexedEvaluator(indexes).EvaluateWithIndexes(expr)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if resolved != tt.wantResolved {
+				t.Errorf("fullyResolved = %v, want %v", resolved, tt.wantResolved)
+			}
+			if (tt.wantIDs == nil) != (ids == nil) || !slices.Equal(ids, tt.wantIDs) {
+				t.Errorf("ids = %v, want %v", ids, tt.wantIDs)
+			}
+		})
 	}
 }
 
@@ -588,117 +478,6 @@ func TestIndexedEvaluator_UnknownLogicalOp(t *testing.T) {
 	}
 	if resolved {
 		t.Error("expected fullyResolved=false for unknown logical op")
-	}
-}
-
-func TestIndexedEvaluator_AND_NeitherResolved(t *testing.T) {
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{})
-
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "a", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "b", Op: OpEqual, Value: "y"},
-	}
-	ids, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("expected fullyResolved=false")
-	}
-	if ids != nil {
-		t.Errorf("ids = %v, want nil", ids)
-	}
-}
-
-func TestIndexedEvaluator_AND_RightOnlyResolved(t *testing.T) {
-	sizeIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{4, 5}, nil
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"size": sizeIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalAND,
-		Left:  &TermExpr{Field: "unindexed", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "size", Op: OpEqual, Value: "large"},
-	}
-	ids, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("expected fullyResolved=false")
-	}
-	if len(ids) != 2 {
-		t.Errorf("ids = %v, want 2 results from right side", ids)
-	}
-}
-
-func TestIndexedEvaluator_NOT_Unresolvable(t *testing.T) {
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{})
-
-	expr := &LogicalExpr{
-		Op:   LogicalNOT,
-		Left: &TermExpr{Field: "unindexed", Op: OpEqual, Value: "x"},
-	}
-	_, resolved, err := eval.EvaluateWithIndexes(expr)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if resolved {
-		t.Error("NOT with unresolved inner should return false")
-	}
-}
-
-func TestIndexedEvaluator_OR_LeftError(t *testing.T) {
-	queryErr := errors.New("left or error")
-	idx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return nil, queryErr
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{"left": idx})
-
-	expr := &LogicalExpr{
-		Op:    LogicalOR,
-		Left:  &TermExpr{Field: "left", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "right", Op: OpEqual, Value: "y"},
-	}
-	_, _, err := eval.EvaluateWithIndexes(expr)
-	if !errors.Is(err, queryErr) {
-		t.Errorf("err = %v, want %v", err, queryErr)
-	}
-}
-
-func TestIndexedEvaluator_OR_RightError(t *testing.T) {
-	queryErr := errors.New("right or error")
-	goodIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return []uint64{1}, nil
-		},
-	}
-	badIdx := &mockScalarIndex{
-		queryFunc: func(_ interfaces.ScalarQueryOp, _ interface{}) ([]uint64, error) {
-			return nil, queryErr
-		},
-	}
-	eval := NewIndexedEvaluator(map[string]interfaces.ScalarIndex{
-		"left":  goodIdx,
-		"right": badIdx,
-	})
-
-	expr := &LogicalExpr{
-		Op:    LogicalOR,
-		Left:  &TermExpr{Field: "left", Op: OpEqual, Value: "x"},
-		Right: &TermExpr{Field: "right", Op: OpEqual, Value: "y"},
-	}
-	_, _, err := eval.EvaluateWithIndexes(expr)
-	if !errors.Is(err, queryErr) {
-		t.Errorf("err = %v, want %v", err, queryErr)
 	}
 }
 
