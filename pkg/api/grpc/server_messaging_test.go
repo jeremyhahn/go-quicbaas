@@ -18,8 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"errors"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -524,6 +522,60 @@ func TestMessagingServer_ListChannels(t *testing.T) {
 				require.NotNil(t, resp)
 				assert.Empty(t, resp.Channels)
 				assert.Equal(t, int32(0), resp.TotalCount)
+			},
+		},
+		{
+			name:    "name_prefix_filters",
+			request: &pb.MessagingListChannelsRequest{NamePrefix: "events."},
+			mockFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+				return []*messaging.Channel{
+					{Name: "events.orders"},
+					{Name: "events.payments"},
+					{Name: "logs.system"},
+				}, nil
+			},
+			validate: func(t *testing.T, resp *pb.MessagingListChannelsResponse) {
+				require.NotNil(t, resp)
+				assert.Len(t, resp.Channels, 2)
+				assert.Equal(t, int32(2), resp.TotalCount)
+			},
+		},
+		{
+			name:    "limit_truncates",
+			request: &pb.MessagingListChannelsRequest{Limit: 2},
+			mockFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+				return []*messaging.Channel{
+					{Name: "ch1"}, {Name: "ch2"}, {Name: "ch3"}, {Name: "ch4"},
+				}, nil
+			},
+			validate: func(t *testing.T, resp *pb.MessagingListChannelsResponse) {
+				require.NotNil(t, resp)
+				assert.Len(t, resp.Channels, 2)
+				assert.Equal(t, int32(2), resp.TotalCount)
+			},
+		},
+		{
+			name:    "prefix_then_limit",
+			request: &pb.MessagingListChannelsRequest{NamePrefix: "events.", Limit: 2},
+			mockFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+				return []*messaging.Channel{
+					{Name: "events.a"}, {Name: "events.b"}, {Name: "events.c"}, {Name: "logs.system"},
+				}, nil
+			},
+			validate: func(t *testing.T, resp *pb.MessagingListChannelsResponse) {
+				require.NotNil(t, resp)
+				assert.Len(t, resp.Channels, 2)
+			},
+		},
+		{
+			name:    "nil_request_lists_all",
+			request: nil,
+			mockFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+				return []*messaging.Channel{{Name: "ch1"}}, nil
+			},
+			validate: func(t *testing.T, resp *pb.MessagingListChannelsResponse) {
+				require.NotNil(t, resp)
+				assert.Len(t, resp.Channels, 1)
 			},
 		},
 		{
@@ -1530,158 +1582,70 @@ func TestMessagingServer_EdgeCases(t *testing.T) {
 // GetDedupStats Tests
 // =============================================================================
 
-func TestMessagingServer_GetDedupStats_MissingChannel(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{})
-
-	_, err := srv.GetDedupStats(context.Background(), &pb.MessagingGetDedupStatsRequest{
-		Channel: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestMessagingServer_GetDedupStats_ChannelNotFound(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		getChannelFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
-			return nil, errors.New("channel not found")
+// GetDedupStats and StreamNotifications need a *messaging.PushService past
+// validation; with the mock service only their error paths are reachable here.
+func TestMessagingServer_GetDedupStats(t *testing.T) {
+	tests := []struct {
+		name       string
+		channel    string
+		getChannel func(ctx context.Context, name string) (*messaging.Channel, error)
+		errorCode  codes.Code
+	}{
+		{
+			name:      "missing_channel",
+			channel:   "",
+			errorCode: codes.InvalidArgument,
 		},
-	})
-
-	_, err := srv.GetDedupStats(context.Background(), &pb.MessagingGetDedupStatsRequest{
-		Channel: "nonexistent",
-	})
-	require.Error(t, err)
-}
-
-func TestMessagingServer_GetDedupStats_NotPushService(t *testing.T) {
-	// The mock service is not a *messaging.PushService, so the type assertion fails.
-	srv := newTestMessagingServer(&mockMessagingService{
-		getChannelFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
-			return &messaging.Channel{Name: name}, nil
+		{
+			name:    "channel_not_found",
+			channel: "nonexistent",
+			getChannel: func(ctx context.Context, name string) (*messaging.Channel, error) {
+				return nil, messaging.NewChannelNotFoundError("GetChannel", name)
+			},
+			errorCode: codes.NotFound,
 		},
-	})
-
-	_, err := srv.GetDedupStats(context.Background(), &pb.MessagingGetDedupStatsRequest{
-		Channel: "test-channel",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-// =============================================================================
-// StreamNotifications Tests
-// =============================================================================
-
-func TestMessagingServer_StreamNotifications_MissingSubscriptionID(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{})
-
-	// StreamNotifications requires a stream, but we can test the input validation
-	// path that checks for missing subscription_id.
-	err := srv.StreamNotifications(&pb.MessagingStreamNotificationsRequest{
-		SubscriptionId: "",
-	}, nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestMessagingServer_StreamNotifications_NotPushService(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{})
-
-	err := srv.StreamNotifications(&pb.MessagingStreamNotificationsRequest{
-		SubscriptionId: "sub-1",
-	}, nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-// =============================================================================
-// ListChannels Filter/Limit Tests
-// =============================================================================
-
-func TestMessagingServer_ListChannels_WithNamePrefix(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		listChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "events.orders"},
-				{Name: "events.payments"},
-				{Name: "logs.system"},
-			}, nil
+		{
+			name:    "not_push_service",
+			channel: "test-channel",
+			getChannel: func(ctx context.Context, name string) (*messaging.Channel, error) {
+				return &messaging.Channel{Name: name}, nil
+			},
+			errorCode: codes.Unimplemented,
 		},
-	})
+	}
 
-	resp, err := srv.ListChannels(context.Background(), &pb.MessagingListChannelsRequest{
-		NamePrefix: "events.",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Channels, 2)
-	assert.Equal(t, int32(2), resp.TotalCount)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestMessagingServer(&mockMessagingService{getChannelFunc: tc.getChannel})
+
+			_, err := srv.GetDedupStats(context.Background(), &pb.MessagingGetDedupStatsRequest{
+				Channel: tc.channel,
+			})
+			require.Error(t, err)
+			assert.Equal(t, tc.errorCode, status.Code(err))
+		})
+	}
 }
 
-func TestMessagingServer_ListChannels_WithLimit(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		listChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "ch1"},
-				{Name: "ch2"},
-				{Name: "ch3"},
-				{Name: "ch4"},
-			}, nil
-		},
-	})
+func TestMessagingServer_StreamNotifications(t *testing.T) {
+	tests := []struct {
+		name           string
+		subscriptionID string
+		errorCode      codes.Code
+	}{
+		{name: "missing_subscription_id", subscriptionID: "", errorCode: codes.InvalidArgument},
+		{name: "not_push_service", subscriptionID: "sub-1", errorCode: codes.Internal},
+	}
 
-	resp, err := srv.ListChannels(context.Background(), &pb.MessagingListChannelsRequest{
-		Limit: 2,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Channels, 2)
-	assert.Equal(t, int32(2), resp.TotalCount)
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestMessagingServer(&mockMessagingService{})
 
-func TestMessagingServer_ListChannels_WithPrefixAndLimit(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		listChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "events.a"},
-				{Name: "events.b"},
-				{Name: "events.c"},
-				{Name: "logs.system"},
-			}, nil
-		},
-	})
-
-	resp, err := srv.ListChannels(context.Background(), &pb.MessagingListChannelsRequest{
-		NamePrefix: "events.",
-		Limit:      2,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Channels, 2)
-}
-
-func TestMessagingServer_ListChannels_NilRequest(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		listChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "ch1"},
-			}, nil
-		},
-	})
-
-	resp, err := srv.ListChannels(context.Background(), nil)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Channels, 1)
-}
-
-func TestMessagingServer_ListChannels_Error(t *testing.T) {
-	srv := newTestMessagingServer(&mockMessagingService{
-		listChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return nil, errors.New("list failed")
-		},
-	})
-
-	_, err := srv.ListChannels(context.Background(), &pb.MessagingListChannelsRequest{})
-	require.Error(t, err)
+			err := srv.StreamNotifications(&pb.MessagingStreamNotificationsRequest{
+				SubscriptionId: tc.subscriptionID,
+			}, nil)
+			require.Error(t, err)
+			assert.Equal(t, tc.errorCode, status.Code(err))
+		})
+	}
 }
