@@ -1613,79 +1613,72 @@ func TestMemoryStateStorage_DeleteState(t *testing.T) {
 }
 
 func TestMemoryStateStorage_CleanupExpired(t *testing.T) {
-	storage := NewMemoryStateStorage()
-
-	// Add mixed states
-	states := []*LoginState{
-		{Nonce: "expired-1", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(-10 * time.Minute)},
-		{Nonce: "expired-2", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(-5 * time.Minute)},
-		{Nonce: "valid-1", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(5 * time.Minute)},
-		{Nonce: "valid-2", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(10 * time.Minute)},
+	newState := func(nonce string, ttl time.Duration) *LoginState {
+		return &LoginState{Nonce: nonce, ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(ttl)}
 	}
 
-	for _, s := range states {
-		_ = storage.SaveState(context.Background(), s)
+	tests := []struct {
+		name        string
+		states      []*LoginState
+		wantCount   int
+		wantRemoved []string
+		wantKept    []string
+	}{
+		{
+			name: "removes only expired states",
+			states: []*LoginState{
+				newState("expired-1", -10*time.Minute),
+				newState("expired-2", -5*time.Minute),
+				newState("valid-1", 5*time.Minute),
+				newState("valid-2", 10*time.Minute),
+			},
+			wantCount:   2,
+			wantRemoved: []string{"expired-1", "expired-2"},
+			wantKept:    []string{"valid-1", "valid-2"},
+		},
+		{
+			name: "no expired states",
+			states: []*LoginState{
+				newState("valid-1", 5*time.Minute),
+				newState("valid-2", 10*time.Minute),
+			},
+			wantCount: 0,
+			wantKept:  []string{"valid-1", "valid-2"},
+		},
+		{
+			name:      "empty storage",
+			wantCount: 0,
+		},
 	}
 
-	count, err := storage.CleanupExpired(context.Background())
-	if err != nil {
-		t.Errorf("CleanupExpired() unexpected error = %v", err)
-		return
-	}
-	if count != 2 {
-		t.Errorf("CleanupExpired() count = %v, want 2", count)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewMemoryStateStorage()
+			for _, s := range tt.states {
+				if err := storage.SaveState(context.Background(), s); err != nil {
+					t.Fatalf("SaveState(%s) error = %v", s.Nonce, err)
+				}
+			}
 
-	// Verify expired states were deleted
-	for _, nonce := range []string{"expired-1", "expired-2"} {
-		_, err := storage.GetState(context.Background(), nonce)
-		if !errors.Is(err, ErrStateNotFound) {
-			t.Errorf("GetState(%s) after cleanup should return ErrStateNotFound, got %v", nonce, err)
-		}
-	}
+			count, err := storage.CleanupExpired(context.Background())
+			if err != nil {
+				t.Fatalf("CleanupExpired() unexpected error = %v", err)
+			}
+			if count != tt.wantCount {
+				t.Errorf("CleanupExpired() count = %v, want %v", count, tt.wantCount)
+			}
 
-	// Verify valid states remain
-	for _, nonce := range []string{"valid-1", "valid-2"} {
-		_, err := storage.GetState(context.Background(), nonce)
-		if err != nil {
-			t.Errorf("GetState(%s) after cleanup should succeed, got %v", nonce, err)
-		}
-	}
-}
-
-func TestMemoryStateStorage_CleanupExpired_NoExpiredStates(t *testing.T) {
-	storage := NewMemoryStateStorage()
-
-	// Add only valid states
-	states := []*LoginState{
-		{Nonce: "valid-1", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(5 * time.Minute)},
-		{Nonce: "valid-2", ProviderID: "google", TenantID: "t1", RedirectURI: "https://example.com/callback", ExpiresAt: time.Now().Add(10 * time.Minute)},
-	}
-
-	for _, s := range states {
-		_ = storage.SaveState(context.Background(), s)
-	}
-
-	count, err := storage.CleanupExpired(context.Background())
-	if err != nil {
-		t.Errorf("CleanupExpired() unexpected error = %v", err)
-		return
-	}
-	if count != 0 {
-		t.Errorf("CleanupExpired() count = %v, want 0", count)
-	}
-}
-
-func TestMemoryStateStorage_CleanupExpired_EmptyStorage(t *testing.T) {
-	storage := NewMemoryStateStorage()
-
-	count, err := storage.CleanupExpired(context.Background())
-	if err != nil {
-		t.Errorf("CleanupExpired() unexpected error = %v", err)
-		return
-	}
-	if count != 0 {
-		t.Errorf("CleanupExpired() count = %v, want 0", count)
+			for _, nonce := range tt.wantRemoved {
+				if _, err := storage.GetState(context.Background(), nonce); !errors.Is(err, ErrStateNotFound) {
+					t.Errorf("GetState(%s) after cleanup should return ErrStateNotFound, got %v", nonce, err)
+				}
+			}
+			for _, nonce := range tt.wantKept {
+				if _, err := storage.GetState(context.Background(), nonce); err != nil {
+					t.Errorf("GetState(%s) after cleanup should succeed, got %v", nonce, err)
+				}
+			}
+		})
 	}
 }
 
@@ -1693,63 +1686,47 @@ func TestMemoryStateStorage_CleanupExpired_EmptyStorage(t *testing.T) {
 // Error Factory Tests
 // ============================================================================
 
-func TestNewLinkNotFoundError(t *testing.T) {
-	err := NewLinkNotFoundError("link-123")
-	if err == nil {
-		t.Fatal("NewLinkNotFoundError() returned nil")
+func TestFederationErrorConstructors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantCode   dberrors.ErrorCode
+		contextKey string
+		value      string
+	}{
+		{
+			name:       "NewLinkNotFoundError",
+			err:        NewLinkNotFoundError("link-123"),
+			wantCode:   dberrors.ErrNotFound,
+			contextKey: "link_id",
+			value:      "link-123",
+		},
+		{
+			name:       "NewStateExpiredError",
+			err:        NewStateExpiredError("token-abc"),
+			wantCode:   dberrors.ErrForbidden,
+			contextKey: "token",
+			value:      "token-abc",
+		},
 	}
 
-	qbErr, ok := err.(*dberrors.QBError)
-	if !ok {
-		t.Fatalf("NewLinkNotFoundError() returned wrong type: %T", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qbErr, ok := tt.err.(*dberrors.QBError)
+			if !ok {
+				t.Fatalf("%s() returned wrong type: %T", tt.name, tt.err)
+			}
+			if qbErr.Code != tt.wantCode {
+				t.Errorf("%s() Code = %v, want %v", tt.name, qbErr.Code, tt.wantCode)
+			}
+			if !strings.Contains(tt.err.Error(), tt.value) {
+				t.Errorf("%s() error should contain %q, got: %v", tt.name, tt.value, tt.err.Error())
+			}
+			if qbErr.Context[tt.contextKey] != tt.value {
+				t.Errorf("%s() Context[%q] = %v, want %q", tt.name, tt.contextKey, qbErr.Context[tt.contextKey], tt.value)
+			}
+		})
 	}
-
-	if qbErr.Code != dberrors.ErrNotFound {
-		t.Errorf("NewLinkNotFoundError() Code = %v, want %v", qbErr.Code, dberrors.ErrNotFound)
-	}
-
-	if !strings.Contains(err.Error(), "link-123") {
-		t.Errorf("NewLinkNotFoundError() error should contain linkID, got: %v", err.Error())
-	}
-
-	if qbErr.Context == nil || qbErr.Context["link_id"] != "link-123" {
-		t.Error("NewLinkNotFoundError() should have link_id in context")
-	}
-}
-
-func TestNewStateExpiredError(t *testing.T) {
-	err := NewStateExpiredError("token-abc")
-	if err == nil {
-		t.Fatal("NewStateExpiredError() returned nil")
-	}
-
-	qbErr, ok := err.(*dberrors.QBError)
-	if !ok {
-		t.Fatalf("NewStateExpiredError() returned wrong type: %T", err)
-	}
-
-	if qbErr.Code != dberrors.ErrForbidden {
-		t.Errorf("NewStateExpiredError() Code = %v, want %v", qbErr.Code, dberrors.ErrForbidden)
-	}
-
-	if !strings.Contains(err.Error(), "token-abc") {
-		t.Errorf("NewStateExpiredError() error should contain token, got: %v", err.Error())
-	}
-
-	if qbErr.Context == nil || qbErr.Context["token"] != "token-abc" {
-		t.Error("NewStateExpiredError() should have token in context")
-	}
-}
-
-// ============================================================================
-// Interface Satisfaction Tests
-// ============================================================================
-
-func TestFederationStorageInterfaceSatisfaction(t *testing.T) {
-	// These tests verify compile-time interface satisfaction
-	var _ ProviderStorage = (*MemoryProviderStorage)(nil)
-	var _ FederationStorage = (*MemoryFederationStorage)(nil)
-	var _ StateStorage = (*MemoryStateStorage)(nil)
 }
 
 // ============================================================================
