@@ -1380,36 +1380,6 @@ func TestSecretsCommandAuthFlag(t *testing.T) {
 	assert.Equal(t, "token", authFlag.DefValue)
 }
 
-func TestCreateSecretsGRPCClient_TLSWithoutCerts(t *testing.T) {
-	// Save original values
-	origTLSEnabled := secretsTLSEnabled
-	origTLSCert := secretsTLSCert
-	origTLSKey := secretsTLSKey
-	origTLSCA := secretsTLSCA
-	origAuthMode := secretsAuthMode
-	origAddress := address
-	defer func() {
-		secretsTLSEnabled = origTLSEnabled
-		secretsTLSCert = origTLSCert
-		secretsTLSKey = origTLSKey
-		secretsTLSCA = origTLSCA
-		secretsAuthMode = origAuthMode
-		address = origAddress
-	}()
-
-	// Set TLS enabled but no certs
-	secretsTLSEnabled = true
-	secretsTLSCert = ""
-	secretsTLSKey = ""
-	secretsTLSCA = ""
-	secretsAuthMode = "token"
-	address = "localhost:9090"
-
-	_, err := createSecretsGRPCClient()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
-}
-
 func TestCreateSecretsGRPCClient_InvalidAuthMode(t *testing.T) {
 	// Save original values
 	origTLSEnabled := secretsTLSEnabled
@@ -1458,28 +1428,50 @@ func TestCreateSecretsGRPCClient_K8sAuth_TokenNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to read Kubernetes service account token")
 }
 
+// TestCreateSecretsGRPCClient_TLSRequired checks that a gRPC client is refused
+// both when TLS is off and when TLS is on without certificate material.
 func TestCreateSecretsGRPCClient_TLSRequired(t *testing.T) {
-	// Save original values
 	origTLSEnabled := secretsTLSEnabled
+	origTLSCert := secretsTLSCert
+	origTLSKey := secretsTLSKey
+	origTLSCA := secretsTLSCA
 	origAuthMode := secretsAuthMode
 	origAddress := address
 	origTimeout := globalTimeout
 	defer func() {
 		secretsTLSEnabled = origTLSEnabled
+		secretsTLSCert = origTLSCert
+		secretsTLSKey = origTLSKey
+		secretsTLSCA = origTLSCA
 		secretsAuthMode = origAuthMode
 		address = origAddress
 		globalTimeout = origTimeout
 	}()
 
-	secretsTLSEnabled = false
-	secretsAuthMode = "token"
-	address = "invalid-address-for-test:99999"
-	globalTimeout = 100 * time.Millisecond
+	tests := []struct {
+		name       string
+		tlsEnabled bool
+		address    string
+	}{
+		{"TLS disabled", false, "invalid-address-for-test:99999"},
+		{"TLS enabled without certs", true, "localhost:9090"},
+	}
 
-	// TLS is required for all gRPC connections
-	_, err := createSecretsGRPCClient()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			secretsTLSEnabled = tt.tlsEnabled
+			secretsTLSCert = ""
+			secretsTLSKey = ""
+			secretsTLSCA = ""
+			secretsAuthMode = "token"
+			address = tt.address
+			globalTimeout = 100 * time.Millisecond
+
+			_, err := createSecretsGRPCClient()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "TLS is required for gRPC connections")
+		})
+	}
 }
 
 func TestK8sServiceAccountTokenPaths(t *testing.T) {
