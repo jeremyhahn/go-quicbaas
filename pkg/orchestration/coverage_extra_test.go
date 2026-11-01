@@ -158,36 +158,6 @@ func TestMatchesFilter(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_log_kv: PutMeta input validation
-// -----------------------------------------------------------------------------
-
-// TestKVSessionEventLog_PutMeta_Validation covers the nil / missing-field guard
-// at the top of PutMeta.
-func TestKVSessionEventLog_PutMeta_Validation(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	ctx := context.Background()
-
-	cases := []struct {
-		name string
-		meta *SessionMeta
-	}{
-		{"nil meta", nil},
-		{"missing session id", &SessionMeta{TenantID: "t"}},
-		{"missing tenant id", &SessionMeta{SessionID: "s"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if err := log.PutMeta(ctx, tc.meta); err == nil {
-				t.Fatal("expected validation error from PutMeta")
-			}
-		})
-	}
-}
-
-// -----------------------------------------------------------------------------
 // peer_messaging_store: Poll skip-branches for malformed inbox entries
 // -----------------------------------------------------------------------------
 
@@ -604,50 +574,6 @@ func TestPeerMessaging_Send_PutMessageError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_log_kv: Append validation + Put-error branches
-// -----------------------------------------------------------------------------
-
-// TestKVSessionEventLog_Append_NilEvent covers Append's nil-event guard.
-func TestKVSessionEventLog_Append_NilEvent(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), nil); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError for nil event, got %v", err)
-	}
-}
-
-// TestKVSessionEventLog_Append_MissingFields covers Append's required-field guard.
-func TestKVSessionEventLog_Append_MissingFields(t *testing.T) {
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: newMemKVStore()})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), newPromptEvent("", "s", 1, "x")); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError for missing tenant, got %v", err)
-	}
-}
-
-// TestKVSessionEventLog_Append_PutError covers Append's kv.Put failure branch:
-// sequence validation passes (empty session -> latest=0, seq=1) but the event
-// write fails, surfacing a SessionLogAppendError that wraps the store error.
-func TestKVSessionEventLog_Append_PutError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.putErr = errors.New("kv put down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	var ae *SessionLogAppendError
-	if err := log.Append(context.Background(), newPromptEvent("t", "s", 1, "x")); !errors.As(err, &ae) {
-		t.Fatalf("want *SessionLogAppendError wrapping put error, got %v", err)
-	}
-}
-
-// -----------------------------------------------------------------------------
 // cost_tracker_store: GetJobUsage readCounter generic-error branch
 // -----------------------------------------------------------------------------
 
@@ -733,81 +659,104 @@ func TestFileLock_ValidateFencingToken_RaftError(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_log_kv: GetMeta / LatestSequence / Range store-error branches
+// session_log_kv: input validation and store-error branches
 // -----------------------------------------------------------------------------
 
-// TestKVSessionEventLog_GetMeta_GenericError covers GetMeta's non-not-found
-// store error branch (returned verbatim, not translated to the sentinel).
-func TestKVSessionEventLog_GetMeta_GenericError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down") // not a not-found error
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	_, gErr := log.GetMeta(context.Background(), "t", "s")
-	if gErr == nil || errors.Is(gErr, ErrSessionLogNotFound) {
-		t.Fatalf("want raw store error, got %v", gErr)
-	}
-}
-
-// TestKVSessionEventLog_GetMeta_CorruptValue covers GetMeta's unmarshal-error
-// branch when the stored meta value is not valid JSON.
-func TestKVSessionEventLog_GetMeta_CorruptValue(t *testing.T) {
-	kv := newMemKVStore()
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
+// TestKVSessionEventLog_Errors covers each method's input validation and its
+// store-failure branches, one row per method and failure.
+func TestKVSessionEventLog_Errors(t *testing.T) {
+	kvDown := errors.New("kv down")
 	ctx := context.Background()
-	if err := kv.Put(ctx, log.metaKey("t", "s"), []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt meta: %v", err)
-	}
-	if _, gErr := log.GetMeta(ctx, "t", "s"); gErr == nil {
-		t.Fatal("expected unmarshal error from corrupt meta")
-	}
-}
 
-// TestKVSessionEventLog_LatestSequence_GetMetaError covers LatestSequence's
-// branch where GetMeta returns a non-not-found error (propagated, not swallowed).
-func TestKVSessionEventLog_LatestSequence_GetMetaError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
+	tests := []struct {
+		name string
+		// fault configures the store before the call; nil leaves it healthy.
+		fault func(*faultKVStore)
+		// seedCorruptMeta stores a non-JSON meta value for session t/s.
+		seedCorruptMeta bool
+		call            func(*KVSessionEventLog) error
+		// wantAppendErr requires a *SessionLogAppendError.
+		wantAppendErr bool
+		// wantNotSentinel requires the error not to read as not-found.
+		wantNotSentinel bool
+	}{
+		{name: "Append/nil event",
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, nil) },
+			wantAppendErr: true},
+		{name: "Append/missing tenant",
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("", "s", 1, "x")) },
+			wantAppendErr: true},
+		{name: "Append/put error",
+			fault:         func(kv *faultKVStore) { kv.putErr = kvDown },
+			call:          func(l *KVSessionEventLog) error { return l.Append(ctx, newPromptEvent("t", "s", 1, "x")) },
+			wantAppendErr: true},
+		{name: "PutMeta/nil meta",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, nil) }},
+		{name: "PutMeta/missing session id",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, &SessionMeta{TenantID: "t"}) }},
+		{name: "PutMeta/missing tenant id",
+			call: func(l *KVSessionEventLog) error { return l.PutMeta(ctx, &SessionMeta{SessionID: "s"}) }},
+		{name: "GetMeta/store error",
+			fault: func(kv *faultKVStore) { kv.getErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.GetMeta(ctx, "t", "s")
+				return err
+			},
+			wantNotSentinel: true},
+		{name: "GetMeta/corrupt value",
+			seedCorruptMeta: true,
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.GetMeta(ctx, "t", "s")
+				return err
+			}},
+		{name: "LatestSequence/meta read error",
+			fault: func(kv *faultKVStore) { kv.getErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.LatestSequence(ctx, "t", "s")
+				return err
+			}},
+		{name: "LatestSequence/scan error",
+			// No meta is stored, so LatestSequence falls through to the scan.
+			fault: func(kv *faultKVStore) { kv.scanErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, err := l.LatestSequence(ctx, "t", "s")
+				return err
+			}},
+		{name: "Range/scan error",
+			fault: func(kv *faultKVStore) { kv.scanErr = kvDown },
+			call: func(l *KVSessionEventLog) error {
+				_, _, err := l.Range(ctx, "t", "s", 1, 10)
+				return err
+			}},
 	}
-	if _, lErr := log.LatestSequence(context.Background(), "t", "s"); lErr == nil {
-		t.Fatal("expected LatestSequence to propagate the store error")
-	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
+			if err != nil {
+				t.Fatalf("NewKVSessionEventLog: %v", err)
+			}
+			if tc.seedCorruptMeta {
+				if err := kv.Put(ctx, log.metaKey("t", "s"), []byte("{not json")); err != nil {
+					t.Fatalf("seed corrupt meta: %v", err)
+				}
+			}
+			if tc.fault != nil {
+				tc.fault(kv)
+			}
 
-// TestKVSessionEventLog_LatestSequence_ScanError covers LatestSequence's
-// events-scan error branch: GetMeta reports not-found (so it falls through to
-// the scan), and the scan itself fails.
-func TestKVSessionEventLog_LatestSequence_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	// Get returns (nil,nil) -> GetMeta treats it as not-found and falls through.
-	kv.scanErr = errors.New("scan down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	if _, lErr := log.LatestSequence(context.Background(), "t", "s"); lErr == nil {
-		t.Fatal("expected LatestSequence to surface the scan error")
-	}
-}
-
-// TestKVSessionEventLog_Range_ScanError covers Range's scan-error branch.
-func TestKVSessionEventLog_Range_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.scanErr = errors.New("scan down")
-	log, err := NewKVSessionEventLog(KVSessionEventLogConfig{KVStore: kv})
-	if err != nil {
-		t.Fatalf("NewKVSessionEventLog: %v", err)
-	}
-	if _, _, rErr := log.Range(context.Background(), "t", "s", 1, 10); rErr == nil {
-		t.Fatal("expected Range to surface the scan error")
+			err = tc.call(log)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			var ae *SessionLogAppendError
+			if tc.wantAppendErr && !errors.As(err, &ae) {
+				t.Fatalf("want *SessionLogAppendError, got %v", err)
+			}
+			if tc.wantNotSentinel && errors.Is(err, ErrSessionLogNotFound) {
+				t.Fatalf("want the raw store error, got the not-found sentinel: %v", err)
+			}
+		})
 	}
 }
 
