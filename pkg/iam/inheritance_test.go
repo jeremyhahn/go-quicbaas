@@ -86,43 +86,6 @@ func TestNewInheritanceManager(t *testing.T) {
 	}
 }
 
-func TestRoleHierarchyCreation(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create roles
-	adminRole := &Role{
-		ID:          "admin",
-		Name:        "Administrator",
-		TenantID:    tenantID,
-		Permissions: []string{"users:read", "users:write", "users:delete"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, adminRole))
-
-	moderatorRole := &Role{
-		ID:          "moderator",
-		Name:        "Moderator",
-		TenantID:    tenantID,
-		Permissions: []string{"posts:read", "posts:write"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, moderatorRole))
-
-	// Add parent role
-	err := manager.AddRoleParent(ctx, tenantID, "moderator", "admin", 1)
-	assert.NoError(t, err)
-
-	// Verify hierarchy
-	hierarchy, err := manager.GetRoleHierarchy(ctx, tenantID, "moderator")
-	assert.NoError(t, err)
-	assert.Len(t, hierarchy, 1)
-	assert.Equal(t, "admin", hierarchy[0].ParentRoleID)
-	assert.Equal(t, "moderator", hierarchy[0].ChildRoleID)
-}
-
 func TestRoleHierarchyCycleDetection(t *testing.T) {
 	manager, storage, ctx := setupInheritanceTest(t)
 	tenantID := "test-tenant"
@@ -151,7 +114,7 @@ func TestRoleHierarchyCycleDetection(t *testing.T) {
 	assert.Contains(t, err.Error(), "cycle")
 }
 
-func TestRoleHierarchyRemoval(t *testing.T) {
+func TestRoleHierarchyAddAndRemove(t *testing.T) {
 	manager, storage, ctx := setupInheritanceTest(t)
 	tenantID := "test-tenant"
 
@@ -182,7 +145,9 @@ func TestRoleHierarchyRemoval(t *testing.T) {
 	// Verify hierarchy exists
 	hierarchy, err := manager.GetRoleHierarchy(ctx, tenantID, "child")
 	require.NoError(t, err)
-	assert.Len(t, hierarchy, 1)
+	require.Len(t, hierarchy, 1)
+	assert.Equal(t, "parent", hierarchy[0].ParentRoleID)
+	assert.Equal(t, "child", hierarchy[0].ChildRoleID)
 
 	// Remove parent
 	err = manager.RemoveRoleParent(ctx, tenantID, "child", "parent")
@@ -192,57 +157,6 @@ func TestRoleHierarchyRemoval(t *testing.T) {
 	hierarchy, err = manager.GetRoleHierarchy(ctx, tenantID, "child")
 	assert.NoError(t, err)
 	assert.Len(t, hierarchy, 0)
-}
-
-func TestEffectiveRolePermissions(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create role hierarchy: viewer -> editor -> admin
-	viewerRole := &Role{
-		ID:          "viewer",
-		Name:        "Viewer",
-		TenantID:    tenantID,
-		Permissions: []string{"read"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, viewerRole))
-
-	editorRole := &Role{
-		ID:          "editor",
-		Name:        "Editor",
-		TenantID:    tenantID,
-		Permissions: []string{"write"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, editorRole))
-
-	adminRole := &Role{
-		ID:          "admin",
-		Name:        "Admin",
-		TenantID:    tenantID,
-		Permissions: []string{"delete"},
-		Created:     time.Now(),
-		Updated:     time.Now(),
-	}
-	require.NoError(t, storage.CreateRole(ctx, adminRole))
-
-	// Build hierarchy: editor inherits from viewer, admin inherits from editor
-	require.NoError(t, manager.AddRoleParent(ctx, tenantID, "editor", "viewer", 1))
-	require.NoError(t, manager.AddRoleParent(ctx, tenantID, "admin", "editor", 1))
-
-	// Get effective permissions for admin role
-	effective, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "admin")
-	assert.NoError(t, err)
-	assert.NotNil(t, effective)
-
-	// Admin should have all permissions: delete (direct), write (from editor), read (from viewer)
-	assert.Contains(t, effective.AllPermissions, "delete")
-	assert.Contains(t, effective.AllPermissions, "write")
-	assert.Contains(t, effective.AllPermissions, "read")
-	assert.Len(t, effective.AllPermissions, 3)
 }
 
 func TestTransitiveClosureInheritance(t *testing.T) {
@@ -584,103 +498,70 @@ func TestInheritanceManager_NotFound(t *testing.T) {
 	}
 }
 
-func TestMemoryHierarchyStorage_GetRoleHierarchy_Success(t *testing.T) {
+func TestMemoryHierarchyStorage_GetRoleHierarchy(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryHierarchyStorage()
-
-	hierarchy := &RoleHierarchy{
+	require.NoError(t, storage.CreateRoleHierarchy(ctx, &RoleHierarchy{
 		ID:           "rh1",
 		TenantID:     "t1",
 		ParentRoleID: "parent-role",
 		ChildRoleID:  "child-role",
 		Priority:     1,
 		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, hierarchy); err != nil {
-		t.Fatalf("CreateRoleHierarchy failed: %v", err)
+	}))
+
+	tests := []struct {
+		name    string
+		parent  string
+		child   string
+		wantID  string
+		wantErr bool
+	}{
+		{name: "found", parent: "parent-role", child: "child-role", wantID: "rh1"},
+		{name: "not found", parent: "nonexistent-parent", child: "nonexistent-child", wantErr: true},
 	}
 
-	result, err := storage.GetRoleHierarchy(ctx, "t1", "parent-role", "child-role")
-	if err != nil {
-		t.Fatalf("GetRoleHierarchy failed: %v", err)
-	}
-	if result.ID != "rh1" {
-		t.Fatalf("expected ID rh1, got %s", result.ID)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := storage.GetRoleHierarchy(ctx, "t1", tt.parent, tt.child)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantID, result.ID)
+		})
 	}
 }
 
-func TestMemoryHierarchyStorage_GetRoleHierarchy_NotFound(t *testing.T) {
+func TestMemoryHierarchyStorage_DetectRoleCycle(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryHierarchyStorage()
 
-	_, err := storage.GetRoleHierarchy(ctx, "t1", "nonexistent-parent", "nonexistent-child")
-	if err == nil {
-		t.Fatal("expected error for nonexistent hierarchy")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectRoleCycle_NoCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create A -> B hierarchy
-	h1 := &RoleHierarchy{
-		ID:           "rh_ab",
-		TenantID:     "t1",
-		ParentRoleID: "roleA",
-		ChildRoleID:  "roleB",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateRoleHierarchy failed: %v", err)
+	// A -> B -> C
+	for _, h := range []*RoleHierarchy{
+		{ID: "rh_ab", TenantID: "t1", ParentRoleID: "roleA", ChildRoleID: "roleB", Priority: 1, Created: time.Now()},
+		{ID: "rh_bc", TenantID: "t1", ParentRoleID: "roleB", ChildRoleID: "roleC", Priority: 1, Created: time.Now()},
+	} {
+		require.NoError(t, storage.CreateRoleHierarchy(ctx, h))
 	}
 
-	// Check that adding B -> C does not create a cycle
-	hasCycle, err := storage.DetectRoleCycle(ctx, "t1", "roleB", "roleC")
-	if err != nil {
-		t.Fatalf("DetectRoleCycle failed: %v", err)
-	}
-	if hasCycle {
-		t.Fatal("expected no cycle for B -> C")
-	}
-}
-
-func TestMemoryHierarchyStorage_DetectRoleCycle_WithCycle(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryHierarchyStorage()
-
-	// Create A -> B and B -> C
-	h1 := &RoleHierarchy{
-		ID:           "rh_ab",
-		TenantID:     "t1",
-		ParentRoleID: "roleA",
-		ChildRoleID:  "roleB",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	h2 := &RoleHierarchy{
-		ID:           "rh_bc",
-		TenantID:     "t1",
-		ParentRoleID: "roleB",
-		ChildRoleID:  "roleC",
-		Priority:     1,
-		Created:      time.Now(),
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h1); err != nil {
-		t.Fatalf("CreateRoleHierarchy A->B failed: %v", err)
-	}
-	if err := storage.CreateRoleHierarchy(ctx, h2); err != nil {
-		t.Fatalf("CreateRoleHierarchy B->C failed: %v", err)
+	tests := []struct {
+		name      string
+		parent    string
+		child     string
+		wantCycle bool
+	}{
+		{name: "new root above the chain has no cycle", parent: "roleD", child: "roleA"},
+		{name: "closing the chain is a cycle", parent: "roleC", child: "roleA", wantCycle: true},
 	}
 
-	// Detect cycle: adding C -> A would create A -> B -> C -> A
-	hasCycle, err := storage.DetectRoleCycle(ctx, "t1", "roleC", "roleA")
-	if err != nil {
-		t.Fatalf("DetectRoleCycle failed: %v", err)
-	}
-	if !hasCycle {
-		t.Fatal("expected cycle detected for C -> A")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hasCycle, err := storage.DetectRoleCycle(ctx, "t1", tt.parent, tt.child)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCycle, hasCycle)
+		})
 	}
 }
 
