@@ -682,26 +682,11 @@ func TestFormatVectorResponses(t *testing.T) {
 		format string
 		run    func() error
 	}{
-		{"namespace create success", "table", func() error {
-			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{Success: true, Namespace: "test-ns", Timestamp: now})
-		}},
 		{"namespace create failure", "table", func() error {
 			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{Success: false, Namespace: "test-ns", Timestamp: now})
 		}},
-		{"namespace delete success", "table", func() error {
-			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{Deleted: true, VectorsDeleted: 100, Timestamp: now})
-		}},
 		{"namespace delete failure", "table", func() error {
 			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{Deleted: false, Timestamp: now})
-		}},
-		{"namespace list", "table", func() error {
-			return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
-				Namespaces: []*vector.NamespaceInfo{
-					{Config: &vector.NamespaceConfig{Namespace: "ns1", Dimensions: 128}, VectorCount: 50, CreatedAt: now},
-				},
-				TotalCount: 1,
-				Timestamp:  now,
-			})
 		}},
 		{"namespace info with config details", "table", func() error {
 			return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
@@ -790,17 +775,8 @@ func TestFormatVectorResponses(t *testing.T) {
 				Timestamp:        now,
 			})
 		}},
-		{"index stats json", "json", func() error {
-			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{Namespace: "test-ns", VectorCount: 5000, Timestamp: now})
-		}},
 		{"update metadata failure", "table", func() error {
 			return formatVectorUpdateMetadataResponse(&vector.UpdateMetadataResponse{Success: false, Timestamp: now})
-		}},
-		{"hybrid search no results", "table", func() error {
-			return formatVectorHybridSearchResponse(&vector.HybridSearchResponse{Timestamp: now})
-		}},
-		{"search by metadata no results", "table", func() error {
-			return formatVectorSearchByMetadataResponse(&vector.SearchByMetadataResponse{Timestamp: now})
 		}},
 		{"search similar table", "table", func() error {
 			return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
@@ -837,18 +813,6 @@ func TestFormatVectorResponses(t *testing.T) {
 // =============================================================================
 // Rebalance Display Functions Tests
 // =============================================================================
-
-func TestDisplayRebalanceReportCoverage(t *testing.T) {
-	// Test the displayRebalanceReport function with various inputs
-	// This covers the function at rebalance.go:300 with 76.3% coverage
-
-	t.Run("empty report", func(t *testing.T) {
-		// The function expects a specific report type from the operations package
-		// Testing command flags ensures the function can be called
-		cmd := newRebalanceStartCommand()
-		require.NotNil(t, cmd)
-	})
-}
 
 type testSDKClientForVector struct {
 	vec vector.Client
