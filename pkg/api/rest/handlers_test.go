@@ -4869,15 +4869,45 @@ func TestRemaining91_HandleGetCompactionProgress_NilVectorService(t *testing.T) 
 // Messaging Handlers
 // =============================================================================
 
-func TestRemaining91_HandleListMessagingChannels_NilService(t *testing.T) {
+func TestRemaining91_MessagingHandlers_NilService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "list channels", method: http.MethodGet, target: "/api/v1/messaging/channels", handler: server.HandleListMessagingChannels},
+		{name: "create channel", method: http.MethodPost, target: "/api/v1/messaging/channels", body: `{"name":"test-ch"}`, handler: server.HandleCreateMessagingChannel},
+		{name: "get channel", method: http.MethodGet, target: "/api/v1/messaging/channels/test-ch", handler: server.HandleGetMessagingChannel},
+		{name: "delete channel", method: http.MethodDelete, target: "/api/v1/messaging/channels/test-ch", handler: server.HandleDeleteMessagingChannel},
+		{name: "subscribe", method: http.MethodPost, target: "/api/v1/messaging/subscribe", body: `{"channel":"ch1"}`, handler: server.HandleMessagingSubscribe},
+		{name: "unsubscribe", method: http.MethodDelete, target: "/api/v1/messaging/subscribe/sub-1", handler: server.HandleMessagingUnsubscribe},
+		{name: "publish", method: http.MethodPost, target: "/api/v1/messaging/publish/ch1", body: `{"payload":"hello"}`, handler: server.HandleMessagingPublish},
+		{name: "publish delta", method: http.MethodPost, target: "/api/v1/messaging/publish-delta/ch1", body: `{"old":"a","new":"b"}`, handler: server.HandleMessagingPublishDelta},
+		{name: "stats", method: http.MethodGet, target: "/api/v1/messaging/stats", handler: server.HandleMessagingStats},
+		{name: "channel stats", method: http.MethodGet, target: "/api/v1/messaging/stats/ch1", handler: server.HandleMessagingChannelStats},
+		{name: "dedup stats", method: http.MethodGet, target: "/api/v1/messaging/dedup/stats/ch1", handler: server.HandleMessagingDedupStats},
+	}
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Each handler reads only its own URL parameter.
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", "test-ch")
+			rctx.URLParams.Add("id", "sub-1")
+			rctx.URLParams.Add("channel", "ch1")
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusNotImplemented, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleListMessagingChannels_Success(t *testing.T) {
@@ -4935,18 +4965,6 @@ func TestRemaining91_HandleListMessagingChannels_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestRemaining91_HandleCreateMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"name":"test-ch"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/channels", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleCreateMessagingChannel_InvalidJSON(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4993,20 +5011,6 @@ func TestRemaining91_HandleCreateMessagingChannel_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleGetMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-ch")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels/test-ch", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleGetMessagingChannel_MissingName(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5044,20 +5048,6 @@ func TestRemaining91_HandleGetMessagingChannel_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleDeleteMessagingChannel_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "test-ch")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/channels/test-ch", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteMessagingChannel(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleDeleteMessagingChannel_MissingName(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5093,18 +5083,6 @@ func TestRemaining91_HandleDeleteMessagingChannel_Success(t *testing.T) {
 	server.HandleDeleteMessagingChannel(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleMessagingSubscribe_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"channel":"ch1"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/subscribe", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleMessagingSubscribe(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingSubscribe_InvalidJSON(t *testing.T) {
@@ -5153,20 +5131,6 @@ func TestRemaining91_HandleMessagingSubscribe_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleMessagingUnsubscribe_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "sub-1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/messaging/subscribe/sub-1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingUnsubscribe(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingUnsubscribe_MissingID(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5197,21 +5161,6 @@ func TestRemaining91_HandleMessagingUnsubscribe_Success(t *testing.T) {
 	server.HandleMessagingUnsubscribe(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleMessagingPublish_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"payload":"hello"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublish(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingPublish_MissingChannel(t *testing.T) {
@@ -5286,21 +5235,6 @@ func TestRemaining91_HandleMessagingPublish_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingPublishDelta_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	body := `{"old":"a","new":"b"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/messaging/publish-delta/ch1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingPublishDelta(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingPublishDelta_MissingOld(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5357,17 +5291,6 @@ func TestRemaining91_HandleMessagingPublishDelta_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats", nil)
-	w := httptest.NewRecorder()
-	server.HandleMessagingStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingStats_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5386,20 +5309,6 @@ func TestRemaining91_HandleMessagingStats_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleMessagingChannelStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/stats/ch1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingChannelStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
-}
-
 func TestRemaining91_HandleMessagingChannelStats_MissingChannel(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5414,20 +5323,6 @@ func TestRemaining91_HandleMessagingChannelStats_MissingChannel(t *testing.T) {
 	server.HandleMessagingChannelStats(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleMessagingDedupStats_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("channel", "ch1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/dedup/stats/ch1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleMessagingDedupStats(w, req)
-
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleMessagingDedupStats_MissingChannel(t *testing.T) {
@@ -5472,16 +5367,38 @@ func TestRemaining91_HandleMessagingDedupStats_NotPushService(t *testing.T) {
 // Scheduler Handlers
 // =============================================================================
 
-func TestRemaining91_HandleCreateSchedulerJob_NilService(t *testing.T) {
+func TestRemaining91_SchedulerHandlers_NilService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	body := `{"name":"job1","handler":"h1","type":"cron"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateSchedulerJob(w, req)
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "create job", method: http.MethodPost, target: "/api/v1/scheduler/jobs", body: `{"name":"job1","handler":"h1","type":"cron"}`, handler: server.HandleCreateSchedulerJob},
+		{name: "list jobs", method: http.MethodGet, target: "/api/v1/scheduler/jobs", handler: server.HandleListSchedulerJobs},
+		{name: "get job", method: http.MethodGet, target: "/api/v1/scheduler/jobs/1", handler: server.HandleGetSchedulerJob},
+		{name: "update job", method: http.MethodPut, target: "/api/v1/scheduler/jobs/1", body: `{"name":"updated"}`, handler: server.HandleUpdateSchedulerJob},
+		{name: "delete job", method: http.MethodDelete, target: "/api/v1/scheduler/jobs/1", handler: server.HandleDeleteSchedulerJob},
+		{name: "job history", method: http.MethodGet, target: "/api/v1/scheduler/jobs/1/history", handler: server.HandleGetSchedulerJobHistory},
+		{name: "status", method: http.MethodGet, target: "/api/v1/scheduler/status", handler: server.HandleGetSchedulerStatus},
+	}
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", "1")
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleCreateSchedulerJob_InvalidJSON(t *testing.T) {
@@ -5561,17 +5478,6 @@ func TestRemaining91_HandleCreateSchedulerJob_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
-func TestRemaining91_HandleListSchedulerJobs_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs", nil)
-	w := httptest.NewRecorder()
-	server.HandleListSchedulerJobs(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestRemaining91_HandleListSchedulerJobs_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5628,20 +5534,6 @@ func TestRemaining91_SchedulerJobHandlers_InvalidID(t *testing.T) {
 	}
 }
 
-func TestRemaining91_HandleGetSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestRemaining91_HandleGetSchedulerJob_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5680,35 +5572,6 @@ func TestRemaining91_HandleUpdateSchedulerJob_InvalidJSON(t *testing.T) {
 	server.HandleUpdateSchedulerJob(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRemaining91_HandleUpdateSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	body := `{"name":"updated"}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/jobs/1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleDeleteSchedulerJob_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/scheduler/jobs/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestRemaining91_HandleDeleteSchedulerJob_Success(t *testing.T) {
@@ -5752,31 +5615,6 @@ func TestRemaining91_HandleCancelSchedulerJob_Success(t *testing.T) {
 	server.HandleCancelSchedulerJob(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetSchedulerJobHistory_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs/1/history", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerJobHistory(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestRemaining91_HandleGetSchedulerStatus_NilService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/status", nil)
-	w := httptest.NewRecorder()
-	server.HandleGetSchedulerStatus(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestRemaining91_HandleGetSchedulerStatus_Success(t *testing.T) {
