@@ -372,6 +372,31 @@ func TestObjectStoreEncryption_Merge(t *testing.T) {
 			t.Errorf("expected Algorithm %q, got %q", "AES-256-GCM", base.Algorithm)
 		}
 	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreEncryption{
+			Enabled:    true,
+			Enforce:    true,
+			DefaultKey: "original",
+			Algorithm:  "AES-256-GCM",
+		}
+
+		base.Merge(&ObjectStoreEncryption{})
+
+		// Booleans with false don't override true
+		if !base.Enabled {
+			t.Error("Enabled should still be true")
+		}
+		if !base.Enforce {
+			t.Error("Enforce should still be true")
+		}
+		if base.DefaultKey != "original" {
+			t.Error("DefaultKey should not have been overridden")
+		}
+		if base.Algorithm != "AES-256-GCM" {
+			t.Error("Algorithm should not have been overridden")
+		}
+	})
 }
 
 func TestObjectStoreEncryption_Validate(t *testing.T) {
@@ -467,6 +492,34 @@ func TestObjectStoreReplication_Merge(t *testing.T) {
 		}
 		if base.Priority != 9 {
 			t.Errorf("expected Priority 9, got %d", base.Priority)
+		}
+	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreReplication{
+			Enabled:      true,
+			MinReplicas:  3,
+			TargetStores: []string{"store1"},
+			Mode:         ReplicationModeSync,
+			Priority:     8,
+		}
+
+		base.Merge(&ObjectStoreReplication{})
+
+		if !base.Enabled {
+			t.Error("Enabled should still be true")
+		}
+		if base.MinReplicas != 3 {
+			t.Error("MinReplicas should not have been overridden")
+		}
+		if len(base.TargetStores) != 1 {
+			t.Error("TargetStores should not have been overridden")
+		}
+		if base.Mode != ReplicationModeSync {
+			t.Error("Mode should not have been overridden")
+		}
+		if base.Priority != 8 {
+			t.Error("Priority should not have been overridden")
 		}
 	})
 }
@@ -598,6 +651,34 @@ func TestObjectStoreArchive_Merge(t *testing.T) {
 			t.Errorf("expected CompressionLevel 8, got %d", base.CompressionLevel)
 		}
 	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreArchive{
+			Enabled:           true,
+			ArchiveAfterDays:  60,
+			TargetStore:       "archive",
+			DeleteFromPrimary: true,
+			CompressionLevel:  7,
+		}
+
+		base.Merge(&ObjectStoreArchive{})
+
+		if !base.Enabled {
+			t.Error("Enabled should still be true")
+		}
+		if base.ArchiveAfterDays != 60 {
+			t.Error("ArchiveAfterDays should not have been overridden")
+		}
+		if base.TargetStore != "archive" {
+			t.Error("TargetStore should not have been overridden")
+		}
+		if !base.DeleteFromPrimary {
+			t.Error("DeleteFromPrimary should still be true")
+		}
+		if base.CompressionLevel != 7 {
+			t.Error("CompressionLevel should not have been overridden")
+		}
+	})
 }
 
 func TestObjectStoreArchive_Validate(t *testing.T) {
@@ -702,6 +783,26 @@ func TestObjectStoreRetention_Merge(t *testing.T) {
 			t.Errorf("expected MaxVersions 5, got %d", base.MaxVersions)
 		}
 	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreRetention{
+			Enabled:       true,
+			RetentionDays: 365,
+			MaxVersions:   10,
+		}
+
+		base.Merge(&ObjectStoreRetention{})
+
+		if !base.Enabled {
+			t.Error("Enabled should still be true")
+		}
+		if base.RetentionDays != 365 {
+			t.Error("RetentionDays should not have been overridden")
+		}
+		if base.MaxVersions != 10 {
+			t.Error("MaxVersions should not have been overridden")
+		}
+	})
 }
 
 func TestObjectStoreRetention_Validate(t *testing.T) {
@@ -802,6 +903,26 @@ func TestObjectStoreQuotas_Merge(t *testing.T) {
 		}
 		if base.MaxObjectCount != 100 {
 			t.Errorf("expected MaxObjectCount 100, got %d", base.MaxObjectCount)
+		}
+	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreQuotas{
+			MaxStorageBytes: 1000,
+			MaxObjectSize:   500,
+			MaxObjectCount:  100,
+		}
+
+		base.Merge(&ObjectStoreQuotas{})
+
+		if base.MaxStorageBytes != 1000 {
+			t.Error("MaxStorageBytes should not have been overridden")
+		}
+		if base.MaxObjectSize != 500 {
+			t.Error("MaxObjectSize should not have been overridden")
+		}
+		if base.MaxObjectCount != 100 {
+			t.Error("MaxObjectCount should not have been overridden")
 		}
 	})
 }
@@ -954,6 +1075,16 @@ func TestObjectStoreShardConfig_Merge(t *testing.T) {
 
 		if base.Replication.MinReplicas != 3 {
 			t.Errorf("expected MinReplicas 3, got %d", base.Replication.MinReplicas)
+		}
+	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreShardConfig{PrimaryBackend: "primary"}
+
+		base.Merge(&ObjectStoreShardConfig{})
+
+		if base.PrimaryBackend != "primary" {
+			t.Error("PrimaryBackend should not have been overridden")
 		}
 	})
 }
@@ -1183,6 +1314,22 @@ func TestObjectStoreTenantConfig_Merge(t *testing.T) {
 			t.Error("new shard config should be added")
 		}
 	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &ObjectStoreTenantConfig{
+			PrimaryBackend:  "primary",
+			AllowedBackends: []string{"backend1"},
+		}
+
+		base.Merge(&ObjectStoreTenantConfig{})
+
+		if base.PrimaryBackend != "primary" {
+			t.Error("PrimaryBackend should not have been overridden")
+		}
+		if len(base.AllowedBackends) != 1 {
+			t.Error("AllowedBackends should not have been overridden")
+		}
+	})
 }
 
 func TestObjectStoreTenantConfig_Validate(t *testing.T) {
@@ -1353,6 +1500,16 @@ func TestBackendOverride_Merge(t *testing.T) {
 			t.Errorf("expected key %q, got %q", "value", base.Config["key"])
 		}
 	})
+
+	t.Run("merge nil config leaves config nil", func(t *testing.T) {
+		base := &BackendOverride{}
+
+		base.Merge(&BackendOverride{})
+
+		if base.Config != nil {
+			t.Error("Config should still be nil")
+		}
+	})
 }
 
 func TestNodeObjectStorageConfig_Clone(t *testing.T) {
@@ -1506,6 +1663,26 @@ func TestNodeObjectStorageConfig_Merge(t *testing.T) {
 		}
 		if base.BackendOverrides["backend2"] == nil {
 			t.Error("new override should be added")
+		}
+	})
+
+	t.Run("merge does not override with empty values", func(t *testing.T) {
+		base := &NodeObjectStorageConfig{
+			InternalBackend: "local",
+			CacheBackend:    "cache",
+			CacheMaxSize:    5000,
+		}
+
+		base.Merge(&NodeObjectStorageConfig{})
+
+		if base.InternalBackend != "local" {
+			t.Error("InternalBackend should not have been overridden")
+		}
+		if base.CacheBackend != "cache" {
+			t.Error("CacheBackend should not have been overridden")
+		}
+		if base.CacheMaxSize != 5000 {
+			t.Error("CacheMaxSize should not have been overridden")
 		}
 	})
 }
@@ -1682,6 +1859,39 @@ func TestObjectStoreFullConfig_Merge(t *testing.T) {
 		}
 		if base.Tenants["tenant2"] == nil {
 			t.Error("new tenant should be added")
+		}
+	})
+
+	t.Run("merge backends replaces existing and copies config", func(t *testing.T) {
+		base := &ObjectStoreFullConfig{
+			Backends: map[string]*StorageBackendConfig{
+				"existing": {Type: "s3", Description: "old"},
+			},
+		}
+
+		other := &ObjectStoreFullConfig{
+			Backends: map[string]*StorageBackendConfig{
+				"existing": {Type: "gcs", Description: "new"},
+				"added":    {Type: "local", Config: map[string]string{"path": "/data"}},
+			},
+		}
+
+		base.Merge(other)
+
+		// Backends are replaced, not merged
+		if base.Backends["existing"].Type != "gcs" {
+			t.Error("existing backend should be replaced")
+		}
+		if base.Backends["existing"].Config != nil {
+			t.Error("a backend merged without Config should keep a nil Config")
+		}
+		added := base.Backends["added"]
+		if added == nil {
+			t.Fatal("new backend should be added")
+		}
+		other.Backends["added"].Config["path"] = "/changed"
+		if added.Config["path"] != "/data" {
+			t.Error("merged backend Config should be a copy")
 		}
 	})
 }
@@ -2030,245 +2240,6 @@ func TestConstants(t *testing.T) {
 	}
 }
 
-func TestObjectStoreEncryption_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreEncryption{
-		Enabled:    true,
-		Enforce:    true,
-		DefaultKey: "original",
-		Algorithm:  "AES-256-GCM",
-	}
-
-	other := &ObjectStoreEncryption{
-		// All zero/empty values
-	}
-
-	base.Merge(other)
-
-	// Booleans with false don't override true
-	if !base.Enabled {
-		t.Error("Enabled should still be true")
-	}
-	if !base.Enforce {
-		t.Error("Enforce should still be true")
-	}
-	if base.DefaultKey != "original" {
-		t.Error("DefaultKey should not have been overridden")
-	}
-	if base.Algorithm != "AES-256-GCM" {
-		t.Error("Algorithm should not have been overridden")
-	}
-}
-
-func TestObjectStoreReplication_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreReplication{
-		Enabled:      true,
-		MinReplicas:  3,
-		TargetStores: []string{"store1"},
-		Mode:         ReplicationModeSync,
-		Priority:     8,
-	}
-
-	other := &ObjectStoreReplication{
-		// All zero/empty values
-	}
-
-	base.Merge(other)
-
-	if !base.Enabled {
-		t.Error("Enabled should still be true")
-	}
-	if base.MinReplicas != 3 {
-		t.Error("MinReplicas should not have been overridden")
-	}
-	if base.Mode != ReplicationModeSync {
-		t.Error("Mode should not have been overridden")
-	}
-	if base.Priority != 8 {
-		t.Error("Priority should not have been overridden")
-	}
-}
-
-func TestObjectStoreArchive_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreArchive{
-		Enabled:           true,
-		ArchiveAfterDays:  60,
-		TargetStore:       "archive",
-		DeleteFromPrimary: true,
-		CompressionLevel:  7,
-	}
-
-	other := &ObjectStoreArchive{
-		// All zero/empty values
-	}
-
-	base.Merge(other)
-
-	if !base.Enabled {
-		t.Error("Enabled should still be true")
-	}
-	if base.ArchiveAfterDays != 60 {
-		t.Error("ArchiveAfterDays should not have been overridden")
-	}
-	if base.TargetStore != "archive" {
-		t.Error("TargetStore should not have been overridden")
-	}
-	if !base.DeleteFromPrimary {
-		t.Error("DeleteFromPrimary should still be true")
-	}
-	if base.CompressionLevel != 7 {
-		t.Error("CompressionLevel should not have been overridden")
-	}
-}
-
-func TestObjectStoreRetention_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreRetention{
-		Enabled:       true,
-		RetentionDays: 365,
-		MaxVersions:   10,
-	}
-
-	other := &ObjectStoreRetention{
-		// All zero values
-	}
-
-	base.Merge(other)
-
-	if !base.Enabled {
-		t.Error("Enabled should still be true")
-	}
-	if base.RetentionDays != 365 {
-		t.Error("RetentionDays should not have been overridden")
-	}
-	if base.MaxVersions != 10 {
-		t.Error("MaxVersions should not have been overridden")
-	}
-}
-
-func TestObjectStoreQuotas_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreQuotas{
-		MaxStorageBytes: 1000,
-		MaxObjectSize:   500,
-		MaxObjectCount:  100,
-	}
-
-	other := &ObjectStoreQuotas{
-		// All zero values
-	}
-
-	base.Merge(other)
-
-	if base.MaxStorageBytes != 1000 {
-		t.Error("MaxStorageBytes should not have been overridden")
-	}
-	if base.MaxObjectSize != 500 {
-		t.Error("MaxObjectSize should not have been overridden")
-	}
-	if base.MaxObjectCount != 100 {
-		t.Error("MaxObjectCount should not have been overridden")
-	}
-}
-
-func TestNodeObjectStorageConfig_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &NodeObjectStorageConfig{
-		InternalBackend: "local",
-		CacheBackend:    "cache",
-		CacheMaxSize:    5000,
-	}
-
-	other := &NodeObjectStorageConfig{
-		// All zero/empty values
-	}
-
-	base.Merge(other)
-
-	if base.InternalBackend != "local" {
-		t.Error("InternalBackend should not have been overridden")
-	}
-	if base.CacheBackend != "cache" {
-		t.Error("CacheBackend should not have been overridden")
-	}
-	if base.CacheMaxSize != 5000 {
-		t.Error("CacheMaxSize should not have been overridden")
-	}
-}
-
-func TestObjectStoreTenantConfig_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreTenantConfig{
-		PrimaryBackend:  "primary",
-		AllowedBackends: []string{"backend1"},
-	}
-
-	other := &ObjectStoreTenantConfig{
-		// All nil/empty values
-	}
-
-	base.Merge(other)
-
-	if base.PrimaryBackend != "primary" {
-		t.Error("PrimaryBackend should not have been overridden")
-	}
-	// AllowedBackends nil does not override existing
-	if len(base.AllowedBackends) != 1 {
-		t.Error("AllowedBackends should not have been overridden")
-	}
-}
-
-func TestObjectStoreShardConfig_MergeDoesNotOverrideWithEmpty(t *testing.T) {
-	base := &ObjectStoreShardConfig{
-		PrimaryBackend: "primary",
-	}
-
-	other := &ObjectStoreShardConfig{
-		// All empty values
-	}
-
-	base.Merge(other)
-
-	if base.PrimaryBackend != "primary" {
-		t.Error("PrimaryBackend should not have been overridden")
-	}
-}
-
-func TestBackendOverride_MergeWithNilConfig(t *testing.T) {
-	base := &BackendOverride{}
-
-	other := &BackendOverride{
-		// Config is nil
-	}
-
-	base.Merge(other)
-
-	// Should not panic and base.Config should remain nil
-	if base.Config != nil {
-		t.Error("Config should still be nil")
-	}
-}
-
-func TestObjectStoreFullConfig_MergeBackends(t *testing.T) {
-	base := &ObjectStoreFullConfig{
-		Backends: map[string]*StorageBackendConfig{
-			"existing": {Type: "s3", Description: "old"},
-		},
-	}
-
-	other := &ObjectStoreFullConfig{
-		Backends: map[string]*StorageBackendConfig{
-			"existing": {Type: "gcs", Description: "new"},
-			"added":    {Type: "local"},
-		},
-	}
-
-	base.Merge(other)
-
-	// Backends should be replaced, not merged
-	if base.Backends["existing"].Type != "gcs" {
-		t.Error("existing backend should be replaced")
-	}
-	if base.Backends["added"] == nil {
-		t.Error("new backend should be added")
-	}
-}
-
 func TestObjectStoreFullConfig_CloneBackendsWithNilConfig(t *testing.T) {
 	original := &ObjectStoreFullConfig{
 		Backends: map[string]*StorageBackendConfig{
@@ -2284,24 +2255,5 @@ func TestObjectStoreFullConfig_CloneBackendsWithNilConfig(t *testing.T) {
 
 	if clone.Backends["test"].Config != nil {
 		t.Error("cloned backend Config should be nil")
-	}
-}
-
-func TestObjectStoreFullConfig_MergeBackendsWithNilConfig(t *testing.T) {
-	base := &ObjectStoreFullConfig{}
-
-	other := &ObjectStoreFullConfig{
-		Backends: map[string]*StorageBackendConfig{
-			"test": {
-				Type: "s3",
-				// Config is nil
-			},
-		},
-	}
-
-	base.Merge(other)
-
-	if base.Backends["test"].Config != nil {
-		t.Error("merged backend Config should be nil")
 	}
 }
