@@ -778,52 +778,52 @@ func TestOrchestratorClaimTask_Success(t *testing.T) {
 	assert.Equal(t, "agent-1", resp["agent_id"])
 }
 
-func TestOrchestratorClaimTask_MissingAgentID(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(OrchestratorClaimTaskRequest{})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskID", "task-1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorClaimTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorClaimTask_AlreadyClaimed(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.claimTaskFunc = func(ctx context.Context, tenantID, taskID, agentID string) error {
-		return &orchestration.TaskAlreadyClaimedError{
-			TaskID:       taskID,
-			ClaimedBy:    "agent-other",
-			RequestingBy: agentID,
-		}
+// TestOrchestratorClaimTask_Errors maps each claim failure to its HTTP status.
+func TestOrchestratorClaimTask_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		claimErr   error
+		agentID    string
+		wantStatus int
+	}{
+		{name: "missing agent id", wantStatus: http.StatusBadRequest},
+		{
+			name: "already claimed",
+			claimErr: &orchestration.TaskAlreadyClaimedError{
+				TaskID:       "task-1",
+				ClaimedBy:    "agent-other",
+				RequestingBy: "agent-1",
+			},
+			agentID:    "agent-1",
+			wantStatus: http.StatusConflict,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
+			if tc.claimErr != nil {
+				agentSvc.claimTaskFunc = func(ctx context.Context, tenantID, taskID, agentID string) error {
+					return tc.claimErr
+				}
+			}
 
-	body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: "agent-1"})
-	require.NoError(t, err)
+			body, err := json.Marshal(OrchestratorClaimTaskRequest{AgentID: tc.agentID})
+			require.NoError(t, err)
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks/task-1/claim?tenant_id=t1", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskID", "task-1")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("taskID", "task-1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorClaimTask(rec, req)
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorClaimTask(rec, req)
 
-	assert.Equal(t, http.StatusConflict, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
