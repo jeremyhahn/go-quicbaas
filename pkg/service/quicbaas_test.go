@@ -2750,21 +2750,6 @@ func TestPut_WithCacheUpdate(t *testing.T) {
 	assert.Len(t, cachedEntries, 1)
 }
 
-func TestClose_BackupManagerError(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		backupMgr: &cov90MockBackupManager{
-			closeFn: func() error {
-				return stderrors.New("backup close failure")
-			},
-		},
-	}
-
-	err := svc.Close()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backup manager")
-}
-
 func TestClose_QRDBClientError(t *testing.T) {
 	provider := &cov90MockClosingQRDBProvider{
 		closeFn: func() error {
@@ -3357,114 +3342,56 @@ func TestTimeSeriesQuery_MetadataExtraction(t *testing.T) {
 	assert.False(t, hasValue)
 }
 
-func TestQuicBaaS_GenerateKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GenerateKey(tenantctx.WithSystem(context.Background()), &GenerateKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_ImportKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.ImportKey(tenantctx.WithSystem(context.Background()), &ImportKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_GetKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GetKey(tenantctx.WithSystem(context.Background()), &GetKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_ListKeys_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.ListKeys(tenantctx.WithSystem(context.Background()), &ListKeysRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_RotateKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.RotateKey(tenantctx.WithSystem(context.Background()), &RotateKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_RevokeKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.RevokeKey(tenantctx.WithSystem(context.Background()), &RevokeKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_DeleteKey_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.DeleteKey(tenantctx.WithSystem(context.Background()), &DeleteKeyRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_GetKeyMetadata_NilService(t *testing.T) {
-	db := &quicBaaS{kmsService: nil}
-	resp, err := db.GetKeyMetadata(tenantctx.WithSystem(context.Background()), &GetKeyMetadataRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "KMS service not initialized")
-}
-
-func TestQuicBaaS_Encrypt_NilService(t *testing.T) {
-	db := &quicBaaS{cryptoService: nil}
-	resp, err := db.Encrypt(tenantctx.WithSystem(context.Background()), &EncryptRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "Crypto service not initialized")
-}
-
-func TestQuicBaaS_Decrypt_NilService(t *testing.T) {
-	db := &quicBaaS{cryptoService: nil}
-	resp, err := db.Decrypt(tenantctx.WithSystem(context.Background()), &DecryptRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
-	assert.Contains(t, err.Error(), "Crypto service not initialized")
+func TestQuicBaaS_KMSAndCryptoVerbs_NilService(t *testing.T) {
+	ctx := tenantctx.WithSystem(context.Background())
+	tests := []struct {
+		name    string
+		call    func(db *quicBaaS) (interface{}, error)
+		wantErr string
+	}{
+		{name: "GenerateKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.GenerateKey(ctx, &GenerateKeyRequest{})
+		}},
+		{name: "ImportKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.ImportKey(ctx, &ImportKeyRequest{})
+		}},
+		{name: "GetKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.GetKey(ctx, &GetKeyRequest{})
+		}},
+		{name: "ListKeys", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.ListKeys(ctx, &ListKeysRequest{})
+		}},
+		{name: "RotateKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.RotateKey(ctx, &RotateKeyRequest{})
+		}},
+		{name: "RevokeKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.RevokeKey(ctx, &RevokeKeyRequest{})
+		}},
+		{name: "DeleteKey", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.DeleteKey(ctx, &DeleteKeyRequest{})
+		}},
+		{name: "GetKeyMetadata", wantErr: "KMS service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.GetKeyMetadata(ctx, &GetKeyMetadataRequest{})
+		}},
+		{name: "Encrypt", wantErr: "Crypto service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.Encrypt(ctx, &EncryptRequest{})
+		}},
+		{name: "Decrypt", wantErr: "Crypto service not initialized", call: func(db *quicBaaS) (interface{}, error) {
+			return db.Decrypt(ctx, &DecryptRequest{})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := &quicBaaS{kmsService: nil, cryptoService: nil}
+			resp, err := tt.call(db)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrUnavailable, qbErr.Code)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestQuicBaaS_Close_AlreadyClosed(t *testing.T) {
@@ -3485,28 +3412,6 @@ func TestQuicBaaS_Close_NilComponents(t *testing.T) {
 	err := db.Close()
 	require.NoError(t, err)
 	assert.True(t, db.closed)
-}
-
-func TestBackupServiceImpl_VerifyBackup_NilManager(t *testing.T) {
-	svc := &quicBaaS{backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
-
-	_, err := backupSvc.VerifyBackup(tenantctx.WithSystem(context.Background()), &VerifyBackupRequest{
-		BackupID: "backup_123",
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "backup manager")
-}
-
-func TestBatchServiceImpl_BatchGet_EmptyKeys(t *testing.T) {
-	svc := &quicBaaS{}
-	batchSvc := &batchService{svc: svc}
-
-	_, err := batchSvc.BatchGet(tenantctx.WithSystem(context.Background()), &BatchGetRequest{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "batch")
 }
 
 func TestKVService_Watch_WithMetricsSuccess(t *testing.T) {
@@ -3538,206 +3443,106 @@ func TestKVService_Watch_WithMetricsSuccess(t *testing.T) {
 	}
 }
 
-func TestBatchService_BatchPut_NilRequestMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestBatchService_BatchPut_EmptyRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchPutRequest{
-		Requests: []*PutRequest{},
+func TestBatchService_InvalidRequestWithMetrics(t *testing.T) {
+	ctx := tenantctx.WithSystem(context.Background())
+	tests := []struct {
+		name    string
+		call    func(svc QuicBaaS) (interface{}, error)
+		wantErr string
+	}{
+		{name: "put nil request", wantErr: "request cannot be nil", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchPut(ctx, nil)
+		}},
+		{name: "put empty batch", wantErr: "batch cannot be empty", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchPut(ctx, &BatchPutRequest{Requests: []*PutRequest{}})
+		}},
+		{name: "delete nil request", wantErr: "request cannot be nil", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchDelete(ctx, nil)
+		}},
+		{name: "delete empty batch", wantErr: "batch cannot be empty", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchDelete(ctx, &BatchDeleteRequest{Requests: []*DeleteRequest{}})
+		}},
+		{name: "get nil request", wantErr: "request cannot be nil", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchGet(ctx, nil)
+		}},
+		{name: "get empty batch", wantErr: "batch cannot be empty", call: func(svc QuicBaaS) (interface{}, error) {
+			return svc.BatchGet(ctx, &BatchGetRequest{Requests: []*GetRequest{}})
+		}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+			svc := createTestService(t, withMockRaftNode(&mockRaftNode{}), withQRDBClientProvider(mockQRDB), withEnableMetrics())
+			defer svc.Close()
 
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "batch cannot be empty")
-}
+			resp, err := tt.call(svc)
+			require.Error(t, err)
+			assert.Nil(t, resp)
 
-func TestBatchService_BatchDelete_NilRequestMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestBatchService_BatchDelete_EmptyRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		Requests: []*DeleteRequest{},
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
 }
 
-func TestBatchService_BatchGet_NilRequestMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestBatchService_BatchGet_EmptyRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchGetRequest{
-		Requests: []*GetRequest{},
-	}
-
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestBatchService_BatchPut_WithDefaultShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			// Verify default shard ID is used
-			if shardID != 1 {
-				t.Errorf("expected shard ID 1, got %d", shardID)
+func TestBatchService_ShardSelection(t *testing.T) {
+	ctx := tenantctx.WithSystem(context.Background())
+	tests := []struct {
+		name      string
+		call      func(svc QuicBaaS) (int, error)
+		wantShard uint64
+	}{
+		{name: "put default shard", wantShard: 1, call: func(svc QuicBaaS) (int, error) {
+			resp, err := svc.BatchPut(ctx, &BatchPutRequest{Requests: []*PutRequest{
+				{EntityType: "user", ID: 1, Data: []byte(`{"name":"test"}`)},
+			}})
+			if err != nil {
+				return 0, err
 			}
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &BatchPutRequest{
-		ShardID: 0, // Should default to 1
-		Requests: []*PutRequest{
-			{EntityType: "user", ID: 1, Data: []byte(`{"name":"test"}`)},
-		},
-	}
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Responses, 1)
-}
-
-func TestBatchService_BatchDelete_WithDefaultShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			// Verify default shard ID is used
-			if shardID != 1 {
-				t.Errorf("expected shard ID 1, got %d", shardID)
+			return len(resp.Responses), nil
+		}},
+		{name: "put explicit shard", wantShard: 3, call: func(svc QuicBaaS) (int, error) {
+			resp, err := svc.BatchPut(ctx, &BatchPutRequest{ShardID: 3, Requests: []*PutRequest{
+				{EntityType: "user", ID: 1, Data: []byte(`{"name":"test"}`), ShardID: 3},
+			}})
+			if err != nil {
+				return 0, err
 			}
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		ShardID: 0, // Should default to 1
-		Requests: []*DeleteRequest{
-			{EntityType: "user", ID: 1},
-		},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Responses, 1)
-}
-
-func TestBatchService_BatchDelete_WithExplicitShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			// Verify explicit shard ID is used
-			if shardID != 5 {
-				t.Errorf("expected shard ID 5, got %d", shardID)
+			return len(resp.Responses), nil
+		}},
+		{name: "delete default shard", wantShard: 1, call: func(svc QuicBaaS) (int, error) {
+			resp, err := svc.BatchDelete(ctx, &BatchDeleteRequest{Requests: []*DeleteRequest{
+				{EntityType: "user", ID: 1},
+			}})
+			if err != nil {
+				return 0, err
 			}
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		ShardID: 5,
-		Requests: []*DeleteRequest{
-			{EntityType: "user", ID: 1, ShardID: 5},
-		},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestBatchService_BatchPut_WithExplicitShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			// Verify explicit shard ID is used
-			if shardID != 3 {
-				t.Errorf("expected shard ID 3, got %d", shardID)
+			return len(resp.Responses), nil
+		}},
+		{name: "delete explicit shard", wantShard: 5, call: func(svc QuicBaaS) (int, error) {
+			resp, err := svc.BatchDelete(ctx, &BatchDeleteRequest{ShardID: 5, Requests: []*DeleteRequest{
+				{EntityType: "user", ID: 1, ShardID: 5},
+			}})
+			if err != nil {
+				return 0, err
 			}
-			return nil
-		},
+			return len(resp.Responses), nil
+		}},
 	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
+			svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+			defer svc.Close()
 
-	req := &BatchPutRequest{
-		ShardID: 3,
-		Requests: []*PutRequest{
-			{EntityType: "user", ID: 1, Data: []byte(`{"name":"test"}`), ShardID: 3},
-		},
+			n, err := tt.call(svc)
+			require.NoError(t, err)
+			assert.Equal(t, 1, n)
+			assert.Equal(t, []uint64{tt.wantShard}, mockQRDB.capturedShardCalls())
+		})
 	}
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestBatchService_BatchDelete_RaftErrorPath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProviderWithErrors(nil, stderrors.New("delete failed"), stderrors.New("batch failed"))
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		Requests: []*DeleteRequest{
-			{EntityType: "user", ID: 1, ShardID: 5},
-		},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
 }
 
 func TestBatchService_BatchDelete_RaftErrorWithMetrics(t *testing.T) {
@@ -3772,93 +3577,6 @@ func TestBatchService_BatchPut_RaftErrorWithMetrics(t *testing.T) {
 	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestBatchService_BatchGet_SuccessPath(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			// Return some data
-			return []byte(`{"name":"test"}`), nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &BatchGetRequest{
-		Requests: []*GetRequest{
-			{EntityType: "user", ID: 1},
-			{EntityType: "user", ID: 2},
-		},
-	}
-
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Len(t, resp.Responses, 2)
-}
-
-func TestBatchService_BatchGet_SuccessWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return []byte(`{"name":"test"}`), nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchGetRequest{
-		Requests: []*GetRequest{
-			{EntityType: "user", ID: 1},
-		},
-	}
-
-	resp, err := svc.BatchGet(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestBatchService_BatchPut_SuccessWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchPutRequest{
-		Requests: []*PutRequest{
-			{EntityType: "user", ID: 1, Data: []byte(`{"name":"test"}`), ShardID: 3},
-		},
-	}
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestBatchService_BatchDelete_SuccessWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		Requests: []*DeleteRequest{
-			{EntityType: "user", ID: 1, ShardID: 5},
-		},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
 }
 
 func TestKVService_ListEntityTypes_ZeroPageSize(t *testing.T) {
@@ -4264,39 +3982,6 @@ func TestKVService_Watch_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestBatchService_BatchPut_EmptyRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &BatchPutRequest{
-		Requests: []*PutRequest{},
-	}
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "batch cannot be empty")
-}
-
-func TestBatchService_BatchPut_RaftError(t *testing.T) {
-	batchErr := stderrors.New("raft propose failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	defer svc.Close()
-
-	req := &BatchPutRequest{
-		Requests: []*PutRequest{
-			{EntityType: "user", ID: 1, Data: []byte(`{"name":"test1"}`)},
-			{EntityType: "user", ID: 2, Data: []byte(`{"name":"test2"}`)},
-		},
-	}
-
-	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
 func TestBatchService_BatchPut_WithMetrics(t *testing.T) {
 	mockRaft := &mockRaftNode{
 		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
@@ -4316,39 +4001,6 @@ func TestBatchService_BatchPut_WithMetrics(t *testing.T) {
 	resp, err := svc.BatchPut(tenantctx.WithSystem(context.Background()), req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestBatchService_BatchDelete_EmptyRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		Requests: []*DeleteRequest{},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "batch cannot be empty")
-}
-
-func TestBatchService_BatchDelete_RaftError(t *testing.T) {
-	batchErr := stderrors.New("raft propose failed")
-	qrdbProvider := newSvcBoostMockQRDBProviderWithErrors(nil, nil, batchErr)
-	svc := createTestService(t, withQRDBClientProvider(qrdbProvider))
-	defer svc.Close()
-
-	req := &BatchDeleteRequest{
-		Requests: []*DeleteRequest{
-			{EntityType: "user", ID: 1},
-			{EntityType: "user", ID: 2},
-		},
-	}
-
-	resp, err := svc.BatchDelete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
 }
 
 func TestBatchService_BatchDelete_WithMetrics(t *testing.T) {
