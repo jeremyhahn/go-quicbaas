@@ -273,6 +273,7 @@ func TestTimeSeriesWritePoint_ExecuteErrors(t *testing.T) {
 	}{
 		{"missing metric", map[string]interface{}{"value": "1.0"}, "metric"},
 		{"missing value", map[string]interface{}{"metric": "cpu"}, "value"},
+		{"empty value", map[string]interface{}{"metric": "cpu", "value": ""}, "value"},
 		{"invalid value", map[string]interface{}{"metric": "cpu", "value": "abc"}, "invalid numeric"},
 		{"bad tags JSON", map[string]interface{}{"metric": "cpu", "value": "1.0", "tags": "{"}, "invalid JSON"},
 	}
@@ -309,6 +310,7 @@ func TestTimeSeriesWriteBatch_ExecuteErrors(t *testing.T) {
 	}{
 		{"missing points", map[string]interface{}{}, "points"},
 		{"invalid JSON", map[string]interface{}{"points": "bad"}, "invalid JSON"},
+		{"non-object tags in point", map[string]interface{}{"points": `[{"metric":"cpu","value":"85.5","tags":"not-a-map"}]`}, "invalid JSON array"},
 		{"empty array", map[string]interface{}{"points": "[]"}, "at least one"},
 		{"missing metric in point", map[string]interface{}{"points": `[{"value":"1.0"}]`}, "metric is required"},
 		{"invalid value in point", map[string]interface{}{"points": `[{"metric":"cpu","value":"bad"}]`}, "invalid numeric"},
@@ -695,46 +697,6 @@ func TestParseTagsJSON(t *testing.T) {
 	}
 }
 
-// Helper to create a mock service registry for time series tests
-func newTSRegistryForCoverage(t *testing.T) *ToolRegistry {
-	t.Helper()
-	svc := &mockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	return NewToolRegistry(svc, log)
-}
-
-// =============================================================================
-// Time Series Query Tests - Additional coverage for optional parameters
-// =============================================================================
-
-// =============================================================================
-// Time Series Delete Series Tests - coverage for time range parameters
-// =============================================================================
-
-// =============================================================================
-// Time Series List Metrics Tests
-// =============================================================================
-
-func TestTimeSeriesListMetrics_WithInvalidTags(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{
-		"tags": "{not-valid-json",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid JSON")
-}
-
-// =============================================================================
-// Time Series Retention Policy Tests - additional coverage
-// =============================================================================
-
-// =============================================================================
-// getInt64 Tests - additional coverage
-// =============================================================================
-
 // =============================================================================
 // Scheduler Job History Tests - with executions
 // =============================================================================
@@ -819,55 +781,4 @@ func TestSchedulerStatus_WithStats(t *testing.T) {
 	resultMap, ok := result.(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, true, resultMap["running"])
-}
-
-// =============================================================================
-// Write Point Tests - missing value parsing edge case
-// =============================================================================
-
-func TestTimeSeriesWritePoint_EmptyValue(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_point", map[string]interface{}{
-		"metric": "cpu.usage",
-		"value":  "",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
-// =============================================================================
-// Write Batch Tests - additional edge cases
-// =============================================================================
-
-func TestTimeSeriesWriteBatch_WithTagsInPoints(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", map[string]interface{}{
-		"points": `[
-			{"metric":"cpu","value":"85.5","tags":{"host":"server-1","region":"us-east"}},
-			{"metric":"mem","value":"1024","timestamp":1700000000000000000}
-		]`,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesWriteBatch_InvalidTagsInPoint(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	// Tags as non-map value should cause an error or be ignored
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_write_batch", map[string]interface{}{
-		"points": `[{"metric":"cpu","value":"85.5","tags":"not-a-map"}]`,
-	})
-	// Depending on implementation, this may succeed with tags ignored
-	// or fail. Let's check based on the actual behavior.
-	if err != nil {
-		assert.Contains(t, err.Error(), "tags")
-	} else {
-		require.NotNil(t, result)
-	}
 }
