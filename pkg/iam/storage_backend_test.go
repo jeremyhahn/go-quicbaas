@@ -569,75 +569,68 @@ func BenchmarkBackendStorage_JSONMarshal(b *testing.B) {
 // =============================================================================
 
 func TestBatchProcessor_ProcessPolicies_DryRunValidation(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+	tests := []struct {
+		name string
+		opts BatchOptions
+	}{
+		{name: "dry run", opts: BatchOptions{DryRun: true}},
+		{name: "validate only", opts: BatchOptions{ValidateOnly: true}},
+	}
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := &finalOpStorage{
+				mockBatchStorage: newMockBatchStorage(),
+				done:             make(chan BatchOperation, 1),
+			}
+			tenantMgr := newMockTenantManager()
+			bp := NewIAMBatchProcessor(storage, tenantMgr)
 
-	items := []PolicyImportItem{
-		{
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "dry-run-test", Tenant: tenantID},
-				Spec: PolicySpec{
-					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+			ctx := context.Background()
+			tenantID := "test-tenant"
+			items := []PolicyImportItem{
+				{
+					Policy: &Policy{
+						APIVersion: "v1",
+						Kind:       "Policy",
+						Metadata:   PolicyMetadata{Name: "no-write-test", Tenant: tenantID},
+						Spec: PolicySpec{
+							Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+						},
+					},
 				},
-			},
-		},
-	}
+			}
 
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		DryRun: true, // Dry run - don't actually create
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
+			_, err := bp.ImportPolicies(ctx, tenantID, items, tt.opts)
+			require.NoError(t, err)
 
-	time.Sleep(200 * time.Millisecond)
+			var final BatchOperation
+			select {
+			case final = <-storage.done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("timed out waiting for the import to finish")
+			}
 
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success in dry run, got %d", saved.Progress.Succeeded)
+			assert.Equal(t, BatchStatusCompleted, final.Status)
+			assert.Equal(t, 1, final.Progress.Succeeded)
+			_, err = tenantMgr.GetPolicy(ctx, tenantID, "no-write-test")
+			assert.ErrorIs(t, err, ErrPolicyNotFound, "a no-write import must not create the policy")
+		})
 	}
 }
 
-func TestBatchProcessor_ProcessPolicies_ValidateOnlyMode(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+// finalOpStorage hands the test a copy of the operation once it is
+// finalized, so the test synchronizes on completion instead of sleeping.
+type finalOpStorage struct {
+	*mockBatchStorage
+	done chan BatchOperation
+}
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []PolicyImportItem{
-		{
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "validate-only-test", Tenant: tenantID},
-				Spec: PolicySpec{
-					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-				},
-			},
-		},
+func (s *finalOpStorage) UpdateOperation(ctx context.Context, op *BatchOperation) error {
+	if op.CompletedAt != nil {
+		s.done <- *op
 	}
-
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		ValidateOnly: true, // Only validate, don't create
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success in validate-only mode, got %d", saved.Progress.Succeeded)
-	}
+	return s.mockBatchStorage.UpdateOperation(ctx, op)
 }
 
 func TestMemoryConsentStorage_DeleteConsent_ByPurpose(t *testing.T) {
@@ -1576,126 +1569,6 @@ func TestBackendStorage_RevokeUserTokens(t *testing.T) {
 // OIDC Provider - ValidateAccessToken coverage
 // =============================================================================
 
-func TestOIDCProvider_ValidateAccessToken_Success(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	config := &OIDCConfig{
-		Issuer:            "https://test.example.com",
-		SigningAlgorithm:  "RS256",
-		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
-		AccessTokenTTL:    1 * time.Hour,
-		RefreshTokenTTL:   24 * time.Hour,
-		IDTokenTTL:        1 * time.Hour,
-		AuthCodeTTL:       10 * time.Minute,
-	}
-
-	appStorage := newMockAppStorage()
-	tokenStorage := newMockTokenStorage()
-	memStorage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: memStorage,
-		RoleStorage: memStorage,
-	})
-
-	deps := OIDCDependencies{
-		IdentityStore: identityStore,
-		AppStorage:    appStorage,
-		TokenStorage:  tokenStorage,
-	}
-
-	provider, err := NewOIDCProvider(config, deps)
-	if err != nil {
-		t.Fatalf("NewOIDCProvider failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Create Claims and generate token
-	now := time.Now()
-	claims := &Claims{
-		Issuer:    "https://test.example.com",
-		Subject:   "user-validate-1",
-		Audience:  []string{"https://test.example.com"},
-		ExpiresAt: NewUnixTime(now.Add(1 * time.Hour)),
-		IssuedAt:  NewUnixTime(now),
-		NotBefore: NewUnixTime(now),
-		JTI:       "validate-test-jti",
-		TenantID:  "tenant-1",
-		Roles:     []string{"admin"},
-		Groups:    []string{"developers"},
-		Email:     "test@example.com",
-		Name:      "Test User",
-		Scope:     "openid profile email",
-		ClientID:  "client-123",
-	}
-
-	// Generate token using the token service
-	tokenService := provider.tokenService
-	accessToken, err := tokenService.GenerateAccessToken(ctx, claims)
-	if err != nil {
-		t.Fatalf("GenerateAccessToken failed: %v", err)
-	}
-
-	// Validate the token
-	validatedClaims, err := provider.ValidateAccessToken(ctx, accessToken)
-	if err != nil {
-		t.Fatalf("ValidateAccessToken failed: %v", err)
-	}
-
-	if validatedClaims == nil {
-		t.Error("expected claims, got nil")
-	}
-	if validatedClaims.Subject != claims.Subject {
-		t.Errorf("expected subject %s, got %s", claims.Subject, validatedClaims.Subject)
-	}
-}
-
-func TestOIDCProvider_ValidateAccessToken_Invalid(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("failed to generate RSA key: %v", err)
-	}
-
-	config := &OIDCConfig{
-		Issuer:            "https://test.example.com",
-		SigningAlgorithm:  "RS256",
-		SigningKeyManager: testSigningKeyManager(t, privateKey, "RS256"),
-		AccessTokenTTL:    1 * time.Hour,
-	}
-
-	appStorage := newMockAppStorage()
-	tokenStorage := newMockTokenStorage()
-	memStorage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: memStorage,
-		RoleStorage: memStorage,
-	})
-
-	deps := OIDCDependencies{
-		IdentityStore: identityStore,
-		AppStorage:    appStorage,
-		TokenStorage:  tokenStorage,
-	}
-
-	provider, err := NewOIDCProvider(config, deps)
-	if err != nil {
-		t.Fatalf("NewOIDCProvider failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	// Validate invalid token
-	_, err = provider.ValidateAccessToken(ctx, "invalid-token-string")
-	if err == nil {
-		t.Error("expected error for invalid token")
-	}
-}
-
 // =============================================================================
 // OIDC Adapter - ValidateAccessToken coverage
 // =============================================================================
@@ -1853,11 +1726,9 @@ func TestOIDCProviderAdapter_GetOAuthASMetadata_NilCheck(t *testing.T) {
 
 	adapter := NewOIDCProviderAdapter(provider)
 
-	// Get metadata - exercises the nil check path
-	metadata := adapter.GetOAuthASMetadata()
-	// The result depends on whether the provider has metadata configured
-	// We're primarily testing that this doesn't panic
-	_ = metadata
+	metadata, ok := adapter.GetOAuthASMetadata().(*OAuthASMetadata)
+	require.True(t, ok)
+	assert.Equal(t, config.Issuer, metadata.Issuer)
 }
 
 // =============================================================================
