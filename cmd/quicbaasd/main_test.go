@@ -28,7 +28,6 @@ import (
 
 	"bytes"
 	"os/exec"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -317,47 +316,6 @@ func createTestLogger(t *testing.T) *logger.Logger {
 // Consolidated from coverage_exit_test.go
 // =============================================================================
 
-// TestInitConfig_ExplicitConfigFileNotFound tests that initConfig exits
-// when an explicitly specified config file cannot be found.
-// Uses subprocess testing to catch os.Exit.
-func TestInitConfig_ExplicitConfigFileNotFound(t *testing.T) {
-	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		cfgFile = "/nonexistent/path/config.yaml"
-		initConfig()
-		return
-	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestInitConfig_ExplicitConfigFileNotFound")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1")
-	err := cmd.Run()
-
-	// Expect exit code 1
-	if e, ok := err.(*exec.ExitError); ok {
-		assert.False(t, e.Success())
-	}
-}
-
-// TestParseSpecialEnvVars_InvalidShardID tests that parseSpecialEnvVars exits
-// when an invalid shard ID is provided.
-func TestParseSpecialEnvVars_InvalidShardID(t *testing.T) {
-	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		os.Setenv("QUICBAAS_SERVER_SHARDS", "100,invalid,200")
-		cfg = nil
-		initConfig()
-		return
-	}
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestParseSpecialEnvVars_InvalidShardID")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1")
-	output, err := cmd.CombinedOutput()
-
-	// Expect exit code 1 and error message about invalid shard ID
-	if e, ok := err.(*exec.ExitError); ok {
-		assert.False(t, e.Success())
-		assert.Contains(t, string(output), config.ErrInvalidEnvValue.Error())
-	}
-}
-
 // TestMain_HelpFlag tests that the main function works with --help.
 func TestMain_HelpFlag(t *testing.T) {
 	// Capture the original args
@@ -418,246 +376,159 @@ func TestVersionCmd_ExecuteShort(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestInitConfig_ConfigFileParseFail drives initConfig against syntactically
-// invalid YAML, in a subprocess because that path exits.
-//
-// The PARENT writes the file, in a directory testing removes. The subprocess
-// cannot own it: it never returns from initConfig, so a deferred os.Remove
-// there never runs, and the file it used to write into os.TempDir() survived
-// every run of this package (go-quicbaas#693).
-func TestInitConfig_ConfigFileParseFail(t *testing.T) {
-	if os.Getenv("TEST_SUBPROCESS") == "1" {
-		cfgFile = os.Getenv("TEST_SUBPROCESS_CONFIG")
-		initConfig()
-		return
-	}
-
-	configPath := filepath.Join(t.TempDir(), "invalid_config.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte("{{{{invalid yaml syntax}}}}"), 0o600))
-
-	cmd := exec.Command(os.Args[0], "-test.run=TestInitConfig_ConfigFileParseFail")
-	cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1", "TEST_SUBPROCESS_CONFIG="+configPath)
-	output, err := cmd.CombinedOutput()
-
-	// Expect exit code 1 and error message
-	if e, ok := err.(*exec.ExitError); ok {
-		assert.False(t, e.Success())
-		outputStr := string(output)
-		// Should contain error about reading config
-		assert.True(t, strings.Contains(outputStr, "Error reading config file") ||
-			strings.Contains(outputStr, "yaml"))
-	}
-}
-
 // TestPrepareDaemon_DataDirCreationFail tests prepareDaemon when data directory
 // creation fails due to permissions.
 // The path below lives under /proc, where mkdir is refused for every uid --
 // procfs simply does not support it. No root guard is needed or wanted
 // (testing-guidelines.md, Fault Injection).
-func TestPrepareDaemon_DataDirCreationFail(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
+// TestPrepareDaemon covers each branch of prepareDaemon: the mode and
+// listener logging, routing validation, and data and socket directory
+// creation, including the failure of each.
+func TestPrepareDaemon(t *testing.T) {
+	log = createTestLogger(t)
 
-	cfg = getDefaultTestConfig(t)
-	// Try to create data directory in a location we can't write to
-	cfg.Storage.DataDir = "/proc/nonexistent/data"
-	cfg.Server.Unix.Enabled = false
-
-	err := prepareDaemon("data-dir-fail")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create data directory")
-}
-
-// TestPrepareDaemon_SocketDirCreationFail tests prepareDaemon when socket directory
-// creation fails due to permissions.
-// Same /proc trick as the data-dir case: mkdir under procfs fails for root too.
-func TestPrepareDaemon_SocketDirCreationFail(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = getDefaultTestConfig(t)
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	// Try to create socket directory in a location we can't write to
-	cfg.Server.Unix.Socket = "/proc/nonexistent/socket.sock"
-
-	err := prepareDaemon("socket-dir-fail")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create socket directory")
-}
-
-// getDefaultTestConfig returns a minimal test configuration.
-func getDefaultTestConfig(t *testing.T) *config.Config {
-	t.Helper()
-	return &config.Config{
-		Server: config.ServerConfig{
-			Mode:            config.ServerModeStandalone,
-			ShutdownTimeout: 5,
-			Unix: config.ServerUnixConfig{
-				Enabled: true,
+	tests := []struct {
+		name string
+		// setup adjusts a default standalone config whose data dir is dir
+		// and returns the directory prepareDaemon must leave in place.
+		setup   func(dir string) string
+		fips    bool
+		wantErr string
+	}{
+		{
+			name: "standalone with no listeners",
+			setup: func(dir string) string {
+				cfg.Server.Unix.Enabled = false
+				cfg.Server.GRPC.Enabled = false
+				cfg.Server.REST.Enabled = false
+				cfg.Discovery.Enabled = false
+				return dir
 			},
 		},
-		Storage: config.StorageConfig{
-			Backend: config.StorageBackendPebble,
-			DataDir: t.TempDir(),
+		{
+			name: "standalone with every listener, discovery and FIPS",
+			setup: func(dir string) string {
+				cfg.Server.Unix.Socket = filepath.Join(dir, "test.sock")
+				cfg.Server.GRPC.Enabled = true
+				cfg.Server.GRPC.Port = 19090
+				cfg.Server.REST.Enabled = true
+				cfg.Server.REST.Port = 18080
+				cfg.Discovery.Enabled = true
+				cfg.Discovery.Type = "multicast"
+				return dir
+			},
+			fips: true,
 		},
-		Logging: config.LoggingConfig{
-			Level:  "error",
-			Format: "json",
-			Output: "stderr",
+		{
+			name: "cluster mode logs raft config",
+			setup: func(dir string) string {
+				cfg.Server.Mode = config.ServerModeCluster
+				cfg.Server.Unix.Socket = filepath.Join(dir, "cluster.sock")
+				cfg.Raft.NodeID = 42
+				cfg.Raft.RaftAddress = "192.168.1.100:63000"
+				return dir
+			},
 		},
+		{
+			name: "devcluster mode logs raft config",
+			setup: func(dir string) string {
+				cfg.Server.Mode = config.ServerModeDevCluster
+				cfg.Server.Unix.Socket = filepath.Join(dir, "devcluster.sock")
+				cfg.Raft.NodeID = 7
+				cfg.Raft.RaftAddress = "10.1.1.1:63000"
+				return dir
+			},
+		},
+		{
+			name: "existing data directory",
+			setup: func(dir string) string {
+				dataDir := filepath.Join(dir, "existing-data")
+				require.NoError(t, os.MkdirAll(dataDir, 0o755))
+				cfg.Storage.DataDir = dataDir
+				cfg.Server.Unix.Enabled = false
+				return dataDir
+			},
+		},
+		{
+			name: "nested socket directory is created",
+			setup: func(dir string) string {
+				cfg.Server.Unix.Enabled = true
+				cfg.Server.Unix.Socket = filepath.Join(dir, "a", "b", "c", "deep.sock")
+				return filepath.Join(dir, "a", "b", "c")
+			},
+		},
+		{
+			name: "socket without directory component",
+			setup: func(dir string) string {
+				cfg.Server.Unix.Enabled = true
+				cfg.Server.Unix.Socket = "bare-socket.sock"
+				return dir
+			},
+		},
+		{
+			name: "valid routing config",
+			setup: func(dir string) string {
+				cfg.Server.Shards = []uint64{100, 200}
+				cfg.Server.EntityShardPins = map[string]uint64{"user": 100}
+				return dir
+			},
+		},
+		{
+			name: "invalid routing config",
+			setup: func(dir string) string {
+				cfg.Server.Shards = []uint64{100, 200}
+				cfg.Server.EntityShardPins = map[string]uint64{"user": 999}
+				return dir
+			},
+			wantErr: "invalid routing config",
+		},
+		{
+			name: "data directory cannot be created",
+			setup: func(string) string {
+				cfg.Storage.DataDir = "/proc/nonexistent/data"
+				cfg.Server.Unix.Enabled = false
+				return ""
+			},
+			wantErr: "failed to create data directory",
+		},
+		{
+			name: "socket directory cannot be created",
+			setup: func(dir string) string {
+				cfg.Server.Unix.Enabled = true
+				cfg.Server.Unix.Socket = "/proc/nonexistent/socket.sock"
+				return dir
+			},
+			wantErr: "failed to create socket directory",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg = config.Default()
+			cfg.Server.Mode = config.ServerModeStandalone
+			cfg.Storage.DataDir = dir
+			wantDir := tt.setup(dir)
+			fipsMode = tt.fips
+			defer func() { fipsMode = false }()
+
+			err := prepareDaemon(tt.name)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			info, statErr := os.Stat(wantDir)
+			require.NoError(t, statErr)
+			assert.True(t, info.IsDir())
+		})
 	}
 }
 
 // =============================================================================
 // Consolidated from coverage_92_test.go
 // =============================================================================
-
-// TestPrepareDaemon_SocketDirCreationEmptyDir covers the case where
-// getSocketDir returns an empty string (socket path has no directory component).
-func TestPrepareDaemon_SocketDirCreationEmptyDir(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	// No slashes means getSocketDir returns "" which should skip MkdirAll
-	cfg.Server.Unix.Socket = "no-directory.sock"
-
-	// Use prepareDaemon to exercise the socket dir creation branch without starting a server
-	err := prepareDaemon("test-no-dir")
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemon_DataDirAlreadyExists covers the case where data directory
-// already exists (os.MkdirAll succeeds without creating new directory).
-func TestPrepareDaemon_DataDirAlreadyExists(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	dataDir := filepath.Join(tempDir, "existing-data")
-	err := os.MkdirAll(dataDir, 0o755)
-	require.NoError(t, err)
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = dataDir
-	cfg.Server.Unix.Enabled = false
-
-	err = prepareDaemon("test-existing-dir")
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemon_UnixSocketWithNestedDir covers the socket directory creation
-// for a deeply nested path.
-func TestPrepareDaemon_UnixSocketWithNestedDir(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	socketPath := filepath.Join(tempDir, "a", "b", "c", "deep.sock")
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = socketPath
-
-	err := prepareDaemon("test-nested-socket")
-	assert.NoError(t, err)
-
-	// Verify the nested directory was created
-	info, statErr := os.Stat(filepath.Join(tempDir, "a", "b", "c"))
-	require.NoError(t, statErr)
-	assert.True(t, info.IsDir())
-}
-
-// TestInitConfig_ValidConfigFileLogging tests initConfig with a valid config
-// file to cover the "Using config file" log line (line 221).
-func TestInitConfig_ValidConfigFileLogging(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-		viper.Reset()
-	}()
-
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "explicit-config.yaml")
-	configContent := `
-logging:
-  level: warn
-  format: json
-  output: stdout
-server:
-  shutdown_timeout: 20
-storage:
-  data_dir: /tmp/test
-`
-	err := os.WriteFile(configPath, []byte(configContent), 0o644)
-	require.NoError(t, err)
-
-	cfgFile = configPath
-	viper.Reset()
-	initConfig()
-
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-}
-
-// TestInitConfig_NoConfigFileFoundPath tests the path where no config file
-// is found in standard locations (which is not an error).
-func TestInitConfig_NoConfigFileFoundPath(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-		viper.Reset()
-	}()
-
-	// Clear any env vars that might interfere
-	os.Unsetenv("QUICBAAS_SERVER_SHARDS")
-	os.Unsetenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS")
-	os.Unsetenv("QUICBAAS_ENABLE_SCHEDULER")
-	os.Unsetenv("QUICBAAS_VECTOR_ENABLED")
-
-	cfgFile = ""
-	viper.Reset()
-	initConfig()
-
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-}
-
-// TestPrepareDaemon_ServerModeDevCluster tests the DevCluster mode logging path.
-func TestPrepareDaemon_ServerModeDevCluster(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeDevCluster
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "devcluster.sock")
-	cfg.Raft.NodeID = 7
-	cfg.Raft.RaftAddress = "10.1.1.1:63000"
-
-	// Covers the DevCluster mode raft logging branch
-	err := prepareDaemon("devcluster-mode")
-	assert.NoError(t, err)
-}
 
 // TestApplyRaftFlags_NoChanges tests applyRaftFlags when no flags are changed.
 func TestApplyRaftFlags_NoChanges(t *testing.T) {
@@ -830,195 +701,9 @@ func TestGetSocketDir_RootSlash(t *testing.T) {
 	assert.Equal(t, "", result)
 }
 
-// TestPrepareDaemon_AllLoggingPathsCombined exercises multiple logging paths
-// in a single run to maximize coverage.
-func TestPrepareDaemon_AllLoggingPathsCombined(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "combined.sock")
-	cfg.Server.GRPC.Enabled = true
-	cfg.Server.GRPC.Port = 29090
-	cfg.Server.REST.Enabled = true
-	cfg.Server.REST.Port = 28080
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "kubernetes"
-	cfg.Raft.NodeID = 99
-	cfg.Raft.RaftAddress = "10.0.0.99:63099"
-	fipsMode = true
-	defer func() { fipsMode = false }()
-
-	err := prepareDaemon("combined-test")
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
-
-// TestInitConfigWithExplicitConfigFileError tests initConfig when the
-// specified config file cannot be read (triggers the os.Exit error path).
-// We verify the internal mechanics rather than calling initConfig directly
-// since os.Exit cannot be intercepted in unit tests.
-func TestInitConfigWithExplicitConfigFileError(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-	}()
-
-	// A non-existent file should cause viper.ReadInConfig to fail.
-	// Since initConfig calls os.Exit(1), we test the scenario indirectly
-	// by verifying that the normal path with a valid file works.
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "valid.yaml")
-	configContent := `
-logging:
-  level: error
-  format: json
-  output: stdout
-storage:
-  data_dir: /tmp/test-data
-server:
-  shutdown_timeout: 15
-`
-	err := os.WriteFile(configPath, []byte(configContent), 0o644)
-	require.NoError(t, err)
-
-	cfgFile = configPath
-	assert.NotPanics(t, func() {
-		initConfig()
-	})
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-	assert.Equal(t, "/tmp/test-data", cfg.Storage.DataDir)
-}
-
-// TestInitConfigLoggingDefaults tests that initConfig applies correct
-// logging defaults when the config file has empty logging fields.
-func TestInitConfigLoggingDefaults(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-	}()
-
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "minimal.yaml")
-	err := os.WriteFile(configPath, []byte("logging:\n  level: \"\"\n"), 0o644)
-	require.NoError(t, err)
-
-	cfgFile = configPath
-	initConfig()
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-}
-
-// TestPrepareDaemonAllLoggingBranches exercises all conditional logging branches
-// in prepareDaemon to maximize coverage of the logging paths.
-func TestPrepareDaemonAllLoggingBranches(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	t.Run("standalone with all listeners and FIPS and discovery", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = tempDir + "/test.sock"
-		cfg.Server.GRPC.Enabled = true
-		cfg.Server.GRPC.Port = 19090
-		cfg.Server.REST.Enabled = true
-		cfg.Server.REST.Port = 18080
-		cfg.Discovery.Enabled = true
-		cfg.Discovery.Type = "multicast"
-		fipsMode = true
-		defer func() { fipsMode = false }()
-
-		// Covers: Unix socket logging, GRPC logging, REST logging,
-		// discovery logging, FIPS logging
-		err := prepareDaemon("standalone-all")
-		assert.NoError(t, err)
-	})
-
-	t.Run("cluster mode with devcluster exercises raft logging", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeDevCluster
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = tempDir + "/cluster.sock"
-		cfg.Raft.NodeID = 5
-		cfg.Raft.RaftAddress = "10.0.0.1:63000"
-		cfg.Server.GRPC.Enabled = false
-		cfg.Server.REST.Enabled = false
-		cfg.Discovery.Enabled = false
-		fipsMode = false
-
-		// Covers: cluster/devcluster raft logging path (NodeID, RaftAddress)
-		err := prepareDaemon("devcluster-raft")
-		assert.NoError(t, err)
-	})
-
-	t.Run("standalone no listeners exercises minimal logging", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = false
-		cfg.Server.Unix.Socket = ""
-		cfg.Server.GRPC.Enabled = false
-		cfg.Server.REST.Enabled = false
-		cfg.Discovery.Enabled = false
-		fipsMode = false
-
-		// Covers: the case where Unix is disabled, no GRPC, no REST, no discovery, no FIPS
-		err := prepareDaemon("standalone-minimal")
-		assert.NoError(t, err)
-	})
-
-	t.Run("socket dir creation for deep path", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = filepath.Join(tempDir, "deep", "nested", "path", "test.sock")
-
-		err := prepareDaemon("socket-dir-creation")
-		assert.NoError(t, err)
-
-		// Verify the nested directory was created
-		info, statErr := os.Stat(filepath.Join(tempDir, "deep", "nested", "path"))
-		require.NoError(t, statErr)
-		assert.True(t, info.IsDir())
-	})
-
-	t.Run("socket with no directory component", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = "bare-socket.sock"
-
-		// Covers: getSocketDir returning "" when no directory separator exists
-		err := prepareDaemon("bare-socket")
-		assert.NoError(t, err)
-	})
-}
 
 // TestApplyRaftFlagsHostnameResolution tests the hostname resolution branch
 // in applyRaftFlags when raft-address is empty but raft-port is changed.
@@ -1059,27 +744,6 @@ func TestApplyRaftFlagsWithDirectAddress(t *testing.T) {
 
 	// Reset global
 	raftAddress = ""
-}
-
-// TestPrepareDaemonRoutingValidationSuccess tests prepareDaemon with valid routing config.
-func TestPrepareDaemonRoutingValidationSuccess(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = tempDir + "/routing-test.sock"
-	cfg.Server.Shards = []uint64{100, 200}
-	cfg.Server.EntityShardPins = map[string]uint64{
-		"user": 100,
-	}
-
-	// Valid routing config should pass validation
-	err := prepareDaemon("routing-valid")
-	assert.NoError(t, err)
 }
 
 // TestGetSocketDir_VariousFormats tests getSocketDir with additional path formats.
@@ -1184,123 +848,6 @@ func TestApplyServerFlagsGRPCDisabled(t *testing.T) {
 // Consolidated from coverage_91_test.go
 // =============================================================================
 
-func TestInitConfig_NoConfigFile_DefaultLogging(t *testing.T) {
-	// Reset viper and config state
-	viper.Reset()
-	cfgFile = ""
-	cfg = nil
-
-	// Ensure no env vars interfere
-	os.Unsetenv("QUICBAAS_SERVER_SHARDS")
-	os.Unsetenv("QUICBAAS_SERVER_ENTITY_SHARD_PINS")
-	os.Unsetenv("QUICBAAS_ENABLE_SCHEDULER")
-	os.Unsetenv("QUICBAAS_VECTOR_ENABLED")
-
-	initConfig()
-
-	if cfg == nil {
-		t.Fatal("expected cfg to be initialized")
-	}
-
-	// Logger should be initialized
-	if log == nil {
-		t.Fatal("expected logger to be initialized")
-	}
-}
-
-func TestPrepareDaemon_RESTAndFIPSLogging(t *testing.T) {
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = t.TempDir()
-
-	// Enable REST
-	cfg.Server.REST.Enabled = true
-	cfg.Server.REST.Port = 18080
-
-	// Enable GRPC
-	cfg.Server.GRPC.Enabled = true
-	cfg.Server.GRPC.Port = 19090
-
-	// Enable FIPS mode
-	fipsMode = true
-	defer func() { fipsMode = false }()
-
-	// Enable discovery
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "static"
-
-	logCfg := logger.LogConfig{Level: "info", Format: "json", Output: "stdout"}
-	var err error
-	log, err = logger.New(logCfg)
-	if err != nil {
-		t.Fatalf("failed to create logger: %v", err)
-	}
-
-	// Use prepareDaemon to exercise logging paths without starting a server
-	err = prepareDaemon("test-logging")
-	if err != nil {
-		t.Fatalf("prepareDaemon should succeed: %v", err)
-	}
-}
-
-func TestPrepareDaemon_ClusterModeLogs(t *testing.T) {
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = t.TempDir()
-
-	// Set raft config
-	cfg.Raft.NodeID = 42
-	cfg.Raft.RaftAddress = "localhost:63001"
-
-	logCfg := logger.LogConfig{Level: "info", Format: "json", Output: "stdout"}
-	var err error
-	log, err = logger.New(logCfg)
-	if err != nil {
-		t.Fatalf("failed to create logger: %v", err)
-	}
-
-	err = prepareDaemon("cluster-test")
-	if err != nil {
-		t.Fatalf("prepareDaemon should succeed: %v", err)
-	}
-}
-
-// TestPrepareDaemon_UnixSocketDirCreation tests that the Unix socket directory
-// creation logic in prepareDaemon correctly creates nested directories.
-func TestPrepareDaemon_UnixSocketDirCreation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = t.TempDir()
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = tmpDir + "/nested/quicbaas.sock"
-
-	logCfg := logger.LogConfig{Level: "info", Format: "json", Output: "stdout"}
-	var err error
-	log, err = logger.New(logCfg)
-	if err != nil {
-		t.Fatalf("failed to create logger: %v", err)
-	}
-
-	err = prepareDaemon("unix-socket-test")
-	if err != nil {
-		t.Fatalf("prepareDaemon should succeed: %v", err)
-	}
-
-	// Verify the directory was created
-	info, err := os.Stat(tmpDir + "/nested")
-	if err != nil {
-		t.Fatalf("expected nested socket directory to exist: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatal("expected nested socket path to be a directory")
-	}
-}
-
 func TestRunDaemon_RoutingValidationFailure(t *testing.T) {
 	cfg = config.Default()
 	cfg.Server.Mode = config.ServerModeStandalone
@@ -1327,146 +874,6 @@ func TestRunDaemon_RoutingValidationFailure(t *testing.T) {
 // =============================================================================
 // Consolidated from coverage_additional_test.go
 // =============================================================================
-
-// TestInitConfigWithValidConfigFile tests initConfig when a valid config file is specified.
-func TestInitConfigWithValidConfigFile(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-	}()
-
-	// Create a valid YAML config file
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
-	configContent := `
-logging:
-  level: debug
-  format: json
-  output: stdout
-storage:
-  data_dir: /tmp/quicbaas-test
-`
-	err := os.WriteFile(configPath, []byte(configContent), 0o644)
-	require.NoError(t, err)
-
-	cfgFile = configPath
-	assert.NotPanics(t, func() {
-		initConfig()
-	})
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-}
-
-// TestInitConfigWithEmptyLoggingFields tests that initConfig applies defaults
-// when logging config fields are empty.
-func TestInitConfigWithEmptyLoggingFields(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-	}()
-
-	// Create a config file with empty logging fields to trigger defaults
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
-	configContent := `
-logging:
-  level: ""
-  format: ""
-  output: ""
-`
-	err := os.WriteFile(configPath, []byte(configContent), 0o644)
-	require.NoError(t, err)
-
-	cfgFile = configPath
-	assert.NotPanics(t, func() {
-		initConfig()
-	})
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
-}
-
-// TestPrepareDaemonDevClusterMode tests prepareDaemon with devcluster mode for logging branch.
-func TestPrepareDaemonDevClusterMode(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeDevCluster
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = tempDir + "/devcluster.sock"
-	cfg.Raft.NodeID = 1
-	cfg.Raft.RaftAddress = "localhost:63000"
-
-	err := prepareDaemon("devcluster")
-	// Covers devCluster raft logging path
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemonUnixSocketDisabled tests prepareDaemon with unix socket disabled.
-func TestPrepareDaemonUnixSocketDisabled(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = false
-	cfg.Server.Unix.Socket = ""
-	cfg.Server.GRPC.Enabled = false
-	cfg.Server.REST.Enabled = false
-	cfg.Discovery.Enabled = false
-
-	err := prepareDaemon("local")
-	// Covers the disabled-unix-socket path
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemonGRPCOnly tests prepareDaemon with only gRPC enabled.
-func TestPrepareDaemonGRPCOnly(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = false
-	cfg.Server.GRPC.Enabled = true
-	cfg.Server.GRPC.Port = 19091
-	cfg.Server.REST.Enabled = false
-	cfg.Discovery.Enabled = false
-
-	err := prepareDaemon("local")
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemonEmptySocketDir tests prepareDaemon with a socket path that has no directory.
-func TestPrepareDaemonEmptySocketDir(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	// Socket path with no directory component - getSocketDir returns ""
-	cfg.Server.Unix.Socket = "quicbaas.sock"
-
-	err := prepareDaemon("local")
-	assert.NoError(t, err)
-}
 
 // TestRunNodeWithDNSDiscovery tests the node command config with DNS discovery (no join-addresses).
 func TestRunNodeWithDNSDiscovery(t *testing.T) {
@@ -2023,113 +1430,142 @@ func TestRunClusterSetsMode(t *testing.T) {
 
 // TestInitConfig tests the initConfig function.
 func TestInitConfig(t *testing.T) {
-	t.Run("default config without config file", func(t *testing.T) {
-		origCfg := cfg
-		origLog := log
-		origCfgFile := cfgFile
-		defer func() {
-			cfg = origCfg
-			log = origLog
-			cfgFile = origCfgFile
-		}()
-
-		cfgFile = ""
-		t.Setenv("QUICBAAS_LOGGING_LEVEL", "error")
-
-		assert.NotPanics(t, func() {
-			initConfig()
-		})
-		require.NotNil(t, cfg)
-		require.NotNil(t, log)
-	})
-
-	t.Run("optional config file not found uses defaults", func(t *testing.T) {
-		origCfg := cfg
-		origLog := log
-		origCfgFile := cfgFile
-		defer func() {
-			cfg = origCfg
-			log = origLog
-			cfgFile = origCfgFile
-		}()
-
-		cfgFile = ""
-		initConfig()
-		require.NotNil(t, cfg)
-	})
-}
-
-// TestPrepareDaemonRoutingValidationError tests prepareDaemon fails on invalid routing config.
-func TestPrepareDaemonRoutingValidationError(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cfg.Server.Shards = []uint64{100, 200}
-	cfg.Server.EntityShardPins = map[string]uint64{
-		"user": 999,
+	tests := []struct {
+		name string
+		// explicit is the content of a file passed as --config.
+		explicit string
+		// search is the content of a quicbaas.yaml in the working directory.
+		search string
+		env    map[string]string
+		check  func(t *testing.T)
+	}{
+		{
+			name: "no config file uses defaults",
+			env:  map[string]string{"QUICBAAS_LOGGING_LEVEL": "error"},
+			check: func(t *testing.T) {
+				assert.Equal(t, "error", cfg.Logging.Level)
+			},
+		},
+		{
+			name: "environment overrides defaults",
+			env:  map[string]string{"QUICBAAS_STORAGE_DATA_DIR": "/tmp/env-data"},
+			check: func(t *testing.T) {
+				assert.Equal(t, "/tmp/env-data", cfg.Storage.DataDir)
+			},
+		},
+		{
+			name:     "explicit config file",
+			explicit: "logging:\n  level: warn\n  format: json\n  output: stdout\nstorage:\n  data_dir: /tmp/test-data\n",
+			check: func(t *testing.T) {
+				assert.Equal(t, "warn", cfg.Logging.Level)
+				assert.Equal(t, "/tmp/test-data", cfg.Storage.DataDir)
+			},
+		},
+		{
+			name:     "empty logging fields fall back to logger defaults",
+			explicit: "logging:\n  level: \"\"\n  format: \"\"\n  output: \"\"\n",
+			check: func(t *testing.T) {
+				assert.Empty(t, cfg.Logging.Level)
+			},
+		},
+		{
+			name:   "config file found in search path",
+			search: "logging:\n  level: error\n  format: json\n  output: stdout\n",
+			check: func(t *testing.T) {
+				assert.Equal(t, "error", cfg.Logging.Level)
+			},
+		},
+		{
+			name:   "malformed config file in search path is ignored",
+			search: "logging:\n  level: debug\n\tbad_indent: error\n",
+			check: func(t *testing.T) {
+				assert.Equal(t, config.Default().Logging.Level, cfg.Logging.Level)
+			},
+		},
 	}
-	cfg.Storage.DataDir = t.TempDir()
 
-	err := prepareDaemon("test")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid routing config")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg, origLog, origCfgFile := cfg, log, cfgFile
+			t.Cleanup(func() {
+				cfg, log, cfgFile = origCfg, origLog, origCfgFile
+				viper.Reset()
+			})
+			viper.Reset()
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+
+			dir := t.TempDir()
+			t.Chdir(dir)
+			cfgFile = ""
+			if tt.explicit != "" {
+				cfgFile = filepath.Join(dir, "explicit.yaml")
+				require.NoError(t, os.WriteFile(cfgFile, []byte(tt.explicit), 0o600))
+			}
+			if tt.search != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "quicbaas.yaml"), []byte(tt.search), 0o600))
+			}
+
+			initConfig()
+
+			require.NotNil(t, cfg)
+			require.NotNil(t, log)
+			tt.check(t)
+		})
+	}
 }
 
-// TestPrepareDaemonLoggingPaths tests prepareDaemon logging paths for coverage.
-func TestPrepareDaemonLoggingPaths(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
+// TestInitConfig_ExitsOnInvalidConfig runs initConfig in a subprocess,
+// because it exits the process when the configuration cannot be loaded.
+func TestInitConfig_ExitsOnInvalidConfig(t *testing.T) {
+	if os.Getenv("TEST_SUBPROCESS") == "1" {
+		cfgFile = os.Getenv("TEST_SUBPROCESS_CONFIG")
+		cfg = nil
+		initConfig()
+		return
+	}
 
-	t.Run("standalone mode with all listeners enabled", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = tempDir + "/test.sock"
-		cfg.Server.GRPC.Enabled = true
-		cfg.Server.GRPC.Port = 19090
-		cfg.Server.REST.Enabled = true
-		cfg.Server.REST.Port = 18080
-		cfg.Discovery.Enabled = true
-		cfg.Discovery.Type = "multicast"
-		fipsMode = true
+	invalidYAML := filepath.Join(t.TempDir(), "invalid_config.yaml")
+	require.NoError(t, os.WriteFile(invalidYAML, []byte("{{{{invalid yaml syntax}}}}"), 0o600))
 
-		err := prepareDaemon("local")
-		assert.NoError(t, err)
-		fipsMode = false
-	})
+	tests := []struct {
+		name       string
+		configFile string
+		env        string
+		wantOutput string
+	}{
+		{
+			name:       "explicit config file not found",
+			configFile: "/nonexistent/path/config.yaml",
+			wantOutput: "Error reading config file",
+		},
+		{
+			name:       "explicit config file does not parse",
+			configFile: invalidYAML,
+			wantOutput: "Error reading config file",
+		},
+		{
+			name:       "invalid shard id in environment",
+			env:        "QUICBAAS_SERVER_SHARDS=100,invalid,200",
+			wantOutput: config.ErrInvalidEnvValue.Error(),
+		},
+	}
 
-	t.Run("cluster mode with raft logging", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeCluster
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = tempDir + "/test.sock"
-		cfg.Raft.NodeID = 1
-		cfg.Raft.RaftAddress = "localhost:63000"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestInitConfig_ExitsOnInvalidConfig$")
+			cmd.Env = append(os.Environ(), "TEST_SUBPROCESS=1", "TEST_SUBPROCESS_CONFIG="+tt.configFile)
+			if tt.env != "" {
+				cmd.Env = append(cmd.Env, tt.env)
+			}
+			output, err := cmd.CombinedOutput()
 
-		err := prepareDaemon("cluster")
-		assert.NoError(t, err)
-	})
-
-	t.Run("socket directory creation for nested paths", func(t *testing.T) {
-		tempDir := t.TempDir()
-		cfg = config.Default()
-		cfg.Server.Mode = config.ServerModeStandalone
-		cfg.Storage.DataDir = tempDir
-		cfg.Server.Unix.Enabled = true
-		cfg.Server.Unix.Socket = tempDir + "/subdir/test.sock"
-
-		err := prepareDaemon("local")
-		assert.NoError(t, err)
-
-		info, statErr := os.Stat(tempDir + "/subdir")
-		require.NoError(t, statErr)
-		assert.True(t, info.IsDir())
-	})
+			var exitErr *exec.ExitError
+			require.ErrorAs(t, err, &exitErr)
+			assert.Contains(t, string(output), tt.wantOutput)
+		})
+	}
 }
 
 // TestRootCmd_VersionFlag tests the root command version flag.
@@ -2195,61 +1631,6 @@ func setupTestLogger(t *testing.T) *logger.Logger {
 // Consolidated from coverage_93_test.go
 // =============================================================================
 
-// TestInitConfig_ConfigFileParseError tests initConfig when a config file
-// exists but has a parse error (not a ConfigFileNotFoundError).
-// This triggers the non-not-found error path in lines 235-237.
-func TestInitConfig_ConfigFileParseError(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-		viper.Reset()
-	}()
-
-	// Create a malformed YAML file that will cause a parse error
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.yaml")
-	// Invalid YAML: tab character in middle of line breaks parsing
-	malformedContent := "logging:\n  level: info\n\tbad_indent: error\n"
-	err := os.WriteFile(configPath, []byte(malformedContent), 0o644)
-	require.NoError(t, err)
-
-	// Set viper to search in our temp directory
-	cfgFile = ""
-	viper.Reset()
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(tempDir)
-
-	// This should trigger the parse error path, but since it doesn't call os.Exit
-	// directly (the error is just logged), initConfig will continue.
-	// Actually, looking at the code more carefully, the parse error branch just
-	// logs and continues - it doesn't exit.
-	assert.NotPanics(t, func() {
-		initConfig()
-	})
-}
-
-// TestPrepareDaemon_ServerCreationLogging tests that prepareDaemon exercises
-// all logging paths without needing to create or start a server.
-func TestPrepareDaemon_ServerCreationLogging(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "test.sock")
-
-	err := prepareDaemon("test-error")
-	assert.NoError(t, err)
-}
-
 // TestApplyRaftFlags_RaftPortWithHostnameResolution tests the raft-port
 // branch where hostname is resolved (can't force os.Hostname to fail).
 func TestApplyRaftFlags_RaftPortWithHostnameResolution(t *testing.T) {
@@ -2271,28 +1652,6 @@ func TestApplyRaftFlags_RaftPortWithHostnameResolution(t *testing.T) {
 	assertDerivedListenAddr(t, "node-c:63099")
 }
 
-// TestPrepareDaemon_ClusterModeWithRaftConfig tests cluster mode to cover
-// raft-specific logging branches.
-func TestPrepareDaemon_ClusterModeWithRaftConfig(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "cluster.sock")
-	cfg.Raft.NodeID = 42
-	cfg.Raft.RaftAddress = "192.168.1.100:63000"
-	cfg.Server.GRPC.Enabled = false
-	cfg.Server.REST.Enabled = false
-	cfg.Discovery.Enabled = false
-
-	err := prepareDaemon("cluster-mode")
-	assert.NoError(t, err)
-}
-
 // TestValidateRoutingConfig_LargeShardList tests validation with many shards.
 func TestValidateRoutingConfig_LargeShardList(t *testing.T) {
 	shards := make([]uint64, 100)
@@ -2306,32 +1665,6 @@ func TestValidateRoutingConfig_LargeShardList(t *testing.T) {
 
 	err := validateRoutingConfig(shards, pins)
 	assert.NoError(t, err)
-}
-
-// TestInitConfig_WithEnvironmentVariables tests initConfig with various
-// environment variables to cover env binding paths.
-func TestInitConfig_WithEnvironmentVariables(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-		viper.Reset()
-	}()
-
-	// Set various environment variables
-	t.Setenv("QUICBAAS_LOGGING_LEVEL", "debug")
-	t.Setenv("QUICBAAS_STORAGE_DATA_DIR", "/tmp/test-data")
-	t.Setenv("QUICBAAS_SECURITY_FIPS_MODE", "true")
-
-	cfgFile = ""
-	viper.Reset()
-	initConfig()
-
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
 }
 
 // TestRunNode_KubernetesDiscovery tests the node command config with kubernetes discovery.
@@ -2425,45 +1758,6 @@ func TestApplyRaftFlags_AllFlagsChanged(t *testing.T) {
 	assertDerivedListenAddr(t, "10.0.0.1:63000")
 
 	raftAddress = ""
-}
-
-// TestPrepareDaemon_DiscoveryEnabledLogging tests the discovery logging path.
-func TestPrepareDaemon_DiscoveryEnabledLogging(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = false
-	cfg.Server.GRPC.Enabled = false
-	cfg.Server.REST.Enabled = false
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "dns"
-
-	err := prepareDaemon("discovery-test")
-	assert.NoError(t, err)
-}
-
-// TestPrepareDaemon_FIPSModeLogging tests the FIPS mode logging path.
-func TestPrepareDaemon_FIPSModeLogging(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = false
-	cfg.Server.GRPC.Enabled = false
-	cfg.Server.REST.Enabled = false
-	cfg.Discovery.Enabled = false
-	fipsMode = true
-	defer func() { fipsMode = false }()
-
-	err := prepareDaemon("fips-test")
-	assert.NoError(t, err)
 }
 
 // TestRunStart_ConfigSetup tests runStart config setup by verifying the config
@@ -2685,41 +1979,6 @@ func TestRunDaemon_ServerNewServerError(t *testing.T) {
 
 	err := runDaemon("test-newserver-fail")
 	require.Error(t, err)
-}
-
-// TestInitConfig_ConfigFileFoundInSearchPath tests the initConfig path where
-// a config file is found in one of the standard search locations.
-func TestInitConfig_ConfigFileFoundInSearchPath(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origCfgFile := cfgFile
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cfgFile = origCfgFile
-		viper.Reset()
-	}()
-
-	// Create a quicbaas.yaml in a temp directory and make it the working directory.
-	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "quicbaas.yaml")
-	configContent := []byte("logging:\n  level: error\n  format: json\n  output: stdout\n")
-	require.NoError(t, os.WriteFile(configPath, configContent, 0o644))
-
-	// Save and change working directory so viper finds the config in ".".
-	origDir, err := os.Getwd()
-	require.NoError(t, err)
-	require.NoError(t, os.Chdir(tempDir))
-	defer func() {
-		require.NoError(t, os.Chdir(origDir))
-	}()
-
-	cfgFile = ""
-	viper.Reset()
-	initConfig()
-
-	require.NotNil(t, cfg)
-	require.NotNil(t, log)
 }
 
 // TestRunDaemon_ServerStartError tests the runDaemon path where
