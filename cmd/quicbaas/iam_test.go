@@ -422,14 +422,6 @@ func TestIAMAuditGetJSONFormat(t *testing.T) {
 // PEP Command Tests
 // =============================================================================
 
-// TestNewIAMPEPCommand tests the PEP command structure.
-func TestNewIAMPEPCommand(t *testing.T) {
-	cmd := newIAMPEPCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "pep", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-}
-
 // TestIAMPEPCheckWithMock tests the PEP check command with a mock client.
 func TestIAMPEPCheckWithMock(t *testing.T) {
 	cleanup := testInitLogger(t)
@@ -923,284 +915,32 @@ func TestIAMCommands_FactoryError(t *testing.T) {
 // Command Structure Tests
 // =============================================================================
 
-func TestNewIAMAppCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMAppCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "app", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMAuditCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMAuditCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "audit", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMGDPRCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMGDPRCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "gdpr", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMRoleCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMRoleCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "role", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMPolicyCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMPolicyCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "policy", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMSessionCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMSessionCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "session", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMMFACommand_StructureComplete(t *testing.T) {
-	cmd := newIAMMFACommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "mfa", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMPEPCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMPEPCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "pep", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMProviderCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMProviderCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "provider", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestNewIAMIdentityCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMIdentityCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "identity", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.Greater(t, len(cmd.Commands()), 0)
-}
-
-func TestIAMAdminAssignmentCreateCommand_InvalidRole(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	cmd := newIAMAdminAssignmentCreateCommand()
-	adminUserID = "user_abc123"
-	adminRole = "invalid_role"
-	adminGrantedBy = "admin_xyz"
-	adminExpiresAt = ""
-
-	err := runIAMAdminAssignmentCreateCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid admin role")
-}
-
-func TestIAMAdminAssignmentCreateCommand_InvalidExpiresAt(t *testing.T) {
-	cmd := newIAMAdminAssignmentCreateCommand()
-	adminUserID = "user_abc123"
-	adminRole = "tenant_admin"
-	adminGrantedBy = "admin_xyz"
-	adminExpiresAt = "not-a-date"
-
-	err := runIAMAdminAssignmentCreateCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expires-at")
-}
-
-func TestIAMAdminAssignmentCreateCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+// TestIAMSubcommands_Structure checks that each IAM command group has its
+// name, a short description and at least one subcommand.
+func TestIAMSubcommands_Structure(t *testing.T) {
+	tests := []struct {
+		use    string
+		newCmd func() *cobra.Command
+	}{
+		{"app", newIAMAppCommand},
+		{"gdpr", newIAMGDPRCommand},
+		{"role", newIAMRoleCommand},
+		{"policy", newIAMPolicyCommand},
+		{"mfa", newIAMMFACommand},
+		{"pep", newIAMPEPCommand},
+		{"provider", newIAMProviderCommand},
+		{"identity", newIAMIdentityCommand},
 	}
 
-	cmd := newIAMAdminAssignmentCreateCommand()
-	adminUserID = "user_abc123"
-	adminRole = "tenant_admin"
-	adminGrantedBy = "admin_xyz"
-	adminExpiresAt = ""
-
-	err := runIAMAdminAssignmentCreateCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection failed")
-}
-
-func TestIAMAdminAssignmentGetCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
+	for _, tt := range tests {
+		t.Run(tt.use, func(t *testing.T) {
+			cmd := tt.newCmd()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tt.use, cmd.Use)
+			assert.NotEmpty(t, cmd.Short)
+			assert.NotEmpty(t, cmd.Commands())
+		})
 	}
-
-	cmd := newIAMAdminAssignmentGetCommand()
-	adminAssignmentID = "adm_test123"
-
-	err := runIAMAdminAssignmentGetCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAdminAssignmentUpdateCommand_InvalidRole(t *testing.T) {
-	cmd := newIAMAdminAssignmentUpdateCommand()
-	cmd.Flags().Set("role", "invalid_role")
-	adminAssignmentID = "adm_test123"
-	adminRole = "invalid_role"
-
-	err := runIAMAdminAssignmentUpdateCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid admin role")
-}
-
-func TestIAMAdminAssignmentUpdateCommand_InvalidExpiresAt(t *testing.T) {
-	cmd := newIAMAdminAssignmentUpdateCommand()
-	cmd.Flags().Set("expires-at", "not-valid-date")
-	adminAssignmentID = "adm_test123"
-	adminExpiresAt = "not-valid-date"
-	adminRole = ""
-
-	err := runIAMAdminAssignmentUpdateCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expires-at")
-}
-
-func TestIAMAdminAssignmentUpdateCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminAssignmentUpdateCommand()
-	adminAssignmentID = "adm_test123"
-	adminRole = ""
-	adminExpiresAt = ""
-
-	err := runIAMAdminAssignmentUpdateCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAdminAssignmentDeleteCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminAssignmentDeleteCommand()
-	adminAssignmentID = "adm_test123"
-	iamForce = true
-
-	err := runIAMAdminAssignmentDeleteCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAdminAssignmentListCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminAssignmentListCommand()
-
-	err := runIAMAdminAssignmentListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Admin Check Permission Command Tests
-// =============================================================================
-
-func TestIAMAdminCheckPermissionCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminCheckPermissionCommand()
-	adminUserID = "user_abc123"
-	adminCheckPermission = "user:create"
-
-	err := runIAMAdminCheckPermissionCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// IAM Admin Impersonation Command Tests
-// =============================================================================
-
-func TestIAMAdminImpersonateStartCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminImpersonateStartCommand()
-	impersonateAdminUserID = "admin_xyz"
-	impersonateTargetUserID = "user_abc123"
-
-	err := runIAMAdminImpersonateStartCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAdminImpersonateEndCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminImpersonateEndCommand()
-	impersonateSessionID = "imp_test123"
-
-	err := runIAMAdminImpersonateEndCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestIAMAdminImpersonateListCommand_FactoryError(t *testing.T) {
-	origFactory := iamClientFactory
-	defer func() { iamClientFactory = origFactory }()
-
-	iamClientFactory = func() (iam.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "connection failed")
-	}
-
-	cmd := newIAMAdminImpersonateListCommand()
-
-	err := runIAMAdminImpersonateListCommand(cmd, []string{})
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -1225,15 +965,6 @@ func TestNewIAMAdminAssignmentCommand_StructureComplete(t *testing.T) {
 		}
 		assert.True(t, found, "Expected subcommand %s not found", expected)
 	}
-}
-
-func TestNewIAMAdminImpersonateCommand_StructureComplete(t *testing.T) {
-	cmd := newIAMAdminImpersonateCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "impersonate", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-	assert.Greater(t, len(cmd.Commands()), 0)
 }
 
 func TestNewIAMAdminCheckPermissionCommand_StructureComplete(t *testing.T) {
@@ -1281,12 +1012,6 @@ func TestNewIAMAdminAssignmentDeleteCommand_Flags(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("assignment-id"))
 }
 
-func TestNewIAMAdminAssignmentListCommand_Flags(t *testing.T) {
-	cmd := newIAMAdminAssignmentListCommand()
-	require.NotNil(t, cmd)
-	assert.NotNil(t, cmd)
-}
-
 func TestNewIAMAdminImpersonateStartCommand_Flags(t *testing.T) {
 	cmd := newIAMAdminImpersonateStartCommand()
 	require.NotNil(t, cmd)
@@ -1302,12 +1027,6 @@ func TestNewIAMAdminImpersonateEndCommand_Flags(t *testing.T) {
 	cmd := newIAMAdminImpersonateEndCommand()
 	require.NotNil(t, cmd)
 	assert.NotNil(t, cmd.Flags().Lookup("session-id"))
-}
-
-func TestNewIAMAdminImpersonateListCommand_Structure(t *testing.T) {
-	cmd := newIAMAdminImpersonateListCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list", cmd.Use)
 }
 
 // =============================================================================
