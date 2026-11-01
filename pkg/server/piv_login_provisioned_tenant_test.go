@@ -20,7 +20,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
 )
 
-
 // TestPIVLogin_CertProvisionedTenantAdminLogsIn drives what the integration
 // helper ProvisionTenant does (test/integration/helpers/tenant_provision.go):
 // provision a tenant in cert mode from a CSR whose subject is CommonName
