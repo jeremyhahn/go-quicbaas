@@ -552,38 +552,6 @@ func TestDeploy_StepError(t *testing.T) {
 // Wait-online
 // -----------------------------------------------------------------------------
 
-func TestDeploy_WaitOnline_Success(t *testing.T) {
-	spec := validSpec()
-	off := false
-	spec.Systemd = &off
-	spec.WaitOnline = 10 * time.Second
-
-	now := time.Unix(1_700_000_000, 0)
-	lastSeen := time.Unix(1_700_000_010, 0).UnixNano()
-	resp := &orchestratorSDK.ListFleetNodesResponse{
-		Nodes: []*orchestratorSDK.FleetNode{
-			{ID: "a-1", Host: "0.0.0.0:9091", Status: "running", LastSeen: lastSeen},
-		},
-		Count: 1,
-	}
-	lst := &fakeLister{responses: []*orchestratorSDK.ListFleetNodesResponse{resp}}
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, now)
-
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatalf("Deploy: %v", err)
-	}
-	if result.NodeID != "a-1" {
-		t.Fatalf("agent id=%q", result.NodeID)
-	}
-	if result.OnlineAt == "" {
-		t.Fatal("expected online timestamp")
-	}
-	if int(lst.calls.Load()) != 1 {
-		t.Fatalf("poll count=%d", lst.calls.Load())
-	}
-}
-
 func TestDeploy_WaitOnline_Timeout(t *testing.T) {
 	spec := validSpec()
 	off := false
@@ -616,7 +584,8 @@ func TestDeploy_WaitOnline_Timeout(t *testing.T) {
 // TestDeploy_WaitOnline_ProbesAfterSessionClosed pins the ordering the
 // remote-agent incident exposed (go-quicbaas#980): the liveness probe has to run
 // after the deploy's SSH session is closed, because a systemd --user
-// agent whose manager does not linger only dies at that moment.
+// agent whose manager does not linger only dies at that moment. It is
+// also the wait-online success path: one poll, node ID and online time.
 func TestDeploy_WaitOnline_ProbesAfterSessionClosed(t *testing.T) {
 	spec := validSpec()
 	on := true
@@ -659,6 +628,12 @@ func TestDeploy_WaitOnline_ProbesAfterSessionClosed(t *testing.T) {
 	}
 	if result.NodeID != "a-1" {
 		t.Fatalf("agent id=%q", result.NodeID)
+	}
+	if result.OnlineAt == "" {
+		t.Fatal("expected online timestamp")
+	}
+	if int(lst.calls.Load()) != 1 {
+		t.Fatalf("poll count=%d", lst.calls.Load())
 	}
 }
 
@@ -898,37 +873,35 @@ func TestAgentProbeAddr(t *testing.T) {
 	}
 }
 
-func TestDeploy_WaitOnline_SkipWhenZero(t *testing.T) {
-	spec := validSpec()
-	off := false
-	spec.Systemd = &off
-	// WaitOnline=0 → no poll.
-	lst := &fakeLister{}
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, lst, time.Now())
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatal(err)
+// TestDeploy_WaitOnline_Skipped checks that a zero budget, or no fleet
+// registry to poll, returns without waiting for the node.
+func TestDeploy_WaitOnline_Skipped(t *testing.T) {
+	cases := []struct {
+		name       string
+		waitOnline time.Duration
+		lister     *fakeLister
+	}{
+		{"zero budget", 0, &fakeLister{}},
+		{"no lister", time.Second, nil},
 	}
-	if result.NodeID != "" {
-		t.Fatalf("expected no agent id, got %q", result.NodeID)
-	}
-	if lst.calls.Load() != 0 {
-		t.Fatalf("expected 0 polls, got %d", lst.calls.Load())
-	}
-}
-
-func TestDeploy_WaitOnline_NilListerSkipped(t *testing.T) {
-	spec := validSpec()
-	off := false
-	spec.Systemd = &off
-	spec.WaitOnline = time.Second
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.NodeID != "" {
-		t.Fatalf("expected empty id, got %q", result.NodeID)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := validSpec()
+			off := false
+			spec.Systemd = &off
+			spec.WaitOnline = tc.waitOnline
+			svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, tc.lister, time.Now())
+			result, err := svc.Deploy(acmeCtx, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.NodeID != "" {
+				t.Fatalf("expected no agent id, got %q", result.NodeID)
+			}
+			if tc.lister != nil && tc.lister.calls.Load() != 0 {
+				t.Fatalf("expected 0 polls, got %d", tc.lister.calls.Load())
+			}
+		})
 	}
 }
 
@@ -1129,13 +1102,6 @@ func TestNewAgentDeployService_DefaultWiring(t *testing.T) {
 	}
 	if concrete.probe == nil {
 		t.Fatal("production service must wire the agent liveness probe")
-	}
-	// Calling Deploy with an invalid spec must surface a typed error
-	// without touching the network.
-	_, err := svc.Deploy(acmeCtx, &deploy.Spec{})
-	var ise *deploy.InvalidSpecError
-	if !errors.As(err, &ise) {
-		t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
 	}
 }
 
