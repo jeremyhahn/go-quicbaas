@@ -157,82 +157,87 @@ func TestModelService_Show_Success(t *testing.T) {
 	}
 }
 
-func TestModelService_Show_EmptyModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewModelService(client)
+func TestModelService_EmptyModel(t *testing.T) {
+	service := NewModelService(NewClient(DefaultClientConfig()))
 
-	_, err := service.Show(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty model name")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestModelService_IsAvailable_True(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := ListModelsResponse{
-			Models: []ModelInfo{
-				{Name: "nomic-embed-text"},
-				{Name: "llama3.2"},
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "Show",
+			call: func() error {
+				_, err := service.Show(context.Background(), "")
+				return err
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	service := NewModelService(client)
-
-	available, err := service.IsAvailable(context.Background(), "nomic-embed-text")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if !available {
-		t.Error("expected model to be available")
-	}
-}
-
-func TestModelService_IsAvailable_False(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := ListModelsResponse{
-			Models: []ModelInfo{
-				{Name: "other-model"},
+		},
+		{
+			name: "IsAvailable",
+			call: func() error {
+				_, err := service.IsAvailable(context.Background(), "")
+				return err
 			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	service := NewModelService(client)
-
-	available, err := service.IsAvailable(context.Background(), "nomic-embed-text")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+		},
+		{
+			name: "GetModelInfo",
+			call: func() error {
+				_, err := service.GetModelInfo(context.Background(), "")
+				return err
+			},
+		},
 	}
 
-	if available {
-		t.Error("expected model to not be available")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			if err == nil {
+				t.Fatal("expected error for empty model name")
+			}
+
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Errorf("expected ErrInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
-func TestModelService_IsAvailable_EmptyModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewModelService(client)
-
-	_, err := service.IsAvailable(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty model name")
+func TestModelService_IsAvailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		models []ModelInfo
+		want   bool
+	}{
+		{
+			name:   "listed",
+			models: []ModelInfo{{Name: "nomic-embed-text"}, {Name: "llama3.2"}},
+			want:   true,
+		},
+		{
+			name:   "not listed",
+			models: []ModelInfo{{Name: "other-model"}},
+			want:   false,
+		},
 	}
 
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(ListModelsResponse{Models: tt.models})
+			}))
+			defer server.Close()
+
+			service := NewModelService(NewClient(ClientConfig{BaseURL: server.URL}))
+
+			available, err := service.IsAvailable(context.Background(), "nomic-embed-text")
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+
+			if available != tt.want {
+				t.Errorf("IsAvailable = %v, want %v", available, tt.want)
+			}
+		})
 	}
 }
 
@@ -294,19 +299,5 @@ func TestModelService_GetModelInfo_NotFound(t *testing.T) {
 
 	if !errors.Is(err, ErrModelNotFound) {
 		t.Errorf("expected ErrModelNotFound, got %v", err)
-	}
-}
-
-func TestModelService_GetModelInfo_EmptyModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewModelService(client)
-
-	_, err := service.GetModelInfo(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty model name")
-	}
-
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
 }
