@@ -834,33 +834,24 @@ func TestServer_Certificate_ServiceError(t *testing.T) {
 // StreamGetObject tests
 // =============================================================================
 
-func TestStreamGetObject_NilRequest(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestStreamGetObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(&pb.GetObjectRequest{Key: "test"}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestStreamGetObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamGetObjectServer{ctx: context.Background()}
-
-	err := srv.StreamGetObject(&pb.GetObjectRequest{Key: ""}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+func TestStreamGetObject_Rejected(t *testing.T) {
+	tests := []struct {
+		name string
+		srv  *objectStorageServer
+		req  *pb.GetObjectRequest
+		want codes.Code
+	}{
+		{"nil request", NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer), nil, codes.InvalidArgument},
+		{"nil service", &objectStorageServer{service: nil}, &pb.GetObjectRequest{Key: "test"}, codes.Unavailable},
+		{"empty key", NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer), &pb.GetObjectRequest{}, codes.InvalidArgument},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.srv.StreamGetObject(tt.req, &mockStreamGetObjectServer{ctx: context.Background()})
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
 }
 
 func TestStreamGetObject_ServiceError(t *testing.T) {
@@ -947,57 +938,36 @@ func TestStreamGetObject_SendError(t *testing.T) {
 // StreamPutObject tests
 // =============================================================================
 
-func TestStreamPutObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-	stream := &mockStreamPutObjectServer{ctx: context.Background()}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func TestStreamPutObject_RecvError(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamPutObjectServer{
-		ctx:       context.Background(),
-		recvError: errors.New("connection broken"),
+func TestStreamPutObject_Rejected(t *testing.T) {
+	ctx := context.Background()
+	withService := NewObjectStorageServer(&mockObjectStorageService{}).(*objectStorageServer)
+	tests := []struct {
+		name   string
+		srv    *objectStorageServer
+		stream *mockStreamPutObjectServer
+		want   codes.Code
+	}{
+		{"nil service", &objectStorageServer{service: nil}, &mockStreamPutObjectServer{ctx: ctx}, codes.Unavailable},
+		{"recv error", withService, &mockStreamPutObjectServer{
+			ctx:       ctx,
+			recvError: errors.New("connection broken"),
+		}, codes.Unknown},
+		{"data before metadata", withService, &mockStreamPutObjectServer{
+			ctx:    ctx,
+			chunks: []*pb.PutObjectChunk{{Payload: &pb.PutObjectChunk_Data{Data: []byte("data")}}},
+		}, codes.InvalidArgument},
+		{"empty key", withService, &mockStreamPutObjectServer{
+			ctx:    ctx,
+			chunks: []*pb.PutObjectChunk{{Payload: &pb.PutObjectChunk_Metadata{Metadata: &pb.PutObjectRequest{}}}},
+		}, codes.InvalidArgument},
 	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.Unknown, status.Code(err))
-}
-
-func TestStreamPutObject_NoMetadata(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	// Send data chunks but no metadata
-	stream := &mockStreamPutObjectServer{
-		ctx: context.Background(),
-		chunks: []*pb.PutObjectChunk{
-			{Payload: &pb.PutObjectChunk_Data{Data: []byte("data")}},
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.srv.StreamPutObject(tt.stream)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
 	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestStreamPutObject_EmptyKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	srv := NewObjectStorageServer(mockSvc).(*objectStorageServer)
-	stream := &mockStreamPutObjectServer{
-		ctx: context.Background(),
-		chunks: []*pb.PutObjectChunk{
-			{Payload: &pb.PutObjectChunk_Metadata{Metadata: &pb.PutObjectRequest{Key: ""}}},
-		},
-	}
-
-	err := srv.StreamPutObject(stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestStreamPutObject_Success(t *testing.T) {
@@ -1237,14 +1207,10 @@ func TestWatchSecretsByPrefix_ContextCanceled(t *testing.T) {
 	srv := NewSecretsServer(svc, log)
 	stream := &mockWatchSecretsStream{ctx: ctx}
 
-	// Cancel context after short delay
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		cancel()
-	}()
+	// The channel never delivers, so only the canceled context can end the watch.
+	cancel()
 
 	err := srv.WatchSecretsByPrefix(&pb.WatchSecretsRequest{Prefix: "test/"}, stream)
-	// Context canceled
 	require.Error(t, err)
 }
 
@@ -1321,19 +1287,6 @@ func TestWatchSecretsByPrefix_SendError(t *testing.T) {
 	err := srv.WatchSecretsByPrefix(&pb.WatchSecretsRequest{Prefix: "test/"}, stream)
 	require.Error(t, err)
 }
-
-// =============================================================================
-// StreamBatchPut main function coverage
-// =============================================================================
-
-// --- Merged from coverage_91_target_test.go ---
-
-// =============================================================================
-// Streaming validation error paths in server.go
-// These cover the validation-error branches inside the actual List, Query,
-// ScanIndex, and TimeSeriesQuery streaming RPC methods (lines 455-459,
-// 675-679, 754-758, 972-976).
-// =============================================================================
 
 // TestServer_StreamValidationError checks that each streaming read method
 // rejects an invalid request with InvalidArgument. Scan and time-series
