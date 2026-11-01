@@ -346,25 +346,18 @@ func TestDeploy_Validate(t *testing.T) {
 // Happy paths
 // -----------------------------------------------------------------------------
 
-func TestDeploy_SuccessSystemd_ExplicitFlag(t *testing.T) {
+func TestDeploy_Success(t *testing.T) {
 	spec := validSpec()
 	on := true
 	spec.Systemd = &on
 	dialer := &fakeDialer{}
 	up := &fakeUploader{}
 	sys := &fakeSystemd{}
-	no := &fakeNohup{}
-	svc := newTestService(dialer, up, sys, no, nil, time.Now())
+	svc := newTestService(dialer, up, sys, &fakeNohup{}, nil, time.Now())
 
 	result, err := svc.Deploy(acmeCtx, spec)
 	if err != nil {
 		t.Fatalf("Deploy: %v", err)
-	}
-	if result.ServiceStatus != "systemd" {
-		t.Fatalf("status=%q", result.ServiceStatus)
-	}
-	if sys.calls != 1 || no.calls != 0 {
-		t.Fatalf("systemd calls=%d nohup calls=%d", sys.calls, no.calls)
 	}
 	if !strings.Contains(up.remotePath, "quicbaas") {
 		t.Fatalf("remote path=%q", up.remotePath)
@@ -383,62 +376,47 @@ func TestDeploy_SuccessSystemd_ExplicitFlag(t *testing.T) {
 	}
 }
 
-func TestDeploy_SuccessNohup_ExplicitFlag(t *testing.T) {
-	spec := validSpec()
-	off := false
-	spec.Systemd = &off
-	dialer := &fakeDialer{}
-	up := &fakeUploader{}
-	sys := &fakeSystemd{}
-	no := &fakeNohup{}
-	svc := newTestService(dialer, up, sys, no, nil, time.Now())
+// TestDeploy_ServiceMode checks that the explicit flag, or detection when
+// it is unset, picks the service manager that installs the fleet node.
+func TestDeploy_ServiceMode(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name    string
+		systemd *bool
+		detect  bool
+		want    string
+	}{
+		{"explicit systemd", &on, false, "systemd"},
+		{"explicit nohup", &off, true, "nohup"},
+		{"detected systemd", nil, true, "systemd"},
+		{"detection falls back to nohup", nil, false, "nohup"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := validSpec()
+			spec.Systemd = tc.systemd
+			sys := &fakeSystemd{detect: tc.detect}
+			no := &fakeNohup{}
+			svc := newTestService(&fakeDialer{}, &fakeUploader{}, sys, no, nil, time.Now())
 
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatalf("Deploy: %v", err)
-	}
-	if result.ServiceStatus != "nohup" {
-		t.Fatalf("status=%q", result.ServiceStatus)
-	}
-	if sys.calls != 0 || no.calls != 1 {
-		t.Fatalf("systemd=%d nohup=%d", sys.calls, no.calls)
-	}
-	if !strings.Contains(no.scriptPath, "start-quicbaas-agent.sh") {
-		t.Fatalf("script path=%q", no.scriptPath)
-	}
-}
-
-func TestDeploy_AutoDetectSystemd(t *testing.T) {
-	spec := validSpec() // Systemd nil → auto
-	dialer := &fakeDialer{}
-	up := &fakeUploader{}
-	sys := &fakeSystemd{detect: true}
-	no := &fakeNohup{}
-	svc := newTestService(dialer, up, sys, no, nil, time.Now())
-
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ServiceStatus != "systemd" {
-		t.Fatalf("expected systemd auto-detected, got %q", result.ServiceStatus)
-	}
-}
-
-func TestDeploy_AutoDetectFallbackNohup(t *testing.T) {
-	spec := validSpec()
-	dialer := &fakeDialer{}
-	up := &fakeUploader{}
-	sys := &fakeSystemd{detect: false}
-	no := &fakeNohup{}
-	svc := newTestService(dialer, up, sys, no, nil, time.Now())
-
-	result, err := svc.Deploy(acmeCtx, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ServiceStatus != "nohup" {
-		t.Fatalf("expected nohup fallback, got %q", result.ServiceStatus)
+			result, err := svc.Deploy(acmeCtx, spec)
+			if err != nil {
+				t.Fatalf("Deploy: %v", err)
+			}
+			if result.ServiceStatus != tc.want {
+				t.Fatalf("status=%q want %q", result.ServiceStatus, tc.want)
+			}
+			wantSys, wantNohup := 1, 0
+			if tc.want == "nohup" {
+				wantSys, wantNohup = 0, 1
+				if !strings.Contains(no.scriptPath, "start-quicbaas-agent.sh") {
+					t.Fatalf("script path=%q", no.scriptPath)
+				}
+			}
+			if sys.calls != wantSys || no.calls != wantNohup {
+				t.Fatalf("systemd calls=%d nohup calls=%d", sys.calls, no.calls)
+			}
+		})
 	}
 }
 
