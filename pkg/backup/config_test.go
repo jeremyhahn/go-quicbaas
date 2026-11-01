@@ -876,19 +876,51 @@ func TestReadKeyValue_ShortRead(t *testing.T) {
 	assert.Nil(t, value)
 }
 
-// TestNewStorageBackend_UnsupportedBackend tests NewStorageBackend with unsupported backend.
-func TestNewStorageBackend_UnsupportedBackend(t *testing.T) {
-	config := &Config{
-		StorageBackend: "unsupported-backend",
-		WorkDir:        t.TempDir(),
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
+// TestNewStorageBackend_LocalAndUnsupported tests the storage backend factory
+// for the local backend and for a backend it does not know.
+func TestNewStorageBackend_LocalAndUnsupported(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *Config
+		wantErr bool
+	}{
+		{
+			name: "local backend with path",
+			config: &Config{
+				StorageBackend: "local",
+				StorageConfig:  map[string]string{"path": t.TempDir()},
+			},
+		},
+		{
+			name: "local backend with nil storage config",
+			config: &Config{
+				StorageBackend: "local",
+			},
+			wantErr: true,
+		},
+		{
+			name: "unsupported backend",
+			config: &Config{
+				StorageBackend: "unsupported-backend",
+				WorkDir:        t.TempDir(),
+				StorageConfig:  map[string]string{"path": t.TempDir()},
+			},
+			wantErr: true,
 		},
 	}
 
-	backend, err := NewStorageBackend(config)
-	assert.Error(t, err)
-	assert.Nil(t, backend)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, err := NewStorageBackend(tt.config)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, backend)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, backend)
+		})
+	}
 }
 
 // TestMockStorage_DeleteWithContext tests MockStorage.DeleteWithContext.
@@ -1021,35 +1053,6 @@ func TestLocalStorage_DownloadSuccessPath(t *testing.T) {
 	downloaded, err := io.ReadAll(reader)
 	require.NoError(t, err)
 	assert.Equal(t, backupData, downloaded)
-}
-
-// TestNewStorageBackend_LocalBackendSuccess verifies the local backend
-// is created successfully via the factory when a valid path is provided.
-func TestNewStorageBackend_LocalBackendSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &Config{
-		StorageBackend: "local",
-		StorageConfig: map[string]string{
-			"path": tmpDir,
-		},
-	}
-
-	backend, err := NewStorageBackend(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, backend)
-}
-
-// TestNewStorageBackend_LocalBackendNilConfig verifies that providing
-// a nil StorageConfig to the local backend results in a factory error.
-func TestNewStorageBackend_LocalBackendNilConfig(t *testing.T) {
-	cfg := &Config{
-		StorageBackend: "local",
-		StorageConfig:  nil,
-	}
-
-	storage, err := NewStorageBackend(cfg)
-	assert.Error(t, err)
-	assert.Nil(t, storage)
 }
 
 func TestMockStorage_Configure(t *testing.T) {
