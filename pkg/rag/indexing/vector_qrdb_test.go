@@ -677,77 +677,48 @@ func TestRagIDFromMetadata_FallbackToNumericID(t *testing.T) {
 // NewVectorIndexFromConfig with qrdb type
 // ---------------------------------------------------------------------------
 
-func TestNewVectorIndexFromConfig_QRDBType_Success(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{
-		IndexType: "qrdb",
-		Namespace: "rag",
-		Enabled:   true,
+func TestNewVectorIndexFromConfig_QRDB(t *testing.T) {
+	tests := []struct {
+		name       string
+		indexType  string
+		withClient bool
+		tenantID   string
+		wantQRDB   bool
+		wantErr    any
+	}{
+		{name: "qrdb with client", indexType: "qrdb", withClient: true, tenantID: "acme", wantQRDB: true},
+		{name: "qrdb without client", indexType: "qrdb", wantErr: new(*QRDBVectorClientNilError)},
+		{name: "auto without client falls back to memory", indexType: "auto"},
+		{name: "auto with client uses qrdb", indexType: "auto", withClient: true, wantQRDB: true},
+		{name: "hnsw with client uses qrdb", indexType: "hnsw", withClient: true, wantQRDB: true},
 	}
-	idx, err := NewVectorIndexFromConfig(cfg, 16,
-		WithVectorClient(client),
-		WithTenantID("acme"),
-	)
-	if err != nil {
-		t.Fatalf("expected success, got error: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-}
-
-func TestNewVectorIndexFromConfig_QRDBType_NilClient(t *testing.T) {
-	cfg := IndexingConfig{
-		IndexType: "qrdb",
-		Namespace: "rag",
-		Enabled:   true,
-	}
-	_, err := NewVectorIndexFromConfig(cfg, 16) // no WithVectorClient
-	if err == nil {
-		t.Fatal("expected error when no VectorClient is provided for qrdb type")
-	}
-	var nilErr *QRDBVectorClientNilError
-	if !errors.As(err, &nilErr) {
-		t.Fatalf("expected QRDBVectorClientNilError, got %T: %v", err, err)
-	}
-}
-
-func TestNewVectorIndexFromConfig_AutoType_FallsBackToMemory_WithoutClient(t *testing.T) {
-	cfg := IndexingConfig{IndexType: "auto", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16) // no client → memory fallback
-	if err != nil {
-		t.Fatalf("auto without client should fall back to memory: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-}
-
-func TestNewVectorIndexFromConfig_AutoType_UsesQRDB_WithClient(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{IndexType: "auto", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16, WithVectorClient(client))
-	if err != nil {
-		t.Fatalf("auto with client should succeed: %v", err)
-	}
-	if idx == nil {
-		t.Fatal("expected non-nil index")
-	}
-	// The returned index should be backed by qrdb.
-	if _, ok := idx.(*qrdbVectorIndex); !ok {
-		t.Fatalf("expected *qrdbVectorIndex, got %T", idx)
-	}
-}
-
-func TestNewVectorIndexFromConfig_HNSWType_UsesQRDB_WithClient(t *testing.T) {
-	client := newMockVectorClient()
-	cfg := IndexingConfig{IndexType: "hnsw", Namespace: "rag", Enabled: true}
-	idx, err := NewVectorIndexFromConfig(cfg, 16, WithVectorClient(client))
-	if err != nil {
-		t.Fatalf("hnsw with client should succeed: %v", err)
-	}
-	if _, ok := idx.(*qrdbVectorIndex); !ok {
-		t.Fatalf("expected *qrdbVectorIndex, got %T", idx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var opts []VectorIndexOption
+			if tt.withClient {
+				opts = append(opts, WithVectorClient(newMockVectorClient()))
+			}
+			if tt.tenantID != "" {
+				opts = append(opts, WithTenantID(tt.tenantID))
+			}
+			cfg := IndexingConfig{IndexType: tt.indexType, Namespace: "rag", Enabled: true}
+			idx, err := NewVectorIndexFromConfig(cfg, 16, opts...)
+			if tt.wantErr != nil {
+				if !errors.As(err, tt.wantErr) {
+					t.Fatalf("expected %T, got %T: %v", tt.wantErr, err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if idx == nil {
+				t.Fatal("expected non-nil index")
+			}
+			if _, isQRDB := idx.(*qrdbVectorIndex); isQRDB != tt.wantQRDB {
+				t.Fatalf("qrdb-backed = %v, want %v (got %T)", isQRDB, tt.wantQRDB, idx)
+			}
+		})
 	}
 }
 
