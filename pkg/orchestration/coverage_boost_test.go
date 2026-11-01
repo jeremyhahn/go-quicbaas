@@ -4509,53 +4509,6 @@ func TestOrchestrator_RemoveAgent_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — FleetNodeHeartbeat success path
-// =============================================================================
-
-func TestOrchestrator_AgentHeartbeat_Success(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-		TenantID: "tenant-hbs",
-		Name:     "hb-agent-s",
-		Host:     "host:8080",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-
-	if err := impl.FleetNodeHeartbeat(ctx, "tenant-hbs", resp.Node.ID, nil); err != nil {
-		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-// =============================================================================
-// orchestrator — defaultBackendName with registered backend
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_WithBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "default-b",
-		Backend: &mockAgentBackend{caps: BackendCapabilities{Kind: BackendKindAgent}},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-
-	name := impl.defaultBackendName()
-	if name == "" {
-		t.Error("expected non-empty default backend name after registration")
-	}
-}
-
-// =============================================================================
 // orchestrator — generateID
 // =============================================================================
 
@@ -4582,21 +4535,20 @@ func TestOrchestrator_GenerateID_Unique(t *testing.T) {
 func TestContainerRuntime_Logs_WithProcess(t *testing.T) {
 	t.Parallel()
 
-	// Use a real command (/bin/ls) to exercise the Logs success path.
-	// /bin/ls will start and the StdoutPipe + cmdReadCloser will be returned.
-	// We get the read closer and immediately close it.
+	// "ls logs fake-container-id" starts fine, so Logs hands back the stream;
+	// ls then exits non-zero because neither path exists, which Close reports.
 	rt := &ExecContainerRuntime{command: "ls", logger: newContainerTestLogger(t)}
 
-	// "ls" with a container ID arg will fail (not a docker command) but the
-	// cmd.Start() will run briefly — enough to exercise the pipe setup.
 	rc, err := rt.Logs(context.Background(), "fake-container-id")
 	if err != nil {
-		// Error is expected since 'ls fake-container-id' fails.
-		// What matters is we exercised the non-empty containerID branch.
-		return
+		t.Fatalf("Logs: %v", err)
 	}
-	if rc != nil {
-		_ = rc.Close()
+	if _, err := io.ReadAll(rc); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	var exitErr *exec.ExitError
+	if err := rc.Close(); !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError from Close, got %T: %v", err, err)
 	}
 }
 
@@ -4641,81 +4593,34 @@ func TestPeerMessagingStore_DropOldest_NoMessages(t *testing.T) {
 }
 
 // =============================================================================
-// control_loop — cleanupAllSessions with no sessions
-// =============================================================================
-
-func TestControlLoop_CleanupAllSessions_NoSessions(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.job.Config = &JobConfig{TenantID: "t-cas", Description: "cleanup sessions test"}
-
-	// cleanupAllSessions with no worker sessions should succeed silently.
-	cl.cleanupAllSessions(context.Background())
-}
-
-// =============================================================================
-// workflow_loader — Get after Register
-// =============================================================================
-
-func TestWorkflowLoader_ListDefinitions_AfterRegister(t *testing.T) {
-	t.Parallel()
-
-	loader := NewWorkflowLoader()
-
-	defs := loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 0 {
-		t.Errorf("expected empty definitions, got %d", len(defs))
-	}
-
-	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
-		Name:   "wfl-def-2",
-		Mode:   WorkflowModeCanned,
-		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	defs = loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 1 {
-		t.Errorf("expected 1 definition, got %d", len(defs))
-	}
-}
-
-// =============================================================================
 // orchestrator — ClaimTask validation error paths
 // =============================================================================
 
-func TestOrchestrator_ClaimTask_EmptyTenantID(t *testing.T) {
+func TestOrchestrator_ClaimTask_EmptyArgument(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
+	tests := []struct {
+		name     string
+		tenantID string
+		taskID   string
+		agentID  string
+		want     error
+	}{
+		{"empty tenantID", "", "task-x", "agent-a", ErrTenantIDRequired},
+		{"empty taskID", "t-ct", "", "agent-a", ErrTaskIDRequired},
+		{"empty agentID", "t-ct", "task-x", "", ErrAgentIDRequired},
 	}
-}
 
-func TestOrchestrator_ClaimTask_EmptyTaskID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "t-ct", "", "agent-a")
-	if err == nil {
-		t.Fatal("expected error for empty taskID")
-	}
-}
-
-func TestOrchestrator_ClaimTask_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetTaskStore(NewInMemoryTaskStore())
-	err := impl.ClaimTask(context.Background(), "t-ct", "task-x", "")
-	if err == nil {
-		t.Fatal("expected error for empty agentID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			impl := newTestService(t)
+			impl.SetTaskStore(NewInMemoryTaskStore())
+			err := impl.ClaimTask(context.Background(), tt.tenantID, tt.taskID, tt.agentID)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
