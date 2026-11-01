@@ -1681,6 +1681,9 @@ func TestSearchSimilar_SearchError_NonEmptyIndex(t *testing.T) {
 func TestSearchSimilar_NoIndex_ReturnsEmpty(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "other-ns", 3)
 	svc.indexFactory = nil
+	svc.indexMu.Lock()
+	delete(svc.indexes, "other-ns")
+	svc.indexMu.Unlock()
 	resp, err := svc.SearchSimilar(tenantctx.WithSystem(context.Background()), &SearchSimilarRequest{
 		Namespace: "other-ns", QueryVector: []float32{1, 2, 3}, K: 5,
 	})
@@ -2259,16 +2262,21 @@ func TestUpdateMetadata_MergeMetadata(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestSearchByID_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestSearchByID_ZeroK(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{Namespace: "test-ns", ID: 1, K: 0})
-	require.Error(t, err)
+func TestSearchByID_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *SearchByIDRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "zero k", req: &SearchByIDRequest{Namespace: "test-ns", ID: 1, K: 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestSearchByID_VectorNotFound(t *testing.T) {
