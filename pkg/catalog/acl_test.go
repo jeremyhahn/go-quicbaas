@@ -554,242 +554,62 @@ func TestGetACL(t *testing.T) {
 func TestGrantAccess(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("GrantReadAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
+	grants := []struct {
+		name    string
+		granted ObjectAction
+		checked ObjectAction
+	}{
+		{"GrantReadAccess", ActionRead, ActionRead},
+		{"GrantListAction", ActionList, ActionList},
+		{"GrantWriteAccess", ActionWrite, ActionWrite},
+		{"GrantReplicateAction", ActionReplicate, ActionReplicate},
+		{"GrantArchiveAction", ActionArchive, ActionArchive},
+		{"GrantAdminAccess", ActionAdmin, ActionDelete},
+		{"GrantDeleteAction", ActionDelete, ActionDelete},
+		{"GrantVerifyAction", ActionVerify, ActionVerify},
+	}
+	for _, tc := range grants {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := newACLTestCatalogManager()
+			catalog.Put(ctx, createACLTestEntry("obj1", "owner1", nil))
+			manager, _ := NewACLManager(&ACLManagerConfig{Catalog: catalog})
 
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
+			if err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{tc.granted}); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionRead})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+			allowed, err := manager.CheckAccess(ctx, "user1", "obj1", tc.checked)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !allowed {
+				t.Errorf("user should have %s access after granting %s", tc.checked, tc.granted)
+			}
+		})
+	}
 
-		// Verify access was granted
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have read access after grant")
-		}
-	})
+	invalid := []struct {
+		name        string
+		key         string
+		principal   string
+		permissions []ObjectAction
+	}{
+		{"EmptyKey", "", "user1", []ObjectAction{ActionRead}},
+		{"EmptyPrincipal", "obj1", "", []ObjectAction{ActionRead}},
+		{"EmptyPermissions", "obj1", "user1", []ObjectAction{}},
+		{"InvalidPermission", "obj1", "user1", []ObjectAction{ObjectAction("invalid")}},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := newACLTestCatalogManager()
+			catalog.Put(ctx, createACLTestEntry("obj1", "owner1", nil))
+			manager, _ := NewACLManager(&ACLManagerConfig{Catalog: catalog})
 
-	t.Run("GrantWriteAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionWrite})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionWrite)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have write access after grant")
-		}
-	})
-
-	t.Run("GrantAdminAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionAdmin})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify admin access was granted
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionDelete)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("admin should have delete access")
-		}
-	})
-
-	t.Run("EmptyKey", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "", "user1", []ObjectAction{ActionRead})
-		if err == nil {
-			t.Error("expected error for empty key")
-		}
-	})
-
-	t.Run("EmptyPrincipal", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "", []ObjectAction{ActionRead})
-		if err == nil {
-			t.Error("expected error for empty principal")
-		}
-	})
-
-	t.Run("EmptyPermissions", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{})
-		if err == nil {
-			t.Error("expected error for empty permissions")
-		}
-	})
-
-	t.Run("InvalidPermission", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ObjectAction("invalid")})
-		if err == nil {
-			t.Error("expected error for invalid permission")
-		}
-	})
-
-	t.Run("GrantListAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionList})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted (list grants reader)
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionList)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have list access after grant")
-		}
-	})
-
-	t.Run("GrantReplicateAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionReplicate})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted (replicate grants writer)
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionReplicate)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have replicate access after grant")
-		}
-	})
-
-	t.Run("GrantArchiveAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionArchive})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted (archive grants writer)
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionArchive)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have archive access after grant")
-		}
-	})
-
-	t.Run("GrantDeleteAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionDelete})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted (delete grants admin)
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionDelete)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have delete access after grant")
-		}
-	})
-
-	t.Run("GrantVerifyAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		err := manager.GrantAccess(ctx, "obj1", "user1", []ObjectAction{ActionVerify})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify access was granted (verify grants admin)
-		allowed, err := manager.CheckAccess(ctx, "user1", "obj1", ActionVerify)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("user should have verify access after grant")
-		}
-	})
+			if err := manager.GrantAccess(ctx, tc.key, tc.principal, tc.permissions); err == nil {
+				t.Error("expected error")
+			}
+		})
+	}
 }
 
 // TestRevokeAccess tests revoking access from principals.
