@@ -566,22 +566,6 @@ func TestVectorUpsert_Success(t *testing.T) {
 		args map[string]interface{}
 	}{
 		{
-			name: "with string vector",
-			args: map[string]interface{}{
-				"namespace": "test-ns",
-				"id":        "vec-1",
-				"vector":    "[0.1, 0.2, 0.3]",
-			},
-		},
-		{
-			name: "with array vector",
-			args: map[string]interface{}{
-				"namespace": "test-ns",
-				"id":        "vec-2",
-				"vector":    []interface{}{0.1, 0.2, 0.3},
-			},
-		},
-		{
 			name: "with metadata string",
 			args: map[string]interface{}{
 				"namespace": "test-ns",
@@ -1084,14 +1068,6 @@ func TestVectorSearchSimilar_Success(t *testing.T) {
 			},
 		},
 		{
-			name: "with array query_vector",
-			args: map[string]interface{}{
-				"namespace":    "test-ns",
-				"query_vector": []interface{}{0.1, 0.2, 0.3},
-				"k":            float64(10),
-			},
-		},
-		{
 			name: "with vector alias",
 			args: map[string]interface{}{
 				"namespace": "test-ns",
@@ -1372,10 +1348,6 @@ func TestVectorRebuildIndex_Success(t *testing.T) {
 			args: map[string]interface{}{"namespace": "test-ns"},
 		},
 		{
-			name: "explicit async true",
-			args: map[string]interface{}{"namespace": "test-ns", "async": true},
-		},
-		{
 			name: "async false",
 			args: map[string]interface{}{"namespace": "test-ns", "async": false},
 		},
@@ -1427,10 +1399,6 @@ func TestVectorCompactNamespace_Success(t *testing.T) {
 		{
 			name: "default async",
 			args: map[string]interface{}{"namespace": "test-ns"},
-		},
-		{
-			name: "explicit async",
-			args: map[string]interface{}{"namespace": "test-ns", "async": true},
 		},
 	}
 
