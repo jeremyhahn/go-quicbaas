@@ -416,33 +416,9 @@ func TestSignalService_DeleteAccount(t *testing.T) {
 	}
 }
 
-func TestSignalService_SendMessage(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "msg-tenant")
-	ctx := tenantCtx("msg-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15557778888",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	err = svc.SendMessage(ctx, &SendMessageRequest{
-		DestinationUUID: resp.UUID,
-		DeviceID:        1,
-		Content:         []byte("hello"),
-		Type:            int(messages.EnvelopeTypeCiphertext),
-		Timestamp:       12345,
-	})
-	if err != nil {
-		t.Fatalf("SendMessage failed: %v", err)
-	}
-}
-
-func TestSignalService_GetMessages(t *testing.T) {
+// TestSignalService_SendAndGetMessages sends a message and reads it back
+// through GetMessages.
+func TestSignalService_SendAndGetMessages(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "getmsg-tenant")
 	ctx := tenantCtx("getmsg-tenant")
@@ -502,38 +478,9 @@ func TestSignalService_GetMessages_Empty(t *testing.T) {
 	}
 }
 
-func TestSignalService_StorePreKeys(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "keys-tenant")
-	ctx := tenantCtx("keys-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15553330000",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	bundle := &keys.SetKeysRequest{
-		SignedPreKey: &keys.SignedPreKey{
-			KeyID:     1,
-			PublicKey: []byte("signed-pub-key"),
-			Signature: []byte("signed-sig"),
-		},
-		PreKeys: []*keys.PreKey{
-			{KeyID: 1, PublicKey: []byte("prekey-1")},
-			{KeyID: 2, PublicKey: []byte("prekey-2")},
-		},
-	}
-
-	if err := svc.StorePreKeys(ctx, resp.UUID, 1, bundle); err != nil {
-		t.Fatalf("StorePreKeys failed: %v", err)
-	}
-}
-
-func TestSignalService_GetPreKeys(t *testing.T) {
+// TestSignalService_StoreAndGetPreKeys stores a signed pre-key and one-time
+// pre-keys, then reads a bundle back through GetPreKeys.
+func TestSignalService_StoreAndGetPreKeys(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "getkeys-tenant")
 	ctx := tenantCtx("getkeys-tenant")
@@ -553,6 +500,10 @@ func TestSignalService_GetPreKeys(t *testing.T) {
 			PublicKey: []byte("signed-pub"),
 			Signature: []byte("signed-sig"),
 		},
+		PreKeys: []*keys.PreKey{
+			{KeyID: 1, PublicKey: []byte("prekey-1")},
+			{KeyID: 2, PublicKey: []byte("prekey-2")},
+		},
 	}
 	if err := svc.StorePreKeys(ctx, resp.UUID, 1, bundle); err != nil {
 		t.Fatalf("StorePreKeys failed: %v", err)
@@ -570,6 +521,9 @@ func TestSignalService_GetPreKeys(t *testing.T) {
 	}
 	if item.SignedPreKey.KeyID != 10 {
 		t.Fatalf("expected SignedPreKey KeyID 10, got %d", item.SignedPreKey.KeyID)
+	}
+	if item.PreKey == nil {
+		t.Fatal("expected a one-time PreKey in response")
 	}
 }
 
