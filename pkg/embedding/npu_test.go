@@ -332,19 +332,8 @@ func TestNPUProviderUnreachableSidecar(t *testing.T) {
 	if typed.Err == nil {
 		t.Error("typed.Err must carry the underlying transport cause")
 	}
-}
-
-func TestNPUProviderHealthUnreachable(t *testing.T) {
-	srv := httptest.NewServer(newRecordingSidecar(t))
-	deadURL := srv.URL
-	srv.Close()
-
-	cfg := DefaultNPUConfig()
-	cfg.BaseURL = deadURL
-	cfg.Timeout = 2 * time.Second
-	p, err := NewNPUProvider(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("NewNPUProvider: %v", err)
+	if !errors.Is(err, ErrProviderUnavailable) {
+		t.Errorf("a down sidecar must match ErrProviderUnavailable; got %v", err)
 	}
 
 	if _, err := p.Health(context.Background()); !errors.Is(err, ErrNPUUnavailable) {
@@ -392,85 +381,100 @@ func TestNPUProviderContextCancellation(t *testing.T) {
 // Sidecar returning an error
 // -----------------------------------------------------------------------------
 
-func TestNPUProviderSidecarStructuredError(t *testing.T) {
-	sidecar := newRecordingSidecar(t)
-	sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		body := npuErrorResponse{}
-		body.Error.Code = "compile_failed"
-		body.Error.Message = "NPU refused shape [8,512]"
-		if err := json.NewEncoder(w).Encode(body); err != nil {
-			t.Errorf("encode: %v", err)
-		}
+// TestNPUProviderSidecarReplyErrors maps each kind of bad sidecar reply to
+// the typed error Embed returns for it.
+func TestNPUProviderSidecarReplyErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		respond func(t *testing.T, w http.ResponseWriter)
+		check   func(t *testing.T, err error)
+	}{
+		{
+			name: "structured JSON error",
+			respond: func(t *testing.T, w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				body := npuErrorResponse{}
+				body.Error.Code = "compile_failed"
+				body.Error.Message = "NPU refused shape [8,512]"
+				if err := json.NewEncoder(w).Encode(body); err != nil {
+					t.Errorf("encode: %v", err)
+				}
+			},
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrNPUSidecar) {
+					t.Errorf("error %v does not match ErrNPUSidecar", err)
+				}
+				var typed *NPUSidecarError
+				if !errors.As(err, &typed) {
+					t.Fatalf("error %v is not an *NPUSidecarError", err)
+				}
+				if typed.StatusCode != http.StatusInternalServerError {
+					t.Errorf("typed.StatusCode = %d, want 500", typed.StatusCode)
+				}
+				if typed.Code != "compile_failed" {
+					t.Errorf("typed.Code = %q, want %q", typed.Code, "compile_failed")
+				}
+				if !strings.Contains(typed.Message, "refused shape") {
+					t.Errorf("typed.Message = %q, want it to carry the sidecar explanation", typed.Message)
+				}
+			},
+		},
+		{
+			name: "plain-text error",
+			respond: func(_ *testing.T, w http.ResponseWriter) {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			},
+			check: func(t *testing.T, err error) {
+				var typed *NPUSidecarError
+				if !errors.As(err, &typed) {
+					t.Fatalf("error %v is not an *NPUSidecarError", err)
+				}
+				if typed.StatusCode != http.StatusServiceUnavailable {
+					t.Errorf("typed.StatusCode = %d, want 503", typed.StatusCode)
+				}
+				if typed.Message != "service unavailable" {
+					t.Errorf("typed.Message = %q, want the plain body text", typed.Message)
+				}
+			},
+		},
+		{
+			name: "malformed success body",
+			respond: func(t *testing.T, w http.ResponseWriter) {
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := w.Write([]byte("{not json")); err != nil {
+					t.Errorf("write: %v", err)
+				}
+			},
+			check: func(t *testing.T, err error) {
+				if !errors.Is(err, ErrNPUMalformedResponse) {
+					t.Fatalf("error %v does not match ErrNPUMalformedResponse", err)
+				}
+				var typed *NPUMalformedResponseError
+				if !errors.As(err, &typed) {
+					t.Fatalf("error %v is not an *NPUMalformedResponseError", err)
+				}
+				if typed.Err == nil {
+					t.Error("typed.Err must carry the decode cause")
+				}
+			},
+		},
 	}
-	srv := startSidecar(t, sidecar)
-	p := newTestProvider(t, srv, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sidecar := newRecordingSidecar(t)
+			sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
+				tt.respond(t, w)
+			}
+			srv := startSidecar(t, sidecar)
+			p := newTestProvider(t, srv, nil)
 
-	_, err := p.Embed(context.Background(), "boom")
-	if err == nil {
-		t.Fatal("expected an error from a failing sidecar, got nil")
-	}
-	if !errors.Is(err, ErrNPUSidecar) {
-		t.Errorf("error %v does not match ErrNPUSidecar", err)
-	}
-	var typed *NPUSidecarError
-	if !errors.As(err, &typed) {
-		t.Fatalf("error %v is not an *NPUSidecarError", err)
-	}
-	if typed.StatusCode != http.StatusInternalServerError {
-		t.Errorf("typed.StatusCode = %d, want 500", typed.StatusCode)
-	}
-	if typed.Code != "compile_failed" {
-		t.Errorf("typed.Code = %q, want %q", typed.Code, "compile_failed")
-	}
-	if !strings.Contains(typed.Message, "refused shape") {
-		t.Errorf("typed.Message = %q, want it to carry the sidecar explanation", typed.Message)
-	}
-}
-
-func TestNPUProviderSidecarPlainTextError(t *testing.T) {
-	sidecar := newRecordingSidecar(t)
-	sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
-		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
-	}
-	srv := startSidecar(t, sidecar)
-	p := newTestProvider(t, srv, nil)
-
-	_, err := p.Embed(context.Background(), "boom")
-	var typed *NPUSidecarError
-	if !errors.As(err, &typed) {
-		t.Fatalf("error %v is not an *NPUSidecarError", err)
-	}
-	if typed.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("typed.StatusCode = %d, want 503", typed.StatusCode)
-	}
-	if typed.Message != "service unavailable" {
-		t.Errorf("typed.Message = %q, want the plain body text", typed.Message)
-	}
-}
-
-func TestNPUProviderMalformedResponseBody(t *testing.T) {
-	sidecar := newRecordingSidecar(t)
-	sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write([]byte("{not json")); err != nil {
-			t.Errorf("write: %v", err)
-		}
-	}
-	srv := startSidecar(t, sidecar)
-	p := newTestProvider(t, srv, nil)
-
-	_, err := p.Embed(context.Background(), "text")
-	if !errors.Is(err, ErrNPUMalformedResponse) {
-		t.Fatalf("error %v does not match ErrNPUMalformedResponse", err)
-	}
-	var typed *NPUMalformedResponseError
-	if !errors.As(err, &typed) {
-		t.Fatalf("error %v is not an *NPUMalformedResponseError", err)
-	}
-	if typed.Err == nil {
-		t.Error("typed.Err must carry the decode cause")
+			_, err := p.Embed(context.Background(), "text")
+			if err == nil {
+				t.Fatal("expected an error from a bad sidecar reply, got nil")
+			}
+			tt.check(t, err)
+		})
 	}
 }
 
@@ -704,30 +708,41 @@ func TestNPUProviderHealthReportsDeviceAndBuckets(t *testing.T) {
 	}
 }
 
-func TestNPUProviderHealthRejectsMalformedBody(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := w.Write([]byte("not json at all")); err != nil {
-			t.Errorf("write: %v", err)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
-	p := newTestProvider(t, srv, nil)
-	if _, err := p.Health(context.Background()); !errors.Is(err, ErrNPUMalformedResponse) {
-		t.Errorf("Health: error %v does not match ErrNPUMalformedResponse", err)
+// TestNPUProviderHealthErrors maps each kind of bad /health reply to the
+// sentinel Health returns for it.
+func TestNPUProviderHealthErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		wantErr error
+	}{
+		{
+			name: "malformed body",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				if _, err := w.Write([]byte("not json at all")); err != nil {
+					t.Errorf("write: %v", err)
+				}
+			},
+			wantErr: ErrNPUMalformedResponse,
+		},
+		{
+			name: "sidecar error status",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "model not loaded", http.StatusServiceUnavailable)
+			},
+			wantErr: ErrNPUSidecar,
+		},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(tt.handler)
+			t.Cleanup(srv.Close)
 
-func TestNPUProviderHealthPropagatesSidecarStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "model not loaded", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(srv.Close)
-
-	p := newTestProvider(t, srv, nil)
-	_, err := p.Health(context.Background())
-	if !errors.Is(err, ErrNPUSidecar) {
-		t.Fatalf("Health: error %v does not match ErrNPUSidecar", err)
+			p := newTestProvider(t, srv, nil)
+			if _, err := p.Health(context.Background()); !errors.Is(err, tt.wantErr) {
+				t.Errorf("Health: error %v does not match %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -755,62 +770,77 @@ func TestNPUProviderContract(t *testing.T) {
 	}
 }
 
-func TestNPUConfigDefaultsApplied(t *testing.T) {
-	p, err := NewNPUProvider(context.Background(), NPUConfig{})
-	if err != nil {
-		t.Fatalf("NewNPUProvider with a zero config: unexpected error: %v", err)
-	}
-	t.Cleanup(func() {
-		if closeErr := p.Close(); closeErr != nil {
-			t.Errorf("Close: %v", closeErr)
-		}
-	})
+// TestNPUConfig checks the configuration NewNPUProvider settles on: zero
+// fields take the package defaults, DefaultNPUConfig carries the documented
+// values, and trailing slashes are trimmed from the base URL.
+func TestNPUConfig(t *testing.T) {
+	trailingSlash := DefaultNPUConfig()
+	trailingSlash.BaseURL = "http://npu.internal:8077///"
 
-	if got := p.BaseURL(); got != DefaultNPUURL {
-		t.Errorf("BaseURL() = %q, want %q", got, DefaultNPUURL)
+	tests := []struct {
+		name          string
+		cfg           NPUConfig
+		wantBaseURL   string
+		wantModel     string
+		wantDims      int
+		wantMaxTokens int
+	}{
+		{
+			name:          "zero config takes the defaults",
+			cfg:           NPUConfig{},
+			wantBaseURL:   DefaultNPUURL,
+			wantModel:     DefaultNPUModel,
+			wantDims:      DefaultNPUDimensions,
+			wantMaxTokens: DefaultNPUMaxTokens,
+		},
+		{
+			name:          "DefaultNPUConfig carries the documented values",
+			cfg:           DefaultNPUConfig(),
+			wantBaseURL:   DefaultNPUURL,
+			wantModel:     DefaultNPUModel,
+			wantDims:      384,
+			wantMaxTokens: 512,
+		},
+		{
+			name:          "trailing slashes are trimmed from the base URL",
+			cfg:           trailingSlash,
+			wantBaseURL:   "http://npu.internal:8077",
+			wantModel:     DefaultNPUModel,
+			wantDims:      384,
+			wantMaxTokens: 512,
+		},
 	}
-	if got := p.Dimensions(); got != DefaultNPUDimensions {
-		t.Errorf("Dimensions() = %d, want %d", got, DefaultNPUDimensions)
-	}
-	if got := p.MaxTokens(); got != DefaultNPUMaxTokens {
-		t.Errorf("MaxTokens() = %d, want %d", got, DefaultNPUMaxTokens)
-	}
-	if got := p.config.MaxBatchSize; got != DefaultNPUMaxBatchSize {
-		t.Errorf("MaxBatchSize = %d, want %d", got, DefaultNPUMaxBatchSize)
-	}
-	if got := p.config.Model; got != DefaultNPUModel {
-		t.Errorf("Model = %q, want %q", got, DefaultNPUModel)
-	}
-	if got := p.config.Timeout; got != DefaultNPUTimeout {
-		t.Errorf("Timeout = %v, want %v", got, DefaultNPUTimeout)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := NewNPUProvider(context.Background(), tt.cfg)
+			if err != nil {
+				t.Fatalf("NewNPUProvider: unexpected error: %v", err)
+			}
+			t.Cleanup(func() {
+				if closeErr := p.Close(); closeErr != nil {
+					t.Errorf("Close: %v", closeErr)
+				}
+			})
 
-func TestNPUConfigTrimsTrailingSlash(t *testing.T) {
-	cfg := DefaultNPUConfig()
-	cfg.BaseURL = "http://npu.internal:8077///"
-	p, err := NewNPUProvider(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("NewNPUProvider: %v", err)
-	}
-	if got := p.BaseURL(); got != "http://npu.internal:8077" {
-		t.Errorf("BaseURL() = %q, want the slash-trimmed form", got)
-	}
-}
-
-func TestDefaultNPUConfigValues(t *testing.T) {
-	cfg := DefaultNPUConfig()
-	if cfg.BaseURL != DefaultNPUURL {
-		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, DefaultNPUURL)
-	}
-	if cfg.Model != DefaultNPUModel {
-		t.Errorf("Model = %q, want %q", cfg.Model, DefaultNPUModel)
-	}
-	if cfg.Dimensions != 384 {
-		t.Errorf("Dimensions = %d, want 384", cfg.Dimensions)
-	}
-	if cfg.MaxTokens != 512 {
-		t.Errorf("MaxTokens = %d, want 512", cfg.MaxTokens)
+			if got := p.BaseURL(); got != tt.wantBaseURL {
+				t.Errorf("BaseURL() = %q, want %q", got, tt.wantBaseURL)
+			}
+			if got := p.Dimensions(); got != tt.wantDims {
+				t.Errorf("Dimensions() = %d, want %d", got, tt.wantDims)
+			}
+			if got := p.MaxTokens(); got != tt.wantMaxTokens {
+				t.Errorf("MaxTokens() = %d, want %d", got, tt.wantMaxTokens)
+			}
+			if got := p.config.Model; got != tt.wantModel {
+				t.Errorf("Model = %q, want %q", got, tt.wantModel)
+			}
+			if got := p.config.MaxBatchSize; got != DefaultNPUMaxBatchSize {
+				t.Errorf("MaxBatchSize = %d, want %d", got, DefaultNPUMaxBatchSize)
+			}
+			if got := p.config.Timeout; got != DefaultNPUTimeout {
+				t.Errorf("Timeout = %v, want %v", got, DefaultNPUTimeout)
+			}
+		})
 	}
 }
 
@@ -1076,25 +1106,6 @@ func TestNPUProviderAcceptsAnUnreportedModel(t *testing.T) {
 // TestNPUProviderUnreachableMapsToProviderUnavailable is the end-to-end form of
 // the error-classification property: a down sidecar must look like an
 // unavailable backend to the service layer, not an internal fault.
-func TestNPUProviderUnreachableMapsToProviderUnavailable(t *testing.T) {
-	srv := httptest.NewServer(newRecordingSidecar(t))
-	deadURL := srv.URL
-	srv.Close()
-
-	cfg := DefaultNPUConfig()
-	cfg.BaseURL = deadURL
-	cfg.Timeout = 2 * time.Second
-	p, err := NewNPUProvider(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("NewNPUProvider: %v", err)
-	}
-
-	_, err = p.Embed(context.Background(), "anything")
-	if !errors.Is(err, ErrProviderUnavailable) {
-		t.Errorf("a down sidecar must match ErrProviderUnavailable; got %v", err)
-	}
-}
-
 // TestNPUProviderRejectsADeclaredWidthMismatch covers the sidecar's own
 // `dimensions` field disagreeing with configuration, which is distinct from the
 // vectors themselves being the wrong width.
