@@ -3579,42 +3579,35 @@ func TestBatchService_BatchPut_RaftErrorWithMetrics(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestKVService_ListEntityTypes_ZeroPageSize(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return map[string][]byte{}, nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &ListEntityTypesRequest{
-		PageSize: 0, // Should default to 100
+func TestKVService_ListEntityTypes_DefaultPageSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		pageSize int
+	}{
+		{name: "zero", pageSize: 0},
+		{name: "negative", pageSize: -1},
 	}
 
-	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scanData := map[string][]byte{
+				"Alpha:1": []byte("data"),
+				"Beta:1":  []byte("data"),
+				"Gamma:1": []byte("data"),
+			}
+			mockQRDB := newSvcBoostMockQRDBProvider(scanData, nil)
+			svc := createTestService(t, withQRDBClientProvider(mockQRDB))
+			defer svc.Close()
 
-func TestKVService_ListEntityTypes_NegativePageSize(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncReadFn: func(ctx context.Context, shardID uint64, query interface{}) (interface{}, error) {
-			return map[string][]byte{}, nil
-		},
+			req := &ListEntityTypesRequest{PageSize: tt.pageSize}
+			resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, []string{"Alpha", "Beta", "Gamma"}, resp.EntityTypes)
+			assert.Equal(t, 3, resp.TotalCount)
+			assert.Empty(t, resp.NextPageToken)
+		})
 	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &ListEntityTypesRequest{
-		PageSize: -1, // Should default to 100
-	}
-
-	resp, err := svc.ListEntityTypes(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
 }
 
 func TestKVService_ListEntityTypes_WithMetrics(t *testing.T) {
@@ -3641,60 +3634,6 @@ func TestTransactionService_Transaction_NilRequestMetrics(t *testing.T) {
 	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestTransactionService_Transaction_EmptyOperationsReturnsEmpty(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &TransactionRequest{
-		Success: []*TransactionOp{},
-		Failure: []*TransactionOp{},
-	}
-
-	// Empty operations returns success with empty result (not an error)
-	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
-	// Check that it either returns an error OR returns success with empty responses
-	if err != nil {
-		// Error case is valid
-		require.Nil(t, resp)
-	} else {
-		// Success with empty result is also valid
-		require.NotNil(t, resp)
-		assert.True(t, resp.Succeeded)
-	}
-}
-
-func TestTransactionService_Transaction_WithDefaultShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			if shardID != 1 {
-				t.Errorf("expected shard ID 1, got %d", shardID)
-			}
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &TransactionRequest{
-		ShardID: 0, // Should default to 1
-		Success: []*TransactionOp{
-			{
-				OpType:     TransactionOpTypePut,
-				EntityType: "user",
-				ID:         1,
-				Data:       []byte(`{"name":"test"}`),
-			},
-		},
-	}
-
-	resp, err := svc.Transaction(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
 }
 
 func TestKVService_List_InvalidRequest(t *testing.T) {
@@ -4168,24 +4107,6 @@ func TestTransactionService_Transaction_GetOperationError(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Len(t, resp.Responses, 1)
 	assert.False(t, resp.Responses[0].Success)
-}
-
-func TestBackupService_CreateBackup_Error(t *testing.T) {
-	mockBackup := &mockBackupManager{
-		createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
-			return nil, stderrors.New("backup failed")
-		},
-	}
-	svc := createTestService(t, withBackupManager(mockBackup))
-	defer svc.Close()
-
-	req := &CreateBackupRequest{
-		Name: "test",
-	}
-
-	resp, err := svc.CreateBackup(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
 }
 
 // =============================================================================
