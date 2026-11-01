@@ -63,6 +63,77 @@ func mismatchTransport() *mockTransport {
 	}
 }
 
+// clientCall is one row of the shared failure tables: a client method name
+// and a closure that calls it with a valid request.
+type clientCall struct {
+	name string
+	call func(c Client, ctx context.Context) error
+}
+
+// failureCalls lists every unary method whose nil-context, transport-error,
+// nil-response and type-mismatch paths share the same shape.
+func failureCalls() []clientCall {
+	return []clientCall{
+		{"SpawnSession", func(c Client, ctx context.Context) error {
+			_, err := c.SpawnSession(ctx, &SpawnSessionRequest{Backend: "ollama"})
+			return err
+		}},
+		{"PromptSession", func(c Client, ctx context.Context) error {
+			_, err := c.PromptSession(ctx, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
+			return err
+		}},
+		{"SessionStatus", func(c Client, ctx context.Context) error {
+			_, err := c.SessionStatus(ctx, &SessionStatusRequest{SessionID: "s1"})
+			return err
+		}},
+		{"CloseSession", func(c Client, ctx context.Context) error {
+			_, err := c.CloseSession(ctx, &CloseSessionRequest{SessionID: "s1"})
+			return err
+		}},
+	}
+}
+
+func TestClient_NilContext(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			var nilCtx context.Context
+			err := tc.call(NewClient(failTransport()), nilCtx)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "context is required")
+		})
+	}
+}
+
+func TestClient_TransportError(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(failTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "transport boom")
+		})
+	}
+}
+
+func TestClient_NilResponse(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(nilTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "nil response")
+		})
+	}
+}
+
+func TestClient_TypeMismatch(t *testing.T) {
+	for _, tc := range failureCalls() {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(NewClient(mismatchTransport()), context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid response type")
+		})
+	}
+}
+
 // =============================================================================
 // SpawnSession
 // =============================================================================
@@ -95,34 +166,6 @@ func TestSpawnSession_ByAgentOrPoolNeedsNoBackend(t *testing.T) {
 	}
 }
 
-func TestSpawnSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SpawnSession", &SpawnSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.SpawnSession(nilCtx, &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "context is required")
-}
-
-func TestSpawnSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-}
-
-func TestSpawnSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil response")
-}
-
-func TestSpawnSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SpawnSession(context.Background(), &SpawnSessionRequest{Backend: "ollama"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid response type")
-}
-
 // =============================================================================
 // PromptSession
 // =============================================================================
@@ -146,31 +189,6 @@ func TestPromptSession_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "prompt is required")
 }
 
-func TestPromptSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "PromptSession", &PromptSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.PromptSession(nilCtx, &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
-func TestPromptSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.PromptSession(context.Background(), &PromptSessionRequest{SessionID: "s1", Prompt: "hi"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // SessionStatus
 // =============================================================================
@@ -190,31 +208,6 @@ func TestSessionStatus_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestSessionStatus_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SessionStatus", &SessionStatusResponse{}))
-	var nilCtx context.Context
-	_, err := c.SessionStatus(nilCtx, &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestSessionStatus_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CloseSession
 // =============================================================================
@@ -231,31 +224,6 @@ func TestCloseSession_Validation(t *testing.T) {
 	_, err := c.CloseSession(context.Background(), nil)
 	require.Error(t, err)
 	_, err = c.CloseSession(context.Background(), &CloseSessionRequest{})
-	require.Error(t, err)
-}
-
-func TestCloseSession_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CloseSession", &CloseSessionResponse{}))
-	var nilCtx context.Context
-	_, err := c.CloseSession(nilCtx, &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
-	require.Error(t, err)
-}
-
-func TestCloseSession_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CloseSession(context.Background(), &CloseSessionRequest{SessionID: "s1"})
 	require.Error(t, err)
 }
 
