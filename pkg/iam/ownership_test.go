@@ -767,6 +767,11 @@ func TestOwnershipManager_ListUserShares(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, shares, 2)
 
+	// A user with no shares gets an empty list, not an error
+	shares, err = mgr.ListUserShares(ctx, "tenant1", "user3", nil)
+	assert.NoError(t, err)
+	assert.Empty(t, shares)
+
 	// Test error cases
 	_, err = mgr.ListUserShares(ctx, "", "user2", nil)
 	assert.Error(t, err)
@@ -779,8 +784,13 @@ func TestOwnershipManager_ListResourceShares(t *testing.T) {
 	ctx := context.Background()
 	mgr := createTestOwnershipManager(t)
 
+	// A resource with no shares gets an empty list, not an error
+	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
+	assert.NoError(t, err)
+	assert.Empty(t, shares)
+
 	// Setup: Create ownership and multiple shares
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
+	_, err = mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
 	require.NoError(t, err)
 
 	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
@@ -806,7 +816,7 @@ func TestOwnershipManager_ListResourceShares(t *testing.T) {
 	require.NoError(t, err)
 
 	// List all shares for resource
-	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
+	shares, err = mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
 	assert.NoError(t, err)
 	assert.Len(t, shares, 2)
 
@@ -1431,68 +1441,129 @@ func TestMemoryShareStorage_CreateDuplicate(t *testing.T) {
 	assert.Contains(t, err.Error(), "already exists")
 }
 
-func TestMemoryShareStorage_UpdateNonexistent(t *testing.T) {
+func TestMemoryOwnershipStorage_MissingRecords(t *testing.T) {
 	ctx := context.Background()
-	storage := NewMemoryShareStorage()
+	storage := NewMemoryOwnershipStorage()
 
-	share := &ResourceShare{
-		ID:           "share1",
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		OwnerID:      "user1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		CreatedBy:    "user1",
+	tests := []struct {
+		name    string
+		call    func() (int, error)
+		wantErr string
+	}{
+		{
+			name: "get not found",
+			call: func() (int, error) {
+				_, err := storage.GetOwnership(ctx, "tenant1", "database", "nonexistent")
+				return 0, err
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "transfer not found",
+			call: func() (int, error) {
+				return 0, storage.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user2")
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "list by owner empty",
+			call: func() (int, error) {
+				ownerships, err := storage.ListOwnershipsByOwner(ctx, "tenant1", "nonexistent")
+				return len(ownerships), err
+			},
+		},
 	}
 
-	// Try to update non-existent share
-	err := storage.UpdateShare(ctx, share)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := tt.call()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
-func TestMemoryShareStorage_GetNonexistent(t *testing.T) {
+func TestMemoryShareStorage_MissingRecords(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryShareStorage()
 
-	// Try to get non-existent share
-	_, err := storage.GetShare(ctx, "tenant1", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
+	tests := []struct {
+		name    string
+		call    func() (int, error)
+		wantErr string
+	}{
+		{
+			name: "get not found",
+			call: func() (int, error) {
+				_, err := storage.GetShare(ctx, "tenant1", "nonexistent")
+				return 0, err
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "update not found",
+			call: func() (int, error) {
+				return 0, storage.UpdateShare(ctx, &ResourceShare{
+					ID:           "share1",
+					TenantID:     "tenant1",
+					ResourceType: "database",
+					ResourceID:   "db1",
+					OwnerID:      "user1",
+					GranteeType:  GranteeTypeUser,
+					GranteeID:    "user2",
+					Permissions:  []SharePermission{PermissionRead},
+					CreatedBy:    "user1",
+				})
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "delete not found",
+			call: func() (int, error) {
+				return 0, storage.DeleteShare(ctx, "tenant1", "nonexistent")
+			},
+			wantErr: "not found",
+		},
+		{
+			name: "list by resource empty",
+			call: func() (int, error) {
+				shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "nonexistent")
+				return len(shares), err
+			},
+		},
+		{
+			name: "list by grantee empty",
+			call: func() (int, error) {
+				shares, err := storage.ListSharesByGrantee(ctx, "tenant1", GranteeTypeUser, "nonexistent")
+				return len(shares), err
+			},
+		},
+		{
+			name: "list by owner empty",
+			call: func() (int, error) {
+				shares, err := storage.ListSharesByOwner(ctx, "tenant1", "nonexistent")
+				return len(shares), err
+			},
+		},
+	}
 
-func TestMemoryShareStorage_DeleteNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// Try to delete non-existent share
-	err := storage.DeleteShare(ctx, "tenant1", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryOwnershipStorage_GetNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryOwnershipStorage()
-
-	// Try to get non-existent ownership
-	_, err := storage.GetOwnership(ctx, "tenant1", "database", "nonexistent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestMemoryOwnershipStorage_TransferNonexistent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryOwnershipStorage()
-
-	// Try to transfer non-existent ownership
-	err := storage.TransferOwnership(ctx, "tenant1", "database", "nonexistent", "user2")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := tt.call()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Zero(t, count)
+		})
+	}
 }
 
 func TestMemoryShareStorage_IndexCleanup(t *testing.T) {
@@ -1911,26 +1982,6 @@ func TestMemoryShareStorage_CreateWithAutoTimestamp(t *testing.T) {
 	assert.False(t, retrieved.UpdatedAt.IsZero())
 }
 
-func TestOwnershipManager_ListResourceShares_NoShares(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// List shares for non-existent resource
-	shares, err := mgr.ListResourceShares(ctx, "tenant1", "database", "db1")
-	assert.NoError(t, err)
-	assert.Len(t, shares, 0)
-}
-
-func TestOwnershipManager_ListUserShares_NoShares(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// List shares for user with no shares
-	shares, err := mgr.ListUserShares(ctx, "tenant1", "user1", nil)
-	assert.NoError(t, err)
-	assert.Len(t, shares, 0)
-}
-
 func TestMemoryShareStorage_GetActiveSharesForUser_NoExpiry(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryShareStorage()
@@ -2011,36 +2062,6 @@ func TestOwnershipManager_ShareResource_PreventSelfShare(t *testing.T) {
 	})
 	// This should succeed because grantee type is group
 	assert.NoError(t, err)
-}
-
-func TestMemoryOwnershipStorage_ListEmpty(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryOwnershipStorage()
-
-	// List ownerships for non-existent owner
-	ownerships, err := storage.ListOwnershipsByOwner(ctx, "tenant1", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, ownerships)
-}
-
-func TestMemoryShareStorage_ListEmpty(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryShareStorage()
-
-	// List shares by resource
-	shares, err := storage.ListSharesByResource(ctx, "tenant1", "database", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
-
-	// List shares by grantee
-	shares, err = storage.ListSharesByGrantee(ctx, "tenant1", GranteeTypeUser, "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
-
-	// List shares by owner
-	shares, err = storage.ListSharesByOwner(ctx, "tenant1", "nonexistent")
-	assert.NoError(t, err)
-	assert.Empty(t, shares)
 }
 
 func TestResourceShare_WithMetadata(t *testing.T) {
