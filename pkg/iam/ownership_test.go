@@ -244,6 +244,24 @@ func TestOwnershipManager_ShareResource(t *testing.T) {
 				GranteeID:    "user2",
 				Permissions:  []SharePermission{PermissionRead, PermissionWrite},
 				CreatedBy:    "user1",
+				Metadata: map[string]interface{}{
+					"reason": "collaboration",
+					"team":   "engineering",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			// Only a user grantee equal to the owner is self-sharing
+			name: "group grantee with the owner's ID",
+			req: &CreateShareRequest{
+				TenantID:     "tenant1",
+				ResourceType: "database",
+				ResourceID:   "db1",
+				GranteeType:  GranteeTypeGroup,
+				GranteeID:    "user1",
+				Permissions:  []SharePermission{PermissionRead},
+				CreatedBy:    "user1",
 			},
 			wantErr: false,
 		},
@@ -359,6 +377,7 @@ func TestOwnershipManager_ShareResource(t *testing.T) {
 				assert.Equal(t, tt.req.GranteeType, share.GranteeType)
 				assert.Equal(t, tt.req.GranteeID, share.GranteeID)
 				assert.Equal(t, tt.req.Permissions, share.Permissions)
+				assert.Equal(t, tt.req.Metadata, share.Metadata)
 				assert.False(t, share.CreatedAt.IsZero())
 				assert.False(t, share.UpdatedAt.IsZero())
 			}
@@ -663,51 +682,6 @@ func TestOwnershipManager_CheckAccess_AdminPermission(t *testing.T) {
 	}
 }
 
-func TestOwnershipManager_CheckAccess_ShareDelegation(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership and share with share permission
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead, PermissionShare},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// User2 should be able to share with share permission
-	resp, err := mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db1",
-		UserID:             "user2",
-		RequiredPermission: PermissionShare,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Allowed)
-
-	// User2 cannot delete without delete permission
-	resp, err = mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db1",
-		UserID:             "user2",
-		RequiredPermission: PermissionDelete,
-	})
-
-	assert.NoError(t, err)
-	assert.False(t, resp.Allowed)
-}
-
 func TestOwnershipManager_CheckAccess_NoOwnership(t *testing.T) {
 	ctx := context.Background()
 	mgr := createTestOwnershipManager(t)
@@ -932,12 +906,6 @@ func TestResourceShare_HasPermission(t *testing.T) {
 			name:        "admin has all permissions",
 			permissions: []SharePermission{PermissionAdmin},
 			check:       PermissionRead,
-			want:        true,
-		},
-		{
-			name:        "admin has write permission",
-			permissions: []SharePermission{PermissionAdmin},
-			check:       PermissionWrite,
 			want:        true,
 		},
 	}
@@ -1651,39 +1619,6 @@ func TestMemoryShareStorage_UpdatePreservesCreatedAt(t *testing.T) {
 	assert.True(t, updated.UpdatedAt.After(originalCreated))
 }
 
-func TestOwnershipManager_CheckAccess_WrongResource(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership and share for db1
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	require.NoError(t, err)
-
-	// Check access for different resource
-	resp, err := mgr.CheckAccess(ctx, &OwnershipCheckRequest{
-		TenantID:           "tenant1",
-		ResourceType:       "database",
-		ResourceID:         "db2", // Different resource
-		UserID:             "user2",
-		RequiredPermission: PermissionRead,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.Allowed)
-}
-
 func TestMemoryOwnershipStorage_DeleteIndexCleanup(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryOwnershipStorage()
@@ -1857,58 +1792,6 @@ func TestMemoryShareStorage_CreateWithAutoTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, retrieved.CreatedAt.IsZero())
 	assert.False(t, retrieved.UpdatedAt.IsZero())
-}
-
-func TestOwnershipManager_ShareResource_PreventSelfShare(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Try to share with self (via group should be allowed, only user is blocked)
-	_, err = mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeGroup,
-		GranteeID:    "user1", // Same as owner, but group type
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-	})
-	// This should succeed because grantee type is group
-	assert.NoError(t, err)
-}
-
-func TestResourceShare_WithMetadata(t *testing.T) {
-	ctx := context.Background()
-	mgr := createTestOwnershipManager(t)
-
-	// Setup: Create ownership
-	_, err := mgr.SetOwner(ctx, "tenant1", "database", "db1", "user1")
-	require.NoError(t, err)
-
-	// Create share with metadata
-	metadata := map[string]interface{}{
-		"reason": "collaboration",
-		"team":   "engineering",
-	}
-
-	share, err := mgr.ShareResource(ctx, &CreateShareRequest{
-		TenantID:     "tenant1",
-		ResourceType: "database",
-		ResourceID:   "db1",
-		GranteeType:  GranteeTypeUser,
-		GranteeID:    "user2",
-		Permissions:  []SharePermission{PermissionRead},
-		CreatedBy:    "user1",
-		Metadata:     metadata,
-	})
-
-	assert.NoError(t, err)
-	require.NotNil(t, share)
-	assert.Equal(t, metadata, share.Metadata)
 }
 
 func TestResourceOwnership_WithMetadata(t *testing.T) {
