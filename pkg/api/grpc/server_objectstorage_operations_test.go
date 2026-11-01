@@ -593,23 +593,8 @@ func TestObjectStorageServer_RestoreObject(t *testing.T) {
 // VerifyObject Tests
 // ========================================
 
-func TestObjectStorageServer_VerifyObject_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.VerifyObject(context.Background(), &pb.VerifyObjectRequest{
-		Key:    "test/obj.txt",
-		Repair: false,
-	})
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Valid)
-	assert.Len(t, resp.Locations, 2)
-}
-
-func TestObjectStorageServer_VerifyObject_WithRepair(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{
+func TestObjectStorageServer_VerifyObject(t *testing.T) {
+	mismatchSvc := &testMockObjectStorageService{
 		verifyObjectFunc: func(_ context.Context, req *service.VerifyObjectRequest) (*service.VerifyObjectResponse, error) {
 			return &service.VerifyObjectResponse{
 				Key:   req.Key,
@@ -622,153 +607,125 @@ func TestObjectStorageServer_VerifyObject_WithRepair(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := &objectStorageServer{service: mockSvc}
+	tests := []struct {
+		name         string
+		svc          service.ObjectStorageService
+		req          *pb.VerifyObjectRequest
+		wantCode     codes.Code
+		wantValid    bool
+		wantRepaired bool
+	}{
+		{
+			name:      "success",
+			svc:       &testMockObjectStorageService{},
+			req:       &pb.VerifyObjectRequest{Key: "test/obj.txt"},
+			wantCode:  codes.OK,
+			wantValid: true,
+		},
+		{
+			name:         "mismatch with repair",
+			svc:          mismatchSvc,
+			req:          &pb.VerifyObjectRequest{Key: "test/obj.txt", Repair: true},
+			wantCode:     codes.OK,
+			wantRepaired: true,
+		},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty key", svc: &testMockObjectStorageService{}, req: &pb.VerifyObjectRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.VerifyObjectRequest{Key: "test/obj.txt"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.VerifyObject(context.Background(), &pb.VerifyObjectRequest{
-		Key:    "test/obj.txt",
-		Repair: true,
-	})
+			resp, err := srv.VerifyObject(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.Valid)
-	assert.True(t, resp.Repaired)
-}
-
-func TestObjectStorageServer_VerifyObject_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.VerifyObject(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_VerifyObject_EmptyKey(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.VerifyObject(context.Background(), &pb.VerifyObjectRequest{Key: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_VerifyObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.VerifyObject(context.Background(), &pb.VerifyObjectRequest{Key: "test/obj.txt"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantValid, resp.Valid)
+			assert.Equal(t, tt.wantRepaired, resp.Repaired)
+			assert.Len(t, resp.Locations, 2)
+		})
+	}
 }
 
 // ========================================
 // SetObjectPolicy Tests
 // ========================================
 
-func TestObjectStorageServer_SetObjectPolicy_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.SetObjectPolicy(context.Background(), &pb.SetObjectPolicyRequest{
-		Key: "test/obj.txt",
-		ReplicationPolicy: &pb.ReplicationPolicy{
-			Enabled:     true,
-			MinReplicas: 3,
+func TestObjectStorageServer_SetObjectPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.SetObjectPolicyRequest
+		wantCode codes.Code
+	}{
+		{
+			name: "success",
+			svc:  &testMockObjectStorageService{},
+			req: &pb.SetObjectPolicyRequest{
+				Key:               "test/obj.txt",
+				ReplicationPolicy: &pb.ReplicationPolicy{Enabled: true, MinReplicas: 3},
+			},
+			wantCode: codes.OK,
 		},
-	})
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty key", svc: &testMockObjectStorageService{}, req: &pb.SetObjectPolicyRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.SetObjectPolicyRequest{Key: "test/obj.txt"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, "test/obj.txt", resp.Key)
-}
+			resp, err := srv.SetObjectPolicy(context.Background(), tt.req)
 
-func TestObjectStorageServer_SetObjectPolicy_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.SetObjectPolicy(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_SetObjectPolicy_EmptyKey(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.SetObjectPolicy(context.Background(), &pb.SetObjectPolicyRequest{Key: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_SetObjectPolicy_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.SetObjectPolicy(context.Background(), &pb.SetObjectPolicyRequest{Key: "test/obj.txt"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "test/obj.txt", resp.Key)
+		})
+	}
 }
 
 // ========================================
 // GetObjectPolicy Tests
 // ========================================
 
-func TestObjectStorageServer_GetObjectPolicy_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_GetObjectPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.GetObjectPolicyRequest
+		wantCode codes.Code
+	}{
+		{name: "success", svc: &testMockObjectStorageService{}, req: &pb.GetObjectPolicyRequest{Key: "test/obj.txt"}, wantCode: codes.OK},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty key", svc: &testMockObjectStorageService{}, req: &pb.GetObjectPolicyRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.GetObjectPolicyRequest{Key: "test/obj.txt"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.GetObjectPolicy(context.Background(), &pb.GetObjectPolicyRequest{
-		Key: "test/obj.txt",
-	})
+			resp, err := srv.GetObjectPolicy(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, "test/obj.txt", resp.Key)
-	assert.NotNil(t, resp.Policy)
-	assert.NotNil(t, resp.Policy.ReplicationPolicy)
-}
-
-func TestObjectStorageServer_GetObjectPolicy_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetObjectPolicy(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetObjectPolicy_EmptyKey(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetObjectPolicy(context.Background(), &pb.GetObjectPolicyRequest{Key: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetObjectPolicy_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.GetObjectPolicy(context.Background(), &pb.GetObjectPolicyRequest{Key: "test/obj.txt"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "test/obj.txt", resp.Key)
+			require.NotNil(t, resp.Policy)
+			assert.NotNil(t, resp.Policy.ReplicationPolicy)
+		})
+	}
 }
 
 // ========================================
