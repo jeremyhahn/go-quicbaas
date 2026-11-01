@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -420,36 +421,54 @@ func TestHandler_Query_ApplyDefaults(t *testing.T) {
 }
 
 func TestHandler_StreamQuery_Success(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-	require.NotNil(t, ch)
-
-	var chunks []StreamChunk
-	for chunk := range ch {
-		chunks = append(chunks, chunk)
+	tests := []struct {
+		name        string
+		results     []Result
+		wantResults int
+	}{
+		{name: "default results", wantResults: 2},
+		{name: "no results", results: []Result{}, wantResults: 0},
 	}
 
-	// Should have results + done chunk
-	assert.GreaterOrEqual(t, len(chunks), 2)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := newMockEmbedder()
+			searcher := newMockSearcher()
+			if tt.results != nil {
+				searcher.setResults(tt.results)
+			}
 
-	// Last chunk should be done
-	lastChunk := chunks[len(chunks)-1]
-	assert.True(t, lastChunk.Done)
+			h, err := NewHandler(embedder, searcher, DefaultConfig())
+			require.NoError(t, err)
+			defer h.Close()
+
+			ch, err := h.StreamQuery(context.Background(), "test query", DefaultOptions())
+			require.NoError(t, err)
+			require.NotNil(t, ch)
+
+			var chunks []StreamChunk
+			for chunk := range ch {
+				require.NoError(t, chunk.Error)
+				chunks = append(chunks, chunk)
+			}
+
+			// One chunk per result, then exactly one done chunk.
+			require.Len(t, chunks, tt.wantResults+1)
+			for _, chunk := range chunks[:tt.wantResults] {
+				assert.NotNil(t, chunk.Result)
+				assert.False(t, chunk.Done)
+			}
+			assert.True(t, chunks[tt.wantResults].Done)
+		})
+	}
 }
+
 func TestHandler_StreamQuery_Cancellation(t *testing.T) {
 	embedder := newMockEmbedder()
 	searcher := newMockSearcher()
 
-	// Create many results
+	// Many more results than the stream buffer holds, so the stream is
+	// still sending when the context is canceled.
 	manyResults := make([]Result, 100)
 	for i := range manyResults {
 		manyResults[i] = Result{
@@ -467,23 +486,27 @@ func TestHandler_StreamQuery_Cancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
+	opts := DefaultOptions()
+	opts.TopK = len(manyResults)
+	ch, err := h.StreamQuery(ctx, "test query", opts)
 	require.NoError(t, err)
 
-	// Read a few chunks then cancel
+	// Read two results, cancel, then drain the stream.
 	chunksRead := 0
+	var last StreamChunk
 	for chunk := range ch {
-		if chunk.Done || chunk.Error != nil {
-			break
+		last = chunk
+		if chunk.Result != nil {
+			chunksRead++
 		}
-		chunksRead++
-		if chunksRead >= 2 {
+		if chunksRead == 2 {
 			cancel()
 		}
 	}
 
-	// Should have read at least some chunks
-	assert.GreaterOrEqual(t, chunksRead, 1)
+	assert.Less(t, chunksRead, len(manyResults))
+	assert.False(t, last.Done)
+	assert.ErrorIs(t, last.Error, ErrContextCanceled)
 }
 
 func TestHandler_Close(t *testing.T) {
@@ -632,17 +655,17 @@ func BenchmarkHandler_QueryCached(b *testing.B) {
 	}
 }
 
-func TestHandler_StreamQuery_ContextCancelDuringStream(t *testing.T) {
+// TestHandler_StreamQuery_SlowConsumer tests that a consumer that does not
+// read until the stream buffer is full still receives every result.
+func TestHandler_StreamQuery_SlowConsumer(t *testing.T) {
 	embedder := newMockEmbedder()
 	searcher := newMockSearcher()
 
-	// Create several results to stream
-	manyResults := make([]Result, 10)
+	manyResults := make([]Result, 25)
 	for i := range manyResults {
 		manyResults[i] = Result{
-			ID:      string(rune('A' + i)),
-			Score:   0.9,
-			Content: "content",
+			ID:    fmt.Sprintf("id-%d", i),
+			Score: 0.9,
 		}
 	}
 	searcher.setResults(manyResults)
@@ -653,113 +676,28 @@ func TestHandler_StreamQuery_ContextCancelDuringStream(t *testing.T) {
 	require.NoError(t, err)
 	defer h.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
+	opts := DefaultOptions()
+	opts.TopK = len(manyResults)
+	ch, err := h.StreamQuery(context.Background(), "test query", opts)
 	require.NoError(t, err)
 
-	// Read slowly to allow timeout
-	receivedResults := 0
-	receivedError := false
-
-	for chunk := range ch {
-		if chunk.Result != nil {
-			receivedResults++
-			time.Sleep(10 * time.Millisecond) // Slow read to trigger timeout
-		}
-		if chunk.Error != nil {
-			receivedError = true
-		}
+	// Hold off reading until the producer has filled the buffer and blocks.
+	for len(ch) < cap(ch) {
+		runtime.Gosched()
 	}
 
-	// Should have either completed or received error
-	assert.True(t, receivedResults > 0 || receivedError)
-}
-
-// TestHandler_StreamQuery_SlowConsumer tests streaming with slow consumer.
-func TestHandler_StreamQuery_SlowConsumer(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	// Consume slowly
 	count := 0
+	done := false
 	for chunk := range ch {
+		require.NoError(t, chunk.Error)
 		if chunk.Result != nil {
 			count++
 		}
-		time.Sleep(1 * time.Millisecond)
-	}
-
-	assert.Equal(t, 2, count)
-}
-
-// TestHandler_StreamQuery_AllResultsStreamed tests that all results are streamed.
-func TestHandler_StreamQuery_AllResultsStreamed(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	resultCount := 0
-	doneReceived := false
-
-	for chunk := range ch {
-		if chunk.Error != nil {
-			t.Fatalf("unexpected error: %v", chunk.Error)
-		}
-		if chunk.Result != nil {
-			resultCount++
-		}
 		if chunk.Done {
-			doneReceived = true
+			done = true
 		}
 	}
 
-	assert.Equal(t, 2, resultCount, "should receive all results")
-	assert.True(t, doneReceived, "should receive done signal")
-}
-
-// TestHandler_StreamQuery_NoResults tests streaming with no results.
-func TestHandler_StreamQuery_NoResults(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	searcher.setResults([]Result{}) // No results
-
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-	ch, err := h.StreamQuery(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	chunks := []StreamChunk{}
-	for chunk := range ch {
-		chunks = append(chunks, chunk)
-	}
-
-	// Should only have done chunk (no results to stream)
-	assert.Len(t, chunks, 1)
-	assert.True(t, chunks[0].Done)
+	assert.Equal(t, len(manyResults), count)
+	assert.True(t, done)
 }
