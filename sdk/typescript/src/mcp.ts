@@ -982,7 +982,7 @@ export class McpCeremonyClient implements CeremonyClient {
     const args: Record<string, unknown> = { so_pin: req.so_pin, user_pin: req.user_pin, threshold: req.threshold };
     if (req.credential_seal_strategy) args.credential_seal_strategy = req.credential_seal_strategy;
     if (req.officers && req.officers.length > 0) {
-      args.officers = req.officers.map((o) => ({ username: o.username, csr_pem: o.csr_pem }));
+      args.officers = req.officers;
     }
     if (req.hostname) args.hostname = req.hostname;
     if (req.sans && req.sans.length > 0) args.sans = req.sans;
