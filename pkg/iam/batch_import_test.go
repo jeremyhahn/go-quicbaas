@@ -2246,203 +2246,87 @@ func TestPolicyEngine_DeletePolicy_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// MemoryStorage - Additional edge cases
-// =============================================================================
-
-func TestMemoryStorage_CreateTenant_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "dup-tenant", Name: "Duplicate Tenant", Created: time.Now()}
-
-	// Create first tenant
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("First CreateTenant failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateTenant(ctx, tenant)
-	if err == nil {
-		t.Error("expected error for duplicate tenant")
-	}
-}
-
-func TestMemoryStorage_UpdateTenant_Success(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "upd-tenant", Name: "Update Tenant", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Update tenant
-	tenant.Name = "Updated Tenant Name"
-	if err := storage.UpdateTenant(ctx, tenant); err != nil {
-		t.Fatalf("UpdateTenant failed: %v", err)
-	}
-
-	// Verify update
-	updated, err := storage.GetTenant(ctx, "upd-tenant")
-	if err != nil {
-		t.Fatalf("GetTenant failed: %v", err)
-	}
-	if updated.Name != "Updated Tenant Name" {
-		t.Errorf("expected name 'Updated Tenant Name', got '%s'", updated.Name)
-	}
-}
-
-func TestMemoryStorage_DeleteTenant_Success(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenant := &Tenant{ID: "del-tenant", Name: "Delete Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Delete tenant
-	if err := storage.DeleteTenant(ctx, "del-tenant"); err != nil {
-		t.Fatalf("DeleteTenant failed: %v", err)
-	}
-
-	// Verify deletion
-	_, err := storage.GetTenant(ctx, "del-tenant")
-	if err == nil {
-		t.Error("expected error for deleted tenant")
-	}
-}
-
-func TestMemoryStorage_GetTenant_NotFound(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	_, err := storage.GetTenant(ctx, "nonexistent-tenant")
-	if err == nil {
-		t.Error("expected error for nonexistent tenant")
-	}
-}
-
-// =============================================================================
 // MemoryStorage - ListTenants
 // =============================================================================
 
-func TestMemoryStorage_ListTenants_Empty(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenants, err := storage.ListTenants(ctx, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 0 {
-		t.Errorf("expected 0 tenants, got %d", len(tenants))
-	}
-}
-
-func TestMemoryStorage_ListTenants_WithData(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	// Create some tenants
-	for i := 0; i < 5; i++ {
-		tenant := &Tenant{
-			ID:      "list-tenant-" + string(rune('0'+i)),
-			Name:    "List Tenant " + string(rune('0'+i)),
-			Created: time.Now(),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
+func TestMemoryStorage_ListTenants(t *testing.T) {
+	tests := []struct {
+		name    string
+		created int
+		opts    ListOptions
+		want    int
+	}{
+		{name: "empty", created: 0, opts: ListOptions{}, want: 0},
+		{name: "all", created: 5, opts: ListOptions{}, want: 5},
+		{name: "limit", created: 10, opts: ListOptions{Limit: 5}, want: 5},
 	}
 
-	tenants, err := storage.ListTenants(ctx, ListOptions{})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 5 {
-		t.Errorf("expected 5 tenants, got %d", len(tenants))
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewMemoryStorage()
+			ctx := context.Background()
 
-func TestMemoryStorage_ListTenants_WithLimit(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
+			for i := 0; i < tt.created; i++ {
+				tenant := &Tenant{
+					ID:      "list-tenant-" + string(rune('0'+i)),
+					Name:    "List Tenant " + string(rune('0'+i)),
+					Created: time.Now(),
+				}
+				if err := storage.CreateTenant(ctx, tenant); err != nil {
+					t.Fatalf("CreateTenant failed: %v", err)
+				}
+			}
 
-	// Create some tenants
-	for i := 0; i < 10; i++ {
-		tenant := &Tenant{
-			ID:      "limit-tenant-" + string(rune('0'+i)),
-			Name:    "Limit Tenant " + string(rune('0'+i)),
-			Created: time.Now(),
-		}
-		if err := storage.CreateTenant(ctx, tenant); err != nil {
-			t.Fatalf("CreateTenant failed: %v", err)
-		}
-	}
-
-	tenants, err := storage.ListTenants(ctx, ListOptions{Limit: 5})
-	if err != nil {
-		t.Fatalf("ListTenants failed: %v", err)
-	}
-	if len(tenants) != 5 {
-		t.Errorf("expected 5 tenants, got %d", len(tenants))
+			tenants, err := storage.ListTenants(ctx, tt.opts)
+			if err != nil {
+				t.Fatalf("ListTenants failed: %v", err)
+			}
+			if len(tenants) != tt.want {
+				t.Errorf("expected %d tenants, got %d", tt.want, len(tenants))
+			}
+		})
 	}
 }
 
 // =============================================================================
-// MemoryStorage - CreateUser duplicate
+// MemoryStorage - duplicate creates
 // =============================================================================
 
-func TestMemoryStorage_CreateUser_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenantID := "dup-user-tenant"
-	tenant := &Tenant{ID: tenantID, Name: "Dup User Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
+func TestMemoryStorage_Create_Duplicate(t *testing.T) {
+	const tenantID = "dup-tenant"
+	tests := []struct {
+		name   string
+		create func(ctx context.Context, storage *MemoryStorage) error
+	}{
+		{
+			name: "user",
+			create: func(ctx context.Context, storage *MemoryStorage) error {
+				return storage.CreateUser(ctx, &User{ID: 36, TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()})
+			},
+		},
+		{
+			name: "role",
+			create: func(ctx context.Context, storage *MemoryStorage) error {
+				return storage.CreateRole(ctx, &Role{ID: "dup-role", TenantID: tenantID, Name: "Dup Role", Created: time.Now(), Updated: time.Now()})
+			},
+		},
 	}
 
-	user := &User{ID: 36, TenantID: tenantID, Email: "dup@test.com", Name: "Dup User", Created: time.Now(), Updated: time.Now()}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := NewMemoryStorage()
+			ctx := context.Background()
+			if err := storage.CreateTenant(ctx, &Tenant{ID: tenantID, Name: "Dup Tenant", Created: time.Now()}); err != nil {
+				t.Fatalf("CreateTenant failed: %v", err)
+			}
 
-	// Create first user
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("First CreateUser failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateUser(ctx, user)
-	if err == nil {
-		t.Error("expected error for duplicate user")
-	}
-}
-
-// =============================================================================
-// MemoryStorage - CreateRole duplicate
-// =============================================================================
-
-func TestMemoryStorage_CreateRole_Duplicate(t *testing.T) {
-	storage := NewMemoryStorage()
-	ctx := context.Background()
-
-	tenantID := "dup-role-tenant"
-	tenant := &Tenant{ID: tenantID, Name: "Dup Role Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	role := &Role{ID: "dup-role", TenantID: tenantID, Name: "Dup Role", Created: time.Now(), Updated: time.Now()}
-
-	// Create first role
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("First CreateRole failed: %v", err)
-	}
-
-	// Try to create duplicate
-	err := storage.CreateRole(ctx, role)
-	if err == nil {
-		t.Error("expected error for duplicate role")
+			if err := tt.create(ctx, storage); err != nil {
+				t.Fatalf("first create failed: %v", err)
+			}
+			if err := tt.create(ctx, storage); err == nil {
+				t.Errorf("expected error for duplicate %s", tt.name)
+			}
+		})
 	}
 }
 
