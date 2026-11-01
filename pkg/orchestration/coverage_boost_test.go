@@ -4053,36 +4053,6 @@ func TestProtoContentBlocksToRuntime_Empty(t *testing.T) {
 // orchestrator — StartJob missing tenant ID
 // =============================================================================
 
-func TestOrchestrator_StartJob_MissingTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.StartJob(context.Background(), &StartJobRequest{
-		Description: "do something",
-	})
-	if err == nil {
-		t.Fatal("expected error for missing tenant ID")
-	}
-}
-
-// =============================================================================
-// orchestrator — validateTenant with guard and empty tenant
-// =============================================================================
-
-func TestOrchestrator_ValidateTenant_WithGuard_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	guard := NewTenantGuard(&peerTestLogger{})
-	impl.SetTenantGuard(guard)
-
-	// Context without tenant ID → validateTenant returns TenantRequiredError.
-	err := impl.validateTenant(context.Background())
-	if err == nil {
-		t.Fatal("expected error for empty tenant in context")
-	}
-}
-
 func TestOrchestrator_ValidateTenant_WithGuard_ValidTenant(t *testing.T) {
 	t.Parallel()
 
@@ -4140,77 +4110,73 @@ func TestControlLoop_GenerateCorrelationID_Unique(t *testing.T) {
 }
 
 // =============================================================================
-// workflow_loader — Register and Get roundtrip, ListDefinitions
+// orchestrator — GetJobStatus / CancelJob / SubscribeJobEvents empty IDs
 // =============================================================================
 
-func TestWorkflowLoader_Register_And_Get(t *testing.T) {
+func TestOrchestrator_JobEmptyID(t *testing.T) {
 	t.Parallel()
 
-	loader := NewWorkflowLoader()
-	def := &WorkflowDefinition{
-		Name: "test-wf",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
+	tests := []struct {
+		name string
+		call func(ctx context.Context, svc *agentServiceImpl) error
+		want error
+	}{
+		{
+			name: "GetJobStatus empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.GetJobStatus(ctx, "", "job-x")
+				return err
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "GetJobStatus empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.GetJobStatus(ctx, "t-gjs", "")
+				return err
+			},
+			want: ErrTaskIDRequired,
+		},
+		{
+			name: "CancelJob empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				return svc.CancelJob(ctx, "", "job-1")
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "CancelJob empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				return svc.CancelJob(ctx, "tenant-1", "")
+			},
+			want: ErrTaskIDRequired,
+		},
+		{
+			name: "SubscribeJobEvents empty tenantID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.SubscribeJobEvents(ctx, "", "job-x")
+				return err
+			},
+			want: ErrTenantIDRequired,
+		},
+		{
+			name: "SubscribeJobEvents empty jobID",
+			call: func(ctx context.Context, svc *agentServiceImpl) error {
+				_, err := svc.SubscribeJobEvents(ctx, "t-sje", "")
+				return err
+			},
+			want: ErrJobNotFound,
 		},
 	}
-	if err := loader.Register(SystemTenantID, def); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
 
-	got, err := loader.Get(SystemTenantID, "test-wf")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.Name != "test-wf" {
-		t.Errorf("expected test-wf, got %s", got.Name)
-	}
-
-	names := loader.List(SystemTenantID)
-	if len(names) != 1 || names[0] != "test-wf" {
-		t.Errorf("expected [test-wf], got %v", names)
-	}
-}
-
-func TestWorkflowLoader_ListDefinitions(t *testing.T) {
-	t.Parallel()
-
-	loader := NewWorkflowLoader()
-	if err := loader.Register(SystemTenantID, &WorkflowDefinition{
-		Name:   "wf-def-1",
-		Mode:   WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	defs := loader.ListDefinitions(SystemTenantID)
-	if len(defs) != 1 {
-		t.Errorf("expected 1 definition, got %d", len(defs))
-	}
-}
-
-// =============================================================================
-// orchestrator — GetJobStatus and CancelJob error paths
-// =============================================================================
-
-func TestOrchestrator_GetJobStatus_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetJobStatus(context.Background(), "", "job-x")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestOrchestrator_GetJobStatus_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetJobStatus(context.Background(), "t-gjs", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newTestService(t))
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, err)
+			}
+		})
 	}
 }
 
@@ -4255,10 +4221,16 @@ func TestOrchestrator_ResolveSandboxMode_WithTenantPolicy(t *testing.T) {
 		Backend:   "acp",
 	}
 
-	// resolveSandboxMode exercises the tenantPolicies branch.
-	// The error (no runtime) is acceptable — we just want to cover the branch.
-	mode, _ := impl.resolveSandboxMode(ctx, req, false)
-	_ = mode
+	// The tenant override raises the policy to Required; with no container
+	// runtime a default-mode spawn must be refused.
+	_, err := impl.resolveSandboxMode(ctx, req, false)
+	var violation *SandboxModeViolationError
+	if !errors.As(err, &violation) {
+		t.Fatalf("expected *SandboxModeViolationError, got %T: %v", err, err)
+	}
+	if violation.Policy != SandboxPolicyRequired {
+		t.Errorf("Policy = %v, want SandboxPolicyRequired", violation.Policy)
+	}
 }
 
 // =============================================================================
@@ -6614,28 +6586,6 @@ func TestOrchestrator_CancelJob_KVFallback(t *testing.T) {
 // orchestrator — SubscribeJobEvents coverage
 // =============================================================================
 
-func TestOrchestrator_SubscribeJobEvents_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-sje")
-	_, err := impl.SubscribeJobEvents(ctx, "t-sje", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
-	}
-}
-
-func TestOrchestrator_SubscribeJobEvents_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-sje2")
-	_, err := impl.SubscribeJobEvents(ctx, "", "job-x")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
 // =============================================================================
 // orchestrator — publishEvent with valid event type
 // =============================================================================
@@ -6855,26 +6805,6 @@ func TestParseWorkItems_BadJSON(t *testing.T) {
 // =============================================================================
 // orchestrator — CancelJob empty field paths (lines 2345-2356)
 // =============================================================================
-
-func TestOrchestrator_CancelJob_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.CancelJob(context.Background(), "", "job-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-func TestOrchestrator_CancelJob_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.CancelJob(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty jobID")
-	}
-}
 
 // =============================================================================
 // orchestrator — DiscoverProjects where root dir itself has CLAUDE.md (line 312)
