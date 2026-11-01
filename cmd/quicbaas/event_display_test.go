@@ -197,24 +197,6 @@ func TestParseKeyValues(t *testing.T) {
 			wantKV:   map[string]string{"role": "lead", "task": "Decompose"},
 			wantRest: "",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kv, rest := parseKeyValues(tt.input)
-			assert.Equal(t, tt.wantKV, kv)
-			assert.Equal(t, tt.wantRest, rest)
-		})
-	}
-}
-
-func TestParseKeyValues_InvalidInput(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		wantKV   map[string]string
-		wantRest string
-	}{
 		{
 			name:     "no equals sign",
 			input:    "just some text",
@@ -248,6 +230,14 @@ func TestParseSessionUpdate(t *testing.T) {
 		assert.Equal(t, "Write", update["title"])
 	})
 
+	t.Run("update without jsonrpc envelope", func(t *testing.T) {
+		msg := `session=sess-1 {"update":{"sessionUpdate":"agent_message_chunk","text":"hello"}}`
+		sid, update, ok := parseSessionUpdate(msg)
+		assert.True(t, ok)
+		assert.Equal(t, "sess-1", sid)
+		assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
+	})
+
 	t.Run("missing session", func(t *testing.T) {
 		msg := `{"jsonrpc":"2.0"}`
 		sid, _, ok := parseSessionUpdate(msg)
@@ -261,14 +251,6 @@ func TestParseSessionUpdate(t *testing.T) {
 		assert.Equal(t, "abc", sid)
 		assert.False(t, ok)
 	})
-}
-
-func TestParseSessionUpdate_FlatUpdate(t *testing.T) {
-	msg := `session=sess-1 {"update":{"sessionUpdate":"agent_message_chunk","text":"hello"}}`
-	sid, update, ok := parseSessionUpdate(msg)
-	assert.True(t, ok)
-	assert.Equal(t, "sess-1", sid)
-	assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
 }
 
 // TestEventDisplay_Render covers the one-line rendering of each event type.
