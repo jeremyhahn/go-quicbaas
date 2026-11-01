@@ -25,54 +25,67 @@ import (
 )
 
 func TestNew(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "test.log")
+
 	tests := []struct {
 		name    string
 		config  LogConfig
 		wantErr bool
+		check   func(t *testing.T, logger *Logger)
 	}{
 		{
-			name: "valid json stdout config",
-			config: LogConfig{
-				Level:  "info",
-				Format: "json",
-				Output: "stdout",
-			},
-			wantErr: false,
+			name:   "valid json stdout config",
+			config: LogConfig{Level: "info", Format: "json", Output: "stdout"},
 		},
 		{
-			name: "valid console stderr config",
-			config: LogConfig{
-				Level:  "debug",
-				Format: "console",
-				Output: "stderr",
-			},
-			wantErr: false,
+			name:   "valid json stderr config",
+			config: LogConfig{Level: "warn", Format: "json", Output: "stderr"},
 		},
 		{
-			name: "invalid level",
-			config: LogConfig{
-				Level:  "invalid",
-				Format: "json",
-				Output: "stdout",
+			name:   "valid console stderr config",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stderr"},
+		},
+		{
+			name:   "valid console stdout config without color",
+			config: LogConfig{Level: "debug", Format: "console", Output: "stdout", NoColor: true},
+		},
+		{
+			name:   "valid config with component",
+			config: LogConfig{Level: "info", Format: "json", Output: "stdout", Component: "test-component"},
+		},
+		{
+			name:   "file output creates the file",
+			config: LogConfig{Level: "info", Format: "json", Output: "file", File: logFile},
+			check: func(t *testing.T, logger *Logger) {
+				logger.Info("test message")
+				if _, err := os.Stat(logFile); err != nil {
+					t.Errorf("log file not created: %v", err)
+				}
 			},
+		},
+		{
+			name:    "invalid level",
+			config:  LogConfig{Level: "invalid", Format: "json", Output: "stdout"},
 			wantErr: true,
 		},
 		{
-			name: "invalid format",
-			config: LogConfig{
-				Level:  "info",
-				Format: "invalid",
-				Output: "stdout",
-			},
+			name:    "invalid format",
+			config:  LogConfig{Level: "info", Format: "invalid", Output: "stdout"},
 			wantErr: true,
 		},
 		{
-			name: "file output without file path",
-			config: LogConfig{
-				Level:  "info",
-				Format: "json",
-				Output: "file",
-			},
+			name:    "unknown output",
+			config:  LogConfig{Level: "info", Format: "json", Output: "unknown"},
+			wantErr: true,
+		},
+		{
+			name:    "file output without file path",
+			config:  LogConfig{Level: "info", Format: "json", Output: "file"},
+			wantErr: true,
+		},
+		{
+			name:    "file output in unwritable directory",
+			config:  LogConfig{Level: "info", Format: "json", Output: "file", File: "/root/nonexistent/directory/test.log"},
 			wantErr: true,
 		},
 	}
@@ -81,11 +94,16 @@ func TestNew(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			logger, err := New(tt.config)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("New() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
 				return
 			}
-			if !tt.wantErr && logger == nil {
-				t.Error("New() returned nil logger without error")
+			if logger == nil {
+				t.Fatal("New() returned nil logger without error")
+			}
+			if tt.check != nil {
+				tt.check(t, logger)
 			}
 		})
 	}
@@ -509,113 +527,6 @@ func TestLogger_LogMethods(t *testing.T) {
 // =============================================================================
 
 // TestNew_FileOutputError tests the New function with an invalid file path.
-func TestNew_FileOutputError(t *testing.T) {
-	// Try to create a logger with a file output in an unwritable directory
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		File:   "/root/nonexistent/directory/test.log",
-	}
-
-	_, err := New(config)
-	if err == nil {
-		t.Error("New() should return error when file path is not writable")
-	}
-}
-
-// TestNew_FileOutputSuccess tests the New function with a valid file path.
-func TestNew_FileOutputSuccess(t *testing.T) {
-	// Create a temporary file path
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "test.log")
-
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		File:   logFile,
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Write a log message to ensure the file is created
-	logger.Info("test message")
-
-	// Check if file exists
-	if _, err := os.Stat(logFile); os.IsNotExist(err) {
-		t.Error("Log file was not created")
-	}
-}
-
-// TestNew_InvalidLevelFallback tests that New() falls back to info level for invalid levels.
-func TestNew_InvalidLevelFallback(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	// The level parser will fall back to info level for unknown levels
-	// This tests the error handling path in parseLevel()
-	level := logger.GetLevel()
-	if level == "" {
-		t.Error("Logger level should be set")
-	}
-}
-
-// TestNew_ConsoleFormat tests the New function with console format.
-func TestNew_ConsoleFormat(t *testing.T) {
-	config := LogConfig{
-		Level:   "debug",
-		Format:  "console",
-		Output:  "stdout",
-		NoColor: true,
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-}
-
-// TestNew_WithComponent tests the New function with a component name.
-func TestNew_WithComponent(t *testing.T) {
-	config := LogConfig{
-		Level:     "info",
-		Format:    "json",
-		Output:    "stdout",
-		Component: "test-component",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Verify the logger was created with the component config.
-	// The component name is embedded in the logger's internal slog handler;
-	// creation success (no error, non-nil logger) is sufficient here.
-	_ = logger
-}
-
 // TestLogger_WithFieldChaining tests chaining WithField calls.
 func TestLogger_WithFieldChaining(t *testing.T) {
 	logger, err := New(LogConfig{
@@ -795,44 +706,6 @@ func TestWithContext_ValidContext(t *testing.T) {
 }
 
 // TestNew_StderrOutput tests the New function with stderr output.
-func TestNew_StderrOutput(t *testing.T) {
-	config := LogConfig{
-		Level:  "warn",
-		Format: "json",
-		Output: "stderr",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Errorf("New() error = %v, want nil", err)
-	}
-	if logger == nil {
-		t.Error("New() returned nil logger")
-	}
-
-	// Verify the logger works
-	logger.Warn("test warning")
-}
-
-// TestNew_DefaultOutput tests the New function with an unknown output (should default to stdout).
-func TestNew_DefaultOutput(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "unknown",
-	}
-
-	// First validate to ensure it fails validation
-	if err := config.Validate(); err == nil {
-		t.Error("Validate() should fail for unknown output")
-	}
-
-	// For the New() function, we need to bypass validation to test the default case
-	// This would require directly calling New with an already-validated config
-	// Since validation happens inside New(), we can test the fallback behavior
-	// by looking at valid outputs
-}
-
 // TestLogger_AllLevels tests logger with all valid log levels.
 func TestLogger_AllLevels(t *testing.T) {
 	levels := []string{"trace", "debug", "info", "warn", "error"}
@@ -862,38 +735,6 @@ func TestLogger_AllLevels(t *testing.T) {
 }
 
 // TestNew_FileOutputWithDefaultFilename tests file output without specifying a filename.
-func TestNew_FileOutputWithDefaultFilename(t *testing.T) {
-	// Change to a temporary directory to avoid polluting the workspace
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-	defer os.Chdir(originalWd)
-
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("Failed to change to temp directory: %v", err)
-	}
-
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "file",
-		// File is intentionally empty to test the default
-		File: "",
-	}
-
-	// Bypass validation which requires File to be set
-	// We need to test the code path at lines 45-47 in logger.go
-	// This happens after validation, so we need to call the internal logic
-
-	// For now, let's test that providing an empty file with file output
-	// gets handled by the validation
-	if err := config.Validate(); err == nil {
-		t.Error("Validate() should fail when Output is 'file' but File is empty")
-	}
-}
-
 // TestLogger_ConsoleFormatWithColor tests console format without NoColor flag.
 func TestLogger_ConsoleFormatWithColor(t *testing.T) {
 	config := LogConfig{
