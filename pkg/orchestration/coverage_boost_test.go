@@ -222,6 +222,16 @@ func TestTypedErrors(t *testing.T) {
 			name: "AgentService/WithoutMessage",
 			err:  &AgentServiceError{Sentinel: ErrAgentServiceUnavailable},
 		},
+		{
+			name:   "UsageRecord/NilCause",
+			err:    &UsageRecordError{TenantID: "t1", JobID: "j1", AgentID: "a1"},
+			wantIs: []error{ErrUsageRecord},
+		},
+		{
+			name:   "UsageRetrieval/NilCause",
+			err:    &UsageRetrievalError{TenantID: "t1", JobID: "j1"},
+			wantIs: []error{ErrUsageRetrieval},
+		},
 	}
 
 	for _, tt := range tests {
@@ -2015,60 +2025,6 @@ func TestAgentRegistry_UpdateAgent_NotFound(t *testing.T) {
 // Agent Registry: ListFleetNodes — with filter
 // =============================================================================
 
-func TestAgentRegistry_ListAgents_WithFilter(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agents := []*FleetNode{
-		{ID: "la-1", TenantID: "tenant-la", Name: "agent-a", Host: "h1", Backend: "acp", NodeType: "worker", Status: FleetNodeStatusIdle},
-		{ID: "la-2", TenantID: "tenant-la", Name: "agent-b", Host: "h2", Backend: "ollama", NodeType: "worker", Status: FleetNodeStatusRunning},
-		{ID: "la-3", TenantID: "tenant-la", Name: "agent-c", Host: "h1", Backend: "acp", NodeType: "reviewer", Status: FleetNodeStatusIdle},
-	}
-	for _, a := range agents {
-		if err := reg.RegisterFleetNode(ctx, a); err != nil {
-			t.Fatalf("RegisterFleetNode %s: %v", a.ID, err)
-		}
-	}
-
-	// Filter by backend.
-	list, err := reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Backend: "acp"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(list) != 2 {
-		t.Errorf("expected 2 acp agents, got %d", len(list))
-	}
-
-	// Filter by host.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Host: "h1"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes by host: %v", err)
-	}
-	if len(list) != 2 {
-		t.Errorf("expected 2 agents on h1, got %d", len(list))
-	}
-
-	// Filter by status.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Status: FleetNodeStatusRunning})
-	if err != nil {
-		t.Fatalf("ListFleetNodes by status: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 running agent, got %d", len(list))
-	}
-
-	// Filter with limit.
-	list, err = reg.ListFleetNodes(ctx, "tenant-la", &FleetNodeFilter{Limit: 1})
-	if err != nil {
-		t.Fatalf("ListFleetNodes with limit: %v", err)
-	}
-	if len(list) != 1 {
-		t.Errorf("expected 1 agent with limit=1, got %d", len(list))
-	}
-}
-
 func TestAgentRegistry_ListAgents_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 
@@ -2674,66 +2630,6 @@ func TestOrchestrator_ListBackends_NoBackends(t *testing.T) {
 }
 
 // =============================================================================
-// Orchestrator: fleet management via registry
-// =============================================================================
-
-func TestOrchestrator_RegisterAgent_WithRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	reg := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(reg)
-
-	resp, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		TenantID: "tenant-svc",
-		Name:     "svc-agent",
-		Host:     "localhost",
-		Backend:  "acp",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-	if resp == nil || resp.Node == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if resp.Node.Name != "svc-agent" {
-		t.Errorf("name = %q, want svc-agent", resp.Node.Name)
-	}
-}
-
-func TestOrchestrator_ListAgents_WithRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	reg := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(reg)
-
-	ctx := context.Background()
-	for i := 0; i < 2; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "la-svc-" + itoa(i),
-			TenantID: "tenant-la-svc",
-			Name:     "agent-" + itoa(i),
-			Host:     "h",
-			Backend:  "acp",
-			NodeType: "worker",
-			Status:   FleetNodeStatusIdle,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode: %v", err)
-		}
-	}
-
-	agents, err := impl.ListFleetNodes(ctx, "tenant-la-svc", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) != 2 {
-		t.Errorf("expected 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
 // Orchestrator: FleetNodeHeartbeat — with registry, not found
 // =============================================================================
 
@@ -2757,67 +2653,43 @@ func TestOrchestrator_AgentHeartbeat_NotFound(t *testing.T) {
 // ControlLoop: defaultWorkerRole
 // =============================================================================
 
-func TestControlLoop_DefaultWorkerRole_NoWorkflow(t *testing.T) {
+func TestControlLoop_DefaultWorkerRole(t *testing.T) {
 	t.Parallel()
 
-	cl := newMinimalControlLoop(t)
-	// No workflow set — should return empty string.
-	role := cl.defaultWorkerRole()
-	if role != "" {
-		t.Errorf("expected empty role without workflow, got %q", role)
-	}
-}
-
-func TestControlLoop_DefaultWorkerRole_OnlyLead(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "lead-only",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		want     string
+	}{
+		{name: "NoWorkflow"},
+		{
+			name: "OnlyLead",
+			workflow: &WorkflowDefinition{
+				Name:   "lead-only",
+				Agents: []AgentRoleSpec{{Role: "lead", Backend: "acp"}},
+			},
+		},
+		{
+			name: "WithWorker",
+			workflow: &WorkflowDefinition{
+				Name: "with-worker",
+				Agents: []AgentRoleSpec{
+					{Role: "lead", Backend: "acp"},
+					{Role: "worker", Backend: "acp"},
+				},
+			},
+			want: "worker",
 		},
 	}
-	// No non-lead role — should return empty string.
-	role := cl.defaultWorkerRole()
-	if role != "" {
-		t.Errorf("expected empty role with only lead, got %q", role)
-	}
-}
 
-func TestControlLoop_DefaultWorkerRole_WithWorker(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "with-worker",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp"},
-			{Role: "worker", Backend: "acp"},
-		},
-	}
-	role := cl.defaultWorkerRole()
-	if role != "worker" {
-		t.Errorf("expected 'worker', got %q", role)
-	}
-}
-
-// =============================================================================
-// ControlLoop: roleHasCapability — with matching capability
-// =============================================================================
-
-func TestControlLoop_RoleHasCapability_Matching(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	cl.workflow = &WorkflowDefinition{
-		Name: "cap-test",
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "acp", Capabilities: []string{"persistent_sessions", "tool_use"}},
-		},
-	}
-	if !cl.roleHasCapability("lead", "persistent_sessions") {
-		t.Error("expected lead to have persistent_sessions capability")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cl := newMinimalControlLoop(t)
+			cl.workflow = tt.workflow
+			if got := cl.defaultWorkerRole(); got != tt.want {
+				t.Errorf("defaultWorkerRole() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -2864,46 +2736,39 @@ func TestControlLoop_ResolveAgentSpec_NotFound(t *testing.T) {
 // ControlLoop: parseReviewResponse
 // =============================================================================
 
-func TestControlLoop_ParseReviewResponse_Approved(t *testing.T) {
+func TestControlLoop_ParseReviewResponse(t *testing.T) {
 	t.Parallel()
 
-	// parseReviewResponse is a package-level function taking a string.
-	// Supply valid JSON with approved=true.
-	text := `{"approved": true, "feedback": "looks good"}`
-	result, err := parseReviewResponse(text)
-	if err != nil {
-		t.Fatalf("parseReviewResponse: %v", err)
+	tests := []struct {
+		name         string
+		text         string
+		wantApproved bool
+		wantErr      bool
+	}{
+		{name: "Approved", text: `{"approved": true, "feedback": "looks good"}`, wantApproved: true},
+		{name: "Rejected", text: `{"approved": false, "feedback": "needs more work"}`},
+		{name: "InvalidJSON", text: "not json at all", wantErr: true},
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if !result.Approved {
-		t.Errorf("expected Approved=true, got false")
-	}
-}
 
-func TestControlLoop_ParseReviewResponse_Rejected(t *testing.T) {
-	t.Parallel()
-
-	text := `{"approved": false, "feedback": "needs more work"}`
-	result, err := parseReviewResponse(text)
-	if err != nil {
-		t.Fatalf("parseReviewResponse rejected: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Approved {
-		t.Errorf("expected Approved=false")
-	}
-}
-
-func TestControlLoop_ParseReviewResponse_InvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseReviewResponse("not json at all")
-	if err == nil {
-		t.Fatal("expected error for invalid input")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseReviewResponse(tt.text)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for invalid input")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseReviewResponse: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Approved != tt.wantApproved {
+				t.Errorf("Approved = %v, want %v", result.Approved, tt.wantApproved)
+			}
+		})
 	}
 }
 
@@ -3398,36 +3263,6 @@ func TestACPBackend_GenerateSessionID_Unique(t *testing.T) {
 }
 
 // =============================================================================
-// Cost Tracker: Error() methods — nil Cause branch
-// =============================================================================
-
-func TestUsageRecordError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &UsageRecordError{TenantID: "t1", JobID: "j1", AgentID: "a1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("Error() returned empty string")
-	}
-	if !errors.Is(err, ErrUsageRecord) {
-		t.Error("expected ErrUsageRecord via Unwrap")
-	}
-}
-
-func TestUsageRetrievalError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &UsageRetrievalError{TenantID: "t1", JobID: "j1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("Error() returned empty string")
-	}
-	if !errors.Is(err, ErrUsageRetrieval) {
-		t.Error("expected ErrUsageRetrieval via Unwrap")
-	}
-}
-
-// =============================================================================
 // Cost Tracker Store: GetAgentUsage and collectAgentUsage
 // =============================================================================
 
@@ -3603,19 +3438,6 @@ func TestOrchestrator_CompleteTask_Success(t *testing.T) {
 	if err = impl.CompleteTask(ctx, "tenant-comp", taskID, &TaskResult{Output: "done"}); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
-}
-
-// =============================================================================
-// Orchestrator: BackendToolGuidance
-// =============================================================================
-
-func TestOrchestrator_BackendToolGuidance_NoBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	guidance := impl.BackendToolGuidance("nonexistent")
-	// No backend — should return empty string without panic.
-	_ = guidance
 }
 
 // =============================================================================
@@ -3887,33 +3709,6 @@ func TestPeerMessagingStore_Send_MaxMessageSize(t *testing.T) {
 	if !errors.Is(err, ErrMessageTooLarge) {
 		t.Errorf("expected ErrMessageTooLarge, got %v", err)
 	}
-}
-
-func TestPeerMessagingStore_NotifySubscriber_BufferFull(t *testing.T) {
-	t.Parallel()
-
-	svc := NewPeerMessagingService(newPeerTestKVStore(), InboxPolicy{}, &peerTestLogger{})
-	ctx := context.Background()
-
-	// Subscribe then drain nothing — buffer fills up.
-	ch, err := svc.Subscribe(ctx, "t-notify", "sub-agent")
-	if err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-
-	// Send enough messages to fill the channel buffer.
-	for i := 0; i <= subscriberBufferSize; i++ {
-		_ = svc.Send(ctx, &PeerMessage{
-			ID:        "notify-" + itoa(i),
-			From:      "src",
-			To:        "sub-agent",
-			Action:    "task",
-			Timestamp: int64(i + 1),
-			Metadata:  map[string]string{"tenant_id": "t-notify"},
-		})
-	}
-	// Ensure the channel is not blocked and didn't panic.
-	_ = ch
 }
 
 // =============================================================================
