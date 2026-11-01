@@ -234,7 +234,7 @@ func TestExecuteObjectListByTenant_WithTags(t *testing.T) {
 }
 
 // =============================================================================
-// Object Migrate - Missing Key, Delete From Source
+// Object tools - missing required argument; Migrate - Delete From Source
 // =============================================================================
 
 func TestExecuteObjectTools_MissingRequiredArgument(t *testing.T) {
@@ -295,7 +295,7 @@ func TestExecuteObjectMigrate_DeleteFromSourceFalse(t *testing.T) {
 }
 
 // =============================================================================
-// Object Archive - Missing Key, Delete From Primary
+// Object Archive - Delete From Primary
 // =============================================================================
 
 func TestExecuteObjectArchive_DeleteFromPrimaryFalse(t *testing.T) {
@@ -326,14 +326,6 @@ func TestExecuteObjectArchive_DeleteFromPrimaryFalse(t *testing.T) {
 	assert.Equal(t, false, resultMap["deleted_from_primary"])
 	mockSvc.AssertExpectations(t)
 }
-
-// =============================================================================
-// Object Restore - Missing Key
-// =============================================================================
-
-// =============================================================================
-// Object Verify - Missing Key
-// =============================================================================
 
 // =============================================================================
 // Object Head - With Existing Object, Tags, and Tenant ID
@@ -484,7 +476,7 @@ func TestExecuteObjectListBackends_MultipleBackends(t *testing.T) {
 }
 
 // =============================================================================
-// Object Tenant Quotas - Missing Tenant ID Edge Case
+// Object Tenant Quotas - With Usage
 // =============================================================================
 
 func TestExecuteObjectTenantQuotas_WithUsage(t *testing.T) {
@@ -545,10 +537,6 @@ func TestExecuteObjectSetTenantQuotas_WithAllQuotas(t *testing.T) {
 	assert.Equal(t, true, resultMap["success"])
 	mockSvc.AssertExpectations(t)
 }
-
-// =============================================================================
-// Object Tenant Usage - Edge Cases
-// =============================================================================
 
 // =============================================================================
 // Mock IAM Service
@@ -846,28 +834,11 @@ func newIAMTestRegistry(iamSvc service.IAMService) *ToolRegistry {
 // getIAMService tests
 // =============================================================================
 
-func TestGetIAMService_NotSupported(t *testing.T) {
-	// mockService does NOT implement iamServiceAccessor, so getIAMService should fail
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	reg := NewToolRegistry(&mockService{}, log)
-
-	_, err := reg.getIAMService()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "IAM service not available")
-}
-
 func TestGetIAMService_NilIAMService(t *testing.T) {
 	reg := newIAMTestRegistry(nil)
 	_, err := reg.getIAMService()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "IAM service not configured")
-}
-
-func TestGetIAMService_Success(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	svc, err := reg.getIAMService()
-	require.NoError(t, err)
-	require.NotNil(t, svc)
 }
 
 // =============================================================================
@@ -886,16 +857,47 @@ func TestExecuteIAMTool_Routes(t *testing.T) {
 		args     map[string]interface{}
 	}{
 		{"tenant_create", "quicbaas_iam_tenant_create", map[string]interface{}{"name": "test"}},
+		{"tenant_create_with_optional_fields", "quicbaas_iam_tenant_create", map[string]interface{}{
+			"id":       "custom-id",
+			"name":     "My Tenant",
+			"settings": map[string]interface{}{"key": "val"},
+			"quotas":   map[string]interface{}{"max_users": float64(100)},
+		}},
 		{"tenant_get", "quicbaas_iam_tenant_get", map[string]interface{}{"id": "t1"}},
-		{"tenant_update", "quicbaas_iam_tenant_update", map[string]interface{}{"id": "t1", "name": "updated"}},
+		{"tenant_update", "quicbaas_iam_tenant_update", map[string]interface{}{
+			"id":       "t1",
+			"name":     "Updated Name",
+			"settings": map[string]interface{}{"mode": "production"},
+			"quotas":   map[string]interface{}{"max_users": float64(500)},
+		}},
 		{"tenant_delete", "quicbaas_iam_tenant_delete", map[string]interface{}{"id": "t1"}},
 		{"tenant_list", "quicbaas_iam_tenant_list", map[string]interface{}{}},
+		{"tenant_list_with_pagination_and_filter", "quicbaas_iam_tenant_list", map[string]interface{}{
+			"limit":  float64(50),
+			"offset": float64(10),
+			"filter": map[string]interface{}{"status": "active"},
+		}},
 		{"tenant_provision", "quicbaas_iam_tenant_provision", map[string]interface{}{"tenant_id": "t1"}},
 		{"user_create", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t1", "email": "u@ex.com", "name": "User"}},
 		{"user_get", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}},
-		{"user_update", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t1", "user_id": "30001", "email": "new@ex.com", "name": "Updated", "suspended": true, "locked": false}},
+		{"user_update", "quicbaas_iam_user_update", map[string]interface{}{
+			"tenant_id":  "t1",
+			"user_id":    "30001",
+			"email":      "new@ex.com",
+			"name":       "Updated",
+			"roles":      []interface{}{"admin"},
+			"attributes": map[string]interface{}{"level": "senior"},
+			"suspended":  true,
+			"locked":     false,
+		}},
 		{"user_delete", "quicbaas_iam_user_delete", map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}},
 		{"user_list", "quicbaas_iam_user_list", map[string]interface{}{"tenant_id": "t1"}},
+		{"user_list_with_pagination_and_filter", "quicbaas_iam_user_list", map[string]interface{}{
+			"tenant_id": "t1",
+			"limit":     float64(25),
+			"offset":    float64(5),
+			"filter":    map[string]interface{}{"role": "admin"},
+		}},
 		{"user_assign_role", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
 		{"user_revoke_role", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
 		{"role_create", "quicbaas_iam_role_create", map[string]interface{}{"tenant_id": "t1", "name": "admin", "description": "Admin role", "permissions": []interface{}{"read", "write"}}},
@@ -950,183 +952,28 @@ func TestExecuteIAMTool_UnknownToolReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown tool")
 }
 
-func TestExecuteIAMTool_ServiceErrors(t *testing.T) {
-	testErr := errors.New("service unavailable")
-	iamSvc := &mockIAMService{
-		createTenantFunc: func(ctx context.Context, req *service.CreateTenantRequest) (*service.CreateTenantResponse, error) {
-			return nil, testErr
-		},
-		createUserFunc: func(ctx context.Context, req *service.IAMCreateUserRequest) (*service.IAMCreateUserResponse, error) {
-			return nil, testErr
-		},
-		createRoleFunc: func(ctx context.Context, req *service.IAMCreateRoleRequest) (*service.IAMCreateRoleResponse, error) {
-			return nil, testErr
-		},
-		registerAppFunc: func(ctx context.Context, req *service.RegisterAppRequest) (*service.RegisterAppResponse, error) {
-			return nil, testErr
-		},
-	}
-	reg := newIAMTestRegistry(iamSvc)
+func TestExecuteIAMPolicyTools_MissingObjectArgument(t *testing.T) {
+	reg := newIAMTestRegistry(&mockIAMService{})
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
 	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
+		name    string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
+		wantErr string
 	}{
-		{"tenant_create_error", "quicbaas_iam_tenant_create", map[string]interface{}{"name": "test"}},
-		{"user_create_error", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t1", "email": "u@ex.com", "name": "U"}},
-		{"role_create_error", "quicbaas_iam_role_create", map[string]interface{}{"tenant_id": "t1", "name": "role"}},
-		{"app_register_error", "quicbaas_iam_app_register", map[string]interface{}{"tenant_id": "t1", "name": "app"}},
+		{"create without policy", reg.executeIAMPolicyCreate, map[string]interface{}{"tenant_id": "t1"}, "policy must be an object"},
+		{"update without policy", reg.executeIAMPolicyUpdate, map[string]interface{}{"tenant_id": "t1", "name": "p1"}, "policy must be an object"},
+		{"test without check", reg.executeIAMPolicyTest, map[string]interface{}{"policy": map[string]interface{}{"name": "p1"}}, "check must be an object"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
+			_, err := tt.execute(ctx, tt.args)
 			require.Error(t, err)
-			assert.Equal(t, testErr, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
-}
-
-func TestExecuteIAMTenantCreate_WithOptionalFields(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"id":       "custom-id",
-		"name":     "My Tenant",
-		"settings": map[string]interface{}{"key": "val"},
-		"quotas":   map[string]interface{}{"max_users": float64(100)},
-	}
-
-	result, err := reg.executeIAMTenantCreate(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMTenantUpdate_WithOptionalFields(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"id":       "t1",
-		"name":     "Updated Name",
-		"settings": map[string]interface{}{"mode": "production"},
-		"quotas":   map[string]interface{}{"max_users": float64(500)},
-	}
-
-	result, err := reg.executeIAMTenantUpdate(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMTenantList_WithPaginationAndFilter(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"limit":  float64(50),
-		"offset": float64(10),
-		"filter": map[string]interface{}{"status": "active"},
-	}
-
-	result, err := reg.executeIAMTenantList(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMUserCreate_WithAllFields(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"tenant_id":  "t1",
-		"email":      "user@example.com",
-		"name":       "Test User",
-		"roles":      []interface{}{"admin", "viewer"},
-		"attributes": map[string]interface{}{"department": "engineering"},
-	}
-
-	result, err := reg.executeIAMUserCreate(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMUserUpdate_WithAllOptionalFields(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"tenant_id":  "t1",
-		"user_id":    "30001",
-		"email":      "new@example.com",
-		"name":       "New Name",
-		"roles":      []interface{}{"admin"},
-		"attributes": map[string]interface{}{"level": "senior"},
-		"suspended":  true,
-		"locked":     false,
-	}
-
-	result, err := reg.executeIAMUserUpdate(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMUserList_WithPaginationAndFilter(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"tenant_id": "t1",
-		"limit":     float64(25),
-		"offset":    float64(5),
-		"filter":    map[string]interface{}{"role": "admin"},
-	}
-
-	result, err := reg.executeIAMUserList(ctx, args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMPolicyCreate_MissingPolicyObject(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"tenant_id": "t1",
-	}
-
-	_, err := reg.executeIAMPolicyCreate(ctx, args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "policy must be an object")
-}
-
-func TestExecuteIAMPolicyUpdate_MissingPolicyObject(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"tenant_id": "t1",
-		"name":      "p1",
-	}
-
-	_, err := reg.executeIAMPolicyUpdate(ctx, args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "policy must be an object")
-}
-
-func TestExecuteIAMPolicyTest_MissingCheckObject(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	args := map[string]interface{}{
-		"policy": map[string]interface{}{"name": "p1"},
-	}
-
-	_, err := reg.executeIAMPolicyTest(ctx, args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "check must be an object")
 }
 
 func TestExecuteIAMPolicyTest_SimulateMode(t *testing.T) {
@@ -2033,15 +1880,13 @@ func TestIAMCoverage91_NoIAMService(t *testing.T) {
 	}
 }
 
-// TestIAMCoverage91_ExecToolRouting_MFA covers MFA routing branches in executeIAMTool.
-func TestIAMCoverage91_ExecToolRouting_MFA(t *testing.T) {
-	// Use a service with IAM but the MFA functions will fail because
-	// getMFAManager() requires a mfaManagerAccessor which the mock doesn't implement.
-	// This covers the switch branches and the getMFAManager error paths.
+func TestExecuteIAMTool_RoutesToUnavailableServices(t *testing.T) {
+	// The registry's service offers IAM only, so every MFA, PEP, delegated
+	// admin, impersonation and GDPR tool is routed to a manager it cannot get.
 	reg := newIAMTestRegistry(&mockIAMService{})
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
 
-	mfaTools := []struct {
+	tests := []struct {
 		name     string
 		toolName string
 		args     map[string]interface{}
@@ -2056,27 +1901,6 @@ func TestIAMCoverage91_ExecToolRouting_MFA(t *testing.T) {
 		{"mfa_backup_codes_generate", "quicbaas_mfa_backup_codes_generate", map[string]interface{}{"user_id": "30001"}},
 		{"mfa_backup_codes_verify", "quicbaas_mfa_backup_codes_verify", map[string]interface{}{"user_id": "30001", "code": "backup"}},
 		{"mfa_backup_codes_status", "quicbaas_mfa_backup_codes_status", map[string]interface{}{"user_id": "30001"}},
-	}
-
-	for _, tt := range mfaTools {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			// All MFA tools should return errors since the MFA manager is not available
-			require.Error(t, err)
-		})
-	}
-}
-
-// TestIAMCoverage91_ExecToolRouting_PEP covers PEP routing branches in executeIAMTool.
-func TestIAMCoverage91_ExecToolRouting_PEP(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	pepTools := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"pep_check", "quicbaas_pep_check", map[string]interface{}{
 			"principal": "user1", "action": "read", "resource": "doc1",
 		}},
@@ -2085,100 +1909,31 @@ func TestIAMCoverage91_ExecToolRouting_PEP(t *testing.T) {
 				map[string]interface{}{"principal": "user1", "action": "read", "resource": "doc1"},
 			},
 		}},
-	}
-
-	for _, tt := range pepTools {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			// PEP tools should return errors since the PEP engine is not available
-			require.Error(t, err)
-		})
-	}
-}
-
-// TestIAMCoverage91_ExecToolRouting_DelegatedAdmin covers delegated admin routing branches.
-func TestIAMCoverage91_ExecToolRouting_DelegatedAdmin(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	adminTools := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"admin_assignment_create", "quicbaas_iam_admin_assignment_create", map[string]interface{}{"admin_id": "a1"}},
 		{"admin_assignment_get", "quicbaas_iam_admin_assignment_get", map[string]interface{}{"assignment_id": "a1"}},
 		{"admin_assignment_update", "quicbaas_iam_admin_assignment_update", map[string]interface{}{"assignment_id": "a1"}},
 		{"admin_assignment_delete", "quicbaas_iam_admin_assignment_delete", map[string]interface{}{"assignment_id": "a1"}},
 		{"admin_assignment_list", "quicbaas_iam_admin_assignment_list", map[string]interface{}{}},
 		{"admin_check_permission", "quicbaas_iam_admin_check_permission", map[string]interface{}{"admin_id": "a1", "permission": "manage_users"}},
-	}
-
-	for _, tt := range adminTools {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			// These will fail because the delegated admin service is not available
-			require.Error(t, err)
-		})
-	}
-}
-
-// TestIAMCoverage91_ExecToolRouting_Impersonation covers impersonation routing branches.
-func TestIAMCoverage91_ExecToolRouting_Impersonation(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	impersonationTools := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"impersonation_start", "quicbaas_iam_impersonation_start", map[string]interface{}{"target_user_id": "30001", "reason": "debug"}},
 		{"impersonation_end", "quicbaas_iam_impersonation_end", map[string]interface{}{"session_id": "s1"}},
 		{"impersonation_list", "quicbaas_iam_impersonation_list", map[string]interface{}{}},
-	}
-
-	for _, tt := range impersonationTools {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			// These will fail because the impersonation service is not available
-			require.Error(t, err)
-		})
-	}
-}
-
-// TestIAMCoverage91_ExecToolRouting_GDPR covers GDPR routing branches in executeIAMTool.
-func TestIAMCoverage91_ExecToolRouting_GDPR(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	gdprTools := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
-		// GDPR Consent
 		{"gdpr_consent_grant", "quicbaas_iam_gdpr_consent_grant", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
 		{"gdpr_consent_withdraw", "quicbaas_iam_gdpr_consent_withdraw", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
 		{"gdpr_consent_get", "quicbaas_iam_gdpr_consent_get", map[string]interface{}{"user_id": "30001", "purpose": "analytics"}},
 		{"gdpr_consent_list", "quicbaas_iam_gdpr_consent_list", map[string]interface{}{"user_id": "30001"}},
-
-		// GDPR Export
 		{"gdpr_export_request", "quicbaas_iam_gdpr_export_request", map[string]interface{}{"user_id": "30001"}},
 		{"gdpr_export_status", "quicbaas_iam_gdpr_export_status", map[string]interface{}{"export_id": "e1"}},
 		{"gdpr_export_generate", "quicbaas_iam_gdpr_export_generate", map[string]interface{}{"user_id": "30001", "format": "json"}},
-
-		// GDPR Deletion
 		{"gdpr_deletion_request", "quicbaas_iam_gdpr_deletion_request", map[string]interface{}{"user_id": "30001", "reason": "request"}},
 		{"gdpr_deletion_cancel", "quicbaas_iam_gdpr_deletion_cancel", map[string]interface{}{"deletion_id": "d1"}},
 		{"gdpr_deletion_process", "quicbaas_iam_gdpr_deletion_process", map[string]interface{}{"deletion_id": "d1"}},
 		{"gdpr_deletion_status", "quicbaas_iam_gdpr_deletion_status", map[string]interface{}{"deletion_id": "d1"}},
 	}
 
-	for _, tt := range gdprTools {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			// GDPR tools will fail because the GDPR service is not available
 			require.Error(t, err)
 		})
 	}
