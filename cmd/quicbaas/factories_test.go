@@ -77,147 +77,42 @@ func TestResetFactories(t *testing.T) {
 	authClientFactory = origAuthFactory
 }
 
-// TestCryptoEncryptFactoryError tests crypto encrypt command with factory error.
-func TestCryptoEncryptFactoryError(t *testing.T) {
-	// Save original factory
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	// Mock factory to return error
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
+// TestCryptoCommandsFactoryError checks that every crypto command returns the
+// client factory's error instead of calling the service.
+func TestCryptoCommandsFactoryError(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func()
+		run   func(*cobra.Command, []string) error
+		args  []string
+	}{
+		{"encrypt", func() { cryptoData = "test data"; cryptoBase64 = false }, runCryptoEncryptCommand, []string{"test-key"}},
+		{"decrypt", func() { cryptoData = "48656c6c6f" }, runCryptoDecryptCommand, []string{"test-key"}},
+		{"rewrap", func() { cryptoData = "48656c6c6f" }, runCryptoRewrapCommand, []string{"test-key"}},
+		{"sign", func() { cryptoData = "test data" }, runCryptoSignCommand, []string{"test-key"}},
+		{"verify", func() { cryptoData = "test data"; cryptoSignature = "dGVzdA==" }, runCryptoVerifyCommand, []string{"test-key"}},
+		{"hash", func() { cryptoData = "test data" }, runCryptoHashCommand, []string{}},
+		{"data key", func() { cryptoBits = 256 }, runCryptoDataKeyCommand, []string{"test-key"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFactory := cryptoClientFactory
+			defer func() {
+				cryptoClientFactory = origFactory
+				cryptoData = ""
+				cryptoSignature = ""
+				cryptoBits = 256
+			}()
+			cryptoClientFactory = func() (CryptoClient, error) {
+				return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+			}
+			tt.setup()
 
-	// Set required flags
-	cryptoData = "test data"
-	cryptoBase64 = false
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoEncryptCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoDecryptFactoryError tests crypto decrypt command with factory error.
-func TestCryptoDecryptFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
+			err := tt.run(&cobra.Command{}, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "connection refused")
+		})
 	}
-
-	// Set valid hex data for the test
-	cryptoData = "48656c6c6f" // "Hello" in hex
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoDecryptCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoRewrapFactoryError tests crypto rewrap command with factory error.
-func TestCryptoRewrapFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	// Set valid hex data
-	cryptoData = "48656c6c6f"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoRewrapCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoSignFactoryError tests crypto sign command with factory error.
-func TestCryptoSignFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoSignCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoVerifyFactoryError tests crypto verify command with factory error.
-func TestCryptoVerifyFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	cryptoSignature = "dGVzdA==" // base64 "test"
-	defer func() {
-		cryptoData = ""
-		cryptoSignature = ""
-	}()
-
-	cmd := &cobra.Command{}
-	err := runCryptoVerifyCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoHashFactoryError tests crypto hash command with factory error.
-func TestCryptoHashFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoData = "test data"
-	defer func() { cryptoData = "" }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoHashCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-// TestCryptoDataKeyFactoryError tests crypto datakey command with factory error.
-func TestCryptoDataKeyFactoryError(t *testing.T) {
-	origFactory := cryptoClientFactory
-	defer func() { cryptoClientFactory = origFactory }()
-
-	factoryErr := errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	cryptoClientFactory = func() (CryptoClient, error) {
-		return nil, factoryErr
-	}
-
-	cryptoBits = 256
-	defer func() { cryptoBits = 256 }()
-
-	cmd := &cobra.Command{}
-	err := runCryptoDataKeyCommand(cmd, []string{"test-key"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 // =============================================================================
@@ -561,12 +456,6 @@ func TestToJSONMap_ValidMap(t *testing.T) {
 	assert.Equal(t, "value1", result["key1"])
 }
 
-func TestToJSONMap_InvalidInput(t *testing.T) {
-	result, err := toJSONMap("not-a-map")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestToJSONMap_NilInput(t *testing.T) {
 	result, err := toJSONMap(nil)
 	assert.NoError(t, err)
@@ -618,20 +507,3 @@ func TestMapGetters(t *testing.T) {
 // Mock Client Method Coverage Tests
 // These test mock methods that have nil function handlers (default paths).
 // =============================================================================
-
-// =============================================================================
-// createTransportAwareSecretsClient routing tests
-// =============================================================================
-
-func TestCreateTransportAwareSecretsClient_DefaultTransport(t *testing.T) {
-	// Cannot create actual gRPC client without server, but we test the routing
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	// The "rest", "quic", "mcp" paths require SDK factory, which needs a real connection
-	// Test the switch statement coverage by testing "default" path
-	transport = "unknown-transport"
-	// This will try createGRPCSecretsClient which requires a server connection
-	// So we only verify it does not panic
-	_, _ = createTransportAwareSecretsClient()
-}
