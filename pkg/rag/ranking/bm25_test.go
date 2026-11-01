@@ -439,6 +439,41 @@ func TestHybridRanker_RankWithMetadata_AllPaths(t *testing.T) {
 			wantErr: nil,
 			checkResults: func(t *testing.T, results []ScoredResult) {
 				assert.LessOrEqual(t, len(results), 1)
+				for _, r := range results {
+					assert.Greater(t, r.RerankScore, float32(0.0))
+				}
+			},
+		},
+		{
+			name: "reranker failure falls back to BM25 scores",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			reranker: &failingRerankerImpl{},
+			results: []Result{
+				{ID: "doc1", Content: "authentication handler implementation"},
+				{ID: "doc2", Content: "authentication database connection"},
+				{ID: "doc3", Content: "authentication api server"},
+			},
+			query:   "authentication",
+			wantErr: nil,
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 3)
+				hasPositiveScore := false
+				for _, r := range results {
+					if r.KeywordScore > 0 {
+						hasPositiveScore = true
+					}
+					assert.Equal(t, r.KeywordScore, r.FinalScore)
+					assert.Equal(t, float32(0.0), r.RerankScore)
+				}
+				assert.True(t, hasPositiveScore, "at least one result should have positive score")
 			},
 		},
 		{
@@ -536,6 +571,7 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 	tests := []struct {
 		name           string
 		config         Config
+		reranker       Reranker
 		vectorResults  []Result
 		keywordResults []Result
 		query          string
@@ -585,11 +621,119 @@ func TestHybridRanker_RankHybrid_AllPaths(t *testing.T) {
 				assert.Len(t, results, 2)
 			},
 		},
+		{
+			name: "reranking with topK less than fused results",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "vector1", VectorScore: 0.9},
+				{ID: "doc2", Content: "vector2", VectorScore: 0.8},
+			},
+			keywordResults: []Result{
+				{ID: "doc3", Content: "keyword1", KeywordScore: 0.7},
+				{ID: "doc4", Content: "keyword2", KeywordScore: 0.6},
+			},
+			query: "test",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.LessOrEqual(t, len(results), 2)
+			},
+		},
+		{
+			name: "reranker failure falls back to fused results",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  true,
+				RerankTopK:    2,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			reranker: &failingRerankerImpl{},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "auth", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "db"},
+			},
+			query: "test",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 2)
+				for _, r := range results {
+					assert.Equal(t, float32(0.0), r.RerankScore)
+				}
+			},
+		},
+		{
+			name: "pre-scored keyword results keep their scores",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  false,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "auth handler", VectorScore: 0.9},
+				{ID: "doc2", Content: "db connection", VectorScore: 0.8},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "db connection", KeywordScore: 5.5},
+				{ID: "doc3", Content: "api server", KeywordScore: 3.2},
+			},
+			query: "database",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				assert.Len(t, results, 3)
+				for _, r := range results {
+					assert.Greater(t, r.FinalScore, float32(0.0))
+				}
+			},
+		},
+		{
+			name: "zero keyword score is computed with BM25",
+			config: Config{
+				BM25K1:        1.2,
+				BM25B:         0.75,
+				EnableRerank:  false,
+				VectorWeight:  0.7,
+				KeywordWeight: 0.3,
+				RRFK:          60,
+			},
+			vectorResults: []Result{
+				{ID: "doc1", Content: "vector content", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc2", Content: "keyword content", KeywordScore: 0},
+			},
+			query: "content",
+			checkResults: func(t *testing.T, results []ScoredResult) {
+				var doc2Found bool
+				for _, r := range results {
+					if r.ID == "doc2" {
+						doc2Found = true
+						assert.Greater(t, r.KeywordScore, float32(0.0))
+					}
+				}
+				assert.True(t, doc2Found)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ranker := NewHybridRanker(tt.config, NewSimpleReranker())
+			reranker := tt.reranker
+			if reranker == nil {
+				reranker = NewSimpleReranker()
+			}
+			ranker := NewHybridRanker(tt.config, reranker)
 			results, err := ranker.RankHybrid(tt.vectorResults, tt.keywordResults, tt.query)
 
 			require.NoError(t, err)
@@ -848,40 +992,6 @@ func TestWeightedFusion_Fuse_HighScores(t *testing.T) {
 	}
 }
 
-// TestHybridRanker_RankWithMetadata_RerankingFailure tests reranking failure path
-func TestHybridRanker_RankWithMetadata_RerankingFailure(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	// Create a reranker that always fails
-	failingReranker := &failingRerankerImpl{}
-	ranker := NewHybridRanker(config, failingReranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "authentication handler implementation"},
-		{ID: "doc2", Content: "authentication database connection"},
-		{ID: "doc3", Content: "authentication api server"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "authentication", nil)
-
-	// Should not return error, should fall back to BM25 scores
-	require.NoError(t, err)
-	assert.Len(t, scored, 3)
-
-	// Verify scores are set (at least some should have positive scores)
-	hasPositiveScore := false
-	for i := range scored {
-		assert.GreaterOrEqual(t, scored[i].KeywordScore, float32(0.0))
-		if scored[i].KeywordScore > 0 {
-			hasPositiveScore = true
-		}
-		assert.Equal(t, scored[i].KeywordScore, scored[i].FinalScore)
-	}
-	assert.True(t, hasPositiveScore, "at least one result should have positive score")
-}
-
 // TestHybridRanker_RankHybrid_PreScoredKeywords tests path where keyword score already set
 func TestHybridRanker_RankHybrid_PreScoredKeywords(t *testing.T) {
 	config := DefaultConfig()
@@ -911,30 +1021,6 @@ func TestHybridRanker_RankHybrid_PreScoredKeywords(t *testing.T) {
 	}
 }
 
-// TestHybridRanker_RankHybrid_RerankingFailure tests reranking failure in hybrid path
-func TestHybridRanker_RankHybrid_RerankingFailure(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	failingReranker := &failingRerankerImpl{}
-	ranker := NewHybridRanker(config, failingReranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "auth", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "db", KeywordScore: 0},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	// Should not error, should fall back to fused results
-	require.NoError(t, err)
-	assert.NotEmpty(t, results)
-}
-
 // TestHybridRanker_RankWithMetadata_TopKGreaterThanResults tests topK boundary
 func TestHybridRanker_RankWithMetadata_TopKGreaterThanResults(t *testing.T) {
 	config := DefaultConfig()
@@ -954,29 +1040,6 @@ func TestHybridRanker_RankWithMetadata_TopKGreaterThanResults(t *testing.T) {
 	require.NoError(t, err)
 	// Should get all results, not limited by topK
 	assert.Len(t, scored, 2)
-}
-
-// TestHybridRanker_RankHybrid_TopKGreaterThanResults tests topK boundary in hybrid
-func TestHybridRanker_RankHybrid_TopKGreaterThanResults(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 100
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "content"},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 2)
 }
 
 // TestSimilarityReranker_Rerank_EmbeddingGenerationFailure tests partial embedding failures
@@ -1093,35 +1156,6 @@ func TestWeightedFusion_Fuse_VectorScoreGreaterThanOne(t *testing.T) {
 	assert.Greater(t, results[0].FinalScore, float32(0.0))
 }
 
-// TestHybridRanker_RankHybrid_KeywordScoreZero tests keyword scoring when score is 0
-func TestHybridRanker_RankHybrid_KeywordScoreZero(t *testing.T) {
-	config := DefaultConfig()
-	ranker := NewHybridRanker(config, NewSimpleReranker())
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "vector content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "keyword content", KeywordScore: 0}, // Zero score
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "content")
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, results)
-
-	// doc2 should have a non-zero keyword score after BM25 scoring
-	var doc2Found bool
-	for _, result := range results {
-		if result.ID == "doc2" {
-			doc2Found = true
-			assert.Greater(t, result.KeywordScore, float32(0.0))
-		}
-	}
-	assert.True(t, doc2Found)
-}
-
 func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 	bm25 := NewBM25(1.2, 0.75)
 
@@ -1164,28 +1198,6 @@ func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 			assert.Equal(t, float32(0.0), score)
 		})
 	}
-}
-
-// TestHybridRanker_RankWithMetadata_ExactTopKBoundary tests exact topK boundary condition
-func TestHybridRanker_RankWithMetadata_ExactTopKBoundary(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 3 // Exact same as result count
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content one"},
-		{ID: "doc2", Content: "test content two"},
-		{ID: "doc3", Content: "test content three"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// When topK equals result count, should get all results
-	assert.Len(t, scored, 3)
 }
 
 // TestHybridRanker_RankHybrid_ExactTopKBoundary tests exact topK boundary in hybrid mode
@@ -1380,33 +1392,6 @@ func TestWeightedFusion_Fuse_ScoreNormalizationEdgeCases(t *testing.T) {
 			results := wf.Fuse(tt.vectorResults, tt.keywordResults)
 			tt.checkFn(t, results)
 		})
-	}
-}
-
-// TestHybridRanker_RankWithMetadata_RerankTopKClamp tests topK clamping
-func TestHybridRanker_RankWithMetadata_RerankTopKClamp(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2 // Smaller than result set
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	results := []Result{
-		{ID: "doc1", Content: "test content one"},
-		{ID: "doc2", Content: "test content two"},
-		{ID: "doc3", Content: "test content three"},
-	}
-
-	scored, err := ranker.RankWithMetadata(results, "test", nil)
-
-	require.NoError(t, err)
-	// Should be clamped to topK
-	assert.LessOrEqual(t, len(scored), config.RerankTopK)
-
-	// Verify all results have rerank scores
-	for _, result := range scored {
-		assert.Greater(t, result.RerankScore, float32(0.0))
 	}
 }
 
