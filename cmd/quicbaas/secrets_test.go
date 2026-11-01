@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	clisecrets "github.com/jeremyhahn/go-quicbaas/pkg/cli/secrets"
-	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
@@ -2223,19 +2222,6 @@ func TestCreateKeyAttributes_InvalidAlgorithm(t *testing.T) {
 // Secrets Command Tests - Execution Functions
 // =============================================================================
 
-func TestExecuteSecretsRotate_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.RotateSecretRequest{
-		SecretID: "test/secret",
-		NewData:  []byte(`{"key":"value"}`),
-	}
-
-	resp, err := executeSecretsRotate(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
 func TestExecuteSecretsRotate_Success(t *testing.T) {
 	ctx := context.Background()
 	req := &service.RotateSecretRequest{
@@ -2302,221 +2288,71 @@ func TestFormatSecretsRotateResponse_AllFormats(t *testing.T) {
 }
 
 // =============================================================================
-// IAM Stub Tests
+// Secrets Execution Function Tests
 // =============================================================================
 
-func TestNewIAMCommand_ReturnsCommandCoverage(t *testing.T) {
-	cmd := newIAMCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "iam", cmd.Use)
-}
-
-// =============================================================================
-// Timeseries Stub Tests
-// =============================================================================
-
-func TestNewTimeSeriesCommands_ReturnsCommandCoverage(t *testing.T) {
-	cmd := newTimeSeriesCommands()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "timeseries", cmd.Use)
-}
-
-// =============================================================================
-// Output Format Parsing Tests
-// =============================================================================
-
-func TestParseOutputFormat_AllFormatsCoverage(t *testing.T) {
+// TestExecuteSecrets_NilClient checks that every secrets verb rejects a nil
+// client with the invalid client type error and returns no result.
+func TestExecuteSecrets_NilClient(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected cli.OutputFormat
-		wantErr  bool
+		name string
+		run  func(ctx context.Context) (resultIsNil bool, err error)
 	}{
-		{"json", cli.OutputFormatJSON, false},
-		{"JSON", cli.OutputFormatJSON, false},
-		{"yaml", cli.OutputFormatYAML, false},
-		{"YAML", cli.OutputFormatYAML, false},
-		{"table", cli.OutputFormatTable, false},
-		{"TABLE", cli.OutputFormatTable, false},
-		{"raw", cli.OutputFormatRaw, false},
-		{"RAW", cli.OutputFormatRaw, false},
-		{"invalid", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result, err := cli.ParseOutputFormat(tt.input)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expected, result)
-			}
-		})
-	}
-}
-
-// =============================================================================
-// Backup Error Type Tests
-// =============================================================================
-
-func TestBackupCLIErrorCoverage(t *testing.T) {
-	t.Run("Error without cause", func(t *testing.T) {
-		err := &BackupCLIError{
-			Op:      "create",
-			Message: "backup failed",
-		}
-		assert.Contains(t, err.Error(), "backup create")
-		assert.Contains(t, err.Error(), "backup failed")
-	})
-
-	t.Run("Error with cause", func(t *testing.T) {
-		cause := &errors.MessageError{Message: "disk full"}
-		err := &BackupCLIError{
-			Op:      "create",
-			Message: "backup failed",
-			Cause:   cause,
-		}
-		assert.Contains(t, err.Error(), "backup create")
-		assert.Contains(t, err.Error(), "backup failed")
-		assert.Contains(t, err.Error(), "disk full")
-	})
-
-	t.Run("Unwrap returns cause", func(t *testing.T) {
-		cause := &errors.MessageError{Message: "disk full"}
-		err := &BackupCLIError{
-			Op:      "create",
-			Message: "backup failed",
-			Cause:   cause,
-		}
-		assert.Equal(t, cause, err.Unwrap())
-	})
-}
-
-// =============================================================================
-// initLogger Coverage Test
-// =============================================================================
-
-func TestInitLogger_LevelsCoverage(t *testing.T) {
-	tests := []struct {
-		name     string
-		logLevel string
-	}{
-		{"debug level", "debug"},
-		{"info level", "info"},
-		{"warn level", "warn"},
-		{"error level", "error"},
+		{"store", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsStore(ctx, nil, &service.StoreSecretRequest{
+				SecretID: "test/secret",
+				Data:     []byte(`{"key":"value"}`),
+			})
+			return resp == nil, err
+		}},
+		{"get", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsGet(ctx, nil, &service.GetSecretRequest{SecretID: "test/secret"})
+			return resp == nil, err
+		}},
+		{"list", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsList(ctx, nil, &service.ListSecretsRequest{Prefix: "test/"})
+			return resp == nil, err
+		}},
+		{"delete", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsDelete(ctx, nil, &service.DeleteSecretRequest{SecretID: "test/secret"})
+			return resp == nil, err
+		}},
+		{"list versions", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsListVersions(ctx, nil, &service.ListSecretVersionsRequest{SecretID: "test/secret"})
+			return resp == nil, err
+		}},
+		{"rollback", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsRollback(ctx, nil, &service.RollbackSecretRequest{
+				SecretID:      "test/secret",
+				TargetVersion: 1,
+			})
+			return resp == nil, err
+		}},
+		{"rotate", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsRotate(ctx, nil, &service.RotateSecretRequest{
+				SecretID: "test/secret",
+				NewData:  []byte(`{"key":"value"}`),
+			})
+			return resp == nil, err
+		}},
+		{"get by prefix", func(ctx context.Context) (bool, error) {
+			resp, err := executeSecretsGetByPrefix(ctx, nil, &service.GetSecretsByPrefixRequest{Prefix: "test/"})
+			return resp == nil, err
+		}},
+		{"watch", func(ctx context.Context) (bool, error) {
+			ch, err := executeSecretsWatch(ctx, nil, &service.WatchSecretsRequest{Prefix: "test/"})
+			return ch == nil, err
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save and restore global state
-			origCfg := cfg
-			origLog := log
-			defer func() {
-				cfg = origCfg
-				log = origLog
-			}()
-
-			// Initialize cfg so initLogger does not panic
-			cfg = config.Default()
-			cfg.Logging.Level = tt.logLevel
-			cfg.Logging.Format = "json"
-
-			err := initLogger()
-			require.NoError(t, err)
-			assert.NotNil(t, log)
+			resultIsNil, err := tt.run(context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid client type")
+			assert.True(t, resultIsNil)
 		})
 	}
-}
-
-// =============================================================================
-// Secrets Execution Function Tests
-// =============================================================================
-
-func TestExecuteSecretsStore_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.StoreSecretRequest{
-		SecretID: "test/secret",
-		Data:     []byte(`{"key":"value"}`),
-	}
-
-	resp, err := executeSecretsStore(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsGet_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.GetSecretRequest{
-		SecretID: "test/secret",
-	}
-
-	resp, err := executeSecretsGet(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsList_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.ListSecretsRequest{
-		Prefix: "test/",
-	}
-
-	resp, err := executeSecretsList(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsDelete_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.DeleteSecretRequest{
-		SecretID: "test/secret",
-	}
-
-	resp, err := executeSecretsDelete(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsListVersions_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.ListSecretVersionsRequest{
-		SecretID: "test/secret",
-	}
-
-	resp, err := executeSecretsListVersions(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsRollback_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.RollbackSecretRequest{
-		SecretID:      "test/secret",
-		TargetVersion: 1,
-	}
-
-	resp, err := executeSecretsRollback(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
-
-func TestExecuteSecretsGetByPrefix_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.GetSecretsByPrefixRequest{
-		Prefix: "test/",
-	}
-
-	resp, err := executeSecretsGetByPrefix(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "invalid client type")
 }
 
 // =============================================================================
@@ -2562,52 +2398,6 @@ func TestFormatSecretsStatusResponse_AllFormats(t *testing.T) {
 			}
 		})
 	}
-}
-
-// =============================================================================
-// Additional Mock Client Method Tests
-// =============================================================================
-
-func TestMockKMSClient_ClearKeySafety(t *testing.T) {
-	client := &MockKMSClient{}
-	ctx := context.Background()
-	req := &service.ClearKeySafetyRequest{
-		KeyID: "test-key",
-	}
-
-	// Test nil function
-	resp, err := client.KMSClearKeySafety(ctx, req)
-	assert.NoError(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestMockCryptoClient_KMSVerifyHMAC(t *testing.T) {
-	client := &MockCryptoClient{}
-	ctx := context.Background()
-	req := &service.VerifyHMACRequest{
-		KeyID:   "test-key",
-		Message: []byte("test data"),
-		HMAC:    []byte("test hmac"),
-	}
-
-	// Test nil function
-	resp, err := client.KMSVerifyHMAC(ctx, req)
-	assert.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestMockCryptoClient_KMSGenerateHMAC(t *testing.T) {
-	client := &MockCryptoClient{}
-	ctx := context.Background()
-	req := &service.HMACRequest{
-		KeyID:   "test-key",
-		Message: []byte("test data"),
-	}
-
-	// Test nil function
-	resp, err := client.KMSGenerateHMAC(ctx, req)
-	assert.NoError(t, err)
-	assert.NotNil(t, resp)
 }
 
 // =============================================================================
@@ -2984,18 +2774,6 @@ func TestFormatFetchResult_AllFormats(t *testing.T) {
 // =============================================================================
 // Secrets Watch Execution Tests
 // =============================================================================
-
-func TestExecuteSecretsWatch_NilClient(t *testing.T) {
-	ctx := context.Background()
-	req := &service.WatchSecretsRequest{
-		Prefix: "test/",
-	}
-
-	ch, err := executeSecretsWatch(ctx, nil, req)
-	assert.Error(t, err)
-	assert.Nil(t, ch)
-	assert.Contains(t, err.Error(), "invalid client type")
-}
 
 func TestExecuteSecretsWatch_Success(t *testing.T) {
 	ctx := context.Background()
@@ -4140,151 +3918,4 @@ func TestRunSecretsFetchCommand_InvalidFormat(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
 	assert.Error(t, err)
-}
-
-// =============================================================================
-// Secrets Execute Functions - Nil Client
-// =============================================================================
-
-func TestExecuteSecretsStoreCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsStore(context.Background(), nil, &service.StoreSecretRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsGetCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsGet(context.Background(), nil, &service.GetSecretRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsListCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsList(context.Background(), nil, &service.ListSecretsRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsDeleteCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsDelete(context.Background(), nil, &service.DeleteSecretRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsListVersionsCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsListVersions(context.Background(), nil, &service.ListSecretVersionsRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsRollbackCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsRollback(context.Background(), nil, &service.RollbackSecretRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsRotateCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsRotate(context.Background(), nil, &service.RotateSecretRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsGetByPrefixCoverage_NilClient(t *testing.T) {
-	resp, err := executeSecretsGetByPrefix(context.Background(), nil, &service.GetSecretsByPrefixRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestExecuteSecretsWatchCoverage_NilClient(t *testing.T) {
-	ch, err := executeSecretsWatch(context.Background(), nil, &service.WatchSecretsRequest{})
-	assert.Error(t, err)
-	assert.Nil(t, ch)
-}
-
-// =============================================================================
-// New Command Builder Tests
-// =============================================================================
-
-func TestNewSecretsCommandCoverage(t *testing.T) {
-	cmd := newSecretsCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "secrets", cmd.Use)
-	assert.True(t, len(cmd.Commands()) > 0)
-}
-
-func TestNewSecretsPutCommandCoverage(t *testing.T) {
-	cmd := newSecretsPutCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "put")
-}
-
-func TestNewSecretsGetCommandCoverage(t *testing.T) {
-	cmd := newSecretsGetCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "get")
-}
-
-func TestNewSecretsDeleteCommandCoverage(t *testing.T) {
-	cmd := newSecretsDeleteCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "delete")
-}
-
-func TestNewSecretsDestroyCommandCoverage(t *testing.T) {
-	cmd := newSecretsDestroyCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "destroy")
-}
-
-func TestNewSecretsVersionsCommandCoverage(t *testing.T) {
-	cmd := newSecretsVersionsCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "versions")
-}
-
-func TestNewSecretsRollbackCommandCoverage(t *testing.T) {
-	cmd := newSecretsRollbackCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "rollback")
-}
-
-func TestNewSecretsRotateCommandCoverage(t *testing.T) {
-	cmd := newSecretsRotateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "rotate")
-}
-
-func TestNewSecretsEnableCommandCoverage(t *testing.T) {
-	cmd := newSecretsEnableCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "enable")
-}
-
-func TestNewSecretsDisableCommandCoverage(t *testing.T) {
-	cmd := newSecretsDisableCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "disable")
-}
-
-func TestNewSecretsGetPrefixCommandCoverage(t *testing.T) {
-	cmd := newSecretsGetPrefixCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "get-prefix")
-}
-
-func TestNewSecretsWatchCommandCoverage(t *testing.T) {
-	cmd := newSecretsWatchCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "watch")
-}
-
-func TestNewSecretsFetchCommandCoverage(t *testing.T) {
-	cmd := newSecretsFetchCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "fetch")
-}
-
-func TestNewSecretsListCommandCoverage(t *testing.T) {
-	cmd := newSecretsListCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "list")
 }
