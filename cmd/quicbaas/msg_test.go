@@ -2082,45 +2082,30 @@ func TestDisplayRebalanceReport_Formats(t *testing.T) {
 // Secrets Fetch - Additional Paths
 // =============================================================================
 
-func TestRunSecretsFetchCommand_FileFormatSuccess(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
+func TestRunSecretsFetchCommand_Formats(t *testing.T) {
+	for _, format := range []string{"env", "json"} {
+		t.Run(format, func(t *testing.T) {
+			mock := &mockSecretsClientForCoverage{}
+			cleanup := setupSecretsMock(t, mock)
+			defer cleanup()
 
-	origFmt := fetchFormat
-	origFetchOutputDir := fetchOutputDir
-	origFmt2 := secretsOutputFmt
-	defer func() {
-		fetchFormat = origFmt
-		fetchOutputDir = origFetchOutputDir
-		secretsOutputFmt = origFmt2
-	}()
-	fetchFormat = "env"
-	fetchOutputDir = t.TempDir()
-	secretsOutputFmt = "table"
+			origFmt := fetchFormat
+			origFetchOutputDir := fetchOutputDir
+			origOutputFmt := secretsOutputFmt
+			defer func() {
+				fetchFormat = origFmt
+				fetchOutputDir = origFetchOutputDir
+				secretsOutputFmt = origOutputFmt
+			}()
+			fetchFormat = format
+			fetchOutputDir = t.TempDir()
+			secretsOutputFmt = "table"
 
-	cmd := &cobra.Command{}
-	err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
-	assert.NoError(t, err)
-}
-
-func TestRunSecretsFetchCommand_JSONFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
-
-	origFmt := fetchFormat
-	origFetchOutputDir := fetchOutputDir
-	defer func() {
-		fetchFormat = origFmt
-		fetchOutputDir = origFetchOutputDir
-	}()
-	fetchFormat = "json"
-	fetchOutputDir = t.TempDir()
-
-	cmd := &cobra.Command{}
-	err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
-	assert.NoError(t, err)
+			cmd := &cobra.Command{}
+			err := runSecretsFetchCommand(cmd, []string{"apps/myapp/"})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -2181,32 +2166,22 @@ func TestRunSecretsPutCommand_JSONFormat(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunSecretsGetCommand_JSONFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
+func TestRunSecretsGetCommand_OutputFormats(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			mock := &mockSecretsClientForCoverage{}
+			cleanup := setupSecretsMock(t, mock)
+			defer cleanup()
 
-	origFmt := secretsOutputFmt
-	defer func() { secretsOutputFmt = origFmt }()
-	secretsOutputFmt = "json"
+			origFmt := secretsOutputFmt
+			defer func() { secretsOutputFmt = origFmt }()
+			secretsOutputFmt = format
 
-	cmd := &cobra.Command{}
-	err := runSecretsGetCommand(cmd, []string{"db/prod"})
-	assert.NoError(t, err)
-}
-
-func TestRunSecretsGetCommand_YAMLFormat(t *testing.T) {
-	mock := &mockSecretsClientForCoverage{}
-	cleanup := setupSecretsMock(t, mock)
-	defer cleanup()
-
-	origFmt := secretsOutputFmt
-	defer func() { secretsOutputFmt = origFmt }()
-	secretsOutputFmt = "yaml"
-
-	cmd := &cobra.Command{}
-	err := runSecretsGetCommand(cmd, []string{"db/prod"})
-	assert.NoError(t, err)
+			cmd := &cobra.Command{}
+			err := runSecretsGetCommand(cmd, []string{"db/prod"})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRunSecretsVersionsCommand_JSONFormat(t *testing.T) {
@@ -2272,24 +2247,24 @@ func TestNewRebalanceCommands_HasSubcommands(t *testing.T) {
 	assert.True(t, len(cmd.Commands()) >= 3)
 }
 
-func TestNewRebalanceStartCommand_HasFlags(t *testing.T) {
-	cmd := newRebalanceStartCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "start", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("dry-run"))
-	assert.NotNil(t, cmd.Flags().Lookup("follow"))
-}
-
-func TestNewRebalanceStatusCommand_HasFlags(t *testing.T) {
-	cmd := newRebalanceStatusCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "status", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("operation"))
-}
-
-func TestNewRebalancePlanCommand_HasFlags(t *testing.T) {
-	cmd := newRebalancePlanCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "plan", cmd.Use)
-	assert.NotNil(t, cmd.Flags().Lookup("output"))
+func TestNewRebalanceSubcommands_HaveFlags(t *testing.T) {
+	tests := []struct {
+		factory func() *cobra.Command
+		use     string
+		flags   []string
+	}{
+		{factory: newRebalanceStartCommand, use: "start", flags: []string{"dry-run", "follow"}},
+		{factory: newRebalanceStatusCommand, use: "status", flags: []string{"operation"}},
+		{factory: newRebalancePlanCommand, use: "plan", flags: []string{"output"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.use, func(t *testing.T) {
+			cmd := tt.factory()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tt.use, cmd.Use)
+			for _, flag := range tt.flags {
+				assert.NotNil(t, cmd.Flags().Lookup(flag), "flag %s", flag)
+			}
+		})
+	}
 }
