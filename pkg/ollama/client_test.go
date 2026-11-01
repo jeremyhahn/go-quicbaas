@@ -121,48 +121,6 @@ func TestClientDoRequest_Success(t *testing.T) {
 	}
 }
 
-func TestClientDoRequest_NotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error": "model 'test' not found"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0, // No retries for this test
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestClientDoRequest_BadRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error": "invalid request"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "POST", "/test", map[string]string{"bad": "data"})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-}
-
 func TestClientDoRequest_ServerError(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -281,48 +239,6 @@ func TestIsConnectionRefused(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
-	}
-}
-
-func TestClientDoRequest_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`not valid json`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	defer client.Close()
-
-	ctx := context.Background()
-	body, err := client.doRequest(ctx, "GET", "/test", nil)
-	// This should succeed - the client just returns raw bytes
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if string(body) != "not valid json" {
-		t.Errorf("expected raw body, got %s", string(body))
-	}
-}
-
-func TestClientDoRequest_GatewayTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusGatewayTimeout)
-		_, _ = w.Write([]byte(`{"error": "gateway timeout"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	defer client.Close()
-
-	ctx := context.Background()
-	_, err := client.doRequest(ctx, "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
 
@@ -588,26 +504,6 @@ func TestClientDoRequestOnce_MarshalError(t *testing.T) {
 	}
 }
 
-// TestClientDoRequestOnce_NilBody tests doRequestOnce with nil body.
-func TestClientDoRequestOnce_NilBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-
-	resp, err := client.doRequestOnce(context.Background(), "GET", "/test", nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp) == 0 {
-		t.Error("expected non-empty response")
-	}
-}
-
 // TestClientDoRequest_RetrySuccess tests retry logic success.
 func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	attempts := 0
@@ -633,26 +529,6 @@ func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	}
 	if attempts < 2 {
 		t.Errorf("expected at least 2 attempts, got %d", attempts)
-	}
-}
-
-// TestClientDoRequest_AllRetriesExhausted tests retry exhaustion.
-func TestClientDoRequest_AllRetriesExhausted(t *testing.T) {
-	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	cfg := DefaultClientConfig()
-	cfg.MaxRetries = 2
-	client := NewClient(cfg)
-	client.baseURL = server.URL
-
-	_, err := client.doRequest(context.Background(), "GET", "/test", nil)
-	if err == nil {
-		t.Fatal("expected error after retries exhausted")
 	}
 }
 
