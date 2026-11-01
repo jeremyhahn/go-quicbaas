@@ -432,18 +432,51 @@ func captureStdoutOutput(fn func()) string {
 // Print Functions Coverage Tests
 // =============================================================================
 
-func TestClusterStatusJSONNilValues(t *testing.T) {
-	// Test with minimal status
-	status := map[string]interface{}{
-		"healthy": false,
+func TestPrintClusterStatusJSON_Inputs(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       interface{}
+		wantContains []string
+	}{
+		{
+			name:         "minimal map",
+			status:       map[string]interface{}{"healthy": false},
+			wantContains: []string{"healthy"},
+		},
+		{
+			name: "map with nodes",
+			status: map[string]interface{}{
+				"healthy":  true,
+				"leader":   "node1",
+				"nodes":    []interface{}{"node1", "node2"},
+				"replicas": 2,
+			},
+			wantContains: []string{"healthy", "node1"},
+		},
+		{
+			name: "cluster status response",
+			status: &cli.ClusterStatusResponse{
+				Healthy:    true,
+				LeaderID:   1,
+				NodeCount:  3,
+				ReadyNodes: 3,
+				Nodes: []cli.NodeInfo{
+					{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true},
+				},
+			},
+			wantContains: []string{"10.0.0.1:50051"},
+		},
 	}
-
-	output := captureStdoutOutput(func() {
-		err := printClusterStatusJSON(status)
-		assert.NoError(t, err)
-	})
-
-	assert.Contains(t, output, "healthy")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureStdoutOutput(func() {
+				assert.NoError(t, printClusterStatusJSON(tt.status))
+			})
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -486,27 +519,6 @@ func TestCacheCommands_NilConfig(t *testing.T) {
 			}
 		})
 	}
-}
-
-// =============================================================================
-// Print Cluster Status Tests
-// =============================================================================
-
-func TestPrintClusterStatusJSONWithNodesOpt(t *testing.T) {
-	status := map[string]interface{}{
-		"healthy":  true,
-		"leader":   "node1",
-		"nodes":    []interface{}{"node1", "node2"},
-		"replicas": 2,
-	}
-
-	output := captureStdoutOutput(func() {
-		err := printClusterStatusJSON(status)
-		assert.NoError(t, err)
-	})
-
-	assert.Contains(t, output, "healthy")
-	assert.Contains(t, output, "node1")
 }
 
 // =============================================================================
@@ -798,20 +810,6 @@ func TestFormatObjectLifecycleResponse_Inputs(t *testing.T) {
 // Cluster Output Formatting
 // =============================================================================
 
-func TestPrintClusterStatusJSON_Success(t *testing.T) {
-	status := &cli.ClusterStatusResponse{
-		Healthy:    true,
-		LeaderID:   1,
-		NodeCount:  3,
-		ReadyNodes: 3,
-		Nodes: []cli.NodeInfo{
-			{NodeID: 1, Address: "10.0.0.1:50051", IsLeader: true, IsHealthy: true},
-		},
-	}
-	err := printClusterStatusJSON(status)
-	assert.NoError(t, err)
-}
-
 func TestPrintClusterStatusTableCLI_Inputs(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -856,6 +854,10 @@ func TestPrintClusterStatusTableCLI_Inputs(t *testing.T) {
 					{LeaderID: 2, MemberCount: 3},
 				},
 			},
+		},
+		{
+			name:   "empty nodes",
+			status: &cli.ClusterStatusResponse{Healthy: true, LeaderID: 1, NodeCount: 0, ReadyNodes: 0, Nodes: []cli.NodeInfo{}},
 		},
 		{name: "non-status type falls back to json", status: map[string]string{"status": "ok"}},
 	}
@@ -1600,19 +1602,6 @@ func TestRemaining91_CreateOllamaClient_GRPCDefault(t *testing.T) {
 	}
 }
 
-func TestRemaining91_CreateOllamaGRPCClient_Success(t *testing.T) {
-	origAddr := address
-	origTimeout := globalTimeout
-	defer func() { address = origAddr; globalTimeout = origTimeout }()
-	address = "localhost:19992"
-	globalTimeout = 1 * time.Second
-	client, err := createOllamaGRPCClient()
-	if err == nil {
-		assert.NotNil(t, client)
-		client.Close()
-	}
-}
-
 // factories_mcp_crypto.go coverage
 
 func TestRemaining91_ParseCryptoEncryptResponse_InvalidInput(t *testing.T) {
@@ -1856,22 +1845,6 @@ func TestRemaining91_CreateSecretsGRPCClient_K8sAuthNoToken(t *testing.T) {
 
 // Cluster display helpers
 
-func TestRemaining91_PrintClusterStatusTableCLI_NotClusterStatusResponse(t *testing.T) {
-	err := printClusterStatusTableCLI(map[string]string{"foo": "bar"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_PrintClusterStatusTableCLI_EmptyNodes(t *testing.T) {
-	status := &cli.ClusterStatusResponse{Healthy: true, LeaderID: 1, NodeCount: 0, ReadyNodes: 0, Nodes: []cli.NodeInfo{}}
-	err := printClusterStatusTableCLI(status)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_PrintClusterStatusJSON_Success(t *testing.T) {
-	err := printClusterStatusJSON(map[string]string{"status": "healthy"})
-	assert.NoError(t, err)
-}
-
 // Node display helpers
 
 func TestRemaining91_DisplayNodeState_InvalidFormat(t *testing.T) {
@@ -1883,47 +1856,55 @@ func TestRemaining91_DisplayNodeState_InvalidFormat(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRemaining91_DisplayNodeReplacementReport_InvalidFormat(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "xml_invalid"
-	report := &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.Error(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_JSONFormat(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "json"
-	now := time.Now()
-	report := &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 100, BytesEvacuated: 4096, Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_Removal(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "table"
-	now := time.Now()
-	report := &NodeReplacementReport{OldNodeID: "removed-1", NewNodeID: "", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 50, BytesEvacuated: 2048, Success: true}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_DisplayNodeReplacementReport_WithErrors(t *testing.T) {
-	origFmt := nodeOutputFormat
-	defer func() { nodeOutputFormat = origFmt }()
-	nodeOutputFormat = "table"
+func TestRemaining91_DisplayNodeReplacementReport(t *testing.T) {
 	now := time.Now()
 	errs := make([]string, 7)
 	for i := range errs {
 		errs[i] = errors.Newf(errors.ErrInternal, "test", "error %d", i).Error()
 	}
-	report := &NodeReplacementReport{OldNodeID: "old-err", NewNodeID: "new-err", StartTime: now.Add(-time.Minute), EndTime: now.Add(time.Minute), Duration: 2 * time.Minute, KeysEvacuated: 200, BytesEvacuated: 8192, VerificationTime: 30 * time.Second, Success: false, Errors: errs}
-	err := displayNodeReplacementReport(report)
-	assert.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		format  string
+		report  *NodeReplacementReport
+		wantErr bool
+	}{
+		{
+			name:    "invalid format",
+			format:  "xml_invalid",
+			report:  &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", Success: true},
+			wantErr: true,
+		},
+		{
+			name:   "json",
+			format: "json",
+			report: &NodeReplacementReport{OldNodeID: "old-1", NewNodeID: "new-1", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 100, BytesEvacuated: 4096, Success: true},
+		},
+		{
+			name:   "table removal",
+			format: "table",
+			report: &NodeReplacementReport{OldNodeID: "removed-1", NewNodeID: "", StartTime: now, EndTime: now.Add(time.Minute), Duration: time.Minute, KeysEvacuated: 50, BytesEvacuated: 2048, Success: true},
+		},
+		{
+			name:   "table with errors",
+			format: "table",
+			report: &NodeReplacementReport{OldNodeID: "old-err", NewNodeID: "new-err", StartTime: now.Add(-time.Minute), EndTime: now.Add(time.Minute), Duration: 2 * time.Minute, KeysEvacuated: 200, BytesEvacuated: 8192, VerificationTime: 30 * time.Second, Success: false, Errors: errs},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origFmt := nodeOutputFormat
+			defer func() { nodeOutputFormat = origFmt }()
+			nodeOutputFormat = tt.format
+
+			err := displayNodeReplacementReport(tt.report)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // Cache enable/disable with valid config
