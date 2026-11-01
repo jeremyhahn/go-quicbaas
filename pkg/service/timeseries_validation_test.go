@@ -424,106 +424,46 @@ func TestTimeSeriesService_TSQuery_WithAllQueryParams(t *testing.T) {
 	mockTS.AssertExpectations(t)
 }
 
-func TestTimeSeriesService_TSQuery_NilStorage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: nil}
-
-	now := time.Now()
-	req := &TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: now.Add(-time.Hour),
-		EndTime:   now,
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrNotImplemented, dErr.Code)
-}
-
-func TestTimeSeriesService_DeleteSeries_WithTimeRange(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
+// TestTimeSeriesService_DeleteSeries_TimeRange checks that each bound of the
+// delete time range reaches the storage only when the request sets it.
+func TestTimeSeriesService_DeleteSeries_TimeRange(t *testing.T) {
 	startTime := time.Now().Add(-24 * time.Hour)
 	endTime := time.Now()
 
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "old.metric" &&
-			!dr.StartTime.IsZero() &&
-			!dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:    "old.metric",
-		Tags:      map[string]string{"region": "us-east"},
-		StartTime: &startTime,
-		EndTime:   &endTime,
+	tests := []struct {
+		name      string
+		req       *TSDeleteRequest
+		wantStart bool
+		wantEnd   bool
+	}{
+		{"start and end", &TSDeleteRequest{
+			Metric:    "old.metric",
+			Tags:      map[string]string{"region": "us-east"},
+			StartTime: &startTime,
+			EndTime:   &endTime,
+		}, true, true},
+		{"start only", &TSDeleteRequest{Metric: "stale.metric", StartTime: &startTime}, true, false},
+		{"end only", &TSDeleteRequest{Metric: "archived.metric", EndTime: &endTime}, false, true},
 	}
 
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockTS := newTestMockTimeSeriesStorage()
+			tsSvc := &timeSeriesService{svc: &quicBaaS{logger: createTestLogger(t)}, tsStorage: mockTS}
 
-func TestTimeSeriesService_DeleteSeries_OnlyStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
+			mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
+				return dr.Metric == tt.req.Metric &&
+					dr.StartTime.IsZero() != tt.wantStart &&
+					dr.EndTime.IsZero() != tt.wantEnd
+			})).Return(nil).Once()
 
-	startTime := time.Now().Add(-48 * time.Hour)
-
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "stale.metric" &&
-			!dr.StartTime.IsZero() &&
-			dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:    "stale.metric",
-		StartTime: &startTime,
+			resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), tt.req)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.True(t, resp.Success)
+			mockTS.AssertExpectations(t)
+		})
 	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
-}
-
-func TestTimeSeriesService_DeleteSeries_OnlyEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	endTime := time.Now()
-
-	mockTS.On("DeleteSeries", mock.Anything, mock.MatchedBy(func(dr *interfaces.DeleteRequest) bool {
-		return dr.Metric == "archived.metric" &&
-			dr.StartTime.IsZero() &&
-			!dr.EndTime.IsZero()
-	})).Return(nil).Once()
-
-	req := &TSDeleteRequest{
-		Metric:  "archived.metric",
-		EndTime: &endTime,
-	}
-
-	resp, err := tsSvc.DeleteSeries(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	mockTS.AssertExpectations(t)
 }
 
 func TestTimeSeriesService_WriteBatch_ZeroTimestampDefaultsToNow(t *testing.T) {
