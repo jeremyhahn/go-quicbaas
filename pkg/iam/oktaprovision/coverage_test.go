@@ -190,49 +190,62 @@ func TestProvisionApp_ExistingAppUpdated(t *testing.T) {
 	}
 }
 
-func TestEnsureApp_FindError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", errStatus(http.StatusForbidden, "E0000006", "no access"))
-	p := newTestProvisioner(t, r)
-	_, _, err := p.ensureApp(context.Background(), "https://acme.okta.com", sampleRequest())
-	assertProvOp(t, err, "find_app")
-}
-
-func TestEnsureApp_GetAppError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", okJSON([]map[string]interface{}{{"id": "app-x", "label": "Acme App"}}))
-	r.on("GET", "/api/v1/apps/app-x", errStatus(http.StatusInternalServerError, "E0000009", "boom"))
-	p := newTestProvisioner(t, r)
-	_, _, err := p.ensureApp(context.Background(), "https://acme.okta.com", sampleRequest())
-	assertProvOp(t, err, "get_app")
-}
-
-func TestEnsureApp_UpdateAppError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", okJSON([]map[string]interface{}{{"id": "app-x", "label": "Acme App"}}))
-	r.on("GET", "/api/v1/apps/app-x", okJSON(map[string]interface{}{"id": "app-x"}))
-	r.on("PUT", "/api/v1/apps/app-x", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	_, _, err := p.ensureApp(context.Background(), "https://acme.okta.com", sampleRequest())
-	assertProvOp(t, err, "update_app")
-}
-
-// -------------------- getApp / updateApp decode errors --------------------
-
-func TestGetApp_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps/app-x", rawBody(http.StatusOK, "not-json"))
-	p := newTestProvisioner(t, r)
-	_, err := p.getApp(context.Background(), "https://acme.okta.com", "tok", "app-x")
-	assertProvOp(t, err, "get_app")
-}
-
-func TestUpdateApp_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("PUT", "/api/v1/apps/app-x", rawBody(http.StatusOK, "not-json"))
-	p := newTestProvisioner(t, r)
-	_, err := p.updateApp(context.Background(), "https://acme.okta.com", "tok", "app-x", map[string]interface{}{})
-	assertProvOp(t, err, "update_app")
+func TestEnsureApp_Errors(t *testing.T) {
+	found := okJSON([]map[string]interface{}{{"id": "app-x", "label": "Acme App"}})
+	tests := []struct {
+		name   string
+		find   http.HandlerFunc
+		get    http.HandlerFunc
+		update http.HandlerFunc
+		wantOp string
+	}{
+		{
+			name:   "find error",
+			find:   errStatus(http.StatusForbidden, "E0000006", "no access"),
+			wantOp: "find_app",
+		},
+		{
+			name:   "get error",
+			find:   found,
+			get:    errStatus(http.StatusInternalServerError, "E0000009", "boom"),
+			wantOp: "get_app",
+		},
+		{
+			name:   "get decode error",
+			find:   found,
+			get:    rawBody(http.StatusOK, "not-json"),
+			wantOp: "get_app",
+		},
+		{
+			name:   "update error",
+			find:   found,
+			get:    okJSON(map[string]interface{}{"id": "app-x"}),
+			update: errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			wantOp: "update_app",
+		},
+		{
+			name:   "update decode error",
+			find:   found,
+			get:    okJSON(map[string]interface{}{"id": "app-x"}),
+			update: rawBody(http.StatusOK, "not-json"),
+			wantOp: "update_app",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			r.on("GET", "/api/v1/apps", tc.find)
+			if tc.get != nil {
+				r.on("GET", "/api/v1/apps/app-x", tc.get)
+			}
+			if tc.update != nil {
+				r.on("PUT", "/api/v1/apps/app-x", tc.update)
+			}
+			p := newTestProvisioner(t, r)
+			_, _, err := p.ensureApp(context.Background(), "https://acme.okta.com", sampleRequest())
+			assertProvOp(t, err, tc.wantOp)
+		})
+	}
 }
 
 // -------------------- mergeAppUpdate (nil/non-map branches) --------------------
