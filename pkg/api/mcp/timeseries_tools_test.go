@@ -535,65 +535,86 @@ func TestTimeSeriesRetention_GetMissingMetric(t *testing.T) {
 }
 
 func TestTimeSeriesRetention_SetSuccess(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
-		"metric":           "cpu.usage",
-		"duration_seconds": float64(86400),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestTimeSeriesRetention_SetMissingFields(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
-
 	tests := []struct {
-		name        string
-		args        map[string]interface{}
-		errContains string
+		name string
+		args map[string]interface{}
 	}{
-		{"missing metric", map[string]interface{}{"duration_seconds": float64(86400)}, "metric"},
-		// Note: duration_seconds defaults to 0 if not provided, which is accepted by the implementation
-		// The schema marks it as required, but the implementation doesn't validate at runtime
+		{
+			name: "duration",
+			args: map[string]interface{}{
+				"metric":           "cpu.usage",
+				"duration_seconds": float64(86400),
+			},
+		},
+		{
+			name: "all options",
+			args: map[string]interface{}{
+				"metric":             "cpu.usage",
+				"duration_seconds":   float64(86400 * 30),
+				"resolution_seconds": float64(60),
+				"aggregation":        "avg",
+			},
+		},
+		{
+			// The schema marks duration_seconds as required, but the
+			// implementation defaults it to 0 and accepts that.
+			name: "duration omitted defaults to zero",
+			args: map[string]interface{}{"metric": "cpu.usage"},
+		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", tc.args)
-			require.Error(t, err)
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), tc.errContains)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_set_retention_policy", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
 		})
 	}
 }
 
-func TestTimeSeriesRetention_SetWithZeroDuration(t *testing.T) {
-	// Test that zero duration is accepted (implementation allows it)
+func TestTimeSeriesRetention_SetMissingMetric(t *testing.T) {
 	registry := newTSRegistry(t)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
-		"metric": "cpu.usage",
-		// duration_seconds not provided, defaults to 0
+	result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_set_retention_policy", map[string]interface{}{
+		"duration_seconds": float64(86400),
 	})
-	// This should succeed since the implementation doesn't validate duration > 0
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "metric")
 }
 
-func TestTimeSeriesListMetrics_ExecuteSuccess(t *testing.T) {
-	registry := newTSRegistry(t)
-	ctx := context.Background()
+func TestTimeSeriesListMetrics_Success(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+	}{
+		{
+			name: "no params",
+			args: map[string]interface{}{},
+		},
+		{
+			name: "all params",
+			args: map[string]interface{}{
+				"prefix": "cpu.",
+				"tags":   `{"host":"server-1"}`,
+				"limit":  float64(50),
+				"cursor": "cursor-123",
+			},
+		},
+	}
 
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := newTSRegistry(t)
+			result, err := registry.ExecuteTool(context.Background(), "qrdb_ts_list_metrics", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
-func TestIsTimeSeriesTool_Coverage(t *testing.T) {
+func TestIsTimeSeriesTool(t *testing.T) {
 	tsTools := []string{
 		"qrdb_ts_write_point", "qrdb_ts_write_batch",
 		"qrdb_ts_query", "qrdb_ts_delete_series",
@@ -619,7 +640,7 @@ func TestTimeSeriesErrorTypes(t *testing.T) {
 	})
 }
 
-func TestGetInt64_Coverage(t *testing.T) {
+func TestGetInt64(t *testing.T) {
 	tests := []struct {
 		name     string
 		args     map[string]interface{}
@@ -627,10 +648,14 @@ func TestGetInt64_Coverage(t *testing.T) {
 		expected int64
 	}{
 		{"float64", map[string]interface{}{"v": float64(42)}, "v", 42},
+		{"float64 zero", map[string]interface{}{"v": float64(0)}, "v", 0},
+		{"float64 large", map[string]interface{}{"v": float64(9999999999)}, "v", 9999999999},
+		{"float64 negative", map[string]interface{}{"v": float64(-500)}, "v", -500},
 		{"int", map[string]interface{}{"v": int(10)}, "v", 10},
 		{"int64", map[string]interface{}{"v": int64(100)}, "v", 100},
 		{"uint64", map[string]interface{}{"v": uint64(200)}, "v", 200},
-		{"string", map[string]interface{}{"v": "999"}, "v", 999},
+		{"numeric string", map[string]interface{}{"v": "999"}, "v", 999},
+		{"non-numeric string", map[string]interface{}{"v": "string"}, "v", 0},
 		{"empty string", map[string]interface{}{"v": ""}, "v", 0},
 		{"missing", map[string]interface{}{}, "v", 0},
 		{"nil", map[string]interface{}{"v": nil}, "v", 0},
@@ -643,7 +668,7 @@ func TestGetInt64_Coverage(t *testing.T) {
 	}
 }
 
-func TestParseTagsJSON_Coverage(t *testing.T) {
+func TestParseTagsJSON(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    map[string]interface{}
@@ -690,22 +715,8 @@ func newTSRegistryForCoverage(t *testing.T) *ToolRegistry {
 // Time Series List Metrics Tests
 // =============================================================================
 
-func TestTimeSeriesListMetrics_WithAllParams(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{
-		"prefix": "cpu.",
-		"tags":   `{"host":"server-1"}`,
-		"limit":  float64(50),
-		"cursor": "cursor-123",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestTimeSeriesListMetrics_WithInvalidTags(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
+	registry := newTSRegistry(t)
 	ctx := context.Background()
 
 	result, err := registry.ExecuteTool(ctx, "qrdb_ts_list_metrics", map[string]interface{}{
@@ -720,46 +731,9 @@ func TestTimeSeriesListMetrics_WithInvalidTags(t *testing.T) {
 // Time Series Retention Policy Tests - additional coverage
 // =============================================================================
 
-func TestTimeSeriesSetRetentionPolicy_WithAllOptions(t *testing.T) {
-	registry := newTSRegistryForCoverage(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "qrdb_ts_set_retention_policy", map[string]interface{}{
-		"metric":             "cpu.usage",
-		"duration_seconds":   float64(86400 * 30), // 30 days
-		"resolution_seconds": float64(60),
-		"aggregation":        "avg",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 // =============================================================================
 // getInt64 Tests - additional coverage
 // =============================================================================
-
-func TestGetInt64_AllBranches(t *testing.T) {
-	tests := []struct {
-		name     string
-		args     map[string]interface{}
-		key      string
-		expected int64
-	}{
-		{"float64 value", map[string]interface{}{"key": float64(100)}, "key", 100},
-		{"missing key", map[string]interface{}{}, "key", 0},
-		{"zero value", map[string]interface{}{"key": float64(0)}, "key", 0},
-		{"large value", map[string]interface{}{"key": float64(9999999999)}, "key", 9999999999},
-		{"negative value", map[string]interface{}{"key": float64(-500)}, "key", -500},
-		{"non-float64 value", map[string]interface{}{"key": "string"}, "key", 0},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := getInt64(tc.args, tc.key)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
 
 // =============================================================================
 // Scheduler Job History Tests - with executions
