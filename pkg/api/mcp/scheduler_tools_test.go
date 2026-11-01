@@ -158,14 +158,34 @@ func TestSchedulerGetJob_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestSchedulerGetJob_MissingID(t *testing.T) {
+// TestSchedulerTools_MissingID checks that every job-scoped scheduler tool
+// rejects a call without job_id before it reaches the scheduler service.
+func TestSchedulerTools_MissingID(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
+	tests := []struct {
+		tool string
+		args map[string]interface{}
+	}{
+		{"quicbaas_scheduler_get_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_update_job", map[string]interface{}{"name": "test"}},
+		{"quicbaas_scheduler_delete_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_trigger_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_pause_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_resume_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_cancel_job", map[string]interface{}{}},
+		{"quicbaas_scheduler_job_history", map[string]interface{}{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.tool, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), "job_id is required")
+		})
+	}
 }
 
 func TestSchedulerGetJob_ServiceError(t *testing.T) {
@@ -196,17 +216,6 @@ func TestSchedulerUpdateJob_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestSchedulerUpdateJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"name": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestSchedulerListJobs_Success(t *testing.T) {
@@ -242,15 +251,6 @@ func TestSchedulerDeleteJob_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestSchedulerDeleteJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_delete_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestSchedulerTriggerJob_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
@@ -260,15 +260,6 @@ func TestSchedulerTriggerJob_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestSchedulerTriggerJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_trigger_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestSchedulerPauseJob_Success(t *testing.T) {
@@ -282,15 +273,6 @@ func TestSchedulerPauseJob_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestSchedulerPauseJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_pause_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestSchedulerResumeJob_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
@@ -300,15 +282,6 @@ func TestSchedulerResumeJob_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestSchedulerResumeJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_resume_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestSchedulerCancelJob_Success(t *testing.T) {
@@ -322,15 +295,6 @@ func TestSchedulerCancelJob_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestSchedulerCancelJob_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_cancel_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestSchedulerJobHistory_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
@@ -340,15 +304,6 @@ func TestSchedulerJobHistory_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestSchedulerJobHistory_MissingID(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_job_history", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestSchedulerStatus_Success(t *testing.T) {
@@ -738,105 +693,6 @@ func TestExecuteSchedulerListJobs_WithPagination(t *testing.T) {
 // =============================================================================
 // Scheduler Tool Validation Tests
 // =============================================================================
-
-func TestExecuteSchedulerGetJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id is missing
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerDeleteJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_delete_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerPauseJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_pause_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerResumeJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_resume_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerTriggerJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_trigger_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerCancelJob_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_cancel_job", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
-
-func TestExecuteSchedulerJobHistory_MissingJobID(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_job_history", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "job_id is required")
-}
 
 // =============================================================================
 // Scheduler Update Job Tests (coverage at 40.6%)
