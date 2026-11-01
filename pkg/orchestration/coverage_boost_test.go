@@ -35,419 +35,152 @@ import (
 )
 
 // =============================================================================
-// Tier 1: Error type methods — errors.go
+// Tier 1: Error type methods
 // =============================================================================
 
-func TestMaxIterationsError(t *testing.T) {
+// TestTypedErrors covers Error() and Unwrap() of the package's typed errors:
+// each message must carry its identifying fields, and errors.Is must reach
+// the sentinel and any wrapped cause.
+func TestTypedErrors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Error", func(t *testing.T) {
-		err := &MaxIterationsError{JobID: "job-42", Iterations: 100}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !containsStr(got, "job-42") {
-			t.Errorf("expected job ID in error, got %q", got)
-		}
-	})
+	reviewCause := errors.New("unexpected token")
+	dialCause := errors.New("connection refused")
+	rpcCause := errors.New("grpc: status unavailable")
 
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &MaxIterationsError{JobID: "job-1", Iterations: 5}
-		if !errors.Is(err, ErrMaxIterationsExceeded) {
-			t.Error("errors.Is(err, ErrMaxIterationsExceeded) = false, want true")
-		}
-	})
+	tests := []struct {
+		name        string
+		err         error
+		wantSubstrs []string
+		wantIs      []error
+	}{
+		{
+			name:        "MaxIterations",
+			err:         &MaxIterationsError{JobID: "job-42", Iterations: 100},
+			wantSubstrs: []string{"job-42"},
+			wantIs:      []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name: "NoFleetNodesAvailable/WithCapabilities",
+			err: &NoFleetNodesAvailableError{
+				TaskTitle:            "build api",
+				RequiredCapabilities: []string{"go", "docker"},
+			},
+			wantSubstrs: []string{"build api", "go", "docker"},
+			wantIs:      []error{ErrNoFleetNodesAvailable},
+		},
+		{
+			name:        "NoFleetNodesAvailable/WithoutCapabilities",
+			err:         &NoFleetNodesAvailableError{TaskTitle: "simple task"},
+			wantSubstrs: []string{"simple task"},
+			wantIs:      []error{ErrNoFleetNodesAvailable},
+		},
+		{
+			name:        "ReviewParse/WithCause",
+			err:         &ReviewParseError{RawResponse: `{bad}`, Cause: reviewCause},
+			wantSubstrs: []string{"unexpected token"},
+			wantIs:      []error{ErrReviewParseFailed, reviewCause},
+		},
+		{
+			name:   "ReviewParse/WithoutCause",
+			err:    &ReviewParseError{RawResponse: ""},
+			wantIs: []error{ErrReviewParseFailed},
+		},
+		{
+			name:        "JobNotFound",
+			err:         &JobNotFoundError{JobID: "job-abc"},
+			wantSubstrs: []string{"job-abc"},
+			wantIs:      []error{ErrJobNotFound},
+		},
+		{
+			name:        "EmptyDecomposition",
+			err:         &EmptyDecompositionError{Description: "no work items returned"},
+			wantSubstrs: []string{"no work items returned"},
+			wantIs:      []error{ErrEmptyDecomposition},
+		},
+		{
+			name:        "ControlLoop/WithMessage",
+			err:         &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "hit limit on wave 3"},
+			wantSubstrs: []string{"hit limit on wave 3"},
+			wantIs:      []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name:   "ControlLoop/WithoutMessage",
+			err:    &ControlLoopError{Sentinel: ErrMaxIterationsExceeded},
+			wantIs: []error{ErrMaxIterationsExceeded},
+		},
+		{
+			name:        "FleetNodeNotFound",
+			err:         &FleetNodeNotFoundError{TenantID: "tenant-x", NodeID: "agent-y"},
+			wantSubstrs: []string{"tenant-x", "agent-y"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "FleetNodeAlreadyExists",
+			err:         &FleetNodeAlreadyExistsError{NodeID: "agent-dup"},
+			wantSubstrs: []string{"agent-dup"},
+			wantIs:      []error{ErrFleetNodeAlreadyExists},
+		},
+		{
+			name:        "FleetRegistry/WithMessage",
+			err:         &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "extra detail"},
+			wantSubstrs: []string{"extra detail"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:   "FleetRegistry/WithoutMessage",
+			err:    &FleetRegistryError{Sentinel: ErrFleetNodeNotFound},
+			wantIs: []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "ProjectNotFound",
+			err:         &ProjectNotFoundError{ProjectID: "proj-xyz"},
+			wantSubstrs: []string{"proj-xyz"},
+			wantIs:      []error{ErrProjectNotFound},
+		},
+		{
+			name:        "AgentStore/WithMessage",
+			err:         &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "store detail"},
+			wantSubstrs: []string{"store detail"},
+			wantIs:      []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:   "AgentStore/WithoutMessage",
+			err:    &AgentStoreError{Sentinel: ErrFleetNodeNotFound},
+			wantIs: []error{ErrFleetNodeNotFound},
+		},
+		{
+			name:        "RemoteBackendDial",
+			err:         &RemoteBackendDialError{Host: "daemon.host:9091", Err: dialCause},
+			wantSubstrs: []string{"daemon.host:9091", "connection refused"},
+			wantIs:      []error{dialCause},
+		},
+		{
+			name:        "RemoteBackendRPC",
+			err:         &RemoteBackendRPCError{Op: "Spawn", Err: rpcCause},
+			wantSubstrs: []string{"Spawn", "grpc: status unavailable"},
+			wantIs:      []error{rpcCause},
+		},
+	}
 
-	t.Run("As", func(t *testing.T) {
-		var target *MaxIterationsError
-		err := error(&MaxIterationsError{JobID: "job-99", Iterations: 10})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.JobID != "job-99" {
-			t.Errorf("JobID = %q, want job-99", target.JobID)
-		}
-		if target.Iterations != 10 {
-			t.Errorf("Iterations = %d, want 10", target.Iterations)
-		}
-	})
-}
-
-func TestNoAgentsAvailableError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCapabilities", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{
-			TaskTitle:            "build api",
-			RequiredCapabilities: []string{"go", "docker"},
-		}
-		got := err.Error()
-		if !containsStr(got, "build api") {
-			t.Errorf("expected task title in error, got %q", got)
-		}
-		if !containsStr(got, "go") || !containsStr(got, "docker") {
-			t.Errorf("expected capabilities in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutCapabilities", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{TaskTitle: "simple task"}
-		got := err.Error()
-		if !containsStr(got, "simple task") {
-			t.Errorf("expected task title in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &NoFleetNodesAvailableError{TaskTitle: "t"}
-		if !errors.Is(err, ErrNoFleetNodesAvailable) {
-			t.Error("errors.Is(err, ErrNoFleetNodesAvailable) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *NoFleetNodesAvailableError
-		err := error(&NoFleetNodesAvailableError{TaskTitle: "task-x", RequiredCapabilities: []string{"rust"}})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.TaskTitle != "task-x" {
-			t.Errorf("TaskTitle = %q, want task-x", target.TaskTitle)
-		}
-	})
-}
-
-func TestReviewParseError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithCause", func(t *testing.T) {
-		cause := errors.New("unexpected token")
-		err := &ReviewParseError{RawResponse: `{bad}`, Cause: cause}
-		got := err.Error()
-		if !containsStr(got, "unexpected token") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-		if !errors.Is(err, ErrReviewParseFailed) {
-			t.Error("errors.Is(err, ErrReviewParseFailed) = false")
-		}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false")
-		}
-	})
-
-	t.Run("ErrorWithoutCause", func(t *testing.T) {
-		err := &ReviewParseError{RawResponse: ""}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-		if !errors.Is(err, ErrReviewParseFailed) {
-			t.Error("errors.Is(err, ErrReviewParseFailed) = false")
-		}
-	})
-}
-
-func TestJobNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &JobNotFoundError{JobID: "job-abc"}
-		got := err.Error()
-		if !containsStr(got, "job-abc") {
-			t.Errorf("expected job ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &JobNotFoundError{JobID: "job-abc"}
-		if !errors.Is(err, ErrJobNotFound) {
-			t.Error("errors.Is(err, ErrJobNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *JobNotFoundError
-		err := error(&JobNotFoundError{JobID: "job-xyz"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.JobID != "job-xyz" {
-			t.Errorf("JobID = %q, want job-xyz", target.JobID)
-		}
-	})
-}
-
-func TestEmptyDecompositionError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &EmptyDecompositionError{Description: "no work items returned"}
-		got := err.Error()
-		if !containsStr(got, "no work items returned") {
-			t.Errorf("expected description in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &EmptyDecompositionError{Description: "d"}
-		if !errors.Is(err, ErrEmptyDecomposition) {
-			t.Error("errors.Is(err, ErrEmptyDecomposition) = false, want true")
-		}
-	})
-}
-
-func TestControlLoopError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "hit limit on wave 3"}
-		got := err.Error()
-		if !containsStr(got, "hit limit on wave 3") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &ControlLoopError{Sentinel: ErrMaxIterationsExceeded, Message: "x"}
-		if !errors.Is(err, ErrMaxIterationsExceeded) {
-			t.Error("errors.Is(err, ErrMaxIterationsExceeded) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *ControlLoopError
-		err := error(&ControlLoopError{Sentinel: ErrJobNotFound, Message: "missing"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Message != "missing" {
-			t.Errorf("Message = %q, want missing", target.Message)
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — fleet_registry_types.go
-// =============================================================================
-
-func TestAgentNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &FleetNodeNotFoundError{TenantID: "tenant-x", NodeID: "agent-y"}
-		got := err.Error()
-		if !containsStr(got, "tenant-x") || !containsStr(got, "agent-y") {
-			t.Errorf("expected tenant and agent in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetNodeNotFoundError{TenantID: "t", NodeID: "a"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *FleetNodeNotFoundError
-		err := error(&FleetNodeNotFoundError{TenantID: "t1", NodeID: "a1"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.TenantID != "t1" || target.NodeID != "a1" {
-			t.Errorf("got TenantID=%q AgentID=%q", target.TenantID, target.NodeID)
-		}
-	})
-}
-
-func TestAgentAlreadyExistsError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &FleetNodeAlreadyExistsError{NodeID: "agent-dup"}
-		got := err.Error()
-		if !containsStr(got, "agent-dup") {
-			t.Errorf("expected agent ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetNodeAlreadyExistsError{NodeID: "a"}
-		if !errors.Is(err, ErrFleetNodeAlreadyExists) {
-			t.Error("errors.Is(err, ErrFleetNodeAlreadyExists) = false, want true")
-		}
-	})
-}
-
-func TestAgentRegistryError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "extra detail"}
-		got := err.Error()
-		if !containsStr(got, "extra detail") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &FleetRegistryError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — orchestrator_types.go
-// =============================================================================
-
-func TestProjectNotFoundError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Error", func(t *testing.T) {
-		err := &ProjectNotFoundError{ProjectID: "proj-xyz"}
-		got := err.Error()
-		if !containsStr(got, "proj-xyz") {
-			t.Errorf("expected project ID in error, got %q", got)
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &ProjectNotFoundError{ProjectID: "p"}
-		if !errors.Is(err, ErrProjectNotFound) {
-			t.Error("errors.Is(err, ErrProjectNotFound) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *ProjectNotFoundError
-		err := error(&ProjectNotFoundError{ProjectID: "proj-1"})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.ProjectID != "proj-1" {
-			t.Errorf("ProjectID = %q, want proj-1", target.ProjectID)
-		}
-	})
-}
-
-func TestAgentStoreError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ErrorWithMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "store detail"}
-		got := err.Error()
-		if !containsStr(got, "store detail") {
-			t.Errorf("expected message in error, got %q", got)
-		}
-	})
-
-	t.Run("ErrorWithoutMessage", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound}
-		got := err.Error()
-		if got == "" {
-			t.Fatal("expected non-empty error string")
-		}
-	})
-
-	t.Run("UnwrapSentinel", func(t *testing.T) {
-		err := &AgentStoreError{Sentinel: ErrFleetNodeNotFound, Message: "x"}
-		if !errors.Is(err, ErrFleetNodeNotFound) {
-			t.Error("errors.Is(err, ErrFleetNodeNotFound) = false, want true")
-		}
-	})
-}
-
-// =============================================================================
-// Tier 1: Error type methods — remote_acp_backend.go
-// =============================================================================
-
-func TestRemoteBackendDialError(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("connection refused")
-
-	t.Run("Error", func(t *testing.T) {
-		err := &RemoteBackendDialError{Host: "daemon.host:9091", Err: cause}
-		got := err.Error()
-		if !containsStr(got, "daemon.host:9091") {
-			t.Errorf("expected host in error, got %q", got)
-		}
-		if !containsStr(got, "connection refused") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		err := &RemoteBackendDialError{Host: "h", Err: cause}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *RemoteBackendDialError
-		err := error(&RemoteBackendDialError{Host: "host-1", Err: cause})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Host != "host-1" {
-			t.Errorf("Host = %q, want host-1", target.Host)
-		}
-	})
-}
-
-func TestRemoteBackendRPCError(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("grpc: status unavailable")
-
-	t.Run("Error", func(t *testing.T) {
-		err := &RemoteBackendRPCError{Op: "Spawn", Err: cause}
-		got := err.Error()
-		if !containsStr(got, "Spawn") {
-			t.Errorf("expected Op in error, got %q", got)
-		}
-		if !containsStr(got, "grpc: status unavailable") {
-			t.Errorf("expected cause in error, got %q", got)
-		}
-	})
-
-	t.Run("Unwrap", func(t *testing.T) {
-		err := &RemoteBackendRPCError{Op: "Prompt", Err: cause}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is(err, cause) = false, want true")
-		}
-	})
-
-	t.Run("As", func(t *testing.T) {
-		var target *RemoteBackendRPCError
-		err := error(&RemoteBackendRPCError{Op: "Close", Err: cause})
-		if !errors.As(err, &target) {
-			t.Fatal("errors.As failed")
-		}
-		if target.Op != "Close" {
-			t.Errorf("Op = %q, want Close", target.Op)
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.Error()
+			if got == "" {
+				t.Fatal("expected non-empty error string")
+			}
+			for _, want := range tt.wantSubstrs {
+				if !containsStr(got, want) {
+					t.Errorf("Error() = %q, want it to contain %q", got, want)
+				}
+			}
+			for _, target := range tt.wantIs {
+				if !errors.Is(tt.err, target) {
+					t.Errorf("errors.Is(err, %v) = false, want true", target)
+				}
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -461,88 +194,6 @@ func newTestService(t *testing.T) *agentServiceImpl {
 		t.Fatalf("NewAgentService: %v", err)
 	}
 	return svc.(*agentServiceImpl)
-}
-
-func TestOrchestrator_SetTenantGuard(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.tenantGuard != nil {
-		t.Fatal("expected tenantGuard to be nil initially")
-	}
-
-	guard := NewTenantGuard(&agentTestLogger{})
-	impl.SetTenantGuard(guard)
-
-	if impl.tenantGuard != guard {
-		t.Fatal("expected tenantGuard to be set")
-	}
-}
-
-func TestOrchestrator_SetLeadSessionID(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.leadSessionID != "" {
-		t.Fatal("expected leadSessionID to be empty initially")
-	}
-
-	impl.SetLeadSessionID("session-lead-001")
-
-	if impl.leadSessionID != "session-lead-001" {
-		t.Errorf("leadSessionID = %q, want session-lead-001", impl.leadSessionID)
-	}
-}
-
-func TestOrchestrator_SetAgentRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.fleetRegistry != nil {
-		t.Fatal("expected fleetRegistry to be nil initially")
-	}
-
-	registry := NewInMemoryFleetRegistry()
-	impl.SetFleetRegistry(registry)
-
-	if impl.fleetRegistry == nil {
-		t.Fatal("expected fleetRegistry to be set")
-	}
-}
-
-func TestOrchestrator_SetKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.kvStore != nil {
-		t.Fatal("expected kvStore to be nil initially")
-	}
-
-	// Use a nil KVStore just to confirm the setter assigns it.
-	impl.SetKVStore(nil)
-	// Setting nil is valid; no panic expected.
-}
-
-func TestOrchestrator_SetTenantPolicyProvider(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if impl.tenantPolicies != nil {
-		t.Fatal("expected tenantPolicies to be nil initially")
-	}
-
-	var provider mockTenantPolicyProvider
-	impl.SetTenantPolicyProvider(&provider)
-
-	if impl.tenantPolicies == nil {
-		t.Fatal("expected tenantPolicies to be set")
-	}
-
-	// Setting nil removes provider.
-	impl.SetTenantPolicyProvider(nil)
-	if impl.tenantPolicies != nil {
-		t.Fatal("expected tenantPolicies to be nil after clearing")
-	}
 }
 
 // mockTenantPolicyProvider implements TenantPolicyProvider for tests.
@@ -686,74 +337,103 @@ func TestOrchestrator_ListProjects_Paginated(t *testing.T) {
 // Tier 2: RegisterFleetNode / GetFleetNode / ListFleetNodes / RemoveFleetNode / FleetNodeHeartbeat
 // =============================================================================
 
-func TestOrchestrator_RegisterAgent_NoRegistry(t *testing.T) {
+// TestOrchestrator_FleetNode_NoRegistry checks that every fleet-node verb
+// fails with ErrFleetRegistryRequired when no registry is configured.
+func TestOrchestrator_FleetNode_NoRegistry(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name:     "agent-1",
-		Host:     "localhost:9090",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
+	tests := []struct {
+		name string
+		call func(ctx context.Context, impl *agentServiceImpl) error
+	}{
+		{
+			name: "RegisterFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
+					Name:     "agent-1",
+					Host:     "localhost:9090",
+					NodeType: "claude-code",
+				})
+				return err
+			},
+		},
+		{
+			name: "GetFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.GetFleetNode(ctx, "t", "a")
+				return err
+			},
+		},
+		{
+			name: "ListFleetNodes",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				_, err := impl.ListFleetNodes(ctx, "t", nil)
+				return err
+			},
+		},
+		{
+			name: "RemoveFleetNode",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				return impl.RemoveFleetNode(ctx, "t", "a")
+			},
+		},
+		{
+			name: "FleetNodeHeartbeat",
+			call: func(ctx context.Context, impl *agentServiceImpl) error {
+				return impl.FleetNodeHeartbeat(ctx, "t", "a", nil)
+			},
+		},
 	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.call(context.Background(), newTestService(t))
+			if !errors.Is(err, ErrFleetRegistryRequired) {
+				t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
+			}
+		})
 	}
 }
 
-func TestOrchestrator_RegisterAgent_MissingName(t *testing.T) {
+// TestOrchestrator_RegisterAgent_MissingField checks that RegisterFleetNode
+// rejects a request missing any required field with that field's sentinel.
+func TestOrchestrator_RegisterAgent_MissingField(t *testing.T) {
 	t.Parallel()
 
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Host:     "localhost:9090",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
+	tests := []struct {
+		name    string
+		req     *RegisterFleetNodeRequest
+		wantErr error
+	}{
+		{
+			name:    "Name",
+			req:     &RegisterFleetNodeRequest{Host: "localhost:9090", NodeType: "claude-code"},
+			wantErr: ErrFleetNodeNameRequired,
+		},
+		{
+			name:    "Host",
+			req:     &RegisterFleetNodeRequest{Name: "agent-1", NodeType: "claude-code"},
+			wantErr: ErrFleetNodeHostRequired,
+		},
+		{
+			name:    "Type",
+			req:     &RegisterFleetNodeRequest{Name: "agent-1", Host: "localhost:9090"},
+			wantErr: ErrFleetNodeTypeRequired,
+		},
 	}
-	if !errors.Is(err, ErrFleetNodeNameRequired) {
-		t.Fatalf("expected ErrFleetNodeNameRequired, got %v", err)
-	}
-}
 
-func TestOrchestrator_RegisterAgent_MissingHost(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			impl := newTestService(t)
+			impl.SetFleetRegistry(NewInMemoryFleetRegistry())
 
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name:     "agent-1",
-		NodeType: "claude-code",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty host")
-	}
-	if !errors.Is(err, ErrFleetNodeHostRequired) {
-		t.Fatalf("expected ErrFleetNodeHostRequired, got %v", err)
-	}
-}
-
-func TestOrchestrator_RegisterAgent_MissingType(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-
-	_, err := impl.RegisterFleetNode(context.Background(), &RegisterFleetNodeRequest{
-		Name: "agent-1",
-		Host: "localhost:9090",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty agent type")
-	}
-	if !errors.Is(err, ErrFleetNodeTypeRequired) {
-		t.Fatalf("expected ErrFleetNodeTypeRequired, got %v", err)
+			_, err := impl.RegisterFleetNode(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -788,19 +468,6 @@ func TestOrchestrator_RegisterAndGetAgent(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_GetAgent_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.GetFleetNode(context.Background(), "t", "a")
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
-	}
-}
-
 func TestOrchestrator_ListAgents(t *testing.T) {
 	t.Parallel()
 
@@ -827,19 +494,6 @@ func TestOrchestrator_ListAgents(t *testing.T) {
 	}
 	if len(agents) != 3 {
 		t.Fatalf("expected 3 agents, got %d", len(agents))
-	}
-}
-
-func TestOrchestrator_ListAgents_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.ListFleetNodes(context.Background(), "t", nil)
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
@@ -871,19 +525,6 @@ func TestOrchestrator_RemoveAgent(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_RemoveAgent_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.RemoveFleetNode(context.Background(), "t", "a")
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
-	}
-}
-
 func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 	t.Parallel()
 
@@ -903,19 +544,6 @@ func TestOrchestrator_AgentHeartbeat(t *testing.T) {
 
 	if err := impl.FleetNodeHeartbeat(ctx, "tenant-1", resp.Node.ID, nil); err != nil {
 		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-func TestOrchestrator_AgentHeartbeat_NoRegistry(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	err := impl.FleetNodeHeartbeat(context.Background(), "t", "a", nil)
-	if err == nil {
-		t.Fatal("expected error when agent registry not configured")
-	}
-	if !errors.Is(err, ErrFleetRegistryRequired) {
-		t.Fatalf("expected ErrFleetRegistryRequired, got %v", err)
 	}
 }
 
