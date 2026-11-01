@@ -76,149 +76,86 @@ func TestWriteBatch_EmptyMetricInBatch_Validation(t *testing.T) {
 // Aggregate - Unsupported function, default value field, non-numeric skip
 // =============================================================================
 
-func TestAggregate_UnsupportedFunction(t *testing.T) {
-	log := createTestLogger(t)
-
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(100)}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunction(999), // invalid function
+func TestAggregate_FunctionAndValueShape(t *testing.T) {
+	tests := []struct {
+		name       string
+		entity     map[string]interface{}
+		fieldName  string
+		function   AggregateFunction
+		wantErr    bool
+		wantResult float64
+		wantCount  uint64
+	}{
+		{
+			name:     "unsupported function",
+			entity:   map[string]interface{}{"timestamp": float64(10), "value": float64(100)},
+			function: AggregateFunction(999),
+			wantErr:  true,
+		},
+		{
+			name:       "empty field name defaults to value",
+			entity:     map[string]interface{}{"timestamp": float64(10), "value": float64(42.0)},
+			function:   AggregateFunctionSum,
+			wantResult: 42.0,
+			wantCount:  1,
+		},
+		{
+			name:      "non-numeric field is skipped",
+			entity:    map[string]interface{}{"timestamp": float64(10), "status": "active"},
+			fieldName: "status",
+			function:  AggregateFunctionSum,
+		},
+		{
+			name:     "missing default value field is skipped",
+			entity:   map[string]interface{}{"timestamp": float64(10), "status": "ok"},
+			function: AggregateFunctionCount,
+		},
+		{
+			name:     "min with no values",
+			function: AggregateFunctionMin,
+		},
+		{
+			name:     "max with no values",
+			function: AggregateFunctionMax,
+		},
 	}
 
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var scan [][]byte
+			if tt.entity != nil {
+				raw, err := json.Marshal(tt.entity)
+				require.NoError(t, err)
+				scan = [][]byte{raw}
+			}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
+			qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult(scan), nil)
+			svc := &quicBaaS{logger: createTestLogger(t), qrdbClient: qrdbProvider}
+			tsSvc := &timeSeriesService{svc: svc}
 
-func TestAggregate_DefaultValueField(t *testing.T) {
-	log := createTestLogger(t)
+			req := &AggregateRequest{
+				EntityType: "metrics",
+				StartTime:  1,
+				EndTime:    100,
+				FieldName:  tt.fieldName,
+				Function:   tt.function,
+			}
 
-	// No FieldName set, should use "value" field by default
-	data1 := map[string]interface{}{"timestamp": float64(10), "value": float64(42.0)}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "", // empty, should use "value" as default
-		Function:   AggregateFunctionSum,
+			resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, resp)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.Equal(t, tt.wantResult, resp.Result)
+			assert.Equal(t, tt.wantCount, resp.Count)
+		})
 	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, 42.0, resp.Result)
-	assert.Equal(t, uint64(1), resp.Count)
-}
-
-func TestAggregate_NonNumericFieldSkip(t *testing.T) {
-	log := createTestLogger(t)
-
-	// Entity where the custom field is a string (not numeric)
-	data1 := map[string]interface{}{"timestamp": float64(10), "status": "active"}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "status", // non-numeric field
-		Function:   AggregateFunctionSum,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result)
-	assert.Equal(t, uint64(0), resp.Count) // skipped because field is not numeric
-}
-
-func TestAggregate_MissingDefaultValueField(t *testing.T) {
-	log := createTestLogger(t)
-
-	// No FieldName and no "value" field in entity -- should be skipped
-	data1 := map[string]interface{}{"timestamp": float64(10), "status": "ok"}
-	json1, _ := json.Marshal(data1)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(sliceToCannedScanResult([][]byte{json1}), nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		FieldName:  "", // no field specified, and entity has no "value" field
-		Function:   AggregateFunctionCount,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // count of 0 entities with "value" field
-}
-
-func TestAggregate_MinWithEmptyValues(t *testing.T) {
-	log := createTestLogger(t)
-
-	// No matching entities after filtering
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMin,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // Min with no values = 0
-	assert.Equal(t, uint64(0), resp.Count)
-}
-
-func TestAggregate_MaxWithEmptyValues(t *testing.T) {
-	log := createTestLogger(t)
-
-	qrdbProvider := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := &quicBaaS{logger: log, qrdbClient: qrdbProvider}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		Function:   AggregateFunctionMax,
-	}
-
-	resp, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, float64(0), resp.Result) // Max with no values = 0
 }
 
 // =============================================================================
@@ -373,75 +310,40 @@ func TestTimeSeriesQuery_ContextCancellation(t *testing.T) {
 // GetMigrationProgress - Non-migration type, ETA calculation, not found
 // =============================================================================
 
-func TestGetMigrationProgress_NilRequest(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestGetMigrationProgress_EmptyMigrationID(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestGetMigrationProgress_NotFound(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "nonexistent-id",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
-}
-
-func TestGetMigrationProgress_NonMigrationType(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	opsSvc := newOperationsService(svc)
-
-	// Insert a job that is NOT of type "migration"
-	opsSvc.jobsMu.Lock()
-	opsSvc.jobs["upgrade-job-1"] = &operationJob{
-		ID:     "upgrade-job-1",
-		Type:   "upgrade",
-		Status: "running",
+func TestGetMigrationProgress_InvalidInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      *GetMigrationProgressRequest
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil request", req: nil, wantCode: errors.ErrInvalidInput},
+		{name: "empty migration id", req: &GetMigrationProgressRequest{MigrationID: ""}, wantCode: errors.ErrInvalidInput},
+		{name: "unknown migration id", req: &GetMigrationProgressRequest{MigrationID: "nonexistent-id"}, wantCode: errors.ErrNotFound},
+		{name: "job is not a migration", req: &GetMigrationProgressRequest{MigrationID: "upgrade-job-1"}, wantCode: errors.ErrInvalidInput},
 	}
-	opsSvc.jobsMu.Unlock()
 
-	resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), &GetMigrationProgressRequest{
-		MigrationID: "upgrade-job-1",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			opsSvc := newOperationsService(svc)
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+			opsSvc.jobsMu.Lock()
+			opsSvc.jobs["upgrade-job-1"] = &operationJob{
+				ID:     "upgrade-job-1",
+				Type:   "upgrade",
+				Status: "running",
+			}
+			opsSvc.jobsMu.Unlock()
+
+			resp, err := opsSvc.GetMigrationProgress(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
 func TestGetMigrationProgress_ETACalculation(t *testing.T) {
