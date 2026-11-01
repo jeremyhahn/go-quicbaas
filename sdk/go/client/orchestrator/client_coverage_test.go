@@ -106,6 +106,30 @@ func listCalls() []clientCall {
 // unaryCalls lists the methods that reject a nil response with an error.
 func unaryCalls() []clientCall {
 	return []clientCall{
+		{"DecomposeTask", func(c Client, ctx context.Context) error {
+			_, err := c.DecomposeTask(ctx, &DecomposeTaskRequest{Task: "x"})
+			return err
+		}},
+		{"SpawnChildJob", func(c Client, ctx context.Context) error {
+			_, err := c.SpawnChildJob(ctx, &SpawnChildJobRequest{ParentJobID: "j1"})
+			return err
+		}},
+		{"StartJob", func(c Client, ctx context.Context) error {
+			_, err := c.StartJob(ctx, &StartJobRequest{Description: "do work"})
+			return err
+		}},
+		{"GetJobStatus", func(c Client, ctx context.Context) error {
+			_, err := c.GetJobStatus(ctx, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
+			return err
+		}},
+		{"ListJobs", func(c Client, ctx context.Context) error {
+			_, err := c.ListJobs(ctx, &ListJobsRequest{TenantID: "t1"})
+			return err
+		}},
+		{"CancelJob", func(c Client, ctx context.Context) error {
+			_, err := c.CancelJob(ctx, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
+			return err
+		}},
 		{"RegisterFleetNode", func(c Client, ctx context.Context) error {
 			_, err := c.RegisterFleetNode(ctx, validRegisterFleetNodeRequest())
 			return err
@@ -622,31 +646,6 @@ func TestDecomposeTask_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "task is required")
 }
 
-func TestDecomposeTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "DecomposeTask", &DecomposeTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.DecomposeTask(nilCtx, &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
-func TestDecomposeTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.DecomposeTask(context.Background(), &DecomposeTaskRequest{Task: "x"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // SpawnChildJob
 // =============================================================================
@@ -667,33 +666,8 @@ func TestSpawnChildJob_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "parent_job_id is required")
 }
 
-func TestSpawnChildJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "SpawnChildJob", &SpawnChildJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.SpawnChildJob(nilCtx, &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestSpawnChildJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.SpawnChildJob(context.Background(), &SpawnChildJobRequest{ParentJobID: "j1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
-// StartJob (extend existing coverage: happy/nilctx/transport/nil/mismatch)
+// StartJob
 // =============================================================================
 
 func TestStartJob_HappyPath(t *testing.T) {
@@ -701,31 +675,6 @@ func TestStartJob_HappyPath(t *testing.T) {
 	resp, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestStartJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "StartJob", &StartJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.StartJob(nilCtx, &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
-}
-
-func TestStartJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.StartJob(context.Background(), &StartJobRequest{Description: "do work"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -737,31 +686,6 @@ func TestGetJobStatus_HappyPath(t *testing.T) {
 	resp, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestGetJobStatus_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetJobStatus", &JobStatus{}))
-	var nilCtx context.Context
-	_, err := c.GetJobStatus(nilCtx, &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestGetJobStatus_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetJobStatus(context.Background(), &GetJobStatusRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -784,31 +708,6 @@ func TestListJobs_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "tenant ID is required")
 }
 
-func TestListJobs_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListJobs", &ListJobsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListJobs(nilCtx, &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListJobs_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListJobs(context.Background(), &ListJobsRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CancelJob
 // =============================================================================
@@ -818,31 +717,6 @@ func TestCancelJob_HappyPath(t *testing.T) {
 	resp, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestCancelJob_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CancelJob", &CancelJobResponse{}))
-	var nilCtx context.Context
-	_, err := c.CancelJob(nilCtx, &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
-}
-
-func TestCancelJob_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CancelJob(context.Background(), &CancelJobRequest{TenantID: "t1", JobID: "j1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
