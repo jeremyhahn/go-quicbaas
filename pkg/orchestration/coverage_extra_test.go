@@ -520,56 +520,53 @@ func (s *faultKVStore) Exists(ctx context.Context, key string) (bool, error) {
 	return s.memKVStore.Exists(ctx, key)
 }
 
-// TestPeerMessaging_InboxSize_ListError covers InboxSize's List-error branch.
-func TestPeerMessaging_InboxSize_ListError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.listErr = errors.New("kv down")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
+// TestPeerMessaging_StoreErrors covers each store failure the service reports
+// as a PeerInboxError, one row per method and failing store verb.
+func TestPeerMessaging_StoreErrors(t *testing.T) {
+	kvDown := errors.New("kv down")
+	ctx := context.Background()
 
-	_, err := svc.InboxSize(context.Background(), "t", "agent-a")
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "inbox_size" {
-		t.Fatalf("want PeerInboxError(inbox_size), got %v", err)
+	tests := []struct {
+		name   string
+		fault  func(*faultKVStore)
+		call   func(PeerMessagingService) error
+		wantOp string
+	}{
+		{"InboxSize/list error",
+			func(kv *faultKVStore) { kv.listErr = kvDown },
+			func(svc PeerMessagingService) error {
+				_, err := svc.InboxSize(ctx, "t", "agent-a")
+				return err
+			}, "inbox_size"},
+		{"Poll/scan error",
+			func(kv *faultKVStore) { kv.scanErr = kvDown },
+			func(svc PeerMessagingService) error {
+				_, err := svc.Poll(ctx, "t", "agent-a", 0)
+				return err
+			}, "poll_scan"},
+		{"Send/dedup check error",
+			func(kv *faultKVStore) { kv.existsErr = kvDown },
+			func(svc PeerMessagingService) error {
+				return svc.Send(ctx, testMessage("m1", "a", "b", "advisory", 1000))
+			}, "dedup_check"},
+		{"Send/put message error",
+			// Exists and InboxSize succeed first; the inbox write fails.
+			func(kv *faultKVStore) { kv.putErr = kvDown },
+			func(svc PeerMessagingService) error {
+				return svc.Send(ctx, testMessage("m1", "a", "b", "advisory", 1000))
+			}, "put_message"},
 	}
-}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			tc.fault(kv)
+			svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
 
-// TestPeerMessaging_Poll_ScanError covers Poll's Scan-error branch.
-func TestPeerMessaging_Poll_ScanError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.scanErr = errors.New("scan failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	_, err := svc.Poll(context.Background(), "t", "agent-a", 0)
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "poll_scan" {
-		t.Fatalf("want PeerInboxError(poll_scan), got %v", err)
-	}
-}
-
-// TestPeerMessaging_Send_DedupCheckError covers Send's Exists-error branch.
-func TestPeerMessaging_Send_DedupCheckError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.existsErr = errors.New("exists failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	err := svc.Send(context.Background(), testMessage("m1", "a", "b", "advisory", 1000))
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "dedup_check" {
-		t.Fatalf("want PeerInboxError(dedup_check), got %v", err)
-	}
-}
-
-// TestPeerMessaging_Send_PutMessageError covers Send's put_message branch where
-// the inbox write fails (Exists/InboxSize succeed first).
-func TestPeerMessaging_Send_PutMessageError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.putErr = errors.New("put failed")
-	svc := NewPeerMessagingService(kv, defaultPolicy(), &peerTestLogger{})
-
-	err := svc.Send(context.Background(), testMessage("m1", "a", "b", "advisory", 1000))
-	var ie *PeerInboxError
-	if !errors.As(err, &ie) || ie.Op != "put_message" {
-		t.Fatalf("want PeerInboxError(put_message), got %v", err)
+			var ie *PeerInboxError
+			if err := tc.call(svc); !errors.As(err, &ie) || ie.Op != tc.wantOp {
+				t.Fatalf("want PeerInboxError(%s), got %v", tc.wantOp, err)
+			}
+		})
 	}
 }
 
