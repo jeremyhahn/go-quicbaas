@@ -438,6 +438,8 @@ func TestGDPRManager_GenerateExport_Categories(t *testing.T) {
 		{"profile only", []string{"profile"}, nil, false, false},
 		{"all categories", nil, nil, true, true},
 		{"exclude sessions", nil, []string{"sessions"}, false, true},
+		{"include profile exclude sessions", []string{"profile"}, []string{"sessions"}, false, false},
+		{"exclude sessions and credentials", nil, []string{"sessions", "credentials"}, false, true},
 	}
 
 	for _, tt := range tests {
@@ -855,64 +857,38 @@ func TestIsValidDataCategory(t *testing.T) {
 	}
 }
 
-func TestConsent_Validate_Success(t *testing.T) {
-	consent := &Consent{
-		UserID:   11,
-		TenantID: "tenant1",
-		Purpose:  ConsentPurposeMarketing,
-		Version:  "1.0",
+func TestConsent_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*Consent)
+		wantMsg string // empty means valid
+	}{
+		{"valid", func(*Consent) {}, ""},
+		{"missing user id", func(c *Consent) { c.UserID = 0 }, "user_id is required"},
+		{"missing tenant id", func(c *Consent) { c.TenantID = "" }, "tenant_id is required"},
+		{"missing purpose", func(c *Consent) { c.Purpose = "" }, "purpose is required"},
+		{"missing version", func(c *Consent) { c.Version = "" }, "version is required"},
 	}
 
-	err := consent.Validate()
-	assert.NoError(t, err)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consent := &Consent{
+				UserID:   11,
+				TenantID: "tenant1",
+				Purpose:  ConsentPurposeMarketing,
+				Version:  "1.0",
+			}
+			tt.mutate(consent)
 
-func TestConsent_Validate_MissingUserID(t *testing.T) {
-	consent := &Consent{
-		TenantID: "tenant1",
-		Purpose:  ConsentPurposeMarketing,
-		Version:  "1.0",
+			err := consent.Validate()
+			if tt.wantMsg == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	err := consent.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user_id is required")
-}
-
-func TestConsent_Validate_MissingTenantID(t *testing.T) {
-	consent := &Consent{
-		UserID:  11,
-		Purpose: ConsentPurposeMarketing,
-		Version: "1.0",
-	}
-
-	err := consent.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant_id is required")
-}
-
-func TestConsent_Validate_MissingPurpose(t *testing.T) {
-	consent := &Consent{
-		UserID:   11,
-		TenantID: "tenant1",
-		Version:  "1.0",
-	}
-
-	err := consent.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "purpose is required")
-}
-
-func TestConsent_Validate_MissingVersion(t *testing.T) {
-	consent := &Consent{
-		UserID:   11,
-		TenantID: "tenant1",
-		Purpose:  ConsentPurposeMarketing,
-	}
-
-	err := consent.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "version is required")
 }
 
 // ==================== MemoryConsentStorage Tests ====================
@@ -1418,91 +1394,32 @@ func TestGDPRManager_ProcessDeletion_NotFound(t *testing.T) {
 }
 
 func TestGDPRManager_ProcessDeletion_NotPending(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
+	statuses := []DeletionStatus{DeletionStatusCompleted, DeletionStatusProcessing}
 
-	tenantID := "tenant1"
-	userID := uint64(11)
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			manager, _ := createTestGDPRManager(t)
+			ctx := context.Background()
 
-	// Create user
-	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
+			tenantID := "tenant1"
+			userID := uint64(11)
 
-	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
-	require.NoError(t, err)
+			createTestUser(t, manager.deps.UserStorage, tenantID, userID)
 
-	// Manually set to completed status
-	request.Status = DeletionStatusCompleted
-	err = manager.deps.DeletionStorage.UpdateDeletionRequest(ctx, request)
-	require.NoError(t, err)
+			request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
+			require.NoError(t, err)
 
-	// Try to process - should fail because not in pending state
-	summary, err := manager.ProcessDeletion(ctx, request.ID)
-	require.Error(t, err)
-	assert.Nil(t, summary)
-	assert.Contains(t, err.Error(), "not in pending status")
-}
+			// Manually move the request out of pending
+			request.Status = status
+			err = manager.deps.DeletionStorage.UpdateDeletionRequest(ctx, request)
+			require.NoError(t, err)
 
-func TestGDPRManager_ProcessDeletion_AlreadyProcessing(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	tenantID := "tenant1"
-	userID := uint64(11)
-
-	// Create user
-	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
-
-	// Create deletion request
-	request, err := manager.RequestDeletion(ctx, tenantID, userID, userID, "", nil, nil, 0)
-	require.NoError(t, err)
-
-	// Manually set to processing status
-	request.Status = DeletionStatusProcessing
-	err = manager.deps.DeletionStorage.UpdateDeletionRequest(ctx, request)
-	require.NoError(t, err)
-
-	// Try to process again - should fail because already processing
-	summary, err := manager.ProcessDeletion(ctx, request.ID)
-	require.Error(t, err)
-	assert.Nil(t, summary)
-	assert.Contains(t, err.Error(), "not in pending status")
-}
-
-func TestGDPRManager_determineCategories(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	tenantID := "tenant1"
-	userID := uint64(11)
-
-	// Create user
-	createTestUser(t, manager.deps.UserStorage, tenantID, userID)
-
-	// Request export with specific categories
-	request, err := manager.RequestExport(ctx, tenantID, userID, userID, DataExportFormatJSON,
-		[]string{"profile"}, []string{"sessions"})
-	require.NoError(t, err)
-	require.NotNil(t, request)
-
-	// Generate export with specified categories
-	export, err := manager.GenerateExport(ctx, request.ID)
-	require.NoError(t, err)
-	assert.NotNil(t, export.Profile)
-	assert.Nil(t, export.Sessions) // Excluded
-
-	// Request export with exclude only
-	request2, err := manager.RequestExport(ctx, tenantID, userID+1, userID+1, DataExportFormatJSON,
-		nil, []string{"sessions", "credentials"})
-	require.NoError(t, err)
-
-	createTestUser(t, manager.deps.UserStorage, tenantID, userID+1)
-
-	export2, err := manager.GenerateExport(ctx, request2.ID)
-	require.NoError(t, err)
-	assert.NotNil(t, export2.Profile)
-	assert.Nil(t, export2.Sessions)    // Excluded
-	assert.Nil(t, export2.Credentials) // Excluded
+			summary, err := manager.ProcessDeletion(ctx, request.ID)
+			require.Error(t, err)
+			assert.Nil(t, summary)
+			assert.Contains(t, err.Error(), "not in pending status")
+		})
+	}
 }
 
 // =============================================================================
