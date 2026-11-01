@@ -207,7 +207,8 @@ func TestEnvBackend_GetNotFound(t *testing.T) {
 	defer backend.Close()
 
 	_, err = backend.Get(context.Background(), "NON_EXISTENT_VAR")
-	assert.Error(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestEnvBackend_SetNotSupported(t *testing.T) {
