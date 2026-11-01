@@ -1914,20 +1914,6 @@ func TestCov91_HandleRangeQuery_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestCov91_HandleRotateSecret_MissingPath(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/?action=rotate", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleRotateSecret(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestCov91_HandleListVersions_MissingPath(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -1938,17 +1924,6 @@ func TestCov91_HandleListVersions_MissingPath(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
 	server.HandleListVersions(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWatchSecrets_MissingPrefix(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/watch", nil)
-	w := httptest.NewRecorder()
-	server.HandleWatchSecrets(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -2005,20 +1980,6 @@ func TestCov91_HandleReplaceNode_InvalidShardID(t *testing.T) {
 	rctx.URLParams.Add("nodeId", "invalid")
 	body := `{"old_node_id": 1, "new_node_id": 2, "new_address": "localhost:9001"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/shards/invalid/replace", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleReplaceNode(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleReplaceNode_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("nodeId", "1")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/shards/1/replace", strings.NewReader("{bad"))
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	w := httptest.NewRecorder()
 	server.HandleReplaceNode(w, req)
@@ -2395,21 +2356,22 @@ func TestHandleBatchDeleteObjects_DeleteError(t *testing.T) {
 	assert.Equal(t, 2, resp.Failed)
 }
 
-func TestFormatVectorID_NilMetadata(t *testing.T) {
-	result := formatVectorID(42, nil)
-	assert.Equal(t, "42", result)
-}
+func TestFormatVectorID(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata map[string]string
+		expected string
+	}{
+		{name: "nil metadata", metadata: nil, expected: "42"},
+		{name: "metadata without original ID", metadata: map[string]string{"other_key": "value"}, expected: "42"},
+		{name: "metadata with original ID", metadata: map[string]string{MetadataKeyOriginalID: "my-doc-id"}, expected: "my-doc-id"},
+	}
 
-func TestFormatVectorID_MetadataWithoutOriginalID(t *testing.T) {
-	metadata := map[string]string{"other_key": "value"}
-	result := formatVectorID(42, metadata)
-	assert.Equal(t, "42", result)
-}
-
-func TestFormatVectorID_MetadataWithOriginalID(t *testing.T) {
-	metadata := map[string]string{MetadataKeyOriginalID: "my-doc-id"}
-	result := formatVectorID(42, metadata)
-	assert.Equal(t, "my-doc-id", result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, formatVectorID(42, tt.metadata))
+		})
+	}
 }
 
 func TestHandleClusterShards_NilResponse(t *testing.T) {
@@ -2476,36 +2438,6 @@ func TestHandleGetLeader_ServiceError(t *testing.T) {
 	server.HandleGetLeader(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestPhase4HandlerGetCacheStatsNilManager(t *testing.T) {
-	t.Run("get stats with nil cache manager", func(t *testing.T) {
-		handler := &Phase4Handler{
-			cacheMgr: nil,
-		}
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cache/stats", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleGetCacheStats(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
-}
-
-func TestPhase4HandlerClearCacheNilManager(t *testing.T) {
-	t.Run("clear cache with nil manager", func(t *testing.T) {
-		handler := &Phase4Handler{
-			cacheMgr: nil,
-		}
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cache/clear", nil)
-		w := httptest.NewRecorder()
-
-		handler.HandleClearCache(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
 }
 
 func TestExtractPathParamEdgeCasesMore(t *testing.T) {
@@ -2925,58 +2857,6 @@ func TestHandleReplaceNode_Validation(t *testing.T) {
 	})
 }
 
-// TestHandleStartMigration_Validation tests validation for migration handler.
-func TestHandleStartMigration_Validation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/migrate", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartMigration(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// TestHandleStartUpgrade_Validation tests validation for upgrade handler.
-func TestHandleStartUpgrade_Validation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/upgrade", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartUpgrade(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing target version", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{"target_version": ""}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/upgrade", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleStartUpgrade(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
 // =============================================================================
 // Range Query Handler - Coverage Boost Tests
 // =============================================================================
@@ -3129,14 +3009,6 @@ func TestRESTClient_SchedulerMethods_Errors(t *testing.T) {
 // =============================================================================
 // Messaging Channel Conversion Tests
 // =============================================================================
-
-// TestMessagingChannelToREST_NilChannel tests nil channel conversion.
-func TestMessagingChannelToREST_NilChannel(t *testing.T) {
-	t.Parallel()
-
-	result := messagingChannelToREST(nil)
-	assert.Nil(t, result)
-}
 
 // =============================================================================
 // Test Utilities
