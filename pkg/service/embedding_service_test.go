@@ -994,11 +994,9 @@ func TestEmbeddingService_ErrorMapping(t *testing.T) {
 
 			_, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
-			require.Error(t, err)
 			var dErr *quicbaasErrors.QBError
-			if errors.As(err, &dErr) {
-				assert.Equal(t, tt.expectedCode, dErr.Code)
-			}
+			require.True(t, errors.As(err, &dErr))
+			assert.Equal(t, tt.expectedCode, dErr.Code)
 		})
 	}
 }
@@ -1032,45 +1030,6 @@ func TestEmbeddingService_GenerateEmbedding_ContextCanceled(t *testing.T) {
 // Token Estimation Tests
 // =============================================================================
 
-func TestEmbeddingService_TokenEstimation(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	tests := []struct {
-		name string
-		text string
-	}{
-		{
-			name: "Short text",
-			text: "Hello",
-		},
-		{
-			name: "Medium text",
-			text: "This is a longer sentence with multiple words",
-		},
-		{
-			name: "Long text",
-			text: "The quick brown fox jumps over the lazy dog. This is a common pangram used for testing purposes.",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &GenerateEmbeddingRequest{
-				Text: tt.text,
-			}
-
-			resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
-
-			require.NoError(t, err)
-			assert.NotNil(t, resp)
-			assert.NotNil(t, resp.Metadata)
-			assert.Greater(t, resp.Metadata.Tokens, 0)
-		})
-	}
-}
-
 // =============================================================================
 // Metadata Propagation Tests
 // =============================================================================
@@ -1100,6 +1059,7 @@ func TestEmbeddingService_MetadataPropagation(t *testing.T) {
 	assert.Equal(t, EmbeddingInputTypeCode, resp.Metadata.InputType)
 	assert.Equal(t, "main.go", resp.Metadata.Source)
 	assert.Equal(t, "go", resp.Metadata.Language)
+	assert.Greater(t, resp.Metadata.Tokens, 0)
 	assert.NotNil(t, resp.Metadata.Tags)
 	assert.Equal(t, "quicbaas", resp.Metadata.Tags["project"])
 	assert.Equal(t, "service", resp.Metadata.Tags["module"])
@@ -1773,114 +1733,6 @@ func TestEmbeddingSvc_ClearCache_SpecificProvider(t *testing.T) {
 	assert.Equal(t, EmbeddingProvider("openai"), resp.Provider)
 }
 
-func TestHandleEmbeddingError_CoverageProviderNotFound(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(embedding.ErrProviderNotFound, "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrNotFound, qbErr.Code)
-}
-
-func TestHandleEmbeddingError_CoverageInvalidInput(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(embedding.ErrInvalidInput, "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestHandleEmbeddingError_CoverageProviderUnavailable(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(embedding.ErrProviderUnavailable, "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrUnavailable, qbErr.Code)
-}
-
-func TestHandleEmbeddingError_CoverageRateLimitExceeded(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(embedding.ErrRateLimitExceeded, "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrRateLimited, qbErr.Code)
-}
-
-func TestHandleEmbeddingError_CoverageTokenLimitExceeded(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(embedding.ErrTokenLimitExceeded, "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrResourceExhausted, qbErr.Code)
-}
-
-func TestHandleEmbeddingError_CoverageUnknownError(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger).(*embeddingService)
-
-	err := svc.handleEmbeddingError(errors.New("unknown error"), "test", "openai")
-
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrInternal, qbErr.Code)
-}
-
-func TestCoverageEstimateTokens(t *testing.T) {
-	tests := []struct {
-		name     string
-		text     string
-		expected int
-	}{
-		{
-			name:     "empty string",
-			text:     "",
-			expected: 0,
-		},
-		{
-			name:     "short text",
-			text:     "Hello",
-			expected: 2, // (5 + 3) / 4 = 2
-		},
-		{
-			name:     "medium text",
-			text:     "Hello, World!",
-			expected: 4, // (13 + 3) / 4 = 4
-		},
-		{
-			name:     "longer text",
-			text:     "This is a longer piece of text for testing.",
-			expected: 11, // (43 + 3) / 4 = 11.5 -> 11
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := estimateTokens(tt.text)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestEmbeddingMgrAdapter_InterfaceCompliance(t *testing.T) {
 	// This tests the adapter delegation to the underlying manager
 	// We test through the embedding service tests above since the adapter
@@ -2144,6 +1996,11 @@ func TestEstimateTokens(t *testing.T) {
 			expected: 1, // (2 + 3) / 4 = 1
 		},
 		{
+			name:     "five character text",
+			text:     "Hello",
+			expected: 2, // (5 + 3) / 4 = 2
+		},
+		{
 			name:     "four character text",
 			text:     "test",
 			expected: 1, // (4 + 3) / 4 = 1
@@ -2157,6 +2014,16 @@ func TestEstimateTokens(t *testing.T) {
 			name:     "longer text",
 			text:     "This is a longer piece of text for testing",
 			expected: 11, // (43 + 3) / 4 = 11
+		},
+		{
+			name:     "longer text with trailing period",
+			text:     "This is a longer piece of text for testing.",
+			expected: 11, // (43 + 3) / 4 = 11
+		},
+		{
+			name:     "sentence with multiple words",
+			text:     "This is a longer sentence with multiple words",
+			expected: 12, // (45 + 3) / 4 = 12
 		},
 		{
 			name:     "text with special characters",
