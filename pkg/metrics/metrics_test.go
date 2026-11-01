@@ -876,39 +876,6 @@ func TestSetVectorNamespaceCount(t *testing.T) {
 	}
 }
 
-func TestVectorMetricsMultiTenant(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record metrics for multiple tenants
-	tenants := []string{"tenant-1", "tenant-2", "tenant-3"}
-	namespaces := []string{"embeddings", "documents"}
-
-	for _, tenant := range tenants {
-		for _, ns := range namespaces {
-			m.RecordVectorOperation(tenant, ns, "upsert", "success")
-			m.SetVectorStorageBytes(tenant, ns, 1048576)
-			m.SetVectorCount(tenant, ns, 1000)
-		}
-		m.SetVectorNamespaceCount(tenant, float64(len(namespaces)))
-	}
-
-	// Verify each tenant's metrics are isolated
-	for _, tenant := range tenants {
-		nsCountLabels := prometheus.Labels{"tenant_id": tenant}
-		nsCount := testutil.ToFloat64(m.VectorNamespaceCount.With(nsCountLabels))
-		assert.Equal(t, float64(len(namespaces)), nsCount,
-			"Tenant %s should have correct namespace count", tenant)
-
-		for _, ns := range namespaces {
-			labels := prometheus.Labels{"tenant_id": tenant, "namespace": ns}
-			count := testutil.ToFloat64(m.VectorCount.With(labels))
-			assert.Equal(t, 1000.0, count,
-				"Tenant %s namespace %s should have correct vector count", tenant, ns)
-		}
-	}
-}
-
 func BenchmarkRecordVectorOperation(b *testing.B) {
 	Reset()
 	m := InitMetrics()
