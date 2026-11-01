@@ -598,287 +598,182 @@ func TestServer_GetTLSConfig_Success(t *testing.T) {
 // Dynamic Secrets Service Tests
 // =============================================================================
 
-func TestServer_CreateDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+// serverCallCase is one request against a server method that must fail with
+// the given gRPC status code.
+type serverCallCase struct {
+	name string
+	call func(srv *Server) error
+	want codes.Code
 }
 
-func TestServer_CreateDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name: "",
+func runServerCallCases(t *testing.T, tests []serverCallCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := createTestServerWithMockService(t)
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, status.Code(err))
+		})
+	}
+}
+
+func TestServer_DynamicSecrets_Errors(t *testing.T) {
+	ctx := context.Background()
+	runServerCallCases(t, []serverCallCase{
+		{"CreateRole nil request", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole empty name", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole empty generator type", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{Name: "test-role"})
+			return err
+		}, codes.InvalidArgument},
+		{"CreateRole service not available", func(s *Server) error {
+			_, err := s.CreateDynamicSecretsRole(ctx, &pb.DynSecretsCreateRoleRequest{Name: "test-role", GeneratorType: "postgres"})
+			return err
+		}, codes.Unimplemented},
+		{"GetRole nil request", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GetRole empty name", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, &pb.DynSecretsGetRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"GetRole service not available", func(s *Server) error {
+			_, err := s.GetDynamicSecretsRole(ctx, &pb.DynSecretsGetRoleRequest{Name: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"ListRoles nil request", func(s *Server) error {
+			_, err := s.ListDynamicSecretsRoles(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"ListRoles service not available", func(s *Server) error {
+			_, err := s.ListDynamicSecretsRoles(ctx, &pb.DynSecretsListRolesRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"DeleteRole nil request", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteRole empty name", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, &pb.DynSecretsDeleteRoleRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"DeleteRole service not available", func(s *Server) error {
+			_, err := s.DeleteDynamicSecretsRole(ctx, &pb.DynSecretsDeleteRoleRequest{Name: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"GenerateCredential nil request", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"GenerateCredential empty role name", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, &pb.GenerateCredentialRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"GenerateCredential service not available", func(s *Server) error {
+			_, err := s.GenerateCredential(ctx, &pb.GenerateCredentialRequest{RoleName: "test-role"})
+			return err
+		}, codes.Unimplemented},
+		{"RenewLease nil request", func(s *Server) error {
+			_, err := s.RenewLease(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RenewLease empty lease ID", func(s *Server) error {
+			_, err := s.RenewLease(ctx, &pb.RenewLeaseRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"RenewLease service not available", func(s *Server) error {
+			_, err := s.RenewLease(ctx, &pb.RenewLeaseRequest{LeaseId: "lease-123", Increment: durationpb.New(time.Hour)})
+			return err
+		}, codes.Unimplemented},
+		{"RevokeLease nil request", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"RevokeLease empty lease ID", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, &pb.RevokeLeaseRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"RevokeLease service not available", func(s *Server) error {
+			_, err := s.RevokeLease(ctx, &pb.RevokeLeaseRequest{LeaseId: "lease-123"})
+			return err
+		}, codes.Unimplemented},
+		{"ListLeases nil request", func(s *Server) error {
+			_, err := s.ListLeases(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"ListLeases service not available", func(s *Server) error {
+			_, err := s.ListLeases(ctx, &pb.ListLeasesRequest{})
+			return err
+		}, codes.Unimplemented},
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_CreateDynamicSecretsRole_EmptyGeneratorType(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_CreateDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.CreateDynamicSecretsRole(context.Background(), &pb.DynSecretsCreateRoleRequest{
-		Name:          "test-role",
-		GeneratorType: "postgres",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), &pb.DynSecretsGetRoleRequest{
-		Name: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GetDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GetDynamicSecretsRole(context.Background(), &pb.DynSecretsGetRoleRequest{
-		Name: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_ListDynamicSecretsRoles_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListDynamicSecretsRoles(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ListDynamicSecretsRoles_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListDynamicSecretsRoles(context.Background(), &pb.DynSecretsListRolesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_EmptyName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), &pb.DynSecretsDeleteRoleRequest{
-		Name: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_DeleteDynamicSecretsRole_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.DeleteDynamicSecretsRole(context.Background(), &pb.DynSecretsDeleteRoleRequest{
-		Name: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_GenerateCredential_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GenerateCredential_EmptyRoleName(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), &pb.GenerateCredentialRequest{
-		RoleName: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_GenerateCredential_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.GenerateCredential(context.Background(), &pb.GenerateCredentialRequest{
-		RoleName: "test-role",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_RenewLease_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RenewLease_EmptyLeaseID(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), &pb.RenewLeaseRequest{
-		LeaseId: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RenewLease_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RenewLease(context.Background(), &pb.RenewLeaseRequest{
-		LeaseId:   "lease-123",
-		Increment: durationpb.New(time.Hour),
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_RevokeLease_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RevokeLease_EmptyLeaseID(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), &pb.RevokeLeaseRequest{
-		LeaseId: "",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_RevokeLease_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.RevokeLease(context.Background(), &pb.RevokeLeaseRequest{
-		LeaseId: "lease-123",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_ListLeases_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListLeases(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ListLeases_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.ListLeases(context.Background(), &pb.ListLeasesRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
 // =============================================================================
 // Embedding Service Tests
 // =============================================================================
 
-func TestServer_EmbeddingGenerate_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingGenerate_EmptyText(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), &pb.EmbeddingGenerateRequest{
-		Text: "",
+func TestServer_Embedding_Errors(t *testing.T) {
+	ctx := context.Background()
+	runServerCallCases(t, []serverCallCase{
+		{"Generate nil request", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"Generate empty text", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, &pb.EmbeddingGenerateRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"Generate service not available", func(s *Server) error {
+			_, err := s.EmbeddingGenerate(ctx, &pb.EmbeddingGenerateRequest{Text: "hello world"})
+			return err
+		}, codes.Unimplemented},
+		{"BatchGenerate nil request", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, nil)
+			return err
+		}, codes.InvalidArgument},
+		{"BatchGenerate empty items", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, &pb.EmbeddingBatchGenerateRequest{})
+			return err
+		}, codes.InvalidArgument},
+		{"BatchGenerate service not available", func(s *Server) error {
+			_, err := s.EmbeddingBatchGenerate(ctx, &pb.EmbeddingBatchGenerateRequest{
+				Items: []*pb.EmbeddingBatchItem{{Id: "1", Text: "hello"}},
+			})
+			return err
+		}, codes.Unimplemented},
+		{"ListProviders service not available", func(s *Server) error {
+			_, err := s.EmbeddingListProviders(ctx, &pb.EmbeddingListProvidersRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"GetProviderInfo service not available", func(s *Server) error {
+			_, err := s.EmbeddingGetProviderInfo(ctx, &pb.EmbeddingGetProviderInfoRequest{
+				Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
+			})
+			return err
+		}, codes.Unimplemented},
+		{"SetDefaultProvider service not available", func(s *Server) error {
+			_, err := s.EmbeddingSetDefaultProvider(ctx, &pb.EmbeddingSetDefaultProviderRequest{
+				Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
+			})
+			return err
+		}, codes.Unimplemented},
+		{"GetCacheStats service not available", func(s *Server) error {
+			_, err := s.EmbeddingGetCacheStats(ctx, &pb.EmbeddingGetCacheStatsRequest{})
+			return err
+		}, codes.Unimplemented},
+		{"ClearCache service not available", func(s *Server) error {
+			_, err := s.EmbeddingClearCache(ctx, &pb.EmbeddingClearCacheRequest{})
+			return err
+		}, codes.Unimplemented},
 	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingGenerate_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGenerate(context.Background(), &pb.EmbeddingGenerateRequest{
-		Text: "hello world",
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_NilRequest(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), nil)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_EmptyItems(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), &pb.EmbeddingBatchGenerateRequest{
-		Items: nil,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_EmbeddingBatchGenerate_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingBatchGenerate(context.Background(), &pb.EmbeddingBatchGenerateRequest{
-		Items: []*pb.EmbeddingBatchItem{{Id: "1", Text: "hello"}},
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingListProviders_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingListProviders(context.Background(), &pb.EmbeddingListProvidersRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingGetProviderInfo_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGetProviderInfo(context.Background(), &pb.EmbeddingGetProviderInfoRequest{
-		Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingSetDefaultProvider_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingSetDefaultProvider(context.Background(), &pb.EmbeddingSetDefaultProviderRequest{
-		Provider: pb.EmbeddingProvider_EMBEDDING_PROVIDER_OPENAI,
-	})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingGetCacheStats_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingGetCacheStats(context.Background(), &pb.EmbeddingGetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServer_EmbeddingClearCache_ServiceNotAvailable(t *testing.T) {
-	srv, _ := createTestServerWithMockService(t)
-	_, err := srv.EmbeddingClearCache(context.Background(), &pb.EmbeddingClearCacheRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 
 // =============================================================================
