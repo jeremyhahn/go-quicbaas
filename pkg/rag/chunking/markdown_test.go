@@ -594,42 +594,211 @@ This section also has multiple sentences to ensure proper chunking behavior.`)
 }
 
 func TestMarkdownChunker_SplitLargeSection(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     30,  // Very small target to force splitting
-		MaxTokens:        100, // Allow sections to trigger split logic
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		IncludeHierarchy: true,
-		KeepCodeBlocks:   true,
-	})
-
-	// Create content with multiple paragraphs to enable splitting
-	content := []byte(`# Large Section
-
-First paragraph with enough content to be meaningful.
-This paragraph has multiple sentences to increase the token count.
-
-Second paragraph also with substantial content here.
-More sentences to ensure this forms a distinct block.
-
-Third paragraph with even more information included.
-Additional sentences to make this substantial as well.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	if err != nil {
-		t.Fatalf("Chunk failed: %v", err)
+	words := func(word string, n int) string {
+		return strings.TrimSpace(strings.Repeat(word+" ", n))
 	}
 
-	// Should split into multiple chunks due to TargetTokens=30
-	if len(chunks) < 2 {
-		t.Logf("Got %d chunks (may vary based on token counting)", len(chunks))
+	tests := []struct {
+		name             string
+		includeHierarchy bool
+		sec              section
+		want             []string
+	}{
+		{
+			name: "one chunk per block over target, each with the header",
+			sec: section{
+				headerLevel: 1,
+				headerText:  "Big",
+				startLine:   1,
+				endLine:     6,
+				content:     []string{words("alpha", 20), "```", words("beta", 20), "```", "- " + words("gamma", 20)},
+				hierarchy:   []string{"Big"},
+			},
+			want: []string{
+				"# Big\n\n" + words("alpha", 20),
+				"# Big\n\n```\n" + words("beta", 20) + "\n```",
+				"# Big\n\n- " + words("gamma", 20),
+			},
+		},
+		{
+			name: "small blocks share one chunk",
+			sec: section{
+				headerLevel: 1,
+				headerText:  "Big",
+				startLine:   1,
+				endLine:     5,
+				content:     []string{"a b c d e", "```", "d e", "```"},
+				hierarchy:   []string{"Big"},
+			},
+			want: []string{"# Big\n\na b c d e\n\n```\nd e\n```"},
+		},
+		{
+			name:             "hierarchy prefix",
+			includeHierarchy: true,
+			sec: section{
+				headerLevel: 2,
+				headerText:  "Sub",
+				startLine:   3,
+				endLine:     4,
+				content:     []string{words("word", 10)},
+				hierarchy:   []string{"Top", "Sub"},
+			},
+			want: []string{"# Top\n## Sub\n\n" + words("word", 10)},
+		},
+		{
+			name: "chunks below the minimum are dropped",
+			sec: section{
+				startLine: 1,
+				endLine:   5,
+				content:   []string{"a b", "```", words("word", 30), "```", "- c"},
+			},
+			want: []string{"```\n" + words("word", 30) + "\n```"},
+		},
 	}
 
-	// All chunks should include the header
-	for i, chunk := range chunks {
-		if !strings.Contains(chunk.Content, "# Large Section") {
-			t.Errorf("Chunk %d should include section header", i)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunker := NewMarkdownChunker(MarkdownChunkerConfig{
+				TargetTokens:     30,
+				MaxTokens:        40,
+				MinChunkSize:     10,
+				MaxHeaderDepth:   3,
+				IncludeHierarchy: tt.includeHierarchy,
+			})
+
+			chunks := chunker.splitLargeSection(tt.sec, Metadata{})
+
+			got := make([]string, 0, len(chunks))
+			for _, chunk := range chunks {
+				got = append(got, chunk.Content)
+				assert.Equal(t, "markdown_section_split", chunk.Metadata.Context["type"])
+				if tt.sec.headerLevel > 0 {
+					assert.Equal(t, tt.sec.headerText, chunk.Metadata.Context["header_text"])
+				}
+				if len(tt.sec.hierarchy) > 0 {
+					assert.Equal(t, strings.Join(tt.sec.hierarchy, " > "), chunk.Metadata.Context["hierarchy"])
+				}
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMarkdownChunker_BuildChunks(t *testing.T) {
+	words := func(n int) string {
+		return strings.TrimSpace(strings.Repeat("word ", n))
+	}
+	first := func(n int) section {
+		return section{
+			headerLevel: 1,
+			headerText:  "First",
+			startLine:   1,
+			endLine:     3,
+			content:     []string{words(n)},
+			hierarchy:   []string{"First"},
 		}
+	}
+	second := func(text string) section {
+		return section{
+			headerLevel: 2,
+			headerText:  "Tiny",
+			startLine:   4,
+			endLine:     6,
+			content:     []string{text},
+			hierarchy:   []string{"First", "Tiny"},
+		}
+	}
+
+	tests := []struct {
+		name             string
+		includeHierarchy bool
+		sections         []section
+		wantType         string
+		want             []string
+		wantContext      map[string]string
+		wantTags         []string
+	}{
+		{
+			name:     "small section merges into the previous chunk",
+			sections: []section{first(20), second("Small.")},
+			wantType: "markdown_section",
+			want:     []string{"# First\n\n" + words(20) + "\n\n## Tiny\n\nSmall."},
+		},
+		{
+			name:     "section below half the minimum that cannot merge is skipped",
+			sections: []section{first(33), second("Y")},
+			wantType: "markdown_section",
+			want:     []string{"# First\n\n" + words(33)},
+		},
+		{
+			name:     "small section that cannot merge is kept",
+			sections: []section{first(33), second("a b c d")},
+			wantType: "markdown_section",
+			want:     []string{"# First\n\n" + words(33), "## Tiny\n\na b c d"},
+		},
+		{
+			name:     "small first section is kept",
+			sections: []section{{headerLevel: 1, headerText: "X", startLine: 1, endLine: 2, content: []string{"Y"}, hierarchy: []string{"X"}}},
+			wantType: "markdown_section",
+			want:     []string{"# X\n\nY"},
+		},
+		{
+			name:     "empty section is skipped",
+			sections: []section{{startLine: 1, endLine: 2, content: []string{"", "  "}}},
+			want:     []string{},
+		},
+		{
+			name:     "section over max tokens is split",
+			sections: []section{{headerLevel: 1, headerText: "Big", startLine: 1, endLine: 2, content: []string{words(50)}}},
+			wantType: "markdown_section_split",
+			want:     []string{"# Big\n\n" + words(50)},
+		},
+		{
+			name:             "hierarchy, context and tags",
+			includeHierarchy: true,
+			sections: []section{{
+				headerLevel: 2,
+				headerText:  "Sub",
+				startLine:   3,
+				endLine:     4,
+				content:     []string{words(10)},
+				hierarchy:   []string{"Top", "Sub"},
+			}},
+			wantType: "markdown_section",
+			want:     []string{"# Top\n## Sub\n\n" + words(10)},
+			wantContext: map[string]string{
+				"header_level": "2",
+				"header_text":  "Sub",
+				"hierarchy":    "Top > Sub",
+				"type":         "markdown_section",
+			},
+			wantTags: []string{"Top", "Sub"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunker := NewMarkdownChunker(MarkdownChunkerConfig{
+				TargetTokens:     30,
+				MaxTokens:        40,
+				MinChunkSize:     10,
+				MaxHeaderDepth:   3,
+				IncludeHierarchy: tt.includeHierarchy,
+			})
+
+			chunks := chunker.buildChunks(tt.sections, Metadata{})
+
+			got := make([]string, 0, len(chunks))
+			for _, chunk := range chunks {
+				got = append(got, chunk.Content)
+				assert.Equal(t, tt.wantType, chunk.Metadata.Context["type"])
+			}
+			assert.Equal(t, tt.want, got)
+			if tt.wantContext != nil {
+				assert.Equal(t, tt.wantContext, chunks[0].Metadata.Context)
+				assert.Equal(t, tt.wantTags, chunks[0].Metadata.Tags)
+			}
+		})
 	}
 }
 
@@ -729,31 +898,6 @@ func TestMarkdownChunker_SplitIntoBlocks(t *testing.T) {
 	}
 }
 
-func TestMarkdownChunker_ExceedMaxTokens(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     50,
-		MaxTokens:        80, // Set max tokens threshold
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		IncludeHierarchy: true,
-		KeepCodeBlocks:   true,
-	})
-
-	// Create content that exceeds MaxTokens
-	longParagraph := strings.Repeat("This is a word. ", 100)
-	content := []byte("# Section\n\n" + longParagraph)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	if err != nil {
-		t.Fatalf("Chunk failed: %v", err)
-	}
-
-	// Should handle content even if it exceeds limits
-	if len(chunks) == 0 {
-		t.Error("Should produce at least one chunk even for oversized content")
-	}
-}
-
 // Benchmarks
 
 func BenchmarkMarkdownChunker_Small(b *testing.B) {
@@ -821,42 +965,6 @@ func BenchmarkMarkdownChunker_Large(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = chunker.Chunk(data, Metadata{})
-	}
-}
-
-func TestMarkdownChunker_SplitLargeSection_EdgeCases(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:   25,
-		MaxTokens:      120,
-		MinChunkSize:   5,
-		MaxHeaderDepth: 3,
-	})
-
-	// Large section exceeding MaxTokens
-	content := []byte(`# Large Section
-
-` + strings.Repeat("This is paragraph text. ", 30) + `
-
-` + "```python\ncode here\n```" + `
-
-` + strings.Repeat("More text here. ", 20))
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	if err != nil {
-		t.Fatalf("Chunk failed: %v", err)
-	}
-
-	if len(chunks) < 2 {
-		t.Logf("Got %d chunks (expected multiple for large section)", len(chunks))
-	}
-
-	for i, chunk := range chunks {
-		if strings.TrimSpace(chunk.Content) == "" {
-			t.Errorf("Chunk %d is empty", i)
-		}
-		if chunk.Tokens == 0 {
-			t.Errorf("Chunk %d has zero tokens", i)
-		}
 	}
 }
 
@@ -1037,30 +1145,6 @@ func TestMarkdownChunker_ChunkReturnError(t *testing.T) {
 	if err != nil {
 		assert.Contains(t, err.Error(), "no chunks created")
 	}
-}
-
-func TestMarkdownChunker_BuildChunks_SkipTooSmallChunk(t *testing.T) {
-	// Test skipping very small chunks
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     100, // High minimum
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	})
-
-	content := []byte(`# Main
-Main content with enough text to meet minimum requirements here.
-
-## Tiny
-Hi.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-
-	// Tiny section should be skipped or merged
-	assert.LessOrEqual(t, len(chunks), 2)
 }
 
 // Text Chunker edge cases
@@ -1431,29 +1515,6 @@ func TestTextChunker_ChunkByTokens_NoChunksCreated(t *testing.T) {
 	// Should error when no chunks can be created
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no chunks created")
-}
-
-func TestMarkdownChunker_SplitLargeSection_EmptyBlockContent(t *testing.T) {
-	// Test splitLargeSection with empty block content
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     30,
-		MaxTokens:        100,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	// Create content with blocks that produce empty content after trimming
-	content := []byte(`# Section
-
-
-
-More content here to ensure section is created.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
 }
 
 func TestTextChunker_ChunkByParagraphs_OverlapAdjustment(t *testing.T) {
@@ -1847,128 +1908,6 @@ func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
 	}
 }
 
-// TestMarkdownChunker_BuildChunks_AllPaths tests all paths in buildChunks
-func TestMarkdownChunker_BuildChunks_AllPaths(t *testing.T) {
-	t.Run("merge small into previous when possible", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens: 100,
-			MaxTokens:    200,
-			MinChunkSize: 30,
-		})
-		// First section is fine, second is tiny and should be merged
-		content := []byte("# First\n" + strings.Repeat("Content. ", 15) + "\n\n## Tiny\nSmall.")
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Check that merging happened or tiny was skipped
-		for _, chunk := range chunks {
-			if chunk.Tokens > 0 && chunk.Tokens < 10 {
-				t.Log("Very small chunk found")
-			}
-		}
-	})
-
-	t.Run("skip very tiny sections", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens: 100,
-			MaxTokens:    200,
-			MinChunkSize: 50,
-		})
-		// Multiple sections, middle one very tiny
-		content := []byte("# One\n" + strings.Repeat("Word ", 25) +
-			"\n\n## Tiny\nX\n\n## Three\n" + strings.Repeat("Word ", 25))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Tiny section should be skipped
-		for _, chunk := range chunks {
-			if strings.Contains(chunk.Content, "## Tiny") && chunk.Tokens < 50 {
-				t.Log("Tiny section handling test")
-			}
-		}
-	})
-
-	t.Run("section with no header level", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens:     100,
-			MaxTokens:        200,
-			MinChunkSize:     5,
-			IncludeHierarchy: false,
-		})
-		// Content before any header
-		content := []byte("Some text before any headers.\n\n# First Header\nContent.")
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks")
-		}
-	})
-}
-
-// TestMarkdownChunker_SplitLargeSection_AllPaths tests all paths
-func TestMarkdownChunker_SplitLargeSection_AllPaths(t *testing.T) {
-	t.Run("create chunks from blocks", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens:     25,
-			MaxTokens:        100,
-			MinChunkSize:     5,
-			IncludeHierarchy: false,
-		})
-		// Large section that needs splitting into blocks
-		content := []byte("# Big\n\n" + strings.Repeat("Para one. ", 10) +
-			"\n\n" + strings.Repeat("Para two. ", 10))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunks from large section")
-		}
-	})
-
-	t.Run("add current chunk when exceeds target", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens:     30,
-			MaxTokens:        100,
-			MinChunkSize:     10,
-			IncludeHierarchy: true,
-		})
-		// Multiple blocks that will trigger chunk creation
-		content := []byte("# Section\n\n" + strings.Repeat("Block one. ", 8) +
-			"\n\n" + strings.Repeat("Block two. ", 8) +
-			"\n\n" + strings.Repeat("Block three. ", 8))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) < 2 {
-			t.Logf("Expected multiple chunks from splitting, got %d", len(chunks))
-		}
-	})
-
-	t.Run("final chunk from remaining content", func(t *testing.T) {
-		chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-			TargetTokens:     30,
-			MaxTokens:        100,
-			MinChunkSize:     10,
-			IncludeHierarchy: false,
-		})
-		// Content where final block creates a chunk
-		content := []byte("# Section\n\n" + strings.Repeat("Content. ", 20))
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create final chunk")
-		}
-	})
-}
-
 // TestTextChunker_ChunkBySentences_FullCoverage pushes to 100%
 func TestTextChunker_ChunkBySentences_FullCoverage(t *testing.T) {
 	t.Run("create chunk with overlap", func(t *testing.T) {
@@ -2259,101 +2198,6 @@ func TestTextChunker_CalculateOverlapWords_ZeroCase(t *testing.T) {
 
 	// Should be at least 1
 	assert.GreaterOrEqual(t, overlapWords, 1)
-}
-
-// Test buildChunks with merging scenario
-func TestMarkdownChunker_BuildChunks_MergeScenario(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     40,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	})
-
-	// Create scenario where small chunk can be merged
-	content := []byte(`# First
-Content here with enough text.
-
-## Small
-X`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-// Test buildChunks scenario where chunk is too small to keep individually but combined exceeds max
-func TestMarkdownChunker_BuildChunks_TooSmallCannotMerge(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        100, // Small max
-		MinChunkSize:     20,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	})
-
-	// First chunk near max, second small
-	content := []byte(`# First
-` + strings.Repeat("Word ", 45) + `
-
-## Second
-Small`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-// Test chunk below half minimum threshold (line 289)
-func TestMarkdownChunker_BuildChunks_BelowHalfMin(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     100,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	})
-
-	// Multiple chunks, some very small (below half minimum)
-	content := []byte(`# Good
-` + strings.Repeat("Content ", 30) + `
-
-## Tiny
-X
-
-## AlsoGood
-` + strings.Repeat("More ", 30))
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	// Tiny chunk should be skipped
-	assert.Greater(t, len(chunks), 0)
-}
-
-// Test splitLargeSection where block content is empty after trim
-func TestMarkdownChunker_SplitLargeSection_EmptyBlock(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     30,
-		MaxTokens:        100,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-
-
-Content here`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
 }
 
 // Test writeImports with no toWrite (line 368-370)
