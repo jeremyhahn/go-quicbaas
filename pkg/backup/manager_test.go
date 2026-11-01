@@ -717,30 +717,6 @@ func TestEncryptionTypes(t *testing.T) {
 	}
 }
 
-func TestBackupManager_Close(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	err := manager.Close()
-	require.NoError(t, err)
-
-	// Verify manager is closed
-	ctx := context.Background()
-	_, err = manager.CreateBackup(ctx, BackupTypeFull)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestBackupManager_DoubleClose(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	err := manager.Close()
-	require.NoError(t, err)
-
-	// Close again - should be idempotent
-	err = manager.Close()
-	require.NoError(t, err)
-}
-
 func TestBackupManager_ClosedOperations(t *testing.T) {
 	manager, _, _ := setupTestBackupManager(t)
 
@@ -765,6 +741,9 @@ func TestBackupManager_ClosedOperations(t *testing.T) {
 	err = manager.DeleteBackup(ctx, "backup-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+
+	// Close is idempotent
+	require.NoError(t, manager.Close())
 }
 
 func TestNewBackupManager_Validation(t *testing.T) {
@@ -895,51 +874,58 @@ func TestBackupManager_EmptyStorage(t *testing.T) {
 	}
 }
 
-func TestBackupManager_MultipleShards(t *testing.T) {
-	memStorage := &mockStorage{
-		MemoryStorage: memory.New(nil),
+func TestBackupManager_CreateBackupShardCount(t *testing.T) {
+	tests := []struct {
+		name       string
+		shardCount int
+	}{
+		{name: "no shards", shardCount: 0},
+		{name: "five shards", shardCount: 5},
 	}
 
-	require.NoError(t, memStorage.Set([]byte("key1"), []byte("value1")))
+	for _, tt := range tests {
+		shardCount := tt.shardCount
+		t.Run(tt.name, func(t *testing.T) {
+			memStorage := &mockStorage{
+				MemoryStorage: memory.New(nil),
+			}
+			require.NoError(t, memStorage.Set([]byte("key1"), []byte("value1")))
 
-	mockRaft := &mockRaftNode{shardCount: 5}
+			log, err := logger.New(logger.LogConfig{
+				Level:  "debug",
+				Format: "json",
+				Output: "stdout",
+			})
+			require.NoError(t, err)
 
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
+			config := &Config{
+				StorageBackend:     "mock",
+				DefaultCompression: CompressionNone,
+				DefaultEncryption:  EncryptionNone,
+				WorkDir:            t.TempDir(),
+				Timeout:            5 * time.Minute,
+				StorageConfig: map[string]string{
+					"path": t.TempDir(),
+				},
+			}
 
-	config := &Config{
-		StorageBackend:     "mock",
-		DefaultCompression: CompressionNone,
-		DefaultEncryption:  EncryptionNone,
-		WorkDir:            t.TempDir(),
-		Timeout:            5 * time.Minute,
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
-		},
+			manager := &BackupManager{
+				config:  config,
+				storage: memStorage,
+				raft:    &mockRaftNode{shardCount: shardCount},
+				backend: NewMockStorage(),
+				logger:  log.WithField("component", "backup-manager"),
+				metrics: initBackupMetrics(),
+			}
+			defer manager.Close()
+
+			backup, err := manager.CreateBackup(context.Background(), BackupTypeFull)
+			require.NoError(t, err)
+
+			assert.Len(t, backup.Shards, shardCount)
+			assert.Equal(t, shardCount, backup.Metadata.NumShards)
+		})
 	}
-
-	manager := &BackupManager{
-		config:  config,
-		storage: memStorage,
-		raft:    mockRaft,
-		backend: NewMockStorage(),
-		logger:  log.WithField("component", "backup-manager"),
-		metrics: initBackupMetrics(),
-	}
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	// Should have 5 shards
-	assert.Len(t, backup.Shards, 5)
-	assert.Equal(t, 5, backup.Metadata.NumShards)
-
-	manager.Close()
 }
 
 func TestBackupManager_RestoreOptions(t *testing.T) {
@@ -1154,52 +1140,6 @@ func TestNewBackupManager_WorkDirCreation(t *testing.T) {
 
 	err = manager.Close()
 	require.NoError(t, err)
-}
-
-func TestBackupManager_CreateBackupNoShards(t *testing.T) {
-	memStorage := &mockStorage{
-		MemoryStorage: memory.New(nil),
-	}
-
-	// Mock raft with no shards
-	mockRaft := &mockRaftNode{shardCount: 0}
-
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	config := &Config{
-		StorageBackend:     "mock",
-		DefaultCompression: CompressionNone,
-		DefaultEncryption:  EncryptionNone,
-		WorkDir:            t.TempDir(),
-		Timeout:            5 * time.Minute,
-		StorageConfig: map[string]string{
-			"path": t.TempDir(),
-		},
-	}
-
-	manager := &BackupManager{
-		config:  config,
-		storage: memStorage,
-		raft:    mockRaft,
-		backend: NewMockStorage(),
-		logger:  log.WithField("component", "backup-manager"),
-		metrics: initBackupMetrics(),
-	}
-
-	ctx := context.Background()
-	backup, err := manager.CreateBackup(ctx, BackupTypeFull)
-	require.NoError(t, err)
-
-	assert.NotNil(t, backup)
-	assert.Empty(t, backup.Shards)
-	assert.Equal(t, 0, backup.Metadata.NumShards)
-
-	manager.Close()
 }
 
 func TestWriteUint32(t *testing.T) {
