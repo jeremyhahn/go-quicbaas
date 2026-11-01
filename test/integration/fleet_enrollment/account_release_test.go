@@ -182,6 +182,7 @@ func (f *enrollmentFixture) adminEdge(t *testing.T) *httptest.Server {
 	if f.admin != nil {
 		return f.admin
 	}
+	quicbaaspermission.Register()
 
 	// The tenant admin holds go-qrdb's built-in admin role. The harness role
 	// store carries that role's grants for these routes, and only the grants
