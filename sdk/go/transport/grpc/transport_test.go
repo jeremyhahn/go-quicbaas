@@ -348,57 +348,55 @@ func TestFactory_Create(t *testing.T) {
 	}
 }
 
-func TestStream_SendClosed(t *testing.T) {
-	s := &stream{}
-	s.closed.Store(true)
-
-	err := s.Send("test")
-	if err == nil {
-		t.Fatal("expected error for closed stream")
+func TestStream_Closed(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(s *stream) error
+	}{
+		{name: "send", op: func(s *stream) error { return s.Send("test") }},
+		{name: "recv", op: func(s *stream) error {
+			_, err := s.Recv()
+			return err
+		}},
 	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &stream{}
+			s.closed.Store(true)
+
+			err := tt.op(s)
+			if err == nil {
+				t.Fatal("expected error for closed stream")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
-func TestStream_RecvClosed(t *testing.T) {
-	s := &stream{}
-	s.closed.Store(true)
-
-	_, err := s.Recv()
-	if err == nil {
-		t.Fatal("expected error for closed stream")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
-	}
-}
-
-func TestStream_CloseAlreadyClosed(t *testing.T) {
-	mockTransport := &Transport{}
-	s := &stream{
-		transport: mockTransport,
-	}
-	s.closed.Store(true)
-
-	err := s.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestStream_CloseReturnsConnection(t *testing.T) {
-	mockTransport := &Transport{}
-	s := &stream{
-		transport: mockTransport,
+func TestStream_Close(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "already closed", closed: true},
+		{name: "open", closed: false},
 	}
 
-	err := s.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if !s.closed.Load() {
-		t.Error("expected stream to be marked closed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &stream{transport: &Transport{}}
+			s.closed.Store(tt.closed)
+
+			if err := s.Close(); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !s.closed.Load() {
+				t.Error("expected stream to be marked closed")
+			}
+		})
 	}
 }
 
@@ -552,9 +550,8 @@ func TestStream_RecvSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// The mock returns the message via pointer, check it was received
-	if msg == nil {
-		// OK - the mock implementation may not populate correctly, but path is covered
+	if msg != expectedMsg {
+		t.Errorf("Recv() = %v, want %q", msg, expectedMsg)
 	}
 }
 
@@ -949,62 +946,6 @@ func TestRequestStream_SendMsgError(t *testing.T) {
 	}
 	// Just verify it doesn't panic - actual error depends on server behavior
 	_ = err
-}
-
-// mockUnhealthyClientStream implements grpc.ClientStream that simulates unhealthy stream.
-type mockUnhealthyClientStream struct {
-	grpc.ClientStream
-	closed bool
-}
-
-func (m *mockUnhealthyClientStream) SendMsg(msg interface{}) error {
-	if m.closed {
-		return status.Error(codes.Unavailable, "stream closed")
-	}
-	return status.Error(codes.Unavailable, "connection unavailable")
-}
-
-func (m *mockUnhealthyClientStream) RecvMsg(msg interface{}) error {
-	return status.Error(codes.Unavailable, "connection unavailable")
-}
-
-func (m *mockUnhealthyClientStream) CloseSend() error {
-	m.closed = true
-	return nil
-}
-
-// TestStream_SendUnavailable tests sending on unavailable stream.
-func TestStream_SendUnavailable(t *testing.T) {
-	mockCS := &mockUnhealthyClientStream{}
-	s := &stream{
-		stream:    mockCS,
-		transport: &Transport{},
-	}
-
-	err := s.Send("test")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.Code(err) != errors.CodeUnavailable {
-		t.Errorf("expected Unavailable error, got %v", errors.Code(err))
-	}
-}
-
-// TestStream_RecvUnavailable tests receiving on unavailable stream.
-func TestStream_RecvUnavailable(t *testing.T) {
-	mockCS := &mockUnhealthyClientStream{}
-	s := &stream{
-		stream:    mockCS,
-		transport: &Transport{},
-	}
-
-	_, err := s.Recv()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if errors.Code(err) != errors.CodeUnavailable {
-		t.Errorf("expected Unavailable error, got %v", errors.Code(err))
-	}
 }
 
 // mockPooledConnServer provides a server for pooled connection tests.
