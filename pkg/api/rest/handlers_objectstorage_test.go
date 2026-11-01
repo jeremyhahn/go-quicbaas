@@ -487,22 +487,6 @@ func TestHandlePutObject_WithChecksum(t *testing.T) {
 	}
 }
 
-func TestHandlePutObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandlePutObject)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt", bytes.NewReader([]byte("content")))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
 // =============================================================================
 // GET Object Tests
 // =============================================================================
@@ -1451,12 +1435,17 @@ type objectHandlerCase struct {
 }
 
 // runObjectHandlerCases serves each case through a chi router and checks the
-// response status. An empty body is sent as a nil body.
+// response status. An empty body is sent as a nil body, and a nil mock leaves
+// the server without an object storage service.
 func runObjectHandlerCases(t *testing.T, tests []objectHandlerCase) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := newTestObjectStorageServer(tt.mock)
+			var objService service.ObjectStorageService
+			if tt.mock != nil {
+				objService = tt.mock
+			}
+			s := newTestObjectStorageServer(objService)
 			r := chi.NewRouter()
 			r.MethodFunc(tt.method, tt.route, func(w http.ResponseWriter, req *http.Request) {
 				tt.handler(s, w, req)
@@ -1652,140 +1641,36 @@ func TestObjectHandlers_ServiceError(t *testing.T) {
 	runObjectHandlerCases(t, tests)
 }
 
-func TestHandlePutObject_InvalidTagsJSON(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandlePutObject)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt?tags=invalid-json", bytes.NewReader([]byte("data")))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+// TestObjectHandlers_InvalidBody sends malformed JSON to every handler that
+// decodes a request body (or, for PUT, a tags query) and expects 400 before
+// the service is called.
+func TestObjectHandlers_InvalidBody(t *testing.T) {
+	post := func(name string, handler func(*Server, http.ResponseWriter, *http.Request), action string) objectHandlerCase {
+		return objectHandlerCase{name: name, mock: &mockObjectStorageService{}, handler: handler,
+			method: http.MethodPost, route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/" + action,
+			body: "invalid-json", wantStatus: http.StatusBadRequest}
 	}
-}
 
-func TestHandleCopyObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleCopyObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/copy", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+	tests := []objectHandlerCase{
+		{
+			name: "PutObjectTags", mock: &mockObjectStorageService{}, handler: (*Server).HandlePutObject,
+			method: http.MethodPut, route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt?tags=invalid-json",
+			body: "data", wantStatus: http.StatusBadRequest,
+		},
+		post("CopyObject", (*Server).HandleCopyObject, "copy"),
+		post("ReplicateObject", (*Server).HandleReplicateObject, "replicate"),
+		post("MigrateObject", (*Server).HandleMigrateObject, "migrate"),
+		post("ArchiveObject", (*Server).HandleArchiveObject, "archive"),
+		post("RestoreObject", (*Server).HandleRestoreObject, "restore"),
+		post("VerifyObject", (*Server).HandleVerifyObject, "verify"),
+		{
+			name: "SetObjectPolicy", mock: &mockObjectStorageService{}, handler: (*Server).HandleSetObjectPolicy,
+			method: http.MethodPut, route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/policy",
+			body: "invalid-json", wantStatus: http.StatusBadRequest,
+		},
 	}
-}
 
-func TestHandleReplicateObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleReplicateObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/replicate", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleMigrateObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleMigrateObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/migrate", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleArchiveObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleArchiveObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/archive", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleRestoreObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleRestoreObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/restore", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleVerifyObject_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleVerifyObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/verify", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleSetObjectPolicy_InvalidBody(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandleSetObjectPolicy)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt/policy", strings.NewReader("invalid-json"))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
+	runObjectHandlerCases(t, tests)
 }
 
 // Additional tests for improved coverage
@@ -1906,232 +1791,45 @@ func TestHandleHeadObject_EmptyKey(t *testing.T) {
 	}
 }
 
-func TestHandleHeadObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Head("/api/v1/objects/*", s.HandleHeadObject)
-
-	req := httptest.NewRequest(http.MethodHead, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
+// TestObjectHandlers_ServiceUnavailable drives every object storage handler on
+// a server with no object storage service and expects 503.
+func TestObjectHandlers_ServiceUnavailable(t *testing.T) {
+	unavailable := func(name string, handler func(*Server, http.ResponseWriter, *http.Request), method, route, target, body string) objectHandlerCase {
+		return objectHandlerCase{name: name, handler: handler, method: method, route: route, target: target,
+			body: body, wantStatus: http.StatusServiceUnavailable}
 	}
-}
 
-func TestHandleListObjects_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects", s.HandleListObjects)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
+	tests := []objectHandlerCase{
+		unavailable("PutObject", (*Server).HandlePutObject, http.MethodPut, "/api/v1/objects/*", "/api/v1/objects/test.txt", "content"),
+		unavailable("GetObject", (*Server).HandleGetObject, http.MethodGet, "/api/v1/objects/*", "/api/v1/objects/test.txt", ""),
+		unavailable("DeleteObject", (*Server).HandleDeleteObject, http.MethodDelete, "/api/v1/objects/*", "/api/v1/objects/test.txt", ""),
+		unavailable("HeadObject", (*Server).HandleHeadObject, http.MethodHead, "/api/v1/objects/*", "/api/v1/objects/test.txt", ""),
+		unavailable("ListObjects", (*Server).HandleListObjects, http.MethodGet, "/api/v1/objects", "/api/v1/objects", ""),
+		unavailable("ListByTag", (*Server).HandleListByTag, http.MethodGet, "/api/v1/objects/by-tag", "/api/v1/objects/by-tag?name=env", ""),
+		unavailable("ListByTenant", (*Server).HandleListByTenant, http.MethodGet,
+			"/api/v1/objects/by-tenant/{tenant}", "/api/v1/objects/by-tenant/tenant1", ""),
+		unavailable("CopyObject", (*Server).HandleCopyObject, http.MethodPost,
+			"/api/v1/objects/*", "/api/v1/objects/test.txt/copy", `{"destination_key":"backup.txt"}`),
+		unavailable("ReplicateObject", (*Server).HandleReplicateObject, http.MethodPost,
+			"/api/v1/objects/*", "/api/v1/objects/test.txt/replicate", `{"targets":["replica1"]}`),
+		unavailable("MigrateObject", (*Server).HandleMigrateObject, http.MethodPost,
+			"/api/v1/objects/*", "/api/v1/objects/test.txt/migrate", `{"target_backend":"archive"}`),
+		unavailable("ArchiveObject", (*Server).HandleArchiveObject, http.MethodPost, "/api/v1/objects/*", "/api/v1/objects/test.txt/archive", ""),
+		unavailable("RestoreObject", (*Server).HandleRestoreObject, http.MethodPost, "/api/v1/objects/*", "/api/v1/objects/test.txt/restore", ""),
+		unavailable("VerifyObject", (*Server).HandleVerifyObject, http.MethodPost, "/api/v1/objects/*", "/api/v1/objects/test.txt/verify", ""),
+		unavailable("GetObjectPolicy", (*Server).HandleGetObjectPolicy, http.MethodGet, "/api/v1/objects/*", "/api/v1/objects/test.txt/policy", ""),
+		unavailable("SetObjectPolicy", (*Server).HandleSetObjectPolicy, http.MethodPut,
+			"/api/v1/objects/*", "/api/v1/objects/test.txt/policy", `{"replication_policy":{"enabled":true}}`),
+		unavailable("ListObjectBackends", (*Server).HandleListObjectBackends, http.MethodGet, "/api/v1/backends", "/api/v1/backends", ""),
+		unavailable("GetObjectBackendHealth", (*Server).HandleGetObjectBackendHealth, http.MethodGet,
+			"/api/v1/backends/{name}/health", "/api/v1/backends/primary/health", ""),
+		unavailable("GetTenantUsage", (*Server).HandleGetTenantUsage, http.MethodGet,
+			"/api/v1/tenants/{tenant}/usage", "/api/v1/tenants/tenant1/usage", ""),
+		unavailable("GetTenantQuotas", (*Server).HandleGetTenantQuotas, http.MethodGet,
+			"/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants/tenant1/quotas", ""),
 	}
-}
 
-func TestHandleListByTag_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/by-tag", s.HandleListByTag)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/by-tag?name=env", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleListByTenant_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/by-tenant/{tenant}", s.HandleListByTenant)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/by-tenant/tenant1", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleCopyObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleCopyObject)
-
-	body := `{"destination_key":"backup.txt"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/copy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleReplicateObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleReplicateObject)
-
-	body := `{"targets":["replica1"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/replicate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleMigrateObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleMigrateObject)
-
-	body := `{"target_backend":"archive"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/migrate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleArchiveObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleArchiveObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/archive", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleRestoreObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleRestoreObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/restore", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleVerifyObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleVerifyObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/verify", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleGetObjectPolicy_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObjectPolicy)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt/policy", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleSetObjectPolicy_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandleSetObjectPolicy)
-
-	body := `{"replication_policy":{"enabled":true}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt/policy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleGetTenantUsage_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/tenants/{tenant}/usage", s.HandleGetTenantUsage)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/usage", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleGetTenantQuotas_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/tenants/{tenant}/quotas", s.HandleGetTenantQuotas)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/quotas", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
+	runObjectHandlerCases(t, tests)
 }
 
 func TestHandleGetTenantUsage_MissingTenant(t *testing.T) {
@@ -2237,70 +1935,6 @@ func TestHandleListObjectBackends_WithFilters(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestHandleListObjectBackends_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/backends", s.HandleListObjectBackends)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleGetObjectBackendHealth_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/backends/{name}/health", s.HandleGetObjectBackendHealth)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends/primary/health", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleDeleteObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/objects/*", s.HandleDeleteObject)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleGetObject_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
 	}
 }
 
