@@ -654,7 +654,7 @@ func TestMessagingServer_Subscribe(t *testing.T) {
 			request: &pb.MessagingSubscribeRequest{
 				Channel: "test-channel",
 				Filter: &pb.SubscriptionFilter{
-					EventTypes: []pb.EventType{pb.EventType_EVENT_TYPE_PUT},
+					EventTypes: []pb.EventType{pb.EventType_EVENT_TYPE_PUT, pb.EventType_EVENT_TYPE_DELETE},
 					KeyPrefix:  "user:",
 				},
 			},
@@ -664,7 +664,7 @@ func TestMessagingServer_Subscribe(t *testing.T) {
 					Channel:   channel,
 					CreatedAt: now,
 					Filters: &messaging.SubscriptionFilter{
-						EventTypes: []messaging.EventType{messaging.EventTypePut},
+						EventTypes: []messaging.EventType{messaging.EventTypePut, messaging.EventTypeDelete},
 						KeyPrefix:  "user:",
 					},
 				}, nil
@@ -675,6 +675,7 @@ func TestMessagingServer_Subscribe(t *testing.T) {
 				require.NotNil(t, resp.Subscription)
 				require.NotNil(t, resp.Subscription.Filters)
 				assert.Equal(t, "user:", resp.Subscription.Filters.KeyPrefix)
+				assert.Len(t, resp.Subscription.Filters.EventTypes, 2)
 			},
 		},
 		{
@@ -1372,6 +1373,26 @@ func TestMessagingServer_TypeConversions(t *testing.T) {
 		assert.Nil(t, result)
 	})
 
+	t.Run("service_message_to_proto", func(t *testing.T) {
+		msg := &messaging.Message{
+			ID:        "msg-1",
+			Type:      messaging.MessageTypeNotification,
+			Channel:   "test-channel",
+			Payload:   []byte(`{"data": "test"}`),
+			Timestamp: time.Now(),
+			Metadata:  map[string]string{"source": "test"},
+		}
+
+		protoMsg := serviceMessageToProto(msg)
+
+		require.NotNil(t, protoMsg)
+		assert.Equal(t, "msg-1", protoMsg.Id)
+		assert.Equal(t, pb.MessageType_MESSAGE_TYPE_NOTIFICATION, protoMsg.Type)
+		assert.Equal(t, "test-channel", protoMsg.Channel)
+		assert.Equal(t, []byte(`{"data": "test"}`), protoMsg.Payload)
+		assert.Equal(t, "test", protoMsg.Metadata["source"])
+	})
+
 	t.Run("service_message_to_proto_nil", func(t *testing.T) {
 		result := serviceMessageToProto(nil)
 		assert.Nil(t, result)
@@ -1486,95 +1507,6 @@ func TestNewMessagingServer(t *testing.T) {
 // =============================================================================
 // Additional Edge Case Tests
 // =============================================================================
-
-func TestMessagingServer_EdgeCases(t *testing.T) {
-	now := time.Now()
-
-	t.Run("create_channel_with_all_options", func(t *testing.T) {
-		mockSvc := &mockMessagingService{
-			createChannelFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
-				return &messaging.Channel{
-					Name:        name,
-					Codec:       "msgpack",
-					CreatedAt:   now,
-					Persistent:  true,
-					MaxHistory:  500,
-					BufferSize:  1024,
-					TTL:         2 * time.Hour,
-					Subscribers: 0,
-				}, nil
-			},
-		}
-		server := newTestMessagingServer(mockSvc)
-
-		resp, err := server.CreateChannel(context.Background(), &pb.MessagingCreateChannelRequest{
-			Name:           "full-options-channel",
-			Codec:          "msgpack",
-			Persistent:     true,
-			MaxHistory:     500,
-			BufferSize:     1024,
-			MaxSubscribers: 100,
-			TtlSeconds:     7200,
-		})
-
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		assert.Equal(t, "full-options-channel", resp.Channel.Name)
-	})
-
-	t.Run("subscribe_with_multiple_event_types", func(t *testing.T) {
-		mockSvc := &mockMessagingService{
-			subscribeFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
-				return &messaging.Subscription{
-					ID:        "sub-multi-events",
-					Channel:   channel,
-					CreatedAt: now,
-					Filters: &messaging.SubscriptionFilter{
-						EventTypes: []messaging.EventType{messaging.EventTypePut, messaging.EventTypeDelete},
-					},
-				}, nil
-			},
-		}
-		server := newTestMessagingServer(mockSvc)
-
-		resp, err := server.Subscribe(context.Background(), &pb.MessagingSubscribeRequest{
-			Channel: "test-channel",
-			Filter: &pb.SubscriptionFilter{
-				EventTypes: []pb.EventType{
-					pb.EventType_EVENT_TYPE_PUT,
-					pb.EventType_EVENT_TYPE_DELETE,
-				},
-			},
-		})
-
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		require.NotNil(t, resp.Subscription.Filters)
-		assert.Len(t, resp.Subscription.Filters.EventTypes, 2)
-	})
-
-	t.Run("service_message_conversion", func(t *testing.T) {
-		msg := &messaging.Message{
-			ID:        "msg-1",
-			Type:      messaging.MessageTypeNotification,
-			Channel:   "test-channel",
-			Payload:   []byte(`{"data": "test"}`),
-			Timestamp: now,
-			Metadata: map[string]string{
-				"source": "test",
-			},
-		}
-
-		protoMsg := serviceMessageToProto(msg)
-
-		require.NotNil(t, protoMsg)
-		assert.Equal(t, "msg-1", protoMsg.Id)
-		assert.Equal(t, pb.MessageType_MESSAGE_TYPE_NOTIFICATION, protoMsg.Type)
-		assert.Equal(t, "test-channel", protoMsg.Channel)
-		assert.Equal(t, []byte(`{"data": "test"}`), protoMsg.Payload)
-		assert.Equal(t, "test", protoMsg.Metadata["source"])
-	})
-}
 
 // --- Merged from server_messaging_coverage_test.go ---
 
