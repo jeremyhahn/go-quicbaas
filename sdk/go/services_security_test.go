@@ -696,50 +696,31 @@ func TestCertExt_IssueDeviceIdentity_HappyPath(t *testing.T) {
 // fido2TransportClient tests
 // =============================================================================
 
-func TestFIDO2_BeginRegistration_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_BeginRegistration_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2BeginRegistrationRequest{Email: "u"}
 	tests := []struct {
-		name string
-		req  *FIDO2BeginRegistrationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2BeginRegistrationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty username", &FIDO2BeginRegistrationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginRegistrationRequest{Email: "u"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty username", context.Background(), &FIDO2BeginRegistrationRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.BeginRegistration(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginRegistration(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_BeginRegistration_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginRegistrationRequest{Email: "u"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_BeginRegistration_HappyPath(t *testing.T) {
@@ -782,81 +763,54 @@ func TestFIDO2_BeginAddCredential_HappyPath(t *testing.T) {
 }
 
 func TestFIDO2_BeginAddCredential_Errors(t *testing.T) {
-	t.Run("nil context", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAddCredential(nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginAddCredential(context.Background()); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-}
-
-func TestFIDO2_FinishRegistration_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		req  *FIDO2FinishRegistrationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"missing session", &FIDO2FinishRegistrationRequest{AttestationJSON: "{}"}, context.Background()},
-		{"missing attestation", &FIDO2FinishRegistrationRequest{SessionID: "s"}, context.Background()},
-		{"nil ctx", &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}, nil},
+		{"nil context", nilCtx, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.FinishRegistration(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginAddCredential(tc.ctx); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
 }
 
-func TestFIDO2_FinishRegistration_TransportAndType(t *testing.T) {
-	req := &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.FinishRegistration(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
+func TestFIDO2_FinishRegistration_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2FinishRegistrationRequest{SessionID: "s", AttestationJSON: "{}"}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		req     *FIDO2FinishRegistrationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing session", context.Background(), &FIDO2FinishRegistrationRequest{AttestationJSON: "{}"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing attestation", context.Background(), &FIDO2FinishRegistrationRequest{SessionID: "s"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.FinishRegistration(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 func TestFIDO2_FinishRegistration_HappyPath(t *testing.T) {
@@ -873,50 +827,31 @@ func TestFIDO2_FinishRegistration_HappyPath(t *testing.T) {
 	}
 }
 
-func TestFIDO2_BeginAuthentication_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_BeginAuthentication_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2BeginAuthenticationRequest{Email: "u"}
 	tests := []struct {
-		name string
-		req  *FIDO2BeginAuthenticationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2BeginAuthenticationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty username", &FIDO2BeginAuthenticationRequest{}, context.Background()},
-		{"nil ctx", &FIDO2BeginAuthenticationRequest{Email: "u"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty username", context.Background(), &FIDO2BeginAuthenticationRequest{}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.BeginAuthentication(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.BeginAuthentication(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_BeginAuthentication_TransportAndType(t *testing.T) {
-	req := &FIDO2BeginAuthenticationRequest{Email: "u"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.BeginAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_BeginAuthentication_HappyPath(t *testing.T) {
@@ -933,51 +868,32 @@ func TestFIDO2_BeginAuthentication_HappyPath(t *testing.T) {
 	}
 }
 
-func TestFIDO2_FinishAuthentication_Validation(t *testing.T) {
-	c := &fido2TransportClient{t: &mockTransport{}}
+func TestFIDO2_FinishAuthentication_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}
 	tests := []struct {
-		name string
-		req  *FIDO2FinishAuthenticationRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *FIDO2FinishAuthenticationRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"missing session", &FIDO2FinishAuthenticationRequest{AssertionJSON: "{}"}, context.Background()},
-		{"missing assertion", &FIDO2FinishAuthenticationRequest{SessionID: "s"}, context.Background()},
-		{"nil ctx", &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing session", context.Background(), &FIDO2FinishAuthenticationRequest{AssertionJSON: "{}"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"missing assertion", context.Background(), &FIDO2FinishAuthenticationRequest{SessionID: "s"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.FinishAuthentication(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &fido2TransportClient{t: tc.tr}
+			if _, err := c.FinishAuthentication(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestFIDO2_FinishAuthentication_TransportAndType(t *testing.T) {
-	req := &FIDO2FinishAuthenticationRequest{SessionID: "s", AssertionJSON: "{}"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &fido2TransportClient{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.FinishAuthentication(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestFIDO2_FinishAuthentication_HappyPath(t *testing.T) {
