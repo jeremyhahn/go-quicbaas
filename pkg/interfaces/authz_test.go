@@ -94,7 +94,6 @@ func TestPermissionWireValues(t *testing.T) {
 	}
 }
 
-
 // TestVectorNamespaceResource tests the VectorNamespaceResource function.
 func TestVectorNamespaceResource(t *testing.T) {
 	tests := []struct {
@@ -484,4 +483,3 @@ func TestMatchesParameterPath(t *testing.T) {
 		})
 	}
 }
-
