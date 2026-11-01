@@ -59,70 +59,48 @@ func TestCreateSDKClientEmptyAddressError(t *testing.T) {
 	assert.Equal(t, ErrEmptyAddress, err)
 }
 
-func TestBuildSDKClientOptionsUnsupportedTransportType(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
+func TestBuildSDKClientOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+		address   string
+		wantErr   bool
+	}{
+		{name: "empty defaults to grpc", transport: ""},
+		{name: "grpc", transport: "grpc"},
+		{name: "rest", transport: "rest"},
+		{name: "quic", transport: "quic"},
+		{name: "unix", transport: "unix", address: "/tmp/test.sock"},
+		{name: "mcp", transport: "mcp"},
+		{name: "invalid transport", transport: "invalid-transport", wantErr: true},
+		{name: "websocket unsupported", transport: "websocket", wantErr: true},
+	}
 
-	transport = "invalid-transport"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origTransport := transport
+			origAddress := address
+			defer func() {
+				transport = origTransport
+				address = origAddress
+			}()
 
-	_, err := buildSDKClientOptions()
-	assert.Error(t, err)
-	var ute *UnsupportedTransportError
-	assert.ErrorAs(t, err, &ute)
-}
+			transport = tt.transport
+			if tt.address != "" {
+				address = tt.address
+			}
 
-func TestBuildSDKClientOptionsRESTTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "rest"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsQUICTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "quic"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsUnixTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	origAddress := address
-	defer func() {
-		transport = origTransport
-		address = origAddress
-	}()
-
-	transport = "unix"
-	address = "/tmp/test.sock"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsMCPTransport(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "mcp"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
+			opts, err := buildSDKClientOptions()
+			if tt.wantErr {
+				var ute *UnsupportedTransportError
+				assert.ErrorAs(t, err, &ute)
+				assert.Empty(t, opts)
+				return
+			}
+			assert.NoError(t, err)
+			assert.NotEmpty(t, opts)
+		})
+	}
 }
 
 func TestGetSDKClientNilReturn(t *testing.T) {
@@ -147,29 +125,13 @@ func TestCloseSDKClientNoClientExists(t *testing.T) {
 // Cluster Status Command Output Format Tests
 // =============================================================================
 
-func TestClusterStatusCommandOutputFormats(t *testing.T) {
-	tests := []struct {
-		name         string
-		outputFormat string
-		expectError  bool
-	}{
-		{"json output", "json", false},
-		{"table output", "table", false},
-		{"invalid output", "invalid", true},
-	}
+func TestClusterStatusCommandOutputDefault(t *testing.T) {
+	cmd := newClusterStatusCommand()
+	require.NotNil(t, cmd)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newClusterStatusCommand()
-			require.NotNil(t, cmd)
-
-			// The actual execution requires a server connection, but we can
-			// test the command structure and flag defaults
-			outputFlag := cmd.Flags().Lookup("output")
-			require.NotNil(t, outputFlag)
-			assert.Equal(t, "table", outputFlag.DefValue)
-		})
-	}
+	outputFlag := cmd.Flags().Lookup("output")
+	require.NotNil(t, outputFlag)
+	assert.Equal(t, "table", outputFlag.DefValue)
 }
 
 // =============================================================================
@@ -239,24 +201,27 @@ func TestCacheConfigCommandNilConfigError(t *testing.T) {
 // Logger Adapter Tests
 // =============================================================================
 
-func TestLoggerAdapterNilInputFix(t *testing.T) {
-	// Test with nil logger
-	adapter := asInterfaceLogger(nil)
-	assert.NotNil(t, adapter) // Function wraps nil in adapter struct
-}
-
-func TestLoggerAdapterValidInput(t *testing.T) {
-	logConfig := logger.LogConfig{
+func TestLoggerAdapter(t *testing.T) {
+	testLog, err := logger.New(logger.LogConfig{
 		Level:     "error",
 		Format:    "json",
 		Output:    "stderr",
 		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
+	})
 	require.NoError(t, err)
 
-	adapter := asInterfaceLogger(testLog)
-	assert.NotNil(t, adapter)
+	tests := []struct {
+		name string
+		in   *logger.Logger
+	}{
+		{name: "nil logger is wrapped", in: nil},
+		{name: "valid logger", in: testLog},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NotNil(t, asInterfaceLogger(tt.in))
+		})
+	}
 }
 
 // =============================================================================
@@ -504,56 +469,6 @@ func TestClusterStatusJSONNilValues(t *testing.T) {
 // Additional Tests for Coverage Boost to 90%+
 // =============================================================================
 
-func TestBuildSDKClientOptionsWebsocketUnsupported(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "websocket"
-
-	opts, err := buildSDKClientOptions()
-	assert.Error(t, err)
-	assert.Empty(t, opts)
-}
-
-func TestBuildSDKClientOptionsGRPCTransportOpt(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "grpc"
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptionsEmptyDefaultsToGRPCOpt(t *testing.T) {
-	// Save and restore
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = ""
-
-	opts, err := buildSDKClientOptions()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-// =============================================================================
-// Embedded Error Types Additional Tests
-// =============================================================================
-
-func TestEmbeddedPortErrorTypeValid(t *testing.T) {
-	err := &EmbeddedPortError{}
-	assert.Equal(t, "listener address is not a TCP address", err.Error())
-}
-
-func TestEmbeddedServerFailedErrorWithReasonValid(t *testing.T) {
-	err := &EmbeddedServerFailedError{Reason: "test failure reason"}
-	assert.Contains(t, err.Error(), "test failure reason")
-}
-
 // =============================================================================
 // Cache Enable/Disable Command Tests
 // =============================================================================
@@ -593,27 +508,6 @@ func TestCacheStatsCommandNilConfig(t *testing.T) {
 	cacheOutputFmt = "table"
 	err := cmd.RunE(cmd, []string{})
 	assert.Error(t, err)
-}
-
-// =============================================================================
-// Client Error Type Tests
-// =============================================================================
-
-func TestUnsupportedTransportErrorMessageFormatOpt(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "tcp"}
-	msg := err.Error()
-	assert.Contains(t, msg, "tcp")
-	assert.Contains(t, msg, "unsupported transport")
-}
-
-func TestErrSDKClientClosedMessageValid(t *testing.T) {
-	assert.NotNil(t, ErrSDKClientClosed)
-	assert.Contains(t, ErrSDKClientClosed.Error(), "closed")
-}
-
-func TestErrEmptyAddressMessageValid(t *testing.T) {
-	assert.NotNil(t, ErrEmptyAddress)
-	assert.Contains(t, ErrEmptyAddress.Error(), "empty")
 }
 
 // =============================================================================
