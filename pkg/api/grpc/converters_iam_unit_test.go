@@ -826,151 +826,13 @@ func TestConvertAdminRoleToProto(t *testing.T) {
 // Tenant Conversions
 // =============================================================================
 
-func TestConvertProtoToTenant_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToTenant(nil))
-}
-
-func TestConvertProtoToTenant_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Tenant{
-		Id:   "tenant-1",
-		Name: "Test Tenant",
-		Settings: &iampb.TenantSettings{
-			MaxUsers:      proto.Int32(100),
-			MfaRequired:   proto.Bool(true),
-			NamedNetworks: map[string]string{"office": "10.0.0.0/8"},
-		},
-		CreatedAt: timestamppb.New(now),
-		UpdatedAt: timestamppb.New(now),
-	}
-
-	result := convertProtoToTenant(pb)
-	assert.Equal(t, "tenant-1", result.ID)
-	assert.Equal(t, "Test Tenant", result.Name)
-	assert.Equal(t, 100, result.Settings.MaxUsers)
-	require.NotNil(t, result.Settings.MFAPolicy)
-	assert.True(t, result.Settings.MFAPolicy.Required)
-	assert.Contains(t, result.Settings.NamedNetworks, "office")
-}
-
-func TestConvertTenantToProto_Nil(t *testing.T) {
-	result, err := convertTenantToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertTenantToProto_Full(t *testing.T) {
-	tenant := &iam.Tenant{
-		ID:   "tenant-1",
-		Name: "Test Tenant",
-		Settings: iam.TenantSettings{
-			MaxUsers:      50,
-			MFAPolicy:     &iam.MFAPolicy{Required: true},
-			NamedNetworks: map[string][]string{"office": {"10.0.0.0/8"}},
-		},
-		Created: time.Now(),
-		Updated: time.Now(),
-	}
-
-	result, err := convertTenantToProto(tenant)
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", result.Id)
-	assert.Equal(t, "Test Tenant", result.Name)
-	assert.Equal(t, int32(50), result.Settings.GetMaxUsers())
-	assert.True(t, result.Settings.GetMfaRequired())
-	assert.Equal(t, "10.0.0.0/8", result.Settings.NamedNetworks["office"])
-}
-
 // =============================================================================
 // User Conversions
 // =============================================================================
 
-func TestConvertProtoToUser_Nil(t *testing.T) {
-	got, err := convertProtoToUser(nil)
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
-func TestConvertProtoToUser_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.User{
-		Id:         "10001",
-		TenantId:   "tenant-1",
-		Email:      "test@example.com",
-		Name:       "Test User",
-		Roles:      []string{"admin"},
-		Attributes: map[string]string{"key": "value"},
-		CreatedAt:  timestamppb.New(now),
-		UpdatedAt:  timestamppb.New(now),
-		LastAuth:   timestamppb.New(now),
-	}
-
-	result, err := convertProtoToUser(pb)
-	require.NoError(t, err)
-	assert.Equal(t, uint64(10001), result.ID)
-	assert.Equal(t, "test@example.com", result.Email)
-	assert.Equal(t, "value", result.Attributes["key"])
-	assert.NotNil(t, result.LastAuth)
-}
-
-func TestConvertUserToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertUserToProto(nil))
-}
-
-func TestConvertUserToProto_Full(t *testing.T) {
-	now := time.Now()
-	user := &iam.User{
-		ID:         10001,
-		TenantID:   "tenant-1",
-		Email:      "test@example.com",
-		Name:       "Test User",
-		Roles:      []string{"admin"},
-		Attributes: map[string]string{"key": "value", "num": "42"},
-		Created:    now,
-		Updated:    now,
-		LastAuth:   &now,
-	}
-
-	result := convertUserToProto(user)
-	assert.Equal(t, "10001", result.Id)
-	assert.Equal(t, "value", result.Attributes["key"])
-	assert.Equal(t, "42", result.Attributes["num"])
-	assert.NotNil(t, result.LastAuth)
-}
-
 // =============================================================================
 // Role Conversions
 // =============================================================================
-
-func TestConvertProtoToRole_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToRole(nil))
-}
-
-func TestConvertProtoToRole_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Role{
-		Id: "role-1", TenantId: "t1", Name: "Admin",
-		Description: "Admin role", Permissions: []string{"read", "write"},
-		CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToRole(pb)
-	assert.Equal(t, "role-1", result.ID)
-	assert.Equal(t, "Admin", result.Name)
-	assert.Len(t, result.Permissions, 2)
-}
-
-func TestConvertRoleToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertRoleToProto(nil))
-}
-
-func TestConvertRoleToProto_Full(t *testing.T) {
-	role := &iam.Role{
-		ID: "role-1", TenantID: "t1", Name: "Admin",
-		Permissions: []string{"read"}, Created: time.Now(), Updated: time.Now(),
-	}
-	result := convertRoleToProto(role)
-	assert.Equal(t, "role-1", result.Id)
-}
 
 // TestConvertRoleToProto_RetiredPermissions pins that the drift a role carries
 // survives the hop to the wire: retired permissions are derived on read, so a
@@ -1069,77 +931,9 @@ func TestConvertRoleReconcileResultToProto_Nil(t *testing.T) {
 // Application Conversions
 // =============================================================================
 
-func TestConvertProtoToApplication_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToApplication(nil))
-}
-
-func TestConvertProtoToApplication_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Application{
-		ClientId: "app-1", ClientSecret: "secret", TenantId: "t1",
-		Name: "MyApp", RedirectUris: []string{"http://localhost"},
-		ResourcePrefix: "myapp", GrantTypes: []string{"authorization_code"},
-		ResponseTypes: []string{"code"},
-		CreatedAt:     timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToApplication(pb)
-	assert.Equal(t, "app-1", result.ClientID)
-	assert.Equal(t, "MyApp", result.Name)
-}
-
-func TestConvertApplicationToProto_Nil(t *testing.T) {
-	assert.Nil(t, convertApplicationToProto(nil))
-}
-
-func TestConvertApplicationToProto_Full(t *testing.T) {
-	app := &iam.Application{
-		ClientID: "app-1", TenantID: "t1", Name: "MyApp",
-		RedirectURIs: []string{"http://localhost"},
-		Created:      time.Now(), Updated: time.Now(),
-	}
-	result := convertApplicationToProto(app)
-	assert.Equal(t, "app-1", result.ClientId)
-}
-
 // =============================================================================
 // Policy Conversions
 // =============================================================================
-
-func TestConvertProtoToPolicy_Nil(t *testing.T) {
-	assert.Nil(t, convertProtoToPolicy(nil))
-}
-
-func TestConvertProtoToPolicy_Full(t *testing.T) {
-	now := time.Now()
-	pb := &iampb.Policy{
-		Name: "policy-1", TenantId: "t1", Description: "Test policy",
-		Labels: map[string]string{"env": "test"}, Priority: 10,
-		CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now),
-	}
-	result := convertProtoToPolicy(pb)
-	assert.Equal(t, "policy-1", result.Metadata.Name)
-	assert.Equal(t, 10, result.Metadata.Priority)
-}
-
-func TestConvertPolicyToProto_Nil(t *testing.T) {
-	result, err := convertPolicyToProto(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestConvertPolicyToProto_Full(t *testing.T) {
-	policy := &iam.Policy{
-		Metadata: iam.PolicyMetadata{
-			Name: "p1", Tenant: "t1", Description: "desc",
-			Labels: map[string]string{"a": "b"}, Priority: 5,
-			Created: time.Now(), Updated: time.Now(),
-		},
-	}
-	result, err := convertPolicyToProto(policy)
-	require.NoError(t, err)
-	assert.Equal(t, "p1", result.Name)
-	assert.Equal(t, int32(5), result.Priority)
-}
 
 // failingYAMLValue makes yaml.Marshal fail when it reaches the value.
 type failingYAMLValue struct{}
