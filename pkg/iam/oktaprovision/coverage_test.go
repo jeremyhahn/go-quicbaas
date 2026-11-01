@@ -305,117 +305,194 @@ func TestMergeAppUpdate_PreservesExistingOAuthSettings(t *testing.T) {
 
 // -------------------- listGroupMembers --------------------
 
-func TestListGroupMembers_Success(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("GET", "/api/v1/groups/g1/users", okJSON([]map[string]interface{}{{"id": "u1"}, {"id": "u2"}}))
-	p := newTestProvisioner(t, r)
-	users, err := p.listGroupMembers(context.Background(), "https://acme.okta.com", "tok", "g1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestListGroupMembers(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+		wantIDs []string
+		wantOp  string
+	}{
+		{
+			name:    "success",
+			handler: okJSON([]map[string]interface{}{{"id": "u1"}, {"id": "u2"}}),
+			wantIDs: []string{"u1", "u2"},
+		},
+		{
+			name:    "http error",
+			handler: errStatus(http.StatusForbidden, "E0000006", "denied"),
+			wantOp:  "list_group_members",
+		},
+		{
+			name:    "decode error",
+			handler: rawBody(http.StatusOK, "{not-an-array"),
+			wantOp:  "list_group_members",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad-url",
+			wantOp:  "list_group_members",
+		},
 	}
-	if len(users) != 2 || users[0].ID != "u1" || users[1].ID != "u2" {
-		t.Errorf("users = %+v", users)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.onPrefix("GET", "/api/v1/groups/g1/users", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			users, err := p.listGroupMembers(context.Background(), baseURL, "tok", "g1")
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(users) != len(tc.wantIDs) {
+				t.Fatalf("users = %+v, want ids %v", users, tc.wantIDs)
+			}
+			for i, id := range tc.wantIDs {
+				if users[i].ID != id {
+					t.Errorf("users[%d].ID = %q, want %q", i, users[i].ID, id)
+				}
+			}
+		})
 	}
-}
-
-func TestListGroupMembers_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("GET", "/api/v1/groups/g1/users", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	_, err := p.listGroupMembers(context.Background(), "https://acme.okta.com", "tok", "g1")
-	assertProvOp(t, err, "list_group_members")
-}
-
-func TestListGroupMembers_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("GET", "/api/v1/groups/g1/users", rawBody(http.StatusOK, "{not-an-array"))
-	p := newTestProvisioner(t, r)
-	_, err := p.listGroupMembers(context.Background(), "https://acme.okta.com", "tok", "g1")
-	assertProvOp(t, err, "list_group_members")
-}
-
-func TestListGroupMembers_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.listGroupMembers(context.Background(), "://bad-url", "tok", "g1")
-	assertProvOp(t, err, "list_group_members")
 }
 
 // -------------------- getTokenOwner --------------------
 
-func TestGetTokenOwner_Success(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/users/me", okJSON(map[string]interface{}{"id": "owner-9"}))
-	p := newTestProvisioner(t, r)
-	u, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestGetTokenOwner(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+		wantID  string
+		wantOp  string
+	}{
+		{
+			name:    "success",
+			handler: okJSON(map[string]interface{}{"id": "owner-9"}),
+			wantID:  "owner-9",
+		},
+		{
+			name:    "http error",
+			handler: errStatus(http.StatusUnauthorized, "E0000011", "invalid token"),
+			wantOp:  "get_token_owner",
+		},
+		{
+			name:    "decode error",
+			handler: rawBody(http.StatusOK, "garbage"),
+			wantOp:  "get_token_owner",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			wantOp:  "get_token_owner",
+		},
 	}
-	if u.ID != "owner-9" {
-		t.Errorf("id = %q", u.ID)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.on("GET", "/api/v1/users/me", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			u, err := p.getTokenOwner(context.Background(), baseURL, "tok")
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if u.ID != tc.wantID {
+				t.Errorf("id = %q, want %q", u.ID, tc.wantID)
+			}
+		})
 	}
-}
-
-func TestGetTokenOwner_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/users/me", errStatus(http.StatusUnauthorized, "E0000011", "invalid token"))
-	p := newTestProvisioner(t, r)
-	_, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
-	assertProvOp(t, err, "get_token_owner")
-}
-
-func TestGetTokenOwner_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/users/me", rawBody(http.StatusOK, "garbage"))
-	p := newTestProvisioner(t, r)
-	_, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
-	assertProvOp(t, err, "get_token_owner")
-}
-
-func TestGetTokenOwner_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.getTokenOwner(context.Background(), "://bad", "tok")
-	assertProvOp(t, err, "get_token_owner")
 }
 
 // -------------------- addUserToGroup --------------------
 
-func TestAddUserToGroup_StatusOK(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("PUT", "/api/v1/groups/g1/users/u1", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	p := newTestProvisioner(t, r)
-	if err := p.addUserToGroup(context.Background(), "https://acme.okta.com", "tok", "g1", "u1"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestAddUserToGroup(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+		wantOp  string
+	}{
+		{
+			name:    "status ok",
+			handler: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) },
+		},
+		{
+			name:    "http error",
+			handler: errStatus(http.StatusNotFound, "E0000007", "user not found"),
+			wantOp:  "add_user_to_group",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			wantOp:  "add_user_to_group",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.onPrefix("PUT", "/api/v1/groups/g1/users/u1", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			err := p.addUserToGroup(context.Background(), baseURL, "tok", "g1", "u1")
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 
-func TestAddUserToGroup_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("PUT", "/api/v1/groups/g1/users/u1", errStatus(http.StatusNotFound, "E0000007", "user not found"))
-	p := newTestProvisioner(t, r)
-	err := p.addUserToGroup(context.Background(), "https://acme.okta.com", "tok", "g1", "u1")
-	assertProvOp(t, err, "add_user_to_group")
-}
-
-func TestAddUserToGroup_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	err := p.addUserToGroup(context.Background(), "://bad", "tok", "g1", "u1")
-	assertProvOp(t, err, "add_user_to_group")
-}
-
-// -------------------- assignGroupToApp --------------------
-
-func TestAssignGroupToApp_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.onPrefix("PUT", "/api/v1/apps/app-1/groups/g1", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.assignGroupToApp(context.Background(), "https://acme.okta.com", "tok", "app-1", "g1")
-	assertProvOp(t, err, "assign_group")
-}
-
-func TestAssignGroupToApp_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	err := p.assignGroupToApp(context.Background(), "://bad", "tok", "app-1", "g1")
-	assertProvOp(t, err, "assign_group")
+func TestAssignGroupToApp_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+	}{
+		{name: "http error", handler: errStatus(http.StatusBadRequest, "E0000001", "bad")},
+		{name: "request error", baseURL: "://bad"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.onPrefix("PUT", "/api/v1/apps/app-1/groups/g1", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			err := p.assignGroupToApp(context.Background(), baseURL, "tok", "app-1", "g1")
+			assertProvOp(t, err, "assign_group")
+		})
+	}
 }
 
 // -------------------- seedAdminFromTokenOwner / seedNamedAdminGroup --------------------
