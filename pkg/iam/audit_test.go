@@ -273,32 +273,8 @@ func TestMemoryAuditStorage_SaveEvent(t *testing.T) {
 	assert.Equal(t, event.Action, retrieved.Action)
 }
 
-func TestMemoryAuditStorage_SaveEvent_InvalidEvent(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryAuditStorage()
-
-	event := &AuditEvent{
-		// Missing required fields
-		TenantID: "tenant1",
-	}
-
-	err := storage.SaveEvent(ctx, event)
-	assert.Error(t, err)
-}
-
-func TestMemoryAuditStorage_GetEvent_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryAuditStorage()
-
-	_, err := storage.GetEvent(ctx, "tenant1", "nonexistent")
-	assert.Equal(t, ErrAuditEventNotFound, err)
-}
-
-func TestMemoryAuditStorage_GetEvent_WrongTenant(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryAuditStorage()
-
-	event := &AuditEvent{
+func TestMemoryAuditStorage_Errors(t *testing.T) {
+	stored := &AuditEvent{
 		ID:        uuid.New().String(),
 		TenantID:  "tenant1",
 		Timestamp: time.Now(),
@@ -308,12 +284,50 @@ func TestMemoryAuditStorage_GetEvent_WrongTenant(t *testing.T) {
 		Outcome:   AuditOutcomeSuccess,
 	}
 
-	err := storage.SaveEvent(ctx, event)
-	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		run     func(ctx context.Context, storage *MemoryAuditStorage) error
+		wantErr error
+	}{
+		{
+			name: "save event missing required fields",
+			run: func(ctx context.Context, storage *MemoryAuditStorage) error {
+				return storage.SaveEvent(ctx, &AuditEvent{TenantID: "tenant1"})
+			},
+		},
+		{
+			name: "get unknown event",
+			run: func(ctx context.Context, storage *MemoryAuditStorage) error {
+				_, err := storage.GetEvent(ctx, "tenant1", "nonexistent")
+				return err
+			},
+			wantErr: ErrAuditEventNotFound,
+		},
+		{
+			// Tenant isolation: an event saved under tenant1 is not visible to tenant2.
+			name: "get event of another tenant",
+			run: func(ctx context.Context, storage *MemoryAuditStorage) error {
+				_, err := storage.GetEvent(ctx, "tenant2", stored.ID)
+				return err
+			},
+			wantErr: ErrAuditEventNotFound,
+		},
+	}
 
-	// Try to retrieve with wrong tenant
-	_, err = storage.GetEvent(ctx, "tenant2", event.ID)
-	assert.Equal(t, ErrAuditEventNotFound, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewMemoryAuditStorage()
+			require.NoError(t, storage.SaveEvent(ctx, stored))
+
+			err := tt.run(ctx, storage)
+			if tt.wantErr != nil {
+				assert.Equal(t, tt.wantErr, err)
+				return
+			}
+			assert.Error(t, err)
+		})
+	}
 }
 
 func TestMemoryAuditStorage_QueryEvents(t *testing.T) {
@@ -898,75 +912,53 @@ func timePtr(t time.Time) *time.Time {
 // Tests for audit.go - WithAuditStorage and WithAsyncChannelSize options
 // =============================================================================
 
-func TestWithAuditStorage(t *testing.T) {
-	// Create a custom storage backend
-	customStorage := NewMemoryAuditStorage()
-
-	// Create logger with custom storage
-	logger, err := NewAuditLogger(WithAuditStorage(customStorage))
-	require.NoError(t, err)
-	defer logger.Close()
-
-	// Log an event
-	ctx := context.Background()
-	event := &AuditEvent{
-		TenantID:  "test-tenant",
-		EventType: AuditEventAuthentication,
-		Category:  AuditCategoryAuthentication,
-		Action:    "login",
-		Outcome:   AuditOutcomeSuccess,
+func TestAuditLoggerOptions(t *testing.T) {
+	tests := []struct {
+		name          string
+		customStorage bool
+		chanSize      int
+		wantChanSize  int
+	}{
+		{name: "custom storage", customStorage: true, wantChanSize: 1000},
+		{name: "custom channel size", chanSize: 500, wantChanSize: 500},
+		{name: "custom storage and channel size", customStorage: true, chanSize: 250, wantChanSize: 250},
 	}
 
-	err = logger.Log(ctx, event)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var opts []AuditLoggerOption
+			customStorage := NewMemoryAuditStorage()
+			if tt.customStorage {
+				opts = append(opts, WithAuditStorage(customStorage))
+			}
+			if tt.chanSize > 0 {
+				opts = append(opts, WithAsyncChannelSize(tt.chanSize))
+			}
 
-	// Verify the event was stored in the custom storage
-	retrieved, err := customStorage.GetEvent(ctx, "test-tenant", event.ID)
-	require.NoError(t, err)
-	assert.Equal(t, event.ID, retrieved.ID)
-}
+			logger, err := NewAuditLogger(opts...)
+			require.NoError(t, err)
+			defer logger.Close()
 
-func TestWithAsyncChannelSize(t *testing.T) {
-	// Create logger with custom channel size
-	customSize := 500
-	logger, err := NewAuditLogger(WithAsyncChannelSize(customSize))
-	require.NoError(t, err)
-	defer logger.Close()
+			assert.Equal(t, tt.wantChanSize, logger.asyncChanSize)
 
-	// Verify the channel size was set (indirectly by filling and checking)
-	assert.Equal(t, customSize, logger.asyncChanSize)
-}
+			if !tt.customStorage {
+				return
+			}
+			ctx := context.Background()
+			event := &AuditEvent{
+				TenantID:  "test-tenant",
+				EventType: AuditEventAuthentication,
+				Category:  AuditCategoryAuthentication,
+				Action:    "login",
+				Outcome:   AuditOutcomeSuccess,
+			}
+			require.NoError(t, logger.Log(ctx, event))
 
-func TestWithAuditStorageAndAsyncChannelSize(t *testing.T) {
-	// Test combining both options
-	customStorage := NewMemoryAuditStorage()
-	customSize := 250
-
-	logger, err := NewAuditLogger(
-		WithAuditStorage(customStorage),
-		WithAsyncChannelSize(customSize),
-	)
-	require.NoError(t, err)
-	defer logger.Close()
-
-	assert.Equal(t, customSize, logger.asyncChanSize)
-
-	// Verify custom storage is used
-	ctx := context.Background()
-	event := &AuditEvent{
-		TenantID:  "test-tenant",
-		EventType: AuditEventAuthentication,
-		Category:  AuditCategoryAuthentication,
-		Action:    "test",
-		Outcome:   AuditOutcomeSuccess,
+			retrieved, err := customStorage.GetEvent(ctx, "test-tenant", event.ID)
+			require.NoError(t, err)
+			assert.Equal(t, event.ID, retrieved.ID)
+		})
 	}
-
-	err = logger.Log(ctx, event)
-	require.NoError(t, err)
-
-	retrieved, err := customStorage.GetEvent(ctx, "test-tenant", event.ID)
-	require.NoError(t, err)
-	assert.Equal(t, event.ID, retrieved.ID)
 }
 
 // =============================================================================
