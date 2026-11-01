@@ -826,7 +826,7 @@ func TestFormatObjectSetPolicyResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectLifecycleResponse(t *testing.T) {
+func TestFormatObjectLifecycleResponse_Inputs(t *testing.T) {
 	tests := []struct {
 		name    string
 		format  string
@@ -889,7 +889,7 @@ func TestPrintClusterStatusJSON_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestPrintClusterStatusTableCLI(t *testing.T) {
+func TestPrintClusterStatusTableCLI_Inputs(t *testing.T) {
 	tests := []struct {
 		name   string
 		status interface{}
@@ -1092,7 +1092,7 @@ profiles:
 	}
 }
 
-func TestExpandEnvVars(t *testing.T) {
+func TestExpandEnvVars_Inputs(t *testing.T) {
 	t.Setenv("TEST_BUCKET_NAME", "my-test-bucket")
 	t.Setenv("TEST_ENV", "production")
 
