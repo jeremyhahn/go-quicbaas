@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -88,153 +89,6 @@ func TestRootCommand(t *testing.T) {
 	})
 }
 
-// TestRunDaemonFlagOverrides tests flag overrides in runDaemon.
-func TestRunDaemonFlagOverrides(t *testing.T) {
-	tempDir := t.TempDir()
-
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = &config.Config{
-		Server: config.ServerConfig{
-			REST: config.ServerRESTConfig{
-				Port:    0,
-				Enabled: false,
-			},
-			GRPC: config.ServerGRPCConfig{
-				Port:    0,
-				Enabled: false,
-			},
-			Unix: config.ServerUnixConfig{
-				Socket:  config.DefaultUnixSocket,
-				Enabled: true,
-			},
-			ShutdownTimeout: 30,
-		},
-		Storage: config.StorageConfig{
-			DataDir: tempDir,
-		},
-		Raft: config.RaftConfig{
-			NodeID:        1,
-			RaftAddress:   "localhost:63000",
-			ListenAddress: "0.0.0.0:63000",
-		},
-	}
-
-	t.Run("UnixSocketOverride", func(t *testing.T) {
-		cfg.Server.Unix.Socket = config.DefaultUnixSocket
-
-		cmd := startCmd
-		err := cmd.Flags().Set("unix-socket", "/custom/socket.sock")
-		require.NoError(t, err)
-
-		if cmd.Flags().Changed("unix-socket") {
-			cfg.Server.Unix.Socket = "/custom/socket.sock"
-		}
-
-		assert.Equal(t, "/custom/socket.sock", cfg.Server.Unix.Socket)
-	})
-
-	t.Run("HTTPPortOverride", func(t *testing.T) {
-		cfg.Server.REST.Port = 0
-		cfg.Server.REST.Enabled = false
-
-		cmd := startCmd
-		err := cmd.Flags().Set("http-port", "8888")
-		require.NoError(t, err)
-
-		if cmd.Flags().Changed("http-port") {
-			cfg.Server.REST.Port = 8888
-			cfg.Server.REST.Enabled = 8888 > 0
-		}
-
-		assert.Equal(t, 8888, cfg.Server.REST.Port)
-		assert.True(t, cfg.Server.REST.Enabled)
-	})
-
-	t.Run("GRPCPortOverride", func(t *testing.T) {
-		cfg.Server.GRPC.Port = 0
-		cfg.Server.GRPC.Enabled = false
-
-		cmd := startCmd
-		err := cmd.Flags().Set("grpc-port", "9999")
-		require.NoError(t, err)
-
-		if cmd.Flags().Changed("grpc-port") {
-			cfg.Server.GRPC.Port = 9999
-			cfg.Server.GRPC.Enabled = 9999 > 0
-		}
-
-		assert.Equal(t, 9999, cfg.Server.GRPC.Port)
-		assert.True(t, cfg.Server.GRPC.Enabled)
-	})
-
-	t.Run("NodeIDOverride", func(t *testing.T) {
-		cfg.Raft.NodeID = 1
-
-		cmd := nodeCmd
-		err := cmd.Flags().Set("node-id", "2")
-		require.NoError(t, err)
-
-		if cmd.Flags().Changed("node-id") {
-			cfg.Raft.NodeID = 2
-		}
-
-		assert.Equal(t, uint64(2), cfg.Raft.NodeID)
-	})
-
-	t.Run("RaftAddressOverride", func(t *testing.T) {
-		cmd := nodeCmd
-		err := cmd.Flags().Set("raft-address", "192.168.1.1:63000")
-		require.NoError(t, err)
-
-		raftAddr := cmd.Flags().Lookup("raft-address").Value.String()
-		if raftAddr != "" {
-			cfg.Raft.RaftAddress = raftAddr
-			cfg.Raft.ListenAddress = raftAddr
-		}
-
-		assert.Equal(t, "192.168.1.1:63000", cfg.Raft.RaftAddress)
-		assert.Equal(t, "192.168.1.1:63000", cfg.Raft.ListenAddress)
-	})
-}
-
-// TestDataDirectoryCreation tests data directory creation.
-func TestDataDirectoryCreation(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	t.Run("CreateDataDirectory", func(t *testing.T) {
-		tempDir := t.TempDir()
-		dataDir := filepath.Join(tempDir, "test-data")
-
-		_, err := os.Stat(dataDir)
-		assert.True(t, os.IsNotExist(err))
-
-		err = os.MkdirAll(dataDir, 0o755)
-		require.NoError(t, err)
-
-		stat, err := os.Stat(dataDir)
-		require.NoError(t, err)
-		assert.True(t, stat.IsDir())
-	})
-
-	t.Run("DataDirectoryPermissions", func(t *testing.T) {
-		tempDir := t.TempDir()
-		dataDir := filepath.Join(tempDir, "test-data-perms")
-
-		err := os.MkdirAll(dataDir, 0o755)
-		require.NoError(t, err)
-
-		stat, err := os.Stat(dataDir)
-		require.NoError(t, err)
-
-		mode := stat.Mode()
-		assert.True(t, mode.IsDir())
-		assert.True(t, mode&0o700 == 0o700)
-	})
-}
-
 // TestGetSocketDir tests the getSocketDir function.
 func TestGetSocketDir(t *testing.T) {
 	tests := []struct {
@@ -257,45 +111,6 @@ func TestGetSocketDir(t *testing.T) {
 	}
 }
 
-// TestConfigValidation tests configuration validation.
-func TestConfigValidation(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	t.Run("ValidConfig", func(t *testing.T) {
-		tempDir := t.TempDir()
-
-		cfg = &config.Config{
-			Server: config.ServerConfig{
-				REST: config.ServerRESTConfig{
-					Port: 0,
-				},
-				GRPC: config.ServerGRPCConfig{
-					Port: 0,
-				},
-				Unix: config.ServerUnixConfig{
-					Socket:  config.DefaultUnixSocket,
-					Enabled: true,
-				},
-				ShutdownTimeout: 30,
-			},
-			Storage: config.StorageConfig{
-				DataDir: tempDir,
-			},
-			Raft: config.RaftConfig{
-				NodeID:        1,
-				RaftAddress:   "localhost:63000",
-				ListenAddress: "0.0.0.0:63000",
-			},
-		}
-
-		assert.Greater(t, cfg.Raft.NodeID, uint64(0))
-		assert.NotEmpty(t, cfg.Storage.DataDir)
-		assert.NotEmpty(t, cfg.Server.Unix.Socket)
-		assert.NotEmpty(t, cfg.Raft.RaftAddress)
-	})
-}
-
 // createTestLogger creates a logger for tests.
 func createTestLogger(t *testing.T) *logger.Logger {
 	logConfig := logger.LogConfig{
@@ -315,64 +130,24 @@ func createTestLogger(t *testing.T) *logger.Logger {
 // Consolidated from coverage_exit_test.go
 // =============================================================================
 
-// TestMain_HelpFlag tests that the main function works with --help.
-func TestMain_HelpFlag(t *testing.T) {
-	// Capture the original args
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-
-	// Set up args for help
-	os.Args = []string{"quicbaasd", "--help"}
-
-	// This should not panic
-	assert.NotPanics(t, func() {
-		// We can't call main() directly as it may os.Exit
-		// Just verify rootCmd.Execute() with help flag works
-		rootCmd.SetArgs([]string{"--help"})
-		_ = rootCmd.Execute()
-	})
-}
-
 // TestRootCmd_ExecuteWithVersion tests executing root command with version.
-func TestRootCmd_ExecuteWithVersion(t *testing.T) {
-	rootCmd.SetArgs([]string{"--version"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestStartCmd_ExecuteHelp tests the start command help output.
-func TestStartCmd_ExecuteHelp(t *testing.T) {
-	rootCmd.SetArgs([]string{"start", "--help"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestNodeCmd_ExecuteHelp tests the node command help output.
-func TestNodeCmd_ExecuteHelp(t *testing.T) {
-	rootCmd.SetArgs([]string{"node", "--help"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestClusterCmd_ExecuteHelp tests the cluster command help output.
-func TestClusterCmd_ExecuteHelp(t *testing.T) {
-	rootCmd.SetArgs([]string{"cluster", "--help"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestVersionCmd_Execute tests the version command execution.
-func TestVersionCmd_Execute(t *testing.T) {
-	rootCmd.SetArgs([]string{"version"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestVersionCmd_ExecuteShort tests the version command with short flag.
-func TestVersionCmd_ExecuteShort(t *testing.T) {
-	rootCmd.SetArgs([]string{"version", "--short"})
-	err := rootCmd.Execute()
-	assert.NoError(t, err)
+func TestRootCmd_Execute(t *testing.T) {
+	// Each run fails with an unknown command or flag error if the subcommand
+	// or flag is not registered on rootCmd.
+	for _, args := range [][]string{
+		{"--help"},
+		{"--version"},
+		{"start", "--help"},
+		{"node", "--help"},
+		{"cluster", "--help"},
+		{"version"},
+		{"version", "--short"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			rootCmd.SetArgs(args)
+			assert.NoError(t, rootCmd.Execute())
+		})
+	}
 }
 
 // TestPrepareDaemon_DataDirCreationFail tests prepareDaemon when data directory
@@ -529,251 +304,17 @@ func TestPrepareDaemon(t *testing.T) {
 // Consolidated from coverage_92_test.go
 // =============================================================================
 
-// TestRunNode_DiscoveryNotChanged tests runNode when discovery flag is not changed
-// (uses default multicast). Verifies config is set correctly without starting a server.
-func TestRunNode_DiscoveryNotChanged(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "node-default.sock")
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply, without calling runDaemon
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	if cmd.Flags().Changed("discovery") {
-		cfg.Discovery.Type = discoveryType
-	} else {
-		cfg.Discovery.Type = "multicast"
-	}
-
-	assert.Equal(t, "multicast", cfg.Discovery.Type)
-	assert.True(t, cfg.Discovery.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("node")
-	assert.NoError(t, err)
-}
-
-// TestRunNode_StaticDiscoveryNoJoinAddresses tests static discovery
-// without setting join-addresses (flag not changed).
-func TestRunNode_StaticDiscoveryNoJoinAddresses(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "node-static-nojoin.sock")
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	err := cmd.Flags().Set("discovery", "static")
-	require.NoError(t, err)
-	// Do not set join-addresses, so the flag is not "Changed"
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "static"
-
-	assert.Equal(t, "static", cfg.Discovery.Type)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("node")
-	assert.NoError(t, err)
-}
-
-// TestValidateRoutingConfig_EmptyShards tests validation with empty shards
-// but non-empty pins (should fail).
-func TestValidateRoutingConfig_EmptyShards(t *testing.T) {
-	shards := []uint64{}
-	pins := map[string]uint64{"user": 100}
-
-	err := validateRoutingConfig(shards, pins)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user")
-}
-
-// TestValidateRoutingConfig_MultiplePins tests validation with multiple pins.
-func TestValidateRoutingConfig_MultiplePins(t *testing.T) {
-	shards := []uint64{100, 200, 300}
-	pins := map[string]uint64{
-		"user":    100,
-		"session": 200,
-		"role":    300,
-	}
-
-	err := validateRoutingConfig(shards, pins)
-	assert.NoError(t, err)
-}
-
-// TestValidateRoutingConfig_OneInvalidPin tests validation with one invalid pin
-// among valid ones.
-func TestValidateRoutingConfig_OneInvalidPin(t *testing.T) {
-	shards := []uint64{100, 200}
-	pins := map[string]uint64{
-		"user":    100,
-		"session": 999, // Invalid
-	}
-
-	err := validateRoutingConfig(shards, pins)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "session")
-	assert.Contains(t, err.Error(), "999")
-}
-
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
-
-// TestRunStartAppliesServerFlags verifies that runStart applies server flags correctly.
-func TestRunStartAppliesServerFlags(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/start-test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithServerFlags()
-	err := cmd.Flags().Set("http-port", "7777")
-	require.NoError(t, err)
-
-	// Apply the config changes that runStart would apply
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-
-	assert.Equal(t, config.ServerModeStandalone, cfg.Server.Mode)
-	assert.Equal(t, 7777, cfg.Server.REST.Port)
-	assert.True(t, cfg.Server.REST.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("local")
-	assert.NoError(t, err)
-}
-
-// TestRunClusterAppliesFlags verifies that runCluster applies both server and raft flags.
-func TestRunClusterAppliesFlags(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/cluster-test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithRaftFlags()
-	err := cmd.Flags().Set("node-id", "3")
-	require.NoError(t, err)
-
-	raftAddress = ""
-
-	// Apply the config changes that runCluster would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = false
-
-	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
-	assert.Equal(t, uint64(3), cfg.Raft.NodeID)
-	assert.False(t, cfg.Discovery.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("cluster")
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // Consolidated from coverage_91_test.go
 // =============================================================================
 
-func TestRunDaemon_RoutingValidationFailure(t *testing.T) {
-	cfg = config.Default()
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	cfg.Storage.DataDir = t.TempDir()
-
-	// Configure invalid routing: pin to a shard that doesn't exist
-	cfg.Server.Shards = []uint64{1, 2}
-	cfg.Server.EntityShardPins = map[string]uint64{"user": 99}
-
-	logCfg := logger.LogConfig{Level: "info", Format: "json", Output: "stdout"}
-	var err error
-	log, err = logger.New(logCfg)
-	if err != nil {
-		t.Fatalf("failed to create logger: %v", err)
-	}
-
-	err = runDaemon("routing-fail-test")
-	if err == nil {
-		t.Fatal("expected error for invalid routing config")
-	}
-}
-
 // =============================================================================
 // Consolidated from coverage_additional_test.go
 // =============================================================================
-
-// TestRunNodeWithDNSDiscovery tests the node command config with DNS discovery (no join-addresses).
-func TestRunNodeWithDNSDiscovery(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	err := cmd.Flags().Set("discovery", "dns")
-	require.NoError(t, err)
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "dns"
-
-	assert.Equal(t, "dns", cfg.Discovery.Type)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("node")
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // Consolidated from main_coverage_test.go
@@ -781,44 +322,58 @@ func TestRunNodeWithDNSDiscovery(t *testing.T) {
 
 // TestValidateRoutingConfig tests the validateRoutingConfig function.
 func TestValidateRoutingConfig(t *testing.T) {
-	t.Run("nil pins returns nil", func(t *testing.T) {
-		err := validateRoutingConfig([]uint64{1, 2, 3}, nil)
-		assert.NoError(t, err)
-	})
+	tests := []struct {
+		name   string
+		shards []uint64
+		pins   map[string]uint64
+		// wantErr lists the substrings the error must carry; nil means success.
+		wantErr []string
+	}{
+		{name: "nil pins", shards: []uint64{1, 2, 3}},
+		{name: "empty pins", shards: []uint64{1, 2, 3}, pins: map[string]uint64{}},
+		{
+			name:   "every pin found in shards",
+			shards: []uint64{100, 200, 300},
+			pins:   map[string]uint64{"user": 100, "session": 200, "role": 300},
+		},
+		{
+			name:    "pin references non-existent shard",
+			shards:  []uint64{100, 200},
+			pins:    map[string]uint64{"user": 999},
+			wantErr: []string{"user", "999"},
+		},
+		{
+			name:    "one invalid pin among valid ones",
+			shards:  []uint64{100, 200},
+			pins:    map[string]uint64{"user": 100, "session": 999},
+			wantErr: []string{"session", "999"},
+		},
+		{
+			name:    "nil shards with pins",
+			pins:    map[string]uint64{"user": 100},
+			wantErr: []string{"user"},
+		},
+		{
+			name:    "empty shards with pins",
+			shards:  []uint64{},
+			pins:    map[string]uint64{"user": 100},
+			wantErr: []string{"user"},
+		},
+	}
 
-	t.Run("empty pins returns nil", func(t *testing.T) {
-		err := validateRoutingConfig([]uint64{1, 2, 3}, map[string]uint64{})
-		assert.NoError(t, err)
-	})
-
-	t.Run("valid pins all found in shards", func(t *testing.T) {
-		shards := []uint64{100, 200, 300}
-		pins := map[string]uint64{
-			"user":    100,
-			"session": 200,
-		}
-		err := validateRoutingConfig(shards, pins)
-		assert.NoError(t, err)
-	})
-
-	t.Run("invalid pin references non-existent shard", func(t *testing.T) {
-		shards := []uint64{100, 200}
-		pins := map[string]uint64{
-			"user": 999,
-		}
-		err := validateRoutingConfig(shards, pins)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "user")
-		assert.Contains(t, err.Error(), "999")
-	})
-
-	t.Run("nil shards with pins returns error", func(t *testing.T) {
-		pins := map[string]uint64{
-			"user": 100,
-		}
-		err := validateRoutingConfig(nil, pins)
-		require.Error(t, err)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRoutingConfig(tt.shards, tt.pins)
+			if tt.wantErr == nil {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, want := range tt.wantErr {
+				assert.Contains(t, err.Error(), want)
+			}
+		})
+	}
 }
 
 // newTestCmd creates a cobra command with the server flags bound to global variables
@@ -1123,15 +678,6 @@ func TestParseSpecialEnvVars(t *testing.T) {
 	}
 }
 
-// TestBindEnvVars tests that bindEnvVars does not panic.
-func TestBindEnvVars(t *testing.T) {
-	t.Run("runs without error", func(t *testing.T) {
-		assert.NotPanics(t, func() {
-			bindEnvVars()
-		})
-	})
-}
-
 // TestRunVersion tests the version command output.
 func TestRunVersion(t *testing.T) {
 	t.Run("full version output", func(t *testing.T) {
@@ -1155,142 +701,6 @@ func TestRunVersion(t *testing.T) {
 		output := buf.String()
 		assert.NotEmpty(t, output)
 	})
-}
-
-// TestRunStartSetsMode tests that runStart sets the correct mode.
-// Verifies config setup without calling runDaemon which would start a server.
-func TestRunStartSetsMode(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithServerFlags()
-
-	// Apply the config changes that runStart would apply
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-
-	assert.Equal(t, config.ServerModeStandalone, cfg.Server.Mode)
-	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("local")
-	assert.NoError(t, err)
-}
-
-// TestRunNodeSetsMode tests that runNode sets the correct mode.
-// Verifies config setup without calling runDaemon which would start a server.
-func TestRunNodeSetsMode(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "multicast"
-
-	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
-	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
-	assert.True(t, cfg.Discovery.Enabled)
-	assert.Equal(t, "multicast", cfg.Discovery.Type)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("node")
-	assert.NoError(t, err)
-}
-
-// TestRunNodeWithStaticDiscovery tests the node command with static discovery.
-func TestRunNodeWithStaticDiscovery(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	err := cmd.Flags().Set("discovery", "static")
-	require.NoError(t, err)
-	err = cmd.Flags().Set("join-addresses", "192.168.1.2:63001,192.168.1.3:63002")
-	require.NoError(t, err)
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "static"
-	if cmd.Flags().Changed("join-addresses") {
-		cfg.Discovery.StaticPeers = []string{"192.168.1.2:63001", "192.168.1.3:63002"}
-	}
-
-	assert.Equal(t, "static", cfg.Discovery.Type)
-	assert.Equal(t, []string{"192.168.1.2:63001", "192.168.1.3:63002"}, cfg.Discovery.StaticPeers)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("node")
-	assert.NoError(t, err)
-}
-
-// TestRunClusterSetsMode tests that runCluster sets the correct mode.
-// Verifies config setup without calling runDaemon which would start a server.
-func TestRunClusterSetsMode(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-	tempDir := t.TempDir()
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Socket = tempDir + "/test.sock"
-	cfg.Server.Unix.Enabled = true
-
-	cmd := newTestCmdWithRaftFlags()
-
-	raftAddress = ""
-
-	// Apply the config changes that runCluster would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = false
-
-	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
-	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
-	assert.False(t, cfg.Discovery.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("cluster")
-	assert.NoError(t, err)
 }
 
 // TestInitConfig tests the initConfig function.
@@ -1433,31 +843,6 @@ func TestInitConfig_ExitsOnInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestRootCmd_VersionFlag tests the root command version flag.
-func TestRootCmd_VersionFlag(t *testing.T) {
-	assert.NotEmpty(t, rootCmd.Version)
-}
-
-// TestVersionCmd tests the version subcommand.
-func TestVersionCmd(t *testing.T) {
-	t.Run("exists as subcommand", func(t *testing.T) {
-		found := false
-		for _, cmd := range rootCmd.Commands() {
-			if cmd.Use == "version" {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "version should be a subcommand")
-	})
-
-	t.Run("has short flag", func(t *testing.T) {
-		flag := versionCmd.Flags().Lookup("short")
-		require.NotNil(t, flag)
-		assert.Equal(t, "false", flag.DefValue)
-	})
-}
-
 // TestSubcommandRegistration tests that all subcommands are registered.
 func TestSubcommandRegistration(t *testing.T) {
 	expected := map[string]bool{
@@ -1479,133 +864,9 @@ func TestSubcommandRegistration(t *testing.T) {
 }
 
 // setupTestLogger creates a logger that writes to stderr for test usage.
-func setupTestLogger(t *testing.T) *logger.Logger {
-	t.Helper()
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	l, err := logger.New(logConfig)
-	require.NoError(t, err)
-	return l
-}
-
 // =============================================================================
 // Consolidated from coverage_93_test.go
 // =============================================================================
-
-// TestValidateRoutingConfig_LargeShardList tests validation with many shards.
-func TestValidateRoutingConfig_LargeShardList(t *testing.T) {
-	shards := make([]uint64, 100)
-	for i := range shards {
-		shards[i] = uint64(i + 1)
-	}
-	pins := map[string]uint64{
-		"user":    50,
-		"session": 99,
-	}
-
-	err := validateRoutingConfig(shards, pins)
-	assert.NoError(t, err)
-}
-
-// TestRunNode_KubernetesDiscovery tests the node command config with kubernetes discovery.
-func TestRunNode_KubernetesDiscovery(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-	cfg.Server.Unix.Enabled = true
-	cfg.Server.Unix.Socket = filepath.Join(tempDir, "k8s.sock")
-
-	cmd := newTestCmdWithRaftFlags()
-	cmd.Flags().StringVar(&discoveryType, "discovery", "multicast", "")
-	cmd.Flags().StringVar(&joinAddresses, "join-addresses", "", "")
-
-	err := cmd.Flags().Set("discovery", "kubernetes")
-	require.NoError(t, err)
-
-	raftAddress = ""
-
-	// Apply the config changes that runNode would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = true
-	cfg.Discovery.Type = "kubernetes"
-
-	assert.Equal(t, "kubernetes", cfg.Discovery.Type)
-
-	// Exercise prepareDaemon for logging coverage
-	err = prepareDaemon("node")
-	assert.NoError(t, err)
-}
-
-// TestRunStart_ConfigSetup tests runStart config setup by verifying the config
-// is set correctly without calling runDaemon.
-func TestRunStart_WithAllOptions(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-
-	cmd := newTestCmdWithServerFlags()
-	require.NoError(t, cmd.Flags().Set("http-port", "8080"))
-	require.NoError(t, cmd.Flags().Set("grpc-port", "9090"))
-
-	// Apply the config changes that runStart would apply
-	cfg.Server.Mode = config.ServerModeStandalone
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-
-	assert.Equal(t, config.ServerModeStandalone, cfg.Server.Mode)
-	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
-	assert.Equal(t, 8080, cfg.Server.REST.Port)
-	assert.True(t, cfg.Server.REST.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("local")
-	assert.NoError(t, err)
-}
-
-// TestRunCluster_ConfigSetup tests runCluster config setup by verifying the config
-// is set correctly without calling runDaemon.
-func TestRunCluster_WithAllOptions(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	tempDir := t.TempDir()
-	cfg = config.Default()
-	cfg.Storage.DataDir = tempDir
-
-	cmd := newTestCmdWithRaftFlags()
-	require.NoError(t, cmd.Flags().Set("node-id", "5"))
-
-	raftAddress = "192.168.1.5:63000"
-	defer func() { raftAddress = "" }()
-
-	// Apply the config changes that runCluster would apply
-	cfg.Server.Mode = config.ServerModeCluster
-	cfg.Storage.Backend = config.StorageBackendPebble
-	applyServerFlags(cmd)
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-	cfg.Discovery.Enabled = false
-
-	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
-	assert.Equal(t, uint64(5), cfg.Raft.NodeID)
-	assert.False(t, cfg.Discovery.Enabled)
-
-	// Exercise prepareDaemon for logging coverage
-	err := prepareDaemon("cluster")
-	assert.NoError(t, err)
-}
 
 // =============================================================================
 // Coverage improvement tests - exercises actual runStart/runNode/runCluster/runDaemon
@@ -1645,79 +906,66 @@ func TestRunStart_DirectCall(t *testing.T) {
 	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
 }
 
-// TestRunNode_DirectCall_DefaultDiscovery calls runNode directly without
-// changing the discovery flag to cover the default multicast branch.
-func TestRunNode_DirectCall_DefaultDiscovery(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
+// TestRunNode_DirectCall calls runNode directly and checks the cluster and
+// discovery settings it applies before the invalid routing pin stops it.
+func TestRunNode_DirectCall(t *testing.T) {
+	log = createTestLogger(t)
 
-	cfg = config.Default()
-	cfg.Storage.DataDir = t.TempDir()
-	cfg.Server.Shards = []uint64{1, 2}
-	cfg.Server.EntityShardPins = map[string]uint64{"user": 99}
-	cfg.Server.Unix.Enabled = false
-	raftAddress = ""
+	tests := []struct {
+		name      string
+		flags     map[string]string
+		wantType  string
+		wantPeers []string
+	}{
+		{
+			name:     "default discovery",
+			wantType: "multicast",
+		},
+		{
+			name:     "explicit discovery",
+			flags:    map[string]string{"discovery": "dns"},
+			wantType: "dns",
+		},
+		{
+			name: "static discovery with join addresses",
+			flags: map[string]string{
+				"discovery":      "static",
+				"join-addresses": "10.0.0.1:63001,10.0.0.2:63002",
+			},
+			wantType:  "static",
+			wantPeers: []string{"10.0.0.1:63001", "10.0.0.2:63002"},
+		},
+	}
 
-	cmd := newTestCmdWithDiscoveryFlags()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg = config.Default()
+			cfg.Storage.DataDir = t.TempDir()
+			// An invalid routing pin stops runDaemon in prepareDaemon, after
+			// runNode has applied its settings and before a server starts.
+			cfg.Server.Shards = []uint64{1, 2}
+			cfg.Server.EntityShardPins = map[string]uint64{"user": 99}
+			cfg.Server.Unix.Enabled = false
+			raftAddress = ""
 
-	err := runNode(cmd, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid routing config")
+			cmd := newTestCmdWithDiscoveryFlags()
+			for name, value := range tt.flags {
+				require.NoError(t, cmd.Flags().Set(name, value))
+			}
 
-	// Verify config was set before the error.
-	assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
-	assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
-	assert.True(t, cfg.Discovery.Enabled)
-	assert.Equal(t, "multicast", cfg.Discovery.Type)
-}
+			err := runNode(cmd, nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid routing config")
 
-// TestRunNode_DirectCall_StaticDiscoveryWithJoinAddresses calls runNode with
-// static discovery and join addresses to cover both discovery branches.
-func TestRunNode_DirectCall_StaticDiscoveryWithJoinAddresses(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = t.TempDir()
-	cfg.Server.Shards = []uint64{1, 2}
-	cfg.Server.EntityShardPins = map[string]uint64{"user": 99}
-	cfg.Server.Unix.Enabled = false
-	raftAddress = ""
-
-	cmd := newTestCmdWithDiscoveryFlags()
-	require.NoError(t, cmd.Flags().Set("discovery", "static"))
-	require.NoError(t, cmd.Flags().Set("join-addresses", "10.0.0.1:63001,10.0.0.2:63002"))
-
-	err := runNode(cmd, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid routing config")
-
-	// Verify discovery settings were applied before the error.
-	assert.Equal(t, "static", cfg.Discovery.Type)
-	assert.Equal(t, []string{"10.0.0.1:63001", "10.0.0.2:63002"}, cfg.Discovery.StaticPeers)
-}
-
-// TestRunNode_DirectCall_ExplicitDiscovery calls runNode with an explicitly
-// changed discovery flag to cover the "discovery changed" branch (line 468).
-func TestRunNode_DirectCall_ExplicitDiscovery(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cfg.Storage.DataDir = t.TempDir()
-	cfg.Server.Shards = []uint64{1, 2}
-	cfg.Server.EntityShardPins = map[string]uint64{"user": 99}
-	cfg.Server.Unix.Enabled = false
-	raftAddress = ""
-
-	cmd := newTestCmdWithDiscoveryFlags()
-	require.NoError(t, cmd.Flags().Set("discovery", "dns"))
-
-	err := runNode(cmd, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid routing config")
-
-	assert.Equal(t, "dns", cfg.Discovery.Type)
+			assert.Equal(t, config.ServerModeCluster, cfg.Server.Mode)
+			assert.Equal(t, config.StorageBackendPebble, cfg.Storage.Backend)
+			assert.True(t, cfg.Discovery.Enabled)
+			assert.Equal(t, tt.wantType, cfg.Discovery.Type)
+			if tt.wantPeers != nil {
+				assert.Equal(t, tt.wantPeers, cfg.Discovery.StaticPeers)
+			}
+		})
+	}
 }
 
 // TestRunCluster_DirectCall calls runCluster directly to cover its
