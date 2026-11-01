@@ -451,16 +451,6 @@ func TestRegistry_ResolveSkipsMalformed(t *testing.T) {
 	}
 }
 
-func TestRegistry_ResolveError(t *testing.T) {
-	b := newFakeBackend()
-	b.rangeErr = errors.New("range boom")
-	_, _, err := New(b).Resolve(sysCtx(), "payments")
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "range" {
-		t.Fatalf("error = %v, want RegistryError{Op:range}", err)
-	}
-}
-
 func TestRegistry_WatchPutAndDelete(t *testing.T) {
 	b := newFakeBackend()
 	r := New(b)
@@ -585,53 +575,76 @@ func TestRegistry_WatchOpenErrors(t *testing.T) {
 	}
 }
 
-func TestRegistry_RegisterGrantError(t *testing.T) {
-	b := newFakeBackend()
-	b.grantErr = errors.New("grant boom")
-	_, err := New(b).Register(sysCtx(), sampleInstance(), time.Second)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "grant" {
-		t.Fatalf("error = %v, want RegistryError{Op:grant}", err)
+// TestRegistry_BackendErrors injects one backend failure per verb and checks
+// that each verb wraps it in a RegistryError naming the failed operation.
+func TestRegistry_BackendErrors(t *testing.T) {
+	boom := errors.New("boom")
+	cases := []struct {
+		name   string
+		inject func(b *fakeBackend)
+		call   func(r *Registry, leaseID int64) error
+		wantOp string
+	}{
+		{
+			name:   "register grant",
+			inject: func(b *fakeBackend) { b.grantErr = boom },
+			call: func(r *Registry, _ int64) error {
+				_, err := r.Register(sysCtx(), sampleInstance(), time.Second)
+				return err
+			},
+			wantOp: "grant",
+		},
+		{
+			name:   "renew keepalive",
+			inject: func(b *fakeBackend) { b.keepAliveErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				_, err := r.Renew(sysCtx(), leaseID)
+				return err
+			},
+			wantOp: "keepalive",
+		},
+		{
+			name:   "renew ownership check",
+			inject: func(b *fakeBackend) { b.existsErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				_, err := r.Renew(sysCtx(), leaseID)
+				return err
+			},
+			wantOp: "exists",
+		},
+		{
+			name:   "deregister revoke",
+			inject: func(b *fakeBackend) { b.revokeErr = boom },
+			call: func(r *Registry, leaseID int64) error {
+				return r.Deregister(sysCtx(), leaseID)
+			},
+			wantOp: "revoke",
+		},
+		{
+			name:   "resolve range",
+			inject: func(b *fakeBackend) { b.rangeErr = boom },
+			call: func(r *Registry, _ int64) error {
+				_, _, err := r.Resolve(sysCtx(), "payments")
+				return err
+			},
+			wantOp: "range",
+		},
 	}
-}
-
-func TestRegistry_RenewError(t *testing.T) {
-	b := newFakeBackend()
-	r := New(b)
-	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	b.keepAliveErr = errors.New("keepalive boom")
-	_, err = r.Renew(sysCtx(), leaseID)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "keepalive" {
-		t.Fatalf("error = %v, want RegistryError{Op:keepalive}", err)
-	}
-}
-
-func TestRegistry_OwnershipCheckError(t *testing.T) {
-	b := newFakeBackend()
-	b.existsErr = errors.New("exists boom")
-	_, err := New(b).Renew(sysCtx(), 1)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "exists" {
-		t.Fatalf("error = %v, want RegistryError{Op:exists}", err)
-	}
-}
-
-func TestRegistry_DeregisterError(t *testing.T) {
-	b := newFakeBackend()
-	r := New(b)
-	leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	b.revokeErr = errors.New("revoke boom")
-	err = r.Deregister(sysCtx(), leaseID)
-	var re *RegistryError
-	if !errors.As(err, &re) || re.Op != "revoke" {
-		t.Fatalf("error = %v, want RegistryError{Op:revoke}", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newFakeBackend()
+			r := New(b)
+			leaseID, err := r.Register(sysCtx(), sampleInstance(), time.Second)
+			if err != nil {
+				t.Fatalf("Register: %v", err)
+			}
+			tc.inject(b)
+			err = tc.call(r, leaseID)
+			var re *RegistryError
+			if !errors.As(err, &re) || re.Op != tc.wantOp {
+				t.Fatalf("error = %v, want RegistryError{Op:%s}", err, tc.wantOp)
+			}
+		})
 	}
 }
 
