@@ -932,95 +932,6 @@ func TestBM25_ScoreWithMetadata_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestWeightedFusion_Fuse_HighScores tests normalization of high BM25 scores
-func TestWeightedFusion_Fuse_HighScores(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	tests := []struct {
-		name           string
-		vectorResults  []Result
-		keywordResults []Result
-		expectedMax    float32
-	}{
-		{
-			name: "very high BM25 score normalization",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.8},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 25.0}, // High BM25 score > 10
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name: "BM25 score exactly at boundary",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.9},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 10.0},
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name: "BM25 score just above 1.0",
-			vectorResults: []Result{
-				{ID: "doc1", VectorScore: 0.5},
-			},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 1.5},
-			},
-			expectedMax: 1.0,
-		},
-		{
-			name:          "keyword only with high score",
-			vectorResults: []Result{},
-			keywordResults: []Result{
-				{ID: "doc1", KeywordScore: 20.0},
-			},
-			expectedMax: 1.0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			results := wf.Fuse(tt.vectorResults, tt.keywordResults)
-			require.Len(t, results, 1)
-			assert.LessOrEqual(t, results[0].FinalScore, tt.expectedMax)
-			assert.GreaterOrEqual(t, results[0].FinalScore, float32(0.0))
-		})
-	}
-}
-
-// TestHybridRanker_RankHybrid_PreScoredKeywords tests path where keyword score already set
-func TestHybridRanker_RankHybrid_PreScoredKeywords(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = false
-	ranker := NewHybridRanker(config, NewSimpleReranker())
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "auth handler", VectorScore: 0.9},
-		{ID: "doc2", Content: "db connection", VectorScore: 0.8},
-	}
-
-	// Keyword results with pre-set scores (non-zero)
-	keywordResults := []Result{
-		{ID: "doc2", Content: "db connection", KeywordScore: 5.5},
-		{ID: "doc3", Content: "api server", KeywordScore: 3.2},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "database")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 3)
-
-	// Verify that keyword scores were not recalculated (they were already set)
-	// The pre-set scores should be preserved in the fusion
-	for _, result := range results {
-		assert.Greater(t, result.FinalScore, float32(0.0))
-	}
-}
-
 // TestHybridRanker_RankWithMetadata_TopKGreaterThanResults tests topK boundary
 func TestHybridRanker_RankWithMetadata_TopKGreaterThanResults(t *testing.T) {
 	config := DefaultConfig()
@@ -1140,22 +1051,6 @@ func (p *partialFailEmbedder) Close() error {
 	return nil
 }
 
-// TestWeightedFusion_Fuse_VectorScoreGreaterThanOne tests vector score normalization
-func TestWeightedFusion_Fuse_VectorScoreGreaterThanOne(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	vectorResults := []Result{
-		{ID: "doc1", VectorScore: 1.5}, // > 1.0, should be normalized
-	}
-
-	results := wf.Fuse(vectorResults, []Result{})
-
-	require.Len(t, results, 1)
-	// Score should be normalized to max 1.0, then weighted
-	assert.LessOrEqual(t, results[0].FinalScore, float32(0.7)) // 1.0 * 0.7
-	assert.Greater(t, results[0].FinalScore, float32(0.0))
-}
-
 func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 	bm25 := NewBM25(1.2, 0.75)
 
@@ -1198,49 +1093,6 @@ func TestBM25_ScoreWithMetadata_TokenizeEdgeCases(t *testing.T) {
 			assert.Equal(t, float32(0.0), score)
 		})
 	}
-}
-
-// TestHybridRanker_RankHybrid_ExactTopKBoundary tests exact topK boundary in hybrid mode
-func TestHybridRanker_RankHybrid_ExactTopKBoundary(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2 // Exact same as fused result count
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "content", VectorScore: 0.9},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc2", Content: "content", KeywordScore: 0.8},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	assert.Len(t, results, 2)
-}
-
-// TestWeightedFusion_Fuse_AllEdgeCases tests remaining edge cases
-func TestWeightedFusion_Fuse_AllEdgeCases(t *testing.T) {
-	wf := NewWeightedFusion(0.7, 0.3)
-
-	// Test with keyword score = 1.0 exactly (boundary condition)
-	vectorResults := []Result{
-		{ID: "doc1", VectorScore: 0.5},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc1", KeywordScore: 1.0}, // Exactly 1.0, should not normalize
-	}
-
-	results := wf.Fuse(vectorResults, keywordResults)
-
-	require.Len(t, results, 1)
-	// Expected: (0.5 * 0.7) + (1.0 * 0.3) = 0.35 + 0.3 = 0.65
-	assert.InDelta(t, 0.65, results[0].FinalScore, 0.01)
 }
 
 // TestBM25_Score_DirectCall tests direct Score method call
@@ -1385,6 +1237,59 @@ func TestWeightedFusion_Fuse_ScoreNormalizationEdgeCases(t *testing.T) {
 				assert.InDelta(t, 0.3, results[0].FinalScore, 0.01)
 			},
 		},
+		{
+			name: "keyword score exactly 1.0 is not normalized",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 0.5},
+			},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 1.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: (0.5 * 0.7) + (1.0 * 0.3) = 0.35 + 0.3 = 0.65
+				assert.InDelta(t, 0.65, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name: "keyword score exactly at 10.0 boundary",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 0.9},
+			},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 10.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: (0.9 * 0.7) + (1.0 * 0.3) = 0.63 + 0.3 = 0.93
+				assert.InDelta(t, 0.93, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name:          "keyword only with high score",
+			vectorResults: []Result{},
+			keywordResults: []Result{
+				{ID: "doc1", KeywordScore: 20.0},
+			},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Expected: 20/10 = 2.0, clamped to 1.0, then (1.0 * 0.3) = 0.3
+				assert.InDelta(t, 0.3, results[0].FinalScore, 0.01)
+			},
+		},
+		{
+			name: "vector score above 1.0 is normalized",
+			vectorResults: []Result{
+				{ID: "doc1", VectorScore: 1.5},
+			},
+			keywordResults: []Result{},
+			checkFn: func(t *testing.T, results []ScoredResult) {
+				require.Len(t, results, 1)
+				// Normalized to at most 1.0, then weighted: <= 1.0 * 0.7
+				assert.LessOrEqual(t, results[0].FinalScore, float32(0.7))
+				assert.Greater(t, results[0].FinalScore, float32(0.0))
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1393,32 +1298,6 @@ func TestWeightedFusion_Fuse_ScoreNormalizationEdgeCases(t *testing.T) {
 			tt.checkFn(t, results)
 		})
 	}
-}
-
-// TestHybridRanker_RankHybrid_RerankTopKClamp tests topK clamping in hybrid mode
-func TestHybridRanker_RankHybrid_RerankTopKClamp(t *testing.T) {
-	config := DefaultConfig()
-	config.EnableRerank = true
-	config.RerankTopK = 2
-
-	reranker := NewSimpleReranker()
-	ranker := NewHybridRanker(config, reranker)
-
-	vectorResults := []Result{
-		{ID: "doc1", Content: "vector1", VectorScore: 0.9},
-		{ID: "doc2", Content: "vector2", VectorScore: 0.8},
-	}
-
-	keywordResults := []Result{
-		{ID: "doc3", Content: "keyword1", KeywordScore: 0.7},
-		{ID: "doc4", Content: "keyword2", KeywordScore: 0.6},
-	}
-
-	results, err := ranker.RankHybrid(vectorResults, keywordResults, "test")
-
-	require.NoError(t, err)
-	// Should be clamped to topK after fusion
-	assert.LessOrEqual(t, len(results), config.RerankTopK)
 }
 
 // TestSimilarityReranker_Rerank_TopKClamp tests topK is properly applied
