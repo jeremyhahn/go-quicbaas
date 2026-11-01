@@ -268,24 +268,6 @@ func TestLogger_Clone(t *testing.T) {
 	}
 }
 
-func TestLogger_ToContext(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	ctx := logger.ToContext(context.Background())
-	retrieved := FromContext(ctx)
-
-	if retrieved == nil {
-		t.Error("FromContext() returned nil")
-	}
-}
-
 func TestFromContext(t *testing.T) {
 	t.Run("with logger in context", func(t *testing.T) {
 		logger, err := New(LogConfig{
@@ -300,8 +282,8 @@ func TestFromContext(t *testing.T) {
 		ctx := logger.ToContext(context.Background())
 		retrieved := FromContext(ctx)
 
-		if retrieved == nil {
-			t.Error("FromContext() returned nil")
+		if retrieved != logger {
+			t.Errorf("FromContext() = %p, want the logger stored by ToContext %p", retrieved, logger)
 		}
 	})
 
@@ -590,7 +572,7 @@ func TestLogger_Fatal(t *testing.T) {
 }
 
 // TestWithContext_NilContext tests WithContext with a nil context.
-func TestWithContext_NilContext(t *testing.T) {
+func TestWithContext(t *testing.T) {
 	logger, err := New(LogConfig{
 		Level:  "info",
 		Format: "json",
@@ -600,47 +582,27 @@ func TestWithContext_NilContext(t *testing.T) {
 		t.Fatalf("Failed to create logger: %v", err)
 	}
 
-	// WithContext should create a background context if nil is passed
-	ctx := WithContext(nil, logger)
-	if ctx == nil {
-		t.Error("WithContext() should return a valid context even when passed nil")
-	}
-
-	// Verify we can retrieve the logger
-	retrieved := FromContext(ctx)
-	if retrieved == nil {
-		t.Error("Should be able to retrieve logger from context created with nil input")
-	}
-}
-
-// TestWithContext_ValidContext tests WithContext with a valid context.
-func TestWithContext_ValidContext(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("nil context falls back to background", func(t *testing.T) {
+		ctx := WithContext(nil, logger)
+		if ctx == nil {
+			t.Fatal("WithContext() should return a valid context even when passed nil")
+		}
+		if FromContext(ctx) != logger {
+			t.Error("Should be able to retrieve logger from context created with nil input")
+		}
 	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
 
-	// Create a context with some values
-	ctx := context.Background()
-	ctx = context.WithValue(ctx, "test_key", "test_value")
+	t.Run("existing context values are preserved", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), "test_key", "test_value")
+		ctx = WithContext(ctx, logger)
 
-	// Add logger to context
-	ctx = WithContext(ctx, logger)
-
-	// Verify logger is in context
-	retrieved := FromContext(ctx)
-	if retrieved == nil {
-		t.Error("Should be able to retrieve logger from context")
-	}
-
-	// Verify original context values are preserved
-	if val := ctx.Value("test_key"); val != "test_value" {
-		t.Error("WithContext should preserve existing context values")
-	}
+		if FromContext(ctx) != logger {
+			t.Error("Should be able to retrieve logger from context")
+		}
+		if val := ctx.Value("test_key"); val != "test_value" {
+			t.Error("WithContext should preserve existing context values")
+		}
+	})
 }
 
 // TestNew_StderrOutput tests the New function with stderr output.
