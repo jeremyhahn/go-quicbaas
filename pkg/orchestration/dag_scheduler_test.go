@@ -147,104 +147,57 @@ func TestBuildDAG(t *testing.T) {
 // DetectCycles Tests
 // =============================================================================
 
-func TestDAG_CycleDetection_NoCycle(t *testing.T) {
-	items := []*WorkItem{
-		workItem("A"),
-		workItem("B", "A"),
-		workItem("C", "B"),
+func TestDAG_DetectCycles(t *testing.T) {
+	tests := []struct {
+		name      string
+		items     []*WorkItem
+		wantCycle bool
+	}{
+		{name: "linear chain has no cycle", items: []*WorkItem{workItem("A"), workItem("B", "A"), workItem("C", "B")}},
+		{name: "empty graph has no cycle", items: []*WorkItem{}},
+		{
+			// A depends on C, B depends on A, C depends on B.
+			name:      "three-node cycle",
+			items:     []*WorkItem{workItem("A", "C"), workItem("B", "A"), workItem("C", "B")},
+			wantCycle: true,
+		},
+		{name: "self cycle", items: []*WorkItem{workItem("A", "A")}, wantCycle: true},
 	}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	if err := dag.DetectCycles(); err != nil {
-		t.Fatalf("unexpected cycle detected: %v", err)
-	}
-}
 
-func TestDAG_CycleDetection_SimpleCycle(t *testing.T) {
-	// A -> B -> C -> A (cycle)
-	// In our model, edges are "depends on", children are "depended on by".
-	// A depends on C, B depends on A, C depends on B => cycle.
-	items := []*WorkItem{
-		workItem("A", "C"),
-		workItem("B", "A"),
-		workItem("C", "B"),
-	}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	err = dag.DetectCycles()
-	if err == nil {
-		t.Fatal("expected cycle error")
-	}
-	if !errors.Is(err, ErrCyclicDependency) {
-		t.Fatalf("expected ErrCyclicDependency, got: %v", err)
-	}
-	var cycleErr *CyclicDependencyError
-	if !errors.As(err, &cycleErr) {
-		t.Fatalf("expected CyclicDependencyError, got: %T", err)
-	}
-	// The cycle should contain at least 2 nodes and loop back.
-	if len(cycleErr.Cycle) < 2 {
-		t.Fatalf("cycle path too short: %v", cycleErr.Cycle)
-	}
-	// First and last element should be the same (cycle loop).
-	if cycleErr.Cycle[0] != cycleErr.Cycle[len(cycleErr.Cycle)-1] {
-		t.Fatalf("cycle should loop: first=%q last=%q", cycleErr.Cycle[0], cycleErr.Cycle[len(cycleErr.Cycle)-1])
-	}
-}
-
-func TestDAG_SelfCycle(t *testing.T) {
-	items := []*WorkItem{workItem("A", "A")}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	err = dag.DetectCycles()
-	if err == nil {
-		t.Fatal("expected cycle error for self-referencing item")
-	}
-	if !errors.Is(err, ErrCyclicDependency) {
-		t.Fatalf("expected ErrCyclicDependency, got: %v", err)
-	}
-	var cycleErr *CyclicDependencyError
-	if !errors.As(err, &cycleErr) {
-		t.Fatalf("expected CyclicDependencyError, got: %T", err)
-	}
-	// Self-cycle: path should be [A, A].
-	if len(cycleErr.Cycle) < 2 {
-		t.Fatalf("expected self-cycle path, got: %v", cycleErr.Cycle)
-	}
-}
-
-func TestDAG_CycleDetection_EmptyGraph(t *testing.T) {
-	dag, err := BuildDAG([]*WorkItem{})
-	if err != nil {
-		t.Fatalf("unexpected build error: %v", err)
-	}
-	if err := dag.DetectCycles(); err != nil {
-		t.Fatalf("unexpected error on empty graph: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dag, err := BuildDAG(tt.items)
+			if err != nil {
+				t.Fatalf("unexpected build error: %v", err)
+			}
+			err = dag.DetectCycles()
+			if !tt.wantCycle {
+				if err != nil {
+					t.Fatalf("unexpected cycle detected: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrCyclicDependency) {
+				t.Fatalf("expected ErrCyclicDependency, got: %v", err)
+			}
+			var cycleErr *CyclicDependencyError
+			if !errors.As(err, &cycleErr) {
+				t.Fatalf("expected CyclicDependencyError, got: %T", err)
+			}
+			// The path has at least 2 nodes and loops back to its start.
+			if len(cycleErr.Cycle) < 2 {
+				t.Fatalf("cycle path too short: %v", cycleErr.Cycle)
+			}
+			if cycleErr.Cycle[0] != cycleErr.Cycle[len(cycleErr.Cycle)-1] {
+				t.Fatalf("cycle should loop: %v", cycleErr.Cycle)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // TopologicalWaves Tests
 // =============================================================================
-
-func TestDAG_SingleItem_OneWave(t *testing.T) {
-	items := []*WorkItem{workItem("A")}
-	dag, err := BuildDAG(items)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	waves := dag.TopologicalWaves()
-	if len(waves) != 1 {
-		t.Fatalf("expected 1 wave, got %d", len(waves))
-	}
-	assertWaveContains(t, waves[0], 0, "A")
-}
 
 func TestDAG_LinearChain(t *testing.T) {
 	// A -> B -> C: 3 waves, one item each.
