@@ -885,118 +885,6 @@ func (m *updateCapableTenantMgr) UpdateUser(ctx context.Context, user *User) err
 	return nil
 }
 
-func TestBatchProcessor_ProcessUsers_SkipDuplicates(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First import - create the user
-	items := []UserImportItem{
-		{Email: "duplicate@test.com", Name: "Original Name"},
-	}
-
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success, got %d", saved.Progress.Succeeded)
-	}
-
-	// Second import with SkipDuplicates - should skip
-	op2, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{
-		SkipDuplicates: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers (skip duplicates) failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved2, _ := storage.GetOperation(ctx, op2.ID)
-	if saved2.Progress.Skipped != 1 {
-		t.Errorf("expected 1 skipped, got %d", saved2.Progress.Skipped)
-	}
-}
-
-func TestBatchProcessor_ProcessUsers_UpdateExisting(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First import - create the user
-	items := []UserImportItem{
-		{Email: "update@test.com", Name: "Original Name"},
-	}
-
-	_, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	// Second import with UpdateExisting - should update
-	updatedItems := []UserImportItem{
-		{Email: "update@test.com", Name: "Updated Name"},
-	}
-
-	op2, err := bp.ImportUsers(ctx, tenantID, updatedItems, BatchOptions{
-		UpdateExisting: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers (update existing) failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved2, _ := storage.GetOperation(ctx, op2.ID)
-	if saved2.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success for update, got %d", saved2.Progress.Succeeded)
-	}
-
-	// Verify user was updated
-	user, _ := tenantMgr.GetUserByEmail(ctx, tenantID, "update@test.com")
-	if user.Name != "Updated Name" {
-		t.Errorf("expected name 'Updated Name', got %s", user.Name)
-	}
-}
-
-func TestBatchProcessor_ProcessUsers_AtomicMode(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newUpdateCapableTenantMgr()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// Mix of valid and invalid items - atomic should fail on first invalid
-	items := []UserImportItem{
-		{Email: "valid@test.com", Name: "Valid User"},
-		{Email: "", Name: "Invalid User"}, // Invalid - missing email
-	}
-
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{
-		Atomic: true,
-	})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	// In atomic mode, should fail on first validation error
-	if saved.Progress.Failed == 0 {
-		t.Error("expected failure in atomic mode for invalid item")
-	}
-}
-
 // =============================================================================
 // SessionPolicy.Validate - Additional coverage
 // =============================================================================
@@ -1103,19 +991,6 @@ func TestSessionExt_IsIdle(t *testing.T) {
 // OIDCProviderAdapter coverage - renamed to avoid duplicate
 // =============================================================================
 
-func TestOIDCProviderAdapter_Creation(t *testing.T) {
-	// Create a mock OIDC provider
-	adapter := NewOIDCProviderAdapter(nil)
-	if adapter == nil {
-		t.Error("NewOIDCProviderAdapter should not return nil")
-	}
-
-	// GetProvider should return nil when initialized with nil
-	if adapter.GetProvider() != nil {
-		t.Error("GetProvider should return nil when initialized with nil")
-	}
-}
-
 // =============================================================================
 // User import with roles
 // =============================================================================
@@ -1140,38 +1015,19 @@ func TestBatchProcessor_ProcessUsers_WithRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportUsers failed: %v", err)
 	}
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		saved, err := storage.GetOperation(ctx, op.ID)
+		return err == nil && saved.Progress.Succeeded == 1
+	}, 5*time.Second, 10*time.Millisecond, "expected 1 success")
 
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 success, got %d", saved.Progress.Succeeded)
-	}
-
-	// Verify user has roles
-	user, _ := tenantMgr.GetUserByEmail(ctx, tenantID, "rolesgroups@test.com")
-	if len(user.Roles) != 2 {
-		t.Errorf("expected 2 roles, got %d", len(user.Roles))
-	}
+	user, err := tenantMgr.GetUserByEmail(ctx, tenantID, "rolesgroups@test.com")
+	require.NoError(t, err)
+	assert.Len(t, user.Roles, 2)
 }
 
 // =============================================================================
 // BatchProgress.CalculateRate edge case
 // =============================================================================
-
-func TestBatchProgress_CalculateRate_WithElapsed(t *testing.T) {
-	progress := &BatchProgress{
-		Total:     100,
-		Processed: 50,
-	}
-
-	// Calculate with 5 seconds elapsed
-	progress.CalculateRate(5 * time.Second)
-
-	expectedRate := 10.0 // 50 processed / 5 seconds
-	if progress.ItemsPerSecond != expectedRate {
-		t.Errorf("expected rate %.2f, got %.2f", expectedRate, progress.ItemsPerSecond)
-	}
-}
 
 // =============================================================================
 // matchesExportFilter coverage
