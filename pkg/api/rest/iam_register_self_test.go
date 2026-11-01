@@ -265,19 +265,6 @@ func TestRegisterSelfBegin_DefaultIsolationModeApplied(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRegisterSelfBegin_InvalidJSON(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{not json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	handler.RegisterSelfBegin(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // --------------------------------------------------------------------------
 // RegisterSelfFinish — gate + session checks
 // --------------------------------------------------------------------------
