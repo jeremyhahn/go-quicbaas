@@ -5,6 +5,7 @@ package rest
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,395 +55,115 @@ func setupDeepHandler(t *testing.T, svc service.QuicBaaS) (*IAMHandler, func()) 
 
 var errDeepFail = errors.New("fail")
 
-func TestDeep_ListUserConsents_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.ListUserConsents(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+// deepCase drives one IAM handler with its dependency absent and with its
+// dependency failing.
+type deepCase struct {
+	name    string
+	method  string
+	target  string
+	body    string
+	params  map[string]string
+	handle  func(*IAMHandler, http.ResponseWriter, *http.Request)
+	nilCode int  // status with the dependency absent; 0 when not exercised
+	noFail  bool // true when the dependency-error case is not exercised
 }
 
-func TestDeep_ListUserConsents_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.ListUserConsents(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
+// runDeepCases serves each case through newSvc(nil), a service without the
+// dependency, and through newSvc(errDeepFail), whose dependency fails. A
+// failing dependency must never answer 200 OK.
+func runDeepCases(t *testing.T, newSvc func(fail error) service.QuicBaaS, cases []deepCase) {
+	t.Helper()
+	for _, tc := range cases {
+		if tc.nilCode != 0 {
+			t.Run(tc.name+"/nil", func(t *testing.T) {
+				assert.Equal(t, tc.nilCode, serveDeepCase(t, newSvc(nil), tc).Code)
+			})
+		}
+		if !tc.noFail {
+			t.Run(tc.name+"/error", func(t *testing.T) {
+				assert.NotEqual(t, http.StatusOK, serveDeepCase(t, newSvc(errDeepFail), tc).Code)
+			})
+		}
+	}
 }
 
-func TestDeep_GetConsent_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
+func serveDeepCase(t *testing.T, svc service.QuicBaaS, tc deepCase) *httptest.ResponseRecorder {
+	t.Helper()
+	h, cl := setupDeepHandler(t, svc)
 	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "purpose": "marketing"})
+	var body io.Reader
+	if tc.body != "" {
+		body = strings.NewReader(tc.body)
+	}
+	r := httptest.NewRequest(tc.method, tc.target, body)
+	if tc.params != nil {
+		r = withChiParams(r, tc.params)
+	}
 	w := httptest.NewRecorder()
-	h.GetConsent(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	tc.handle(h, w, r)
+	return w
 }
 
-func TestDeep_GetConsent_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "purpose": "marketing"})
-	w := httptest.NewRecorder()
-	h.GetConsent(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
+func TestDeep_GDPRManager(t *testing.T) {
+	user := map[string]string{"tenant_id": "t1", "user_id": "30001"}
+	consent := map[string]string{"tenant_id": "t1", "user_id": "30001", "purpose": "marketing"}
+	export := map[string]string{"tenant_id": "t1", "user_id": "30001", "export_id": "exp1"}
+	deletion := map[string]string{"tenant_id": "t1", "user_id": "30001", "deletion_id": "del1"}
+	newSvc := func(fail error) service.QuicBaaS {
+		return &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: fail}
+	}
+	runDeepCases(t, newSvc, []deepCase{
+		{name: "ListUserConsents", method: http.MethodGet, target: "/c", params: user,
+			handle: (*IAMHandler).ListUserConsents, nilCode: http.StatusInternalServerError},
+		{name: "GetConsent", method: http.MethodGet, target: "/c", params: consent,
+			handle: (*IAMHandler).GetConsent, nilCode: http.StatusInternalServerError},
+		{name: "WithdrawConsent", method: http.MethodDelete, target: "/c", params: consent,
+			handle: (*IAMHandler).WithdrawConsent, nilCode: http.StatusInternalServerError},
+		{name: "RequestDataExport", method: http.MethodPost, target: "/e", body: `{"format":"json"}`, params: user,
+			handle: (*IAMHandler).RequestDataExport, nilCode: http.StatusInternalServerError},
+		{name: "GetExportStatus", method: http.MethodGet, target: "/e/1", params: export,
+			handle: (*IAMHandler).GetExportStatus, nilCode: http.StatusInternalServerError},
+		{name: "DownloadExport", method: http.MethodGet, target: "/e/1/d", params: export,
+			handle: (*IAMHandler).DownloadExport, nilCode: http.StatusInternalServerError},
+		{name: "RequestDeletion", method: http.MethodPost, target: "/d", body: `{"reason":"test"}`, params: user,
+			handle: (*IAMHandler).RequestDeletion, nilCode: http.StatusInternalServerError},
+		{name: "GetDeletionStatus", method: http.MethodGet, target: "/d/1", params: deletion,
+			handle: (*IAMHandler).GetDeletionStatus, nilCode: http.StatusInternalServerError},
+		{name: "CancelDeletion", method: http.MethodPost, target: "/d/1/c", params: deletion,
+			handle: (*IAMHandler).CancelDeletion, nilCode: http.StatusInternalServerError},
+	})
 }
 
-func TestDeep_WithdrawConsent_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "purpose": "marketing"})
-	w := httptest.NewRecorder()
-	h.WithdrawConsent(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_WithdrawConsent_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "purpose": "marketing"})
-	w := httptest.NewRecorder()
-	h.WithdrawConsent(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_RequestDataExport_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/e", strings.NewReader(`{"format":"json"}`))
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.RequestDataExport(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_RequestDataExport_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/e", strings.NewReader(`{"format":"json"}`))
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.RequestDataExport(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_GetExportStatus_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/e/1", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "export_id": "exp1"})
-	w := httptest.NewRecorder()
-	h.GetExportStatus(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_GetExportStatus_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/e/1", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "export_id": "exp1"})
-	w := httptest.NewRecorder()
-	h.GetExportStatus(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_DownloadExport_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/e/1/d", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "export_id": "exp1"})
-	w := httptest.NewRecorder()
-	h.DownloadExport(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_DownloadExport_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/e/1/d", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "export_id": "exp1"})
-	w := httptest.NewRecorder()
-	h.DownloadExport(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_RequestDeletion_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/d", strings.NewReader(`{"reason":"test"}`))
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.RequestDeletion(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_RequestDeletion_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/d", strings.NewReader(`{"reason":"test"}`))
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.RequestDeletion(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_GetDeletionStatus_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/d/1", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "deletion_id": "del1"})
-	w := httptest.NewRecorder()
-	h.GetDeletionStatus(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_GetDeletionStatus_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/d/1", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "deletion_id": "del1"})
-	w := httptest.NewRecorder()
-	h.GetDeletionStatus(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_CancelDeletion_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/d/1/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "deletion_id": "del1"})
-	w := httptest.NewRecorder()
-	h.CancelDeletion(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_CancelDeletion_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithGDPR{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/d/1/c", nil)
-	r = withChiParams(r, map[string]string{"tenant_id": "t1", "user_id": "30001", "deletion_id": "del1"})
-	w := httptest.NewRecorder()
-	h.CancelDeletion(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_CreateAdminAssignment_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
-	w := httptest.NewRecorder()
-	h.CreateAdminAssignment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_CreateAdminAssignment_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/a", strings.NewReader(`{"user_id":"50001","admin_role":"super_admin"}`))
-	w := httptest.NewRecorder()
-	h.CreateAdminAssignment(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_ListAdminAssignments_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a", nil)
-	w := httptest.NewRecorder()
-	h.ListAdminAssignments(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_ListAdminAssignments_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a", nil)
-	w := httptest.NewRecorder()
-	h.ListAdminAssignments(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_GetAdminAssignment_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a/1", nil)
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.GetAdminAssignment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_GetAdminAssignment_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a/1", nil)
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.GetAdminAssignment(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_UpdateAdminAssignment_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPut, "/a/1", strings.NewReader(`{"admin_role":"super_admin"}`))
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.UpdateAdminAssignment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_UpdateAdminAssignment_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPut, "/a/1", strings.NewReader(`{"admin_role":"super_admin"}`))
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.UpdateAdminAssignment(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_DeleteAdminAssignment_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/a/1", nil)
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.DeleteAdminAssignment(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_DeleteAdminAssignment_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/a/1", nil)
-	r = withChiParams(r, map[string]string{"assignment_id": "a1"})
-	w := httptest.NewRecorder()
-	h.DeleteAdminAssignment(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_GetUserAssignments_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a/u/1", nil)
-	r = withChiParams(r, map[string]string{"user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.GetUserAssignments(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_GetUserAssignments_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/a/u/1", nil)
-	r = withChiParams(r, map[string]string{"user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.GetUserAssignments(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_CheckAdminPermission_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
-	w := httptest.NewRecorder()
-	h.CheckAdminPermission(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_CheckAdminPermission_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/c", strings.NewReader(`{"user_id":"50001","permission":"manage_users"}`))
-	w := httptest.NewRecorder()
-	h.CheckAdminPermission(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_StartImpersonation_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
-	w := httptest.NewRecorder()
-	h.StartImpersonation(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_StartImpersonation_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodPost, "/i", strings.NewReader(`{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`))
-	w := httptest.NewRecorder()
-	h.StartImpersonation(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_EndImpersonation_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/i/1", nil)
-	r = withChiParams(r, map[string]string{"session_id": "s1"})
-	w := httptest.NewRecorder()
-	h.EndImpersonation(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_EndImpersonation_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodDelete, "/i/1", nil)
-	r = withChiParams(r, map[string]string{"session_id": "s1"})
-	w := httptest.NewRecorder()
-	h.EndImpersonation(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_ListActiveImpersonations_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/i/active", nil)
-	r = withChiParams(r, map[string]string{"user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.ListActiveImpersonations(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_ListActiveImpersonations_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/i/active", nil)
-	w := httptest.NewRecorder()
-	h.ListActiveImpersonations(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestDeep_ListImpersonations_NilManager(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/i", nil)
-	r = withChiParams(r, map[string]string{"user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.ListImpersonations(w, r)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestDeep_ListImpersonations_ManagerError(t *testing.T) {
-	h, cl := setupDeepHandler(t, &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: errDeepFail})
-	defer cl()
-	r := httptest.NewRequest(http.MethodGet, "/i", nil)
-	r = withChiParams(r, map[string]string{"user_id": "30001"})
-	w := httptest.NewRecorder()
-	h.ListImpersonations(w, r)
-	assert.NotEqual(t, http.StatusOK, w.Code)
+func TestDeep_AdminManager(t *testing.T) {
+	assignment := map[string]string{"assignment_id": "a1"}
+	user := map[string]string{"user_id": "30001"}
+	newSvc := func(fail error) service.QuicBaaS {
+		return &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS(), mgrErr: fail}
+	}
+	runDeepCases(t, newSvc, []deepCase{
+		{name: "CreateAdminAssignment", method: http.MethodPost, target: "/a", body: `{"user_id":"50001","admin_role":"super_admin"}`,
+			handle: (*IAMHandler).CreateAdminAssignment, nilCode: http.StatusInternalServerError},
+		{name: "ListAdminAssignments", method: http.MethodGet, target: "/a",
+			handle: (*IAMHandler).ListAdminAssignments, nilCode: http.StatusInternalServerError},
+		{name: "GetAdminAssignment", method: http.MethodGet, target: "/a/1", params: assignment,
+			handle: (*IAMHandler).GetAdminAssignment, nilCode: http.StatusInternalServerError},
+		{name: "UpdateAdminAssignment", method: http.MethodPut, target: "/a/1", body: `{"admin_role":"super_admin"}`, params: assignment,
+			handle: (*IAMHandler).UpdateAdminAssignment, nilCode: http.StatusInternalServerError},
+		{name: "DeleteAdminAssignment", method: http.MethodDelete, target: "/a/1", params: assignment,
+			handle: (*IAMHandler).DeleteAdminAssignment, nilCode: http.StatusInternalServerError},
+		{name: "GetUserAssignments", method: http.MethodGet, target: "/a/u/1", params: user,
+			handle: (*IAMHandler).GetUserAssignments, nilCode: http.StatusInternalServerError},
+		{name: "CheckAdminPermission", method: http.MethodPost, target: "/c", body: `{"user_id":"50001","permission":"manage_users"}`,
+			handle: (*IAMHandler).CheckAdminPermission, nilCode: http.StatusInternalServerError},
+		{name: "StartImpersonation", method: http.MethodPost, target: "/i", body: `{"target_user_id":"50001","tenant_id":"t1","reason":"support"}`,
+			handle: (*IAMHandler).StartImpersonation, nilCode: http.StatusInternalServerError},
+		{name: "EndImpersonation", method: http.MethodDelete, target: "/i/1", params: map[string]string{"session_id": "s1"},
+			handle: (*IAMHandler).EndImpersonation, nilCode: http.StatusInternalServerError},
+		{name: "ListActiveImpersonations", method: http.MethodGet, target: "/i/active", params: user,
+			handle: (*IAMHandler).ListActiveImpersonations, nilCode: http.StatusInternalServerError},
+		{name: "ListImpersonations", method: http.MethodGet, target: "/i", params: user,
+			handle: (*IAMHandler).ListImpersonations, nilCode: http.StatusInternalServerError},
+	})
 }
 
 func TestDeep_GetApp_NilManager(t *testing.T) {
