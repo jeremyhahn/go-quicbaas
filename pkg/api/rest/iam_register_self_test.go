@@ -61,68 +61,63 @@ func postJSON(t *testing.T, handler http.HandlerFunc, body interface{}) *httptes
 // slugify
 // --------------------------------------------------------------------------
 
-func TestSlugify_BasicConversion(t *testing.T) {
-	assert.Equal(t, "acme-corp", slugify("Acme Corp"))
-	assert.Equal(t, "my-org", slugify("My Org"))
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "basic conversion", in: "Acme Corp", want: "acme-corp"},
+		{name: "second basic conversion", in: "My Org", want: "my-org"},
+		// Exclamation mark is not alphanumeric/hyphen; replaced by hyphen.
+		{name: "special chars stripped", in: "Acme!Corp", want: "acme-corp"},
+		// Empty name → no useful slug; deriveTenantID falls back to UUID.
+		{name: "empty input", in: "", want: ""},
+		// Multiple spaces collapse to a single hyphen.
+		{name: "multiple spaces", in: "  Hello   World  ", want: "hello-world"},
+		// Ampersand is stripped; surrounding spaces become hyphens that collapse.
+		{name: "special and spaces", in: "Acme & Corp", want: "acme-corp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, slugify(tt.in))
+		})
+	}
 }
 
-func TestSlugify_SpecialCharsStripped(t *testing.T) {
-	// Exclamation mark is not alphanumeric/hyphen; replaced by hyphen then
-	// collapsed into the surrounding context.
-	result := slugify("Acme!Corp")
-	assert.Equal(t, "acme-corp", result)
-}
-
-func TestSlugify_TooShortPadded(t *testing.T) {
+func TestSlugify_LengthBounds(t *testing.T) {
 	// A single-char name produces a slug shorter than 3; "org" is appended.
-	result := slugify("a")
-	assert.True(t, len(result) >= 3, "slug should be at least 3 chars, got %q", result)
-}
+	short := slugify("a")
+	assert.GreaterOrEqual(t, len(short), 3, "slug should be at least 3 chars, got %q", short)
 
-func TestSlugify_TruncatedAt50(t *testing.T) {
-	long := strings.Repeat("a", 60)
-	result := slugify(long)
-	assert.LessOrEqual(t, len(result), 50)
-}
-
-func TestSlugify_EmptyInput(t *testing.T) {
-	// Empty name → no useful slug; deriveTenantID falls back to UUID.
-	assert.Equal(t, "", slugify(""))
-}
-
-func TestSlugify_MultipleSpaces(t *testing.T) {
-	// Multiple spaces collapse to a single hyphen.
-	assert.Equal(t, "hello-world", slugify("  Hello   World  "))
-}
-
-func TestSlugify_SpecialAndSpaces(t *testing.T) {
-	// Ampersand is stripped; surrounding spaces become hyphens that collapse.
-	assert.Equal(t, "acme-corp", slugify("Acme & Corp"))
+	long := slugify(strings.Repeat("a", 60))
+	assert.LessOrEqual(t, len(long), 50)
 }
 
 // --------------------------------------------------------------------------
 // isReservedTenantID
 // --------------------------------------------------------------------------
 
-func TestIsReservedTenantID_SystemAndDefault(t *testing.T) {
-	assert.True(t, isReservedTenantID("system"))
-	assert.True(t, isReservedTenantID("default"))
-}
-
-func TestIsReservedTenantID_UnderscorePrefix(t *testing.T) {
-	assert.True(t, isReservedTenantID("_internal"))
-	assert.True(t, isReservedTenantID("_"))
-}
-
-func TestIsReservedTenantID_ColonPattern(t *testing.T) {
-	assert.True(t, isReservedTenantID("ns:tenant"))
-	assert.True(t, isReservedTenantID("a:b"))
-}
-
-func TestIsReservedTenantID_ValidIDs(t *testing.T) {
-	assert.False(t, isReservedTenantID("acme"))
-	assert.False(t, isReservedTenantID("my-org-42"))
-	assert.False(t, isReservedTenantID("xyz"))
+func TestIsReservedTenantID(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{id: "system", want: true},
+		{id: "default", want: true},
+		{id: "_internal", want: true},
+		{id: "_", want: true},
+		{id: "ns:tenant", want: true},
+		{id: "a:b", want: true},
+		{id: "acme", want: false},
+		{id: "my-org-42", want: false},
+		{id: "xyz", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			assert.Equal(t, tt.want, isReservedTenantID(tt.id))
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -449,16 +444,22 @@ func TestRejectUser_UnknownUserReturnsError(t *testing.T) {
 // stringInSlice
 // --------------------------------------------------------------------------
 
-func TestStringInSlice_Found(t *testing.T) {
-	assert.True(t, stringInSlice("keyspace", []string{"keyspace", "barrier"}))
-}
-
-func TestStringInSlice_NotFound(t *testing.T) {
-	assert.False(t, stringInSlice("other", []string{"keyspace", "barrier"}))
-}
-
-func TestStringInSlice_EmptyList(t *testing.T) {
-	assert.False(t, stringInSlice("keyspace", []string{}))
+func TestStringInSlice(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		list  []string
+		want  bool
+	}{
+		{name: "found", value: "keyspace", list: []string{"keyspace", "barrier"}, want: true},
+		{name: "not found", value: "other", list: []string{"keyspace", "barrier"}, want: false},
+		{name: "empty list", value: "keyspace", list: []string{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, stringInSlice(tt.value, tt.list))
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
