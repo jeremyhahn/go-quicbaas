@@ -1173,28 +1173,26 @@ func TestConvertErrorNilReturnsNil(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestConvertErrorNonGRPCError(t *testing.T) {
-	// Non-gRPC errors get wrapped in a QBError with ErrInternal
-	plainErr := stderrors.New("plain error")
+func TestConvertError(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    error
+		wantCode errors.ErrorCode
+	}{
+		// Non-gRPC errors get wrapped in a QBError with ErrInternal.
+		{"plain error", stderrors.New("plain error"), errors.ErrInternal},
+		// gRPC status errors get converted to QBError with mapped code.
+		{"grpc status", status.Error(codes.NotFound, "resource not found"), errors.ErrNotFound},
+	}
 
-	result := convertError(plainErr)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, result, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-	assert.Equal(t, "grpc", qbErr.Op)
-}
-
-func TestConvertErrorGRPCStatusError(t *testing.T) {
-	// gRPC status errors get converted to QBError with mapped code
-	grpcErr := status.Error(codes.NotFound, "resource not found")
-
-	result := convertError(grpcErr)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, result, &qbErr)
-	assert.Equal(t, errors.ErrNotFound, qbErr.Code)
-	assert.Equal(t, "grpc", qbErr.Op)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var qbErr *errors.QBError
+			require.ErrorAs(t, convertError(tt.input), &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+			assert.Equal(t, "grpc", qbErr.Op)
+		})
+	}
 }
 
 // =============================================================================
