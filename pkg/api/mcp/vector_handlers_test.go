@@ -15,74 +15,34 @@ import (
 
 // Package mcp implements comprehensive tests for vector handlers
 
-// TestHandleBatchUpsertVectors tests batch upsert operation
+// TestHandleBatchUpsertVectors tests batch upsert results and validation
 func TestHandleBatchUpsertVectors(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	vectors := []map[string]interface{}{
+	runToolCases(t, server.handleBatchUpsertVectors, []toolCase{
 		{
-			"id":       "vec1",
-			"vector":   []interface{}{0.1, 0.2, 0.3},
-			"metadata": map[string]interface{}{"type": "test1"},
+			name: "TwoVectors",
+			params: map[string]interface{}{
+				"namespace": "test-namespace",
+				"vectors": `[{"id":"vec1","metadata":{"type":"test1"},"vector":[0.1,0.2,0.3]},` +
+					`{"id":"vec2","metadata":{"type":"test2"},"vector":[0.4,0.5,0.6]}]`,
+			},
+			want: map[string]interface{}{"namespace": "test-namespace", "vectors_total": float64(2), "vectors_succeeded": float64(2)},
 		},
 		{
-			"id":       "vec2",
-			"vector":   []interface{}{0.4, 0.5, 0.6},
-			"metadata": map[string]interface{}{"type": "test2"},
+			name:    "MissingNamespace",
+			params:  map[string]interface{}{"vectors": `[{"id":"vec1","vector":[0.1,0.2,0.3]}]`},
+			wantErr: "namespace is required",
 		},
-	}
-	vectorsJSON, _ := json.Marshal(vectors)
-
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"vectors":   string(vectorsJSON),
-	}
-
-	resp, err := server.handleBatchUpsertVectors(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, float64(2), result["vectors_total"])
-	assert.Equal(t, float64(2), result["vectors_succeeded"])
-}
-
-// TestHandleBatchUpsertVectorsValidation tests parameter validation
-func TestHandleBatchUpsertVectorsValidation(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("MissingNamespace", func(t *testing.T) {
-		params := map[string]interface{}{
-			"vectors": `[{"id":"vec1","vector":[0.1,0.2,0.3]}]`,
-		}
-		_, err := server.handleBatchUpsertVectors(ctx, params)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("MissingVectors", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		_, err := server.handleBatchUpsertVectors(ctx, params)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "vectors is required")
-	})
-
-	t.Run("InvalidVectorsJSON", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-			"vectors":   "invalid-json",
-		}
-		_, err := server.handleBatchUpsertVectors(ctx, params)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid vectors format")
+		{
+			name:    "MissingVectors",
+			params:  map[string]interface{}{"namespace": "test-ns"},
+			wantErr: "vectors is required",
+		},
+		{
+			name:    "InvalidVectorsJSON",
+			params:  map[string]interface{}{"namespace": "test-ns", "vectors": "invalid-json"},
+			wantErr: "invalid vectors format",
+		},
 	})
 }
 
@@ -327,6 +287,11 @@ func TestHandleUpdateNamespace(t *testing.T) {
 			name:    "InvalidMetadataJSON",
 			params:  map[string]interface{}{"namespace": "test-ns", "metadata": "not-valid-json{"},
 			wantErr: "invalid metadata format",
+		},
+		{
+			name:    "InvalidIndexParamsJSON",
+			params:  map[string]interface{}{"namespace": "test-ns", "index_params": "invalid-json"},
+			wantErr: "invalid index_params format",
 		},
 	})
 }
@@ -668,92 +633,86 @@ func TestParseIndexType(t *testing.T) {
 	}
 }
 
-// TestNormalizeHealthStatus tests health status normalization
-func TestNormalizeHealthStatus(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    int
-		expected string
-	}{
-		{"Healthy", 1, "healthy"},
-		{"Degraded", 2, "degraded"},
-		{"Unhealthy", 3, "unhealthy"},
-		{"Unknown", 999, "unknown"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// We can't directly test the enum values without importing proto,
-			// but we can verify the function exists and handles unknown values
-			if tt.input == 999 {
-				result := normalizeHealthStatus(999)
-				assert.Equal(t, "unknown", result)
-			}
-		})
-	}
-}
-
-// TestHandleSearchSimilarWithFilters tests search with metadata filters
-func TestHandleSearchSimilarWithFilters(t *testing.T) {
+// TestHandleSearchSimilarOptions tests search similar with metadata filters
+// and the optional tuning parameters
+func TestHandleSearchSimilarOptions(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	queryVector := []float32{0.1, 0.2, 0.3}
-	queryVectorJSON, _ := json.Marshal(queryVector)
-
-	filters := []map[string]interface{}{
-		{"key": "category", "value": "test"},
-		{"key": "environment", "value": "production"},
-	}
-	filtersJSON, _ := json.Marshal(filters)
-
-	params := map[string]interface{}{
-		"namespace":        "test-namespace",
-		"query_vector":     string(queryVectorJSON),
-		"k":                float64(10),
-		"metadata_filters": string(filtersJSON),
-		"min_score":        float64(0.5),
-		"ef_search":        float64(100),
-	}
-
-	resp, err := server.handleSearchSimilar(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, float64(2), result["filters_count"])
-	assert.Equal(t, float64(0.5), result["min_score"])
-	assert.Equal(t, float64(100), result["ef_search"])
+	runToolCases(t, server.handleSearchSimilar, []toolCase{
+		{
+			name: "WithFilters",
+			params: map[string]interface{}{
+				"namespace":        "test-namespace",
+				"query_vector":     "[0.1,0.2,0.3]",
+				"k":                float64(10),
+				"metadata_filters": `[{"key":"category","value":"test"},{"key":"environment","value":"production"}]`,
+				"min_score":        float64(0.5),
+				"ef_search":        float64(100),
+			},
+			want: map[string]interface{}{"filters_count": float64(2), "min_score": float64(0.5), "ef_search": float64(100)},
+		},
+		{
+			name: "WithAllOptionalParams",
+			params: map[string]interface{}{
+				"namespace":        "test-ns",
+				"query_vector":     "[0.1,0.2,0.3]",
+				"k":                float64(20),
+				"metadata_filters": `[{"key":"type","value":"test"}]`,
+				"min_score":        float64(0.8),
+				"ef_search":        float64(200),
+				"consistency":      "ONE",
+				"timeout_ms":       float64(3000),
+			},
+			want: map[string]interface{}{"k": float64(20), "min_score": float64(0.8)},
+		},
+	})
 }
 
 // TestJSONToolResponse tests JSON response formatting
 func TestJSONToolResponse(t *testing.T) {
 	server := newTestVectorServer(t)
 
-	t.Run("ValidResult", func(t *testing.T) {
-		result := map[string]interface{}{
-			"key1": "value1",
-			"key2": 42,
-			"key3": true,
-		}
-		resp, err := server.jsonToolResponse(result)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		assert.False(t, resp.IsError)
-		assert.Len(t, resp.Content, 1)
-		assert.Equal(t, "text", resp.Content[0].Type)
+	tests := []struct {
+		name  string
+		input map[string]interface{}
+		want  map[string]interface{}
+	}{
+		{
+			name:  "ScalarValues",
+			input: map[string]interface{}{"key1": "value1", "key2": 42, "key3": true},
+			want:  map[string]interface{}{"key1": "value1", "key2": float64(42), "key3": true},
+		},
+		{
+			name:  "EmptyResult",
+			input: map[string]interface{}{},
+			want:  map[string]interface{}{},
+		},
+		{
+			name: "NestedStructures",
+			input: map[string]interface{}{
+				"nested": map[string]interface{}{"level2": map[string]interface{}{"level3": "value"}},
+				"array":  []interface{}{1, 2, 3},
+			},
+			want: map[string]interface{}{
+				"nested": map[string]interface{}{"level2": map[string]interface{}{"level3": "value"}},
+				"array":  []interface{}{float64(1), float64(2), float64(3)},
+			},
+		},
+	}
 
-		// Verify it's valid JSON
-		var parsed map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &parsed)
-		require.NoError(t, err)
-		assert.Equal(t, "value1", parsed["key1"])
-		assert.Equal(t, float64(42), parsed["key2"])
-		assert.Equal(t, true, parsed["key3"])
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := server.jsonToolResponse(tt.input)
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.False(t, resp.IsError)
+			require.Len(t, resp.Content, 1)
+			assert.Equal(t, "text", resp.Content[0].Type)
+
+			var parsed map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &parsed))
+			assert.Equal(t, tt.want, parsed)
+		})
+	}
 }
 
 // TestCreateNamespaceInvalidParams tests create namespace validation
@@ -806,22 +765,6 @@ func TestCreateNamespaceInvalidParams(t *testing.T) {
 	})
 }
 
-// TestUpdateNamespaceInvalidParams tests update namespace validation
-func TestUpdateNamespaceInvalidParams(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("InvalidIndexParams", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace":    "test-ns",
-			"index_params": "invalid-json",
-		}
-		_, err := server.handleUpdateNamespace(ctx, params)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid index_params format")
-	})
-}
-
 // TestHandleUpsertVectorInvalidMetadata tests upsert with invalid metadata
 func TestHandleUpsertVectorInvalidMetadata(t *testing.T) {
 	server := newTestVectorServer(t)
@@ -842,10 +785,8 @@ func TestHandleUpsertVectorInvalidMetadata(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid metadata format")
 }
 
-// Package mcp implements edge case tests to reach 90%+ coverage
-
-// TestNormalizeHealthStatusAllCases tests all health status enum values
-func TestNormalizeHealthStatusAllCases(t *testing.T) {
+// TestNormalizeHealthStatus tests every health status enum value
+func TestNormalizeHealthStatus(t *testing.T) {
 	tests := []struct {
 		name     string
 		status   pb.VectorHealthStatus
@@ -864,42 +805,6 @@ func TestNormalizeHealthStatusAllCases(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-// TestHandleSearchSimilarEdgeCases tests search similar edge cases
-func TestHandleSearchSimilarEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithAllOptionalParams", func(t *testing.T) {
-		queryVector := []float32{0.1, 0.2, 0.3}
-		queryVectorJSON, _ := json.Marshal(queryVector)
-
-		filters := []map[string]interface{}{
-			{"key": "type", "value": "test"},
-		}
-		filtersJSON, _ := json.Marshal(filters)
-
-		params := map[string]interface{}{
-			"namespace":        "test-ns",
-			"query_vector":     string(queryVectorJSON),
-			"k":                float64(20),
-			"metadata_filters": string(filtersJSON),
-			"min_score":        float64(0.8),
-			"ef_search":        float64(200),
-			"consistency":      "ONE",
-			"timeout_ms":       float64(3000),
-		}
-		resp, err := server.handleSearchSimilar(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, float64(20), result["k"])
-		assert.Equal(t, float64(0.8), result["min_score"])
-	})
 }
 
 // TestHandleVectorHealthEdgeCases tests vector health edge cases
@@ -953,43 +858,5 @@ func TestHandleGetVectorClusterStatsEdgeCases(t *testing.T) {
 		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
 		require.NoError(t, err)
 		assert.NotNil(t, result["cluster_id"])
-	})
-}
-
-// TestJSONToolResponseEdgeCases tests JSON response edge cases
-func TestJSONToolResponseEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-
-	t.Run("EmptyResult", func(t *testing.T) {
-		result := map[string]interface{}{}
-		resp, err := server.jsonToolResponse(result)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		assert.False(t, resp.IsError)
-
-		var parsed map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &parsed)
-		require.NoError(t, err)
-		assert.Empty(t, parsed)
-	})
-
-	t.Run("NestedStructures", func(t *testing.T) {
-		result := map[string]interface{}{
-			"nested": map[string]interface{}{
-				"level2": map[string]interface{}{
-					"level3": "value",
-				},
-			},
-			"array": []interface{}{1, 2, 3},
-		}
-		resp, err := server.jsonToolResponse(result)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var parsed map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &parsed)
-		require.NoError(t, err)
-		assert.NotNil(t, parsed["nested"])
-		assert.NotNil(t, parsed["array"])
 	})
 }
