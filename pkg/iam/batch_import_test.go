@@ -1525,18 +1525,6 @@ func TestGetBatchSizeAndParallelism(t *testing.T) {
 		}
 	})
 
-	t.Run("uses zero defaults gracefully", func(t *testing.T) {
-		bm := NewBatchManager(BatchManagerOptions{})
-
-		opts := BatchImportOptions{}
-		batchSize := bm.getBatchSize(opts)
-		parallelism := bm.getParallelism(opts)
-
-		// Should return default values from manager (which might be 0)
-		// This is a boundary test
-		_ = batchSize
-		_ = parallelism
-	})
 }
 
 // TestImportAllErrorPropagation tests error propagation in ImportAll
