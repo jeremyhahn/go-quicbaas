@@ -662,10 +662,16 @@ type e2eAgentBackend struct {
 	// directory the runner's clone puts the project in, seen from the daemon
 	// side of the bind mount, which is where the worker writes.
 	sessions map[string]string
+	// peakLive is the most sessions that were live at once: sessions grows
+	// on Spawn and shrinks on Close, so this is the high-water mark of it.
+	peakLive int
 	seq      int
 	prompts  []string
 	spawns   []*orchestration.SpawnRequest
-	block    chan struct{}
+	// specs holds each spawn's workspace spec, read at spawn while the spec
+	// directory still exists, in spawn order.
+	specs []orchestration.WorkspaceSpec
+	block chan struct{}
 
 	// onPrompt runs after each prompt is recorded, so a scenario can act as
 	// the reviewer between rounds.
@@ -695,7 +701,9 @@ func (b *e2eAgentBackend) Spawn(_ context.Context, req *orchestration.SpawnReque
 	id := "e2e-session-" + strconv.Itoa(b.seq)
 	containerID := "e2e-container-" + strconv.Itoa(b.seq)
 	b.sessions[id] = filepath.Join(req.WorkDir, spec.Project.Name)
+	b.peakLive = max(b.peakLive, len(b.sessions))
 	b.spawns = append(b.spawns, req)
+	b.specs = append(b.specs, spec)
 	runtime := b.runtime
 	b.mu.Unlock()
 	// The backend OWNS the container it put the agent in, exactly as the ACP
@@ -780,6 +788,27 @@ func (b *e2eAgentBackend) spawnCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.spawns)
+}
+
+// peakLiveSessions is the most sessions the backend held open at once over
+// the job's life: a session closed before the next spawn counts once.
+func (b *e2eAgentBackend) peakLiveSessions() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.peakLive
+}
+
+// spawnedWorkspaces is, per spawn in order, the work directory, project and
+// branch the worker was put on.
+func (b *e2eAgentBackend) spawnedWorkspaces() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	workspaces := make([]string, 0, len(b.spawns))
+	for i, req := range b.spawns {
+		spec := b.specs[i]
+		workspaces = append(workspaces, req.WorkDir+" "+spec.Project.Name+" "+spec.Branch.Name)
+	}
+	return workspaces
 }
 
 func (b *e2eAgentBackend) promptTexts() []string {
@@ -1461,10 +1490,13 @@ func taskOfJob(t *testing.T, srv *server.Server, job *orchestration.JobStatus) s
 	return job.Config.TaskID
 }
 
-// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession: the review
-// sends the work back, the SAME worker is prompted again with the findings,
-// and the second round lands.
-func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.T) {
+// TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameBranch: the review
+// sends the work back and the second round lands on the same branch and
+// workspace, through the same pull request. The runner closes the worker on
+// entry to reviewing (go-quicbaas#938), so the round spawns a fresh one: two
+// spawns over the job's life, but never more than WorkerSessionCount live at
+// once.
+func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameBranch(t *testing.T) {
 	rig := startFactory(t, 72)
 	loopForge.setVerdictOnOpen("REQUEST_CHANGES")
 	// Round one opens the pull request on the head the reviewer refuses.
@@ -1486,10 +1518,14 @@ func TestSDLCRunner_ChangesRequestedRunsAnotherRoundOnTheSameSession(t *testing.
 
 	job := awaitJob(t, rig.srv, orchestration.JobStateCompleted)
 	require.Equal(t, sdlc.JobRunnerName, job.Runner)
-	require.Equal(t, 1, rig.backend.spawnCount(), "a review round must not spawn a second worker")
+	require.Equal(t, sdlc.WorkerSessionCount, rig.backend.peakLiveSessions(), "a review round held two workers at once")
+	require.Equal(t, 2, rig.backend.spawnCount(), "each round spawns one worker, since reviewing released the first")
+	workspaces := rig.backend.spawnedWorkspaces()
+	require.Equal(t, workspaces[0], workspaces[1], "the review round ran on a different workspace or branch")
 	require.GreaterOrEqual(t, rig.backend.promptCount(), 2, "the findings never reached the worker")
 	require.Len(t, loopForge.pullRequests(), 1, "a review round opened a second pull request")
-	t.Logf("OBSERVED: sessions=%d prompts=%d iteration=%d", rig.backend.spawnCount(), rig.backend.promptCount(), job.Iteration)
+	t.Logf("OBSERVED: sessions=%d peak=%d prompts=%d iteration=%d",
+		rig.backend.spawnCount(), rig.backend.peakLiveSessions(), rig.backend.promptCount(), job.Iteration)
 }
 
 // TestSDLCRunner_TrunkBasedCarveOutLandsWithoutAPullRequest: a change class
