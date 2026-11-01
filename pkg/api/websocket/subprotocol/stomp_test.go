@@ -253,37 +253,39 @@ func TestSTOMPHandler_ParseFrame_SendFrameWithBody(t *testing.T) {
 }
 
 func TestSTOMPHandler_ParseFrame_HeaderEscapes(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	// Test escaped characters in header values: \n -> newline, \c -> colon, \\ -> backslash, \r -> CR
-	// Note: SEND frame should have escaping applied
-	frameData := []byte("SEND\ndestination:/queue/test\\c1\\nline2\n\n\x00")
-
-	frame, err := handler.parseFrame(frameData)
-	if err != nil {
-		t.Fatalf("parseFrame failed: %v", err)
+	// SEND frames decode STOMP 1.2 header escapes; undefined or trailing
+	// escapes are fatal protocol errors.
+	tests := []struct {
+		name    string
+		header  string
+		want    string
+		wantErr bool
+	}{
+		{name: "colon and newline", header: "/queue/test\\c1\\nline2", want: "/queue/test:1\nline2"},
+		{name: "carriage return", header: "/queue/test\\rvalue", want: "/queue/test\rvalue"},
+		{name: "undefined escape", header: "/queue/test\\tvalue", wantErr: true},
+		{name: "trailing backslash", header: "/queue/test\\", wantErr: true},
 	}
 
-	expected := "/queue/test:1\nline2"
-	if frame.Headers["destination"] != expected {
-		t.Errorf("destination = %q, want %q", frame.Headers["destination"], expected)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewSTOMPHandler(nil)
 
-func TestSTOMPHandler_ParseFrame_HeaderEscapes_CarriageReturn(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	// Test \r escape -> carriage return (STOMP 1.2 compliance)
-	frameData := []byte("SEND\ndestination:/queue/test\\rvalue\n\n\x00")
-
-	frame, err := handler.parseFrame(frameData)
-	if err != nil {
-		t.Fatalf("parseFrame failed: %v", err)
-	}
-
-	expected := "/queue/test\rvalue"
-	if frame.Headers["destination"] != expected {
-		t.Errorf("destination = %q, want %q", frame.Headers["destination"], expected)
+			frame, err := handler.parseFrame([]byte("SEND\ndestination:" + tt.header + "\n\n\x00"))
+			if tt.wantErr {
+				var escapeErr *STOMPInvalidEscapeError
+				if !errors.As(err, &escapeErr) {
+					t.Fatalf("Expected STOMPInvalidEscapeError, got %T: %v", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseFrame failed: %v", err)
+			}
+			if frame.Headers["destination"] != tt.want {
+				t.Errorf("destination = %q, want %q", frame.Headers["destination"], tt.want)
+			}
+		})
 	}
 }
 
@@ -303,40 +305,6 @@ func TestSTOMPHandler_ParseFrame_ConnectFrameNoEscaping(t *testing.T) {
 	expected := "localhost\\ntest"
 	if frame.Headers["host"] != expected {
 		t.Errorf("host = %q, want %q (CONNECT should not unescape)", frame.Headers["host"], expected)
-	}
-}
-
-func TestSTOMPHandler_ParseFrame_UndefinedEscapeSequence(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	// Test undefined escape sequence like \t - should be fatal protocol error per STOMP 1.2
-	frameData := []byte("SEND\ndestination:/queue/test\\tvalue\n\n\x00")
-
-	_, err := handler.parseFrame(frameData)
-	if err == nil {
-		t.Error("Expected error for undefined escape sequence")
-	}
-
-	var escapeErr *STOMPInvalidEscapeError
-	if !errors.As(err, &escapeErr) {
-		t.Errorf("Expected STOMPInvalidEscapeError, got %T: %v", err, err)
-	}
-}
-
-func TestSTOMPHandler_ParseFrame_TrailingBackslashError(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	// Test trailing backslash - should be fatal protocol error
-	frameData := []byte("SEND\ndestination:/queue/test\\\n\n\x00")
-
-	_, err := handler.parseFrame(frameData)
-	if err == nil {
-		t.Error("Expected error for trailing backslash")
-	}
-
-	var escapeErr *STOMPInvalidEscapeError
-	if !errors.As(err, &escapeErr) {
-		t.Errorf("Expected STOMPInvalidEscapeError, got %T: %v", err, err)
 	}
 }
 
@@ -430,69 +398,56 @@ func TestSTOMPHandler_BuildConnectedFrame(t *testing.T) {
 }
 
 func TestSTOMPHandler_BuildMessageFrame(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	frame := handler.buildMessageFrame("/queue/test", "sub-1", "msg-123", []byte("Hello"), "text/plain", "")
-
-	if !bytes.HasPrefix(frame, []byte("MESSAGE\n")) {
-		t.Error("Frame should start with MESSAGE")
+	tests := []struct {
+		name        string
+		contentType string
+		ackID       string
+		want        []string
+		notWant     []string
+	}{
+		{
+			name:        "content type, no ack",
+			contentType: "text/plain",
+			want: []string{"destination:/queue/test", "subscription:sub-1", "message-id:msg-123",
+				"content-type:text/plain", "content-length:5", "Hello"},
+			notWant: []string{"ack:"},
+		},
+		{
+			name:        "with ack id",
+			contentType: "text/plain",
+			ackID:       "ack-456",
+			want:        []string{"ack:ack-456"},
+		},
+		{
+			name:    "no content type",
+			want:    []string{"content-length:5"},
+			notWant: []string{"content-type:"},
+		},
 	}
 
-	if !bytes.Contains(frame, []byte("destination:/queue/test")) {
-		t.Error("Frame should contain destination:/queue/test")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewSTOMPHandler(nil)
 
-	if !bytes.Contains(frame, []byte("subscription:sub-1")) {
-		t.Error("Frame should contain subscription:sub-1")
-	}
+			frame := handler.buildMessageFrame("/queue/test", "sub-1", "msg-123", []byte("Hello"), tt.contentType, tt.ackID)
 
-	if !bytes.Contains(frame, []byte("message-id:msg-123")) {
-		t.Error("Frame should contain message-id:msg-123")
-	}
-
-	if !bytes.Contains(frame, []byte("content-type:text/plain")) {
-		t.Error("Frame should contain content-type:text/plain")
-	}
-
-	if !bytes.Contains(frame, []byte("content-length:5")) {
-		t.Error("Frame should contain content-length:5")
-	}
-
-	if !bytes.Contains(frame, []byte("Hello")) {
-		t.Error("Frame should contain body Hello")
-	}
-
-	if !bytes.HasSuffix(frame, []byte{0x00}) {
-		t.Error("Frame should end with NULL byte")
-	}
-}
-
-func TestSTOMPHandler_BuildMessageFrame_WithAckID(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	frame := handler.buildMessageFrame("/queue/test", "sub-1", "msg-123", []byte("Hello"), "text/plain", "ack-456")
-
-	if !bytes.Contains(frame, []byte("ack:ack-456")) {
-		t.Error("Frame should contain ack:ack-456 for client/client-individual mode")
-	}
-}
-
-func TestSTOMPHandler_BuildMessageFrame_NoContentType(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	frame := handler.buildMessageFrame("/queue/test", "sub-1", "msg-123", []byte("Hello"), "", "")
-
-	if !bytes.HasPrefix(frame, []byte("MESSAGE\n")) {
-		t.Error("Frame should start with MESSAGE")
-	}
-
-	// Should not have content-type header when empty
-	if bytes.Contains(frame, []byte("content-type:")) {
-		t.Error("Frame should not contain content-type when empty")
-	}
-
-	if !bytes.Contains(frame, []byte("content-length:5")) {
-		t.Error("Frame should contain content-length:5")
+			if !bytes.HasPrefix(frame, []byte("MESSAGE\n")) {
+				t.Error("Frame should start with MESSAGE")
+			}
+			if !bytes.HasSuffix(frame, []byte{0x00}) {
+				t.Error("Frame should end with NULL byte")
+			}
+			for _, s := range tt.want {
+				if !bytes.Contains(frame, []byte(s)) {
+					t.Errorf("Frame should contain %q", s)
+				}
+			}
+			for _, s := range tt.notWant {
+				if bytes.Contains(frame, []byte(s)) {
+					t.Errorf("Frame should not contain %q", s)
+				}
+			}
+		})
 	}
 }
 
@@ -565,46 +520,25 @@ func TestSTOMPHandler_BuildErrorFrame_WithBody(t *testing.T) {
 	}
 }
 
-func TestErrSTOMPProtocolError(t *testing.T) {
-	err := &ErrSTOMPProtocolError{Message: "test error"}
-
-	expected := "stomp protocol error: test error"
-	if err.Error() != expected {
-		t.Errorf("Error() = %q, want %q", err.Error(), expected)
+func TestSTOMPErrorMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "protocol", err: &ErrSTOMPProtocolError{Message: "test error"}, want: "stomp protocol error: test error"},
+		{name: "missing header", err: &STOMPMissingHeaderError{Header: "destination"}, want: "stomp protocol error: missing required header: destination"},
+		{name: "invalid escape", err: &STOMPInvalidEscapeError{Sequence: "\\t"}, want: "stomp protocol error: undefined escape sequence: \\t"},
+		{name: "invalid transaction", err: &STOMPInvalidTransactionError{TransactionID: "tx-1", Reason: "not found"}, want: "stomp protocol error: transaction tx-1: not found"},
+		{name: "disconnect", err: ErrSTOMPDisconnect, want: "stomp: client disconnected"},
 	}
-}
 
-func TestErrSTOMPMissingHeader(t *testing.T) {
-	err := &STOMPMissingHeaderError{Header: "destination"}
-
-	expected := "stomp protocol error: missing required header: destination"
-	if err.Error() != expected {
-		t.Errorf("Error() = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestErrSTOMPInvalidEscape(t *testing.T) {
-	err := &STOMPInvalidEscapeError{Sequence: "\\t"}
-
-	expected := "stomp protocol error: undefined escape sequence: \\t"
-	if err.Error() != expected {
-		t.Errorf("Error() = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestErrSTOMPInvalidTransaction(t *testing.T) {
-	err := &STOMPInvalidTransactionError{TransactionID: "tx-1", Reason: "not found"}
-
-	expected := "stomp protocol error: transaction tx-1: not found"
-	if err.Error() != expected {
-		t.Errorf("Error() = %q, want %q", err.Error(), expected)
-	}
-}
-
-func TestErrSTOMPDisconnect(t *testing.T) {
-	expected := "stomp: client disconnected"
-	if ErrSTOMPDisconnect.Error() != expected {
-		t.Errorf("ErrSTOMPDisconnect.Error() = %q, want %q", ErrSTOMPDisconnect.Error(), expected)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Errorf("Error() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
