@@ -1429,25 +1429,6 @@ func TestTrain_AChangeThatLostItsApprovalIsEjectedAtLanding(t *testing.T) {
 	}
 }
 
-// TestTrain_AMergeTheForgeRefusesIsATypedFailure proves a refused landing is
-// named, and leaves the train on the ledger for the next job to finish.
-func TestTrain_AMergeTheForgeRefusesIsATypedFailure(t *testing.T) {
-	rig := newTrainRig(t)
-	rig.queue(101, "task-a")
-	rig.pipeline(trainCommit(1, 101), "success", "")
-	rig.forge.mergeErr = errors.New("protected branch: status check missing")
-	err := rig.run(orchestration.JobStateInitializing)
-	if !errors.Is(err, ErrTrainLanding) {
-		t.Fatalf("Run = %v, want a landing error", err)
-	}
-	if ledger := rig.ledger(); ledger.Active == nil || ledger.Active.Phase != TrainLanding {
-		t.Fatalf("ledger = %+v, want the train still landing", ledger.Active)
-	}
-	if got := rig.entry("task-a"); got.State != TrainEntryRiding {
-		t.Fatalf("entry = %+v, want still riding", got)
-	}
-}
-
 // =============================================================================
 // Restart
 // =============================================================================
@@ -1525,7 +1506,8 @@ func TestTrain_ARestartMidBuildAbandonsAndRebuildsUnderANewNumber(t *testing.T) 
 }
 
 // TestTrain_ARestartMidLandingFinishesWithoutMergingTwice proves the landing
-// is idempotent: a train that merged and died before recording it is
+// is idempotent: a refused landing is a typed failure that leaves the train
+// on the ledger, and a train that merged and died before recording it is
 // recorded, not merged again.
 func TestTrain_ARestartMidLandingFinishesWithoutMergingTwice(t *testing.T) {
 	rig := newTrainRig(t)
@@ -1535,6 +1517,12 @@ func TestTrain_ARestartMidLandingFinishesWithoutMergingTwice(t *testing.T) {
 	rig.forge.mergeErr = errors.New("unanswered")
 	if err := rig.run(orchestration.JobStateInitializing); !errors.Is(err, ErrTrainLanding) {
 		t.Fatalf("first run = %v, want the landing to fail", err)
+	}
+	if ledger := rig.ledger(); ledger.Active == nil || ledger.Active.Phase != TrainLanding {
+		t.Fatalf("ledger = %+v, want the train still landing", ledger.Active)
+	}
+	if got := rig.entry("task-a"); got.State != TrainEntryRiding {
+		t.Fatalf("entry = %+v, want still riding", got)
 	}
 	// The forge had in fact merged it.
 	rig.forge.mu.Lock()
