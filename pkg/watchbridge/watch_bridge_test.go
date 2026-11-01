@@ -1044,105 +1044,93 @@ func TestWatchEventPayload(t *testing.T) {
 func TestWatchBridgeErrorTypes(t *testing.T) {
 	t.Parallel()
 
-	t.Run("IsWatchBridgeNotRunning", func(t *testing.T) {
-		err := NewWatchBridgeNotRunningError("test", "operation")
-		if !IsWatchBridgeNotRunning(err) {
-			t.Error("expected true for WatchBridgeNotRunning error")
-		}
+	// qbCode builds a QBError that carries the code but wraps an untyped
+	// inner error, so only the code-matching branch can match it.
+	qbCode := func(code errors.ErrorCode) error {
+		return &errors.QBError{Code: code, Op: "test", Err: stderrors.New("generic inner error")}
+	}
+	// wrapped wraps a sentinel so errors.As finds no typed error but
+	// errors.Is still matches the sentinel.
+	wrapped := func(sentinel error) error {
+		return &errors.WrappedMessageError{Message: "wrapper", Cause: sentinel}
+	}
 
-		if IsWatchBridgeNotRunning(nil) {
-			t.Error("expected false for nil error")
-		}
+	predicates := []struct {
+		name    string
+		is      func(error) bool
+		matches map[string]error
+	}{
+		{
+			name: "IsWatchBridgeNotRunning",
+			is:   IsWatchBridgeNotRunning,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNotRunningError("test", "operation"),
+				"direct type":      &WatchBridgeNotRunningError{Operation: "test"},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNotRunning),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNotRunning),
+			},
+		},
+		{
+			name: "IsWatchBridgeAlreadyRunning",
+			is:   IsWatchBridgeAlreadyRunning,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeAlreadyRunningError("test"),
+				"direct type":      &WatchBridgeAlreadyRunningError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeAlreadyRunning),
+				"QBError code":     qbCode(ErrCodeWatchBridgeAlreadyRunning),
+			},
+		},
+		{
+			name: "IsWatchBridgeNilManager",
+			is:   IsWatchBridgeNilManager,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNilManagerError("test"),
+				"direct type":      &WatchBridgeNilManagerError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNilManager),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNilManager),
+			},
+		},
+		{
+			name: "IsWatchBridgeNilService",
+			is:   IsWatchBridgeNilService,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeNilServiceError("test"),
+				"direct type":      &WatchBridgeNilServiceError{},
+				"wrapped sentinel": wrapped(ErrWatchBridgeNilService),
+				"QBError code":     qbCode(ErrCodeWatchBridgeNilService),
+			},
+		},
+		{
+			name: "IsWatchBridgeInvalidMapping",
+			is:   IsWatchBridgeInvalidMapping,
+			matches: map[string]error{
+				"constructor":      NewWatchBridgeInvalidMappingError("test", "/prefix/", "reason"),
+				"direct type":      &WatchBridgeInvalidMappingError{KeyPrefix: "/test/", Reason: "bad"},
+				"wrapped sentinel": wrapped(ErrWatchBridgeInvalidMapping),
+				"QBError code":     qbCode(ErrCodeWatchBridgeInvalidMapping),
+			},
+		},
+	}
 
-		if IsWatchBridgeNotRunning(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
+	nonMatches := map[string]error{
+		"nil":   nil,
+		"other": stderrors.New("other error"),
+	}
 
-		directErr := &WatchBridgeNotRunningError{Operation: "test"}
-		if !IsWatchBridgeNotRunning(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeAlreadyRunning", func(t *testing.T) {
-		err := NewWatchBridgeAlreadyRunningError("test")
-		if !IsWatchBridgeAlreadyRunning(err) {
-			t.Error("expected true for WatchBridgeAlreadyRunning error")
-		}
-
-		if IsWatchBridgeAlreadyRunning(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeAlreadyRunning(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeAlreadyRunningError{}
-		if !IsWatchBridgeAlreadyRunning(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeNilManager", func(t *testing.T) {
-		err := NewWatchBridgeNilManagerError("test")
-		if !IsWatchBridgeNilManager(err) {
-			t.Error("expected true for WatchBridgeNilManager error")
-		}
-
-		if IsWatchBridgeNilManager(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeNilManager(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeNilManagerError{}
-		if !IsWatchBridgeNilManager(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeNilService", func(t *testing.T) {
-		err := NewWatchBridgeNilServiceError("test")
-		if !IsWatchBridgeNilService(err) {
-			t.Error("expected true for WatchBridgeNilService error")
-		}
-
-		if IsWatchBridgeNilService(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeNilService(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeNilServiceError{}
-		if !IsWatchBridgeNilService(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
-
-	t.Run("IsWatchBridgeInvalidMapping", func(t *testing.T) {
-		err := NewWatchBridgeInvalidMappingError("test", "/prefix/", "reason")
-		if !IsWatchBridgeInvalidMapping(err) {
-			t.Error("expected true for WatchBridgeInvalidMapping error")
-		}
-
-		if IsWatchBridgeInvalidMapping(nil) {
-			t.Error("expected false for nil error")
-		}
-
-		if IsWatchBridgeInvalidMapping(stderrors.New("other error")) {
-			t.Error("expected false for other error")
-		}
-
-		directErr := &WatchBridgeInvalidMappingError{KeyPrefix: "/test/", Reason: "bad"}
-		if !IsWatchBridgeInvalidMapping(directErr) {
-			t.Error("expected true for direct error type")
-		}
-	})
+	for _, p := range predicates {
+		t.Run(p.name, func(t *testing.T) {
+			for input, err := range p.matches {
+				if !p.is(err) {
+					t.Errorf("%s: expected true", input)
+				}
+			}
+			for input, err := range nonMatches {
+				if p.is(err) {
+					t.Errorf("%s: expected false", input)
+				}
+			}
+		})
+	}
 
 	t.Run("error messages", func(t *testing.T) {
 		notRunningErr := &WatchBridgeNotRunningError{Operation: "publish"}
@@ -1752,59 +1740,6 @@ func BenchmarkWatchBridgeEventProcessing(b *testing.B) {
 // Consolidated from watch_bridge_coverage_test.go
 // =============================================================================
 
-// TestIsWatchBridgeNotRunning_SentinelError exercises the sentinel error matching
-// path in IsWatchBridgeNotRunning (the stderrors.Is fallback).
-func TestIsWatchBridgeNotRunning_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	// Wrap the sentinel error so that errors.As does not match a typed error
-	// but errors.Is still matches the sentinel.
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNotRunning}
-	if !IsWatchBridgeNotRunning(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNotRunning")
-	}
-}
-
-// TestIsWatchBridgeAlreadyRunning_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeAlreadyRunning_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeAlreadyRunning}
-	if !IsWatchBridgeAlreadyRunning(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeAlreadyRunning")
-	}
-}
-
-// TestIsWatchBridgeNilManager_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeNilManager_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNilManager}
-	if !IsWatchBridgeNilManager(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNilManager")
-	}
-}
-
-// TestIsWatchBridgeNilService_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeNilService_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeNilService}
-	if !IsWatchBridgeNilService(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeNilService")
-	}
-}
-
-// TestIsWatchBridgeInvalidMapping_SentinelError exercises the sentinel error matching path.
-func TestIsWatchBridgeInvalidMapping_SentinelError(t *testing.T) {
-	t.Parallel()
-
-	wrappedSentinel := &errors.WrappedMessageError{Message: "wrapper", Cause: ErrWatchBridgeInvalidMapping}
-	if !IsWatchBridgeInvalidMapping(wrappedSentinel) {
-		t.Error("expected true for wrapped sentinel ErrWatchBridgeInvalidMapping")
-	}
-}
-
 // TestWatchBridgeStartContextCancellation verifies Start returns context error
 // when context is cancelled during watch subscription setup.
 func TestWatchBridgeStartContextCancellation(t *testing.T) {
@@ -2107,82 +2042,6 @@ func TestWithBridgeBufferSizeNegative(t *testing.T) {
 	}
 	if bridge.options.bufferSize != 1024 {
 		t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
-	}
-}
-
-// -----------------------------------------------------------------------------
-// QBError code matching branch for IsWatchBridge* functions
-// These exercise the middle branch (QBError with matching code but no typed inner error).
-// -----------------------------------------------------------------------------
-
-// TestIsWatchBridgeNotRunning_QBErrorCodeMatch tests the QBError code matching
-// branch where the error wraps a non-typed inner error.
-func TestIsWatchBridgeNotRunning_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNotRunning,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNotRunning(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNotRunning code")
-	}
-}
-
-// TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeAlreadyRunning_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeAlreadyRunning,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeAlreadyRunning(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeAlreadyRunning code")
-	}
-}
-
-// TestIsWatchBridgeNilManager_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeNilManager_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNilManager,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNilManager(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNilManager code")
-	}
-}
-
-// TestIsWatchBridgeNilService_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeNilService_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeNilService,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeNilService(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeNilService code")
-	}
-}
-
-// TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch tests the QBError code matching branch.
-func TestIsWatchBridgeInvalidMapping_QBErrorCodeMatch(t *testing.T) {
-	t.Parallel()
-
-	qbErr := &errors.QBError{
-		Code: ErrCodeWatchBridgeInvalidMapping,
-		Op:   "test",
-		Err:  stderrors.New("generic inner error"),
-	}
-	if !IsWatchBridgeInvalidMapping(qbErr) {
-		t.Error("expected true for QBError with ErrCodeWatchBridgeInvalidMapping code")
 	}
 }
 
