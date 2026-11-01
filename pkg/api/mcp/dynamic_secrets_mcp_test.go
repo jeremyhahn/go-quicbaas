@@ -475,160 +475,6 @@ func TestDynamicSecretsCreateRoleSuccess(t *testing.T) {
 	mockDS.AssertExpectations(t)
 }
 
-func TestDynamicSecretsCreateRoleMissingName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingGeneratorType(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":        "db-role",
-		"default_ttl": "1h",
-		"max_ttl":     "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generator_type is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingDefaultTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "default_ttl is required")
-}
-
-func TestDynamicSecretsCreateRoleMissingMaxTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "max_ttl is required")
-}
-
-func TestDynamicSecretsCreateRoleInvalidDefaultTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "invalid",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid default_ttl format")
-}
-
-func TestDynamicSecretsCreateRoleInvalidMaxTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "invalid",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid max_ttl format")
-}
-
-func TestDynamicSecretsCreateRoleInvalidConfig(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"config":         "not-valid-json",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid config JSON")
-}
-
-func TestDynamicSecretsCreateRoleServiceError(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("CreateRole", mock.Anything, mock.Anything).Return(nil, errors.New("role already exists"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"name":           "db-role",
-		"generator_type": "postgres",
-		"default_ttl":    "1h",
-		"max_ttl":        "24h",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_create_role", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "create role failed")
-
-	mockDS.AssertExpectations(t)
-}
-
 // =============================================================================
 // Get Role Tests
 // =============================================================================
@@ -927,88 +773,6 @@ func TestDynamicSecretsGenerateSuccess(t *testing.T) {
 	leaseData, ok := resultMap["lease"].(map[string]interface{})
 	require.True(t, ok, "lease should be a map")
 	assert.Equal(t, "lease-456", leaseData["lease_id"])
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsGenerateWithTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	testCred := createTestCredential("cred-123", "database", "lease-456")
-	testLease := createTestLease("lease-456", "credentials/db-role/cred-123")
-
-	mockDS.On("GenerateCredential", mock.Anything, mock.MatchedBy(func(req *service.GenerateCredentialRequest) bool {
-		return req.RoleName == "db-role" && req.TTL == 30*time.Minute
-	})).Return(&service.GenerateCredentialResponse{
-		Credential: testCred,
-		Lease:      testLease,
-		LeaseID:    "lease-456",
-	}, nil)
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "db-role",
-		"ttl":       "30m",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	mockDS.AssertExpectations(t)
-}
-
-func TestDynamicSecretsGenerateMissingRoleName(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "role_name is required")
-}
-
-func TestDynamicSecretsGenerateInvalidTTL(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "db-role",
-		"ttl":       "invalid",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid ttl format")
-}
-
-func TestDynamicSecretsGenerateRoleNotFound(t *testing.T) {
-	log := createDynamicSecretsTestLogger(t)
-	mockDS := NewMockDynamicSecretsService()
-
-	mockDS.On("GenerateCredential", mock.Anything, mock.Anything).Return(nil, errors.New("role not found"))
-
-	mockSvc := newTestQuicBaaSWithDynamicSecrets(mockDS)
-	registry := NewToolRegistry(mockSvc, log)
-
-	args := map[string]interface{}{
-		"role_name": "nonexistent-role",
-	}
-
-	result, err := registry.ExecuteTool(context.Background(), "quicbaas_dynamic_secrets_generate", args)
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "generate credential failed")
 
 	mockDS.AssertExpectations(t)
 }
@@ -1487,6 +1251,40 @@ func TestDynamicSecretsCreateRoleTableDriven(t *testing.T) {
 			setupMock:     func(m *MockDynamicSecretsService) {},
 			expectError:   true,
 			errorContains: "invalid default_ttl format",
+		},
+		{
+			name: "missing default_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"max_ttl":        "24h",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "default_ttl is required",
+		},
+		{
+			name: "missing max_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"default_ttl":    "1h",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "max_ttl is required",
+		},
+		{
+			name: "invalid max_ttl",
+			args: map[string]interface{}{
+				"name":           "test-role",
+				"generator_type": "postgres",
+				"default_ttl":    "1h",
+				"max_ttl":        "not-a-duration",
+			},
+			setupMock:     func(m *MockDynamicSecretsService) {},
+			expectError:   true,
+			errorContains: "invalid max_ttl format",
 		},
 		{
 			name: "invalid config JSON",
