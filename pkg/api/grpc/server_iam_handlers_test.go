@@ -452,26 +452,6 @@ func TestIAMServer_CreateTenant_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CreateTenant_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CreateTenant(callerContext("t1"), &iampb.CreateTenantRequest{Name: "Test"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestIAMServer_CreateTenant_MissingName(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CreateTenant(callerContext("t1"), &iampb.CreateTenantRequest{Id: "t1"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestIAMServer_CreateTenant_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -499,16 +479,6 @@ func TestIAMServer_GetTenant_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_GetTenant_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetTenant(callerContext("t1"), &iampb.GetTenantRequest{})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestIAMServer_UpdateTenant_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -531,16 +501,6 @@ func TestIAMServer_UpdateTenant_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdateTenant_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateTenant(callerContext("t1"), &iampb.UpdateTenantRequest{})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestIAMServer_DeleteTenant_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -551,16 +511,6 @@ func TestIAMServer_DeleteTenant_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteTenant_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteTenant(callerContext("t1"), &iampb.DeleteTenantRequest{})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 func TestIAMServer_ListTenants_Success(t *testing.T) {
@@ -612,26 +562,6 @@ func TestIAMServer_CreateUser_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CreateUser_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CreateUser(callerContext("t1"), &iampb.CreateUserRequest{Email: "test@test.com"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestIAMServer_CreateUser_MissingEmail(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CreateUser(callerContext("t1"), &iampb.CreateUserRequest{TenantId: "t1"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestIAMServer_GetUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -643,26 +573,6 @@ func TestIAMServer_GetUser_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "30001", resp.Id)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetUser_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetUser(callerContext("t1"), &iampb.GetUserRequest{UserId: "30001"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestIAMServer_GetUser_MissingUserID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetUser(callerContext("t1"), &iampb.GetUserRequest{TenantId: "t1"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
 }
 
 func TestIAMServer_UpdateUser_Success(t *testing.T) {
@@ -685,26 +595,6 @@ func TestIAMServer_UpdateUser_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdateUser_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateUser(callerContext("t1"), &iampb.UpdateUserRequest{UserId: "30001"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestIAMServer_UpdateUser_MissingUserID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateUser(callerContext("t1"), &iampb.UpdateUserRequest{TenantId: "t1"})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 func TestIAMServer_DeleteUser_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -715,16 +605,6 @@ func TestIAMServer_DeleteUser_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteUser_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteUser(callerContext("t1"), &iampb.DeleteUserRequest{UserId: "30001"})
-	require.Error(t, err)
-
-	_, err = srv.DeleteUser(callerContext("t1"), &iampb.DeleteUserRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ListUsers_Success(t *testing.T) {
@@ -748,16 +628,6 @@ func TestIAMServer_ListUsers_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_ListUsers_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListUsers(callerContext("t1"), &iampb.ListUsersRequest{})
-
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
 // =============================================================================
 // Role Operations
 // =============================================================================
@@ -777,20 +647,6 @@ func TestIAMServer_CreateRole_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CreateRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.CreateRole(ctx, &iampb.CreateRoleRequest{Id: "r1", Name: "Admin"})
-	require.Error(t, err)
-
-	_, err = srv.CreateRole(ctx, &iampb.CreateRoleRequest{TenantId: "t1", Name: "Admin"})
-	require.Error(t, err)
-
-	_, err = srv.CreateRole(ctx, &iampb.CreateRoleRequest{TenantId: "t1", Id: "r1"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -802,16 +658,6 @@ func TestIAMServer_GetRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "r1", resp.Id)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetRole(callerContext("t1"), &iampb.GetRoleRequest{RoleId: "r1"})
-	require.Error(t, err)
-
-	_, err = srv.GetRole(callerContext("t1"), &iampb.GetRoleRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_UpdateRole_Success(t *testing.T) {
@@ -829,16 +675,6 @@ func TestIAMServer_UpdateRole_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdateRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateRole(callerContext("t1"), &iampb.UpdateRoleRequest{RoleId: "r1"})
-	require.Error(t, err)
-
-	_, err = srv.UpdateRole(callerContext("t1"), &iampb.UpdateRoleRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_DeleteRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -849,16 +685,6 @@ func TestIAMServer_DeleteRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteRole(callerContext("t1"), &iampb.DeleteRoleRequest{RoleId: "r1"})
-	require.Error(t, err)
-
-	_, err = srv.DeleteRole(callerContext("t1"), &iampb.DeleteRoleRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ListRoles_Success(t *testing.T) {
@@ -872,13 +698,6 @@ func TestIAMServer_ListRoles_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Roles, 1)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_ListRoles_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListRoles(callerContext("t1"), &iampb.ListRolesRequest{})
-	require.Error(t, err)
 }
 
 func TestIAMServer_AssignRole_Success(t *testing.T) {
@@ -895,20 +714,6 @@ func TestIAMServer_AssignRole_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_AssignRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.AssignRole(ctx, &iampb.AssignRoleRequest{UserId: "30001", Role: "admin"})
-	require.Error(t, err)
-
-	_, err = srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", Role: "admin"})
-	require.Error(t, err)
-
-	_, err = srv.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_RevokeRole_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -921,20 +726,6 @@ func TestIAMServer_RevokeRole_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_RevokeRole_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{UserId: "30001", Role: "admin"})
-	require.Error(t, err)
-
-	_, err = srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", Role: "admin"})
-	require.Error(t, err)
-
-	_, err = srv.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ReconcileRoles_Success(t *testing.T) {
@@ -980,15 +771,6 @@ func TestIAMServer_ReconcileRoles_NoDrift(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_ReconcileRoles_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ReconcileRoles(callerContext("t1"), &iampb.ReconcileRolesRequest{})
-
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
 func TestIAMServer_ReconcileRoles_ServiceError(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -999,6 +781,156 @@ func TestIAMServer_ReconcileRoles_ServiceError(t *testing.T) {
 
 	require.Error(t, err)
 	svc.AssertExpectations(t)
+}
+
+// iamCall invokes one IAMServer handler and returns only its error.
+type iamCall func(ctx context.Context, srv *IAMServer) error
+
+// TestIAMServer_MissingRequiredField pins each handler's request validation:
+// a request missing a required field is rejected with InvalidArgument before
+// the service is reached (the mock has no expectations, so a service call
+// fails the row).
+func TestIAMServer_MissingRequiredField(t *testing.T) {
+	tests := []struct {
+		name string
+		call iamCall
+	}{
+		{"CreateTenant/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateTenant(ctx, &iampb.CreateTenantRequest{Name: "Test"})
+			return err
+		}},
+		{"CreateTenant/name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateTenant(ctx, &iampb.CreateTenantRequest{Id: "t1"})
+			return err
+		}},
+		{"GetTenant/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetTenant(ctx, &iampb.GetTenantRequest{})
+			return err
+		}},
+		{"UpdateTenant/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateTenant(ctx, &iampb.UpdateTenantRequest{})
+			return err
+		}},
+		{"DeleteTenant/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteTenant(ctx, &iampb.DeleteTenantRequest{})
+			return err
+		}},
+		{"CreateUser/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateUser(ctx, &iampb.CreateUserRequest{Email: "test@test.com"})
+			return err
+		}},
+		{"CreateUser/email", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateUser(ctx, &iampb.CreateUserRequest{TenantId: "t1"})
+			return err
+		}},
+		{"GetUser/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetUser(ctx, &iampb.GetUserRequest{UserId: "30001"})
+			return err
+		}},
+		{"GetUser/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetUser(ctx, &iampb.GetUserRequest{TenantId: "t1"})
+			return err
+		}},
+		{"UpdateUser/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateUser(ctx, &iampb.UpdateUserRequest{UserId: "30001"})
+			return err
+		}},
+		{"UpdateUser/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateUser(ctx, &iampb.UpdateUserRequest{TenantId: "t1"})
+			return err
+		}},
+		{"DeleteUser/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteUser(ctx, &iampb.DeleteUserRequest{UserId: "30001"})
+			return err
+		}},
+		{"DeleteUser/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteUser(ctx, &iampb.DeleteUserRequest{TenantId: "t1"})
+			return err
+		}},
+		{"ListUsers/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListUsers(ctx, &iampb.ListUsersRequest{})
+			return err
+		}},
+		{"CreateRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateRole(ctx, &iampb.CreateRoleRequest{Id: "r1", Name: "Admin"})
+			return err
+		}},
+		{"CreateRole/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateRole(ctx, &iampb.CreateRoleRequest{TenantId: "t1", Name: "Admin"})
+			return err
+		}},
+		{"CreateRole/name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateRole(ctx, &iampb.CreateRoleRequest{TenantId: "t1", Id: "r1"})
+			return err
+		}},
+		{"GetRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetRole(ctx, &iampb.GetRoleRequest{RoleId: "r1"})
+			return err
+		}},
+		{"GetRole/role_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetRole(ctx, &iampb.GetRoleRequest{TenantId: "t1"})
+			return err
+		}},
+		{"UpdateRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateRole(ctx, &iampb.UpdateRoleRequest{RoleId: "r1"})
+			return err
+		}},
+		{"UpdateRole/role_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateRole(ctx, &iampb.UpdateRoleRequest{TenantId: "t1"})
+			return err
+		}},
+		{"DeleteRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteRole(ctx, &iampb.DeleteRoleRequest{RoleId: "r1"})
+			return err
+		}},
+		{"DeleteRole/role_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteRole(ctx, &iampb.DeleteRoleRequest{TenantId: "t1"})
+			return err
+		}},
+		{"ListRoles/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListRoles(ctx, &iampb.ListRolesRequest{})
+			return err
+		}},
+		{"AssignRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.AssignRole(ctx, &iampb.AssignRoleRequest{UserId: "30001", Role: "admin"})
+			return err
+		}},
+		{"AssignRole/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", Role: "admin"})
+			return err
+		}},
+		{"AssignRole/role", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.AssignRole(ctx, &iampb.AssignRoleRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"RevokeRole/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RevokeRole(ctx, &iampb.RevokeRoleRequest{UserId: "30001", Role: "admin"})
+			return err
+		}},
+		{"RevokeRole/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", Role: "admin"})
+			return err
+		}},
+		{"RevokeRole/role", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RevokeRole(ctx, &iampb.RevokeRoleRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"ReconcileRoles/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ReconcileRoles(ctx, &iampb.ReconcileRolesRequest{})
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newTestIAMServer(t)
+
+			err := tt.call(callerContext("t1"), srv)
+
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		})
+	}
 }
 
 // =============================================================================
