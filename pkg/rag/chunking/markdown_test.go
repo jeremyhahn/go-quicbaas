@@ -634,59 +634,98 @@ Additional sentences to make this substantial as well.`)
 }
 
 func TestMarkdownChunker_SplitIntoBlocks(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     40,
-		MaxTokens:        150,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		IncludeHierarchy: false,
-		KeepCodeBlocks:   true,
-	})
+	chunker := NewMarkdownChunker(DefaultMarkdownChunkerConfig())
 
-	// Create content with different block types
-	content := []byte(`# Content Types
-
-Regular paragraph text here with information.
-
-` + "```go" + `
-func example() {
-    return "code block"
-}
-` + "```" + `
-
-- List item one with content
-- List item two with content
-- List item three with content
-
-Another paragraph after the list.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	if err != nil {
-		t.Fatalf("Chunk failed: %v", err)
+	type wantBlock struct {
+		blockType string
+		content   string
 	}
 
-	// Verify we got chunks (exact number may vary)
-	if len(chunks) == 0 {
-		t.Error("Should produce at least one chunk")
+	tests := []struct {
+		name  string
+		lines []string
+		want  []wantBlock
+	}{
+		{
+			name: "paragraph, code, list and paragraph",
+			lines: []string{
+				"Regular paragraph text.",
+				"",
+				"```go",
+				"func example() {}",
+				"```",
+				"",
+				"- List item one",
+				"- List item two",
+				"",
+				"Another paragraph.",
+			},
+			want: []wantBlock{
+				{"paragraph", "Regular paragraph text."},
+				{"code", "```go\nfunc example() {}\n```"},
+				{"list", "- List item one\n- List item two"},
+				{"paragraph", "Another paragraph."},
+			},
+		},
+		{
+			name:  "consecutive code blocks",
+			lines: []string{"```go", "func a() {}", "```", "```python", "def b():", "    pass", "```"},
+			want: []wantBlock{
+				{"code", "```go\nfunc a() {}\n```"},
+				{"code", "```python\ndef b():\n    pass\n```"},
+			},
+		},
+		{
+			name:  "empty code block",
+			lines: []string{"```", "```"},
+			want:  []wantBlock{{"code", "```\n```"}},
+		},
+		{
+			name:  "list ended by empty line",
+			lines: []string{"- List item", "", "Text after."},
+			want: []wantBlock{
+				{"list", "- List item"},
+				{"paragraph", "Text after."},
+			},
+		},
+		{
+			name:  "list followed directly by paragraph",
+			lines: []string{"- Item", "Paragraph without empty line"},
+			want: []wantBlock{
+				{"list", "- Item"},
+				{"paragraph", "Paragraph without empty line"},
+			},
+		},
+		{
+			name:  "code followed directly by paragraph",
+			lines: []string{"```", "code", "```", "Regular text here."},
+			want: []wantBlock{
+				{"code", "```\ncode\n```"},
+				{"paragraph", "Regular text here."},
+			},
+		},
+		{
+			name:  "paragraph lines continue one block",
+			lines: []string{"Paragraph line one", "continues here", "and here too"},
+			want:  []wantBlock{{"paragraph", "Paragraph line one\ncontinues here\nand here too"}},
+		},
+		{
+			// An empty line does not end a paragraph: the next line joins it.
+			name:  "empty line inside paragraph",
+			lines: []string{"First para.", "", "Second para."},
+			want:  []wantBlock{{"paragraph", "First para.\nSecond para."}},
+		},
 	}
 
-	// Check that code blocks are preserved
-	foundCode := false
-	foundList := false
-	for _, chunk := range chunks {
-		if strings.Contains(chunk.Content, "```go") {
-			foundCode = true
-		}
-		if strings.Contains(chunk.Content, "- List item") {
-			foundList = true
-		}
-	}
-
-	if !foundCode {
-		t.Error("Code block should be preserved in chunks")
-	}
-	if !foundList {
-		t.Error("List should be preserved in chunks")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blocks := chunker.splitIntoBlocks(tt.lines)
+			got := make([]wantBlock, 0, len(blocks))
+			for _, b := range blocks {
+				got = append(got, wantBlock{b.blockType, b.content})
+			}
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }
 
@@ -818,54 +857,6 @@ func TestMarkdownChunker_SplitLargeSection_EdgeCases(t *testing.T) {
 		if chunk.Tokens == 0 {
 			t.Errorf("Chunk %d has zero tokens", i)
 		}
-	}
-}
-
-func TestMarkdownChunker_SplitIntoBlocks_EdgeCases(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:   35,
-		MaxTokens:      150,
-		MinChunkSize:   5,
-		KeepCodeBlocks: true,
-	})
-
-	// Mix of paragraphs, code blocks, and lists
-	content := []byte(`# Mixed Content
-
-Regular paragraph here.
-
-` + "```go\nfunc test() {}\n```" + `
-
-Another paragraph.
-
-- List item one
-- List item two
-- List item three
-
-Final paragraph.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	if err != nil {
-		t.Fatalf("Chunk failed: %v", err)
-	}
-
-	foundCode := false
-	foundList := false
-
-	for _, chunk := range chunks {
-		if strings.Contains(chunk.Content, "```") {
-			foundCode = true
-		}
-		if strings.Contains(chunk.Content, "- List") {
-			foundList = true
-		}
-	}
-
-	if !foundCode {
-		t.Error("Code block should be preserved")
-	}
-	if !foundList {
-		t.Error("List should be preserved")
 	}
 }
 
@@ -1046,52 +1037,6 @@ func TestMarkdownChunker_ChunkReturnError(t *testing.T) {
 	if err != nil {
 		assert.Contains(t, err.Error(), "no chunks created")
 	}
-}
-
-func TestMarkdownChunker_SplitIntoBlocks_EmptyCodeBlock(t *testing.T) {
-	// Test code block edge cases in splitIntoBlocks
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     30,
-		MaxTokens:        100,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-` + "```" + `
-` + "```" + `
-
-Text after code block.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-func TestMarkdownChunker_SplitIntoBlocks_ListWithEmptyLine(t *testing.T) {
-	// Test list ending with empty line
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     30,
-		MaxTokens:        100,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-- Item one
-- Item two
-
-Regular paragraph.`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
 }
 
 func TestMarkdownChunker_BuildChunks_SkipTooSmallChunk(t *testing.T) {
@@ -1527,164 +1472,6 @@ func TestTextChunker_ChunkByParagraphs_OverlapAdjustment(t *testing.T) {
 	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
 	require.NoError(t, err)
 	assert.Greater(t, len(chunks), 0)
-}
-
-func TestMarkdownChunker_SplitIntoBlocks_AllPaths(t *testing.T) {
-	chunker := NewMarkdownChunker(DefaultMarkdownChunkerConfig())
-
-	t.Run("code block then code block", func(t *testing.T) {
-		// Test consecutive code blocks without intermediate paragraph
-		lines := []string{
-			"```go",
-			"func test1() {}",
-			"```",
-			"```python",
-			"def test2():",
-			"    pass",
-			"```",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		codeCount := 0
-		for _, b := range blocks {
-			if b.blockType == "code" {
-				codeCount++
-			}
-		}
-		if codeCount != 2 {
-			t.Errorf("Expected 2 code blocks, got %d", codeCount)
-		}
-	})
-
-	t.Run("list then list item", func(t *testing.T) {
-		// Test continuing a list
-		lines := []string{
-			"- First item",
-			"- Second item",
-			"- Third item",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		listCount := 0
-		for _, b := range blocks {
-			if b.blockType == "list" {
-				listCount++
-				// Should contain all items
-				if !strings.Contains(b.content, "First item") {
-					t.Error("List should contain first item")
-				}
-				if !strings.Contains(b.content, "Third item") {
-					t.Error("List should contain third item")
-				}
-			}
-		}
-		if listCount != 1 {
-			t.Errorf("Should have 1 list block, got %d", listCount)
-		}
-	})
-
-	t.Run("list empty line then text", func(t *testing.T) {
-		// Empty line after list
-		lines := []string{
-			"- List item",
-			"",
-			"Text after.",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		foundList := false
-		foundPara := false
-		for _, b := range blocks {
-			if b.blockType == "list" {
-				foundList = true
-			}
-			if b.blockType == "paragraph" && strings.Contains(b.content, "Text after") {
-				foundPara = true
-			}
-		}
-		if !foundList || !foundPara {
-			t.Error("Should have both list and paragraph blocks")
-		}
-	})
-
-	t.Run("inside code block content", func(t *testing.T) {
-		// Code block with multiple lines
-		lines := []string{
-			"```bash",
-			"#!/bin/bash",
-			"echo 'test'",
-			"exit 0",
-			"```",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		for _, b := range blocks {
-			if b.blockType == "code" {
-				if !strings.Contains(b.content, "#!/bin/bash") {
-					t.Error("Code block should contain all lines")
-				}
-				if !strings.Contains(b.content, "exit 0") {
-					t.Error("Code block should contain all content lines")
-				}
-			}
-		}
-	})
-
-	t.Run("paragraph then empty then paragraph", func(t *testing.T) {
-		// Paragraphs separated by empty lines
-		lines := []string{
-			"First para line 1.",
-			"First para line 2.",
-			"",
-			"Second para.",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		paraCount := 0
-		for _, b := range blocks {
-			if b.blockType == "paragraph" {
-				paraCount++
-			}
-		}
-		if paraCount < 1 {
-			t.Error("Should have paragraph blocks")
-		}
-	})
-
-	t.Run("start new paragraph after non-paragraph", func(t *testing.T) {
-		// Switch from code/list to paragraph
-		lines := []string{
-			"```",
-			"code",
-			"```",
-			"Regular text here.",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		foundCode := false
-		foundPara := false
-		for _, b := range blocks {
-			if b.blockType == "code" {
-				foundCode = true
-			}
-			if b.blockType == "paragraph" && strings.Contains(b.content, "Regular text") {
-				foundPara = true
-			}
-		}
-		if !foundCode || !foundPara {
-			t.Error("Should have both code and paragraph")
-		}
-	})
-
-	t.Run("final block appended", func(t *testing.T) {
-		// Test that final block is added
-		lines := []string{
-			"Some text.",
-			"More text.",
-		}
-		blocks := chunker.splitIntoBlocks(lines)
-		if len(blocks) == 0 {
-			t.Error("Should have at least one block")
-		}
-		// Final block should be added
-		if blocks[len(blocks)-1].content == "" {
-			t.Error("Final block should have content")
-		}
-	})
 }
 
 // TestTextChunker_ChunkByParagraphs_AllPaths tests all paths in chunkByParagraphs
@@ -2472,72 +2259,6 @@ func TestTextChunker_CalculateOverlapWords_ZeroCase(t *testing.T) {
 
 	// Should be at least 1
 	assert.GreaterOrEqual(t, overlapWords, 1)
-}
-
-// Test splitIntoBlocks paragraph continuation
-func TestMarkdownChunker_SplitIntoBlocks_ParagraphContinuation(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     40,
-		MaxTokens:        150,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-Paragraph line one
-continues here
-and here too`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-// Test splitIntoBlocks switching from list to paragraph
-func TestMarkdownChunker_SplitIntoBlocks_ListToParagraph(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     40,
-		MaxTokens:        150,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-- Item
-Paragraph without empty line`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
-}
-
-// Test splitIntoBlocks non-paragraph to paragraph cryptoion
-func TestMarkdownChunker_SplitIntoBlocks_StartNewParagraph(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     40,
-		MaxTokens:        150,
-		MinChunkSize:     5,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: false,
-	})
-
-	content := []byte(`# Section
-
-` + "```" + `
-code
-` + "```" + `
-Text paragraph`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
 }
 
 // Test buildChunks with merging scenario
