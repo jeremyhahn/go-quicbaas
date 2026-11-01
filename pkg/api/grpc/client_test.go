@@ -1020,604 +1020,115 @@ func TestClient_OllamaEmbedBatch_NotConnected(t *testing.T) {
 // --- Merged from coverage_extended_additional_test.go ---
 
 // =============================================================================
-// Client Secrets Functions - Nil Request Tests
+// Nil Request Tests
 // =============================================================================
 
-func TestClientCoverage_StoreSecret_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.StoreSecret(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+// nilRequestCase calls one client method with a nil request.
+type nilRequestCase struct {
+	name string
+	call func(c *Client, ctx context.Context) (any, error)
 }
 
-func TestClientCoverage_GetSecret_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.GetSecret(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+// runNilRequestCases asserts that every method rejects a nil request
+// before it touches the connection.
+func runNilRequestCases(t *testing.T, cases []nilRequestCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			resp, err := tc.call(&Client{}, context.Background())
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), "request cannot be nil")
+			}
+			assert.Nil(t, resp)
+		})
+	}
 }
 
-func TestClientCoverage_ListSecrets_NilRequest(t *testing.T) {
+func TestClientSecrets_NilRequest(t *testing.T) {
 	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.ListSecrets(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+	runNilRequestCases(t, []nilRequestCase{
+		{"StoreSecret", func(c *Client, ctx context.Context) (any, error) { return c.StoreSecret(ctx, nil) }},
+		{"GetSecret", func(c *Client, ctx context.Context) (any, error) { return c.GetSecret(ctx, nil) }},
+		{"ListSecrets", func(c *Client, ctx context.Context) (any, error) { return c.ListSecrets(ctx, nil) }},
+		{"DeleteSecret", func(c *Client, ctx context.Context) (any, error) { return c.DeleteSecret(ctx, nil) }},
+		{"ListSecretVersions", func(c *Client, ctx context.Context) (any, error) { return c.ListSecretVersions(ctx, nil) }},
+		{"RollbackSecret", func(c *Client, ctx context.Context) (any, error) { return c.RollbackSecret(ctx, nil) }},
+		{"RotateSecret", func(c *Client, ctx context.Context) (any, error) { return c.RotateSecret(ctx, nil) }},
+		{"UpdateSecretStatus", func(c *Client, ctx context.Context) (any, error) { return c.UpdateSecretStatus(ctx, nil) }},
+		{"GetSecretsByPrefix", func(c *Client, ctx context.Context) (any, error) { return c.GetSecretsByPrefix(ctx, nil) }},
+		{"WatchSecretsByPrefix", func(c *Client, ctx context.Context) (any, error) { return c.WatchSecretsByPrefix(ctx, nil) }},
+	})
 }
 
-func TestClientCoverage_DeleteSecret_NilRequest(t *testing.T) {
+func TestClientKMS_NilRequest(t *testing.T) {
 	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.DeleteSecret(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+	runNilRequestCases(t, []nilRequestCase{
+		{"KMSGenerateKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSGenerateKey(ctx, nil) }},
+		{"KMSImportKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSImportKey(ctx, nil) }},
+		{"KMSGetKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSGetKey(ctx, nil) }},
+		{"KMSRotateKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSRotateKey(ctx, nil) }},
+		{"KMSDeleteKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSDeleteKey(ctx, nil) }},
+		{"KMSEncrypt", func(c *Client, ctx context.Context) (any, error) { return c.KMSEncrypt(ctx, nil) }},
+		{"KMSDecrypt", func(c *Client, ctx context.Context) (any, error) { return c.KMSDecrypt(ctx, nil) }},
+		{"KMSGenerateDataKey", func(c *Client, ctx context.Context) (any, error) { return c.KMSGenerateDataKey(ctx, nil) }},
+		{"KMSSign", func(c *Client, ctx context.Context) (any, error) { return c.KMSSign(ctx, nil) }},
+		{"KMSVerify", func(c *Client, ctx context.Context) (any, error) { return c.KMSVerify(ctx, nil) }},
+		{"KMSHash", func(c *Client, ctx context.Context) (any, error) { return c.KMSHash(ctx, nil) }},
+		{"KMSGenerateHMAC", func(c *Client, ctx context.Context) (any, error) { return c.KMSGenerateHMAC(ctx, nil) }},
+		{"KMSVerifyHMAC", func(c *Client, ctx context.Context) (any, error) { return c.KMSVerifyHMAC(ctx, nil) }},
+		{"KMSRewrap", func(c *Client, ctx context.Context) (any, error) { return c.KMSRewrap(ctx, nil) }},
+		{"KMSGenerateRandom", func(c *Client, ctx context.Context) (any, error) { return c.KMSGenerateRandom(ctx, nil) }},
+		{"KMSStartReencryption", func(c *Client, ctx context.Context) (any, error) { return c.KMSStartReencryption(ctx, nil) }},
+		{"KMSGetReencryptionProgress", func(c *Client, ctx context.Context) (any, error) {
+			return c.KMSGetReencryptionProgress(ctx, nil)
+		}},
+		{"KMSGetDEKStatus", func(c *Client, ctx context.Context) (any, error) { return c.KMSGetDEKStatus(ctx, nil) }},
+		{"KMSSetDefaultDEK", func(c *Client, ctx context.Context) (any, error) { return c.KMSSetDefaultDEK(ctx, nil) }},
+		{"KMSSetDEKSafety", func(c *Client, ctx context.Context) (any, error) { return c.KMSSetDEKSafety(ctx, nil) }},
+		{"KMSClearDEKSafety", func(c *Client, ctx context.Context) (any, error) { return c.KMSClearDEKSafety(ctx, nil) }},
+	})
 }
 
-func TestClientCoverage_ListSecretVersions_NilRequest(t *testing.T) {
+func TestClientScheduler_NilRequest(t *testing.T) {
 	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.ListSecretVersions(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+	runNilRequestCases(t, []nilRequestCase{
+		{"SchedulerCreateJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerCreateJob(ctx, nil) }},
+		{"SchedulerGetJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerGetJob(ctx, nil) }},
+		{"SchedulerUpdateJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerUpdateJob(ctx, nil) }},
+		{"SchedulerDeleteJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerDeleteJob(ctx, nil) }},
+		{"SchedulerTriggerJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerTriggerJob(ctx, nil) }},
+		{"SchedulerPauseJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerPauseJob(ctx, nil) }},
+		{"SchedulerResumeJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerResumeJob(ctx, nil) }},
+		{"SchedulerCancelJob", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerCancelJob(ctx, nil) }},
+		{"SchedulerGetJobHistory", func(c *Client, ctx context.Context) (any, error) { return c.SchedulerGetJobHistory(ctx, nil) }},
+	})
 }
 
-func TestClientCoverage_RollbackSecret_NilRequest(t *testing.T) {
+func TestClientMessaging_NilRequest(t *testing.T) {
 	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.RollbackSecret(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_RotateSecret_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.RotateSecret(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_UpdateSecretStatus_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.UpdateSecretStatus(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_GetSecretsByPrefix_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.GetSecretsByPrefix(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_WatchSecretsByPrefix_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	ch, err := client.WatchSecretsByPrefix(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, ch)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client KMS Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_KMSGenerateKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGenerateKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSImportKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSImportKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSGetKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGetKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSRotateKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSRotateKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSDeleteKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSDeleteKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSEncrypt_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSEncrypt(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSDecrypt_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSDecrypt(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSGenerateDataKey_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGenerateDataKey(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client KMS Crypto Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_KMSSign_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSSign(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSVerify_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSVerify(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSHash_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSHash(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSGenerateHMAC_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGenerateHMAC(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSVerifyHMAC_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSVerifyHMAC(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSRewrap_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSRewrap(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSGenerateRandom_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGenerateRandom(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client KMS Reencryption - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_KMSStartReencryption_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSStartReencryption(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSGetReencryptionProgress_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGetReencryptionProgress(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client Scheduler Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_SchedulerCreateJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerCreateJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerGetJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerGetJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerUpdateJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerUpdateJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerDeleteJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerDeleteJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerTriggerJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerTriggerJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerPauseJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerPauseJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerResumeJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerResumeJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerCancelJob_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerCancelJob(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_SchedulerGetJobHistory_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.SchedulerGetJobHistory(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client Messaging Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_MessagingCreateChannel_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingCreateChannel(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingDeleteChannel_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingDeleteChannel(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingGetChannel_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingGetChannel(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingSubscribe_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingSubscribe(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingUnsubscribe_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingUnsubscribe(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingPublish_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingPublish(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingPublishDelta_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingPublishDelta(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingStreamNotifications_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	ch, errCh, err := client.MessagingStreamNotifications(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, ch)
-	assert.Nil(t, errCh)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingStreamNotificationsRaw_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	stream, err := client.MessagingStreamNotificationsRaw(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, stream)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingWatchChannel_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	stream, err := client.MessagingWatchChannel(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, stream)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingGetDedupStats_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingGetDedupStats(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_MessagingGetChannelStats_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.MessagingGetChannelStats(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client KMS DEK Functions - Nil Request Tests
-// =============================================================================
-
-func TestClientCoverage_KMSGetDEKStatus_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSGetDEKStatus(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSSetDefaultDEK_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSSetDefaultDEK(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSSetDEKSafety_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSSetDEKSafety(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientCoverage_KMSClearDEKSafety_NilRequest(t *testing.T) {
-	t.Parallel()
-	client := &Client{}
-	ctx := context.Background()
-
-	resp, err := client.KMSClearDEKSafety(ctx, nil)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
+	runNilRequestCases(t, []nilRequestCase{
+		{"MessagingCreateChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingCreateChannel(ctx, nil) }},
+		{"MessagingDeleteChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingDeleteChannel(ctx, nil) }},
+		{"MessagingGetChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingGetChannel(ctx, nil) }},
+		{"MessagingSubscribe", func(c *Client, ctx context.Context) (any, error) { return c.MessagingSubscribe(ctx, nil) }},
+		{"MessagingUnsubscribe", func(c *Client, ctx context.Context) (any, error) { return c.MessagingUnsubscribe(ctx, nil) }},
+		{"MessagingPublish", func(c *Client, ctx context.Context) (any, error) { return c.MessagingPublish(ctx, nil) }},
+		{"MessagingPublishDelta", func(c *Client, ctx context.Context) (any, error) { return c.MessagingPublishDelta(ctx, nil) }},
+		{"MessagingStreamNotifications", func(c *Client, ctx context.Context) (any, error) {
+			ch, errCh, err := c.MessagingStreamNotifications(ctx, nil)
+			if errCh != nil {
+				return errCh, err
+			}
+			return ch, err
+		}},
+		{"MessagingStreamNotificationsRaw", func(c *Client, ctx context.Context) (any, error) {
+			return c.MessagingStreamNotificationsRaw(ctx, nil)
+		}},
+		{"MessagingWatchChannel", func(c *Client, ctx context.Context) (any, error) { return c.MessagingWatchChannel(ctx, nil) }},
+		{"MessagingGetDedupStats", func(c *Client, ctx context.Context) (any, error) { return c.MessagingGetDedupStats(ctx, nil) }},
+		{"MessagingGetChannelStats", func(c *Client, ctx context.Context) (any, error) { return c.MessagingGetChannelStats(ctx, nil) }},
+	})
 }
 
 // =============================================================================
@@ -1705,190 +1216,6 @@ func TestClientCoverage_Conn_Nil(t *testing.T) {
 }
 
 // --- Merged from coverage_boost_test.go ---
-
-// =============================================================================
-// Client KMS Tests - Nil Request Coverage
-// =============================================================================
-
-func TestClientKMSEncryptWithNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSEncrypt(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSDecryptWithNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSDecrypt(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSGenerateDataKeyWithNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSGenerateDataKey(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSStartReencryptionWithNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSStartReencryption(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSGetReencryptionProgressWithNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSGetReencryptionProgress(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSGetDEKStatusNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSGetDEKStatus(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSSetDefaultDEKNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSSetDefaultDEK(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSSetDEKSafetyNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSSetDEKSafety(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSClearDEKSafetyNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSClearDEKSafety(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client Crypto Tests - Nil Request Coverage
-// =============================================================================
-
-func TestClientKMSSignNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSSign(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSVerifyNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSVerify(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSHashNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSHash(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSGenerateHMACNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSGenerateHMAC(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSVerifyHMACNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSVerifyHMAC(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSRewrapNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSRewrap(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientKMSGenerateRandomNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.KMSGenerateRandom(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
 
 // =============================================================================
 // Pool Tests - Additional Coverage
@@ -2309,225 +1636,6 @@ func TestClientVectorGetCompactionProgressNotConnected(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, resp)
-}
-
-// =============================================================================
-// Client Messaging Tests - Nil Request Coverage
-// =============================================================================
-
-func TestClientMessagingCreateChannelNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingCreateChannel(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingDeleteChannelNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingDeleteChannel(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingGetChannelNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingGetChannel(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingSubscribeNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingSubscribe(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingUnsubscribeNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingUnsubscribe(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingPublishNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingPublish(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingPublishDeltaNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingPublishDelta(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingWatchChannelNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingWatchChannel(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingGetDedupStatsNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingGetDedupStats(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientMessagingGetChannelStatsNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.MessagingGetChannelStats(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-// =============================================================================
-// Client Scheduler Tests - Nil Request Coverage
-// Note: Scheduler methods check nil request FIRST before using c.conn,
-// so these work with empty Client{}
-// =============================================================================
-
-func TestClientSchedulerCreateJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerCreateJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerGetJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerGetJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerUpdateJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerUpdateJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerDeleteJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerDeleteJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerTriggerJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerTriggerJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerPauseJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerPauseJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerResumeJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerResumeJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerCancelJobNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerCancelJob(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientSchedulerGetJobHistoryNilRequest(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.SchedulerGetJobHistory(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
 }
 
 // =============================================================================
