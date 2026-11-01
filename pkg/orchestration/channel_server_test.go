@@ -254,39 +254,6 @@ func TestChannelServer_InitializeHandshake(t *testing.T) {
 	<-startDone
 }
 
-func TestChannelServer_InitializeHandshake_NoReply(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName: "no-reply-server",
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	resp := performHandshake(t, conn)
-
-	resultBytes, err := json.Marshal(resp.Result)
-	if err != nil {
-		t.Fatalf("marshal result: %v", err)
-	}
-
-	var result mcpInitializeResult
-	if err := json.Unmarshal(resultBytes, &result); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-
-	if result.Capabilities.Tools != nil {
-		t.Error("tools capability should be nil when EnableReply=false")
-	}
-
-	cancel()
-	<-startDone
-}
-
 func TestChannelServer_InitializeHandshake_PermissionRelay(t *testing.T) {
 	srv, conn := newTestChannelServer(t, ChannelServerConfig{
 		ServerName:            "perm-relay-server",
@@ -316,6 +283,10 @@ func TestChannelServer_InitializeHandshake_PermissionRelay(t *testing.T) {
 	_, ok := result.Capabilities.Experimental["claude/channel/permission"]
 	if !ok {
 		t.Fatal("missing claude/channel/permission capability")
+	}
+
+	if result.Capabilities.Tools != nil {
+		t.Error("tools capability should be nil when EnableReply=false")
 	}
 
 	cancel()
@@ -804,48 +775,9 @@ func TestChannelServer_ReplyTool_BadArguments(t *testing.T) {
 	<-startDone
 }
 
-func TestChannelServer_UnknownMethod(t *testing.T) {
+func TestChannelServer_RequestErrors(t *testing.T) {
 	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName: "unknown-method",
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// Send unknown method with an ID
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(10),
-		Method:  "unknown/method",
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error response for unknown method")
-	}
-
-	if resp.Error.Code != -32601 {
-		t.Errorf("error code = %d, want -32601", resp.Error.Code)
-	}
-
-	if !strings.Contains(resp.Error.Message, "method not found") {
-		t.Errorf("error message = %q, want 'method not found'", resp.Error.Message)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_UnknownTool(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "unknown-tool",
+		ServerName:  "request-errors",
 		EnableReply: true,
 	})
 
@@ -859,23 +791,38 @@ func TestChannelServer_UnknownTool(t *testing.T) {
 
 	performHandshake(t, conn)
 
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(5),
-		Method:  "tools/call",
-		Params: map[string]any{
-			"name":      "nonexistent",
-			"arguments": map[string]any{},
-		},
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error for unknown tool")
+	tests := []struct {
+		name     string
+		method   string
+		params   any
+		wantCode int // 0 skips the code check
+		wantText string
+	}{
+		{"unknown method", "unknown/method", nil, -32601, "method not found"},
+		{"unknown tool", "tools/call", map[string]any{"name": "nonexistent", "arguments": map[string]any{}}, 0, "unknown tool"},
+		{"invalid tools/call params", "tools/call", "not an object", -32602, ""},
 	}
 
-	if !strings.Contains(resp.Error.Message, "unknown tool") {
-		t.Errorf("error message = %q, want 'unknown tool'", resp.Error.Message)
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
+				JSONRPC: JSONRPCVersion,
+				ID:      float64(i + 10),
+				Method:  tt.method,
+				Params:  tt.params,
+			})
+
+			resp := readJSONRPC(t, conn.scanner)
+			if resp.Error == nil {
+				t.Fatal("expected error response")
+			}
+			if tt.wantCode != 0 && resp.Error.Code != tt.wantCode {
+				t.Errorf("error code = %d, want %d", resp.Error.Code, tt.wantCode)
+			}
+			if !strings.Contains(resp.Error.Message, tt.wantText) {
+				t.Errorf("error message = %q, want it to contain %q", resp.Error.Message, tt.wantText)
+			}
+		})
 	}
 
 	cancel()
@@ -1053,43 +1000,6 @@ func TestChannelServer_MalformedJSON(t *testing.T) {
 
 	if resp.Error != nil {
 		t.Fatalf("initialize after malformed input should succeed, got error: %v", resp.Error)
-	}
-
-	cancel()
-	<-startDone
-}
-
-func TestChannelServer_ToolsCall_InvalidParams(t *testing.T) {
-	srv, conn := newTestChannelServer(t, ChannelServerConfig{
-		ServerName:  "invalid-params",
-		EnableReply: true,
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	startDone := make(chan error, 1)
-	go func() {
-		startDone <- srv.Start(ctx)
-	}()
-
-	performHandshake(t, conn)
-
-	// Send tools/call with invalid params (not an object with name/arguments)
-	sendJSONRPC(t, conn.clientWrite, &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      float64(5),
-		Method:  "tools/call",
-		Params:  "not an object",
-	})
-
-	resp := readJSONRPC(t, conn.scanner)
-	if resp.Error == nil {
-		t.Fatal("expected error for invalid params")
-	}
-
-	if resp.Error.Code != -32602 {
-		t.Errorf("error code = %d, want -32602", resp.Error.Code)
 	}
 
 	cancel()
