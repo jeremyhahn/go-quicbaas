@@ -384,6 +384,9 @@ func TestAgentService_Infer_Validation(t *testing.T) {
 	if _, err := svc.Infer(ctx, &InferRequest{Backend: "mock"}); !errors.Is(err, ErrPromptRequired) {
 		t.Fatalf("empty prompt: expected ErrPromptRequired, got %v", err)
 	}
+	if _, err := svc.Infer(ctx, &InferRequest{Backend: "nope", Prompt: "x"}); err == nil {
+		t.Fatal("unknown backend: expected an error")
+	}
 }
 
 func TestAgentService_Infer_SessionBackendUnsupported(t *testing.T) {
@@ -485,14 +488,6 @@ func TestAgentService_Infer_BackendPromptError(t *testing.T) {
 	}
 }
 
-func TestAgentService_Infer_UnknownBackend(t *testing.T) {
-	ctx := context.Background()
-	svc := newWorkflowTestService(t)
-	if _, err := svc.Infer(ctx, &InferRequest{Backend: "nope", Prompt: "x"}); err == nil {
-		t.Fatal("expected error for unknown backend")
-	}
-}
-
 // =============================================================================
 // project_authz.go — AuthorizeFleetNode (project-ID-only path) & findProject
 // =============================================================================
@@ -546,74 +541,6 @@ func (s *idOnlyProjectStore) ListByTenant(ctx context.Context, _ string) ([]*Pro
 	return nil, nil
 }
 
-func TestProjectAuthz_AuthorizeAgent_Allowed(t *testing.T) {
-	ctx := context.Background()
-	store := &idOnlyProjectStore{}
-	_ = store.Create(ctx, newScopedProjectInternal("p1", "t1", map[string]ProjectRole{
-		"agent-A": ProjectRoleLead,
-	}))
-	authz := NewProjectAuthz(store)
-
-	if err := authz.AuthorizeFleetNode(ctx, "p1", "agent-A", ProjectRoleWorker); err != nil {
-		t.Fatalf("expected authorization to succeed, got %v", err)
-	}
-}
-
-func TestProjectAuthz_AuthorizeAgent_Denied(t *testing.T) {
-	ctx := context.Background()
-	store := &idOnlyProjectStore{}
-	_ = store.Create(ctx, newScopedProjectInternal("p2", "t1", map[string]ProjectRole{
-		"agent-B": ProjectRoleObserver,
-	}))
-	authz := NewProjectAuthz(store)
-
-	err := authz.AuthorizeFleetNode(ctx, "p2", "agent-B", ProjectRoleLead)
-	var denied *ProjectAccessDeniedError
-	if !errors.As(err, &denied) {
-		t.Fatalf("expected ProjectAccessDeniedError, got %T: %v", err, err)
-	}
-}
-
-func TestProjectAuthz_AuthorizeAgent_EmptyArgsAndInvalidRole(t *testing.T) {
-	ctx := context.Background()
-	authz := NewProjectAuthz(&idOnlyProjectStore{})
-
-	// Empty project or agent → unscoped legacy path → nil.
-	if err := authz.AuthorizeFleetNode(ctx, "", "agent", ProjectRoleLead); err != nil {
-		t.Fatalf("empty projectID should be a no-op: %v", err)
-	}
-	if err := authz.AuthorizeFleetNode(ctx, "p", "", ProjectRoleLead); err != nil {
-		t.Fatalf("empty agentID should be a no-op: %v", err)
-	}
-
-	// Invalid required role → ProjectRoleInvalidError.
-	err := authz.AuthorizeFleetNode(ctx, "p", "a", ProjectRole("root"))
-	var invalid *ProjectRoleInvalidError
-	if !errors.As(err, &invalid) {
-		t.Fatalf("expected ProjectRoleInvalidError, got %T: %v", err, err)
-	}
-}
-
-func TestProjectAuthz_AuthorizeAgent_MissingProjectRefused(t *testing.T) {
-	ctx := context.Background()
-	authz := NewProjectAuthz(&idOnlyProjectStore{})
-
-	// Project not found → findProject returns (nil, nil) → refusal. A check
-	// that could not read the role matrix must never answer "allowed".
-	err := authz.AuthorizeFleetNode(ctx, "no-such", "agent", ProjectRoleLead)
-	if err == nil {
-		t.Fatal("expected a refusal for a project the store cannot produce, got nil")
-	}
-	var unresolved *ProjectUnresolvedError
-	if !errors.As(err, &unresolved) {
-		t.Fatalf("expected *ProjectUnresolvedError, got %T: %v", err, err)
-	}
-	if unresolved.ProjectID != "no-such" || unresolved.FleetNodeID != "agent" {
-		t.Errorf("refusal names project=%q agent=%q, want project=%q agent=%q",
-			unresolved.ProjectID, unresolved.FleetNodeID, "no-such", "agent")
-	}
-}
-
 // errProjectStore returns an arbitrary (non-not-found) error from Get so the
 // findProject error-propagation branch is exercised.
 type errProjectStore struct{ err error }
@@ -631,13 +558,69 @@ func (s *errProjectStore) ListByTenant(context.Context, string) ([]*Project, err
 	return nil, s.err
 }
 
-func TestProjectAuthz_AuthorizeAgent_StorePropagatesError(t *testing.T) {
-	ctx := context.Background()
+func TestProjectAuthz_AuthorizeFleetNode(t *testing.T) {
 	storeErr := errors.New("store unavailable")
-	authz := NewProjectAuthz(&errProjectStore{err: storeErr})
+	scoped := &idOnlyProjectStore{byID: map[string]*Project{
+		"p1": newScopedProjectInternal("p1", "t1", map[string]ProjectRole{"agent-A": ProjectRoleLead}),
+		"p2": newScopedProjectInternal("p2", "t1", map[string]ProjectRole{"agent-B": ProjectRoleObserver}),
+	}}
 
-	if err := authz.AuthorizeFleetNode(ctx, "p", "a", ProjectRoleWorker); !errors.Is(err, storeErr) {
-		t.Fatalf("expected store error to propagate, got %v", err)
+	tests := []struct {
+		name      string
+		store     ProjectStore
+		projectID string
+		agentID   string
+		role      ProjectRole
+		check     func(t *testing.T, err error)
+	}{
+		{"role at or above required is allowed", scoped, "p1", "agent-A", ProjectRoleWorker, wantNoErr},
+		{"empty project ID is unscoped", scoped, "", "agent", ProjectRoleLead, wantNoErr},
+		{"empty agent ID is unscoped", scoped, "p", "", ProjectRoleLead, wantNoErr},
+		{"role below required is denied", scoped, "p2", "agent-B", ProjectRoleLead, wantErrAs[*ProjectAccessDeniedError]},
+		{"invalid required role", scoped, "p", "a", ProjectRole("root"), wantErrAs[*ProjectRoleInvalidError]},
+		{
+			// A check that could not read the role matrix must never answer "allowed".
+			"missing project is refused", scoped, "no-such", "agent", ProjectRoleLead,
+			func(t *testing.T, err error) {
+				var unresolved *ProjectUnresolvedError
+				if !errors.As(err, &unresolved) {
+					t.Fatalf("expected *ProjectUnresolvedError, got %T: %v", err, err)
+				}
+				if unresolved.ProjectID != "no-such" || unresolved.FleetNodeID != "agent" {
+					t.Errorf("refusal names project=%q agent=%q, want project=%q agent=%q",
+						unresolved.ProjectID, unresolved.FleetNodeID, "no-such", "agent")
+				}
+			},
+		},
+		{
+			"store error propagates", &errProjectStore{err: storeErr}, "p", "a", ProjectRoleWorker,
+			func(t *testing.T, err error) {
+				if !errors.Is(err, storeErr) {
+					t.Fatalf("expected store error to propagate, got %v", err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := NewProjectAuthz(tt.store).AuthorizeFleetNode(context.Background(), tt.projectID, tt.agentID, tt.role)
+			tt.check(t, err)
+		})
+	}
+}
+
+func wantNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func wantErrAs[E error](t *testing.T, err error) {
+	t.Helper()
+	var target E
+	if !errors.As(err, &target) {
+		t.Fatalf("expected %T, got %T: %v", target, err, err)
 	}
 }
 
