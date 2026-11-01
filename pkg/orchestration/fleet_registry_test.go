@@ -359,56 +359,35 @@ func TestRegisterAgent_AlreadyExists(t *testing.T) {
 	assert.Equal(t, "first", got.Name)
 }
 
-func TestRegisterAgent_MissingTenantID(t *testing.T) {
+func TestRegisterAgent_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agent := &FleetNode{
-		ID:       "agent-1",
-		TenantID: "",
-		Name:     "test-agent",
-		Host:     "host-1",
-		NodeType: "claude-code",
+	tests := map[string]*FleetNode{
+		"nil agent": nil,
+		"missing tenant id": {
+			ID:       "agent-1",
+			Name:     "test-agent",
+			Host:     "host-1",
+			NodeType: "claude-code",
+		},
+		"missing id": {
+			TenantID: "tenant-a",
+			Name:     "test-agent",
+			Host:     "host-1",
+			NodeType: "claude-code",
+		},
 	}
 
-	err := registry.RegisterFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
+	for name, agent := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-func TestRegisterAgent_MissingID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	agent := &FleetNode{
-		ID:       "",
-		TenantID: "tenant-a",
-		Name:     "test-agent",
-		Host:     "host-1",
-		NodeType: "claude-code",
+			registry := NewInMemoryFleetRegistry()
+			err := registry.RegisterFleetNode(context.Background(), agent)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrFleetRegistryInvalidInput)
+		})
 	}
-
-	err := registry.RegisterFleetNode(ctx, agent)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
-func TestRegisterAgent_NilAgent(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.RegisterFleetNode(ctx, nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for nil agent, got: %v", err)
 }
 
 func TestRegisterAgent_StoreFailure(t *testing.T) {
@@ -484,43 +463,30 @@ func TestGetAgent_Success(t *testing.T) {
 	assert.NotZero(t, got.LastSeen)
 }
 
-func TestGetAgent_NotFound(t *testing.T) {
+func TestGetAgent_Errors(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
+	tests := map[string]struct {
+		tenantID string
+		agentID  string
+		wantErr  error
+	}{
+		"not found":       {tenantID: "tenant-a", agentID: "nonexistent", wantErr: ErrFleetNodeNotFound},
+		"empty tenant id": {tenantID: "", agentID: "agent-1", wantErr: ErrFleetRegistryInvalidInput},
+		"empty agent id":  {tenantID: "tenant-a", agentID: "", wantErr: ErrFleetRegistryInvalidInput},
+	}
 
-	got, err := registry.GetFleetNode(ctx, "tenant-a", "nonexistent")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
-}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-func TestGetAgent_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	got, err := registry.GetFleetNode(ctx, "", "agent-1")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for empty tenant, got: %v", err)
-}
-
-func TestGetAgent_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	got, err := registry.GetFleetNode(ctx, "tenant-a", "")
-	require.Error(t, err)
-	assert.Nil(t, got)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput for empty agent ID, got: %v", err)
+			registry := NewInMemoryFleetRegistry()
+			got, err := registry.GetFleetNode(context.Background(), tc.tenantID, tc.agentID)
+			require.Error(t, err)
+			assert.Nil(t, got)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestGetAgent_CorruptRecord(t *testing.T) {
@@ -997,40 +963,29 @@ func TestHeartbeat_StatusTransitions(t *testing.T) {
 	}
 }
 
-func TestHeartbeat_NotFound(t *testing.T) {
+func TestHeartbeat_Errors(t *testing.T) {
 	t.Parallel()
 
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
+	tests := map[string]struct {
+		tenantID string
+		agentID  string
+		wantErr  error
+	}{
+		"not found":       {tenantID: "tenant-a", agentID: "nonexistent", wantErr: ErrFleetNodeNotFound},
+		"empty tenant id": {tenantID: "", agentID: "agent-1", wantErr: ErrFleetRegistryInvalidInput},
+		"empty agent id":  {tenantID: "tenant-a", agentID: "", wantErr: ErrFleetRegistryInvalidInput},
+	}
 
-	err := registry.Heartbeat(ctx, "tenant-a", "nonexistent", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetNodeNotFound),
-		"expected ErrFleetNodeNotFound, got: %v", err)
-}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-func TestHeartbeat_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.Heartbeat(ctx, "", "agent-1", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
-}
-
-func TestHeartbeat_EmptyAgentID(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	err := registry.Heartbeat(ctx, "tenant-a", "", nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrFleetRegistryInvalidInput),
-		"expected ErrFleetRegistryInvalidInput, got: %v", err)
+			registry := NewInMemoryFleetRegistry()
+			err := registry.Heartbeat(context.Background(), tc.tenantID, tc.agentID, nil)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, tc.wantErr)
+		})
+	}
 }
 
 func TestHeartbeat_StoreFailure(t *testing.T) {
