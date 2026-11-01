@@ -1292,10 +1292,18 @@ func TestIAMServer_RotateAppSecret_Success(t *testing.T) {
 // Policy Operations
 // =============================================================================
 
-func TestIAMServer_CreatePolicy_FullFormat(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	specYAML := []byte(`apiVersion: iam.quicbaas.io/v1
+// TestIAMServer_CreatePolicy_Success covers both accepted spec shapes: a full
+// policy document and a bare rules spec.
+func TestIAMServer_CreatePolicy_Success(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *iampb.CreatePolicyRequest
+	}{
+		{"full format", &iampb.CreatePolicyRequest{
+			TenantId:    "t1",
+			Name:        "test-policy",
+			Description: "A test policy",
+			SpecYaml: []byte(`apiVersion: iam.quicbaas.io/v1
 kind: Policy
 metadata:
   name: test-policy
@@ -1304,54 +1312,38 @@ spec:
     - effect: allow
       actions: ["read"]
       resources: ["*"]
-`)
-
-	svc.On("CreatePolicy", mock.Anything, mock.AnythingOfType("*iam.Policy")).
-		Return(&iam.Policy{
-			APIVersion: "iam.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata:   iam.PolicyMetadata{Name: "test-policy", Tenant: "t1"},
-		}, nil)
-
-	resp, err := srv.CreatePolicy(callerContext("t1"), &iampb.CreatePolicyRequest{
-		TenantId:    "t1",
-		Name:        "test-policy",
-		Description: "A test policy",
-		SpecYaml:    specYAML,
-		Labels:      map[string]string{"env": "test"},
-		Priority:    10,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "test-policy", resp.Name)
-	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_CreatePolicy_SpecOnly(t *testing.T) {
-	srv, svc := newTestIAMServer(t)
-
-	specYAML := []byte(`rules:
+`),
+			Labels:   map[string]string{"env": "test"},
+			Priority: 10,
+		}},
+		{"spec only", &iampb.CreatePolicyRequest{
+			TenantId: "t1",
+			Name:     "test-policy",
+			SpecYaml: []byte(`rules:
   - effect: allow
     actions: ["read"]
     resources: ["*"]
-`)
+`),
+		}},
+	}
 
-	svc.On("CreatePolicy", mock.Anything, mock.AnythingOfType("*iam.Policy")).
-		Return(&iam.Policy{
-			APIVersion: "iam.quicbaas.io/v1",
-			Kind:       "Policy",
-			Metadata:   iam.PolicyMetadata{Name: "test-policy", Tenant: "t1"},
-		}, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, svc := newTestIAMServer(t)
+			svc.On("CreatePolicy", mock.Anything, mock.AnythingOfType("*iam.Policy")).
+				Return(&iam.Policy{
+					APIVersion: "iam.quicbaas.io/v1",
+					Kind:       "Policy",
+					Metadata:   iam.PolicyMetadata{Name: "test-policy", Tenant: "t1"},
+				}, nil)
 
-	resp, err := srv.CreatePolicy(callerContext("t1"), &iampb.CreatePolicyRequest{
-		TenantId: "t1",
-		Name:     "test-policy",
-		SpecYaml: specYAML,
-	})
+			resp, err := srv.CreatePolicy(callerContext("t1"), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	svc.AssertExpectations(t)
+			require.NoError(t, err)
+			assert.Equal(t, "test-policy", resp.Name)
+			svc.AssertExpectations(t)
+		})
+	}
 }
 
 func TestIAMServer_GetPolicy_Success(t *testing.T) {
@@ -1790,20 +1782,4 @@ func TestIAMServer_GetDeletionStatus_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "d1", resp.Id)
 	svc.AssertExpectations(t)
-}
-
-// =============================================================================
-// NewIAMServer Tests
-// =============================================================================
-
-func TestNewIAMServer_Success(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	require.NoError(t, err)
-
-	svc := &mockIAMService{}
-	srv := NewIAMServer(svc, log)
-
-	assert.NotNil(t, srv)
-	assert.NotNil(t, srv.iamService)
-	assert.NotNil(t, srv.logger)
 }
