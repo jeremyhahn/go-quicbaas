@@ -637,126 +637,87 @@ func TestListMetrics_StorageNotConfigured(t *testing.T) {
 // Backup functions - Type assertion failures, error paths
 // =============================================================================
 
-func TestCreateBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
+func TestBackupService_ManagerFailures(t *testing.T) {
+	type backupCall func(ctx context.Context, s *backupService) (interface{}, error)
 
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	createBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.CreateBackup(ctx, &CreateBackupRequest{Name: "full"})
+	}
+	restoreBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.RestoreBackup(ctx, &RestoreBackupRequest{BackupID: "backup-123"})
+	}
+	deleteBackup := func(ctx context.Context, s *backupService) (interface{}, error) {
+		return s.DeleteBackup(ctx, &DeleteBackupRequest{BackupID: "backup-123"})
+	}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestCreateBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
-			return nil, stderrors.New("backup creation failed")
+	tests := []struct {
+		name     string
+		mgr      *mockBackupManager
+		call     backupCall
+		wantCode errors.ErrorCode
+	}{
+		{name: "create: nil manager", call: createBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "create: manager error",
+			mgr: &mockBackupManager{
+				createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
+					return nil, stderrors.New("backup creation failed")
+				},
+			},
+			call:     createBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "full"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestCreateBackup_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
-			return "not-a-backup-struct", nil // wrong type
+		{
+			name: "create: manager returns wrong type",
+			mgr: &mockBackupManager{
+				createBackupFn: func(ctx context.Context, backupType interface{}) (interface{}, error) {
+					return "not-a-backup-struct", nil
+				},
+			},
+			call:     createBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.CreateBackup(tenantctx.WithSystem(context.Background()), &CreateBackupRequest{Name: "incremental"})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestRestoreBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestRestoreBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		restoreBackupFn: func(ctx context.Context, backupID string, opts interface{}) error {
-			return stderrors.New("restore failed")
+		{name: "restore: nil manager", call: restoreBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "restore: manager error",
+			mgr: &mockBackupManager{
+				restoreBackupFn: func(ctx context.Context, backupID string, opts interface{}) error {
+					return stderrors.New("restore failed")
+				},
+			},
+			call:     restoreBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.RestoreBackup(tenantctx.WithSystem(context.Background()), &RestoreBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestDeleteBackup_NilBackupManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: nil}
-	backupSvc := &backupService{svc: svc}
-
-	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestDeleteBackup_ManagerError(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, backupMgr: &mockBackupManager{
-		deleteBackupFn: func(ctx context.Context, backupID string) error {
-			return stderrors.New("delete failed")
+		{name: "delete: nil manager", call: deleteBackup, wantCode: errors.ErrNotImplemented},
+		{
+			name: "delete: manager error",
+			mgr: &mockBackupManager{
+				deleteBackupFn: func(ctx context.Context, backupID string) error {
+					return stderrors.New("delete failed")
+				},
+			},
+			call:     deleteBackup,
+			wantCode: errors.ErrInternal,
 		},
-	}}
-	backupSvc := &backupService{svc: svc}
+	}
 
-	resp, err := backupSvc.DeleteBackup(tenantctx.WithSystem(context.Background()), &DeleteBackupRequest{
-		BackupID: "backup-123",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &quicBaaS{logger: createTestLogger(t)}
+			if tt.mgr != nil {
+				svc.backupMgr = tt.mgr
+			}
+			backupSvc := &backupService{svc: svc}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+			resp, err := tt.call(tenantctx.WithSystem(context.Background()), backupSvc)
+			require.Error(t, err)
+			assert.Nil(t, resp)
+
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -774,114 +735,50 @@ func (m *mockCacheInterface) Delete(ctx context.Context, key string) error { ret
 func (m *mockCacheInterface) Clear()                                       {}
 func (m *mockCacheInterface) Close() error                                 { return nil }
 
-func TestGetCacheStats_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
+func TestCacheService_ManagerFailures(t *testing.T) {
+	methods := []struct {
+		name string
+		call func(ctx context.Context, s *cacheService) (interface{}, error)
+	}{
+		{"GetCacheStats", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.GetCacheStats(ctx, &GetCacheStatsRequest{})
+		}},
+		{"ClearCache", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.ClearCache(ctx, &ClearCacheRequest{})
+		}},
+		{"GetCacheConfig", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.GetCacheConfig(ctx, &GetCacheConfigRequest{})
+		}},
+		{"UpdateCacheConfig", func(ctx context.Context, s *cacheService) (interface{}, error) {
+			return s.UpdateCacheConfig(ctx, &UpdateCacheConfigRequest{})
+		}},
+	}
+	failures := []struct {
+		name     string
+		mgr      *mockCacheInterface
+		wantCode errors.ErrorCode
+	}{
+		{name: "nil manager", wantCode: errors.ErrNotImplemented},
+		{name: "manager of wrong type", mgr: &mockCacheInterface{}, wantCode: errors.ErrInternal},
+	}
 
-	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+	for _, m := range methods {
+		for _, f := range failures {
+			t.Run(m.name+": "+f.name, func(t *testing.T) {
+				svc := &quicBaaS{logger: createTestLogger(t)}
+				if f.mgr != nil {
+					svc.cacheManager = f.mgr
+				}
+				cacheSvc := &cacheService{svc: svc}
 
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
+				resp, err := m.call(tenantctx.WithSystem(context.Background()), cacheSvc)
+				require.Error(t, err)
+				assert.Nil(t, resp)
 
-func TestGetCacheStats_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheStats(tenantctx.WithSystem(context.Background()), &GetCacheStatsRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestClearCache_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestClearCache_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.ClearCache(tenantctx.WithSystem(context.Background()), &ClearCacheRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestGetCacheConfig_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestGetCacheConfig_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.GetCacheConfig(tenantctx.WithSystem(context.Background()), &GetCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
-}
-
-func TestUpdateCacheConfig_NilCacheManager(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: nil}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestUpdateCacheConfig_TypeAssertionFailure(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, cacheManager: &mockCacheInterface{}}
-	cacheSvc := &cacheService{svc: svc}
-
-	resp, err := cacheSvc.UpdateCacheConfig(tenantctx.WithSystem(context.Background()), &UpdateCacheConfigRequest{})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInternal, qbErr.Code)
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, f.wantCode, qbErr.Code)
+			})
+		}
+	}
 }
