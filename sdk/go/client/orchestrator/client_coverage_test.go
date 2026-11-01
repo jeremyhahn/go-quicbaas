@@ -70,10 +70,42 @@ type clientCall struct {
 	call func(c Client, ctx context.Context) error
 }
 
-// failureCalls lists every unary method whose nil-context, transport-error,
-// nil-response and type-mismatch paths share the same shape.
+// failureCalls lists every method whose nil-context, transport-error and
+// type-mismatch paths share the same shape.
 func failureCalls() []clientCall {
+	return append(unaryCalls(), listCalls()...)
+}
+
+// listCalls lists the methods that turn a nil response into an empty result;
+// each has its own _NilResponseReturnsEmpty test.
+func listCalls() []clientCall {
 	return []clientCall{
+		{"ListSessions", func(c Client, ctx context.Context) error {
+			_, err := c.ListSessions(ctx, &ListSessionsRequest{})
+			return err
+		}},
+		{"ListTasks", func(c Client, ctx context.Context) error {
+			_, err := c.ListTasks(ctx, &ListTasksRequest{TenantID: "t1"})
+			return err
+		}},
+	}
+}
+
+// unaryCalls lists the methods that reject a nil response with an error.
+func unaryCalls() []clientCall {
+	return []clientCall{
+		{"GetTask", func(c Client, ctx context.Context) error {
+			_, err := c.GetTask(ctx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
+			return err
+		}},
+		{"ClaimTask", func(c Client, ctx context.Context) error {
+			_, err := c.ClaimTask(ctx, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
+			return err
+		}},
+		{"CompleteTask", func(c Client, ctx context.Context) error {
+			_, err := c.CompleteTask(ctx, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
+			return err
+		}},
 		{"SpawnSession", func(c Client, ctx context.Context) error {
 			_, err := c.SpawnSession(ctx, &SpawnSessionRequest{Backend: "ollama"})
 			return err
@@ -115,7 +147,7 @@ func TestClient_TransportError(t *testing.T) {
 }
 
 func TestClient_NilResponse(t *testing.T) {
-	for _, tc := range failureCalls() {
+	for _, tc := range unaryCalls() {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.call(NewClient(nilTransport()), context.Background())
 			require.Error(t, err)
@@ -246,19 +278,6 @@ func TestListSessions_NilRequest(t *testing.T) {
 	assert.Contains(t, err.Error(), "request is required")
 }
 
-func TestListSessions_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListSessions", &ListSessionsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListSessions(nilCtx, &ListSessionsRequest{})
-	require.Error(t, err)
-}
-
-func TestListSessions_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
-	require.Error(t, err)
-}
-
 func TestListSessions_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
@@ -266,12 +285,6 @@ func TestListSessions_NilResponseReturnsEmpty(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Sessions)
-}
-
-func TestListSessions_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListSessions(context.Background(), &ListSessionsRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -297,31 +310,6 @@ func TestGetTask_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "task ID is required")
 }
 
-func TestGetTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "GetTask", &Task{}))
-	var nilCtx context.Context
-	_, err := c.GetTask(nilCtx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestGetTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.GetTask(context.Background(), &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // ListTasks
 // =============================================================================
@@ -341,31 +329,12 @@ func TestListTasks_Validation(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestListTasks_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListTasks", &ListTasksResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListTasks(nilCtx, &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestListTasks_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
 func TestListTasks_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Tasks)
-}
-
-func TestListTasks_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListTasks(context.Background(), &ListTasksRequest{TenantID: "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -394,31 +363,6 @@ func TestClaimTask_Validation(t *testing.T) {
 	assert.Contains(t, err.Error(), "agent ID is required")
 }
 
-func TestClaimTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ClaimTask", &ClaimTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.ClaimTask(nilCtx, &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
-func TestClaimTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ClaimTask(context.Background(), &ClaimTaskRequest{TenantID: "t1", TaskID: "tk1", AgentID: "a1"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CompleteTask
 // =============================================================================
@@ -437,31 +381,6 @@ func TestCompleteTask_Validation(t *testing.T) {
 	_, err = c.CompleteTask(context.Background(), &CompleteTaskRequest{TaskID: "tk1"})
 	require.Error(t, err)
 	_, err = c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "CompleteTask", &CompleteTaskResponse{}))
-	var nilCtx context.Context
-	_, err := c.CompleteTask(nilCtx, &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
-	require.Error(t, err)
-}
-
-func TestCompleteTask_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.CompleteTask(context.Background(), &CompleteTaskRequest{TenantID: "t1", TaskID: "tk1"})
 	require.Error(t, err)
 }
 
