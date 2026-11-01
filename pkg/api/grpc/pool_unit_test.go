@@ -16,14 +16,12 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -618,216 +616,101 @@ func TestBuildDialOptions_TLSModes(t *testing.T) {
 // Vector Metrics Tests
 // =============================================================================
 
-func TestGetTenantID_WithContext(t *testing.T) {
+func TestGetTenantID_Fallback(t *testing.T) {
 	t.Parallel()
 
-	ctx := tenantctx.WithTenant(context.Background(), "test-tenant")
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, "test-tenant", tenantID)
+	tests := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{name: "tenant from context", ctx: tenantctx.WithTenant(context.Background(), "test-tenant"), want: "test-tenant"},
+		{name: "no tenant falls back to default", ctx: context.Background(), want: defaultTenantID},
+		{name: "empty tenant falls back to default", ctx: tenantctx.WithTenant(context.Background(), ""), want: defaultTenantID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, getTenantID(tt.ctx))
+		})
+	}
 }
 
-func TestGetTenantID_Default(t *testing.T) {
+func TestVectorMetricsRecorder(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, defaultTenantID, tenantID)
-}
-
-func TestGetTenantID_EmptyTenant(t *testing.T) {
-	t.Parallel()
-
-	ctx := tenantctx.WithTenant(context.Background(), "")
-	tenantID := getTenantID(ctx)
-	assert.Equal(t, defaultTenantID, tenantID)
-}
-
-func TestNewVectorMetricsRecorder_Coverage(t *testing.T) {
-	t.Parallel()
+	start := time.Now().Add(-100 * time.Millisecond)
+	tests := []struct {
+		name   string
+		record func(r *VectorMetricsRecorder, ctx context.Context, success bool)
+	}{
+		{name: "RecordUpsert", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordUpsert(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordBatchUpsert", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordBatchUpsert(ctx, "test-ns", 100, start, success)
+		}},
+		{name: "RecordGet", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordGet(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordDelete(ctx, "test-ns", start, success)
+		}},
+		{name: "RecordBatchDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordBatchDelete(ctx, "test-ns", 50, start, success)
+		}},
+		{name: "RecordSearch", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordSearch(ctx, "test-ns", "knn", start, success)
+		}},
+		{name: "RecordNamespaceCreate", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordNamespaceCreate(ctx, "new-ns", start, success)
+		}},
+		{name: "RecordNamespaceDelete", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordNamespaceDelete(ctx, "old-ns", start, success)
+		}},
+		{name: "UpdateNamespaceStats", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateNamespaceStats(ctx, "test-ns", 1000, 1024*1024)
+		}},
+		{name: "UpdateQuotaUsage", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateQuotaUsage(ctx, "test-ns", "vectors", 0.75)
+		}},
+		{name: "UpdateTenantNamespaceCount", record: func(r *VectorMetricsRecorder, ctx context.Context, _ bool) {
+			r.UpdateTenantNamespaceCount(ctx, 5)
+		}},
+		{name: "RecordExport", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordExport(ctx, "test-ns", 10000, start, success)
+		}},
+		{name: "RecordImport", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordImport(ctx, "test-ns", 5000, start, success)
+		}},
+		{name: "RecordIndexRebuild", record: func(r *VectorMetricsRecorder, ctx context.Context, success bool) {
+			r.RecordIndexRebuild(ctx, "test-ns", start, success)
+		}},
+	}
 
 	recorder := NewVectorMetricsRecorder()
 	require.NotNil(t, recorder)
-	assert.NotNil(t, recorder.metrics)
-}
+	require.NotNil(t, recorder.metrics)
 
-func TestVectorMetricsRecorder_RecordUpsert(t *testing.T) {
-	t.Parallel()
+	contexts := []context.Context{
+		context.Background(),
+		tenantctx.WithTenant(context.Background(), "tenant-abc"),
+	}
 
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Should not panic
-	recorder.RecordUpsert(ctx, "test-ns", startTime, true)
-	recorder.RecordUpsert(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordBatchUpsert(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordBatchUpsert(ctx, "test-ns", 100, startTime, true)
-	recorder.RecordBatchUpsert(ctx, "test-ns", 100, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordGet(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-10 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordGet(ctx, "test-ns", startTime, true)
-	recorder.RecordGet(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-10 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordDelete(ctx, "test-ns", startTime, true)
-	recorder.RecordDelete(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordBatchDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-100 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordBatchDelete(ctx, "test-ns", 50, startTime, true)
-	recorder.RecordBatchDelete(ctx, "test-ns", 50, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordSearch(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-50 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordSearch(ctx, "test-ns", "knn", startTime, true)
-	recorder.RecordSearch(ctx, "test-ns", "hybrid", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordNamespaceCreate(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-200 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordNamespaceCreate(ctx, "new-ns", startTime, true)
-	recorder.RecordNamespaceCreate(ctx, "new-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordNamespaceDelete(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-200 * time.Millisecond)
-
-	// Should not panic
-	recorder.RecordNamespaceDelete(ctx, "old-ns", startTime, true)
-	recorder.RecordNamespaceDelete(ctx, "old-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_UpdateNamespaceStats(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateNamespaceStats(ctx, "test-ns", 1000, 1024*1024)
-}
-
-func TestVectorMetricsRecorder_UpdateQuotaUsage(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateQuotaUsage(ctx, "test-ns", "vectors", 0.75)
-	recorder.UpdateQuotaUsage(ctx, "test-ns", "storage", 0.50)
-}
-
-func TestVectorMetricsRecorder_UpdateTenantNamespaceCount(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-
-	// Should not panic
-	recorder.UpdateTenantNamespaceCount(ctx, 5)
-}
-
-func TestVectorMetricsRecorder_RecordExport(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-1 * time.Second)
-
-	// Should not panic
-	recorder.RecordExport(ctx, "test-ns", 10000, startTime, true)
-	recorder.RecordExport(ctx, "test-ns", 10000, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordImport(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-2 * time.Second)
-
-	// Should not panic
-	recorder.RecordImport(ctx, "test-ns", 5000, startTime, true)
-	recorder.RecordImport(ctx, "test-ns", 5000, startTime, false)
-}
-
-func TestVectorMetricsRecorder_RecordIndexRebuild(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := context.Background()
-	startTime := time.Now().Add(-5 * time.Second)
-
-	// Should not panic
-	recorder.RecordIndexRebuild(ctx, "test-ns", startTime, true)
-	recorder.RecordIndexRebuild(ctx, "test-ns", startTime, false)
-}
-
-func TestVectorMetricsRecorder_WithTenant(t *testing.T) {
-	t.Parallel()
-
-	recorder := NewVectorMetricsRecorder()
-	ctx := tenantctx.WithTenant(context.Background(), "tenant-abc")
-	startTime := time.Now()
-
-	// All operations should use the tenant from context
-	recorder.RecordUpsert(ctx, "ns", startTime, true)
-	recorder.RecordGet(ctx, "ns", startTime, true)
-	recorder.RecordDelete(ctx, "ns", startTime, true)
-	recorder.RecordSearch(ctx, "ns", "knn", startTime, true)
-	recorder.UpdateNamespaceStats(ctx, "ns", 100, 1024)
-	recorder.UpdateQuotaUsage(ctx, "ns", "vectors", 0.5)
-	recorder.UpdateTenantNamespaceCount(ctx, 3)
+			// The recorder has no return value; each call must record its
+			// success and failure outcome, with and without a tenant, without
+			// panicking.
+			for _, ctx := range contexts {
+				assert.NotPanics(t, func() { tt.record(recorder, ctx, true) })
+				assert.NotPanics(t, func() { tt.record(recorder, ctx, false) })
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -845,53 +728,37 @@ func TestInitStreamBatchMetrics(t *testing.T) {
 	assert.NotNil(t, metrics.operationsTotal)
 	assert.NotNil(t, metrics.backpressure)
 	assert.NotNil(t, metrics.activeStreams)
-}
 
-func TestInitStreamBatchMetrics_Singleton(t *testing.T) {
-	t.Parallel()
-
-	metrics1 := initStreamBatchMetrics()
-	metrics2 := initStreamBatchMetrics()
-
-	// Should return the same instance
-	assert.Same(t, metrics1, metrics2)
+	// Later calls return the same instance.
+	assert.Same(t, metrics, initStreamBatchMetrics())
 }
 
 // =============================================================================
 // Client State Tests
 // =============================================================================
 
-func TestClient_IsConnected_Closed(t *testing.T) {
+func TestClient_IsConnected(t *testing.T) {
 	t.Parallel()
 
-	client := &Client{
-		connected: true,
-		closed:    true,
+	tests := []struct {
+		name      string
+		connected bool
+		closed    bool
+		want      bool
+	}{
+		{name: "connected and open", connected: true, closed: false, want: true},
+		{name: "connected but closed", connected: true, closed: true, want: false},
+		{name: "not connected", connected: false, closed: false, want: false},
 	}
 
-	assert.False(t, client.isConnected())
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestClient_IsConnected_NotConnected(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{
-		connected: false,
-		closed:    false,
+			client := &Client{connected: tt.connected, closed: tt.closed}
+			assert.Equal(t, tt.want, client.isConnected())
+		})
 	}
-
-	assert.False(t, client.isConnected())
-}
-
-func TestClient_IsConnected_True(t *testing.T) {
-	t.Parallel()
-
-	client := &Client{
-		connected: true,
-		closed:    false,
-	}
-
-	assert.True(t, client.isConnected())
 }
 
 func TestClient_Conn_ReturnsNil(t *testing.T) {
@@ -902,61 +769,4 @@ func TestClient_Conn_ReturnsNil(t *testing.T) {
 	}
 
 	assert.Nil(t, client.Conn())
-}
-
-// =============================================================================
-// Connection State Tests
-// =============================================================================
-
-func TestConnectivityState(t *testing.T) {
-	t.Parallel()
-
-	// Test that we understand gRPC connectivity states
-	states := []connectivity.State{
-		connectivity.Idle,
-		connectivity.Connecting,
-		connectivity.Ready,
-		connectivity.TransientFailure,
-		connectivity.Shutdown,
-	}
-
-	for _, state := range states {
-		assert.NotEmpty(t, state.String())
-	}
-}
-
-// =============================================================================
-// Atomic Operations Tests
-// =============================================================================
-
-func TestAtomicBool(t *testing.T) {
-	t.Parallel()
-
-	var b atomic.Bool
-	assert.False(t, b.Load())
-
-	b.Store(true)
-	assert.True(t, b.Load())
-
-	old := b.Swap(false)
-	assert.True(t, old)
-	assert.False(t, b.Load())
-
-	swapped := b.CompareAndSwap(false, true)
-	assert.True(t, swapped)
-	assert.True(t, b.Load())
-}
-
-func TestAtomicUint64(t *testing.T) {
-	t.Parallel()
-
-	var u atomic.Uint64
-	assert.Equal(t, uint64(0), u.Load())
-
-	u.Store(100)
-	assert.Equal(t, uint64(100), u.Load())
-
-	new := u.Add(50)
-	assert.Equal(t, uint64(150), new)
-	assert.Equal(t, uint64(150), u.Load())
 }
