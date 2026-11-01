@@ -140,56 +140,34 @@ func TestNewGDPRManager_Success(t *testing.T) {
 	assert.Equal(t, DefaultExportDownloadTTL, manager.exportDownloadTTL)
 }
 
-func TestNewGDPRManager_MissingConsentStorage(t *testing.T) {
-	deps := GDPRManagerDependencies{
-		DataExportStorage: NewMemoryDataExportStorage(),
-		DeletionStorage:   NewMemoryDeletionStorage(),
-		UserStorage:       NewMemoryStorage(),
+func TestNewGDPRManager_MissingStorage(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*GDPRManagerDependencies)
+		wantMsg string
+	}{
+		{"consent", func(d *GDPRManagerDependencies) { d.ConsentStorage = nil }, "consent storage is required"},
+		{"data export", func(d *GDPRManagerDependencies) { d.DataExportStorage = nil }, "data export storage is required"},
+		{"deletion", func(d *GDPRManagerDependencies) { d.DeletionStorage = nil }, "deletion storage is required"},
+		{"user", func(d *GDPRManagerDependencies) { d.UserStorage = nil }, "user storage is required"},
 	}
 
-	manager, err := NewGDPRManager(deps)
-	require.Error(t, err)
-	assert.Nil(t, manager)
-	assert.Contains(t, err.Error(), "consent storage is required")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := GDPRManagerDependencies{
+				ConsentStorage:    NewMemoryConsentStorage(),
+				DataExportStorage: NewMemoryDataExportStorage(),
+				DeletionStorage:   NewMemoryDeletionStorage(),
+				UserStorage:       NewMemoryStorage(),
+			}
+			tt.mutate(&deps)
 
-func TestNewGDPRManager_MissingDataExportStorage(t *testing.T) {
-	deps := GDPRManagerDependencies{
-		ConsentStorage:  NewMemoryConsentStorage(),
-		DeletionStorage: NewMemoryDeletionStorage(),
-		UserStorage:     NewMemoryStorage(),
+			manager, err := NewGDPRManager(deps)
+			require.Error(t, err)
+			assert.Nil(t, manager)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	manager, err := NewGDPRManager(deps)
-	require.Error(t, err)
-	assert.Nil(t, manager)
-	assert.Contains(t, err.Error(), "data export storage is required")
-}
-
-func TestNewGDPRManager_MissingDeletionStorage(t *testing.T) {
-	deps := GDPRManagerDependencies{
-		ConsentStorage:    NewMemoryConsentStorage(),
-		DataExportStorage: NewMemoryDataExportStorage(),
-		UserStorage:       NewMemoryStorage(),
-	}
-
-	manager, err := NewGDPRManager(deps)
-	require.Error(t, err)
-	assert.Nil(t, manager)
-	assert.Contains(t, err.Error(), "deletion storage is required")
-}
-
-func TestNewGDPRManager_MissingUserStorage(t *testing.T) {
-	deps := GDPRManagerDependencies{
-		ConsentStorage:    NewMemoryConsentStorage(),
-		DataExportStorage: NewMemoryDataExportStorage(),
-		DeletionStorage:   NewMemoryDeletionStorage(),
-	}
-
-	manager, err := NewGDPRManager(deps)
-	require.Error(t, err)
-	assert.Nil(t, manager)
-	assert.Contains(t, err.Error(), "user storage is required")
 }
 
 // ==================== Consent Management Tests ====================
@@ -229,36 +207,37 @@ func TestGDPRManager_GrantConsent_Success(t *testing.T) {
 	assert.Equal(t, strconv.FormatUint(userID, 10), events[0].UserID)
 }
 
-func TestGDPRManager_GrantConsent_InvalidPurpose(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	consent, err := manager.GrantConsent(ctx, "tenant1", 11, "invalid_purpose", "1.0", nil, "", "")
-	require.Error(t, err)
-	assert.Nil(t, consent)
-
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrValidation, qbErr.Code)
-}
-
-func TestGDPRManager_GrantConsent_AllPurposes(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	purposes := []ConsentPurpose{
-		ConsentPurposeMarketing,
-		ConsentPurposeAnalytics,
-		ConsentPurposePersonalization,
-		ConsentPurposeThirdParty,
-		ConsentPurposeDataProcessing,
-		ConsentPurposeDataRetention,
+func TestGDPRManager_GrantConsent_Purposes(t *testing.T) {
+	tests := []struct {
+		purpose ConsentPurpose
+		wantErr bool
+	}{
+		{ConsentPurposeMarketing, false},
+		{ConsentPurposeAnalytics, false},
+		{ConsentPurposePersonalization, false},
+		{ConsentPurposeThirdParty, false},
+		{ConsentPurposeDataProcessing, false},
+		{ConsentPurposeDataRetention, false},
+		{"invalid_purpose", true},
 	}
 
-	for _, purpose := range purposes {
-		consent, err := manager.GrantConsent(ctx, "tenant1", 11, purpose, "1.0", nil, "", "")
-		require.NoError(t, err, "Failed for purpose: %s", purpose)
-		assert.Equal(t, purpose, consent.Purpose)
+	manager, _ := createTestGDPRManager(t)
+	ctx := context.Background()
+
+	for _, tt := range tests {
+		t.Run(string(tt.purpose), func(t *testing.T) {
+			consent, err := manager.GrantConsent(ctx, "tenant1", 11, tt.purpose, "1.0", nil, "", "")
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, consent)
+				var qbErr *dberrors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, dberrors.ErrValidation, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.purpose, consent.Purpose)
+		})
 	}
 }
 
@@ -303,13 +282,21 @@ func TestGDPRManager_WithdrawConsent_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not_found")
 }
 
-func TestGDPRManager_GetConsent_Found(t *testing.T) {
+func TestGDPRManager_GetConsent(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
 	tenantID := "tenant1"
 	userID := uint64(11)
 	purpose := ConsentPurposeAnalytics
+
+	// Not found before any grant
+	missing, err := manager.GetConsent(ctx, tenantID, userID, purpose)
+	require.Error(t, err)
+	assert.Nil(t, missing)
+	var qbErr *dberrors.QBError
+	require.ErrorAs(t, err, &qbErr)
+	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 
 	// Grant consent
 	original, err := manager.GrantConsent(ctx, tenantID, userID, purpose, "1.0", nil, "", "")
@@ -322,25 +309,17 @@ func TestGDPRManager_GetConsent_Found(t *testing.T) {
 	assert.Equal(t, original.Status, retrieved.Status)
 }
 
-func TestGDPRManager_GetConsent_NotFound(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	consent, err := manager.GetConsent(ctx, "tenant1", 11, ConsentPurposeMarketing)
-	require.Error(t, err)
-	assert.Nil(t, consent)
-
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
 func TestGDPRManager_ListUserConsents(t *testing.T) {
 	manager, _ := createTestGDPRManager(t)
 	ctx := context.Background()
 
 	tenantID := "tenant1"
 	userID := uint64(11)
+
+	// No consents before any grant
+	empty, err := manager.ListUserConsents(ctx, tenantID, userID)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
 
 	// Grant multiple consents
 	purposes := []ConsentPurpose{
@@ -367,15 +346,6 @@ func TestGDPRManager_ListUserConsents(t *testing.T) {
 	for _, purpose := range purposes {
 		assert.True(t, foundPurposes[purpose], "Missing purpose: %s", purpose)
 	}
-}
-
-func TestGDPRManager_ListUserConsents_Empty(t *testing.T) {
-	manager, _ := createTestGDPRManager(t)
-	ctx := context.Background()
-
-	consents, err := manager.ListUserConsents(ctx, "tenant1", 11)
-	require.NoError(t, err)
-	assert.Empty(t, consents)
 }
 
 // ==================== Data Export Tests ====================
