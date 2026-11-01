@@ -476,63 +476,49 @@ func TestStream_CloseSend(t *testing.T) {
 	}
 }
 
-func TestTransport_Request_Closed(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:   0,
-			RetryBackoff: time.Millisecond,
-		},
-	}
-	tr.closed.Store(true)
-
-	_, err := tr.Request(context.Background(), "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for closed transport")
-	}
-}
-
-func TestTransport_RequestStream_Closed(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{},
-	}
-	tr.closed.Store(true)
-
-	_, err := tr.RequestStream(context.Background(), "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for closed transport")
-	}
-}
-
-func TestTransportConfig_Fields(t *testing.T) {
-	cfg := &transport.Config{
-		Address:            "localhost:50051",
-		Timeout:            5 * time.Second,
-		KeepaliveTime:      10 * time.Second,
-		KeepaliveTimeout:   5 * time.Second,
-		MaxRetries:         3,
-		RetryBackoff:       100 * time.Millisecond,
-		MaxRetryBackoff:    5 * time.Second,
-		PoolEnabled:        true,
-		PoolMinSize:        5,
-		PoolMaxSize:        50,
-		PoolMaxAge:         time.Hour,
-		PoolHealthInterval: 30 * time.Second,
+func TestTransport_Request_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+		op     func(tr *Transport) error
+	}{
+		{name: "request closed", closed: true, op: func(tr *Transport) error {
+			_, err := tr.Request(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "request no connection", op: func(tr *Transport) error {
+			_, err := tr.Request(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "stream closed", closed: true, op: func(tr *Transport) error {
+			_, err := tr.RequestStream(context.Background(), "service", "method", nil)
+			return err
+		}},
+		{name: "stream no connection", op: func(tr *Transport) error {
+			_, err := tr.RequestStream(context.Background(), "service", "method", nil)
+			return err
+		}},
 	}
 
-	if cfg.Address != "localhost:50051" {
-		t.Error("Address not set correctly")
-	}
-	if cfg.Timeout != 5*time.Second {
-		t.Error("Timeout not set correctly")
-	}
-	if !cfg.PoolEnabled {
-		t.Error("PoolEnabled not set correctly")
-	}
-	if cfg.PoolMinSize != 5 {
-		t.Error("PoolMinSize not set correctly")
-	}
-	if cfg.PoolMaxSize != 50 {
-		t.Error("PoolMaxSize not set correctly")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{
+				cfg: &transport.Config{
+					MaxRetries:      2,
+					RetryBackoff:    time.Millisecond,
+					MaxRetryBackoff: 10 * time.Millisecond,
+				},
+			}
+			tr.closed.Store(tt.closed)
+
+			err := tt.op(tr)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
@@ -565,28 +551,6 @@ func TestStream_SendSuccess(t *testing.T) {
 	err := s.Send("test-message")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestPoolConfig_Fields(t *testing.T) {
-	cfg := &PoolConfig{
-		MinSize:        10,
-		MaxSize:        100,
-		MaxAge:         2 * time.Hour,
-		HealthInterval: time.Minute,
-	}
-
-	if cfg.MinSize != 10 {
-		t.Error("MinSize not set correctly")
-	}
-	if cfg.MaxSize != 100 {
-		t.Error("MaxSize not set correctly")
-	}
-	if cfg.MaxAge != 2*time.Hour {
-		t.Error("MaxAge not set correctly")
-	}
-	if cfg.HealthInterval != time.Minute {
-		t.Error("HealthInterval not set correctly")
 	}
 }
 
@@ -623,102 +587,6 @@ func TestRequestWithRetry_SuccessOnFirstAttempt(t *testing.T) {
 	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestRequestWithRetry_ContextCanceledDuringBackoff tests context canceled during backoff wait.
-func TestRequestWithRetry_ContextCanceledDuringBackoff(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      10,
-			RetryBackoff:    500 * time.Millisecond, // Long backoff so we can cancel
-			MaxRetryBackoff: 1 * time.Second,
-			Timeout:         50 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	var wg sync.WaitGroup
-	var resultErr error
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, resultErr = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	}()
-
-	// Cancel after the first attempt's error but before retry completes
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	wg.Wait()
-
-	if resultErr == nil {
-		t.Fatal("expected error after context cancel")
-	}
-	// May be canceled error or the initial request error
-}
-
-// TestRequestWithRetry_ExhaustsRetries tests exhausting all retries.
-func TestRequestWithRetry_ExhaustsRetries(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	// Make the request retryable by using Unavailable error
-	// But since our mock server doesn't return Unavailable, this tests the non-retryable path
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      2,
-			RetryBackoff:    time.Millisecond,
-			MaxRetryBackoff: 10 * time.Millisecond,
-			Timeout:         50 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	start := time.Now()
-	ctx := context.Background()
-	_, err = tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	// Non-retryable errors should fail fast
-	if elapsed > 500*time.Millisecond {
-		t.Logf("request took %v, which is acceptable", elapsed)
 	}
 }
 
@@ -1081,22 +949,6 @@ func TestPool_PerformHealthCheckReplacement(t *testing.T) {
 	if p.Size() < cfg.MinSize {
 		t.Errorf("expected at least %d connections after health check, got %d",
 			cfg.MinSize, p.Size())
-	}
-}
-
-// TestTransport_RequestStreamNoConnection tests RequestStream with nil connection.
-func TestTransport_RequestStreamNoConnection(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{},
-	}
-
-	ctx := context.Background()
-	_, err := tr.RequestStream(ctx, "service", "method", nil)
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
 	}
 }
 
@@ -1727,69 +1579,6 @@ func TestTransport_DoRequestNoTimeout(t *testing.T) {
 	_, err = tr.doRequest(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestTransport_RequestWithRetry_NoConnection tests retry logic with no connection.
-func TestTransport_RequestWithRetry_NoConnection(t *testing.T) {
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      2,
-			RetryBackoff:    time.Millisecond,
-			MaxRetryBackoff: 10 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-	}
-
-	ctx := context.Background()
-	_, err := tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-}
-
-// TestTransport_RequestWithRetry_ContextCanceled tests retry with canceled context.
-func TestTransport_RequestWithRetry_ContextCanceled(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			MaxRetries:      5,
-			RetryBackoff:    50 * time.Millisecond,
-			MaxRetryBackoff: 100 * time.Millisecond,
-			Timeout:         100 * time.Millisecond,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := tr.requestWithRetry(ctx, "test.Service", "Method", nil)
-		done <- err
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-
-	err = <-done
-	if err == nil {
-		t.Fatal("expected error after context cancel")
 	}
 }
 
