@@ -773,6 +773,7 @@ func TestFormatEmbeddingGenerateResponse_AllFormats(t *testing.T) {
 		format   string
 		wantErr  bool
 		contains []string
+		resp     *embedding.GenerateEmbeddingResponse // nil uses resp above
 	}{
 		{
 			name:     "json_format",
@@ -803,6 +804,30 @@ func TestFormatEmbeddingGenerateResponse_AllFormats(t *testing.T) {
 			format:  "invalid",
 			wantErr: true,
 		},
+		{
+			// Fewer values than the table previews.
+			name:   "table_short_embedding",
+			format: "table",
+			resp: &embedding.GenerateEmbeddingResponse{
+				Embedding: []float32{0.1, 0.2, 0.3},
+				Metadata: &embedding.Metadata{
+					Provider:       embedding.ProviderVoyage,
+					Model:          "voyage-large-2",
+					Dimensions:     3,
+					Tokens:         5,
+					ProcessingTime: 10 * time.Millisecond,
+				},
+				Timestamp: time.Now(),
+			},
+		},
+		{
+			name:   "table_nil_metadata",
+			format: "table",
+			resp: &embedding.GenerateEmbeddingResponse{
+				Embedding: []float32{0.1, 0.2, 0.3},
+				Timestamp: time.Now(),
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -810,7 +835,12 @@ func TestFormatEmbeddingGenerateResponse_AllFormats(t *testing.T) {
 			outputFormat = tc.format
 			defer func() { outputFormat = "" }()
 
-			err := formatEmbeddingGenerateResponse(resp)
+			in := resp
+			if tc.resp != nil {
+				in = tc.resp
+			}
+
+			err := formatEmbeddingGenerateResponse(in)
 
 			if tc.wantErr {
 				assert.Error(t, err)
@@ -984,6 +1014,7 @@ func TestFormatEmbeddingProviderInfoResponse_AllFormats(t *testing.T) {
 		format   string
 		wantErr  bool
 		contains []string
+		resp     *embedding.GetProviderInfoResponse // nil uses resp above
 	}{
 		{
 			name:     "json_format",
@@ -1008,6 +1039,27 @@ func TestFormatEmbeddingProviderInfoResponse_AllFormats(t *testing.T) {
 			format:  "invalid",
 			wantErr: true,
 		},
+		{
+			name:   "table_no_rate_limit_no_last_error",
+			format: "table",
+			resp: &embedding.GetProviderInfoResponse{
+				Info: &embedding.ProviderInfo{
+					Name:         "voyage",
+					Type:         embedding.ProviderVoyage,
+					Model:        "voyage-large-2",
+					Dimensions:   1024,
+					MaxTokens:    32000,
+					MaxBatchSize: 128,
+					Status:       embedding.StatusAvailable,
+					APIURL:       "https://api.voyageai.com/v1",
+					Timeout:      30 * time.Second,
+					IsDefault:    true,
+					SuccessCount: 1000,
+					AvgLatency:   50 * time.Millisecond,
+				},
+				Timestamp: time.Now(),
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1015,7 +1067,12 @@ func TestFormatEmbeddingProviderInfoResponse_AllFormats(t *testing.T) {
 			outputFormat = tc.format
 			defer func() { outputFormat = "" }()
 
-			err := formatEmbeddingProviderInfoResponse(resp)
+			in := resp
+			if tc.resp != nil {
+				in = tc.resp
+			}
+
+			err := formatEmbeddingProviderInfoResponse(in)
 
 			if tc.wantErr {
 				assert.Error(t, err)
@@ -1100,6 +1157,7 @@ func TestFormatEmbeddingCacheStatsResponse_AllFormats(t *testing.T) {
 		format   string
 		wantErr  bool
 		contains []string
+		resp     *embedding.GetEmbeddingCacheStatsResponse // nil uses resp above
 	}{
 		{
 			name:     "json_format",
@@ -1124,6 +1182,20 @@ func TestFormatEmbeddingCacheStatsResponse_AllFormats(t *testing.T) {
 			format:  "invalid",
 			wantErr: true,
 		},
+		{
+			name:   "table_no_memory_no_compression",
+			format: "table",
+			resp: &embedding.GetEmbeddingCacheStatsResponse{
+				Enabled:   true,
+				Size:      500,
+				Capacity:  10000,
+				Hits:      4500,
+				Misses:    500,
+				HitRate:   0.90,
+				Evictions: 50,
+				Timestamp: time.Now(),
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -1131,7 +1203,12 @@ func TestFormatEmbeddingCacheStatsResponse_AllFormats(t *testing.T) {
 			outputFormat = tc.format
 			defer func() { outputFormat = "" }()
 
-			err := formatEmbeddingCacheStatsResponse(resp)
+			in := resp
+			if tc.resp != nil {
+				in = tc.resp
+			}
+
+			err := formatEmbeddingCacheStatsResponse(in)
 
 			if tc.wantErr {
 				assert.Error(t, err)
@@ -1326,91 +1403,5 @@ func TestRunEmbeddingGenerateCommand_WithMetadata(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	err := runEmbeddingGenerateCommand(cmd, []string{"test text"})
-	assert.NoError(t, err)
-}
-
-func TestFormatEmbeddingGenerateResponse_ShortEmbedding(t *testing.T) {
-	// Test with embedding shorter than display count
-	resp := &embedding.GenerateEmbeddingResponse{
-		Embedding: []float32{0.1, 0.2, 0.3},
-		Metadata: &embedding.Metadata{
-			Provider:       embedding.ProviderVoyage,
-			Model:          "voyage-large-2",
-			Dimensions:     3,
-			Tokens:         5,
-			CacheHit:       false,
-			ProcessingTime: 10 * time.Millisecond,
-		},
-		Timestamp: time.Now(),
-	}
-
-	outputFormat = "table"
-	defer func() { outputFormat = "" }()
-
-	err := formatEmbeddingGenerateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatEmbeddingGenerateResponse_NilMetadata(t *testing.T) {
-	resp := &embedding.GenerateEmbeddingResponse{
-		Embedding: []float32{0.1, 0.2, 0.3},
-		Metadata:  nil,
-		Timestamp: time.Now(),
-	}
-
-	outputFormat = "table"
-	defer func() { outputFormat = "" }()
-
-	err := formatEmbeddingGenerateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatEmbeddingCacheStatsResponse_NoMemoryBytes(t *testing.T) {
-	resp := &embedding.GetEmbeddingCacheStatsResponse{
-		Enabled:            true,
-		Size:               500,
-		Capacity:           10000,
-		Hits:               4500,
-		Misses:             500,
-		HitRate:            0.90,
-		Evictions:          50,
-		MemoryBytes:        0,
-		CompressionEnabled: false,
-		CompressionRatio:   0,
-		Timestamp:          time.Now(),
-	}
-
-	outputFormat = "table"
-	defer func() { outputFormat = "" }()
-
-	err := formatEmbeddingCacheStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatEmbeddingProviderInfoResponse_NoRateLimit(t *testing.T) {
-	resp := &embedding.GetProviderInfoResponse{
-		Info: &embedding.ProviderInfo{
-			Name:               "voyage",
-			Type:               embedding.ProviderVoyage,
-			Model:              "voyage-large-2",
-			Dimensions:         1024,
-			MaxTokens:          32000,
-			MaxBatchSize:       128,
-			Status:             embedding.StatusAvailable,
-			APIURL:             "https://api.voyageai.com/v1",
-			RateLimitPerMinute: 0,
-			Timeout:            30 * time.Second,
-			IsDefault:          true,
-			SuccessCount:       1000,
-			ErrorCount:         0,
-			AvgLatency:         50 * time.Millisecond,
-		},
-		Timestamp: time.Now(),
-	}
-
-	outputFormat = "table"
-	defer func() { outputFormat = "" }()
-
-	err := formatEmbeddingProviderInfoResponse(resp)
 	assert.NoError(t, err)
 }
