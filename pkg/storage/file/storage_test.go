@@ -1995,36 +1995,6 @@ func createTestFileStorageWithSync(t *testing.T) *FileStorage {
 // setUnlocked - exercise SyncWrites path
 // ---------------------------------------------------------------------------
 
-func TestSetUnlocked_WithSyncWrites(t *testing.T) {
-	store := createTestFileStorageWithSync(t)
-	defer store.Close()
-
-	err := store.Set([]byte("sync-key"), []byte("sync-value"))
-	assert.NoError(t, err)
-
-	val, err := store.Get([]byte("sync-key"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("sync-value"), val)
-}
-
-func TestSetUnlocked_WithSyncWritesLargeValue(t *testing.T) {
-	store := createTestFileStorageWithSync(t)
-	defer store.Close()
-
-	// Large value to exercise the write + sync path
-	largeValue := make([]byte, 64*1024)
-	for i := range largeValue {
-		largeValue[i] = byte(i % 256)
-	}
-
-	err := store.Set([]byte("large-sync-key"), largeValue)
-	assert.NoError(t, err)
-
-	val, err := store.Get([]byte("large-sync-key"))
-	require.NoError(t, err)
-	assert.Equal(t, largeValue, val)
-}
-
 // ---------------------------------------------------------------------------
 // Restore - cover more paths
 // ---------------------------------------------------------------------------
@@ -2084,164 +2054,6 @@ func TestNewFileSnapshot_ClosedStorage(t *testing.T) {
 // Snapshot iterator - cover seek and iteration patterns
 // ---------------------------------------------------------------------------
 
-func TestSnapshotIterator_SeekToFirst(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("alpha"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("beta"), []byte("2"))
-	require.NoError(t, err)
-	err = store.Set([]byte("gamma"), []byte("3"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	assert.True(t, iter.SeekToFirst())
-	assert.True(t, iter.Valid())
-	assert.NotEmpty(t, iter.Key())
-}
-
-func TestSnapshotIterator_ReverseIteration(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("a"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("b"), []byte("2"))
-	require.NoError(t, err)
-	err = store.Set([]byte("c"), []byte("3"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	assert.True(t, iter.SeekToFirst())
-
-	// In reverse, should start from last key
-	var keys []string
-	for iter.Valid() {
-		keys = append(keys, string(iter.Key()))
-		if !iter.Next() {
-			break
-		}
-	}
-	assert.NotEmpty(t, keys)
-
-	// Should be in reverse order
-	if len(keys) > 1 {
-		for i := 0; i < len(keys)-1; i++ {
-			assert.GreaterOrEqual(t, keys[i], keys[i+1])
-		}
-	}
-}
-
-func TestSnapshotIterator_SeekToKey(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("aaa"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("bbb"), []byte("2"))
-	require.NoError(t, err)
-	err = store.Set([]byte("ccc"), []byte("3"))
-	require.NoError(t, err)
-	err = store.Set([]byte("ddd"), []byte("4"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	// Seek to "bbb" - should find it
-	found := iter.Seek([]byte("bbb"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("bbb"), iter.Key())
-}
-
-func TestSnapshotIterator_SeekBeyondAll(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("aaa"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("bbb"), []byte("2"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	// Seek beyond all keys
-	found := iter.Seek([]byte("zzz"))
-	assert.False(t, found)
-}
-
-func TestSnapshotIterator_SeekReverseBeyondAll(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("bbb"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("ccc"), []byte("2"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	// Test reverse seek that finds nothing: seek a key that is after all keys
-	// In reverse mode with reversed keys ["ccc", "bbb"], seeking beyond both
-	// would need a key before all keys in original order
-	iter := snap.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	// Seeking exact match
-	found := iter.Seek([]byte("bbb"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("bbb"), iter.Key())
-}
-
-func TestSnapshotIterator_ValueOnClosed(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("key"), []byte("value"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-
-	iter := snap.NewIterator(&storage.IteratorOptions{})
-	iter.SeekToFirst()
-
-	// Close iterator
-	err = iter.Close()
-	require.NoError(t, err)
-
-	// Value should return nil after close
-	assert.Nil(t, iter.Value())
-
-	// Close snapshot
-	err = snap.Close()
-	require.NoError(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // pathToKey - cover error path
 // ---------------------------------------------------------------------------
@@ -2261,11 +2073,6 @@ func TestSnapshotIterator_ValueOnClosed(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Factory Create - cover more paths
 // ---------------------------------------------------------------------------
-
-func TestFactory_BackendType(t *testing.T) {
-	factory := NewFactory(nil, WithCodecType(codec.JSON))
-	assert.Equal(t, "file", factory.BackendType())
-}
 
 // ---------------------------------------------------------------------------
 // Batch operations through Set/Delete
@@ -2325,35 +2132,6 @@ func TestSnapshot_NewIterator_ClosedSnapshot(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Storage iterator - cover bounds
 // ---------------------------------------------------------------------------
-
-func TestIterator_WithBounds(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("aaa"), []byte("1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("bbb"), []byte("2"))
-	require.NoError(t, err)
-	err = store.Set([]byte("ccc"), []byte("3"))
-	require.NoError(t, err)
-	err = store.Set([]byte("ddd"), []byte("4"))
-	require.NoError(t, err)
-
-	iter := store.NewIterator(&storage.IteratorOptions{
-		LowerBound: []byte("bbb"),
-		UpperBound: []byte("ddd"),
-	})
-	defer iter.Close()
-
-	var keys []string
-	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
-		keys = append(keys, string(iter.Key()))
-	}
-
-	assert.Contains(t, keys, "bbb")
-	assert.Contains(t, keys, "ccc")
-	assert.NotContains(t, keys, "aaa")
-}
 
 // ---------------------------------------------------------------------------
 // Restore with read-only target dir (should fail)
@@ -2484,36 +2262,6 @@ func TestNewFileSnapshot_FileDeletedDuringRead(t *testing.T) {
 // Snapshot iterator with LowerBound and UpperBound
 // ---------------------------------------------------------------------------
 
-func TestSnapshotIterator_WithBounds(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	for _, k := range []string{"aa", "bb", "cc", "dd", "ee"} {
-		err := store.Set([]byte(k), []byte("val-"+k))
-		require.NoError(t, err)
-	}
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{
-		LowerBound: []byte("bb"),
-		UpperBound: []byte("dd"),
-	})
-	defer iter.Close()
-
-	var keys []string
-	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
-		keys = append(keys, string(iter.Key()))
-	}
-
-	assert.Contains(t, keys, "bb")
-	assert.Contains(t, keys, "cc")
-	assert.NotContains(t, keys, "aa")
-	assert.NotContains(t, keys, "ee")
-}
-
 // ---------------------------------------------------------------------------
 // New - cover edge case configurations
 // ---------------------------------------------------------------------------
@@ -2599,20 +2347,6 @@ func TestSetUnlocked_AtomicRename(t *testing.T) {
 // setUnlocked - trigger MkdirAll error by making dataDir read-only
 // ---------------------------------------------------------------------------
 
-func TestSetUnlocked_MkdirAllError(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// A regular file where "subdir" needs to be a directory: MkdirAll returns
-	// ENOTDIR, which root cannot walk through, unlike a read-only parent
-	// (testing-guidelines.md, Fault Injection).
-	require.NoError(t, os.WriteFile(filepath.Join(store.config.DataDir, "subdir"), []byte("blocking"), 0o644))
-
-	err := store.Set([]byte("subdir/new-key"), []byte("value"))
-	assert.Error(t, err)
-	assert.ErrorIs(t, err, syscall.ENOTDIR)
-}
-
 // ---------------------------------------------------------------------------
 // Restore - trigger write error path
 // ---------------------------------------------------------------------------
@@ -2620,42 +2354,6 @@ func TestSetUnlocked_MkdirAllError(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Iterator - Seek forward to exact match
 // ---------------------------------------------------------------------------
-
-func TestIterator_SeekExactMatch(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	for _, k := range []string{"apple", "banana", "cherry", "date"} {
-		err := store.Set([]byte(k), []byte("val-"+k))
-		require.NoError(t, err)
-	}
-
-	iter := store.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	// Seek to exact key
-	found := iter.Seek([]byte("banana"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("banana"), iter.Key())
-}
-
-func TestIterator_SeekBetweenKeys(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	for _, k := range []string{"aaa", "ccc", "eee"} {
-		err := store.Set([]byte(k), []byte("val-"+k))
-		require.NoError(t, err)
-	}
-
-	iter := store.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	// Seek to a key between existing keys
-	found := iter.Seek([]byte("bbb"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("ccc"), iter.Key())
-}
 
 // ---------------------------------------------------------------------------
 // Iterator - Reverse Seek
@@ -2682,38 +2380,9 @@ func TestIterator_ReverseSeekExact(t *testing.T) {
 // Snapshot Value with data
 // ---------------------------------------------------------------------------
 
-func TestSnapshotIterator_Value(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("val-key"), []byte("val-data"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	iter := snap.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	iter.SeekToFirst()
-	assert.True(t, iter.Valid())
-	assert.Equal(t, []byte("val-data"), iter.Value())
-}
-
 // ---------------------------------------------------------------------------
 // Factory Create - with nil logger (auto-creates one)
 // ---------------------------------------------------------------------------
-
-func TestFactory_Create_NilLogger(t *testing.T) {
-	factory := NewFactory(nil, WithCodecType(codec.JSON))
-
-	store, err := factory.Create("nil-logger-partition", &PartitionConfig{
-		DataDir: t.TempDir(),
-	})
-	assert.NoError(t, err)
-	assert.NotNil(t, store)
-}
 
 // ---------------------------------------------------------------------------
 // Restore - WalkDir error path (non-existent data dir)
@@ -2838,46 +2507,9 @@ func TestIterator_ReverseSeek_ExactMatchFirstKey(t *testing.T) {
 // TestSnapshotIterator_ReverseSeek_ExactMatchFirstKey tests the reverse
 // Seek path on a snapshot iterator where the target exactly matches the
 // first key in reverse order.
-func TestSnapshotIterator_ReverseSeek_ExactMatchFirstKey(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("aaa"), []byte("v1")))
-	require.NoError(t, store.Set([]byte("bbb"), []byte("v2")))
-	require.NoError(t, store.Set([]byte("ccc"), []byte("v3")))
-
-	snapshot, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snapshot.Close()
-
-	iter := snapshot.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	// In reverse mode, keys are ["ccc", "bbb", "aaa"]
-	// Seek("ccc") should match the first key and return true
-	found := iter.Seek([]byte("ccc"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("ccc"), iter.Key())
-}
 
 // TestSetUnlocked_OpenFileError_DirAtTmpPath tests setUnlocked when the
 // temp file cannot be created because a directory exists at the tmp path.
-func TestSetUnlocked_OpenFileError_DirAtTmpPath(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Create the parent directory for the key
-	keyPath := store.keyToPath([]byte("new-key"))
-	tmpPath := keyPath + ".tmp"
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), store.config.DirPermissions))
-
-	// Create a directory at the tmp path location - OpenFile will fail
-	// because it can't truncate/write over a directory
-	require.NoError(t, os.MkdirAll(tmpPath, 0755))
-
-	err := store.Set([]byte("new-key"), []byte("value"))
-	assert.Error(t, err, "should fail when tmp file path is a directory")
-}
 
 // TestRestore_MkdirAllError tests Restore when creating parent
 // directories for a snapshot entry fails because a file blocks the path.
@@ -3038,54 +2670,6 @@ func TestPathToKey_ValidPath(t *testing.T) {
 // setUnlocked error branches (storage.go:243 -- 65.5% covered)
 // ---------------------------------------------------------------------------
 
-func TestSetUnlocked_ReadOnlyDir(t *testing.T) {
-	tempDir := t.TempDir()
-	readOnlyDir := filepath.Join(tempDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0o755))
-
-	config := DefaultConfig()
-	config.DataDir = readOnlyDir
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	// "nested" is a regular file, so MkdirAll for "nested/deep" returns
-	// ENOTDIR -- for every uid, unlike a read-only data directory
-	// (testing-guidelines.md, Fault Injection).
-	require.NoError(t, os.WriteFile(filepath.Join(readOnlyDir, "nested"), []byte("blocking"), 0o644))
-
-	err = store.Set([]byte("nested/deep/key"), []byte("value"))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, syscall.ENOTDIR)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-}
-
-func TestSetUnlocked_NilValue(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	// Setting nil value should work (empty file)
-	err := store.Set([]byte("nil-val"), nil)
-	require.NoError(t, err)
-
-	val, err := store.Get([]byte("nil-val"))
-	require.NoError(t, err)
-	assert.Empty(t, val)
-}
-
-func TestSetUnlocked_OverwriteExisting(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("key"), []byte("original")))
-	require.NoError(t, store.Set([]byte("key"), []byte("updated")))
-
-	val, err := store.Get([]byte("key"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("updated"), val)
-}
-
 // ---------------------------------------------------------------------------
 // Restore error branches (storage.go:517 -- 76.2% covered)
 // ---------------------------------------------------------------------------
@@ -3123,120 +2707,9 @@ func TestSnapshot_ClosedStorage(t *testing.T) {
 // Snapshot Seek (snapshot.go:195 -- 87.5% covered)
 // ---------------------------------------------------------------------------
 
-func TestSnapshotIterator_SeekExact(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("b"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("b"), it.Key())
-}
-
-func TestSnapshotIterator_SeekBeyondLast(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("zzz"))
-	assert.False(t, found)
-}
-
-func TestSnapshotIterator_SeekEmptySnapshot(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("any"))
-	assert.False(t, found)
-}
-
-func TestSnapshotIterator_SeekReverse(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer it.Close()
-
-	found := it.Seek([]byte("b"))
-	assert.True(t, found)
-}
-
-func TestSnapshotIterator_SeekReverseNoMatch(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("c"), []byte("1")))
-	require.NoError(t, store.Set([]byte("d"), []byte("2")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer it.Close()
-
-	// Seek to value greater than all keys in reverse mode
-	found := it.Seek([]byte("e"))
-	assert.False(t, found)
-}
-
 // ---------------------------------------------------------------------------
 // Snapshot Value (snapshot.go:287 -- 90.0% covered, OnlyKeys branch)
 // ---------------------------------------------------------------------------
-
-func TestSnapshotIterator_ValueOnlyKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("k1"), []byte("v1")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	it := snap.NewIterator(&storage.IteratorOptions{OnlyKeys: true})
-	defer it.Close()
-
-	ok := it.SeekToFirst()
-	require.True(t, ok)
-
-	assert.NotNil(t, it.Key())
-	assert.Nil(t, it.Value()) // OnlyKeys should return nil for Value
-}
 
 func TestSnapshotIterator_ValueInvalidPosition(t *testing.T) {
 	store := createTestStorage(t)
@@ -3256,75 +2729,6 @@ func TestSnapshotIterator_ValueInvalidPosition(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Iterator Seek (iterator.go:132 -- 87.5% covered)
 // ---------------------------------------------------------------------------
-
-func TestIterator_SeekExact(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	it := store.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("b"))
-	assert.True(t, found)
-	assert.Equal(t, []byte("b"), it.Key())
-}
-
-func TestIterator_SeekBeyondLast(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-
-	it := store.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("zzz"))
-	assert.False(t, found)
-}
-
-func TestIterator_SeekEmpty(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	it := store.NewIterator(&storage.IteratorOptions{})
-	defer it.Close()
-
-	found := it.Seek([]byte("any"))
-	assert.False(t, found)
-}
-
-func TestIterator_SeekReverse(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	it := store.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer it.Close()
-
-	found := it.Seek([]byte("b"))
-	assert.True(t, found)
-}
-
-func TestIterator_SeekReverseNoMatch(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("c"), []byte("1")))
-	require.NoError(t, store.Set([]byte("d"), []byte("2")))
-
-	it := store.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer it.Close()
-
-	found := it.Seek([]byte("e"))
-	assert.False(t, found)
-}
 
 // ---------------------------------------------------------------------------
 // Batch Commit edge cases (batch.go:122 -- 93.8% covered)
@@ -3383,56 +2787,6 @@ func TestBatch_CommitWithDeletes(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Factory Create (factory.go:63 -- 86.7% covered)
 // ---------------------------------------------------------------------------
-
-func TestFactory_CreateNilConfig(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	f := NewFactory(log)
-	_, createErr := f.Create("test", nil)
-	require.Error(t, createErr)
-	assert.True(t, errors.IsInvalidInput(createErr))
-}
-
-func TestFactory_CreateEmptyDataDir(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	f := NewFactory(log)
-	_, createErr := f.Create("test", &PartitionConfig{DataDir: ""})
-	require.Error(t, createErr)
-	assert.True(t, errors.IsInvalidInput(createErr))
-}
-
-func TestFactory_CreateSuccess(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	f := NewFactory(log)
-	s, createErr := f.Create("test-partition", &PartitionConfig{DataDir: t.TempDir()})
-	require.NoError(t, createErr)
-	require.NotNil(t, s)
-	require.NoError(t, s.Close())
-}
-
-func TestFactory_CreateWithCodecType(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	f := NewFactory(log, WithCodecType(codec.JSON))
-	s, createErr := f.Create("json-partition", &PartitionConfig{DataDir: t.TempDir()})
-	require.NoError(t, createErr)
-	require.NotNil(t, s)
-	require.NoError(t, s.Close())
-}
-
-func TestFactory_CreateNilLogger(t *testing.T) {
-	f := NewFactory(nil)
-	s, createErr := f.Create("test", &PartitionConfig{DataDir: t.TempDir()})
-	require.NoError(t, createErr)
-	require.NotNil(t, s)
-	require.NoError(t, s.Close())
-}
 
 // ---------------------------------------------------------------------------
 // New (storage.go:101 -- 92.3% covered, default config path)
@@ -3538,48 +2892,9 @@ func TestSnapshot_GetAfterClose(t *testing.T) {
 // Iterator Seek after close
 // ---------------------------------------------------------------------------
 
-func TestIterator_SeekAfterClose(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-
-	it := store.NewIterator(&storage.IteratorOptions{})
-	it.Close()
-
-	found := it.Seek([]byte("a"))
-	assert.False(t, found)
-}
-
-func TestSnapshotIterator_SeekAfterClose(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-
-	it := snap.NewIterator(&storage.IteratorOptions{})
-	it.Close()
-
-	found := it.Seek([]byte("a"))
-	assert.False(t, found)
-
-	snap.Close()
-}
-
 // ---------------------------------------------------------------------------
 // Factory Create with nil logger should auto-create one
 // ---------------------------------------------------------------------------
-
-func TestFactory_CreateAutoLogger(t *testing.T) {
-	f := NewFactory(nil, WithCodecType(codec.JSON))
-	s, err := f.Create("auto-log", &PartitionConfig{DataDir: t.TempDir()})
-	require.NoError(t, err)
-	require.NotNil(t, s)
-	require.NoError(t, s.Close())
-}
 
 // ---------------------------------------------------------------------------
 // newFileSnapshot with unreadable file (snapshot.go:41 -- covers read error path)
@@ -3652,27 +2967,6 @@ func TestNew_InvalidCodecType(t *testing.T) {
 // tmpFile.Close failure, and os.Rename failure branches.
 // -----------------------------------------------------------------------------
 
-func TestSetUnlocked_ClosedStorage_ReturnsError(t *testing.T) {
-	store := createTestStorage(t)
-	require.NoError(t, store.Close())
-
-	err := store.Set([]byte("key"), []byte("value"))
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestSetUnlocked_EmptyKey_ReturnsError(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte{}, []byte("value"))
-
-	require.Error(t, err)
-	assert.True(t, errors.IsInvalidInput(err))
-}
-
 func TestSet_WithSyncWrites_Succeeds(t *testing.T) {
 	tempDir := t.TempDir()
 	config := DefaultConfig()
@@ -3735,43 +3029,6 @@ func TestPathToKey_EmptyStringForInvalidPath(t *testing.T) {
 // -----------------------------------------------------------------------------
 // Iterator Seek in reverse mode (covers iterator.go lines 140-160)
 // -----------------------------------------------------------------------------
-
-func TestIterator_Seek_ReverseExactMatch(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("aaa"), []byte("1")))
-	require.NoError(t, store.Set([]byte("bbb"), []byte("2")))
-	require.NoError(t, store.Set([]byte("ccc"), []byte("3")))
-
-	iter := store.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	// In reverse mode, keys are [ccc, bbb, aaa]
-	found := iter.Seek([]byte("bbb"))
-
-	assert.True(t, found)
-	assert.True(t, iter.Valid())
-}
-
-func TestIterator_Seek_ReverseFirstKey(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("aaa"), []byte("1")))
-	require.NoError(t, store.Set([]byte("bbb"), []byte("2")))
-	require.NoError(t, store.Set([]byte("ccc"), []byte("3")))
-
-	iter := store.NewIterator(&storage.IteratorOptions{Reverse: true})
-	defer iter.Close()
-
-	// In reverse mode, keys are [ccc, bbb, aaa]
-	// Seek to "ccc" (the first element)
-	found := iter.Seek([]byte("ccc"))
-
-	assert.True(t, found)
-	assert.True(t, iter.Valid())
-}
 
 func TestIterator_Seek_ReverseNotFound(t *testing.T) {
 	store := createTestStorage(t)
