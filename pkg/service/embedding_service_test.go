@@ -341,76 +341,46 @@ func TestEmbeddingService_BatchGenerateEmbeddings_Success(t *testing.T) {
 	}
 }
 
-func TestEmbeddingService_BatchGenerateEmbeddings_NilRequest(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), nil)
-	assert.Error(t, err, "nil request must return a validation error, not panic")
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingService_BatchGenerateEmbeddings_EmptyItems(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{},
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "items is required")
-}
-
-func TestEmbeddingService_BatchGenerateEmbeddings_ItemMissingID(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	items := []*BatchEmbeddingItem{
+func TestEmbeddingService_BatchGenerateEmbeddings_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		req         *BatchGenerateEmbeddingsRequest
+		errContains string
+	}{
+		{name: "NilRequest", req: nil},
 		{
-			ID:   "",
-			Text: "Text without ID",
+			name:        "EmptyItems",
+			req:         &BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{}},
+			errContains: "items is required",
+		},
+		{
+			name: "ItemMissingID",
+			req: &BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{
+				{ID: "", Text: "Text without ID"},
+			}},
+			errContains: "id is required",
+		},
+		{
+			name: "ItemMissingText",
+			req: &BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{
+				{ID: "item-1", Text: ""},
+			}},
+			errContains: "text is required",
 		},
 	}
 
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: items,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, _ := createTestManager(t, "openai")
+			svc := NewEmbeddingService(mgr, newMockEmbeddingLogger())
+
+			resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), tt.req)
+
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
 	}
-
-	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "id is required")
-}
-
-func TestEmbeddingService_BatchGenerateEmbeddings_ItemMissingText(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	items := []*BatchEmbeddingItem{
-		{
-			ID:   "item-1",
-			Text: "",
-		},
-	}
-
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: items,
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "text is required")
 }
 
 func TestEmbeddingService_BatchGenerateEmbeddings_ProviderError(t *testing.T) {
@@ -1206,79 +1176,6 @@ func TestEmbeddingSvc_BatchGenerateEmbeddings_Success(t *testing.T) {
 	assert.Equal(t, 2, resp.SuccessCount)
 	assert.Equal(t, 0, resp.ErrorCount)
 	assert.Len(t, resp.Results, 2)
-}
-
-func TestEmbeddingSvc_BatchGenerateEmbeddings_EmptyItems(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{},
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingSvc_BatchGenerateEmbeddings_ItemMissingText(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{
-			{ID: "1", Text: ""},
-		},
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingSvc_BatchGenerateEmbeddings_ItemMissingID(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{
-			{ID: "", Text: "text1"},
-		},
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingSvc_BatchGenerateEmbeddings_ProviderError(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	mockManager.On("EmbedBatch", ctx, []string{"text1"}).Return(nil, embedding.ErrProviderUnavailable)
-
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{
-			{ID: "1", Text: "text1"},
-		},
-	}
-
-	resp, err := svc.BatchGenerateEmbeddings(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestEmbeddingSvc_ListProviders_Success(t *testing.T) {
