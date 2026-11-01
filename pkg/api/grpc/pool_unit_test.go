@@ -111,6 +111,13 @@ func TestPoolOptionsUnit(t *testing.T) {
 		assert.Error(t, err)
 	})
 
+	t.Run("WithMaxConnectionAge negative", func(t *testing.T) {
+		opts := defaultPoolOptions()
+		err := WithMaxConnectionAge(-5 * time.Second)(opts)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "positive")
+	})
+
 	t.Run("WithMaxRequestsPerConn valid", func(t *testing.T) {
 		opts := defaultPoolOptions()
 		err := WithMaxRequestsPerConn(50000)(opts)
@@ -160,34 +167,6 @@ func TestPoolOptionsUnit(t *testing.T) {
 	})
 }
 
-func TestPooledConnAtomic(t *testing.T) {
-	t.Run("atomic operations on pooledConn", func(t *testing.T) {
-		pc := &pooledConn{
-			created: time.Now(),
-		}
-
-		// Test healthy flag
-		pc.healthy.Store(true)
-		assert.True(t, pc.healthy.Load())
-		pc.healthy.Store(false)
-		assert.False(t, pc.healthy.Load())
-
-		// Test inUse flag
-		pc.inUse.Store(true)
-		assert.True(t, pc.inUse.Load())
-		pc.inUse.Store(false)
-		assert.False(t, pc.inUse.Load())
-
-		// Test requests counter
-		pc.requests.Store(0)
-		assert.Equal(t, uint64(0), pc.requests.Load())
-		pc.requests.Add(1)
-		assert.Equal(t, uint64(1), pc.requests.Load())
-		pc.requests.Add(100)
-		assert.Equal(t, uint64(101), pc.requests.Load())
-	})
-}
-
 func TestPoolMetricsUnit(t *testing.T) {
 	t.Run("create pool metrics", func(t *testing.T) {
 		m := newPoolMetrics("localhost:50051")
@@ -215,56 +194,6 @@ func TestDefaultPoolOptions(t *testing.T) {
 		assert.Equal(t, 30*time.Second, opts.healthCheck)
 		assert.True(t, opts.warmupConns) // Default is true
 		assert.NotNil(t, opts.clientOpts)
-	})
-}
-
-func TestPoolUpdateMetrics(t *testing.T) {
-	t.Run("update metrics with empty pool", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns:   make([]*pooledConn, 0),
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Should not panic
-		pool.updateMetrics()
-	})
-
-	t.Run("update metrics with connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Set some connection states
-		pool.conns[0].inUse.Store(true)
-		pool.conns[0].healthy.Store(true)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[1].healthy.Store(true)
-
-		// Should not panic
-		pool.updateMetrics()
-	})
-
-	t.Run("update metrics with unhealthy connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("localhost:50051"),
-		}
-
-		// Mark first connection as unhealthy
-		pool.conns[0].inUse.Store(false)
-		pool.conns[0].healthy.Store(false)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[1].healthy.Store(true)
-
-		// Should not panic
-		pool.updateMetrics()
 	})
 }
 
@@ -486,28 +415,6 @@ func TestConnectionPool_NeedsRecycling(t *testing.T) {
 // Pool Options Coverage
 // =============================================================================
 
-func TestPool91_DefaultPoolOptions(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultPoolOptions()
-	assert.Equal(t, 5, opts.minSize)
-	assert.Equal(t, 20, opts.maxSize)
-	assert.Equal(t, 30*time.Minute, opts.maxAge)
-	assert.Equal(t, uint64(100000), opts.maxRequests)
-	assert.Equal(t, 30*time.Second, opts.healthCheck)
-	assert.True(t, opts.warmupConns)
-	assert.NotNil(t, opts.clientOpts)
-}
-
-func TestPool91_WithMaxConnectionAge_Negative(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultPoolOptions()
-	err := WithMaxConnectionAge(-5 * time.Second)(opts)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "positive")
-}
-
 // =============================================================================
 // Backup Client Adapter Coverage
 // =============================================================================
@@ -657,74 +564,6 @@ func TestBackup91_BackupListRequest_Pagination(t *testing.T) {
 // =============================================================================
 // Pool Metrics Coverage
 // =============================================================================
-
-func TestPool91_PoolMetrics_Creation(t *testing.T) {
-	t.Parallel()
-
-	m := newPoolMetrics("test-address:9090")
-	assert.NotNil(t, m)
-	assert.NotNil(t, m.poolSize)
-	assert.NotNil(t, m.activeConns)
-	assert.NotNil(t, m.idleConns)
-	assert.NotNil(t, m.totalRequests)
-	assert.NotNil(t, m.connectionReuse)
-	assert.NotNil(t, m.connectionCreated)
-	assert.NotNil(t, m.connectionRecycled)
-	assert.NotNil(t, m.healthChecksFailed)
-	assert.NotNil(t, m.getLatency)
-}
-
-func TestPool91_PoolMetrics_Operations(t *testing.T) {
-	t.Parallel()
-
-	m := newPoolMetrics("test-address:9090")
-
-	// Test gauge operations
-	m.poolSize.Set(10)
-	m.activeConns.Set(5)
-	m.idleConns.Set(5)
-
-	// Test counter operations
-	m.totalRequests.Inc()
-	m.connectionReuse.Inc()
-	m.connectionCreated.Inc()
-	m.connectionRecycled.Inc()
-	m.healthChecksFailed.Inc()
-
-	// Test histogram operations
-	m.getLatency.Observe(0.001)
-	m.getLatency.Observe(0.005)
-}
-
-func TestPool91_PooledConn_AtomicOperations(t *testing.T) {
-	t.Parallel()
-
-	pc := &pooledConn{
-		created: time.Now(),
-	}
-
-	// Test healthy flag toggling
-	pc.healthy.Store(true)
-	assert.True(t, pc.healthy.Load())
-	old := pc.healthy.Swap(false)
-	assert.True(t, old)
-	assert.False(t, pc.healthy.Load())
-
-	// Test inUse flag
-	pc.inUse.Store(true)
-	assert.True(t, pc.inUse.Load())
-	pc.inUse.Store(false)
-	assert.False(t, pc.inUse.Load())
-
-	// Test requests counter
-	pc.requests.Store(0)
-	pc.requests.Add(1)
-	pc.requests.Add(10)
-	assert.Equal(t, uint64(11), pc.requests.Load())
-
-	// Test created timestamp
-	assert.False(t, pc.created.IsZero())
-}
 
 func TestPool91_UpdateMetrics_MixedStates(t *testing.T) {
 	t.Parallel()
