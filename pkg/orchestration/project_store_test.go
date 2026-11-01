@@ -312,50 +312,24 @@ func TestProjectStore_Create_DuplicateID(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Create_NilProject(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Create(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil project, got nil")
+func TestProjectStore_Create_Invalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		project *Project
+	}{
+		{"nil project", nil},
+		{"empty ID", newTestProject("", "tenant-1", "name")},
+		{"empty tenantID", newTestProject("id-1", "", "name")},
+		{"empty name", newTestProject("id-1", "tenant-1", "")},
 	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Create_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("", "tenant-1", "name")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty ID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
-func TestProjectStore_Create_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("id-1", "", "name")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
-func TestProjectStore_Create_EmptyName(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("id-1", "tenant-1", "")
-	err := store.Create(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewInMemoryProjectStore()
+			err := store.Create(context.Background(), tt.project)
+			if !errors.Is(err, ErrProjectInvalid) {
+				t.Errorf("expected ErrProjectInvalid, got %v", err)
+			}
+		})
 	}
 }
 
@@ -381,25 +355,55 @@ func TestProjectStore_Get_HappyPath(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Get_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "tenant-1", "missing-id")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
+// TestProjectStore_ArgumentAndNotFoundErrors drives each method with an
+// invalid argument or an absent record and checks the typed error it returns.
+func TestProjectStore_ArgumentAndNotFoundErrors(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(s ProjectStore) error
+		want error
+	}{
+		{"Get not found", func(s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "missing-id")
+			return err
+		}, ErrProjectNotFound},
+		{"Get empty tenantID", func(s ProjectStore) error {
+			_, err := s.Get(ctx, "", "id-1")
+			return err
+		}, ErrProjectInvalid},
+		{"GetByName not found", func(s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "ghost")
+			return err
+		}, ErrProjectNotFound},
+		{"GetByName empty name", func(s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "")
+			return err
+		}, ErrProjectInvalid},
+		{"Update not found", func(s ProjectStore) error {
+			return s.Update(ctx, newTestProject("ghost", "tenant-1", "ghost"))
+		}, ErrProjectNotFound},
+		{"Update nil project", func(s ProjectStore) error {
+			return s.Update(ctx, nil)
+		}, ErrProjectInvalid},
+		{"Delete not found", func(s ProjectStore) error {
+			return s.Delete(ctx, "tenant-1", "ghost")
+		}, ErrProjectNotFound},
+		{"Delete empty ID", func(s ProjectStore) error {
+			return s.Delete(ctx, "tenant-1", "")
+		}, ErrProjectInvalid},
+		{"ListByTenant empty tenantID", func(s ProjectStore) error {
+			_, err := s.ListByTenant(ctx, "")
+			return err
+		}, ErrProjectInvalid},
 	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Get_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.Get(context.Background(), "", "id-1")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(NewInMemoryProjectStore())
+			if !errors.Is(err, tt.want) {
+				t.Errorf("expected %v, got %T: %v", tt.want, err, err)
+			}
+		})
 	}
 }
 
@@ -445,28 +449,6 @@ func TestProjectStore_GetByName_HappyPath(t *testing.T) {
 	}
 	if got.ID != "id-1" {
 		t.Errorf("expected ID 'id-1', got %q", got.ID)
-	}
-}
-
-func TestProjectStore_GetByName_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "tenant-1", "ghost")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_GetByName_EmptyName(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.GetByName(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
 	}
 }
 
@@ -587,29 +569,6 @@ func TestProjectStore_Update_EmptyNameKeepsCurrentName(t *testing.T) {
 	}
 }
 
-func TestProjectStore_Update_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	p := newTestProject("ghost", "tenant-1", "ghost")
-	err := store.Update(context.Background(), p)
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Update_NilProject(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Update(context.Background(), nil)
-	if err == nil {
-		t.Fatal("expected error for nil project")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
-	}
-}
-
 // =============================================================================
 // Delete
 // =============================================================================
@@ -635,28 +594,6 @@ func TestProjectStore_Delete_HappyPath(t *testing.T) {
 	// The name must be free for reuse.
 	if err := store.Create(ctx, newTestProject("id-2", "tenant-1", "to-delete")); err != nil {
 		t.Fatalf("name must be released by delete: %v", err)
-	}
-}
-
-func TestProjectStore_Delete_NotFound(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Delete(context.Background(), "tenant-1", "ghost")
-	if err == nil {
-		t.Fatal("expected not-found error, got nil")
-	}
-	if !errors.Is(err, ErrProjectNotFound) {
-		t.Errorf("expected ErrProjectNotFound, got %T: %v", err, err)
-	}
-}
-
-func TestProjectStore_Delete_EmptyID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	err := store.Delete(context.Background(), "tenant-1", "")
-	if err == nil {
-		t.Fatal("expected error for empty ID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
 	}
 }
 
@@ -686,17 +623,6 @@ func TestProjectStore_ListByTenant_HappyPath(t *testing.T) {
 	}
 	if len(projects) != 3 {
 		t.Errorf("expected 3 projects, got %d", len(projects))
-	}
-}
-
-func TestProjectStore_ListByTenant_EmptyTenantID(t *testing.T) {
-	store := NewInMemoryProjectStore()
-	_, err := store.ListByTenant(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-	if !errors.Is(err, ErrProjectInvalid) {
-		t.Errorf("expected ErrProjectInvalid, got %v", err)
 	}
 }
 
