@@ -251,43 +251,6 @@ func TestClient_PutObject_Validation(t *testing.T) {
 	}
 }
 
-func TestClient_PutObject_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("transport", "connection failed")
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.PutObject(ctx, &PutObjectRequest{Key: "test:key", Value: []byte("value")})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_PutObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.PutObject(ctx, &PutObjectRequest{Key: "test:key", Value: []byte("value")})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 // =============================================================================
 // GetObject Tests
 // =============================================================================
@@ -353,24 +316,6 @@ func TestClient_GetObject_Validation(t *testing.T) {
 				t.Errorf("GetObject() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestClient_GetObject_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.GetObject(ctx, &GetObjectRequest{Key: "nonexistent"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
 	}
 }
 
@@ -441,25 +386,6 @@ func TestClient_DeleteObject_Validation(t *testing.T) {
 	}
 }
 
-func TestClient_DeleteObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.DeleteObject(ctx, &DeleteObjectRequest{Key: "test:key"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 // =============================================================================
 // HeadObject Tests
 // =============================================================================
@@ -489,28 +415,6 @@ func TestClient_HeadObject_Success(t *testing.T) {
 	}
 	if !resp.Exists {
 		t.Error("expected exists to be true")
-	}
-}
-
-func TestClient_HeadObject_NotExists(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.HeadObject(ctx, &HeadObjectRequest{Key: "nonexistent"})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if resp.Exists {
-		t.Error("expected exists to be false")
 	}
 }
 
@@ -584,28 +488,6 @@ func TestClient_ListObjects_Success(t *testing.T) {
 	}
 }
 
-func TestClient_ListObjects_EmptyResult(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.ListObjects(ctx, &ListObjectsRequest{})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Objects) != 0 {
-		t.Errorf("expected 0 objects, got %d", len(resp.Objects))
-	}
-}
-
 func TestClient_ListObjects_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -656,28 +538,6 @@ func TestClient_ListByTag_Success(t *testing.T) {
 	}
 	if len(resp.Objects) != 1 {
 		t.Errorf("expected 1 object, got %d", len(resp.Objects))
-	}
-}
-
-func TestClient_ListByTag_EmptyResult(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.ListByTag(ctx, &ListByTagRequest{TagName: "env"})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Objects) != 0 {
-		t.Errorf("expected 0 objects, got %d", len(resp.Objects))
 	}
 }
 
@@ -742,28 +602,6 @@ func TestClient_ListByTenant_Success(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
-	}
-}
-
-func TestClient_ListByTenant_EmptyResult(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.ListByTenant(ctx, &ListByTenantRequest{TenantID: "tenant-123"})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Objects) != 0 {
-		t.Errorf("expected 0 objects, got %d", len(resp.Objects))
 	}
 }
 
@@ -834,25 +672,6 @@ func TestClient_CopyObject_Success(t *testing.T) {
 	}
 	if resp.Key != "dest:key" {
 		t.Errorf("expected key %q, got %q", "dest:key", resp.Key)
-	}
-}
-
-func TestClient_CopyObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.CopyObject(ctx, &CopyObjectRequest{SourceKey: "s", DestinationKey: "d"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -936,25 +755,6 @@ func TestClient_ReplicateObject_Success(t *testing.T) {
 	}
 }
 
-func TestClient_ReplicateObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.ReplicateObject(ctx, &ReplicateObjectRequest{Key: "k", Targets: []string{"t"}})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 func TestClient_ReplicateObject_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1029,25 +829,6 @@ func TestClient_MigrateObject_Success(t *testing.T) {
 	}
 	if !resp.Success {
 		t.Error("expected success to be true")
-	}
-}
-
-func TestClient_MigrateObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.MigrateObject(ctx, &MigrateObjectRequest{Key: "k", TargetBackend: "t"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -1128,25 +909,6 @@ func TestClient_ArchiveObject_Success(t *testing.T) {
 	}
 }
 
-func TestClient_ArchiveObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.ArchiveObject(ctx, &ArchiveObjectRequest{Key: "k"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 func TestClient_ArchiveObject_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1217,25 +979,6 @@ func TestClient_RestoreObject_Success(t *testing.T) {
 	}
 }
 
-func TestClient_RestoreObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.RestoreObject(ctx, &RestoreObjectRequest{Key: "k"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 func TestClient_RestoreObject_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1302,25 +1045,6 @@ func TestClient_VerifyObject_Success(t *testing.T) {
 	}
 	if !resp.Valid {
 		t.Error("expected valid to be true")
-	}
-}
-
-func TestClient_VerifyObject_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.VerifyObject(ctx, &VerifyObjectRequest{Key: "k"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -1396,25 +1120,6 @@ func TestClient_SetObjectPolicy_Success(t *testing.T) {
 	}
 }
 
-func TestClient_SetObjectPolicy_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.SetObjectPolicy(ctx, &SetObjectPolicyRequest{Key: "k"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
-	}
-}
-
 func TestClient_SetObjectPolicy_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1480,24 +1185,6 @@ func TestClient_GetObjectPolicy_Success(t *testing.T) {
 	}
 	if resp.ReplicationPolicy == nil {
 		t.Error("expected replication policy to be set")
-	}
-}
-
-func TestClient_GetObjectPolicy_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.GetObjectPolicy(ctx, &GetObjectPolicyRequest{Key: "nonexistent"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
 	}
 }
 
@@ -1568,28 +1255,6 @@ func TestClient_ListBackends_Success(t *testing.T) {
 	}
 }
 
-func TestClient_ListBackends_Empty(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.ListBackends(ctx, &ListBackendsRequest{})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Backends) != 0 {
-		t.Errorf("expected 0 backends, got %d", len(resp.Backends))
-	}
-}
-
 func TestClient_ListBackends_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1640,24 +1305,6 @@ func TestClient_GetBackendHealth_Success(t *testing.T) {
 	}
 	if !resp.Healthy {
 		t.Error("expected healthy to be true")
-	}
-}
-
-func TestClient_GetBackendHealth_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.GetBackendHealth(ctx, &GetBackendHealthRequest{Name: "nonexistent"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
 	}
 }
 
@@ -1726,24 +1373,6 @@ func TestClient_GetTenantUsage_Success(t *testing.T) {
 	}
 	if resp.ObjectCount != 1000 {
 		t.Errorf("expected object count 1000, got %d", resp.ObjectCount)
-	}
-}
-
-func TestClient_GetTenantUsage_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.GetTenantUsage(ctx, &GetTenantUsageRequest{TenantID: "nonexistent"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
 	}
 }
 
@@ -1816,24 +1445,6 @@ func TestClient_GetTenantQuotas_Success(t *testing.T) {
 	}
 }
 
-func TestClient_GetTenantQuotas_NotFound(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.GetTenantQuotas(ctx, &GetTenantQuotasRequest{TenantID: "nonexistent"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound error, got %v", err)
-	}
-}
-
 func TestClient_GetTenantQuotas_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -1901,25 +1512,6 @@ func TestClient_SetTenantQuotas_Success(t *testing.T) {
 	}
 	if resp.TenantID != "tenant-123" {
 		t.Errorf("expected tenant ID %q, got %q", "tenant-123", resp.TenantID)
-	}
-}
-
-func TestClient_SetTenantQuotas_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.SetTenantQuotas(ctx, &SetTenantQuotasRequest{TenantID: "t"})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -2015,27 +1607,6 @@ func TestClient_BatchPutObjects_Success(t *testing.T) {
 	}
 	if resp.Succeeded != 2 {
 		t.Errorf("expected 2 succeeded, got %d", resp.Succeeded)
-	}
-}
-
-func TestClient_BatchPutObjects_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.BatchPutObjects(ctx, &BatchPutObjectsRequest{
-		Objects: []*PutObjectRequest{{Key: "k", Value: []byte("v")}},
-	})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -2148,28 +1719,6 @@ func TestClient_BatchGetObjects_Success(t *testing.T) {
 	}
 }
 
-func TestClient_BatchGetObjects_EmptyResult(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := client.BatchGetObjects(ctx, &BatchGetObjectsRequest{Keys: []string{"k"}})
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if resp == nil {
-		t.Fatal("expected non-nil response")
-	}
-	if len(resp.Objects) != 0 {
-		t.Errorf("expected 0 objects, got %d", len(resp.Objects))
-	}
-}
-
 func TestClient_BatchGetObjects_Validation(t *testing.T) {
 	client := NewClient(validResponseMock())
 	ctx := context.Background()
@@ -2257,25 +1806,6 @@ func TestClient_BatchDeleteObjects_Success(t *testing.T) {
 	}
 	if len(resp.DeletedKeys) != 2 {
 		t.Errorf("expected 2 deleted keys, got %d", len(resp.DeletedKeys))
-	}
-}
-
-func TestClient_BatchDeleteObjects_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	client := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := client.BatchDeleteObjects(ctx, &BatchDeleteObjectsRequest{Keys: []string{"k"}})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-	code := errors.Code(err)
-	if code != errors.CodeInternal {
-		t.Errorf("expected Internal error code, got %v", code)
 	}
 }
 
@@ -2961,6 +2491,248 @@ func TestClient_InvalidResponseType(t *testing.T) {
 	}
 }
 
+// TestClient_NilResponseError covers the methods for which a nil transport
+// response is an error: writes report Internal, lookups report NotFound.
+func TestClient_NilResponseError(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	client := NewClient(mockT)
+	ctx := context.Background()
+
+	isInternal := func(err error) bool { return errors.Code(err) == errors.CodeInternal }
+
+	tests := []struct {
+		name    string
+		fn      func() error
+		wantErr func(error) bool
+	}{
+		{
+			name: "PutObject",
+			fn: func() error {
+				_, err := client.PutObject(ctx, &PutObjectRequest{Key: "k", Value: []byte("v")})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "GetObject",
+			fn: func() error {
+				_, err := client.GetObject(ctx, &GetObjectRequest{Key: "k"})
+				return err
+			},
+			wantErr: errors.IsNotFound,
+		},
+		{
+			name: "DeleteObject",
+			fn: func() error {
+				_, err := client.DeleteObject(ctx, &DeleteObjectRequest{Key: "k"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "CopyObject",
+			fn: func() error {
+				_, err := client.CopyObject(ctx, &CopyObjectRequest{SourceKey: "s", DestinationKey: "d"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "ReplicateObject",
+			fn: func() error {
+				_, err := client.ReplicateObject(ctx, &ReplicateObjectRequest{Key: "k", Targets: []string{"t"}})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "MigrateObject",
+			fn: func() error {
+				_, err := client.MigrateObject(ctx, &MigrateObjectRequest{Key: "k", TargetBackend: "t"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "ArchiveObject",
+			fn: func() error {
+				_, err := client.ArchiveObject(ctx, &ArchiveObjectRequest{Key: "k"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "RestoreObject",
+			fn: func() error {
+				_, err := client.RestoreObject(ctx, &RestoreObjectRequest{Key: "k"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "VerifyObject",
+			fn: func() error {
+				_, err := client.VerifyObject(ctx, &VerifyObjectRequest{Key: "k"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "SetObjectPolicy",
+			fn: func() error {
+				_, err := client.SetObjectPolicy(ctx, &SetObjectPolicyRequest{Key: "k"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "GetObjectPolicy",
+			fn: func() error {
+				_, err := client.GetObjectPolicy(ctx, &GetObjectPolicyRequest{Key: "k"})
+				return err
+			},
+			wantErr: errors.IsNotFound,
+		},
+		{
+			name: "GetBackendHealth",
+			fn: func() error {
+				_, err := client.GetBackendHealth(ctx, &GetBackendHealthRequest{Name: "n"})
+				return err
+			},
+			wantErr: errors.IsNotFound,
+		},
+		{
+			name: "GetTenantUsage",
+			fn: func() error {
+				_, err := client.GetTenantUsage(ctx, &GetTenantUsageRequest{TenantID: "t"})
+				return err
+			},
+			wantErr: errors.IsNotFound,
+		},
+		{
+			name: "GetTenantQuotas",
+			fn: func() error {
+				_, err := client.GetTenantQuotas(ctx, &GetTenantQuotasRequest{TenantID: "t"})
+				return err
+			},
+			wantErr: errors.IsNotFound,
+		},
+		{
+			name: "SetTenantQuotas",
+			fn: func() error {
+				_, err := client.SetTenantQuotas(ctx, &SetTenantQuotasRequest{TenantID: "t"})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "BatchPutObjects",
+			fn: func() error {
+				_, err := client.BatchPutObjects(ctx, &BatchPutObjectsRequest{Objects: []*PutObjectRequest{{Key: "k", Value: []byte("v")}}})
+				return err
+			},
+			wantErr: isInternal,
+		},
+		{
+			name: "BatchDeleteObjects",
+			fn: func() error {
+				_, err := client.BatchDeleteObjects(ctx, &BatchDeleteObjectsRequest{Keys: []string{"k"}})
+				return err
+			},
+			wantErr: isInternal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.fn()
+			if err == nil {
+				t.Fatal("expected error for nil response")
+			}
+			if !tt.wantErr(err) {
+				t.Errorf("unexpected error kind: %v", err)
+			}
+		})
+	}
+}
+
+// TestClient_NilResponseEmptyResult covers the methods for which a nil
+// transport response means an empty result rather than an error.
+func TestClient_NilResponseEmptyResult(t *testing.T) {
+	mockT := &mockTransport{
+		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+			return nil, nil
+		},
+	}
+	client := NewClient(mockT)
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		// fn reports whether the method returned a non-nil, empty result.
+		fn func() (bool, error)
+	}{
+		{
+			name: "HeadObject",
+			fn: func() (bool, error) {
+				resp, err := client.HeadObject(ctx, &HeadObjectRequest{Key: "k"})
+				return resp != nil && !resp.Exists, err
+			},
+		},
+		{
+			name: "ListObjects",
+			fn: func() (bool, error) {
+				resp, err := client.ListObjects(ctx, &ListObjectsRequest{})
+				return resp != nil && len(resp.Objects) == 0, err
+			},
+		},
+		{
+			name: "ListByTag",
+			fn: func() (bool, error) {
+				resp, err := client.ListByTag(ctx, &ListByTagRequest{TagName: "t"})
+				return resp != nil && len(resp.Objects) == 0, err
+			},
+		},
+		{
+			name: "ListByTenant",
+			fn: func() (bool, error) {
+				resp, err := client.ListByTenant(ctx, &ListByTenantRequest{TenantID: "t"})
+				return resp != nil && len(resp.Objects) == 0, err
+			},
+		},
+		{
+			name: "ListBackends",
+			fn: func() (bool, error) {
+				resp, err := client.ListBackends(ctx, &ListBackendsRequest{})
+				return resp != nil && len(resp.Backends) == 0, err
+			},
+		},
+		{
+			name: "BatchGetObjects",
+			fn: func() (bool, error) {
+				resp, err := client.BatchGetObjects(ctx, &BatchGetObjectsRequest{Keys: []string{"k"}})
+				return resp != nil && len(resp.Objects) == 0, err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			empty, err := tt.fn()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !empty {
+				t.Error("expected a non-nil, empty result")
+			}
+		})
+	}
+}
+
 // =============================================================================
 // Transport Error Tests
 // =============================================================================
@@ -2979,6 +2751,13 @@ func TestClient_TransportErrors(t *testing.T) {
 		name string
 		fn   func() error
 	}{
+		{
+			name: "PutObject",
+			fn: func() error {
+				_, err := client.PutObject(ctx, &PutObjectRequest{Key: "k", Value: []byte("v")})
+				return err
+			},
+		},
 		{
 			name: "GetObject",
 			fn: func() error {
