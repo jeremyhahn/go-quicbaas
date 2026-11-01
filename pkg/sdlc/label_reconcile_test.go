@@ -1022,10 +1022,14 @@ func TestLabelReconciler_ReadmittedTaskHasItsParkLabelCleared(t *testing.T) {
 	}
 
 	// AND IT IS IDEMPOTENT: with the trigger and nothing else owned, the
-	// issue agrees.
+	// issue agrees and nothing more is written.
+	writes := len(rig.forge.labelAdds) + len(rig.forge.labelRemovals)
 	second := only(t, rig.sweep(t))
 	if second.Verdict != LabelReconcileConsistent {
 		t.Fatalf("second sweep verdict = %q (%s), want consistent", second.Verdict, second.Evidence)
+	}
+	if got := len(rig.forge.labelAdds) + len(rig.forge.labelRemovals); got != writes {
+		t.Fatalf("a clean issue was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
 	}
 }
 
@@ -1105,21 +1109,6 @@ func TestLabelReconciler_HandoversAndReadmissionsCannotBothFire(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent is the healthy
-// state: the readmission's label move landed, so the issue carries the trigger
-// and nothing else this module owns, and there is nothing to do.
-func TestLabelReconciler_ReadmittedTaskWithACleanIssueIsConsistent(t *testing.T) {
-	rig := newReconcileRig(t, []string{"bug", "task:ready"}, readmittedTask())
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileConsistent {
-		t.Fatalf("verdict = %q (%s), want consistent", finding.Verdict, finding.Evidence)
-	}
-	if len(rig.forge.labelAdds)+len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("a clean issue was written to: +%v -%v", rig.forge.labelAdds, rig.forge.labelRemovals)
-	}
-}
-
 // TestLabelReconciler_ReadmittedTaskAlreadyRestartedIsTheClaimDirections is the
 // boundary between two directions: once the next attempt has started and
 // labelled the issue in progress, the issue claims live work and the claim
@@ -1165,48 +1154,45 @@ func TestLabelReconciler_ReadmissionReparkedMidPassIsNotCleared(t *testing.T) {
 	}
 }
 
-// TestLabelReconciler_ReadmissionDefersWhenTheForgeRefuses is the error path:
-// both reads are fail-closed and the label write is retried next sweep.
-func TestLabelReconciler_ReadmissionDefersWhenTheForgeRefuses(t *testing.T) {
-	for name, arm := range map[string]func(*reconcileRig){
-		"issue unreadable": func(r *reconcileRig) { r.forge.getIssueErr = errors.New("forge down") },
-		"label write":      func(r *reconcileRig) { r.forge.removeLabelErr = errors.New("forge down") },
+// TestLabelReconciler_ReadmissionDefers is the error path: both reads (the
+// issue and the record, the freshness guard) are fail-closed and the label
+// write is retried next sweep.
+func TestLabelReconciler_ReadmissionDefers(t *testing.T) {
+	for name, tc := range map[string]struct {
+		arm      func(*reconcileRig, *firstStepPacer)
+		evidence string
+	}{
+		"issue unreadable": {
+			arm:      func(r *reconcileRig, _ *firstStepPacer) { r.forge.getIssueErr = errors.New("forge down") },
+			evidence: "forge down",
+		},
+		"label write": {
+			arm:      func(r *reconcileRig, _ *firstStepPacer) { r.forge.removeLabelErr = errors.New("forge down") },
+			evidence: "forge down",
+		},
+		"record unreadable": {
+			arm: func(r *reconcileRig, p *firstStepPacer) {
+				p.act = func() { r.tasks.failListing(errors.New("store unreachable")) }
+			},
+			evidence: ErrLabelReconcileRecord.Error(),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rig := newReconcileRig(t, []string{"factory:blocked"}, readmittedTask())
-			arm(rig)
+			pacer := &firstStepPacer{}
+			rig := newReconcileRigPaced(t, pacer, []string{"factory:blocked"}, readmittedTask())
+			tc.arm(rig, pacer)
 
 			finding := only(t, rig.sweep(t))
 			if finding.Verdict != LabelReconcileDeferred {
 				t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
 			}
-			if !strings.Contains(finding.Evidence, "forge down") {
-				t.Fatalf("the evidence does not carry the cause: %s", finding.Evidence)
+			if !strings.Contains(finding.Evidence, tc.evidence) {
+				t.Fatalf("the evidence does not carry %q: %s", tc.evidence, finding.Evidence)
 			}
 			if got := rig.forge.issueLabels(reconcileIssue); !hasAll(got, []string{"factory:blocked"}) {
 				t.Fatalf("labels = %v, want the issue untouched", got)
 			}
 		})
-	}
-}
-
-// TestLabelReconciler_ReadmissionDefersWhenTheRecordCannotBeReRead is the
-// fail-closed half of the freshness guard: an unreadable record is not evidence
-// that a readmission still stands.
-func TestLabelReconciler_ReadmissionDefersWhenTheRecordCannotBeReRead(t *testing.T) {
-	pacer := &firstStepPacer{}
-	rig := newReconcileRigPaced(t, pacer, []string{"factory:blocked"}, readmittedTask())
-	pacer.act = func() { rig.tasks.failListing(errors.New("store unreachable")) }
-
-	finding := only(t, rig.sweep(t))
-	if finding.Verdict != LabelReconcileDeferred {
-		t.Fatalf("verdict = %q (%s), want deferred", finding.Verdict, finding.Evidence)
-	}
-	if !strings.Contains(finding.Evidence, ErrLabelReconcileRecord.Error()) {
-		t.Fatalf("the evidence does not carry the record sentinel: %s", finding.Evidence)
-	}
-	if len(rig.forge.labelRemovals) != 0 {
-		t.Fatalf("an unreadable record still wrote: -%v", rig.forge.labelRemovals)
 	}
 }
 
