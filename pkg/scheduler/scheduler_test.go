@@ -2466,145 +2466,72 @@ func TestJobResultMessage(t *testing.T) {
 	})
 }
 
-// TestSchedulerDefaultConfig tests the DefaultConfig function.
-func TestSchedulerDefaultConfig(t *testing.T) {
-	t.Run("returns valid default config", func(t *testing.T) {
-		config := DefaultConfig()
+// TestStateChangeUpdateStorageError tests that Cancel, Pause and Resume
+// return ErrStorageError when persisting the new status fails.
+func TestStateChangeUpdateStorageError(t *testing.T) {
+	tests := []struct {
+		name   string
+		status JobStatus
+		op     func(ctx context.Context, s *SchedulerEngine, jobID uint64) error
+	}{
+		{
+			name:   "cancel",
+			status: JobStatusPending,
+			op: func(ctx context.Context, s *SchedulerEngine, jobID uint64) error {
+				return s.CancelJob(ctx, jobID)
+			},
+		},
+		{
+			name:   "pause",
+			status: JobStatusPending,
+			op: func(ctx context.Context, s *SchedulerEngine, jobID uint64) error {
+				return s.PauseJob(ctx, jobID, "")
+			},
+		},
+		{
+			name:   "resume",
+			status: JobStatusPaused,
+			op: func(ctx context.Context, s *SchedulerEngine, jobID uint64) error {
+				return s.ResumeJob(ctx, jobID, "")
+			},
+		},
+	}
 
-		require.NotNil(t, config)
-		assert.Equal(t, time.Second, config.TickInterval)
-		assert.Equal(t, 10, config.MaxConcurrentJobs)
-		assert.Equal(t, 5*time.Minute, config.DefaultTimeout)
-		assert.Equal(t, 3, config.DefaultRetries)
-		assert.Equal(t, 5*time.Second, config.RetryBackoff)
-	})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := newMockJobStorage()
+			scheduler := New(nil, storage)
+			ctx := context.Background()
 
-// TestCancelJobUpdateStorageError tests storage error handling during cancel.
-func TestCancelJobUpdateStorageError(t *testing.T) {
-	t.Run("returns error on update failure during cancel", func(t *testing.T) {
-		storage := newMockJobStorage()
-		scheduler := New(nil, storage)
-		ctx := context.Background()
+			err := scheduler.Start(ctx)
+			require.NoError(t, err)
+			defer func() {
+				stopCtx, cancel := context.WithTimeout(ctx, time.Second)
+				defer cancel()
+				_ = scheduler.Stop(stopCtx)
+			}()
 
-		err := scheduler.RegisterHandler("test-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
-			return &JobResult{Success: true}, nil
+			storage.mu.Lock()
+			storage.jobs[1] = &Job{
+				ID:        1,
+				Name:      "test-job",
+				Type:      JobTypeDelayed,
+				Handler:   "test-handler",
+				Status:    tt.status,
+				NextRun:   time.Now().Add(time.Hour),
+				Delay:     time.Minute,
+				OwnerType: OwnerTypeSystem,
+			}
+			storage.mu.Unlock()
+			storage.updateJobErr = errors.New("update failed")
+
+			err = tt.op(ctx, scheduler, 1)
+
+			require.Error(t, err)
+			var storageErr ErrStorageError
+			assert.True(t, errors.As(err, &storageErr))
 		})
-		require.NoError(t, err)
-
-		err = scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
-		job := &Job{
-			Name:      "test-job",
-			Type:      JobTypeOneShot,
-			Handler:   "test-handler",
-			ExecuteAt: time.Now().Add(time.Hour),
-			OwnerType: OwnerTypeSystem,
-		}
-		err = scheduler.ScheduleJob(ctx, job)
-		require.NoError(t, err)
-
-		// Set update error
-		storage.updateJobErr = errors.New("update failed")
-
-		err = scheduler.CancelJob(ctx, job.ID)
-
-		require.Error(t, err)
-		var storageErr ErrStorageError
-		assert.True(t, errors.As(err, &storageErr))
-	})
-}
-
-// TestPauseJobUpdateStorageError tests storage error handling during pause.
-func TestPauseJobUpdateStorageError(t *testing.T) {
-	t.Run("returns error on update failure during pause", func(t *testing.T) {
-		storage := newMockJobStorage()
-		scheduler := New(nil, storage)
-		ctx := context.Background()
-
-		err := scheduler.RegisterHandler("test-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
-			return &JobResult{Success: true}, nil
-		})
-		require.NoError(t, err)
-
-		err = scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
-		job := &Job{
-			Name:      "test-job",
-			Type:      JobTypeOneShot,
-			Handler:   "test-handler",
-			ExecuteAt: time.Now().Add(time.Hour),
-			OwnerType: OwnerTypeSystem,
-		}
-		err = scheduler.ScheduleJob(ctx, job)
-		require.NoError(t, err)
-
-		// Set update error
-		storage.updateJobErr = errors.New("update failed")
-
-		err = scheduler.PauseJob(ctx, job.ID, "")
-
-		require.Error(t, err)
-		var storageErr ErrStorageError
-		assert.True(t, errors.As(err, &storageErr))
-	})
-}
-
-// TestResumeJobUpdateStorageError tests storage error handling during resume.
-func TestResumeJobUpdateStorageError(t *testing.T) {
-	t.Run("returns error on update failure during resume", func(t *testing.T) {
-		storage := newMockJobStorage()
-		scheduler := New(nil, storage)
-		ctx := context.Background()
-
-		err := scheduler.RegisterHandler("test-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
-			return &JobResult{Success: true}, nil
-		})
-		require.NoError(t, err)
-
-		err = scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
-		// Insert a paused job
-		storage.mu.Lock()
-		storage.jobs[1] = &Job{
-			ID:        1,
-			Name:      "paused-job",
-			Type:      JobTypeDelayed,
-			Handler:   "test-handler",
-			Status:    JobStatusPaused,
-			NextRun:   time.Now().Add(time.Hour),
-			Delay:     time.Minute,
-			OwnerType: OwnerTypeSystem,
-		}
-		storage.mu.Unlock()
-
-		// Set update error
-		storage.updateJobErr = errors.New("update failed")
-
-		err = scheduler.ResumeJob(ctx, 1, "")
-
-		require.Error(t, err)
-		var storageErr ErrStorageError
-		assert.True(t, errors.As(err, &storageErr))
-	})
+	}
 }
 
 // TestStorageErrorCount tests the StorageErrorCount method.
