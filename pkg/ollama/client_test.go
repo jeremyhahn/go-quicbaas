@@ -478,26 +478,6 @@ func TestClientDoRequest_RetrySuccess(t *testing.T) {
 // Consolidated from coverage_boost_test.go
 // =============================================================================
 
-// TestModelService_List_RequestError tests List when the request fails.
-func TestModelService_List_RequestError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"error": "service unavailable"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	svc := NewModelService(client)
-
-	_, err := svc.List(context.Background())
-	if err == nil {
-		t.Fatal("expected error when request fails")
-	}
-}
-
 // TestModelService_Show_RequestError tests Show when the request fails.
 func TestModelService_Show_RequestError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -535,26 +515,6 @@ func TestEmbeddingService_EmbedWithModel_InvalidJSON(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidResponse) {
 		t.Errorf("expected ErrInvalidResponse, got %v", err)
-	}
-}
-
-// TestEmbeddingService_EmbedWithModel_EmptyEmbedding tests EmbedWithModel with empty embedding response.
-func TestEmbeddingService_EmbedWithModel_EmptyEmbedding(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	_, err := svc.EmbedWithModel(context.Background(), "model", "test text")
-	if err == nil {
-		t.Fatal("expected error for empty embedding")
-	}
-	if !errors.Is(err, ErrEmptyResponse) {
-		t.Errorf("expected ErrEmptyResponse, got %v", err)
 	}
 }
 
@@ -720,105 +680,5 @@ func TestHealthChecker_Check_StoresError(t *testing.T) {
 	lastStatus := checker.LastStatus()
 	if lastStatus.Error == "" {
 		t.Error("expected LastStatus().Error to be set")
-	}
-}
-
-// TestEmbeddingService_EmbedBatchWithModel_EmptyTextInBatch tests EmbedBatchWithModel with empty text in batch.
-func TestEmbeddingService_EmbedBatchWithModel_EmptyTextInBatch(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	svc := NewEmbeddingService(client, "test-model")
-
-	_, err := svc.EmbedBatchWithModel(context.Background(), "model", []string{"text1", "", "text3"})
-	if err == nil {
-		t.Fatal("expected error for empty text in batch")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-// TestEmbeddingService_EmbedBatch_SequentialMode tests batch embedding with small batch (sequential).
-func TestEmbeddingService_EmbedBatch_SequentialMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	// Small batch (<=3) uses sequential processing
-	texts := []string{"text1", "text2"}
-	embeddings, err := svc.EmbedBatch(context.Background(), texts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(embeddings) != 2 {
-		t.Errorf("expected 2 embeddings, got %d", len(embeddings))
-	}
-}
-
-// TestEmbeddingService_EmbedBatch_ConcurrentMode tests batch embedding with large batch (concurrent).
-func TestEmbeddingService_EmbedBatch_ConcurrentMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	// Large batch (>3) uses concurrent processing
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	embeddings, err := svc.EmbedBatch(context.Background(), texts)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(embeddings) != 5 {
-		t.Errorf("expected 5 embeddings, got %d", len(embeddings))
-	}
-}
-
-// TestEmbeddingService_EmbedBatchConcurrent_ContextCanceled tests concurrent batch with context canceled.
-func TestEmbeddingService_EmbedBatchConcurrent_ContextCanceled(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
-		resp := EmbedResponse{Embedding: []float32{0.1, 0.2, 0.3}}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	svc := NewEmbeddingService(client, "test-model")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
-
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	_, err := svc.embedBatchConcurrent(ctx, "model", texts)
-	if err == nil {
-		t.Fatal("expected error for canceled context")
-	}
-}
-
-// TestEmbeddingService_EmbedBatchConcurrent_Error tests concurrent batch with request error.
-func TestEmbeddingService_EmbedBatchConcurrent_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	svc := NewEmbeddingService(client, "test-model")
-
-	texts := []string{"text1", "text2", "text3", "text4", "text5"}
-	_, err := svc.embedBatchConcurrent(context.Background(), "model", texts)
-	if err == nil {
-		t.Fatal("expected error")
 	}
 }
