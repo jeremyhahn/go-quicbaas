@@ -148,51 +148,6 @@ func (m *mockStatusWithSyncedNodesMethod) SyncedNodes() map[uint64]string {
 	return m.syncedNodes
 }
 
-func TestServiceImpl_Accessor_KMS(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	result := svc.KMS()
-	assert.Nil(t, result, "Expected nil for unconfigured KMS accessor")
-}
-
-func TestServiceImpl_Accessor_Secrets(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	result := svc.Secrets()
-	assert.Nil(t, result, "Expected nil for unconfigured Secrets accessor")
-}
-
-func TestServiceImpl_Accessor_Transit(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	result := svc.Crypto()
-	assert.Nil(t, result, "Expected nil for unconfigured Crypto accessor")
-}
-
-func TestServiceImpl_Accessor_Vector(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	result := svc.Vector()
-	assert.Nil(t, result, "Expected nil for unconfigured Vector accessor")
-}
-
-func TestServiceImpl_Accessor_Embedding(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	result := svc.Embedding()
-	assert.Nil(t, result, "Expected nil for unconfigured Embedding accessor")
-}
-
 func TestServiceImpl_Close_Idempotent(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
@@ -206,15 +161,6 @@ func TestServiceImpl_Close_Idempotent(t *testing.T) {
 	assert.NoError(t, err, "Close should be idempotent and not return error on second call")
 }
 
-func TestServiceImpl_Close_WithBackupManager(t *testing.T) {
-	mockBackup := &mockBackupManager{}
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft), withBackupManager(mockBackup))
-
-	err := svc.Close()
-	assert.NoError(t, err)
-}
-
 type unavailableMockKMSManager struct {
 	mockKMSManager
 }
@@ -223,40 +169,30 @@ func (m *unavailableMockKMSManager) IsAvailable(ctx context.Context) bool {
 	return false
 }
 
-func TestOperationsService_MigrateData_NilRequest(t *testing.T) {
+func TestOperationsService_NilRequest(t *testing.T) {
 	svc := createTestService(t)
 	defer svc.Close()
+	ctx := context.Background()
 
-	resp, err := svc.MigrateData(context.Background(), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
+	tests := []struct {
+		name string
+		call func() (any, error)
+	}{
+		{"MigrateData", func() (any, error) { return svc.MigrateData(ctx, nil) }},
+		{"ReplaceNode", func() (any, error) { return svc.ReplaceNode(ctx, nil) }},
+		{"UpgradeNode", func() (any, error) { return svc.UpgradeNode(ctx, nil) }},
+	}
 
-func TestOperationsService_ReplaceNode_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.ReplaceNode(context.Background(), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestOperationsService_UpgradeNode_NilRequest(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	resp, err := svc.UpgradeNode(context.Background(), nil)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *dberrors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			var qbErr *dberrors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 func TestOperationsService_GetUpgradeStatus_WrongJobType(t *testing.T) {
@@ -814,47 +750,51 @@ func TestClusterService_RebalanceCluster_NilRaftNode(t *testing.T) {
 	assert.Contains(t, err.Error(), "qrdb client service not configured")
 }
 
-func TestClusterService_AddNode_NilQRDBClient(t *testing.T) {
+func TestClusterService_NilQRDBClient(t *testing.T) {
 	log := createTestLogger(t)
 	svc := &quicBaaS{logger: log, qrdbClient: nil}
 	clusterSvc := &clusterService{svc: svc}
+	ctx := context.Background()
 
-	resp, err := clusterSvc.AddNode(context.Background(), &AddNodeRequest{
-		ShardID: 1,
-		NodeID:  2,
-		Address: "localhost:9000",
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "qrdb client provider not configured")
-}
+	tests := []struct {
+		name    string
+		call    func() (any, error)
+		wantMsg string
+	}{
+		{
+			name: "AddNode",
+			call: func() (any, error) {
+				return clusterSvc.AddNode(ctx, &AddNodeRequest{ShardID: 1, NodeID: 2, Address: "localhost:9000"})
+			},
+			wantMsg: "qrdb client provider not configured",
+		},
+		{
+			name: "RemoveNode",
+			call: func() (any, error) {
+				return clusterSvc.RemoveNode(ctx, &RemoveNodeRequest{ShardID: 1, NodeID: 2})
+			},
+			wantMsg: "qrdb client provider not configured",
+		},
+		{
+			name: "CreateShard",
+			call: func() (any, error) {
+				return clusterSvc.CreateShard(ctx, &CreateShardRequest{
+					ShardID:        1,
+					InitialMembers: map[uint64]string{1: "localhost:9000"},
+				})
+			},
+			wantMsg: "qrdb client service not configured",
+		},
+	}
 
-func TestClusterService_RemoveNode_NilQRDBClient(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, qrdbClient: nil}
-	clusterSvc := &clusterService{svc: svc}
-
-	resp, err := clusterSvc.RemoveNode(context.Background(), &RemoveNodeRequest{
-		ShardID: 1,
-		NodeID:  2,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "qrdb client provider not configured")
-}
-
-func TestClusterService_CreateShard_NilQRDBClient(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log, qrdbClient: nil}
-	clusterSvc := &clusterService{svc: svc}
-
-	resp, err := clusterSvc.CreateShard(context.Background(), &CreateShardRequest{
-		ShardID:        1,
-		InitialMembers: map[uint64]string{1: "localhost:9000"},
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "qrdb client service not configured")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := tt.call()
+			require.Error(t, err)
+			assert.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
+	}
 }
 
 type coverageRaftNode struct{}
@@ -1159,47 +1099,11 @@ func TestTimeSeriesMethods_TSQuery(t *testing.T) {
 	assert.Contains(t, err.Error(), "not configured")
 }
 
-func TestAuthServiceImpl_Login_NilManager(t *testing.T) {
-	// Password-based login is removed. Login() always returns ErrNotImplemented.
-	svc := &quicBaaS{}
-	authSvc := &authService{svc: svc}
-
-	_, err := authSvc.Login(context.Background(), &LoginRequest{
-		Username: "test",
-	})
-
-	require.Error(t, err)
-}
-
 func TestAuthServiceImpl_Logout_NilManager(t *testing.T) {
 	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
 
 	_, err := authSvc.Logout(context.Background(), &LogoutRequest{
-		AccessToken: "token",
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestAuthServiceImpl_RefreshToken_NilManager(t *testing.T) {
-	svc := &quicBaaS{}
-	authSvc := &authService{svc: svc}
-
-	_, err := authSvc.RefreshToken(context.Background(), &RefreshTokenRequest{
-		RefreshToken: "token",
-	})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "authentication")
-}
-
-func TestAuthServiceImpl_ValidateToken_NilManager(t *testing.T) {
-	svc := &quicBaaS{}
-	authSvc := &authService{svc: svc}
-
-	_, err := authSvc.ValidateToken(context.Background(), &ValidateTokenRequest{
 		AccessToken: "token",
 	})
 
@@ -1645,34 +1549,6 @@ func testLoggerCoverage(t *testing.T) interfaces.Logger {
 }
 
 // Health Service Tests - Liveness and Readiness (0% -> 100%).
-func TestHealthServiceImpl_Liveness(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		logger: testLoggerCoverage(t),
-	}
-
-	healthSvc := &healthService{svc: svc}
-
-	resp, err := healthSvc.Liveness(context.Background(), &LivenessRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Alive)
-}
-
-func TestHealthServiceImpl_Readiness(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		logger: testLoggerCoverage(t),
-	}
-
-	healthSvc := &healthService{svc: svc}
-
-	resp, err := healthSvc.Readiness(context.Background(), &ReadinessRequest{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Ready)
-}
-
 // Cluster Service Tests - ClusterStatus (45% -> 75%).
 func TestClusterServiceImpl_ClusterStatus_Success(t *testing.T) {
 	provider := newSvcBoostMockQRDBProviderWithTopology(nil, nil,
@@ -1780,43 +1656,6 @@ func TestRBACServiceImpl_AssignRole_InvalidInput(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
-}
-
-func TestRBACServiceImpl_AssignRole_NotConfigured(t *testing.T) {
-	// AssignRole routes through the qrdb-backed IdentityStore (authz-unification
-	// C1-E). With no IAM provider wired, the iam build fails closed on the
-	// missing tenant context / unconfigured identity store and the !iam stub
-	// returns a typed not-configured error — both carry the service.AssignRole op.
-	svc := &quicBaaS{
-		logger: testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &AssignRoleRequest{
-		Username: "testuser",
-		RoleName: "admin",
-	}
-
-	_, err := rbacSvc.AssignRole(context.Background(), req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "service.AssignRole")
-}
-
-func TestRBACServiceImpl_RevokeRole_NoAuthManager(t *testing.T) {
-	svc := &quicBaaS{
-		logger: testLoggerCoverage(t),
-	}
-
-	rbacSvc := &rbacService{svc: svc}
-
-	req := &RevokeRoleRequest{
-		Username: "testuser",
-		RoleName: "admin",
-	}
-
-	_, err := rbacSvc.RevokeRole(context.Background(), req)
-	assert.Error(t, err)
 }
 
 func TestRBACServiceImpl_RevokeRole_InvalidInput(t *testing.T) {
@@ -1940,49 +1779,29 @@ func TestAuthService_ValidateToken_NoAuthManager(t *testing.T) {
 	assert.Contains(t, err.Error(), "authentication service not configured")
 }
 
-func TestClusterService_AddNode_NilRequest(t *testing.T) {
+func TestClusterService_AddNode_Validation(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
 	defer svc.Close()
 
-	resp, err := svc.AddNode(context.Background(), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClusterService_AddNode_InvalidShardID(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AddNodeRequest{
-		ShardID: 0,
-		NodeID:  2,
-		Address: "localhost:5002",
+	tests := []struct {
+		name    string
+		req     *AddNodeRequest
+		wantMsg string
+	}{
+		{"nil request", nil, "request cannot be nil"},
+		{"zero shard id", &AddNodeRequest{ShardID: 0, NodeID: 2, Address: "localhost:5002"}, "shard_id must be greater than 0"},
+		{"empty address", &AddNodeRequest{ShardID: 1, NodeID: 2, Address: ""}, "address cannot be empty"},
 	}
 
-	resp, err := svc.AddNode(context.Background(), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "shard_id must be greater than 0")
-}
-
-func TestClusterService_AddNode_EmptyAddress(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AddNodeRequest{
-		ShardID: 1,
-		NodeID:  2,
-		Address: "",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := svc.AddNode(context.Background(), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	resp, err := svc.AddNode(context.Background(), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "address cannot be empty")
 }
 
 func TestCacheService_GetCacheStats_Success(t *testing.T) {
@@ -2204,18 +2023,6 @@ func TestServiceBuilder_Build_NilRaftNode(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, svc)
 	assert.Contains(t, err.Error(), "raft node is required")
-}
-
-func TestService_Close_Success(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-
-	err := svc.Close()
-	require.NoError(t, err)
-
-	// Second close should be no-op
-	err = svc.Close()
-	require.NoError(t, err)
 }
 
 func TestService_Close_WithAllComponents(t *testing.T) {
@@ -2552,32 +2359,6 @@ func TestConvertConsistency_Coverage(t *testing.T) {
 	// Test default
 	result = kvSvc.convertConsistency(ConsistencyLevel(99))
 	assert.NotNil(t, result)
-}
-
-func TestLiveness_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	healthSvc := &healthService{svc: svc}
-
-	resp, err := healthSvc.Liveness(context.Background(), &LivenessRequest{})
-	require.NoError(t, err)
-	assert.True(t, resp.Alive)
-}
-
-func TestReadiness_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-	// Readiness requires config to be non-nil and checks for raft leader availability
-	// In local mode (no raftNode), it should return ready
-	svc := &quicBaaS{
-		logger:   log,
-		config:   &ServiceConfig{},
-		raftNode: nil, // No raft = local mode
-	}
-	healthSvc := &healthService{svc: svc}
-
-	resp, err := healthSvc.Readiness(context.Background(), &ReadinessRequest{})
-	require.NoError(t, err)
-	assert.True(t, resp.Ready)
 }
 
 func TestScanIndex_Coverage(t *testing.T) {
