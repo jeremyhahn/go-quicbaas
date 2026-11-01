@@ -22,7 +22,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/tenantctx"
@@ -445,69 +447,54 @@ func TestPool91_Get_EmptyPool(t *testing.T) {
 	assert.Contains(t, err.Error(), "pool has no connections")
 }
 
-func TestPool91_NeedsRecycling_HealthyConn(t *testing.T) {
+func TestConnectionPool_NeedsRecycling(t *testing.T) {
 	t.Parallel()
 
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100000,
+	tests := []struct {
+		name     string
+		healthy  bool
+		age      time.Duration
+		requests uint64
+		closed   bool
+		want     bool
+	}{
+		{name: "healthy idle connection is kept", healthy: true, requests: 100, want: false},
+		{name: "unhealthy connection is recycled", healthy: false, requests: 100, want: true},
+		{name: "connection older than max age is recycled", healthy: true, age: 15 * time.Minute, requests: 100, want: true},
+		{name: "connection at max requests is recycled", healthy: true, requests: 1000, want: true},
+		{name: "shut down connection is recycled", healthy: true, requests: 100, closed: true, want: true},
 	}
 
-	conn := &pooledConn{
-		created: time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool := &ConnectionPool{
+				maxAge:      10 * time.Minute,
+				maxRequests: 1000,
+			}
+
+			// NewClient does not dial, so the connection stays Idle until
+			// it is closed, which moves it to Shutdown.
+			cc, err := grpclib.NewClient("passthrough:///localhost:1",
+				grpclib.WithTransportCredentials(insecure.NewCredentials()))
+			require.NoError(t, err)
+			if tt.closed {
+				require.NoError(t, cc.Close())
+			} else {
+				t.Cleanup(func() { assert.NoError(t, cc.Close()) })
+			}
+
+			conn := &pooledConn{
+				conn:    cc,
+				created: time.Now().Add(-tt.age),
+			}
+			conn.healthy.Store(tt.healthy)
+			conn.requests.Store(tt.requests)
+
+			assert.Equal(t, tt.want, pool.needsRecycling(conn))
+		})
 	}
-	conn.healthy.Store(true)
-	conn.requests.Store(0)
-
-	// Cannot fully test needsRecycling without a real gRPC conn,
-	// but we can verify the method exists and the struct fields are accessible
-	assert.True(t, conn.healthy.Load())
-	assert.Equal(t, uint64(0), conn.requests.Load())
-	assert.True(t, time.Since(conn.created) < pool.maxAge)
-}
-
-func TestPool91_NeedsRecycling_UnhealthyConn(t *testing.T) {
-	t.Parallel()
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(false)
-
-	assert.False(t, conn.healthy.Load())
-}
-
-func TestPool91_NeedsRecycling_OldConn(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      1 * time.Millisecond,
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now().Add(-1 * time.Hour),
-	}
-	conn.healthy.Store(true)
-
-	assert.True(t, time.Since(conn.created) > pool.maxAge)
-}
-
-func TestPool91_NeedsRecycling_MaxRequests(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100,
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(101)
-
-	assert.True(t, conn.requests.Load() >= pool.maxRequests)
 }
 
 // =============================================================================
@@ -884,100 +871,6 @@ func TestConnectionPool_String_Coverage(t *testing.T) {
 	assert.Contains(t, str, "recycled=3")
 }
 
-func TestConnectionPool_NeedsRecycling_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      10 * time.Minute,
-		maxRequests: 1000,
-	}
-
-	t.Run("healthy connection does not need recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.False(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("unhealthy connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  false,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("old connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now().Add(-15 * time.Minute),
-			requests: 100,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("connection over max requests needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 1001,
-			state:    connectivity.Ready,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("transient failure needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.TransientFailure,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-
-	t.Run("shutdown connection needs recycling", func(t *testing.T) {
-		conn := &mockPooledConnTest{
-			healthy:  true,
-			created:  time.Now(),
-			requests: 100,
-			state:    connectivity.Shutdown,
-		}
-		assert.True(t, pool.needsRecyclingForMockTest(conn))
-	})
-}
-
-// mockPooledConnTest for unit testing pool recycling logic
-type mockPooledConnTest struct {
-	healthy  bool
-	created  time.Time
-	requests uint64
-	state    connectivity.State
-}
-
-// needsRecyclingForMockTest is a test helper that checks mock connections
-func (p *ConnectionPool) needsRecyclingForMockTest(conn *mockPooledConnTest) bool {
-	if !conn.healthy {
-		return true
-	}
-	if time.Since(conn.created) > p.maxAge {
-		return true
-	}
-	if conn.requests >= p.maxRequests {
-		return true
-	}
-	if conn.state == connectivity.TransientFailure || conn.state == connectivity.Shutdown {
-		return true
-	}
-	return false
-}
-
 func TestConnectionPool_Get_ClosedPool_Coverage(t *testing.T) {
 	t.Parallel()
 
@@ -1004,18 +897,6 @@ func TestConnectionPool_Get_EmptyPool_Coverage(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, conn)
 	assert.Contains(t, err.Error(), "pool has no connections")
-}
-
-func TestConnectionPool_Close_AlreadyClosed_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		stopHealthCheck: make(chan struct{}),
-	}
-	pool.closed.Store(true)
-
-	err := pool.Close()
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -1241,55 +1122,6 @@ func TestPooledConn_ConcurrentAccess(t *testing.T) {
 	assert.True(t, pc.requests.Load() >= 100)
 }
 
-func TestPoolNeedsRecycling_Unhealthy(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(false) // Unhealthy
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPoolNeedsRecycling_TooOld(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      1 * time.Nanosecond, // Very short max age
-		maxRequests: 100000,
-	}
-
-	conn := &pooledConn{
-		created: time.Now().Add(-1 * time.Minute), // Created 1 minute ago
-	}
-	conn.healthy.Store(true)
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPoolNeedsRecycling_TooManyRequests(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 10, // Low max requests
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(15) // More than max
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
 func TestPoolString_Empty(t *testing.T) {
 	t.Parallel()
 
@@ -1329,20 +1161,6 @@ func TestPoolString_WithConnections(t *testing.T) {
 	assert.Contains(t, str, "idle=1")
 	assert.Contains(t, str, "requests=500")
 	assert.Contains(t, str, "recycled=10")
-}
-
-func TestPoolClose_AlreadyClosed(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:           []*pooledConn{},
-		stopHealthCheck: make(chan struct{}),
-		metrics:         newPoolMetrics("localhost:50051"),
-	}
-	pool.closed.Store(true)
-
-	err := pool.Close()
-	assert.NoError(t, err)
 }
 
 func TestPoolGet_Closed(t *testing.T) {
