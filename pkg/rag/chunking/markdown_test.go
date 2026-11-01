@@ -1135,34 +1135,6 @@ func TestGoCodeChunker_WriteImports_Cases(t *testing.T) {
 	}
 }
 
-// Markdown Chunker edge cases
-
-func TestMarkdownChunker_ChunkReturnError(t *testing.T) {
-	// Test markdown with only whitespace that produces no valid chunks
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     50,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	})
-
-	// Content with only empty sections
-	content := []byte(`#
-
-##
-
-### `)
-
-	_, err := chunker.Chunk(content, Metadata{})
-
-	// Should error when no chunks can be created
-	if err != nil {
-		assert.Contains(t, err.Error(), "no chunks created")
-	}
-}
-
 // Text Chunker edge cases
 
 func TestTextChunker_ConfigValidation_Corrections(t *testing.T) {
@@ -1195,21 +1167,31 @@ func TestTextChunker_ConfigValidation_Corrections(t *testing.T) {
 	}
 }
 
-func TestTextChunker_ChunkByParagraphs_EmptyParagraphs(t *testing.T) {
-	// Test with empty paragraphs - content with enough text to meet minimum
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectParagraphs: true,
-		RespectSentences:  false,
-	})
+func TestTextChunker_Chunk_SkipsEmptySegments(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  TextChunkerConfig
+		content string
+	}{
+		{
+			name:    "empty paragraphs",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 5, RespectParagraphs: true},
+			content: "\n\n\n\nActual content here with more words to meet minimum requirements.\n\n\n\n",
+		},
+		{
+			name:    "empty sentences",
+			config:  TextChunkerConfig{ChunkSize: 100, ChunkOverlap: 10, MinChunkSize: 5, RespectSentences: true},
+			content: "   .   .   . Actual sentence here with content.",
+		},
+	}
 
-	content := []byte("\n\n\n\nActual content here with more words to meet minimum requirements.\n\n\n\n")
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Equal(t, 1, len(chunks))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := NewTextChunker(tt.config).Chunk([]byte(tt.content), Metadata{StartLine: 1})
+			require.NoError(t, err)
+			assert.Len(t, chunks, 1)
+		})
+	}
 }
 
 func TestTextChunker_Chunk_DefaultStartLine(t *testing.T) {
@@ -1294,23 +1276,6 @@ func TestTextChunker_Chunk_MultipleChunks(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTextChunker_ChunkBySentences_EmptySentences(t *testing.T) {
-	// Test with empty sentences
-	chunker := NewTextChunker(TextChunkerConfig{
-		ChunkSize:         100,
-		ChunkOverlap:      10,
-		MinChunkSize:      5,
-		RespectSentences:  true,
-		RespectParagraphs: false,
-	})
-
-	content := []byte("   .   .   . Actual sentence here with content.")
-
-	chunks, err := chunker.Chunk(content, Metadata{StartLine: 1})
-	require.NoError(t, err)
-	assert.Greater(t, len(chunks), 0)
 }
 
 func TestTextChunker_GetOverlapText_Cases(t *testing.T) {
@@ -1410,42 +1375,35 @@ func TestTextChunker_Chunk_NoChunksCreated(t *testing.T) {
 }
 
 // TestMarkdownChunker_Chunk_ErrorPath tests error return in Chunk
-func TestMarkdownChunker_Chunk_ErrorPath(t *testing.T) {
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens: 100,
-		MaxTokens:    200,
-		MinChunkSize: 1000000, // Impossibly high minimum
-	})
-
-	// Content that will be completely skipped
-	content := []byte("# H\nX")
-	_, err := chunker.Chunk(content, Metadata{})
-	if err == nil {
-		// Implementation may create tiny chunk or merge, both valid
-		t.Log("Implementation handles minimum size gracefully")
-	} else if !strings.Contains(err.Error(), "no chunks") {
-		t.Errorf("Expected 'no chunks' error, got: %v", err)
+func TestMarkdownChunker_Chunk_TinyContentKept(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  MarkdownChunkerConfig
+		content string
+	}{
+		{
+			name:    "hierarchy",
+			config:  MarkdownChunkerConfig{TargetTokens: 100, MaxTokens: 200, MinChunkSize: 1000000, IncludeHierarchy: true},
+			content: "# H\nX",
+		},
+		{
+			name:    "no hierarchy",
+			config:  MarkdownChunkerConfig{TargetTokens: 100, MaxTokens: 200, MinChunkSize: 100000},
+			content: "# X\nY",
+		},
+		{
+			name:    "empty headers",
+			config:  MarkdownChunkerConfig{TargetTokens: 512, MaxTokens: 2000, MinChunkSize: 50, MaxHeaderDepth: 3, KeepCodeBlocks: true, IncludeHierarchy: true},
+			content: "#\n\n##\n\n### ",
+		},
 	}
-}
 
-// TestMarkdownChunker_Chunk_NoChunksError tests the error path
-func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
-	// Create chunker with settings that will skip all content
-	chunker := NewMarkdownChunker(MarkdownChunkerConfig{
-		TargetTokens:     100,
-		MaxTokens:        200,
-		MinChunkSize:     100000, // Impossibly high
-		IncludeHierarchy: false,
-	})
-
-	// Minimal content
-	content := []byte("# X\nY")
-	_, err := chunker.Chunk(content, Metadata{})
-
-	// Should error or create no chunks
-	if err == nil {
-		t.Log("Implementation may handle tiny content gracefully")
-	} else if !strings.Contains(err.Error(), "no chunks") {
-		t.Errorf("Expected 'no chunks' error, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Content below MinChunkSize is kept when it is the only content.
+			chunks, err := NewMarkdownChunker(tt.config).Chunk([]byte(tt.content), Metadata{})
+			require.NoError(t, err)
+			assert.Len(t, chunks, 1)
+		})
 	}
 }
