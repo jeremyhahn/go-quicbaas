@@ -1102,140 +1102,99 @@ func TestAdapter91_UserMethods(t *testing.T) {
 // Role Operations
 // =============================================================================
 
-func TestAdapter91_CreateRole_Success(t *testing.T) {
+func TestAdapter91_RoleMethods(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
 
-	result, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "admin", Permissions: []string{"read", "write"}})
-	require.NoError(t, err)
-	assert.Equal(t, "admin", result.Name)
-}
+	createRole := func(t *testing.T, ctx context.Context, a *IAMServiceAdapter, name string) *iam.Role {
+		t.Helper()
+		created, err := a.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: name})
+		require.NoError(t, err)
+		return created
+	}
+	createUser := func(t *testing.T, ctx context.Context, a *IAMServiceAdapter, email string) *iam.User {
+		t.Helper()
+		created, _, _, err := a.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: email, Name: "Role Holder"}, 0)
+		require.NoError(t, err)
+		return created
+	}
 
-func TestAdapter91_CreateRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
+	tests := []struct {
+		name string
+		run  func(t *testing.T, ctx context.Context, a *IAMServiceAdapter)
+	}{
+		{"CreateRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "admin", Permissions: []string{"read", "write"}})
+			require.NoError(t, err)
+			assert.Equal(t, "admin", result.Name)
+		}},
+		{"CreateRole duplicate", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			role := &iam.Role{ID: "dup-role", TenantID: "tenant-1", Name: "duplicate"}
+			_, err := a.CreateRole(ctx, role)
+			require.NoError(t, err)
+			_, err = a.CreateRole(ctx, role)
+			assert.Error(t, err)
+		}},
+		{"GetRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createRole(t, ctx, a, "viewer")
+			result, err := a.GetRole(ctx, "tenant-1", created.ID)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"GetRole not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetRole(ctx, "tenant-1", "nonexistent-role")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"UpdateRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createRole(t, ctx, a, "editor")
+			created.Name = "senior-editor"
+			result, err := a.UpdateRole(ctx, created)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"UpdateRole not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.UpdateRole(ctx, &iam.Role{TenantID: "tenant-1", ID: "nonexistent", Name: "X"})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"DeleteRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createRole(t, ctx, a, "delete-me")
+			assert.NoError(t, a.DeleteRole(ctx, "tenant-1", created.ID))
+		}},
+		{"DeleteRole not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.DeleteRole(ctx, "tenant-1", "nonexistent-role"))
+		}},
+		{"ListRoles success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			roles, total, err := a.ListRoles(ctx, "tenant-1", 10, 0)
+			require.NoError(t, err)
+			assert.NotNil(t, roles)
+			assert.Equal(t, len(roles), total)
+		}},
+		{"AssignRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			user := createUser(t, ctx, a, "assign@example.com")
+			role := createRole(t, ctx, a, "assignable")
+			assert.NoError(t, a.AssignRole(ctx, "tenant-1", user.ID, role.ID))
+		}},
+		{"AssignRole unknown user and role", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.AssignRole(ctx, "tenant-1", 999999, "nonexistent-role"))
+		}},
+		{"RevokeRole success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			user := createUser(t, ctx, a, "revoke@example.com")
+			role := createRole(t, ctx, a, "revocable")
+			require.NoError(t, a.AssignRole(ctx, "tenant-1", user.ID, role.ID))
+			assert.NoError(t, a.RevokeRole(ctx, "tenant-1", user.ID, role.ID))
+		}},
+		{"RevokeRole unknown user and role", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.RevokeRole(ctx, "tenant-1", 999999, "nonexistent-role"))
+		}},
+	}
 
-	role := &iam.Role{ID: "dup-role", TenantID: "tenant-1", Name: "duplicate"}
-	_, err := adapter.CreateRole(ctx, role)
-	require.NoError(t, err)
-	_, err = adapter.CreateRole(ctx, role)
-	assert.Error(t, err)
-}
-
-func TestAdapter91_GetRole_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "viewer"})
-	require.NoError(t, err)
-
-	result, err := adapter.GetRole(ctx, "tenant-1", created.ID)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_GetRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetRole(ctx, "tenant-1", "nonexistent-role")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdateRole_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "editor"})
-	require.NoError(t, err)
-
-	created.Name = "senior-editor"
-	result, err := adapter.UpdateRole(ctx, created)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_UpdateRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.UpdateRole(ctx, &iam.Role{TenantID: "tenant-1", ID: "nonexistent", Name: "X"})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_DeleteRole_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "delete-me"})
-	require.NoError(t, err)
-	assert.NoError(t, adapter.DeleteRole(ctx, "tenant-1", created.ID))
-}
-
-func TestAdapter91_DeleteRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.DeleteRole(ctx, "tenant-1", "nonexistent-role"))
-}
-
-func TestAdapter91_ListRoles_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	roles, total, err := adapter.ListRoles(ctx, "tenant-1", 10, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, roles)
-	assert.Equal(t, len(roles), total)
-}
-
-func TestAdapter91_AssignRole_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	createdUser, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "assign@example.com", Name: "Assign"}, 0)
-	require.NoError(t, err)
-	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "assignable"})
-	require.NoError(t, err)
-	assert.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
-}
-
-func TestAdapter91_AssignRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.AssignRole(ctx, "tenant-1", 999999, "nonexistent-role"))
-}
-
-func TestAdapter91_RevokeRole_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	createdUser, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "revoke@example.com", Name: "Revoke"}, 0)
-	require.NoError(t, err)
-	createdRole, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "revocable"})
-	require.NoError(t, err)
-	require.NoError(t, adapter.AssignRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
-	assert.NoError(t, adapter.RevokeRole(ctx, "tenant-1", createdUser.ID, createdRole.ID))
-}
-
-func TestAdapter91_RevokeRole_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.RevokeRole(ctx, "tenant-1", 999999, "nonexistent-role"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.run(t, context.Background(), createTestIAMAdapter91(t))
+		})
+	}
 }
 
 // adapter91ReconcilingRoleStorage is a role storage that also honours
@@ -1334,145 +1293,90 @@ func TestAdapter91_ReconcileBuiltInRoles_EmptyTenantID(t *testing.T) {
 // Application Operations
 // =============================================================================
 
-func TestAdapter91_RegisterApp_Success(t *testing.T) {
+func TestAdapter91_AppMethods(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
 
-	app := &iam.Application{
-		TenantID: "tenant-1", Name: "TestApp",
-		RedirectURIs: []string{"http://localhost/callback"},
-		GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
+	registerApp := func(t *testing.T, ctx context.Context, a *IAMServiceAdapter, name string) *iam.Application {
+		t.Helper()
+		created, err := a.RegisterApp(ctx, &iam.Application{
+			TenantID: "tenant-1", Name: name,
+			RedirectURIs: []string{"http://localhost/callback"},
+			GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
+		})
+		require.NoError(t, err)
+		return created
 	}
-	result, err := adapter.RegisterApp(ctx, app)
-	require.NoError(t, err)
-	assert.Equal(t, "TestApp", result.Name)
-	assert.NotEmpty(t, result.ClientID)
-}
 
-func TestAdapter91_RegisterApp_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
+	tests := []struct {
+		name string
+		run  func(t *testing.T, ctx context.Context, a *IAMServiceAdapter)
+	}{
+		{"RegisterApp success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result := registerApp(t, ctx, a, "TestApp")
+			assert.Equal(t, "TestApp", result.Name)
+			assert.NotEmpty(t, result.ClientID)
+		}},
+		{"RegisterApp missing name", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.RegisterApp(ctx, &iam.Application{TenantID: "tenant-1", Name: ""})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"GetApp success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := registerApp(t, ctx, a, "GetTestApp")
+			result, err := a.GetApp(ctx, "tenant-1", created.ClientID)
+			require.NoError(t, err)
+			assert.Equal(t, created.ClientID, result.ClientID)
+		}},
+		{"GetApp not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetApp(ctx, "tenant-1", "nonexistent-app")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"UpdateApp success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := registerApp(t, ctx, a, "UpdateableApp")
+			name := "Updated App"
+			result, err := a.UpdateApp(ctx, created.TenantID, created.ClientID, iam.UpdateAppOptions{Name: &name})
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"UpdateApp not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			name := "X"
+			result, err := a.UpdateApp(ctx, "tenant-1", "nonexistent", iam.UpdateAppOptions{Name: &name})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"DeleteApp success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := registerApp(t, ctx, a, "DeleteableApp")
+			assert.NoError(t, a.DeleteApp(ctx, "tenant-1", created.ClientID))
+		}},
+		{"DeleteApp not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.DeleteApp(ctx, "tenant-1", "nonexistent-app"))
+		}},
+		{"ListApps success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			apps, total, err := a.ListApps(ctx, "tenant-1", 10, 0)
+			require.NoError(t, err)
+			assert.NotNil(t, apps)
+			assert.Equal(t, len(apps), total)
+		}},
+		{"RotateAppSecret success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := registerApp(t, ctx, a, "RotateApp")
+			result, err := a.RotateAppSecret(ctx, "tenant-1", created.ClientID)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"RotateAppSecret not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.RotateAppSecret(ctx, "tenant-1", "nonexistent-app")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+	}
 
-	result, err := adapter.RegisterApp(ctx, &iam.Application{TenantID: "tenant-1", Name: ""})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_GetApp_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.RegisterApp(ctx, &iam.Application{
-		TenantID: "tenant-1", Name: "GetTestApp",
-		RedirectURIs: []string{"http://localhost/callback"},
-		GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
-	})
-	require.NoError(t, err)
-
-	result, err := adapter.GetApp(ctx, "tenant-1", created.ClientID)
-	require.NoError(t, err)
-	assert.Equal(t, created.ClientID, result.ClientID)
-}
-
-func TestAdapter91_GetApp_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetApp(ctx, "tenant-1", "nonexistent-app")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdateApp_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.RegisterApp(ctx, &iam.Application{
-		TenantID: "tenant-1", Name: "UpdateableApp",
-		RedirectURIs: []string{"http://localhost/callback"},
-		GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
-	})
-	require.NoError(t, err)
-
-	name := "Updated App"
-	result, err := adapter.UpdateApp(ctx, created.TenantID, created.ClientID, iam.UpdateAppOptions{Name: &name})
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_UpdateApp_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	name := "X"
-	result, err := adapter.UpdateApp(ctx, "tenant-1", "nonexistent", iam.UpdateAppOptions{Name: &name})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_DeleteApp_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.RegisterApp(ctx, &iam.Application{
-		TenantID: "tenant-1", Name: "DeleteableApp",
-		RedirectURIs: []string{"http://localhost/callback"},
-		GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
-	})
-	require.NoError(t, err)
-	assert.NoError(t, adapter.DeleteApp(ctx, "tenant-1", created.ClientID))
-}
-
-func TestAdapter91_DeleteApp_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.DeleteApp(ctx, "tenant-1", "nonexistent-app"))
-}
-
-func TestAdapter91_ListApps_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	apps, total, err := adapter.ListApps(ctx, "tenant-1", 10, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, apps)
-	assert.Equal(t, len(apps), total)
-}
-
-func TestAdapter91_RotateAppSecret_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	created, err := adapter.RegisterApp(ctx, &iam.Application{
-		TenantID: "tenant-1", Name: "RotateApp",
-		RedirectURIs: []string{"http://localhost/callback"},
-		GrantTypes:   []string{"authorization_code"}, ResponseTypes: []string{"code"},
-	})
-	require.NoError(t, err)
-
-	result, err := adapter.RotateAppSecret(ctx, "tenant-1", created.ClientID)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_RotateAppSecret_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.RotateAppSecret(ctx, "tenant-1", "nonexistent-app")
-	assert.Error(t, err)
-	assert.Nil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.run(t, context.Background(), createTestIAMAdapter91(t))
+		})
+	}
 }
 
 // =============================================================================
@@ -1501,169 +1405,111 @@ func makeTestPolicy91(name, tenantID string) *iam.Policy {
 	}
 }
 
-func TestAdapter91_CreatePolicy_Success(t *testing.T) {
+func TestAdapter91_PolicyMethods(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
 
-	policy := makeTestPolicy91("test-policy", "tenant-1")
-	result, err := adapter.CreatePolicy(ctx, policy)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "test-policy", result.Metadata.Name)
-}
-
-func TestAdapter91_CreatePolicy_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	// Invalid policy - missing required fields
-	policy := &iam.Policy{Metadata: iam.PolicyMetadata{Tenant: "tenant-1"}}
-	result, err := adapter.CreatePolicy(ctx, policy)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_GetPolicy_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	policy := makeTestPolicy91("get-test-policy", "tenant-1")
-	_, err := adapter.CreatePolicy(ctx, policy)
-	require.NoError(t, err)
-
-	result, err := adapter.GetPolicy(ctx, "tenant-1", "get-test-policy")
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_GetPolicy_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetPolicy(ctx, "tenant-1", "nonexistent-policy")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdatePolicy_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	policy := makeTestPolicy91("update-test-policy", "tenant-1")
-	_, err := adapter.CreatePolicy(ctx, policy)
-	require.NoError(t, err)
-
-	policy.Spec.Rules[0].Effect = iam.EffectDeny
-	result, err := adapter.UpdatePolicy(ctx, policy)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_UpdatePolicy_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	policy := &iam.Policy{Metadata: iam.PolicyMetadata{Name: "nonexistent", Tenant: "tenant-1"}}
-	result, err := adapter.UpdatePolicy(ctx, policy)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_DeletePolicy_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	policy := makeTestPolicy91("delete-test-policy", "tenant-1")
-	_, err := adapter.CreatePolicy(ctx, policy)
-	require.NoError(t, err)
-	assert.NoError(t, adapter.DeletePolicy(ctx, "tenant-1", "delete-test-policy"))
-}
-
-func TestAdapter91_DeletePolicy_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.DeletePolicy(ctx, "tenant-1", "nonexistent-policy"))
-}
-
-func TestAdapter91_ListPolicies_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	policies, total, err := adapter.ListPolicies(ctx, "tenant-1", 10, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, policies)
-	assert.Equal(t, len(policies), total)
-}
-
-func TestAdapter91_ValidatePolicy_ValidYAML(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	yamlSpec := []byte(`
-metadata:
-  name: test-validate
-spec:
-  subjects:
-    users: ["*"]
-  rules:
-    - name: allow-read
-      effect: allow
-      actions: ["read"]
-      resources: ["/*"]
-`)
-	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", "", yamlSpec)
-	require.NoError(t, err)
-	_ = valid
-	_ = issues
-}
-
-func TestAdapter91_ValidatePolicy_InvalidYAML(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	valid, issues, err := adapter.ValidatePolicy(ctx, "tenant-1", "", []byte(`{{{{invalid yaml`))
-	require.NoError(t, err)
-	assert.False(t, valid)
-	assert.NotEmpty(t, issues)
-}
-
-func TestAdapter91_TestPolicy_NilRequest(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.TestPolicy(ctx, "tenant-1", nil)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_TestPolicy_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	req := &iam.CheckRequest{
-		Subject: iam.Subject{
-			TenantID: "tenant-1",
-			ID:       "user-1",
-		},
-		Resource: "/test/data",
-		Action:   "read",
+	createPolicy := func(t *testing.T, ctx context.Context, a *IAMServiceAdapter, name string) *iam.Policy {
+		t.Helper()
+		policy := makeTestPolicy91(name, "tenant-1")
+		_, err := a.CreatePolicy(ctx, policy)
+		require.NoError(t, err)
+		return policy
 	}
-	result, err := adapter.TestPolicy(ctx, "tenant-1", req)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T, ctx context.Context, a *IAMServiceAdapter)
+	}{
+		{"CreatePolicy success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.CreatePolicy(ctx, makeTestPolicy91("test-policy", "tenant-1"))
+			require.NoError(t, err)
+			assert.Equal(t, "test-policy", result.Metadata.Name)
+		}},
+		{"CreatePolicy missing required fields", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.CreatePolicy(ctx, &iam.Policy{Metadata: iam.PolicyMetadata{Tenant: "tenant-1"}})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"GetPolicy success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createPolicy(t, ctx, a, "get-test-policy")
+			result, err := a.GetPolicy(ctx, "tenant-1", "get-test-policy")
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"GetPolicy not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetPolicy(ctx, "tenant-1", "nonexistent-policy")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"UpdatePolicy success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			policy := createPolicy(t, ctx, a, "update-test-policy")
+			policy.Spec.Rules[0].Effect = iam.EffectDeny
+			result, err := a.UpdatePolicy(ctx, policy)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"UpdatePolicy not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.UpdatePolicy(ctx, &iam.Policy{Metadata: iam.PolicyMetadata{Name: "nonexistent", Tenant: "tenant-1"}})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"DeletePolicy success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createPolicy(t, ctx, a, "delete-test-policy")
+			assert.NoError(t, a.DeletePolicy(ctx, "tenant-1", "delete-test-policy"))
+		}},
+		{"DeletePolicy not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.DeletePolicy(ctx, "tenant-1", "nonexistent-policy"))
+		}},
+		{"ListPolicies success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			policies, total, err := a.ListPolicies(ctx, "tenant-1", 10, 0)
+			require.NoError(t, err)
+			assert.NotNil(t, policies)
+			assert.Equal(t, len(policies), total)
+		}},
+		{"ValidatePolicy valid YAML", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			yamlSpec := []byte(`
+subjects:
+  users: ["*"]
+rules:
+  - name: allow-read
+    effect: allow
+    actions: ["read"]
+    resources: ["/*"]
+`)
+			valid, issues, err := a.ValidatePolicy(ctx, "tenant-1", "test-validate", yamlSpec)
+			require.NoError(t, err)
+			assert.True(t, valid)
+			assert.Empty(t, issues)
+		}},
+		{"ValidatePolicy invalid YAML", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			valid, issues, err := a.ValidatePolicy(ctx, "tenant-1", "", []byte(`{{{{invalid yaml`))
+			require.NoError(t, err)
+			assert.False(t, valid)
+			assert.NotEmpty(t, issues)
+		}},
+		{"TestPolicy success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			req := &iam.CheckRequest{
+				Subject:  iam.Subject{TenantID: "tenant-1", ID: "user-1"},
+				Resource: "/test/data",
+				Action:   "read",
+			}
+			result, err := a.TestPolicy(ctx, "tenant-1", req)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+		}},
+		{"TestPolicy nil request", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.TestPolicy(ctx, "tenant-1", nil)
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.run(t, context.Background(), createTestIAMAdapter91(t))
+		})
+	}
 }
 
 // =============================================================================
