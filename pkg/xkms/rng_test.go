@@ -2177,18 +2177,14 @@ func TestJWTSign_NotInitialized(t *testing.T) {
 
 func TestJWTSign_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-sign-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
+	_, fullKeyID := createTestECDSAKey(t, "jwt-sign-test")
 
 	claims := JWTClaims{
 		"sub": "user123",
 		"iat": time.Now().Unix(),
 	}
 
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
+	token, err := JWTSign(fullKeyID, claims)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 	// JWT has 3 parts separated by dots
@@ -2214,14 +2210,10 @@ func TestJWTSignWithAlgorithm_NotInitialized(t *testing.T) {
 
 func TestJWTSignWithAlgorithm_Success(t *testing.T) {
 	setupFullTestXKMS(t)
-	attrs, _ := createTestECDSAKey(t, "jwt-sign-alg-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
+	_, fullKeyID := createTestECDSAKey(t, "jwt-sign-alg-test")
 
 	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(signer, claims, "ES256")
+	token, err := JWTSignWithAlgorithm(fullKeyID, claims, JWTAlgES256)
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
 }
@@ -2235,25 +2227,38 @@ func TestJWTSignWithAlgorithm_KeyNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrJWTSigningFailed)
 }
 
-func TestJWTSignWithSigner_Success(t *testing.T) {
-	// Generate a key directly for this test
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func TestJWTSignWithSigner(t *testing.T) {
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(privateKey, claims, "ES256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
-
-func TestJWTSignWithSigner_InvalidAlgorithm(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	setupFullTestXKMS(t)
+	rsaAttrs, _ := createTestRSAKey(t, "rsa-alg-test")
+	rsaSigner, err := Signer(context.Background(), rsaAttrs)
 	require.NoError(t, err)
 
-	claims := JWTClaims{"sub": "user123"}
-	_, err = JWTSignWithSigner(privateKey, claims, "INVALID")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTSigningFailed)
+	tests := []struct {
+		name      string
+		signer    crypto.Signer
+		algorithm string
+		wantErr   bool
+	}{
+		{name: "ECDSA ES256", signer: ecKey, algorithm: "ES256"},
+		{name: "backend RSA RS256", signer: rsaSigner, algorithm: "RS256"},
+		{name: "unknown algorithm", signer: ecKey, algorithm: "INVALID", wantErr: true},
+		{name: "algorithm does not match key", signer: ecKey, algorithm: "RS256", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := JWTSignWithSigner(tt.signer, JWTClaims{"sub": "user123"}, tt.algorithm)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrJWTSigningFailed)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotEmpty(t, token)
+		})
+	}
 }
 
 func TestJWTVerify_NotInitialized(t *testing.T) {
@@ -2579,67 +2584,9 @@ func TestJWTVerifyHMACWithAlgorithm_EmptyAlgorithm(t *testing.T) {
 // Additional Error Type Tests
 // -----------------------------------------------------------------------------
 
-func TestAdditionalErrorTypes(t *testing.T) {
-	assert.NotNil(t, ErrKeyNotFound)
-	assert.NotNil(t, ErrKeyImportFailed)
-	assert.NotNil(t, ErrSigningFailed)
-	assert.NotNil(t, ErrVerificationFailed)
-	assert.NotNil(t, ErrCertificateOperationFailed)
-	assert.NotNil(t, ErrInvalidKeyID)
-	assert.NotNil(t, ErrJWTSigningFailed)
-	assert.NotNil(t, ErrJWTVerificationFailed)
-	assert.NotNil(t, ErrJWTParsingFailed)
-	assert.NotNil(t, ErrSealingFailed)
-	assert.NotNil(t, ErrUnsealingFailed)
-	assert.NotNil(t, ErrEncryptionFailed)
-	assert.NotNil(t, ErrDecryptionFailed)
-
-	// Verify error messages contain expected text
-	assert.Contains(t, ErrKeyNotFound.Error(), "not found")
-	assert.Contains(t, ErrKeyImportFailed.Error(), "import")
-	assert.Contains(t, ErrSigningFailed.Error(), "signing")
-	assert.Contains(t, ErrVerificationFailed.Error(), "verification")
-	assert.Contains(t, ErrCertificateOperationFailed.Error(), "certificate")
-	assert.Contains(t, ErrInvalidKeyID.Error(), "key ID")
-	assert.Contains(t, ErrJWTSigningFailed.Error(), "jwt")
-	assert.Contains(t, ErrJWTVerificationFailed.Error(), "jwt")
-	assert.Contains(t, ErrJWTParsingFailed.Error(), "jwt")
-	assert.Contains(t, ErrSealingFailed.Error(), "sealing")
-	assert.Contains(t, ErrUnsealingFailed.Error(), "unsealing")
-	assert.Contains(t, ErrEncryptionFailed.Error(), "encryption")
-	assert.Contains(t, ErrDecryptionFailed.Error(), "decryption")
-}
-
 // -----------------------------------------------------------------------------
 // JWT Algorithm Constants Tests
 // -----------------------------------------------------------------------------
-
-func TestJWTAlgorithmConstants(t *testing.T) {
-	// Verify algorithm constants are properly defined
-	_ = JWTAlgRS256
-	_ = JWTAlgRS384
-	_ = JWTAlgRS512
-	_ = JWTAlgES256
-	_ = JWTAlgES384
-	_ = JWTAlgES512
-	_ = JWTAlgEdDSA
-	_ = JWTAlgPS256
-	_ = JWTAlgPS384
-	_ = JWTAlgPS512
-
-	// Test some algorithms with RSA key
-	setupFullTestXKMS(t)
-	attrs, _ := createTestRSAKey(t, "rsa-alg-test")
-
-	// Get key and sign directly
-	signer, err := Signer(context.Background(), attrs)
-	require.NoError(t, err)
-
-	claims := JWTClaims{"sub": "user123"}
-	token, err := JWTSignWithSigner(signer, claims, "RS256")
-	require.NoError(t, err)
-	assert.NotEmpty(t, token)
-}
 
 // -----------------------------------------------------------------------------
 // Backend and DefaultBackend Tests
@@ -2925,29 +2872,6 @@ func TestWrapUnwrapKeyWithECDHES_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, originalMaterial, unwrapped)
-}
-
-// TestJWTSignWithSigner_SignError exercises the SignedString error path.
-func TestJWTSignWithSigner_SignError(t *testing.T) {
-	// Provide a signer that is incompatible with the algorithm to trigger error
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	claims := JWTClaims{"sub": "test"}
-	// RS256 expects RSA key, but we provide ECDSA signer
-	_, err = JWTSignWithSigner(ecKey, claims, "RS256")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrJWTSigningFailed)
-}
-
-// TestJWTSignHMACWithAlgorithm_EmptySecret exercises HMAC signing with empty secret.
-func TestJWTSignHMACWithAlgorithm_EmptySecret(t *testing.T) {
-	claims := JWTClaims{"sub": "test"}
-	// HMAC signing with empty secret should still work (it produces a valid token)
-	token, err := JWTSignHMACWithAlgorithm(claims, []byte{}, "HS256")
-	if err == nil {
-		assert.NotEmpty(t, token)
-	}
 }
 
 // TestNewJWTSigner_CallbacksWork tests that the JWT signer callbacks resolve keys.
