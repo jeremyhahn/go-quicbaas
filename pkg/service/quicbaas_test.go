@@ -2492,39 +2492,6 @@ func TestBackupService_DeleteBackup_ManagerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "delete backup failed")
 }
 
-func TestWatch_EmptyKey(t *testing.T) {
-	svc := &quicBaaS{
-		config:           &ServiceConfig{},
-		raftNode:         &mockRaftNode{},
-		keyspaceResolver: NewKeyspaceResolver(),
-		watchManager:     watch.NewManager(),
-	}
-	svc.kvService = &kvService{svc: svc}
-
-	stream := make(chan *WatchResponse, 1)
-	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: nil}, stream)
-	require.Error(t, err)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestWatch_NilStream(t *testing.T) {
-	svc := &quicBaaS{
-		config:           &ServiceConfig{},
-		raftNode:         &mockRaftNode{},
-		keyspaceResolver: NewKeyspaceResolver(),
-		watchManager:     watch.NewManager(),
-	}
-	svc.kvService = &kvService{svc: svc}
-
-	_, err := svc.kvService.Watch(tenantctx.WithSystem(context.Background()), &WatchRequest{Key: []byte("test-key")}, nil)
-	require.Error(t, err)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
 func TestWatch_SuccessWithEventForwarding(t *testing.T) {
 	mgr := watch.NewManager()
 	svc := &quicBaaS{
@@ -2783,23 +2750,6 @@ func TestPut_WithCacheUpdate(t *testing.T) {
 	assert.Len(t, cachedEntries, 1)
 }
 
-func TestClose_CacheManagerError(t *testing.T) {
-	cache := &cov90MockCacheManager{
-		closeFn: func() error {
-			return stderrors.New("cache close failure")
-		},
-	}
-
-	svc := &quicBaaS{
-		config:       &ServiceConfig{},
-		cacheManager: cache,
-	}
-
-	err := svc.Close()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cache manager")
-}
-
 func TestClose_BackupManagerError(t *testing.T) {
 	svc := &quicBaaS{
 		config: &ServiceConfig{},
@@ -2813,23 +2763,6 @@ func TestClose_BackupManagerError(t *testing.T) {
 	err := svc.Close()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "backup manager")
-}
-
-func TestClose_StorageError(t *testing.T) {
-	store := &cov90MockStorage{
-		closeFn: func() error {
-			return stderrors.New("storage close failure")
-		},
-	}
-
-	svc := &quicBaaS{
-		config:  &ServiceConfig{},
-		storage: store,
-	}
-
-	err := svc.Close()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "storage")
 }
 
 func TestClose_QRDBClientError(t *testing.T) {
@@ -2847,16 +2780,6 @@ func TestClose_QRDBClientError(t *testing.T) {
 	err := svc.Close()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "qrdb client")
-}
-
-func TestClose_AlreadyClosed(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		closed: true,
-	}
-
-	err := svc.Close()
-	assert.NoError(t, err)
 }
 
 func TestClose_MultipleErrors(t *testing.T) {
@@ -2881,18 +2804,6 @@ func TestClose_MultipleErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cache manager")
 	assert.Contains(t, err.Error(), "storage")
-}
-
-func TestClose_WithLogger(t *testing.T) {
-	logger := createTestLogger(t)
-
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		logger: logger,
-	}
-
-	err := svc.Close()
-	assert.NoError(t, err)
 }
 
 func TestRebalanceCluster_NilQRDBClient(t *testing.T) {
@@ -3598,98 +3509,6 @@ func TestBatchServiceImpl_BatchGet_EmptyKeys(t *testing.T) {
 	assert.Contains(t, err.Error(), "batch")
 }
 
-func TestKVService_Watch_ContextCanceledDuringSend(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key: []byte("test-key"),
-	}
-
-	// Create a buffered channel that we'll fill up
-	stream := make(chan *WatchResponse, 1)
-
-	ctx, cancel := context.WithCancel(tenantctx.WithSystem(context.Background()))
-
-	// Start the watch
-	watchID, err := svc.Watch(ctx, req, stream)
-	require.NoError(t, err)
-	assert.Greater(t, watchID, int64(0))
-
-	// Read the created response
-	resp := <-stream
-
-	assert.True(t, resp.Created)
-
-	// Cancel context immediately
-	cancel()
-
-	// Give time for goroutine to process cancellation
-	time.Sleep(50 * time.Millisecond)
-
-	// The stream should receive a canceled response
-	select {
-	case resp = <-stream:
-		assert.True(t, resp.Canceled)
-	case <-time.After(200 * time.Millisecond):
-		// Acceptable - the goroutine may have already exited
-	}
-}
-
-func TestKVService_Watch_NilRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestKVService_Watch_EmptyKeyWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key: []byte{},
-	}
-
-	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestKVService_Watch_NilStreamWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key: []byte("test-key"),
-	}
-
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, nil)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
 func TestKVService_Watch_WithMetricsSuccess(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
@@ -4160,75 +3979,36 @@ func TestTransactionService_Transaction_WithDefaultShardID(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
-func TestKVService_List_NilRequestPath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestKVService_List_NilRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-}
-
-func TestKVService_List_EmptyEntityTypePath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &ListRequest{
-		EntityType: "",
+func TestKVService_List_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *ListRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "empty entity type", req: &ListRequest{EntityType: ""}, wantErr: "entity type is required"},
 	}
+	for _, metrics := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s/metrics=%t", tt.name, metrics), func(t *testing.T) {
+				opts := []func(*serviceBuilder){withMockRaftNode(&mockRaftNode{})}
+				if metrics {
+					opts = append(opts, withEnableMetrics())
+				}
+				svc := createTestService(t, opts...)
+				defer svc.Close()
 
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-}
+				stream := make(chan *ListResponse, 1)
+				err := svc.List(tenantctx.WithSystem(context.Background()), tt.req, stream)
+				require.Error(t, err)
 
-func TestKVService_List_EmptyEntityTypeWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	req := &ListRequest{
-		EntityType: "",
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			})
+		}
 	}
-
-	stream := make(chan *ListResponse, 10)
-	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-}
-
-func TestKVService_Delete_NilRequestPath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Delete_NilRequestWithMetrics(t *testing.T) {
@@ -4242,104 +4022,36 @@ func TestKVService_Delete_NilRequestWithMetrics(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestKVService_Delete_EmptyEntityTypePath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &DeleteRequest{
-		EntityType: "",
-		ID:         1,
+func TestKVService_Put_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *PutRequest
+		wantErr string
+	}{
+		{name: "nil request", req: nil, wantErr: "request cannot be nil"},
+		{name: "empty entity type", req: &PutRequest{EntityType: "", ID: 1, Data: []byte(`{}`)}, wantErr: "entity type is required"},
 	}
+	for _, metrics := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s/metrics=%t", tt.name, metrics), func(t *testing.T) {
+				opts := []func(*serviceBuilder){withMockRaftNode(&mockRaftNode{})}
+				if metrics {
+					opts = append(opts, withEnableMetrics())
+				}
+				svc := createTestService(t, opts...)
+				defer svc.Close()
 
-	resp, err := svc.Delete(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
+				resp, err := svc.Put(tenantctx.WithSystem(context.Background()), tt.req)
+				require.Error(t, err)
+				require.Nil(t, resp)
 
-func TestKVService_Put_NilRequestPath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestKVService_Put_NilRequestWithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB), withEnableMetrics())
-	defer svc.Close()
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestKVService_Put_EmptyEntityTypePath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &PutRequest{
-		EntityType: "",
-		ID:         1,
-		Data:       []byte(`{}`),
+				var qbErr *errors.QBError
+				require.ErrorAs(t, err, &qbErr)
+				assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			})
+		}
 	}
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestKVService_Put_NilDataAllowed(t *testing.T) {
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &PutRequest{
-		EntityType: "user",
-		ID:         1,
-		Data:       nil, // nil data is allowed (treated as empty)
-	}
-
-	// If the implementation allows nil data, this should succeed
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
-	// Either success OR error is acceptable based on implementation
-	if err != nil {
-		require.Nil(t, resp)
-	} else {
-		require.NotNil(t, resp)
-	}
-}
-
-func TestKVService_Get_NilRequestPath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	qbErr, ok := err.(*errors.QBError)
-	assert.True(t, ok)
-	assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestKVService_Get_NilRequestWithMetrics(t *testing.T) {
@@ -4351,50 +4063,6 @@ func TestKVService_Get_NilRequestWithMetrics(t *testing.T) {
 	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), nil)
 	require.Error(t, err)
 	require.Nil(t, resp)
-}
-
-func TestKVService_Get_EmptyEntityTypePath(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &GetRequest{
-		EntityType: "",
-		ID:         1,
-	}
-
-	resp, err := svc.Get(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-}
-
-func TestKVService_Put_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestKVService_Put_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &PutRequest{
-		EntityType: "",
-		ID:         1,
-		Data:       []byte(`{"name":"test"}`),
-	}
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "entity type is required")
 }
 
 func TestKVService_Put_RaftError(t *testing.T) {
@@ -4445,34 +4113,6 @@ func TestKVService_Put_WithMetrics(t *testing.T) {
 	}
 	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
 	svc := createTestService(t, withMockRaftNode(mockRaft), withEnableMetrics(), withQRDBClientProvider(mockQRDB))
-	defer svc.Close()
-
-	req := &PutRequest{
-		EntityType: "user",
-		ID:         1,
-		Data:       []byte(`{"name":"test"}`),
-	}
-
-	resp, err := svc.Put(tenantctx.WithSystem(context.Background()), req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestKVService_Put_WithCacheUpdate(t *testing.T) {
-	cacheMgr, err := cache.NewManager(cache.Config{
-		L1Size:          100,
-		L1TTL:           1 * time.Minute,
-		CleanupInterval: 5 * time.Minute,
-	}, createTestLogger(t))
-	require.NoError(t, err)
-
-	mockRaft := &mockRaftNode{
-		syncProposeFn: func(ctx context.Context, shardID uint64, data []byte) error {
-			return nil
-		},
-	}
-	mockQRDB := newSvcBoostMockQRDBProvider(nil, nil)
-	svc := createTestService(t, withMockRaftNode(mockRaft), withCacheManager(cacheMgr), withQRDBClientProvider(mockQRDB))
 	defer svc.Close()
 
 	req := &PutRequest{
@@ -4557,32 +4197,6 @@ func TestKVService_Get_WithMetrics(t *testing.T) {
 	require.NotNil(t, resp)
 }
 
-func TestKVService_List_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	stream := make(chan *ListResponse, 1)
-	err := svc.List(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestKVService_List_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &ListRequest{
-		EntityType: "",
-	}
-
-	stream := make(chan *ListResponse, 1)
-	err := svc.List(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "entity type is required")
-}
-
 func TestKVService_List_RaftError(t *testing.T) {
 	scanErr := stderrors.New("raft read failed")
 	qrdbProvider := newSvcBoostMockQRDBProvider(nil, scanErr)
@@ -4619,101 +4233,6 @@ func TestKVService_List_ContextCanceled(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestKVService_Watch_NilRequest(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), nil, stream)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestKVService_Watch_EmptyKey(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key: []byte{},
-	}
-
-	stream := make(chan *WatchResponse, 10)
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, stream)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key is required")
-}
-
-func TestKVService_Watch_NilStream(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key: []byte("test-key"),
-	}
-
-	_, err := svc.Watch(tenantctx.WithSystem(context.Background()), req, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "stream channel is required")
-}
-
-func TestKVService_Watch_Success(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key:      []byte("test-key"),
-		IsPrefix: false,
-	}
-
-	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
-	defer cancel()
-
-	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.Watch(ctx, req, stream)
-	require.NoError(t, err)
-	assert.Greater(t, watchID, int64(0))
-
-	// Wait for created response
-	select {
-	case resp := <-stream:
-		assert.True(t, resp.Created)
-		assert.Equal(t, watchID, resp.WatchID)
-	case <-ctx.Done():
-		t.Fatal("Timeout waiting for created response")
-	}
-}
-
-func TestKVService_Watch_WithPrefix(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key:      []byte("/users/"),
-		IsPrefix: true,
-	}
-
-	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
-	defer cancel()
-
-	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.Watch(ctx, req, stream)
-	require.NoError(t, err)
-	assert.Greater(t, watchID, int64(0))
-
-	// Wait for created response
-	select {
-	case resp := <-stream:
-		assert.True(t, resp.Created)
-	case <-ctx.Done():
-		t.Fatal("Timeout waiting for created response")
-	}
-}
-
 func TestKVService_Watch_ContextCanceled(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	svc := createTestService(t, withMockRaftNode(mockRaft))
@@ -4742,33 +4261,6 @@ func TestKVService_Watch_ContextCanceled(t *testing.T) {
 		assert.True(t, resp.Canceled)
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Timeout waiting for canceled response")
-	}
-}
-
-func TestKVService_Watch_WithFilters(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &WatchRequest{
-		Key:     []byte("test-key"),
-		Filters: []WatchEventType{WatchEventTypeDelete}, // Filter out DELETE events
-	}
-
-	ctx, cancel := context.WithTimeout(tenantctx.WithSystem(context.Background()), 100*time.Millisecond)
-	defer cancel()
-
-	stream := make(chan *WatchResponse, 10)
-	watchID, err := svc.Watch(ctx, req, stream)
-	require.NoError(t, err)
-	assert.Greater(t, watchID, int64(0))
-
-	// Wait for created response
-	select {
-	case resp := <-stream:
-		assert.True(t, resp.Created)
-	case <-ctx.Done():
-		t.Fatal("Timeout waiting for created response")
 	}
 }
 
