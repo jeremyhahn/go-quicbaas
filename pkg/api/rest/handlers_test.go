@@ -4434,16 +4434,53 @@ func TestRemaining91_HandleCreateNamespace_MissingMetric(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleCreateNamespace_NilVectorService(t *testing.T) {
+func TestRemaining91_VectorHandlers_NilVectorService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
-	body := `{"namespace":"ns","dimensions":128,"distance_metric":"cosine"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleCreateNamespace(w, req)
+	const ns = "/api/v1/vector/namespaces/test-ns"
+	tests := []struct {
+		name    string
+		method  string
+		target  string
+		body    string
+		withID  bool
+		handler func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "create namespace", method: http.MethodPost, target: "/api/v1/vector/namespaces", body: `{"namespace":"ns","dimensions":128,"distance_metric":"cosine"}`, handler: server.HandleCreateNamespace},
+		{name: "update namespace", method: http.MethodPut, target: ns, body: `{"metadata":{"key":"val"}}`, handler: server.HandleUpdateNamespace},
+		{name: "delete namespace", method: http.MethodDelete, target: ns, handler: server.HandleDeleteNamespace},
+		{name: "list namespaces", method: http.MethodGet, target: "/api/v1/vector/namespaces", handler: server.HandleListNamespaces},
+		{name: "get namespace info", method: http.MethodGet, target: ns, handler: server.HandleGetNamespaceInfo},
+		{name: "get namespace stats", method: http.MethodGet, target: ns + "/stats", handler: server.HandleGetNamespaceStats},
+		{name: "upsert vector", method: http.MethodPost, target: ns + "/vectors", body: `{"id":"vec1","vector":[1.0,2.0,3.0]}`, handler: server.HandleUpsertVector},
+		{name: "get vector", method: http.MethodGet, target: ns + "/vectors/vec1", withID: true, handler: server.HandleGetVector},
+		{name: "delete vector", method: http.MethodDelete, target: ns + "/vectors/vec1", withID: true, handler: server.HandleDeleteVector},
+		{name: "batch upsert vectors", method: http.MethodPost, target: ns + "/vectors/batch", body: `{"vectors":[{"id":"v1","vector":[1.0]}]}`, handler: server.HandleBatchUpsertVectors},
+		{name: "batch delete vectors", method: http.MethodDelete, target: ns + "/vectors/batch", body: `{"ids":["v1","v2"]}`, handler: server.HandleBatchDeleteVectors},
+		{name: "list vectors", method: http.MethodGet, target: ns + "/vectors", handler: server.HandleListVectors},
+		{name: "search similar", method: http.MethodPost, target: ns + "/search/similar", body: `{"query_vector":[1.0,2.0],"k":5}`, handler: server.HandleSearchSimilar},
+		{name: "search by id", method: http.MethodPost, target: ns + "/search/by-id/vec1", body: `{"k":5}`, withID: true, handler: server.HandleSearchByID},
+		{name: "rebuild index", method: http.MethodPost, target: ns + "/index/rebuild", body: `{}`, handler: server.HandleRebuildIndex},
+		{name: "global stats", method: http.MethodGet, target: "/api/v1/vector/admin/stats/global", handler: server.HandleGetGlobalStats},
+		{name: "update metadata", method: http.MethodPut, target: ns + "/vectors/vec1/metadata", body: `{"metadata":{"key":"val"}}`, withID: true, handler: server.HandleUpdateMetadata},
+	}
 
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("namespace", "test-ns")
+			if tt.withID {
+				rctx.URLParams.Add("id", "vec1")
+			}
+			req := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		})
+	}
 }
 
 func TestRemaining91_HandleCreateNamespace_ServiceError(t *testing.T) {
@@ -4479,21 +4516,6 @@ func TestRemaining91_HandleUpdateNamespace_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleUpdateNamespace_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"metadata":{"key":"val"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/vector/namespaces/test-ns", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateNamespace(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4514,20 +4536,6 @@ func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	server.HandleUpdateNamespace(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleDeleteNamespace_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteNamespace(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleDeleteNamespace_Success(t *testing.T) {
@@ -4572,17 +4580,6 @@ func TestRemaining91_HandleDeleteNamespace_ServiceError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestRemaining91_HandleListNamespaces_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces", nil)
-	w := httptest.NewRecorder()
-	server.HandleListNamespaces(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleListNamespaces_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4602,20 +4599,6 @@ func TestRemaining91_HandleListNamespaces_Success(t *testing.T) {
 	server.HandleListNamespaces(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetNamespaceInfo_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetNamespaceInfo(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetNamespaceInfo_Success(t *testing.T) {
@@ -4641,20 +4624,6 @@ func TestRemaining91_HandleGetNamespaceInfo_Success(t *testing.T) {
 	server.HandleGetNamespaceInfo(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetNamespaceStats_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/stats", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetNamespaceStats(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetNamespaceStats_Success(t *testing.T) {
@@ -4726,21 +4695,6 @@ func TestRemaining91_HandleUpsertVector_EmptyVector(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleUpsertVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"id":"vec1","vector":[1.0,2.0,3.0]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/vectors", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpsertVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleUpsertVector_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4766,21 +4720,6 @@ func TestRemaining91_HandleUpsertVector_Success(t *testing.T) {
 	server.HandleUpsertVector(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/vectors/vec1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleGetVector_NotFound(t *testing.T) {
@@ -4831,21 +4770,6 @@ func TestRemaining91_HandleGetVector_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestRemaining91_HandleDeleteVector_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns/vectors/vec1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleDeleteVector(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleDeleteVector_Success(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4882,81 +4806,6 @@ func TestRemaining91_HandleBatchUpsertVectors_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleBatchUpsertVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"vectors":[{"id":"v1","vector":[1.0]}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/vectors/batch", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleBatchUpsertVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleBatchDeleteVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"ids":["v1","v2"]}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/vector/namespaces/test-ns/vectors/batch", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleBatchDeleteVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleListVectors_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/namespaces/test-ns/vectors", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleListVectors(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleSearchSimilar_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	body := `{"query_vector":[1.0,2.0],"k":5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/search/similar", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSearchSimilar(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestRemaining91_HandleSearchByID_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	body := `{"k":5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/search/by-id/vec1", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSearchByID(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleHybridSearch_InvalidJSON(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -4979,20 +4828,6 @@ func TestRemaining91_HandleSearchByMetadata_InvalidJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestRemaining91_HandleRebuildIndex_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/vector/namespaces/test-ns/index/rebuild", strings.NewReader("{}"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleRebuildIndex(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
 func TestRemaining91_HandleGetIndexProgress_NilVectorService(t *testing.T) {
 	server, _, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -5005,17 +4840,6 @@ func TestRemaining91_HandleGetIndexProgress_NilVectorService(t *testing.T) {
 	server.HandleGetIndexProgress(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleGetGlobalStats_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/vector/admin/stats/global", nil)
-	w := httptest.NewRecorder()
-	server.HandleGetGlobalStats(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestRemaining91_HandleCompactNamespace_NilVectorService(t *testing.T) {
@@ -5039,22 +4863,6 @@ func TestRemaining91_HandleGetCompactionProgress_NilVectorService(t *testing.T) 
 	server.HandleGetCompactionProgress(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestRemaining91_HandleUpdateMetadata_NilVectorService(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("namespace", "test-ns")
-	rctx.URLParams.Add("id", "vec1")
-	body := `{"metadata":{"key":"val"}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/vector/namespaces/test-ns/vectors/vec1/metadata", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleUpdateMetadata(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 // =============================================================================
