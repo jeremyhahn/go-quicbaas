@@ -1550,11 +1550,12 @@ func TestIAMCommands_MissingTenant(t *testing.T) {
 		run  func() error
 	}{
 		{"pep check", func() error {
+			cmd := newIAMPEPCheckCommand()
 			pepSubject = `{"id":"user1"}`
 			pepAction = "read"
 			pepResource = "keys/foo"
 			pepContext = ""
-			return runIAMPEPCheckCommand(newIAMPEPCheckCommand(), []string{})
+			return runIAMPEPCheckCommand(cmd, []string{})
 		}},
 		{"audit query", func() error {
 			return runIAMAuditQueryCommand(newIAMAuditQueryCommand(), []string{})
@@ -1575,48 +1576,57 @@ func TestIAMCommands_MissingTenant(t *testing.T) {
 			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
 		}},
 		{"gdpr consent grant", func() error {
+			cmd := newIAMGDPRConsentGrantCommand()
 			gdprUserID = "user_001"
 			gdprPurpose = "marketing"
-			return runIAMGDPRConsentGrantCommand(newIAMGDPRConsentGrantCommand(), []string{})
+			return runIAMGDPRConsentGrantCommand(cmd, []string{})
 		}},
 		{"gdpr consent withdraw", func() error {
+			cmd := newIAMGDPRConsentWithdrawCommand()
 			gdprUserID = "user_001"
 			gdprPurpose = "marketing"
-			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+			return runIAMGDPRConsentWithdrawCommand(cmd, []string{})
 		}},
 		{"gdpr consent get", func() error {
+			cmd := newIAMGDPRConsentGetCommand()
 			gdprUserID = "user_001"
 			gdprPurpose = "analytics"
-			return runIAMGDPRConsentGetCommand(newIAMGDPRConsentGetCommand(), []string{})
+			return runIAMGDPRConsentGetCommand(cmd, []string{})
 		}},
 		{"gdpr consent list", func() error {
+			cmd := newIAMGDPRConsentListCommand()
 			gdprUserID = "user_001"
-			return runIAMGDPRConsentListCommand(newIAMGDPRConsentListCommand(), []string{})
+			return runIAMGDPRConsentListCommand(cmd, []string{})
 		}},
 		{"gdpr export request", func() error {
+			cmd := newIAMGDPRExportRequestCommand()
 			gdprUserID = "user_001"
 			gdprExportFormat = "json"
-			return runIAMGDPRExportRequestCommand(newIAMGDPRExportRequestCommand(), []string{})
+			return runIAMGDPRExportRequestCommand(cmd, []string{})
 		}},
 		{"gdpr export status", func() error {
+			cmd := newIAMGDPRExportStatusCommand()
 			gdprUserID = "user_001"
 			gdprExportID = "export_001"
-			return runIAMGDPRExportStatusCommand(newIAMGDPRExportStatusCommand(), []string{})
+			return runIAMGDPRExportStatusCommand(cmd, []string{})
 		}},
 		{"gdpr deletion request", func() error {
+			cmd := newIAMGDPRDeletionRequestCommand()
 			gdprUserID = "user_001"
 			gdprDeletionReason = "reason"
-			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+			return runIAMGDPRDeletionRequestCommand(cmd, []string{})
 		}},
 		{"gdpr deletion cancel", func() error {
+			cmd := newIAMGDPRDeletionCancelCommand()
 			gdprUserID = "user_001"
 			gdprDeletionID = "del_001"
-			return runIAMGDPRDeletionCancelCommand(newIAMGDPRDeletionCancelCommand(), []string{})
+			return runIAMGDPRDeletionCancelCommand(cmd, []string{})
 		}},
 		{"gdpr deletion status", func() error {
+			cmd := newIAMGDPRDeletionStatusCommand()
 			gdprUserID = "user_001"
 			gdprDeletionID = "del_001"
-			return runIAMGDPRDeletionStatusCommand(newIAMGDPRDeletionStatusCommand(), []string{})
+			return runIAMGDPRDeletionStatusCommand(cmd, []string{})
 		}},
 		{"policy get", func() error {
 			return runIAMPolicyGetCommand(newIAMPolicyGetCommand(), []string{"test-policy"})
@@ -1628,39 +1638,46 @@ func TestIAMCommands_MissingTenant(t *testing.T) {
 			return runIAMPolicyListCommand(newIAMPolicyListCommand(), []string{})
 		}},
 		{"app register", func() error {
+			cmd := newIAMAppRegisterCommand()
 			iamAppName = "test-app"
-			return runIAMAppRegisterCommand(newIAMAppRegisterCommand(), []string{})
+			return runIAMAppRegisterCommand(cmd, []string{})
 		}},
 		{"app list", func() error {
 			return runIAMAppListCommand(newIAMAppListCommand(), []string{})
 		}},
 		{"mfa disable", func() error {
+			cmd := newMFADisableCommand()
 			mfaUserID = "user_001"
-			return runMFADisableCommand(newMFADisableCommand(), []string{})
+			return runMFADisableCommand(cmd, []string{})
 		}},
 		{"mfa backup-codes generate", func() error {
+			cmd := newMFABackupCodesGenerateCommand()
 			mfaUserID = "user_001"
-			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+			return runMFABackupCodesGenerateCommand(cmd, []string{})
 		}},
 		{"provider get", func() error {
+			cmd := newIAMProviderGetCommand()
 			providerID = "provider_test"
-			return runIAMProviderGetCommand(newIAMProviderGetCommand(), []string{})
+			return runIAMProviderGetCommand(cmd, []string{})
 		}},
 		{"provider delete", func() error {
+			cmd := newIAMProviderDeleteCommand()
 			providerID = "provider_test"
-			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+			return runIAMProviderDeleteCommand(cmd, []string{})
 		}},
 		{"provider list", func() error {
 			return runIAMProviderListCommand(newIAMProviderListCommand(), []string{})
 		}},
 		{"identity unlink", func() error {
+			cmd := newIAMIdentityUnlinkCommand()
 			identityUserID = "user_001"
 			identityProviderID = "provider_test"
-			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+			return runIAMIdentityUnlinkCommand(cmd, []string{})
 		}},
 		{"identity list", func() error {
+			cmd := newIAMIdentityListCommand()
 			identityUserID = "user_001"
-			return runIAMIdentityListCommand(newIAMIdentityListCommand(), []string{})
+			return runIAMIdentityListCommand(cmd, []string{})
 		}},
 	}
 
@@ -1672,11 +1689,9 @@ func TestIAMCommands_MissingTenant(t *testing.T) {
 			defer cleanupLog()
 
 			globalTenantID = ""
-			iamForce = true
 
 			err := tt.run()
-			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "--tenant flag is required")
+			assert.ErrorContains(t, err, "--tenant flag is required")
 		})
 	}
 }
@@ -2606,7 +2621,8 @@ func withStdinInput(t *testing.T, input string) func() {
 
 // TestIAMCommands_ConfirmPrompt runs each destructive IAM command without
 // --force and answers its confirmation prompt on stdin, so both the confirmed
-// and the declined branch of every prompt run.
+// and the declined branch of every prompt run. Each row builds its command
+// before setting flag globals, because binding the flags resets them.
 func TestIAMCommands_ConfirmPrompt(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -2632,75 +2648,91 @@ func TestIAMCommands_ConfirmPrompt(t *testing.T) {
 			return runIAMSessionRevokeCommand(newIAMSessionRevokeCommand(), []string{"sess_001"})
 		}},
 		{"session revoke-all no", "n\n", func() error {
+			cmd := newIAMSessionRevokeAllCommand()
 			sessionKeepCurrent = false
-			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
+			return runIAMSessionRevokeAllCommand(cmd, []string{})
 		}},
 		{"session revoke-all keep-current no", "n\n", func() error {
+			cmd := newIAMSessionRevokeAllCommand()
 			sessionKeepCurrent = true
 			defer func() { sessionKeepCurrent = false }()
-			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
+			return runIAMSessionRevokeAllCommand(cmd, []string{})
 		}},
 		{"gdpr consent withdraw yes", "y\n", func() error {
+			cmd := newIAMGDPRConsentWithdrawCommand()
 			gdprUserID = "user_001"
 			gdprPurpose = "marketing"
-			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+			return runIAMGDPRConsentWithdrawCommand(cmd, []string{})
 		}},
 		{"gdpr consent withdraw no", "n\n", func() error {
+			cmd := newIAMGDPRConsentWithdrawCommand()
 			gdprUserID = "user_001"
 			gdprPurpose = "marketing"
-			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+			return runIAMGDPRConsentWithdrawCommand(cmd, []string{})
 		}},
 		{"gdpr deletion request yes", "yes\n", func() error {
+			cmd := newIAMGDPRDeletionRequestCommand()
 			gdprUserID = "user_001"
 			gdprDeletionReason = "user request"
-			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+			return runIAMGDPRDeletionRequestCommand(cmd, []string{})
 		}},
 		{"gdpr deletion request no", "n\n", func() error {
+			cmd := newIAMGDPRDeletionRequestCommand()
 			gdprUserID = "user_001"
 			gdprDeletionReason = "user request"
-			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+			return runIAMGDPRDeletionRequestCommand(cmd, []string{})
 		}},
 		{"admin assignment delete yes", "y\n", func() error {
+			cmd := newIAMAdminAssignmentDeleteCommand()
 			adminAssignmentID = "adm_test123"
-			return runIAMAdminAssignmentDeleteCommand(newIAMAdminAssignmentDeleteCommand(), []string{})
+			return runIAMAdminAssignmentDeleteCommand(cmd, []string{})
 		}},
 		{"admin assignment delete no", "n\n", func() error {
+			cmd := newIAMAdminAssignmentDeleteCommand()
 			adminAssignmentID = "adm_test123"
-			return runIAMAdminAssignmentDeleteCommand(newIAMAdminAssignmentDeleteCommand(), []string{})
+			return runIAMAdminAssignmentDeleteCommand(cmd, []string{})
 		}},
 		{"mfa disable yes", "y\n", func() error {
+			cmd := newMFADisableCommand()
 			mfaUserID = "user_001"
-			return runMFADisableCommand(newMFADisableCommand(), []string{})
+			return runMFADisableCommand(cmd, []string{})
 		}},
 		{"mfa disable no", "n\n", func() error {
+			cmd := newMFADisableCommand()
 			mfaUserID = "user_001"
-			return runMFADisableCommand(newMFADisableCommand(), []string{})
+			return runMFADisableCommand(cmd, []string{})
 		}},
 		{"mfa backup-codes generate yes", "y\n", func() error {
+			cmd := newMFABackupCodesGenerateCommand()
 			mfaUserID = "user_001"
-			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+			return runMFABackupCodesGenerateCommand(cmd, []string{})
 		}},
 		{"mfa backup-codes generate no", "n\n", func() error {
+			cmd := newMFABackupCodesGenerateCommand()
 			mfaUserID = "user_001"
-			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+			return runMFABackupCodesGenerateCommand(cmd, []string{})
 		}},
 		{"provider delete yes", "y\n", func() error {
+			cmd := newIAMProviderDeleteCommand()
 			providerID = "provider_test"
-			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+			return runIAMProviderDeleteCommand(cmd, []string{})
 		}},
 		{"provider delete no", "n\n", func() error {
+			cmd := newIAMProviderDeleteCommand()
 			providerID = "provider_test"
-			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+			return runIAMProviderDeleteCommand(cmd, []string{})
 		}},
 		{"identity unlink yes", "y\n", func() error {
+			cmd := newIAMIdentityUnlinkCommand()
 			identityUserID = "user_001"
 			identityProviderID = "provider_test"
-			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+			return runIAMIdentityUnlinkCommand(cmd, []string{})
 		}},
 		{"identity unlink no", "n\n", func() error {
+			cmd := newIAMIdentityUnlinkCommand()
 			identityUserID = "user_001"
 			identityProviderID = "provider_test"
-			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+			return runIAMIdentityUnlinkCommand(cmd, []string{})
 		}},
 		{"role delete yes", "y\n", func() error {
 			return runIAMRoleDeleteCommand(newIAMRoleDeleteCommand(), []string{"role_test"})
