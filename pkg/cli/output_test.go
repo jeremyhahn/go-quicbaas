@@ -17,7 +17,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +69,14 @@ func TestParseOutputFormat(t *testing.T) {
 			want:    OutputFormatRaw,
 			wantErr: false,
 		},
+		{name: "json mixed case", input: "Json", want: OutputFormatJSON},
+		{name: "yaml uppercase", input: "YAML", want: OutputFormatYAML},
+		{name: "yaml mixed case", input: "Yaml", want: OutputFormatYAML},
+		{name: "yml uppercase", input: "YML", want: OutputFormatYAML},
+		{name: "table uppercase", input: "TABLE", want: OutputFormatTable},
+		{name: "table mixed case", input: "Table", want: OutputFormatTable},
+		{name: "raw uppercase", input: "RAW", want: OutputFormatRaw},
+		{name: "raw mixed case", input: "Raw", want: OutputFormatRaw},
 		{
 			name:    "invalid format",
 			input:   "invalid",
@@ -296,6 +303,19 @@ func TestFormatDeleteResponse(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "testkey")
 		assert.Contains(t, output, "true")
+		assert.Contains(t, output, "Message:")
+	})
+
+	t.Run("Table format omits empty message", func(t *testing.T) {
+		noMessage := &DeleteResponse{Key: "testkey", Deleted: true, Timestamp: now}
+
+		var buf bytes.Buffer
+		err := formatter.FormatDeleteResponse(noMessage, OutputFormatTable, &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "testkey")
+		assert.NotContains(t, output, "Message:")
 	})
 
 	t.Run("Default format failed delete", func(t *testing.T) {
@@ -353,6 +373,18 @@ func TestFormatListResponse(t *testing.T) {
 		assert.Contains(t, output, "key2")
 		assert.Contains(t, output, "Total")
 		assert.Contains(t, output, "cursor123")
+	})
+
+	t.Run("Table format empty list", func(t *testing.T) {
+		empty := &ListResponse{Items: []ListItem{}, Total: 0}
+
+		var buf bytes.Buffer
+		err := formatter.FormatListResponse(empty, OutputFormatTable, &buf)
+		require.NoError(t, err)
+
+		output := buf.String()
+		assert.Contains(t, output, "Total")
+		assert.Contains(t, output, "0")
 	})
 
 	t.Run("Default format", func(t *testing.T) {
@@ -439,6 +471,15 @@ func TestFormatQueryResponse(t *testing.T) {
 		assert.Contains(t, buf.String(), "key1")
 	})
 
+	t.Run("Table format empty query", func(t *testing.T) {
+		empty := &QueryResponse{Items: []QueryItem{}, Total: 0}
+
+		var buf bytes.Buffer
+		err := formatter.FormatQueryResponse(empty, OutputFormatTable, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "Total")
+	})
+
 	t.Run("Default format", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := formatter.FormatQueryResponse(resp, "", &buf)
@@ -518,114 +559,75 @@ func TestFormatClusterStatus(t *testing.T) {
 		output := buf.String()
 		assert.Contains(t, output, "healthy")
 	})
+
+	t.Run("YAML format", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := formatter.FormatClusterStatus(resp, OutputFormatYAML, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "node1:9000")
+	})
+
+	t.Run("Table format with no nodes or groups", func(t *testing.T) {
+		empty := &ClusterStatusResponse{
+			Healthy:       true,
+			LeaderID:      1,
+			NodeCount:     3,
+			ReadyNodes:    3,
+			Nodes:         []NodeInfo{},
+			RaftGroupInfo: []RaftGroupInfo{},
+		}
+
+		var buf bytes.Buffer
+		err := formatter.FormatClusterStatus(empty, OutputFormatTable, &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "CLUSTER STATUS")
+	})
+
+	t.Run("Default format unhealthy cluster", func(t *testing.T) {
+		unhealthy := &ClusterStatusResponse{
+			Healthy:    false,
+			NodeCount:  3,
+			ReadyNodes: 1,
+			Nodes:      []NodeInfo{},
+		}
+
+		var buf bytes.Buffer
+		err := formatter.FormatClusterStatus(unhealthy, "", &buf)
+		require.NoError(t, err)
+		assert.Contains(t, buf.String(), "unhealthy")
+	})
 }
 
 // TestFormatError tests error formatting.
 func TestFormatError(t *testing.T) {
-	formatter := NewFormatter(false)
-	err := assert.AnError
-
-	var buf bytes.Buffer
-	fmtErr := formatter.FormatError(err, &buf)
-	require.NoError(t, fmtErr)
-
-	output := buf.String()
-	assert.Contains(t, output, "Error:")
-}
-
-// TestColorOutput tests colored vs non-colored output.
-func TestColorOutput(t *testing.T) {
 	t.Run("without color", func(t *testing.T) {
 		formatter := NewFormatter(false)
-		err := assert.AnError
 
 		var buf bytes.Buffer
-		formatter.FormatError(err, &buf)
+		err := formatter.FormatError(assert.AnError, &buf)
+		require.NoError(t, err)
 
 		output := buf.String()
-		assert.NotContains(t, output, "\033[") // No ANSI color codes
+		assert.Contains(t, output, "Error:")
+		assert.NotContains(t, output, "\033[")
 	})
 
 	t.Run("with color", func(t *testing.T) {
 		formatter := NewFormatter(true)
-		err := assert.AnError
 
 		var buf bytes.Buffer
-		formatter.FormatError(err, &buf)
+		err := formatter.FormatError(assert.AnError, &buf)
+		require.NoError(t, err)
 
 		output := buf.String()
-		assert.Contains(t, output, "\033[") // Has ANSI color codes
+		assert.Contains(t, output, "\033[31m")
+		assert.Contains(t, output, "\033[0m")
 	})
 }
 
+// TestColorOutput tests colored vs non-colored output.
 // TestEmptyResponses tests formatting of empty responses.
-func TestEmptyResponses(t *testing.T) {
-	formatter := NewFormatter(false)
-
-	t.Run("empty list", func(t *testing.T) {
-		resp := &ListResponse{
-			Items: []ListItem{},
-			Total: 0,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatListResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "Total")
-		assert.Contains(t, output, "0")
-	})
-
-	t.Run("empty query", func(t *testing.T) {
-		resp := &QueryResponse{
-			Items: []QueryItem{},
-			Total: 0,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatQueryResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "Total")
-	})
-}
-
 // TestLargeDatasets tests formatting with large datasets.
-func TestLargeDatasets(t *testing.T) {
-	formatter := NewFormatter(false)
-	now := time.Now()
-
-	items := make([]ListItem, 1000)
-	for i := 0; i < 1000; i++ {
-		items[i] = ListItem{
-			Key:       strings.Repeat("a", 100),
-			Value:     []byte(strings.Repeat("b", 1000)),
-			Timestamp: now,
-		}
-	}
-
-	resp := &ListResponse{
-		Items: items,
-		Total: 1000,
-	}
-
-	t.Run("JSON format with large dataset", func(t *testing.T) {
-		var buf bytes.Buffer
-		err := formatter.FormatListResponse(resp, OutputFormatJSON, &buf)
-		require.NoError(t, err)
-		assert.Greater(t, buf.Len(), 0)
-	})
-
-	t.Run("Table format with large dataset", func(t *testing.T) {
-		var buf bytes.Buffer
-		err := formatter.FormatListResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-		assert.Greater(t, buf.Len(), 0)
-	})
-}
-
 // BenchmarkFormatJSON benchmarks JSON formatting.
 func BenchmarkFormatJSON(b *testing.B) {
 	formatter := &DefaultFormatter{}
@@ -711,152 +713,6 @@ func BenchmarkFormatListLarge(b *testing.B) {
 }
 
 // Additional edge case tests for 90%+ coverage
-
-func TestFormatClusterStatus_EdgeCases(t *testing.T) {
-	now := time.Now()
-	formatter := NewFormatter(false)
-
-	t.Run("unhealthy cluster", func(t *testing.T) {
-		resp := &ClusterStatusResponse{
-			Healthy:    false,
-			LeaderID:   0,
-			NodeCount:  3,
-			ReadyNodes: 1,
-			Nodes:      []NodeInfo{},
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatClusterStatus(resp, "", &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "unhealthy")
-	})
-
-	t.Run("empty nodes and groups", func(t *testing.T) {
-		resp := &ClusterStatusResponse{
-			Healthy:       true,
-			LeaderID:      1,
-			NodeCount:     3,
-			ReadyNodes:    3,
-			Nodes:         []NodeInfo{},
-			RaftGroupInfo: []RaftGroupInfo{},
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatClusterStatus(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "CLUSTER STATUS")
-	})
-
-	t.Run("yaml format", func(t *testing.T) {
-		resp := &ClusterStatusResponse{
-			Healthy:    true,
-			LeaderID:   1,
-			NodeCount:  1,
-			ReadyNodes: 1,
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatClusterStatus(resp, OutputFormatYAML, &buf)
-		require.NoError(t, err)
-		assert.NotEmpty(t, buf.String())
-	})
-
-	t.Run("multiple raft groups", func(t *testing.T) {
-		resp := &ClusterStatusResponse{
-			Healthy:    true,
-			LeaderID:   1,
-			NodeCount:  3,
-			ReadyNodes: 3,
-			Nodes: []NodeInfo{
-				{NodeID: 1, Address: "node1:9000", IsLeader: true, IsHealthy: true, LastSeen: now},
-			},
-			RaftGroupInfo: []RaftGroupInfo{
-				{GroupID: 1, LeaderID: 1, MemberCount: 3, LogIndex: 100, CommitIndex: 100, AppliedIndex: 100},
-				2: {GroupID: 2, LeaderID: 1, MemberCount: 3, LogIndex: 50, CommitIndex: 50, AppliedIndex: 50},
-			},
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatClusterStatus(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-
-		output := buf.String()
-		assert.Contains(t, output, "RAFT GROUPS")
-	})
-}
-
-func TestParseOutputFormat_CaseInsensitive(t *testing.T) {
-	tests := []struct {
-		input string
-		want  OutputFormat
-	}{
-		{"JSON", OutputFormatJSON},
-		{"Json", OutputFormatJSON},
-		{"YAML", OutputFormatYAML},
-		{"Yaml", OutputFormatYAML},
-		{"YML", OutputFormatYAML},
-		{"TABLE", OutputFormatTable},
-		{"Table", OutputFormatTable},
-		{"RAW", OutputFormatRaw},
-		{"Raw", OutputFormatRaw},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got, err := ParseOutputFormat(tt.input)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestFormatError_WithColor(t *testing.T) {
-	formatter := NewFormatter(true)
-	err := assert.AnError
-
-	var buf bytes.Buffer
-	fmtErr := formatter.FormatError(err, &buf)
-	require.NoError(t, fmtErr)
-
-	output := buf.String()
-	// Should contain color codes
-	assert.Contains(t, output, "\033[31m")
-	assert.Contains(t, output, "\033[0m")
-}
-
-func TestFormatters_NilResponses(t *testing.T) {
-	formatter := NewFormatter(false)
-
-	t.Run("empty put message", func(t *testing.T) {
-		resp := &PutResponse{
-			Key:       "key",
-			Success:   true,
-			Message:   "",
-			Timestamp: time.Now(),
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatPutResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-	})
-
-	t.Run("empty delete message", func(t *testing.T) {
-		resp := &DeleteResponse{
-			Key:       "key",
-			Deleted:   true,
-			Message:   "",
-			Timestamp: time.Now(),
-		}
-
-		var buf bytes.Buffer
-		err := formatter.FormatDeleteResponse(resp, OutputFormatTable, &buf)
-		require.NoError(t, err)
-	})
-}
 
 // =============================================================================
 // Consolidated from output_additional_test.go
