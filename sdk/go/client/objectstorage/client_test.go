@@ -2060,31 +2060,32 @@ func TestStreamPutWriter_Write(t *testing.T) {
 	if sendCount != 3 {
 		t.Errorf("expected 3 sends, got %d", sendCount)
 	}
-}
-
-func TestStreamPutWriter_WriteClosed(t *testing.T) {
-	writer := &streamPutWriter{
-		stream: &mockStream{},
-		opts:   StreamPutOptions{Key: "test:key"},
-		closed: true,
-	}
-
-	_, err := writer.Write([]byte("hello"))
-	if err == nil {
-		t.Error("expected error for closed writer")
+	if writer.BytesWritten() != 11 {
+		t.Errorf("expected BytesWritten 11, got %d", writer.BytesWritten())
 	}
 }
 
-func TestStreamPutWriter_WriteAborted(t *testing.T) {
-	writer := &streamPutWriter{
-		stream:  &mockStream{},
-		opts:    StreamPutOptions{Key: "test:key"},
-		aborted: true,
+func TestStreamPutWriter_WriteRejected(t *testing.T) {
+	tests := []struct {
+		name   string
+		writer *streamPutWriter
+	}{
+		{
+			name:   "closed",
+			writer: &streamPutWriter{stream: &mockStream{}, opts: StreamPutOptions{Key: "test:key"}, closed: true},
+		},
+		{
+			name:   "aborted",
+			writer: &streamPutWriter{stream: &mockStream{}, opts: StreamPutOptions{Key: "test:key"}, aborted: true},
+		},
 	}
 
-	_, err := writer.Write([]byte("hello"))
-	if err == nil {
-		t.Error("expected error for aborted writer")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.writer.Write([]byte("hello")); err == nil {
+				t.Errorf("expected error writing to %s writer", tt.name)
+			}
+		})
 	}
 }
 
@@ -2159,16 +2160,6 @@ func TestStreamPutWriter_Abort(t *testing.T) {
 	}
 }
 
-func TestStreamPutWriter_BytesWritten(t *testing.T) {
-	writer := &streamPutWriter{
-		bytesWritten: 100,
-	}
-
-	if writer.BytesWritten() != 100 {
-		t.Errorf("expected 100, got %d", writer.BytesWritten())
-	}
-}
-
 // =============================================================================
 // StreamGetReader Tests
 // =============================================================================
@@ -2200,6 +2191,12 @@ func TestStreamGetReader_Read(t *testing.T) {
 	}
 	if string(buf[:n]) != "hello" {
 		t.Errorf("expected %q, got %q", "hello", string(buf[:n]))
+	}
+	if reader.BytesRead() != 5 {
+		t.Errorf("expected BytesRead 5, got %d", reader.BytesRead())
+	}
+	if reader.TotalSize() != 5 {
+		t.Errorf("expected TotalSize 5, got %d", reader.TotalSize())
 	}
 }
 
@@ -2273,26 +2270,6 @@ func TestStreamGetReader_CloseTwice(t *testing.T) {
 	err := reader.Close()
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestStreamGetReader_TotalSize(t *testing.T) {
-	reader := &streamGetReader{
-		totalSize: 1000,
-	}
-
-	if reader.TotalSize() != 1000 {
-		t.Errorf("expected 1000, got %d", reader.TotalSize())
-	}
-}
-
-func TestStreamGetReader_BytesRead(t *testing.T) {
-	reader := &streamGetReader{
-		bytesRead: 500,
-	}
-
-	if reader.BytesRead() != 500 {
-		t.Errorf("expected 500, got %d", reader.BytesRead())
 	}
 }
 
