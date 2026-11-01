@@ -92,6 +92,10 @@ func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &tokens))
 	require.NotEmpty(t, tokens.AccessToken)
 
+	// Compose the service layer so the node's REST module serves the IAM
+	// routes rather than answering 503 "still composing".
+	require.NoError(t, srv.startService(), "compose the quicbaas service")
+
 	status, body = postBearerOnlyToNodeREST(t, srv, root, "/api/v1/tenants/acme/roles",
 		tokens.AccessToken, `{"name":"itest-role"}`)
 	t.Logf("POST /api/v1/tenants/acme/roles: %d %s", status, body)
