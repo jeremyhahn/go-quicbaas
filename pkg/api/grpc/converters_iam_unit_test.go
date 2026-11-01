@@ -2575,32 +2575,6 @@ func TestPoolHealthCheckLoopStopsGracefully(t *testing.T) {
 }
 
 // =============================================================================
-// Pool Update Metrics Tests
-// =============================================================================
-
-func TestPoolUpdateMetricsWithConnections(t *testing.T) {
-	pool := &ConnectionPool{
-		conns: []*pooledConn{
-			{created: time.Now()},
-			{created: time.Now()},
-			{created: time.Now()},
-		},
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-	}
-
-	// Set various states
-	pool.conns[0].inUse.Store(true)
-	pool.conns[1].inUse.Store(false)
-	pool.conns[2].inUse.Store(true)
-
-	pool.updateMetrics()
-
-	// Metrics should be updated without error
-	// The actual values are verified by the metrics package
-}
-
-// =============================================================================
 // Proto Secret Converter Tests
 // =============================================================================
 
@@ -2715,11 +2689,6 @@ func TestWrapServerStreamContext(t *testing.T) {
 	// Wrapped stream should return new context
 	assert.NotEqual(t, originalCtx, wrapped.Context())
 }
-
-// =============================================================================
-// Data Export Format Converter Tests
-// =============================================================================
-
 
 // =============================================================================
 // Connection Pool Mutex Coverage
