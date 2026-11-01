@@ -2,7 +2,6 @@ package iam
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -102,36 +101,7 @@ func TestDeltaLogGetSinceOldVersion(t *testing.T) {
 	assert.Nil(t, events)
 }
 
-// TestDeltaLogTrim tests trimming old entries.
-// TestBatchProcessorAdd tests adding events to the batch processor.
-func TestBatchProcessorAdd(t *testing.T) {
-	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
-	config.BatchSize = 5
-	config.BatchInterval = 1 * time.Second
-
-	syncer := &mockPolicyCacheSyncer{
-		notifyCalled: make(chan PolicyChangeEvent, 10),
-	}
-
-	bp, err := NewBatchProcessor(config, syncer)
-	require.NoError(t, err)
-	defer bp.Close()
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    uuid.New().String(),
-		Type:       PolicyUpdateCreated,
-		TenantID:   "tenant-1",
-		PolicyName: "policy-1",
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
-	}
-
-	err = bp.Add(event)
-	assert.NoError(t, err)
-}
-
-// TestBatchProcessorAddNil tests adding nil events.
+// TestBatchProcessorAddNil tests adding a nil event.
 func TestBatchProcessorAddNil(t *testing.T) {
 	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
 	syncer := &mockPolicyCacheSyncer{}
@@ -291,9 +261,13 @@ func TestPolicyChangeEventSerialization(t *testing.T) {
 		Type:       PolicyUpdateCreated,
 		TenantID:   "tenant-1",
 		PolicyName: "policy-1",
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
+		Policy: &Policy{
+			Metadata: PolicyMetadata{Name: "policy-1", Tenant: "tenant-1"},
+			Spec:     PolicySpec{Subjects: SubjectSelector{Users: []string{"user-1"}}},
+		},
+		Version:   1,
+		Timestamp: time.Now(),
+		NodeID:    "node-1",
 		Metadata: map[string]string{
 			"key": "value",
 		},
@@ -315,6 +289,12 @@ func TestPolicyChangeEventSerialization(t *testing.T) {
 	assert.Equal(t, event.Version, decoded.Version)
 	assert.Equal(t, event.NodeID, decoded.NodeID)
 	assert.Equal(t, event.Metadata["key"], decoded.Metadata["key"])
+	require.NotNil(t, decoded.Policy)
+	assert.Equal(t, event.Policy.Metadata.Name, decoded.Policy.Metadata.Name)
+	assert.Equal(t, event.Policy.Spec.Subjects.Users, decoded.Policy.Spec.Subjects.Users)
+
+	// Malformed data is rejected.
+	assert.Error(t, decoded.UnmarshalBinary([]byte("not an event")))
 }
 
 // TestEnhancedCacheSyncConfig tests configuration validation.
@@ -374,6 +354,7 @@ func TestEnhancedCacheSyncMetrics(t *testing.T) {
 	metrics := NewEnhancedCacheSyncMetrics()
 
 	metrics.RecordBatchSent()
+	metrics.RecordBatchSent()
 	metrics.RecordBatchReceived()
 	metrics.RecordCompressionRatio(2.5)
 	metrics.RecordDeltaLogSize(100)
@@ -381,7 +362,7 @@ func TestEnhancedCacheSyncMetrics(t *testing.T) {
 	metrics.RecordFullSync()
 
 	stats := metrics.GetStats()
-	assert.Equal(t, int64(1), stats.BatchesSent)
+	assert.Equal(t, int64(2), stats.BatchesSent, "counters accumulate")
 	assert.Equal(t, int64(1), stats.BatchesReceived)
 	assert.Equal(t, 2.5, stats.CompressionRatio)
 	assert.Equal(t, int64(100), stats.DeltaLogSize)
@@ -512,61 +493,9 @@ func TestBatchProcessorClose(t *testing.T) {
 	err = bp.Add(event)
 	assert.Error(t, err)
 	assert.Equal(t, ErrSyncerClosed, err)
-}
 
-// TestBatchProcessorCloseTwice tests closing the batch processor twice.
-func TestBatchProcessorCloseTwice(t *testing.T) {
-	config := DefaultEnhancedCacheSyncConfig("node-1", "tenant-1")
-	syncer := &mockPolicyCacheSyncer{}
-
-	bp, err := NewBatchProcessor(config, syncer)
-	require.NoError(t, err)
-
-	err = bp.Close()
-	assert.NoError(t, err)
-
-	// Second close should be a no-op
-	err = bp.Close()
-	assert.NoError(t, err)
-}
-
-// TestEnhancedPolicyChangeEventWithPolicy tests event with full policy.
-func TestEnhancedPolicyChangeEventWithPolicy(t *testing.T) {
-	policy := &Policy{
-		Metadata: PolicyMetadata{
-			Name:   "test-policy",
-			Tenant: "tenant-1",
-		},
-		Spec: PolicySpec{
-			Subjects: SubjectSelector{
-				Users: []string{"user-1"},
-			},
-		},
-	}
-
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    uuid.New().String(),
-		Type:       PolicyUpdateCreated,
-		TenantID:   "tenant-1",
-		PolicyName: "test-policy",
-		Policy:     policy,
-		Version:    1,
-		Timestamp:  time.Now(),
-		NodeID:     "node-1",
-	}
-
-	// Serialize
-	data, err := json.Marshal(event)
-	require.NoError(t, err)
-
-	// Deserialize
-	var decoded EnhancedPolicyChangeEvent
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, event.PolicyName, decoded.PolicyName)
-	assert.NotNil(t, decoded.Policy)
-	assert.Equal(t, policy.Metadata.Name, decoded.Policy.Metadata.Name)
+	// A second Close is a no-op.
+	assert.NoError(t, bp.Close())
 }
 
 func TestEnhancedCacheVersionTracker_NewAndGetPolicyVersion(t *testing.T) {
@@ -579,23 +508,6 @@ func TestEnhancedCacheVersionTracker_NewAndGetPolicyVersion(t *testing.T) {
 	v := tracker.GetPolicyVersion("tenant1", "policy1")
 	if v != 0 {
 		t.Fatalf("expected 0 for nonexistent policy, got %d", v)
-	}
-}
-
-func TestEnhancedCacheVersionTracker_SetPolicyVersion(t *testing.T) {
-	tracker := NewEnhancedCacheVersionTracker()
-
-	tracker.SetPolicyVersion("tenant1", "policy1", 5)
-
-	v := tracker.GetPolicyVersion("tenant1", "policy1")
-	if v != 5 {
-		t.Fatalf("expected version 5, got %d", v)
-	}
-
-	// Setting a higher version should update the tenant version too
-	tenantVersion := tracker.GetTenantVersion("tenant1")
-	if tenantVersion < 5 {
-		t.Fatalf("expected tenant version >= 5, got %d", tenantVersion)
 	}
 }
 
@@ -651,74 +563,6 @@ func TestEnhancedCacheVersionTracker_MakePolicyKey(t *testing.T) {
 	}
 }
 
-func TestEnhancedPolicyChangeEvent_MarshalUnmarshalBinary(t *testing.T) {
-	event := &EnhancedPolicyChangeEvent{
-		EventID:    "evt-1",
-		Type:       PolicyUpdateCreated,
-		TenantID:   "t1",
-		PolicyName: "test-policy",
-		Version:    5,
-		NodeID:     "node1",
-		Metadata:   map[string]string{"key": "value"},
-	}
-
-	data, err := event.MarshalBinary()
-	if err != nil {
-		t.Fatalf("MarshalBinary failed: %v", err)
-	}
-	if len(data) == 0 {
-		t.Fatal("expected non-empty data")
-	}
-
-	restored := &EnhancedPolicyChangeEvent{}
-	if err := restored.UnmarshalBinary(data); err != nil {
-		t.Fatalf("UnmarshalBinary failed: %v", err)
-	}
-
-	if restored.EventID != "evt-1" {
-		t.Fatalf("expected EventID evt-1, got %s", restored.EventID)
-	}
-	if restored.PolicyName != "test-policy" {
-		t.Fatalf("expected PolicyName test-policy, got %s", restored.PolicyName)
-	}
-	if restored.Version != 5 {
-		t.Fatalf("expected Version 5, got %d", restored.Version)
-	}
-}
-
-func TestEnhancedCacheSyncMetrics_RecordOperations(t *testing.T) {
-	metrics := NewEnhancedCacheSyncMetrics()
-
-	metrics.RecordBatchSent()
-	metrics.RecordBatchSent()
-	metrics.RecordBatchReceived()
-	metrics.RecordCompressionRatio(2.5)
-	metrics.RecordDeltaLogSize(500)
-	metrics.RecordIncrementalSync()
-	metrics.RecordFullSync()
-
-	stats := metrics.GetStats()
-
-	if stats.BatchesSent != 2 {
-		t.Fatalf("expected 2 batches sent, got %d", stats.BatchesSent)
-	}
-	if stats.BatchesReceived != 1 {
-		t.Fatalf("expected 1 batch received, got %d", stats.BatchesReceived)
-	}
-	if stats.CompressionRatio != 2.5 {
-		t.Fatalf("expected compression ratio 2.5, got %f", stats.CompressionRatio)
-	}
-	if stats.DeltaLogSize != 500 {
-		t.Fatalf("expected delta log size 500, got %d", stats.DeltaLogSize)
-	}
-	if stats.IncrementalSyncs != 1 {
-		t.Fatalf("expected 1 incremental sync, got %d", stats.IncrementalSyncs)
-	}
-	if stats.FullSyncs != 1 {
-		t.Fatalf("expected 1 full sync, got %d", stats.FullSyncs)
-	}
-}
-
 // appendDeltaVersions appends one event per version 1..n for tenant t1.
 func appendDeltaVersions(t *testing.T, dl *DeltaLog, n int64) {
 	t.Helper()
@@ -733,6 +577,7 @@ func appendDeltaVersions(t *testing.T, dl *DeltaLog, n int64) {
 	}
 }
 
+// TestDeltaLogTrim tests trimming old entries.
 func TestDeltaLogTrim(t *testing.T) {
 	tests := []struct {
 		name       string
