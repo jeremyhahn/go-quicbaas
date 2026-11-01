@@ -147,6 +147,12 @@ func TestLogger_WithFields(t *testing.T) {
 			t.Errorf("Field %s = %v, want %v", k, gotFields[k], v)
 		}
 	}
+
+	// GetFields returns a copy, so mutating it leaves the logger unchanged.
+	gotFields["extra"] = "value"
+	if len(newLogger.GetFields()) != len(fields) {
+		t.Error("GetFields() should return a copy, not the original map")
+	}
 }
 
 func TestLogger_WithField(t *testing.T) {
@@ -205,41 +211,6 @@ func TestLogger_SetLevel(t *testing.T) {
 
 	if err := logger.SetLevel("invalid"); err == nil {
 		t.Error("SetLevel() with invalid level should return error")
-	}
-}
-
-func TestLogger_GetFields(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("Failed to create logger: %v", err)
-	}
-
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-	}
-
-	newLogger := logger.WithFields(fields)
-	gotFields := newLogger.GetFields()
-
-	if len(gotFields) != len(fields) {
-		t.Errorf("GetFields() returned %d fields, want %d", len(gotFields), len(fields))
-	}
-
-	for k, v := range fields {
-		if gotFields[k] != v {
-			t.Errorf("Field %s = %v, want %v", k, gotFields[k], v)
-		}
-	}
-
-	// Verify returned map is a copy
-	gotFields["key3"] = "value3"
-	if len(newLogger.GetFields()) != len(fields) {
-		t.Error("GetFields() should return a copy, not the original map")
 	}
 }
 
@@ -728,129 +699,32 @@ func TestLogger_LevelAttrs(t *testing.T) {
 
 // TestNewAdapter tests the NewAdapter function.
 func TestNewAdapter(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("wraps a logger", func(t *testing.T) {
+		logger, err := New(LogConfig{
+			Level:  "info",
+			Format: "json",
+			Output: "stdout",
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+
+		adapter, ok := NewAdapter(logger).(*LoggerAdapter)
+		if !ok || adapter == nil {
+			t.Fatal("NewAdapter() should return a non-nil *LoggerAdapter")
+		}
+		if adapter.Logger != logger {
+			t.Error("NewAdapter() should wrap the given logger")
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
 
-	adapter := NewAdapter(logger)
-	if adapter == nil {
-		t.Error("NewAdapter() returned nil")
-	}
-
-	// Verify it implements interfaces.Logger
-	_, ok := adapter.(*LoggerAdapter)
-	if !ok {
-		t.Error("NewAdapter() should return *LoggerAdapter")
-	}
-}
-
-// TestNewAdapter_NilLogger tests NewAdapter with nil logger.
-func TestNewAdapter_NilLogger(t *testing.T) {
-	adapter := NewAdapter(nil)
-	if adapter != nil {
-		t.Error("NewAdapter(nil) should return nil")
-	}
-}
-
-// TestLoggerAdapter_WithField tests the WithField method of LoggerAdapter.
-func TestLoggerAdapter_WithField(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
+	t.Run("nil logger", func(t *testing.T) {
+		if adapter := NewAdapter(nil); adapter != nil {
+			t.Error("NewAdapter(nil) should return nil")
+		}
 	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	result := adapter.WithField("key", "value")
-
-	if result == nil {
-		t.Error("WithField() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithField() should return *LoggerAdapter")
-	}
-
-	// Verify the field was added
-	fields := resultAdapter.GetFields()
-	if fields["key"] != "value" {
-		t.Errorf("WithField() key = %v, want 'value'", fields["key"])
-	}
 }
 
-// TestLoggerAdapter_WithFields tests the WithFields method of LoggerAdapter.
-func TestLoggerAdapter_WithFields(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-	}
-	result := adapter.WithFields(fields)
-
-	if result == nil {
-		t.Error("WithFields() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithFields() should return *LoggerAdapter")
-	}
-
-	// Verify fields were added
-	resultFields := resultAdapter.GetFields()
-	if resultFields["key1"] != "value1" {
-		t.Errorf("WithFields() key1 = %v, want 'value1'", resultFields["key1"])
-	}
-}
-
-// TestLoggerAdapter_WithError tests the WithError method of LoggerAdapter.
-func TestLoggerAdapter_WithError(t *testing.T) {
-	logger, err := New(LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	adapter := NewAdapter(logger)
-	testErr := errors.New("test error")
-	result := adapter.WithError(testErr)
-
-	if result == nil {
-		t.Error("WithError() returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
-	_, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("WithError() should return *LoggerAdapter")
-	}
-}
-
-// TestLoggerAdapter_Chaining tests method chaining on LoggerAdapter.
 func TestLoggerAdapter_Chaining(t *testing.T) {
 	logger, err := New(LogConfig{
 		Level:  "info",
@@ -863,26 +737,20 @@ func TestLoggerAdapter_Chaining(t *testing.T) {
 
 	adapter := NewAdapter(logger)
 	result := adapter.
-		WithField("key1", "value1").
-		WithField("key2", "value2").
+		WithFields(map[string]interface{}{"key1": "value1", "key2": 123}).
+		WithField("key3", "value3").
 		WithError(errors.New("test error"))
 
-	if result == nil {
-		t.Error("Chained operations returned nil")
-	}
-
-	// Verify it's still a LoggerAdapter
 	resultAdapter, ok := result.(*LoggerAdapter)
-	if !ok {
-		t.Error("Chained operations should return *LoggerAdapter")
+	if !ok || resultAdapter == nil {
+		t.Fatal("Chained operations should return a non-nil *LoggerAdapter")
 	}
 
-	// Verify fields are present
 	fields := resultAdapter.GetFields()
-	if fields["key1"] != "value1" {
-		t.Errorf("Chained key1 = %v, want 'value1'", fields["key1"])
-	}
-	if fields["key2"] != "value2" {
-		t.Errorf("Chained key2 = %v, want 'value2'", fields["key2"])
+	want := map[string]interface{}{"key1": "value1", "key2": 123, "key3": "value3"}
+	for key, value := range want {
+		if fields[key] != value {
+			t.Errorf("Chained %s = %v, want %v", key, fields[key], value)
+		}
 	}
 }
