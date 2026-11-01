@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -145,79 +144,44 @@ func (m *mockOllamaClient) Close() error {
 // =============================================================================
 
 func TestNewOllamaCommands(t *testing.T) {
-	cmd := newOllamaCommands()
+	root := newOllamaCommands()
+	require.NotNil(t, root)
+	assert.Equal(t, "ollama", root.Use)
+	assert.Contains(t, root.Short, "Ollama integration")
 
-	require.NotNil(t, cmd)
-	assert.Equal(t, "ollama", cmd.Use)
-	assert.Contains(t, cmd.Short, "Ollama integration")
-
-	// Verify subcommands are registered
-	subcommands := cmd.Commands()
-	commandNames := make([]string, len(subcommands))
-	for i, subcmd := range subcommands {
-		commandNames[i] = subcmd.Name()
+	tests := []struct {
+		name    string
+		use     string
+		short   string
+		aliases []string
+		flags   []string
+	}{
+		{name: "health", use: "health", short: "Check Ollama service health", flags: []string{"full-check"}},
+		{name: "models", use: "models", short: "List available Ollama models", aliases: []string{"list"}, flags: []string{"prefix", "list"}},
+		{name: "model", use: "model info <model-name>", short: "Get detailed information"},
+		{name: "embed", use: "embed <text>", short: "Generate an embedding", flags: []string{"model"}},
+		{name: "embed-batch", use: "embed-batch", short: "Generate embeddings for multiple texts", flags: []string{"texts", "model"}},
 	}
 
-	assert.Contains(t, commandNames, "health", "health command should be registered")
-	assert.Contains(t, commandNames, "models", "models command should be registered")
-	assert.Contains(t, commandNames, "model", "model command should be registered")
-	assert.Contains(t, commandNames, "embed", "embed command should be registered")
-	assert.Contains(t, commandNames, "embed-batch", "embed-batch command should be registered")
-}
-
-func TestNewOllamaHealthCommand(t *testing.T) {
-	cmd := newOllamaHealthCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "health", cmd.Use)
-	assert.Contains(t, cmd.Short, "Check Ollama service health")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("full-check"))
-}
-
-func TestNewOllamaModelsCommand(t *testing.T) {
-	cmd := newOllamaModelsCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "models", cmd.Use)
-	assert.Contains(t, cmd.Aliases, "list")
-	assert.Contains(t, cmd.Short, "List available Ollama models")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("prefix"))
-	assert.NotNil(t, cmd.Flags().Lookup("list"))
-}
-
-func TestNewOllamaModelInfoCommand(t *testing.T) {
-	cmd := newOllamaModelInfoCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "model info <model-name>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Get detailed information")
-}
-
-func TestNewOllamaEmbedCommand(t *testing.T) {
-	cmd := newOllamaEmbedCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "embed <text>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Generate an embedding")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("model"))
-}
-
-func TestNewOllamaEmbedBatchCommand(t *testing.T) {
-	cmd := newOllamaEmbedBatchCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "embed-batch", cmd.Use)
-	assert.Contains(t, cmd.Short, "Generate embeddings for multiple texts")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("texts"))
-	assert.NotNil(t, cmd.Flags().Lookup("model"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cmd *cobra.Command
+			for _, sub := range root.Commands() {
+				if sub.Name() == tt.name {
+					cmd = sub
+				}
+			}
+			require.NotNil(t, cmd, "subcommand %q must be registered", tt.name)
+			assert.Equal(t, tt.use, cmd.Use)
+			assert.Contains(t, cmd.Short, tt.short)
+			for _, alias := range tt.aliases {
+				assert.Contains(t, cmd.Aliases, alias)
+			}
+			for _, flag := range tt.flags {
+				assert.NotNil(t, cmd.Flags().Lookup(flag), "flag --%s", flag)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -343,19 +307,35 @@ func TestRunOllamaHealthCommand_Unavailable(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunOllamaHealthCommand_FactoryError(t *testing.T) {
-	// Save original factory and restore after test
+func TestRunOllamaCommands_FactoryError(t *testing.T) {
 	origFactory := ollamaClientFactory
 	defer func() { ollamaClientFactory = origFactory }()
-
 	ollamaClientFactory = func() (OllamaClient, error) {
 		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
 	}
 
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
+	defer func() { ollamaTexts = "" }()
+	ollamaTexts = `["text1", "text2"]`
+
+	tests := []struct {
+		name string
+		run  func(*cobra.Command, []string) error
+		args []string
+	}{
+		{name: "health", run: runOllamaHealthCommand},
+		{name: "models", run: runOllamaModelsCommand},
+		{name: "model info", run: runOllamaModelInfoCommand, args: []string{"nomic-embed-text"}},
+		{name: "embed", run: runOllamaEmbedCommand, args: []string{"test text"}},
+		{name: "embed-batch", run: runOllamaEmbedBatchCommand},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run(&cobra.Command{}, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "connection refused")
+		})
+	}
 }
 
 func TestRunOllamaHealthCommand_ServiceError(t *testing.T) {
@@ -431,21 +411,6 @@ func TestRunOllamaModelsCommand_TableFormat(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runOllamaModelsCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestRunOllamaModelsCommand_FactoryError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runOllamaModelsCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 func TestRunOllamaModelInfoCommand_Success(t *testing.T) {
@@ -528,21 +493,6 @@ func TestRunOllamaModelInfoCommand_EmptyDetails(t *testing.T) {
 	cmd := &cobra.Command{}
 	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
 	assert.NoError(t, err)
-}
-
-func TestRunOllamaModelInfoCommand_FactoryError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 func TestRunOllamaEmbedCommand_Success(t *testing.T) {
@@ -630,21 +580,6 @@ func TestRunOllamaEmbedCommand_EmptyText(t *testing.T) {
 	assert.Contains(t, err.Error(), "text cannot be empty")
 }
 
-func TestRunOllamaEmbedCommand_FactoryError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedCommand(cmd, []string{"test text"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
 func TestRunOllamaEmbedBatchCommand_Success(t *testing.T) {
 	// Save original factory and restore after test
 	origFactory := ollamaClientFactory
@@ -720,25 +655,6 @@ func TestRunOllamaEmbedBatchCommand_EmptyArray(t *testing.T) {
 	err := runOllamaEmbedBatchCommand(cmd, []string{})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "texts array cannot be empty")
-}
-
-func TestRunOllamaEmbedBatchCommand_FactoryError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	// Reset globals
-	defer func() { ollamaTexts = "" }()
-	ollamaTexts = `["text1", "text2"]`
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedBatchCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "connection refused")
 }
 
 // =============================================================================
@@ -1009,59 +925,3 @@ func TestCreateOllamaClient_UnsupportedTransport(t *testing.T) {
 // =============================================================================
 // Command Help Tests
 // =============================================================================
-
-func TestOllamaCommandHelp(t *testing.T) {
-	cmd := newOllamaCommands()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "ollama")
-	assert.Contains(t, output, "Ollama integration")
-}
-
-func TestOllamaHealthCommandHelp(t *testing.T) {
-	cmd := newOllamaHealthCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "health")
-	assert.Contains(t, output, "--full-check")
-}
-
-func TestOllamaModelsCommandHelp(t *testing.T) {
-	cmd := newOllamaModelsCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "models")
-	assert.Contains(t, output, "--prefix")
-}
-
-func TestOllamaEmbedCommandHelp(t *testing.T) {
-	cmd := newOllamaEmbedCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "embed")
-	assert.Contains(t, output, "--model")
-}
