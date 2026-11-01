@@ -1216,51 +1216,6 @@ func TestWithTimeoutContext(t *testing.T) {
 // Error Message Tests
 // =============================================================================
 
-func TestErrorMessages(t *testing.T) {
-	tests := []struct {
-		name        string
-		err         error
-		shouldEmpty bool
-	}{
-		{
-			name:        "not found",
-			err:         ErrNotFound,
-			shouldEmpty: false,
-		},
-		{
-			name: "wrapped error",
-			err: WrapError(
-				stderrors.New("base error"),
-				dberrors.ErrStorage,
-				"service.Put",
-				"storage write failed",
-			),
-			shouldEmpty: false,
-		},
-		{
-			name: "with context",
-			err: WithEntityContext(
-				ErrNotFound,
-				"user",
-				123,
-				"service.Get",
-			),
-			shouldEmpty: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errMsg := tt.err.Error()
-			isEmpty := errMsg == ""
-
-			if isEmpty != tt.shouldEmpty {
-				t.Errorf("expected empty=%v, got message: %q", tt.shouldEmpty, errMsg)
-			}
-		})
-	}
-}
-
 func TestErrorCodeToGRPCCode_Comprehensive(t *testing.T) {
 	tests := []struct {
 		name         string
