@@ -1801,36 +1801,52 @@ func TestPerformIndexRebuild_Success(t *testing.T) {
 	job.mu.RUnlock()
 }
 
-func TestPerformIndexRebuild_WithCustomConfig(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, nil
+func TestPerformIndexRebuild_IndexConfig(t *testing.T) {
+	defaults := interfaces.DefaultVectorIndexConfig()
+	tests := []struct {
+		name               string
+		indexConfig        map[string]string
+		wantM              int
+		wantEfConstruction int
+		wantEfSearch       int
+	}{
+		{
+			name:        "custom values applied",
+			indexConfig: map[string]string{"m": "32", "ef_construction": "400", "ef_search": "100"},
+			wantM:       32, wantEfConstruction: 400, wantEfSearch: 100,
+		},
+		{
+			name:        "invalid values keep defaults",
+			indexConfig: map[string]string{"m": "bad", "ef_construction": "bad", "ef_search": "bad"},
+			wantM:       int(defaults.M), wantEfConstruction: int(defaults.EfConstruction), wantEfSearch: int(defaults.EfSearch),
+		},
 	}
-	job := &RebuildJobState{JobID: "j4", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j4"] = job
-	svc.jobMu.Unlock()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				return nil, nil
+			}
+			var got *interfaces.VectorIndexConfig
+			svc.indexFactory = &vecMockVectorIndexFactory{
+				createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+					got = config
+					return newVecMockVectorIndex(), nil
+				},
+			}
+			job := &RebuildJobState{JobID: "j4", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+			svc.jobMu.Lock()
+			svc.rebuildJobs["j4"] = job
+			svc.jobMu.Unlock()
 
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j4", "test-ns", map[string]string{
-		"m": "32", "ef_construction": "400", "ef_search": "100",
-	})
-	require.NoError(t, err)
-}
-
-func TestPerformIndexRebuild_InvalidConfig(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, nil
+			err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j4", "test-ns", tt.indexConfig)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.EqualValues(t, tt.wantM, got.M)
+			assert.EqualValues(t, tt.wantEfConstruction, got.EfConstruction)
+			assert.EqualValues(t, tt.wantEfSearch, got.EfSearch)
+		})
 	}
-	job := &RebuildJobState{JobID: "j5", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["j5"] = job
-	svc.jobMu.Unlock()
-
-	err := svc.performIndexRebuild(tenantctx.WithSystem(context.Background()), "j5", "test-ns", map[string]string{
-		"m": "bad", "ef_construction": "bad", "ef_search": "bad",
-	})
-	require.NoError(t, err)
 }
 
 func TestPerformIndexRebuild_ScanError(t *testing.T) {
@@ -1880,7 +1896,7 @@ func TestRebuildIndex_NamespaceNotFound(t *testing.T) {
 func TestGetRebuildProgress_ByJobID(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	job := &RebuildJobState{JobID: "j1", Namespace: "test-ns", InProgress: true,
-		VectorsProcessed: 50, TotalVectors: 100, StartedAt: time.Now()}
+		VectorsProcessed: 50, TotalVectors: 100, StartedAt: time.Now().Add(-1 * time.Second)}
 	svc.jobMu.Lock()
 	svc.rebuildJobs["j1"] = job
 	svc.jobMu.Unlock()
@@ -1889,6 +1905,7 @@ func TestGetRebuildProgress_ByJobID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "running", resp.Status)
 	assert.Equal(t, 50.0, resp.PercentComplete)
+	assert.Greater(t, resp.EstimatedTimeRemainingMs, int64(0))
 }
 
 func TestGetRebuildProgress_ByNamespace(t *testing.T) {
@@ -1939,20 +1956,6 @@ func TestGetRebuildProgress_Failed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", resp.Status)
 	assert.Equal(t, "failed", resp.Error)
-}
-
-func TestGetRebuildProgress_WithEstimate(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	started := time.Now().Add(-1 * time.Second)
-	job := &RebuildJobState{JobID: "je", Namespace: "test-ns", InProgress: true,
-		VectorsProcessed: 50, TotalVectors: 100, StartedAt: started}
-	svc.jobMu.Lock()
-	svc.rebuildJobs["je"] = job
-	svc.jobMu.Unlock()
-
-	resp, err := svc.GetRebuildProgress(tenantctx.WithSystem(context.Background()), &GetRebuildProgressRequest{JobID: "je"})
-	require.NoError(t, err)
-	assert.Greater(t, resp.EstimatedTimeRemainingMs, int64(0))
 }
 
 func TestGetIndexStats_WithIndex(t *testing.T) {
