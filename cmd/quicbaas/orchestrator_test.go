@@ -487,14 +487,6 @@ func TestOrchestratorRunOrchSpawn(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchSpawnCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to create client")
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			spawnSessionFn: func(ctx context.Context, req *orchestratorSDK.SpawnSessionRequest) (*orchestratorSDK.SpawnSessionResponse, error) {
@@ -533,13 +525,6 @@ func TestOrchestratorRunOrchPrompt(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchPromptCommand()
-		err := cmd.RunE(cmd, []string{"sess_123", "Hello"})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			promptSessionFn: func(ctx context.Context, req *orchestratorSDK.PromptSessionRequest) (*orchestratorSDK.PromptSessionResponse, error) {
@@ -576,13 +561,6 @@ func TestOrchestratorRunOrchStatus(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchStatusCommand()
-		err := cmd.RunE(cmd, []string{"sess_123"})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			sessionStatusFn: func(ctx context.Context, req *orchestratorSDK.SessionStatusRequest) (*orchestratorSDK.SessionStatusResponse, error) {
@@ -615,12 +593,6 @@ func TestOrchestratorRunOrchClose(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchCloseCommand()
-		err := cmd.RunE(cmd, []string{"sess_123"})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchSessions(t *testing.T) {
@@ -646,12 +618,6 @@ func TestOrchestratorRunOrchSessions(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchSessionsCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchBackends(t *testing.T) {
@@ -677,12 +643,6 @@ func TestOrchestratorRunOrchBackends(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchBackendsCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchHealth(t *testing.T) {
@@ -704,13 +664,6 @@ func TestOrchestratorRunOrchHealth(t *testing.T) {
 		cmd := newOrchHealthCommand()
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchHealthCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
 	})
 
 	t.Run("ClientError", func(t *testing.T) {
@@ -757,15 +710,6 @@ func TestOrchestratorRunOrchTaskCreate(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-
-		cmd := newOrchTaskCreateCommand()
-		orchTaskSubject = "Build the project"
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
-	})
-
 	t.Run("ClientError", func(t *testing.T) {
 		mock := &mockOrchestratorClient{
 			createTaskFn: func(ctx context.Context, req *orchestratorSDK.CreateTaskRequest) (*orchestratorSDK.Task, error) {
@@ -802,13 +746,6 @@ func TestOrchestratorRunOrchTaskGet(t *testing.T) {
 		cmd := newOrchTaskGetCommand()
 		err := cmd.RunE(cmd, []string{"task_123"})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskGetCommand()
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
 	})
 
 	t.Run("NotFound", func(t *testing.T) {
@@ -849,13 +786,6 @@ func TestOrchestratorRunOrchTaskList(t *testing.T) {
 		orchTaskStatus = "pending"
 		err := cmd.RunE(cmd, []string{})
 		assert.NoError(t, err)
-	})
-
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskListCommand()
-		err := cmd.RunE(cmd, []string{})
-		assert.Error(t, err)
 	})
 
 	t.Run("WithFilters", func(t *testing.T) {
@@ -899,13 +829,6 @@ func TestOrchestratorRunOrchTaskClaim(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskClaimCommand()
-		orchTaskAgentID = "agent_001"
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
-	})
 }
 
 func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
@@ -946,12 +869,45 @@ func TestOrchestratorRunOrchTaskComplete(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("FactoryError", func(t *testing.T) {
-		setErrorOrchestratorFactory()
-		cmd := newOrchTaskCompleteCommand()
-		err := cmd.RunE(cmd, []string{"task_123"})
-		assert.Error(t, err)
-	})
+}
+
+// TestOrchestratorRunOrchFactoryError checks that every command returns the
+// client factory's error instead of calling the orchestrator.
+func TestOrchestratorRunOrchFactoryError(t *testing.T) {
+	saveAndRestoreOrchestratorState(t)
+
+	tests := []struct {
+		name  string
+		cmd   func() *cobra.Command
+		args  []string
+		setup func()
+	}{
+		{name: "spawn", cmd: newOrchSpawnCommand, args: []string{}},
+		{name: "prompt", cmd: newOrchPromptCommand, args: []string{"sess_123", "Hello"}},
+		{name: "status", cmd: newOrchStatusCommand, args: []string{"sess_123"}},
+		{name: "close", cmd: newOrchCloseCommand, args: []string{"sess_123"}},
+		{name: "sessions", cmd: newOrchSessionsCommand, args: []string{}},
+		{name: "backends", cmd: newOrchBackendsCommand, args: []string{}},
+		{name: "health", cmd: newOrchHealthCommand, args: []string{}},
+		{name: "task create", cmd: newOrchTaskCreateCommand, args: []string{}, setup: func() { orchTaskSubject = "Build the project" }},
+		{name: "task get", cmd: newOrchTaskGetCommand, args: []string{"task_123"}},
+		{name: "task list", cmd: newOrchTaskListCommand, args: []string{}},
+		{name: "task claim", cmd: newOrchTaskClaimCommand, args: []string{"task_123"}, setup: func() { orchTaskAgentID = "agent_001" }},
+		{name: "task complete", cmd: newOrchTaskCompleteCommand, args: []string{"task_123"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setErrorOrchestratorFactory()
+			cmd := tt.cmd()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			err := cmd.RunE(cmd, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "failed to create client")
+		})
+	}
 }
 
 // =============================================================================
