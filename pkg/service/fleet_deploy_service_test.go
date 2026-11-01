@@ -300,30 +300,37 @@ func nilOr(l *fakeLister) FleetNodeLister {
 // -----------------------------------------------------------------------------
 
 func TestDeploy_Validate(t *testing.T) {
-	base := validSpec()
+	mutated := func(mutate func(*deploy.Spec)) func() *deploy.Spec {
+		return func() *deploy.Spec {
+			spec := validSpec()
+			mutate(spec)
+			return spec
+		}
+	}
 	cases := []struct {
-		name   string
-		mutate func(*deploy.Spec)
-		field  string
+		name     string
+		spec     func() *deploy.Spec
+		noIssuer bool
+		field    string
 	}{
-		{"nil spec", func(s *deploy.Spec) { *s = deploy.Spec{} }, "host"},
-		{"no host", func(s *deploy.Spec) { s.Host = "" }, "host"},
-		{"no user", func(s *deploy.Spec) { s.SSHUser = "" }, "ssh_user"},
-		{"no server", func(s *deploy.Spec) { s.Server = "" }, "server"},
-		{"no tenant", func(s *deploy.Spec) { s.Tenant = "" }, "tenant"},
-		{"no binary", func(s *deploy.Spec) { s.Binary = "" }, "binary"},
-		{"no bind", func(s *deploy.Spec) { s.NodeBind = "" }, "agent_bind"},
-		{"no backends", func(s *deploy.Spec) { s.Backends = nil }, "backends"},
+		{"nil spec", func() *deploy.Spec { return nil }, false, "spec"},
+		{"empty spec", mutated(func(s *deploy.Spec) { *s = deploy.Spec{} }), false, "host"},
+		{"no host", mutated(func(s *deploy.Spec) { s.Host = "" }), false, "host"},
+		{"no user", mutated(func(s *deploy.Spec) { s.SSHUser = "" }), false, "ssh_user"},
+		{"no server", mutated(func(s *deploy.Spec) { s.Server = "" }), false, "server"},
+		{"no tenant", mutated(func(s *deploy.Spec) { s.Tenant = "" }), false, "tenant"},
+		{"no binary", mutated(func(s *deploy.Spec) { s.Binary = "" }), false, "binary"},
+		{"no bind", mutated(func(s *deploy.Spec) { s.NodeBind = "" }), false, "agent_bind"},
+		{"no backends", mutated(func(s *deploy.Spec) { s.Backends = nil }), false, "backends"},
+		{"no cert issuer", validSpec, true, "cert_issuer"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := *base
-			tc.mutate(&spec)
 			svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, &fakeLister{}, time.Now())
-			_, err := svc.Deploy(acmeCtx, &spec)
-			if err == nil {
-				t.Fatal("expected error")
+			if tc.noIssuer {
+				svc.certIssuer = nil
 			}
+			_, err := svc.Deploy(acmeCtx, tc.spec())
 			var ise *deploy.InvalidSpecError
 			if !errors.As(err, &ise) {
 				t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
@@ -332,37 +339,6 @@ func TestDeploy_Validate(t *testing.T) {
 				t.Fatalf("field=%q want %q", ise.Field, tc.field)
 			}
 		})
-	}
-}
-
-func TestDeploy_ValidateNilSpec(t *testing.T) {
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, &fakeLister{}, time.Now())
-	_, err := svc.Deploy(acmeCtx, nil)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var ise *deploy.InvalidSpecError
-	if !errors.As(err, &ise) {
-		t.Fatalf("want InvalidSpecError, got %T", err)
-	}
-}
-
-// TestDeploy_ValidateRequiresCertIssuer asserts that Deploy() rejects a
-// service wired without a cert issuer before it dials SSH. This is the
-// guardrail for production wiring mistakes.
-func TestDeploy_ValidateRequiresCertIssuer(t *testing.T) {
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	svc.certIssuer = nil
-	_, err := svc.Deploy(acmeCtx, validSpec())
-	if err == nil {
-		t.Fatal("expected error when cert issuer is nil")
-	}
-	var ise *deploy.InvalidSpecError
-	if !errors.As(err, &ise) {
-		t.Fatalf("want InvalidSpecError, got %T: %v", err, err)
-	}
-	if ise.Field != "cert_issuer" {
-		t.Fatalf("field=%q want %q", ise.Field, "cert_issuer")
 	}
 }
 
@@ -547,72 +523,50 @@ func TestDeploy_CertIssuerError(t *testing.T) {
 // Error propagation
 // -----------------------------------------------------------------------------
 
-func TestDeploy_DialError(t *testing.T) {
-	want := &deploy.SSHDialError{Host: "h"}
-	dialer := &fakeDialer{err: want}
-	svc := newTestService(dialer, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(acmeCtx, validSpec())
-	if !errors.Is(err, want) {
-		t.Fatalf("got %v", err)
+// TestDeploy_StepError checks that a failure at each install step stops
+// the deploy and surfaces that step's error.
+func TestDeploy_StepError(t *testing.T) {
+	dialErr := &deploy.SSHDialError{Host: "h"}
+	uploadErr := &deploy.SFTPUploadError{RemotePath: "/x"}
+	identityErr := errors.New("permission denied")
+	systemdErr := &deploy.SystemdInstallError{Unit: "u"}
+	nohupErr := &deploy.RemoteExecError{Command: "x"}
+	on, off := true, false
+	cases := []struct {
+		name    string
+		systemd *bool
+		setup   func(svc *fleetDeployService)
+		want    error
+	}{
+		{"dial", nil, func(svc *fleetDeployService) { svc.ssh = &fakeDialer{err: dialErr} }, dialErr},
+		{"upload", nil, func(svc *fleetDeployService) { svc.upload = &fakeUploader{err: uploadErr} }, uploadErr},
+		{"identity upload", nil, func(svc *fleetDeployService) {
+			files := newFakeFileUploader()
+			files.err = identityErr
+			svc.files = files
+		}, identityErr},
+		{"systemd", &on, func(svc *fleetDeployService) { svc.systemd = &fakeSystemd{err: systemdErr} }, systemdErr},
+		{"nohup", &off, func(svc *fleetDeployService) { svc.nohup = &fakeNohup{err: nohupErr} }, nohupErr},
 	}
-}
-
-func TestDeploy_UploadError(t *testing.T) {
-	want := &deploy.SFTPUploadError{RemotePath: "/x"}
-	up := &fakeUploader{err: want}
-	svc := newTestService(&fakeDialer{}, up, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(acmeCtx, validSpec())
-	if !errors.Is(err, want) {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestDeploy_IdentityUploadError(t *testing.T) {
-	files := newFakeFileUploader()
-	files.err = errors.New("permission denied")
-	svc := &fleetDeployService{
-		ssh:         &fakeDialer{},
-		upload:      &fakeUploader{},
-		files:       files,
-		systemd:     &fakeSystemd{},
-		nohup:       &fakeNohup{},
-		renderer:    fakeRenderer{},
-		node:        &fakeNode{},
-		certIssuer:  &fakeCertIssuer{},
-		now:         time.Now,
-		sleep:       func(ctx context.Context, d time.Duration) error { return nil },
-		resolveHome: func(ctx context.Context, sess sshSession) (string, error) { return "", nil },
-	}
-	_, err := svc.Deploy(acmeCtx, validSpec())
-	var identErr *FleetNodeIdentityUploadError
-	if !errors.As(err, &identErr) {
-		t.Fatalf("want FleetNodeIdentityUploadError, got %T: %v", err, err)
-	}
-}
-
-func TestDeploy_SystemdError(t *testing.T) {
-	spec := validSpec()
-	on := true
-	spec.Systemd = &on
-	want := &deploy.SystemdInstallError{Unit: "u"}
-	sys := &fakeSystemd{err: want}
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, sys, &fakeNohup{}, nil, time.Now())
-	_, err := svc.Deploy(acmeCtx, spec)
-	if !errors.Is(err, want) {
-		t.Fatalf("got %v", err)
-	}
-}
-
-func TestDeploy_NohupError(t *testing.T) {
-	spec := validSpec()
-	off := false
-	spec.Systemd = &off
-	want := &deploy.RemoteExecError{Command: "x"}
-	no := &fakeNohup{err: want}
-	svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, no, nil, time.Now())
-	_, err := svc.Deploy(acmeCtx, spec)
-	if !errors.Is(err, want) {
-		t.Fatalf("got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(&fakeDialer{}, &fakeUploader{}, &fakeSystemd{}, &fakeNohup{}, nil, time.Now())
+			tc.setup(svc)
+			spec := validSpec()
+			if tc.systemd != nil {
+				spec.Systemd = tc.systemd
+			}
+			_, err := svc.Deploy(acmeCtx, spec)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+			if tc.want == identityErr {
+				var identErr *FleetNodeIdentityUploadError
+				if !errors.As(err, &identErr) {
+					t.Fatalf("want FleetNodeIdentityUploadError, got %T: %v", err, err)
+				}
+			}
+		})
 	}
 }
 
@@ -1008,12 +962,13 @@ func TestPickOnlineAgent(t *testing.T) {
 	spec := &deploy.Spec{NodeBind: "0.0.0.0:9091"}
 
 	cases := []struct {
-		name string
-		resp *orchestratorSDK.ListFleetNodesResponse
-		want string
+		name     string
+		resp     *orchestratorSDK.ListFleetNodesResponse
+		expected string
+		want     string
 	}{
-		{"nil", nil, ""},
-		{"empty", &orchestratorSDK.ListFleetNodesResponse{}, ""},
+		{name: "nil"},
+		{name: "empty", resp: &orchestratorSDK.ListFleetNodesResponse{}},
 		{
 			name: "offline skipped",
 			resp: &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{
@@ -1043,10 +998,37 @@ func TestPickOnlineAgent(t *testing.T) {
 			}},
 			want: "sfx",
 		},
+		{
+			// The server derives the ID from tenant and node name, so an
+			// expected ID wins over a host match.
+			name: "prefers expected id",
+			resp: &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{
+				{ID: "wrong", Host: "0.0.0.0:9091", Status: "running", LastSeen: 100},
+				{ID: "agent-default-agent-198.51.100.91", Host: "agent-02:9091", Status: "running", LastSeen: 200},
+			}},
+			expected: "agent-default-agent-198.51.100.91",
+			want:     "agent-default-agent-198.51.100.91",
+		},
+		{
+			name: "expected id ignores host mismatch",
+			resp: &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{
+				{ID: "agent-acme-agent-cloud-1", Host: "totally-different-host:31337", Status: "running"},
+			}},
+			expected: "agent-acme-agent-cloud-1",
+			want:     "agent-acme-agent-cloud-1",
+		},
+		{
+			name: "expected id filters stale host match",
+			resp: &orchestratorSDK.ListFleetNodesResponse{Nodes: []*orchestratorSDK.FleetNode{
+				{ID: "stale", Host: "0.0.0.0:9091", Status: "running"},
+			}},
+			expected: "agent-default-agent-newcomer",
+			want:     "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			id, _ := pickOnlineNode(tc.resp, spec, "")
+			id, _ := pickOnlineNode(tc.resp, spec, tc.expected)
 			if id != tc.want {
 				t.Fatalf("id=%q want %q", id, tc.want)
 			}
@@ -1106,18 +1088,14 @@ func TestHostnameForCert(t *testing.T) {
 	}
 }
 
-func TestCtxSleep_Cancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+func TestCtxSleep(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := ctxSleep(ctx, time.Second); err == nil {
+	if err := ctxSleep(cancelled, time.Second); err == nil {
 		t.Fatal("expected cancellation error")
 	}
-}
-
-func TestCtxSleep_Elapsed(t *testing.T) {
-	ctx := context.Background()
-	// Use 1ns to avoid real wall-clock delay.
-	if err := ctxSleep(ctx, time.Nanosecond); err != nil {
+	// 1ns elapses at once, so the success path has no wall-clock delay.
+	if err := ctxSleep(context.Background(), time.Nanosecond); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -1274,62 +1252,6 @@ func (i *cnCertIssuer) IssueFleetNodeCertificate(ctx context.Context, req *Fleet
 		CAPEM:      []byte("-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----\n"),
 		ParsedCert: parsed,
 	}, nil
-}
-
-// TestPickOnlineAgent_PrefersExpectedID reproduces the production bug:
-// the daemon registers under its resolved hostname (e.g. agent-02:9091)
-// while the deploy spec carries NodeBind=0.0.0.0:9091. The host-suffix
-// heuristic skips this row, but matching on the canonical AgentID
-// computed by iam.FleetNodeAppName picks it correctly.
-func TestPickOnlineAgent_PrefersExpectedID(t *testing.T) {
-	spec := &deploy.Spec{NodeBind: "0.0.0.0:9091"}
-	// Server-side: AgentID is "agent-default-agent-198.51.100.91"
-	expected := "agent-default-agent-198.51.100.91"
-	resp := &orchestratorSDK.ListFleetNodesResponse{
-		Nodes: []*orchestratorSDK.FleetNode{
-			{ID: "wrong", Host: "0.0.0.0:9091", Status: "running", LastSeen: 100},
-			{ID: expected, Host: "agent-02:9091", Status: "running", LastSeen: 200},
-		},
-	}
-	id, _ := pickOnlineNode(resp, spec, expected)
-	if id != expected {
-		t.Fatalf("got id=%q, want %q", id, expected)
-	}
-}
-
-// TestPickOnlineAgent_ExpectedIDIgnoresHostMismatch confirms that when
-// the caller passes an expectedID, host strings are not consulted —
-// only the ID is. This is what unblocks deploys against hosts whose
-// resolved hostname differs from the SSH target.
-func TestPickOnlineAgent_ExpectedIDIgnoresHostMismatch(t *testing.T) {
-	spec := &deploy.Spec{NodeBind: "0.0.0.0:9091"}
-	expected := "agent-acme-agent-cloud-1"
-	resp := &orchestratorSDK.ListFleetNodesResponse{
-		Nodes: []*orchestratorSDK.FleetNode{
-			{ID: expected, Host: "totally-different-host:31337", Status: "running"},
-		},
-	}
-	id, _ := pickOnlineNode(resp, spec, expected)
-	if id != expected {
-		t.Fatalf("got id=%q, want %q", id, expected)
-	}
-}
-
-// TestPickOnlineAgent_ExpectedIDFiltersStaleEntries asserts that a
-// stale registration still keyed by the legacy host suffix is NOT
-// picked when the caller asked for a specific ID that no online agent
-// currently advertises.
-func TestPickOnlineAgent_ExpectedIDFiltersStaleEntries(t *testing.T) {
-	spec := &deploy.Spec{NodeBind: "0.0.0.0:9091"}
-	resp := &orchestratorSDK.ListFleetNodesResponse{
-		Nodes: []*orchestratorSDK.FleetNode{
-			{ID: "stale", Host: "0.0.0.0:9091", Status: "running"},
-		},
-	}
-	id, _ := pickOnlineNode(resp, spec, "agent-default-agent-newcomer")
-	if id != "" {
-		t.Fatalf("expected no match, got %q", id)
-	}
 }
 
 // TestExpectedAgentID_DerivesFromCertCN verifies the helper that the
