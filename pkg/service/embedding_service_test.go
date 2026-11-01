@@ -244,11 +244,12 @@ func TestEmbeddingService_GenerateEmbedding_WithDefaultProvider(t *testing.T) {
 
 func TestEmbeddingService_GenerateEmbedding_InvalidRequest(t *testing.T) {
 	tests := []struct {
-		name string
-		req  *GenerateEmbeddingRequest
+		name        string
+		req         *GenerateEmbeddingRequest
+		errContains string
 	}{
-		{name: "NilRequest", req: nil},
-		{name: "EmptyText", req: &GenerateEmbeddingRequest{Text: ""}},
+		{name: "NilRequest", req: nil, errContains: "request is nil"},
+		{name: "EmptyText", req: &GenerateEmbeddingRequest{Text: ""}, errContains: "text is required"},
 	}
 
 	for _, tt := range tests {
@@ -262,6 +263,7 @@ func TestEmbeddingService_GenerateEmbedding_InvalidRequest(t *testing.T) {
 			var dErr *quicbaasErrors.QBError
 			require.True(t, errors.As(err, &dErr))
 			assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
+			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }
@@ -347,7 +349,7 @@ func TestEmbeddingService_BatchGenerateEmbeddings_InvalidRequest(t *testing.T) {
 		req         *BatchGenerateEmbeddingsRequest
 		errContains string
 	}{
-		{name: "NilRequest", req: nil},
+		{name: "NilRequest", req: nil, errContains: "request is nil"},
 		{
 			name:        "EmptyItems",
 			req:         &BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{}},
@@ -376,8 +378,10 @@ func TestEmbeddingService_BatchGenerateEmbeddings_InvalidRequest(t *testing.T) {
 
 			resp, err := svc.BatchGenerateEmbeddings(systemTenantCtx(), tt.req)
 
-			require.Error(t, err)
 			assert.Nil(t, resp)
+			var dErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &dErr))
+			assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
 			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
@@ -542,9 +546,10 @@ func TestEmbeddingService_GetProviderInfo_Errors(t *testing.T) {
 		name         string
 		req          *GetProviderInfoRequest
 		expectedCode quicbaasErrors.ErrorCode
+		errContains  string
 	}{
-		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput},
-		{name: "EmptyProvider", req: &GetProviderInfoRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput, errContains: "request is nil"},
+		{name: "EmptyProvider", req: &GetProviderInfoRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput, errContains: "provider is required"},
 		{name: "NotFound", req: &GetProviderInfoRequest{Provider: "nonexistent"}, expectedCode: quicbaasErrors.ErrNotFound},
 	}
 
@@ -559,6 +564,7 @@ func TestEmbeddingService_GetProviderInfo_Errors(t *testing.T) {
 			var dErr *quicbaasErrors.QBError
 			require.True(t, errors.As(err, &dErr))
 			assert.Equal(t, tt.expectedCode, dErr.Code)
+			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }
@@ -598,9 +604,10 @@ func TestEmbeddingService_SetDefaultProvider_Errors(t *testing.T) {
 		name         string
 		req          *SetDefaultProviderRequest
 		expectedCode quicbaasErrors.ErrorCode
+		errContains  string
 	}{
-		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput},
-		{name: "EmptyProvider", req: &SetDefaultProviderRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput, errContains: "request is nil"},
+		{name: "EmptyProvider", req: &SetDefaultProviderRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput, errContains: "provider is required"},
 		{name: "NotFound", req: &SetDefaultProviderRequest{Provider: "nonexistent"}, expectedCode: quicbaasErrors.ErrNotFound},
 	}
 
@@ -615,6 +622,7 @@ func TestEmbeddingService_SetDefaultProvider_Errors(t *testing.T) {
 			var dErr *quicbaasErrors.QBError
 			require.True(t, errors.As(err, &dErr))
 			assert.Equal(t, tt.expectedCode, dErr.Code)
+			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }
@@ -1354,146 +1362,6 @@ func TestEmbeddingSvc_GenerateEmbedding_DefaultProvider(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestEmbeddingService_ValidateGenerateEmbeddingRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		err := svc.validateGenerateEmbeddingRequest(nil)
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "request is nil")
-	})
-
-	t.Run("empty text returns error", func(t *testing.T) {
-		err := svc.validateGenerateEmbeddingRequest(&GenerateEmbeddingRequest{Text: ""})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "text is required")
-	})
-
-	t.Run("valid request with text returns no error", func(t *testing.T) {
-		err := svc.validateGenerateEmbeddingRequest(&GenerateEmbeddingRequest{Text: "hello world"})
-		require.NoError(t, err)
-	})
-
-	t.Run("valid request with provider returns no error", func(t *testing.T) {
-		err := svc.validateGenerateEmbeddingRequest(&GenerateEmbeddingRequest{Text: "test text", Provider: "openai"})
-		require.NoError(t, err)
-	})
-}
-
-func TestEmbeddingService_ValidateBatchGenerateEmbeddingsRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		err := svc.validateBatchGenerateEmbeddingsRequest(nil)
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "request is nil")
-	})
-
-	t.Run("empty items returns error", func(t *testing.T) {
-		err := svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{Items: []*BatchEmbeddingItem{}})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "items is required")
-	})
-
-	t.Run("item with empty text returns error", func(t *testing.T) {
-		err := svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{
-			Items: []*BatchEmbeddingItem{{ID: "1", Text: ""}},
-		})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "text is required")
-	})
-
-	t.Run("item with empty ID returns error", func(t *testing.T) {
-		err := svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{
-			Items: []*BatchEmbeddingItem{{ID: "", Text: "hello"}},
-		})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "id is required")
-	})
-
-	t.Run("valid request returns no error", func(t *testing.T) {
-		err := svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{
-			Items: []*BatchEmbeddingItem{
-				{ID: "1", Text: "hello"},
-				{ID: "2", Text: "world"},
-			},
-		})
-		require.NoError(t, err)
-	})
-}
-
-func TestEmbeddingService_ValidateGetProviderInfoRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		err := svc.validateGetProviderInfoRequest(nil)
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "request is nil")
-	})
-
-	t.Run("empty provider returns error", func(t *testing.T) {
-		err := svc.validateGetProviderInfoRequest(&GetProviderInfoRequest{Provider: ""})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "provider is required")
-	})
-
-	t.Run("valid request returns no error", func(t *testing.T) {
-		err := svc.validateGetProviderInfoRequest(&GetProviderInfoRequest{Provider: "openai"})
-		require.NoError(t, err)
-	})
-}
-
-func TestEmbeddingService_ValidateSetDefaultProviderRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	t.Run("nil request returns error", func(t *testing.T) {
-		err := svc.validateSetDefaultProviderRequest(nil)
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "request is nil")
-	})
-
-	t.Run("empty provider returns error", func(t *testing.T) {
-		err := svc.validateSetDefaultProviderRequest(&SetDefaultProviderRequest{Provider: ""})
-		require.Error(t, err)
-		var qbErr *quicbaasErrors.QBError
-		require.ErrorAs(t, err, &qbErr)
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-		assert.Contains(t, qbErr.Err.Error(), "provider is required")
-	})
-
-	t.Run("valid request returns no error", func(t *testing.T) {
-		err := svc.validateSetDefaultProviderRequest(&SetDefaultProviderRequest{Provider: "ollama"})
-		require.NoError(t, err)
-	})
 }
 
 func TestEstimateTokens(t *testing.T) {
