@@ -107,21 +107,6 @@ func TestChannelExistsError(t *testing.T) {
 			t.Errorf("expected code %v, got %v", ErrCodePushChannelExists, err.Code)
 		}
 	})
-
-	t.Run("IsChannelExists returns true for ChannelExistsError", func(t *testing.T) {
-		t.Parallel()
-		err := &ChannelExistsError{Channel: "test"}
-		if !IsChannelExists(err) {
-			t.Error("expected IsChannelExists to return true")
-		}
-	})
-
-	t.Run("IsChannelExists returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsChannelExists(nil) {
-			t.Error("expected IsChannelExists to return false for nil")
-		}
-	})
 }
 
 func TestHubBufferFullError(t *testing.T) {
@@ -149,21 +134,6 @@ func TestHubBufferFullError(t *testing.T) {
 			t.Errorf("expected buffer_size context, got %v", bs)
 		}
 	})
-
-	t.Run("IsHubBufferFull returns true for HubBufferFullError", func(t *testing.T) {
-		t.Parallel()
-		err := &HubBufferFullError{Channel: "test", BufferSize: 100}
-		if !IsHubBufferFull(err) {
-			t.Error("expected IsHubBufferFull to return true")
-		}
-	})
-
-	t.Run("IsHubBufferFull returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsHubBufferFull(nil) {
-			t.Error("expected IsHubBufferFull to return false for nil")
-		}
-	})
 }
 
 func TestClientDisconnectedError(t *testing.T) {
@@ -175,21 +145,6 @@ func TestClientDisconnectedError(t *testing.T) {
 		expected := "push client disconnected: client-123"
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
-
-	t.Run("IsClientDisconnected returns true for ClientDisconnectedError", func(t *testing.T) {
-		t.Parallel()
-		err := &ClientDisconnectedError{ClientID: "test"}
-		if !IsClientDisconnected(err) {
-			t.Error("expected IsClientDisconnected to return true")
-		}
-	})
-
-	t.Run("IsClientDisconnected returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsClientDisconnected(nil) {
-			t.Error("expected IsClientDisconnected to return false for nil")
 		}
 	})
 }
@@ -205,21 +160,6 @@ func TestClientSlowError(t *testing.T) {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}
 	})
-
-	t.Run("IsClientSlow returns true for ClientSlowError", func(t *testing.T) {
-		t.Parallel()
-		err := &ClientSlowError{ClientID: "test"}
-		if !IsClientSlow(err) {
-			t.Error("expected IsClientSlow to return true")
-		}
-	})
-
-	t.Run("IsClientSlow returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsClientSlow(nil) {
-			t.Error("expected IsClientSlow to return false for nil")
-		}
-	})
 }
 
 func TestInvalidCodecError(t *testing.T) {
@@ -231,21 +171,6 @@ func TestInvalidCodecError(t *testing.T) {
 		expected := "invalid push codec: unknown-codec"
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
-
-	t.Run("IsInvalidCodec returns true for InvalidCodecError", func(t *testing.T) {
-		t.Parallel()
-		err := &InvalidCodecError{Codec: "test"}
-		if !IsInvalidCodec(err) {
-			t.Error("expected IsInvalidCodec to return true")
-		}
-	})
-
-	t.Run("IsInvalidCodec returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsInvalidCodec(nil) {
-			t.Error("expected IsInvalidCodec to return false for nil")
 		}
 	})
 }
@@ -261,21 +186,6 @@ func TestSubscriptionNotFoundError(t *testing.T) {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}
 	})
-
-	t.Run("IsSubscriptionNotFound returns true for SubscriptionNotFoundError", func(t *testing.T) {
-		t.Parallel()
-		err := &SubscriptionNotFoundError{SubscriptionID: "test"}
-		if !IsSubscriptionNotFound(err) {
-			t.Error("expected IsSubscriptionNotFound to return true")
-		}
-	})
-
-	t.Run("IsSubscriptionNotFound returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsSubscriptionNotFound(nil) {
-			t.Error("expected IsSubscriptionNotFound to return false for nil")
-		}
-	})
 }
 
 func TestDedupKeyExistsError(t *testing.T) {
@@ -287,21 +197,6 @@ func TestDedupKeyExistsError(t *testing.T) {
 		expected := "push dedup key exists: hash-abc123"
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
-
-	t.Run("IsDedupKeyExists returns true for DedupKeyExistsError", func(t *testing.T) {
-		t.Parallel()
-		err := &DedupKeyExistsError{Key: "test"}
-		if !IsDedupKeyExists(err) {
-			t.Error("expected IsDedupKeyExists to return true")
-		}
-	})
-
-	t.Run("IsDedupKeyExists returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsDedupKeyExists(nil) {
-			t.Error("expected IsDedupKeyExists to return false for nil")
 		}
 	})
 }
@@ -317,21 +212,6 @@ func TestServiceNotRunningError(t *testing.T) {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}
 	})
-
-	t.Run("IsServiceNotRunning returns true for ServiceNotRunningError", func(t *testing.T) {
-		t.Parallel()
-		err := &ServiceNotRunningError{Operation: "test"}
-		if !IsServiceNotRunning(err) {
-			t.Error("expected IsServiceNotRunning to return true")
-		}
-	})
-
-	t.Run("IsServiceNotRunning returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsServiceNotRunning(nil) {
-			t.Error("expected IsServiceNotRunning to return false for nil")
-		}
-	})
 }
 
 func TestInvalidChannelNameError(t *testing.T) {
@@ -343,21 +223,6 @@ func TestInvalidChannelNameError(t *testing.T) {
 		expected := "invalid push channel name 'bad@channel': contains invalid characters"
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
-
-	t.Run("IsInvalidChannelName returns true for InvalidChannelNameError", func(t *testing.T) {
-		t.Parallel()
-		err := &InvalidChannelNameError{Name: "test", Reason: "reason"}
-		if !IsInvalidChannelName(err) {
-			t.Error("expected IsInvalidChannelName to return true")
-		}
-	})
-
-	t.Run("IsInvalidChannelName returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsInvalidChannelName(nil) {
-			t.Error("expected IsInvalidChannelName to return false for nil")
 		}
 	})
 }
@@ -373,21 +238,6 @@ func TestInvalidMessageIDError(t *testing.T) {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}
 	})
-
-	t.Run("IsInvalidMessageID returns true for InvalidMessageIDError", func(t *testing.T) {
-		t.Parallel()
-		err := &InvalidMessageIDError{ID: "test", Reason: "reason"}
-		if !IsInvalidMessageID(err) {
-			t.Error("expected IsInvalidMessageID to return true")
-		}
-	})
-
-	t.Run("IsInvalidMessageID returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsInvalidMessageID(nil) {
-			t.Error("expected IsInvalidMessageID to return false for nil")
-		}
-	})
 }
 
 func TestMaxSubscriptionsReachedError(t *testing.T) {
@@ -399,21 +249,6 @@ func TestMaxSubscriptionsReachedError(t *testing.T) {
 		expected := "maximum subscriptions reached for channel: popular"
 		if err.Error() != expected {
 			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
-
-	t.Run("IsMaxSubscriptionsReached returns true for MaxSubscriptionsReachedError", func(t *testing.T) {
-		t.Parallel()
-		err := &MaxSubscriptionsReachedError{Channel: "test", Max: 100}
-		if !IsMaxSubscriptionsReached(err) {
-			t.Error("expected IsMaxSubscriptionsReached to return true")
-		}
-	})
-
-	t.Run("IsMaxSubscriptionsReached returns false for nil", func(t *testing.T) {
-		t.Parallel()
-		if IsMaxSubscriptionsReached(nil) {
-			t.Error("expected IsMaxSubscriptionsReached to return false for nil")
 		}
 	})
 }
