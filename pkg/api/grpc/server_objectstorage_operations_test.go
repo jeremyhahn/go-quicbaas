@@ -732,183 +732,144 @@ func TestObjectStorageServer_GetObjectPolicy(t *testing.T) {
 // ListBackends Tests
 // ========================================
 
-func TestObjectStorageServer_ListBackends_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_ListBackends(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.ListBackendsRequest
+		wantCode codes.Code
+	}{
+		{name: "success", svc: &testMockObjectStorageService{}, req: &pb.ListBackendsRequest{IncludeHealth: true}, wantCode: codes.OK},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.ListBackendsRequest{}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.ListBackends(context.Background(), &pb.ListBackendsRequest{
-		IncludeHealth: true,
-	})
+			resp, err := srv.ListBackends(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Len(t, resp.Backends, 2)
-}
-
-func TestObjectStorageServer_ListBackends_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ListBackends(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ListBackends_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.ListBackends(context.Background(), &pb.ListBackendsRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, resp.Backends, 2)
+		})
+	}
 }
 
 // ========================================
 // GetBackendHealth Tests
 // ========================================
 
-func TestObjectStorageServer_GetBackendHealth_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_GetBackendHealth(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.GetBackendHealthRequest
+		wantCode codes.Code
+	}{
+		{name: "success", svc: &testMockObjectStorageService{}, req: &pb.GetBackendHealthRequest{Name: "local"}, wantCode: codes.OK},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty name", svc: &testMockObjectStorageService{}, req: &pb.GetBackendHealthRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.GetBackendHealthRequest{Name: "local"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.GetBackendHealth(context.Background(), &pb.GetBackendHealthRequest{
-		Name: "local",
-	})
+			resp, err := srv.GetBackendHealth(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Healthy)
-	assert.Equal(t, "local", resp.Name)
-}
-
-func TestObjectStorageServer_GetBackendHealth_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetBackendHealth(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetBackendHealth_EmptyName(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetBackendHealth(context.Background(), &pb.GetBackendHealthRequest{Name: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetBackendHealth_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.GetBackendHealth(context.Background(), &pb.GetBackendHealthRequest{Name: "local"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.True(t, resp.Healthy)
+			assert.Equal(t, "local", resp.Name)
+		})
+	}
 }
 
 // ========================================
 // GetObjectStorageTenantUsage Tests
 // ========================================
 
-func TestObjectStorageServer_GetTenantUsage_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_GetTenantUsage_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.GetObjectStorageTenantUsageRequest
+		wantCode codes.Code
+	}{
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty tenant id", svc: &testMockObjectStorageService{}, req: &pb.GetObjectStorageTenantUsageRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.GetObjectStorageTenantUsageRequest{TenantId: "tenant-1"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.GetObjectStorageTenantUsage(context.Background(), nil)
+			resp, err := srv.GetObjectStorageTenantUsage(context.Background(), tt.req)
 
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetTenantUsage_EmptyTenantID(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetObjectStorageTenantUsage(context.Background(), &pb.GetObjectStorageTenantUsageRequest{TenantId: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetTenantUsage_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.GetObjectStorageTenantUsage(context.Background(), &pb.GetObjectStorageTenantUsageRequest{TenantId: "tenant-1"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			assert.Nil(t, resp)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
 }
 
 // ========================================
 // GetObjectStorageTenantQuotas Tests
 // ========================================
 
-func TestObjectStorageServer_GetTenantQuotas_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_GetTenantQuotas_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.GetObjectStorageTenantQuotasRequest
+		wantCode codes.Code
+	}{
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty tenant id", svc: &testMockObjectStorageService{}, req: &pb.GetObjectStorageTenantQuotasRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.GetObjectStorageTenantQuotasRequest{TenantId: "tenant-1"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.GetObjectStorageTenantQuotas(context.Background(), nil)
+			resp, err := srv.GetObjectStorageTenantQuotas(context.Background(), tt.req)
 
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetTenantQuotas_EmptyTenantID(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.GetObjectStorageTenantQuotas(context.Background(), &pb.GetObjectStorageTenantQuotasRequest{TenantId: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_GetTenantQuotas_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.GetObjectStorageTenantQuotas(context.Background(), &pb.GetObjectStorageTenantQuotasRequest{TenantId: "tenant-1"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			assert.Nil(t, resp)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
 }
 
 // ========================================
 // SetObjectStorageTenantQuotas Tests
 // ========================================
 
-func TestObjectStorageServer_SetTenantQuotas_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_SetTenantQuotas_Errors(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.SetObjectStorageTenantQuotasRequest
+		wantCode codes.Code
+	}{
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.SetObjectStorageTenantQuotasRequest{}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.SetObjectStorageTenantQuotas(context.Background(), nil)
+			resp, err := srv.SetObjectStorageTenantQuotas(context.Background(), tt.req)
 
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_SetTenantQuotas_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.SetObjectStorageTenantQuotas(context.Background(), &pb.SetObjectStorageTenantQuotasRequest{})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			assert.Nil(t, resp)
+			assert.Equal(t, tt.wantCode, status.Code(err))
+		})
+	}
 }
