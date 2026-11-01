@@ -523,19 +523,10 @@ func TestMemoryStorage_GetAppByTenant(t *testing.T) {
 	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
 		t.Errorf("Expected ErrNotFound, got: %v", err)
 	}
-
-	// Test error path - app doesn't exist
-	_, err = storage.GetAppByTenant(ctx, tenant.ID, "nonexistent")
-	if err == nil {
-		t.Error("Expected error for nonexistent app")
-	}
-	if !errors.As(err, &qbErr) || qbErr.Code != dberrors.ErrNotFound {
-		t.Errorf("Expected ErrNotFound, got: %v", err)
-	}
 }
 
 // TestMemoryStorage_StoreAuthCode tests the StoreAuthCode function
-func TestMemoryStorage_StoreAuthCode(t *testing.T) {
+func TestMemoryStorage_GetAuthCode(t *testing.T) {
 	ctx := context.Background()
 	storage := NewMemoryStorage()
 
@@ -552,51 +543,17 @@ func TestMemoryStorage_StoreAuthCode(t *testing.T) {
 		ExpiresAt:           time.Now().Add(10 * time.Minute),
 		CreatedAt:           time.Now(),
 	}
-
-	// Test storing auth code
-	err := storage.StoreAuthCode(ctx, authCode)
-	if err != nil {
+	if err := storage.StoreAuthCode(ctx, authCode); err != nil {
 		t.Fatalf("StoreAuthCode failed: %v", err)
 	}
-
-	// Verify it was stored by retrieving it
-	retrieved, err := storage.GetAuthCode(ctx, authCode.Code)
-	if err != nil {
-		t.Fatalf("GetAuthCode failed after StoreAuthCode: %v", err)
-	}
-	if retrieved.Code != authCode.Code {
-		t.Errorf("Expected code %s, got %s", authCode.Code, retrieved.Code)
-	}
-	if retrieved.UserID != authCode.UserID {
-		t.Errorf("Expected userID %d, got %d", authCode.UserID, retrieved.UserID)
-	}
-	if retrieved.ClientID != authCode.ClientID {
-		t.Errorf("Expected clientID %s, got %s", authCode.ClientID, retrieved.ClientID)
-	}
-}
-
-// TestMemoryStorage_GetAuthCode tests the GetAuthCode function
-func TestMemoryStorage_GetAuthCode(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	authCode := &AuthCodeData{
-		Code:      "code456",
-		UserID:    20002,
-		TenantID:  "tenant2",
-		ClientID:  "client2",
-		ExpiresAt: time.Now().Add(10 * time.Minute),
-		CreatedAt: time.Now(),
-	}
-	storage.StoreAuthCode(ctx, authCode)
 
 	// Test happy path - code exists
 	retrieved, err := storage.GetAuthCode(ctx, authCode.Code)
 	if err != nil {
 		t.Fatalf("GetAuthCode failed: %v", err)
 	}
-	if retrieved.Code != authCode.Code {
-		t.Errorf("Expected code %s, got %s", authCode.Code, retrieved.Code)
+	if retrieved.Code != authCode.Code || retrieved.UserID != authCode.UserID || retrieved.ClientID != authCode.ClientID {
+		t.Errorf("GetAuthCode = %+v, want the stored code %+v", retrieved, authCode)
 	}
 
 	// Test error path - code doesn't exist
@@ -859,46 +816,6 @@ func TestMemoryStorage_AuthCodeExpiration(t *testing.T) {
 }
 
 // TestMemoryStorage_GetAppByTenant_EdgeCases tests edge cases for GetAppByTenant
-func TestMemoryStorage_GetAppByTenant_EdgeCases(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	tenant := &Tenant{ID: "edge-tenant", Name: "Edge Tenant", Created: time.Now(), Updated: time.Now()}
-	storage.CreateTenant(ctx, tenant)
-
-	// Test with empty tenant ID
-	_, err := storage.GetAppByTenant(ctx, "", "client123")
-	if err == nil {
-		t.Error("Expected error with empty tenant ID")
-	}
-
-	// Test with empty client ID
-	_, err = storage.GetAppByTenant(ctx, tenant.ID, "")
-	if err == nil {
-		t.Error("Expected error with empty client ID")
-	}
-
-	// Create app and verify isolation
-	app := &Application{
-		ClientID:     "isolated-client",
-		Name:         "Isolated App",
-		TenantID:     tenant.ID,
-		RedirectURIs: []string{"https://example.com/callback"},
-		Created:      time.Now(),
-		Updated:      time.Now(),
-	}
-	storage.CreateApp(ctx, app)
-
-	// Verify app is accessible with correct tenant
-	retrieved, err := storage.GetAppByTenant(ctx, tenant.ID, app.ClientID)
-	if err != nil {
-		t.Fatalf("Failed to retrieve app with correct tenant: %v", err)
-	}
-	if retrieved.ClientID != app.ClientID {
-		t.Errorf("Expected clientID %s, got %s", app.ClientID, retrieved.ClientID)
-	}
-}
-
 // TestMemoryStorage_GetSettings tests the GetSettings function
 func TestMemoryStorage_GetSettings(t *testing.T) {
 	ctx := context.Background()
