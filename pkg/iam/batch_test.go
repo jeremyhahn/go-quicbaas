@@ -170,51 +170,6 @@ func TestBatchImportRequestValidate(t *testing.T) {
 	})
 }
 
-func TestBatchOptionsValidate(t *testing.T) {
-	t.Run("valid options", func(t *testing.T) {
-		opts := BatchOptions{
-			BatchSize:       100,
-			Parallelism:     4,
-			ContinueOnError: true,
-			Timeout:         5 * time.Minute,
-		}
-
-		if err := opts.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("zero values are valid", func(t *testing.T) {
-		opts := BatchImportOptions{}
-
-		if err := opts.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("negative batch size", func(t *testing.T) {
-		opts := BatchOptions{
-			BatchSize: -1,
-		}
-
-		err := opts.Validate()
-		if err == nil {
-			t.Error("expected error for negative batch size")
-		}
-	})
-
-	t.Run("negative parallelism", func(t *testing.T) {
-		opts := BatchOptions{
-			Parallelism: -1,
-		}
-
-		err := opts.Validate()
-		if err == nil {
-			t.Error("expected error for negative parallelism")
-		}
-	})
-}
-
 func TestBatchExportRequestValidate(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {
 		req := &BatchExportRequest{
@@ -463,113 +418,6 @@ func TestBatchResult(t *testing.T) {
 		}
 		if result.ProcessedItems["users"][0] != "u1" {
 			t.Errorf("expected first user 'u1', got '%s'", result.ProcessedItems["users"][0])
-		}
-	})
-}
-
-func TestBatchError(t *testing.T) {
-	t.Run("batch error fields", func(t *testing.T) {
-		testErr := errors.New("test error")
-		batchErr := BatchError{
-			Index: 42,
-			Type:  "user",
-			ID:    "user-123",
-			Error: testErr,
-		}
-
-		if batchErr.Index != 42 {
-			t.Errorf("expected index 42, got %d", batchErr.Index)
-		}
-		if batchErr.Type != "user" {
-			t.Errorf("expected type 'user', got '%s'", batchErr.Type)
-		}
-		if batchErr.ID != "user-123" {
-			t.Errorf("expected ID 'user-123', got '%s'", batchErr.ID)
-		}
-		if batchErr.Error != testErr {
-			t.Error("error not preserved correctly")
-		}
-	})
-}
-
-func TestUserImport(t *testing.T) {
-	t.Run("user import fields", func(t *testing.T) {
-		user := &UserImport{
-			ID:       30001,
-			Email:    "test@example.com",
-			Username: "testuser",
-			Name:     "Test User",
-			Attributes: map[string]string{
-				"department": "engineering",
-			},
-			Roles:   []string{"r1"},
-			Enabled: boolPtr(true),
-		}
-
-		if user.ID != 30001 {
-			t.Errorf("expected ID 30001, got %d", user.ID)
-		}
-		if user.Email != "test@example.com" {
-			t.Errorf("expected email 'test@example.com', got '%s'", user.Email)
-		}
-		assertEnabledStated(t, user.Enabled, true, "user")
-	})
-}
-
-func TestRoleImport(t *testing.T) {
-	t.Run("role import fields", func(t *testing.T) {
-		role := &RoleImport{
-			ID:          "r1",
-			Name:        "Admin",
-			Description: "Administrator role",
-			Permissions: []string{"read", "write", "delete"},
-			Attributes: map[string]interface{}{
-				"level": "high",
-			},
-		}
-
-		if role.ID != "r1" {
-			t.Errorf("expected ID 'r1', got '%s'", role.ID)
-		}
-		if role.Name != "Admin" {
-			t.Errorf("expected name 'Admin', got '%s'", role.Name)
-		}
-		if len(role.Permissions) != 3 {
-			t.Errorf("expected 3 permissions, got %d", len(role.Permissions))
-		}
-	})
-}
-
-func TestPolicyImport(t *testing.T) {
-	t.Run("policy import fields", func(t *testing.T) {
-		policy := &PolicyImport{
-			Name:        "admin-policy",
-			Description: "Admin access policy",
-			Priority:    100,
-			Subjects: SubjectSelector{
-				Roles: []string{"admin"},
-			},
-			Rules: []Rule{
-				{
-					Name:      "allow-all",
-					Effect:    EffectAllow,
-					Actions:   []string{"*"},
-					Resources: []string{"*"},
-				},
-			},
-			Variables: map[string]string{
-				"env": "production",
-			},
-		}
-
-		if policy.Name != "admin-policy" {
-			t.Errorf("expected name 'admin-policy', got '%s'", policy.Name)
-		}
-		if policy.Priority != 100 {
-			t.Errorf("expected priority 100, got %d", policy.Priority)
-		}
-		if len(policy.Rules) != 1 {
-			t.Errorf("expected 1 rule, got %d", len(policy.Rules))
 		}
 	})
 }
@@ -1356,8 +1204,8 @@ func TestPolicyImportItem_Validate(t *testing.T) {
 	}
 }
 
-// TestBatchOptions_Validate_Coverage tests BatchOptions validation edge cases.
-func TestBatchOptions_Validate_Coverage(t *testing.T) {
+// TestBatchOptionsValidate tests BatchOptions validation.
+func TestBatchOptionsValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		opts    *BatchOptions
@@ -1412,10 +1260,8 @@ func TestBatchOptions_Validate_Coverage(t *testing.T) {
 			}
 			if err != nil && tt.field != "" {
 				var vErr *ValidationError
-				if errors.As(err, &vErr) {
-					if vErr.Field != tt.field {
-						t.Errorf("Validate() field = %s, want %s", vErr.Field, tt.field)
-					}
+				if !errors.As(err, &vErr) || vErr.Field != tt.field {
+					t.Errorf("Validate() error = %v, want ValidationError on field %s", err, tt.field)
 				}
 			}
 		})
@@ -1486,8 +1332,8 @@ func TestBatchOperation_Validate_Coverage(t *testing.T) {
 	}
 }
 
-// TestUserImportItem_ValidateCoverage tests UserImportItem validation.
-func TestUserImportItem_ValidateCoverage(t *testing.T) {
+// TestUserImportItemValidate tests UserImportItem validation.
+func TestUserImportItemValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		item    *UserImportItem
@@ -1497,14 +1343,6 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 			name: "valid user with email",
 			item: &UserImportItem{
 				Email: "test@example.com",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid user with email and username",
-			item: &UserImportItem{
-				Username: "testuser",
-				Email:    "test@example.com",
 			},
 			wantErr: false,
 		},
@@ -1532,8 +1370,8 @@ func TestUserImportItem_ValidateCoverage(t *testing.T) {
 	}
 }
 
-// TestRoleImportItem_ValidateCoverage tests RoleImportItem validation.
-func TestRoleImportItem_ValidateCoverage(t *testing.T) {
+// TestRoleImportItemValidate tests RoleImportItem validation.
+func TestRoleImportItemValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		item    *RoleImportItem
@@ -1543,14 +1381,6 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 			name: "valid role",
 			item: &RoleImportItem{
 				Name: "admin",
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid role with description",
-			item: &RoleImportItem{
-				Name:        "admin",
-				Description: "Administrator role",
 			},
 			wantErr: false,
 		},
@@ -1568,21 +1398,5 @@ func TestRoleImportItem_ValidateCoverage(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-// TestBatchError_ErrorMessage tests BatchError error message.
-func TestBatchError_ErrorMessage(t *testing.T) {
-	err := errors.New("test error")
-	be := &BatchError{
-		Index: 5,
-		Type:  "user",
-		ID:    "user-123",
-		Error: err,
-	}
-
-	msg := be.Error.Error()
-	if msg != "test error" {
-		t.Errorf("Error() = %s, want %s", msg, "test error")
 	}
 }
