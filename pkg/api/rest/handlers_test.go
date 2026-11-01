@@ -3576,22 +3576,6 @@ func TestHandleSetParameter_ReadBodyError(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestHandleKVPut_ReadBodyError(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "/test-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kv/test-key", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req.Body = io.NopCloser(&errorReader{})
-	w := httptest.NewRecorder()
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 type stubMessagingServiceWithError struct {
 	stubMessagingService
 }
@@ -3648,214 +3632,6 @@ func TestPerformanceMetricsHandler_Encoding(t *testing.T) {
 		assert.NotZero(t, metrics.Timestamp)
 	})
 }
-
-func TestHandlerEdgeCases_InvalidJSONParsing(t *testing.T) {
-	testCases := []struct {
-		name        string
-		requestBody string
-		expectError bool
-	}{
-		{
-			name:        "EmptyBody",
-			requestBody: "",
-			expectError: true,
-		},
-		{
-			name:        "InvalidJSON",
-			requestBody: "{invalid json}",
-			expectError: true,
-		},
-		{
-			name:        "PartialJSON",
-			requestBody: `{"key":`,
-			expectError: true,
-		},
-		{
-			name:        "NullJSON",
-			requestBody: "null",
-			expectError: false, // null is valid JSON
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var result map[string]interface{}
-			err := json.NewDecoder(bytes.NewBufferString(tc.requestBody)).Decode(&result)
-
-			if tc.expectError {
-				assert.Error(t, err)
-			} else {
-				if err != nil {
-					// null JSON decodes successfully
-					assert.NoError(t, err)
-				}
-			}
-		})
-	}
-}
-
-// Test helper function edge cases - only valid cases that don't panic
-
-func TestExtractPathParamFunction_ValidCases(t *testing.T) {
-	testCases := []struct {
-		name     string
-		path     string
-		prefix   string
-		suffix   string
-		expected string
-	}{
-		{
-			name:     "NormalCase",
-			path:     "/api/v1/backups/backup-123/restore",
-			prefix:   "/api/v1/backups/",
-			suffix:   "/restore",
-			expected: "backup-123",
-		},
-		{
-			name:     "PrefixOnly",
-			path:     "/api/v1/backups/backup-456",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "backup-456",
-		},
-		{
-			name:     "NoAffixes",
-			path:     "backup-789",
-			prefix:   "",
-			suffix:   "",
-			expected: "backup-789",
-		},
-		{
-			name:     "DataRestore",
-			path:     "/api/v1/data/restore",
-			prefix:   "/api/v1/",
-			suffix:   "/restore",
-			expected: "data",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := extractPathParam(tc.path, tc.prefix, tc.suffix)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// Test response formatting edge cases
-
-func TestRespondJSON_EncodingIssues(t *testing.T) {
-	t.Run("EncodeFunctionType", func(t *testing.T) {
-		// Functions cannot be encoded to JSON
-		w := httptest.NewRecorder()
-
-		// Create a struct with a function field (not encodable)
-		type BadStruct struct {
-			Func func()
-		}
-
-		data := BadStruct{
-			Func: func() {},
-		}
-
-		// Try to encode
-		err := json.NewEncoder(w).Encode(data)
-
-		// Should produce an error
-		assert.Error(t, err)
-	})
-
-	t.Run("EncodeChannelType", func(t *testing.T) {
-		// Channels cannot be encoded to JSON
-		w := httptest.NewRecorder()
-
-		type BadStruct struct {
-			Ch chan int
-		}
-
-		data := BadStruct{
-			Ch: make(chan int),
-		}
-
-		err := json.NewEncoder(w).Encode(data)
-		assert.Error(t, err)
-	})
-}
-
-// Test metric structure validity
-
-func TestPerformanceMetricsStructure_Validation(t *testing.T) {
-	t.Run("AllFieldsPresent", func(t *testing.T) {
-		metrics := &PerformanceMetrics{}
-
-		// Ensure all nested structs are present (not panicking on access)
-		assert.NotPanics(t, func() {
-			_ = metrics.Throughput.ReadsPerSec
-			_ = metrics.Throughput.WritesPerSec
-			_ = metrics.Throughput.TotalOpsPerSec
-			_ = metrics.Latency.ReadP50Ms
-			_ = metrics.Latency.ReadP95Ms
-			_ = metrics.Latency.ReadP99Ms
-			_ = metrics.Latency.WriteP50Ms
-			_ = metrics.Latency.WriteP95Ms
-			_ = metrics.Latency.WriteP99Ms
-			_ = metrics.Storage.CacheHitRatePct
-			_ = metrics.Storage.BloomFilterEffectivenessPct
-			_ = metrics.Storage.CompactionsPerMin
-			_ = metrics.Storage.L0Files
-			_ = metrics.Storage.DiskUsageGB
-			_ = metrics.Pool.Size
-			_ = metrics.Pool.Active
-			_ = metrics.Pool.ConnectionReuseRatePct
-		})
-	})
-
-	t.Run("JSONMarshaling", func(t *testing.T) {
-		now := time.Now()
-		metrics := &PerformanceMetrics{
-			Timestamp: now,
-			Throughput: ThroughputMetrics{
-				ReadsPerSec:    100.5,
-				WritesPerSec:   50.2,
-				TotalOpsPerSec: 150.7,
-			},
-			Latency: LatencyMetrics{
-				ReadP50Ms:  1.2,
-				ReadP95Ms:  5.5,
-				ReadP99Ms:  10.0,
-				WriteP50Ms: 2.0,
-				WriteP95Ms: 6.0,
-				WriteP99Ms: 12.0,
-			},
-			Storage: StorageMetrics{
-				CacheHitRatePct:             85.5,
-				BloomFilterEffectivenessPct: 95.0,
-				CompactionsPerMin:           2.5,
-				L0Files:                     5,
-				DiskUsageGB:                 100.5,
-			},
-			Pool: PoolMetrics{
-				Size:                   10,
-				Active:                 7,
-				ConnectionReuseRatePct: 90.0,
-			},
-		}
-
-		data, err := json.Marshal(metrics)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, data)
-
-		// Unmarshal back
-		var decoded PerformanceMetrics
-		err = json.Unmarshal(data, &decoded)
-		assert.NoError(t, err)
-		assert.Equal(t, metrics.Throughput.ReadsPerSec, decoded.Throughput.ReadsPerSec)
-		assert.Equal(t, metrics.Storage.L0Files, decoded.Storage.L0Files)
-		assert.Equal(t, metrics.Pool.Size, decoded.Pool.Size)
-	})
-}
-
-// Test getClientIP edge cases
 
 func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 	testCases := []struct {
@@ -3930,207 +3706,73 @@ func TestGetClientIPFunction_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestHandleGetParametersBatchInvalidJSON(t *testing.T) {
+func TestParametersBatchValidation(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		body    string
+		errMsg  string
+	}{
+		{"get invalid JSON", server.HandleGetParametersBatch, `not-json`, ""},
+		{"get empty paths", server.HandleGetParametersBatch, `{"paths": []}`, "at least one path is required"},
+		{"delete invalid JSON", server.HandleDeleteParametersBatch, `not-json`, ""},
+		{"delete empty paths", server.HandleDeleteParametersBatch, `{"paths": []}`, "at least one path is required"},
+		{"set invalid JSON", server.HandleSetParametersBatch, `not-json`, ""},
+		{"set empty parameters", server.HandleSetParametersBatch, `{"parameters": []}`, ""},
+		{"set missing path", server.HandleSetParametersBatch, `{"parameters": [{"value": "test"}]}`, "parameter path is required"},
+		{"set missing value", server.HandleSetParametersBatch, `{"parameters": [{"path": "/test/path"}]}`, "parameter value is required"},
+		{"search invalid JSON", server.HandleSearchParametersByTags, `not-json`, ""},
+		{"search empty tags", server.HandleSearchParametersByTags, `{"tags": {}}`, "at least one tag is required"},
+	}
 
-	server.HandleGetParametersBatch(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(tt.body)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			tt.handler(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.errMsg != "" {
+				assert.Contains(t, w.Body.String(), tt.errMsg)
+			}
+		})
+	}
 }
 
-func TestHandleGetParametersBatchEmptyPaths(t *testing.T) {
+func TestHandleKVDelete_MissingParams(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	body := `{"paths": []}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		entityType string
+		key        string
+	}{
+		{"missing entity type", "", "test-key"},
+		{"missing key", "test-type", ""},
+	}
 
-	server.HandleGetParametersBatch(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/entities", nil)
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one path is required")
-}
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", tt.entityType)
+			rctx.URLParams.Add("key", tt.key)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-func TestHandleDeleteParametersBatchInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
+			server.HandleKVDelete(w, req)
 
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleDeleteParametersBatchEmptyPaths(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"paths": []}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/parameters/batch", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one path is required")
-}
-
-func TestHandleSetParametersBatchInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSetParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSetParametersBatchEmptyParameters(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"parameters": []}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSetParametersBatch(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSearchParametersByTagsInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/search/tags", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSearchParametersByTags(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleSearchParametersByTagsEmptyTags(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"tags": {}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/search/tags", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleSearchParametersByTags(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "at least one tag is required")
-}
-
-func TestHandleKVPutInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `not-json`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/test-bucket", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVPutMissingBucket(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"key": "test-key", "value": "test-value"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVPutMissingKey(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body := `{"value": "test-value"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/bucket/test-bucket", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVPut(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVDeleteMissingBucket(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/bucket//key/test-key", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "")
-	rctx.URLParams.Add("key", "test-key")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVDelete(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestHandleKVDeleteMissingKey(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/kv/bucket/test-bucket/key/", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("bucket", "test-bucket")
-	rctx.URLParams.Add("key", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleKVDelete(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "entity type and key are required")
+		})
+	}
 }
 
 func TestHandleCryptoBatchEncryptInvalidJSON(t *testing.T) {
@@ -7395,35 +7037,6 @@ func TestGetReencryptionProgressMissingPath(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "path is required")
 }
 
-func TestSetParametersBatchValidations(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	t.Run("missing path in parameter", func(t *testing.T) {
-		body := `{"parameters": [{"value": "test"}]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleSetParametersBatch(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "parameter path is required")
-	})
-
-	t.Run("missing value in parameter", func(t *testing.T) {
-		body := `{"parameters": [{"path": "/test/path"}]}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/set", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleSetParametersBatch(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "parameter value is required")
-	})
-}
-
 func TestKVPutValidations(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
@@ -7638,6 +7251,13 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 			prefix:   "/api/v1/backups/",
 			suffix:   "/restore",
 			expected: "a",
+		},
+		{
+			name:     "single segment between prefix and suffix",
+			path:     "/api/v1/data/restore",
+			prefix:   "/api/v1/",
+			suffix:   "/restore",
+			expected: "data",
 		},
 		{
 			name:     "empty result after prefix",
