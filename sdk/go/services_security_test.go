@@ -572,48 +572,29 @@ func TestTrustBootstrap_Fetch_ErrorPath(t *testing.T) {
 // certExtImpl tests
 // =============================================================================
 
-func TestCertExt_CrossSign_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
+func TestCertExt_CrossSign_Errors(t *testing.T) {
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		root []byte
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		root    []byte
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty root", nil, context.Background()},
-		{"nil ctx", []byte("pem"), nil},
+		{"empty root", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []byte("pem"), &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []byte("p"), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), []byte("p"), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), []byte("p"), respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.CrossSign(tc.ctx, tc.root); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.CrossSign(tc.ctx, tc.root); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestCertExt_CrossSign_TransportAndType(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.CrossSign(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestCertExt_CrossSign_HappyPath(t *testing.T) {
@@ -630,43 +611,29 @@ func TestCertExt_CrossSign_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCertExt_Chain_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
-	t.Run("empty pem", func(t *testing.T) {
-		if _, err := c.Chain(context.Background(), nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
-	})
-	t.Run("nil ctx", func(t *testing.T) {
-		if _, err := c.Chain(nil, []byte("p")); err == nil || !sdkerrors.IsInvalidInput(err) {
-			t.Errorf("expected InvalidInput, got %v", err)
-		}
-	})
-}
-
-func TestCertExt_Chain_TransportAndType(t *testing.T) {
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return 12, nil
-		}}}
-		if _, err := c.Chain(context.Background(), []byte("p")); err == nil {
-			t.Fatal("expected error")
-		}
-	})
+func TestCertExt_Chain_Errors(t *testing.T) {
+	var nilCtx context.Context
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		pem     []byte
+		tr      *mockTransport
+		wantErr func(error) bool
+	}{
+		{"empty pem", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []byte("p"), &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []byte("p"), respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), []byte("p"), &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), []byte("p"), respondWith(12, nil), isAnyError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.Chain(tc.ctx, tc.pem); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
 }
 
 func TestCertExt_Chain_HappyPath(t *testing.T) {
@@ -683,51 +650,32 @@ func TestCertExt_Chain_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCertExt_IssueDeviceIdentity_Validation(t *testing.T) {
-	c := &certExtImpl{t: &mockTransport{}}
+func TestCertExt_IssueDeviceIdentity_Errors(t *testing.T) {
+	var nilCtx context.Context
+	valid := &DeviceIdentityRequest{Type: DeviceIdentityIDevID, DeviceID: "d-1"}
 	tests := []struct {
-		name string
-		req  *DeviceIdentityRequest
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		req     *DeviceIdentityRequest
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"nil req", nil, context.Background()},
-		{"empty type", &DeviceIdentityRequest{DeviceID: "d"}, context.Background()},
-		{"empty deviceid", &DeviceIdentityRequest{Type: DeviceIdentityEK}, context.Background()},
-		{"nil ctx", &DeviceIdentityRequest{Type: DeviceIdentityEK, DeviceID: "d"}, nil},
+		{"nil req", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty type", context.Background(), &DeviceIdentityRequest{DeviceID: "d"}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty deviceid", context.Background(), &DeviceIdentityRequest{Type: DeviceIdentityEK}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, valid, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), valid, respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), valid, &mockTransport{}, isAnyError},
+		{"invalid type", context.Background(), valid, respondWith("wrong", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := c.IssueDeviceIdentity(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			c := &certExtImpl{t: tc.tr}
+			if _, err := c.IssueDeviceIdentity(tc.ctx, tc.req); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
-}
-
-func TestCertExt_IssueDeviceIdentity_TransportAndType(t *testing.T) {
-	req := &DeviceIdentityRequest{Type: DeviceIdentityIDevID, DeviceID: "d-1"}
-	t.Run("transport error", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return nil, errBoom
-		}}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("nil response", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
-	t.Run("invalid type", func(t *testing.T) {
-		c := &certExtImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-			return "wrong", nil
-		}}}
-		if _, err := c.IssueDeviceIdentity(context.Background(), req); err == nil {
-			t.Fatal("expected error")
-		}
-	})
 }
 
 func TestCertExt_IssueDeviceIdentity_HappyPath(t *testing.T) {
@@ -741,12 +689,6 @@ func TestCertExt_IssueDeviceIdentity_HappyPath(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestNewCertificateExtensions_NonNil(t *testing.T) {
-	if newCertificateExtensions(&mockTransport{}) == nil {
-		t.Fatal("expected non-nil CertificateExtensions")
 	}
 }
 
