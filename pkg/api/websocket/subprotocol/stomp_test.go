@@ -855,72 +855,6 @@ func TestSTOMPHandler_HandleConnection_VersionNegotiation(t *testing.T) {
 	}
 }
 
-func TestSTOMPHandler_HandleConnection_NotConnectedError(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-	handlerErr := make(chan error, 1)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-
-		session := ws.NewSession("test-session", "stomp", conn)
-
-		err = handler.HandleConnection(session.Context(), conn, session)
-		handlerErr <- err
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
-
-	// Send SUBSCRIBE without CONNECT first
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("SUBSCRIBE", map[string]string{
-		"id":          "sub-1",
-		"destination": "/queue/test",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write SUBSCRIBE failed: %v", err)
-	}
-
-	// Read ERROR frame
-	_, errorData, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read ERROR failed: %v", err)
-	}
-
-	if !bytes.HasPrefix(errorData, []byte("ERROR")) {
-		t.Errorf("Expected ERROR frame, got: %s", string(errorData))
-	}
-
-	if !bytes.Contains(errorData, []byte("not connected")) {
-		t.Error("Error should mention not connected")
-	}
-
-	// Wait for handler error
-	select {
-	case err := <-handlerErr:
-		var protoErr *ErrSTOMPProtocolError
-		if !errors.As(err, &protoErr) {
-			t.Errorf("Expected ErrSTOMPProtocolError, got %T: %v", err, err)
-		}
-	case <-time.After(time.Second):
-		t.Error("Handler did not return error")
-	}
-}
-
 func TestSTOMPHandler_HandleConnection_MissingHeaders(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1956,6 +1890,7 @@ func TestSTOMPHandler_CommandsNotConnected(t *testing.T) {
 		{"ABORT not connected", "ABORT", map[string]string{"transaction": "tx-1"}},
 		{"SEND not connected", "SEND", map[string]string{"destination": "/queue/test"}},
 		{"UNSUBSCRIBE not connected", "UNSUBSCRIBE", map[string]string{"id": "sub-1"}},
+		{"SUBSCRIBE not connected", "SUBSCRIBE", map[string]string{"id": "sub-1", "destination": "/queue/test"}},
 	}
 
 	for _, tt := range tests {
@@ -2686,307 +2621,140 @@ func TestSTOMPHandler_HeaderValueNoTrimming(t *testing.T) {
 // Consolidated from stomp_acknack_coverage_test.go
 // =============================================================================
 
-// TestSTOMPHandler_AckWithinTransaction verifies that an ACK command with a
-// transaction header queues the acknowledgment into the transaction's acks list
-// rather than processing it immediately. This covers the transaction branch in
-// handleAck that was previously untested.
-func TestSTOMPHandler_AckWithinTransaction(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
+// TestSTOMPHandler_AckNackWithinTransaction verifies that an ACK or NACK
+// command with a transaction header is queued into the transaction rather than
+// processed immediately (the transaction branches of handleAck and handleNack).
+func TestSTOMPHandler_AckNackWithinTransaction(t *testing.T) {
+	for _, command := range []string{"ACK", "NACK"} {
+		t.Run(command, func(t *testing.T) {
+			handler := NewSTOMPHandler(nil)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		session := ws.NewSession("test-ack-tx", "stomp", conn)
-		_ = handler.HandleConnection(session.Context(), conn, session)
-	}))
-	defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				session := ws.NewSession("test-ack-tx", "stomp", conn)
+				_ = handler.HandleConnection(session.Context(), conn, session)
+			}))
+			defer server.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+			wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
+			conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+			if err != nil {
+				t.Fatalf("WebSocket dial failed: %v", err)
+			}
+			defer conn.Close(websocket.StatusNormalClosure, "test complete")
 
-	// CONNECT
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
-		"accept-version": "1.2",
-		"host":           "localhost",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write CONNECT failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read CONNECTED failed: %v", err)
-	}
+			// CONNECT
+			err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
+				"accept-version": "1.2",
+				"host":           "localhost",
+			}, ""))
+			if err != nil {
+				t.Fatalf("Write CONNECT failed: %v", err)
+			}
+			_, _, err = conn.Read(ctx)
+			if err != nil {
+				t.Fatalf("Read CONNECTED failed: %v", err)
+			}
 
-	// BEGIN transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("BEGIN", map[string]string{
-		"transaction": "tx-ack-1",
-		"receipt":     "begin-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write BEGIN failed: %v", err)
-	}
-	_, beginReceipt, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read BEGIN RECEIPT failed: %v", err)
-	}
-	if !bytes.HasPrefix(beginReceipt, []byte("RECEIPT")) {
-		t.Errorf("expected RECEIPT for BEGIN, got: %s", string(beginReceipt))
-	}
-
-	// ACK within the transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("ACK", map[string]string{
-		"id":          "msg-100",
-		"transaction": "tx-ack-1",
-		"receipt":     "ack-tx-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write ACK with transaction failed: %v", err)
-	}
-	_, ackReceipt, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read ACK RECEIPT failed: %v", err)
-	}
-	if !bytes.HasPrefix(ackReceipt, []byte("RECEIPT")) {
-		t.Errorf("expected RECEIPT for ACK, got: %s", string(ackReceipt))
-	}
-
-	// COMMIT the transaction to finalize
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("COMMIT", map[string]string{
-		"transaction": "tx-ack-1",
-		"receipt":     "commit-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write COMMIT failed: %v", err)
-	}
-	_, commitReceipt, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read COMMIT RECEIPT failed: %v", err)
-	}
-	if !bytes.HasPrefix(commitReceipt, []byte("RECEIPT")) {
-		t.Errorf("expected RECEIPT for COMMIT, got: %s", string(commitReceipt))
+			// BEGIN, then ACK or NACK within the transaction, then COMMIT:
+			// each frame carries a receipt that must come back.
+			frames := []struct {
+				command string
+				headers map[string]string
+			}{
+				{"BEGIN", map[string]string{"transaction": "tx-1", "receipt": "begin-r"}},
+				{command, map[string]string{"id": "msg-100", "transaction": "tx-1", "receipt": "ack-tx-r"}},
+				{"COMMIT", map[string]string{"transaction": "tx-1", "receipt": "commit-r"}},
+			}
+			for _, f := range frames {
+				err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame(f.command, f.headers, ""))
+				if err != nil {
+					t.Fatalf("Write %s failed: %v", f.command, err)
+				}
+				_, receipt, err := conn.Read(ctx)
+				if err != nil {
+					t.Fatalf("Read %s RECEIPT failed: %v", f.command, err)
+				}
+				if !bytes.HasPrefix(receipt, []byte("RECEIPT")) {
+					t.Errorf("expected RECEIPT for %s, got: %s", f.command, string(receipt))
+				}
+			}
+		})
 	}
 }
 
-// TestSTOMPHandler_NackWithinTransaction verifies that a NACK command with a
-// transaction header queues the negative acknowledgment into the transaction's
-// nacks list. This covers the transaction branch in handleNack.
-func TestSTOMPHandler_NackWithinTransaction(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		session := ws.NewSession("test-nack-tx", "stomp", conn)
-		_ = handler.HandleConnection(session.Context(), conn, session)
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
-
-	// CONNECT
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
-		"accept-version": "1.2",
-		"host":           "localhost",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write CONNECT failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read CONNECTED failed: %v", err)
-	}
-
-	// BEGIN transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("BEGIN", map[string]string{
-		"transaction": "tx-nack-1",
-		"receipt":     "begin-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write BEGIN failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read BEGIN RECEIPT failed: %v", err)
-	}
-
-	// NACK within the transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("NACK", map[string]string{
-		"id":          "msg-200",
-		"transaction": "tx-nack-1",
-		"receipt":     "nack-tx-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write NACK with transaction failed: %v", err)
-	}
-	_, nackReceipt, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read NACK RECEIPT failed: %v", err)
-	}
-	if !bytes.HasPrefix(nackReceipt, []byte("RECEIPT")) {
-		t.Errorf("expected RECEIPT for NACK, got: %s", string(nackReceipt))
-	}
-
-	// COMMIT the transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("COMMIT", map[string]string{
-		"transaction": "tx-nack-1",
-		"receipt":     "commit-r",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write COMMIT failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read COMMIT RECEIPT failed: %v", err)
-	}
-}
-
-// TestSTOMPHandler_AckInvalidTransaction verifies that an ACK command
+// TestSTOMPHandler_AckNackInvalidTransaction verifies that an ACK or NACK command
 // referencing a non-existent transaction results in the server sending an
 // ERROR frame and closing the connection.
-func TestSTOMPHandler_AckInvalidTransaction(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
+func TestSTOMPHandler_AckNackInvalidTransaction(t *testing.T) {
+	for _, command := range []string{"ACK", "NACK"} {
+		t.Run(command, func(t *testing.T) {
+			handler := NewSTOMPHandler(nil)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		session := ws.NewSession("test-ack-invalid-tx", "stomp", conn)
-		_ = handler.HandleConnection(session.Context(), conn, session)
-	}))
-	defer server.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				session := ws.NewSession("test-ack-invalid-tx", "stomp", conn)
+				_ = handler.HandleConnection(session.Context(), conn, session)
+			}))
+			defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
+			wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+			conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+			if resp != nil && resp.Body != nil {
+				resp.Body.Close()
+			}
+			if err != nil {
+				t.Fatalf("WebSocket dial failed: %v", err)
+			}
+			defer conn.Close(websocket.StatusNormalClosure, "test complete")
 
-	// CONNECT
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
-		"accept-version": "1.2",
-		"host":           "localhost",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write CONNECT failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read CONNECTED failed: %v", err)
-	}
+			// CONNECT
+			err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
+				"accept-version": "1.2",
+				"host":           "localhost",
+			}, ""))
+			if err != nil {
+				t.Fatalf("Write CONNECT failed: %v", err)
+			}
+			_, _, err = conn.Read(ctx)
+			if err != nil {
+				t.Fatalf("Read CONNECTED failed: %v", err)
+			}
 
-	// ACK with non-existent transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("ACK", map[string]string{
-		"id":          "msg-300",
-		"transaction": "nonexistent-tx",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write ACK with invalid transaction failed: %v", err)
-	}
+			// ACK or NACK with a non-existent transaction
+			err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame(command, map[string]string{
+				"id":          "msg-300",
+				"transaction": "nonexistent-tx",
+			}, ""))
+			if err != nil {
+				t.Fatalf("Write %s with invalid transaction failed: %v", command, err)
+			}
 
-	// Server sends ERROR frame then closes -- read may get ERROR or close error
-	_, errData, readErr := conn.Read(ctx)
-	if readErr != nil {
-		// Connection closed by server after error -- this is expected behavior
-		return
-	}
-	if !bytes.HasPrefix(errData, []byte("ERROR")) {
-		t.Errorf("expected ERROR frame for invalid transaction, got: %s", string(errData))
-	}
-}
-
-// TestSTOMPHandler_NackInvalidTransaction verifies that a NACK command
-// referencing a non-existent transaction results in the server sending an
-// ERROR frame and closing the connection.
-func TestSTOMPHandler_NackInvalidTransaction(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		session := ws.NewSession("test-nack-invalid-tx", "stomp", conn)
-		_ = handler.HandleConnection(session.Context(), conn, session)
-	}))
-	defer server.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		resp.Body.Close()
-	}
-	if err != nil {
-		t.Fatalf("WebSocket dial failed: %v", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "test complete")
-
-	// CONNECT
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("CONNECT", map[string]string{
-		"accept-version": "1.2",
-		"host":           "localhost",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write CONNECT failed: %v", err)
-	}
-	_, _, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Read CONNECTED failed: %v", err)
-	}
-
-	// NACK with non-existent transaction
-	err = conn.Write(ctx, websocket.MessageText, buildSTOMPFrame("NACK", map[string]string{
-		"id":          "msg-400",
-		"transaction": "nonexistent-tx",
-	}, ""))
-	if err != nil {
-		t.Fatalf("Write NACK with invalid transaction failed: %v", err)
-	}
-
-	// Server sends ERROR frame then closes -- read may get ERROR or close error
-	_, errData, readErr := conn.Read(ctx)
-	if readErr != nil {
-		// Connection closed by server after error -- this is expected behavior
-		return
-	}
-	if !bytes.HasPrefix(errData, []byte("ERROR")) {
-		t.Errorf("expected ERROR frame for invalid transaction, got: %s", string(errData))
+			// Server sends ERROR frame then closes -- read may get ERROR or close error
+			_, errData, readErr := conn.Read(ctx)
+			if readErr != nil {
+				// Connection closed by server after error -- this is expected behavior
+				return
+			}
+			if !bytes.HasPrefix(errData, []byte("ERROR")) {
+				t.Errorf("expected ERROR frame for invalid transaction, got: %s", string(errData))
+			}
+		})
 	}
 }
