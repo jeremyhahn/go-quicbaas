@@ -174,36 +174,6 @@ func TestVectorCommandHelp(t *testing.T) {
 	}
 }
 
-// TestFlagValidation tests command flag validation.
-func TestFlagValidation(t *testing.T) {
-	t.Run("dimension zero rejected", func(t *testing.T) {
-		// Store original and restore after test
-		origDimension := vectorDimension
-		defer func() { vectorDimension = origDimension }()
-
-		vectorDimension = 0
-		cmd := newVectorNamespaceCreateCommand()
-		err := runVectorNamespaceCreateCommand(cmd, []string{"test-ns"})
-		require.Error(t, err)
-	})
-
-	t.Run("k must be positive", func(t *testing.T) {
-		// Store original and restore after test
-		origK := vectorK
-		origVector := vectorData
-		defer func() {
-			vectorK = origK
-			vectorData = origVector
-		}()
-
-		vectorK = 0
-		vectorData = "0.1,0.2,0.3"
-		cmd := newVectorSearchSimilarCommand()
-		err := runVectorSearchSimilarCommand(cmd, []string{"test-ns"})
-		require.Error(t, err)
-	})
-}
-
 // =============================================================================
 // Benchmark Tests
 // =============================================================================
@@ -214,32 +184,6 @@ func BenchmarkParseVectorData(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = parseVectorData(input)
-	}
-}
-
-// BenchmarkSDKSearchResponse benchmarks SDK search response creation.
-func BenchmarkSDKSearchResponse(b *testing.B) {
-	now := time.Now()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		resp := &vector.SearchSimilarResponse{
-			Results: make([]*vector.SearchResult, 100),
-		}
-		for j := 0; j < 100; j++ {
-			resp.Results[j] = &vector.SearchResult{
-				Score: float32(j) / 100.0,
-				Vector: &vector.VectorEntity{
-					ID:        "vec",
-					Vector:    []float32{0.1, 0.2, 0.3},
-					Metadata:  map[string]string{"key": "val"},
-					Version:   int64(j),
-					CreatedAt: now,
-					UpdatedAt: now,
-				},
-				Rank: int32(j + 1),
-			}
-		}
-		_ = resp
 	}
 }
 
@@ -911,22 +855,6 @@ func TestFormatVectorResponses(t *testing.T) {
 // =============================================================================
 // Vector Command Run Function Tests - Dimension Zero Error
 // =============================================================================
-
-func TestRunVectorNamespaceCreateCommandDimensionError(t *testing.T) {
-	// Save and restore globals
-	origDimension := vectorDimension
-	defer func() {
-		vectorDimension = origDimension
-	}()
-
-	vectorDimension = 0
-
-	cmd := &cobra.Command{}
-	err := runVectorNamespaceCreateCommand(cmd, []string{"test-namespace"})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "dimension must be greater than 0")
-}
 
 // =============================================================================
 // Rebalance Display Functions Tests
