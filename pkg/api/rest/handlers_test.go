@@ -5087,52 +5087,40 @@ func TestRemaining91_HandleListMessagingChannels_NilService(t *testing.T) {
 }
 
 func TestRemaining91_HandleListMessagingChannels_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockMsgSvc := &mocks.MockMessagingService{
-		ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "ch1", CreatedAt: time.Now()},
-				{Name: "ch2", CreatedAt: time.Now()},
-			}, nil
-		},
+	tests := []struct {
+		name      string
+		target    string
+		wantTotal int
+	}{
+		{name: "all channels", target: "/api/v1/messaging/channels", wantTotal: 3},
+		{name: "name prefix filter", target: "/api/v1/messaging/channels?name_prefix=events", wantTotal: 2},
 	}
-	mockService.MockMessagingService = mockMsgSvc
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListMessagingChannelsRESTResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, 2, resp.Total)
-}
+			mockService.MockMessagingService = &mocks.MockMessagingService{
+				ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+					return []*messaging.Channel{
+						{Name: "events.user", CreatedAt: time.Now()},
+						{Name: "events.order", CreatedAt: time.Now()},
+						{Name: "logs.system", CreatedAt: time.Now()},
+					}, nil
+				},
+			}
 
-func TestRemaining91_HandleListMessagingChannels_WithPrefix(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
+			server.HandleListMessagingChannels(w, req)
 
-	mockMsgSvc := &mocks.MockMessagingService{
-		ListChannelsFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-			return []*messaging.Channel{
-				{Name: "events.user", CreatedAt: time.Now()},
-				{Name: "events.order", CreatedAt: time.Now()},
-				{Name: "logs.system", CreatedAt: time.Now()},
-			}, nil
-		},
+			assert.Equal(t, http.StatusOK, w.Code)
+			var resp ListMessagingChannelsRESTResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal(t, tt.wantTotal, resp.Total)
+		})
 	}
-	mockService.MockMessagingService = mockMsgSvc
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messaging/channels?name_prefix=events", nil)
-	w := httptest.NewRecorder()
-	server.HandleListMessagingChannels(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp ListMessagingChannelsRESTResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, 2, resp.Total)
 }
 
 func TestRemaining91_HandleListMessagingChannels_ServiceError(t *testing.T) {
@@ -6941,39 +6929,37 @@ func TestKVPutValidations(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	t.Run("missing entity type", func(t *testing.T) {
-		body := `{"value": "test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/entities/", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		entityType string
+		key        string
+		body       io.Reader
+		wantMsg    string
+	}{
+		{name: "missing entity type", entityType: "", key: "test-key", body: strings.NewReader(`{"value": "test"}`), wantMsg: "entity type is required"},
+		{name: "missing key", entityType: "test-type", key: "", body: strings.NewReader(`{"value": "test"}`), wantMsg: "key is required"},
+		{name: "invalid key encoding", entityType: "test-type", key: "bad%zzkey", body: strings.NewReader(`{"value": "test"}`), wantMsg: "invalid key encoding"},
+		{name: "read body error", entityType: "test-type", key: "test-key", body: &errorReader{}, wantMsg: "failed to read request body"},
+	}
 
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("type", "")
-		rctx.URLParams.Add("key", "test-key")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPut, "/api/v1/kv/entities/test-type/test-key", nil)
+			req.Body = io.NopCloser(tt.body)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-		server.HandleKVPut(w, req)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", tt.entityType)
+			rctx.URLParams.Add("key", tt.key)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "entity type is required")
-	})
+			server.HandleKVPut(w, req)
 
-	t.Run("missing key", func(t *testing.T) {
-		body := `{"value": "test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/kv/entities/test-type/", bytes.NewReader([]byte(body)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("type", "test-type")
-		rctx.URLParams.Add("key", "")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleKVPut(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "key is required")
-	})
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantMsg)
+		})
+	}
 }
 
 func TestKVGetMissingParams(t *testing.T) {
