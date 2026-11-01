@@ -822,4 +822,3 @@ func TestEmbeddingService_EmbedBatchConcurrent_Error(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
-
