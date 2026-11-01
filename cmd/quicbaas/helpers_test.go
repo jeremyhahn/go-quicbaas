@@ -837,50 +837,48 @@ func TestFormatVectorSearchByMetadataResponse(t *testing.T) {
 // MCP KMS Parsing Function Tests
 // =============================================================================
 
-func TestParseKMSImportKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":    "imported-key-123",
-		"algorithm": "AES-256-GCM",
-		"status":    "active",
-	}
-
-	resp, err := parseKMSImportKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "imported-key-123", resp.Key.KeyID)
-	assert.Equal(t, "AES-256-GCM", string(resp.Key.Algorithm))
-	assert.Equal(t, "active", string(resp.Key.Status))
-}
-
-func TestParseKMSImportKeyResponseInvalidData(t *testing.T) {
-	// Test with nil
-	resp, err := parseKMSImportKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-
-	// Test with empty map
-	resp, err = parseKMSImportKeyResponse(map[string]interface{}{})
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-}
-
-func TestParseKMSGetKeyResponse(t *testing.T) {
+// TestParseKMSResponses covers each MCP KMS parser with a populated result
+// and with nil or empty input, which yields a zero-valued response.
+func TestParseKMSResponses(t *testing.T) {
 	tests := []struct {
-		name   string
-		result map[string]interface{}
+		name  string
+		check func(t *testing.T)
 	}{
-		{
-			name: "flat structure",
-			result: map[string]interface{}{
+		{"import key", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(map[string]interface{}{
+				"key_id":    "imported-key-123",
+				"algorithm": "AES-256-GCM",
+				"status":    "active",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "imported-key-123", resp.Key.KeyID)
+			assert.Equal(t, "AES-256-GCM", string(resp.Key.Algorithm))
+			assert.Equal(t, "active", string(resp.Key.Status))
+		}},
+		{"import key nil", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"import key empty map", func(t *testing.T) {
+			resp, err := parseKMSImportKeyResponse(map[string]interface{}{})
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"get key flat structure", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(map[string]interface{}{
 				"key_id":     "key-123",
 				"algorithm":  "AES-256-GCM",
 				"status":     "active",
 				"version":    float64(1),
 				"created_at": float64(time.Now().Unix()),
-			},
-		},
-		{
-			name: "nested metadata",
-			result: map[string]interface{}{
+			})
+			require.NoError(t, err)
+			assert.NotNil(t, resp.Key)
+			assert.NotNil(t, resp.Metadata)
+		}},
+		{"get key nested metadata", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(map[string]interface{}{
 				"metadata": map[string]interface{}{
 					"key_id":     "key-456",
 					"algorithm":  "CHACHA20-POLY1305",
@@ -888,250 +886,198 @@ func TestParseKMSGetKeyResponse(t *testing.T) {
 					"version":    float64(2),
 					"created_at": float64(time.Now().Unix()),
 				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := parseKMSGetKeyResponse(tt.result)
+			})
 			require.NoError(t, err)
 			assert.NotNil(t, resp.Key)
 			assert.NotNil(t, resp.Metadata)
-		})
-	}
-}
-
-func TestParseKMSGetKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSGetKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.Key.KeyID)
-}
-
-func TestParseKMSRotateKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"old_version": float64(1),
-		"new_version": float64(2),
-	}
-
-	resp, err := parseKMSRotateKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.OldVersion)
-	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-func TestParseKMSRotateKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSRotateKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSDeleteKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-		"status": "deleted",
-	}
-
-	resp, err := parseKMSDeleteKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "deleted", string(resp.Status))
-}
-
-func TestParseKMSDeleteKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSDeleteKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSUpdateKeyStatusResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":     "key-123",
-		"old_status": "active",
-		"new_status": "disabled",
-	}
-
-	resp, err := parseKMSUpdateKeyStatusResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "active", string(resp.OldStatus))
-	assert.Equal(t, "disabled", string(resp.NewStatus))
-}
-
-func TestParseKMSUpdateKeyStatusResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSUpdateKeyStatusResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSListKeyVersionsResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"versions": []interface{}{
-			map[string]interface{}{
-				"version":    float64(1),
-				"status":     "active",
-				"algorithm":  "AES-256-GCM",
-				"created_at": float64(time.Now().Unix()),
-			},
-			map[string]interface{}{
-				"version":    float64(2),
-				"status":     "active",
-				"algorithm":  "AES-256-GCM",
-				"created_at": float64(time.Now().Unix()),
-			},
-		},
-	}
-
-	resp, err := parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 2)
-	assert.Equal(t, uint64(1), resp.Versions[0].Version)
-	assert.Equal(t, uint64(2), resp.Versions[1].Version)
-}
-
-func TestParseKMSListKeyVersionsResponseInvalidData(t *testing.T) {
-	// Test with nil
-	resp, err := parseKMSListKeyVersionsResponse(nil)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-
-	// Test with empty versions
-	result := map[string]interface{}{"versions": []interface{}{}}
-	resp, err = parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-
-	// Test with invalid version entry type
-	result = map[string]interface{}{"versions": []interface{}{"invalid"}}
-	resp, err = parseKMSListKeyVersionsResponse(result)
-	require.NoError(t, err)
-	assert.Len(t, resp.Versions, 0)
-}
-
-func TestParseKMSExportKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"wrapped_key": "base64-wrapped-key-data",
-	}
-
-	resp, err := parseKMSExportKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, []byte("base64-wrapped-key-data"), resp.WrappedKey)
-}
-
-func TestParseKMSExportKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSExportKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-	assert.Nil(t, resp.WrappedKey)
-}
-
-func TestParseKMSUnwrapKeyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":    "key-123",
-		"algorithm": "AES-256-GCM",
-		"status":    "active",
-	}
-
-	resp, err := parseKMSUnwrapKeyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, "AES-256-GCM", string(resp.Algorithm))
-	assert.Equal(t, "active", string(resp.Status))
-}
-
-func TestParseKMSUnwrapKeyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSUnwrapKeyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSSetKeySafetyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-		"config": map[string]interface{}{
-			"max_operations":  float64(1000000),
-			"max_bytes":       float64(1073741824),
-			"warning_percent": float64(80),
-		},
-	}
-
-	resp, err := parseKMSSetKeySafetyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1000000), resp.Config.MaxOperations)
-	assert.Equal(t, uint64(1073741824), resp.Config.MaxBytes)
-	assert.Equal(t, 80, resp.Config.WarningPercent)
-}
-
-func TestParseKMSSetKeySafetyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSSetKeySafetyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSClearKeySafetyResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id": "key-123",
-	}
-
-	resp, err := parseKMSClearKeySafetyResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-}
-
-func TestParseKMSClearKeySafetyResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSClearKeySafetyResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSEncryptResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"key_version": float64(1),
-		"ciphertext":  "encrypted-data",
+		}},
+		{"get key nil", func(t *testing.T) {
+			resp, err := parseKMSGetKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.Key.KeyID)
+		}},
+		{"rotate key", func(t *testing.T) {
+			resp, err := parseKMSRotateKeyResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"old_version": float64(1),
+				"new_version": float64(2),
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.OldVersion)
+			assert.Equal(t, uint64(2), resp.NewVersion)
+		}},
+		{"rotate key nil", func(t *testing.T) {
+			resp, err := parseKMSRotateKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"delete key", func(t *testing.T) {
+			resp, err := parseKMSDeleteKeyResponse(map[string]interface{}{
+				"key_id": "key-123",
+				"status": "deleted",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "deleted", string(resp.Status))
+		}},
+		{"delete key nil", func(t *testing.T) {
+			resp, err := parseKMSDeleteKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"update key status", func(t *testing.T) {
+			resp, err := parseKMSUpdateKeyStatusResponse(map[string]interface{}{
+				"key_id":     "key-123",
+				"old_status": "active",
+				"new_status": "disabled",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "active", string(resp.OldStatus))
+			assert.Equal(t, "disabled", string(resp.NewStatus))
+		}},
+		{"update key status nil", func(t *testing.T) {
+			resp, err := parseKMSUpdateKeyStatusResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"list key versions", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{
+				"versions": []interface{}{
+					map[string]interface{}{
+						"version":    float64(1),
+						"status":     "active",
+						"algorithm":  "AES-256-GCM",
+						"created_at": float64(time.Now().Unix()),
+					},
+					map[string]interface{}{
+						"version":    float64(2),
+						"status":     "active",
+						"algorithm":  "AES-256-GCM",
+						"created_at": float64(time.Now().Unix()),
+					},
+				},
+			})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 2)
+			assert.Equal(t, uint64(1), resp.Versions[0].Version)
+			assert.Equal(t, uint64(2), resp.Versions[1].Version)
+		}},
+		{"list key versions nil", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(nil)
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"list key versions empty", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{"versions": []interface{}{}})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"list key versions invalid entry type", func(t *testing.T) {
+			resp, err := parseKMSListKeyVersionsResponse(map[string]interface{}{"versions": []interface{}{"invalid"}})
+			require.NoError(t, err)
+			assert.Len(t, resp.Versions, 0)
+		}},
+		{"export key", func(t *testing.T) {
+			resp, err := parseKMSExportKeyResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"wrapped_key": "base64-wrapped-key-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, []byte("base64-wrapped-key-data"), resp.WrappedKey)
+		}},
+		{"export key nil", func(t *testing.T) {
+			resp, err := parseKMSExportKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+			assert.Nil(t, resp.WrappedKey)
+		}},
+		{"unwrap key", func(t *testing.T) {
+			resp, err := parseKMSUnwrapKeyResponse(map[string]interface{}{
+				"key_id":    "key-123",
+				"algorithm": "AES-256-GCM",
+				"status":    "active",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, "AES-256-GCM", string(resp.Algorithm))
+			assert.Equal(t, "active", string(resp.Status))
+		}},
+		{"unwrap key nil", func(t *testing.T) {
+			resp, err := parseKMSUnwrapKeyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"set key safety", func(t *testing.T) {
+			resp, err := parseKMSSetKeySafetyResponse(map[string]interface{}{
+				"key_id": "key-123",
+				"config": map[string]interface{}{
+					"max_operations":  float64(1000000),
+					"max_bytes":       float64(1073741824),
+					"warning_percent": float64(80),
+				},
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1000000), resp.Config.MaxOperations)
+			assert.Equal(t, uint64(1073741824), resp.Config.MaxBytes)
+			assert.Equal(t, 80, resp.Config.WarningPercent)
+		}},
+		{"set key safety nil", func(t *testing.T) {
+			resp, err := parseKMSSetKeySafetyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"clear key safety", func(t *testing.T) {
+			resp, err := parseKMSClearKeySafetyResponse(map[string]interface{}{"key_id": "key-123"})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+		}},
+		{"clear key safety nil", func(t *testing.T) {
+			resp, err := parseKMSClearKeySafetyResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"encrypt", func(t *testing.T) {
+			resp, err := parseKMSEncryptResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"key_version": float64(1),
+				"ciphertext":  "encrypted-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.KeyVersion)
+			assert.Equal(t, []byte("encrypted-data"), resp.Ciphertext)
+		}},
+		{"encrypt nil", func(t *testing.T) {
+			resp, err := parseKMSEncryptResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
+		{"decrypt", func(t *testing.T) {
+			resp, err := parseKMSDecryptResponse(map[string]interface{}{
+				"key_id":      "key-123",
+				"key_version": float64(1),
+				"plaintext":   "decrypted-data",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "key-123", resp.KeyID)
+			assert.Equal(t, uint64(1), resp.KeyVersion)
+			assert.Equal(t, []byte("decrypted-data"), resp.Plaintext)
+		}},
+		{"decrypt nil", func(t *testing.T) {
+			resp, err := parseKMSDecryptResponse(nil)
+			require.NoError(t, err)
+			assert.Equal(t, "", resp.KeyID)
+		}},
 	}
 
-	resp, err := parseKMSEncryptResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.KeyVersion)
-	assert.Equal(t, []byte("encrypted-data"), resp.Ciphertext)
-}
-
-func TestParseKMSEncryptResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSEncryptResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-func TestParseKMSDecryptResponse(t *testing.T) {
-	result := map[string]interface{}{
-		"key_id":      "key-123",
-		"key_version": float64(1),
-		"plaintext":   "decrypted-data",
+	for _, tt := range tests {
+		t.Run(tt.name, tt.check)
 	}
-
-	resp, err := parseKMSDecryptResponse(result)
-	require.NoError(t, err)
-	assert.Equal(t, "key-123", resp.KeyID)
-	assert.Equal(t, uint64(1), resp.KeyVersion)
-	assert.Equal(t, []byte("decrypted-data"), resp.Plaintext)
 }
-
-func TestParseKMSDecryptResponseInvalidData(t *testing.T) {
-	resp, err := parseKMSDecryptResponse(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "", resp.KeyID)
-}
-
-// =============================================================================
-// DEK Parsing Function Tests
-// =============================================================================
 
 // =============================================================================
 // Backend and Safety Response Parsing Tests
