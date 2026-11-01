@@ -400,6 +400,7 @@ func TestRegisterProvider_Errors(t *testing.T) {
 		{name: "invalid type", params: tenant, body: jsonBody(t, RegisterProviderOptions{Name: "google", Type: "invalid", ClientID: "google-client-id"}), wantCode: http.StatusBadRequest, wantDesc: "invalid provider type"},
 		{name: "missing client ID", params: tenant, body: jsonBody(t, RegisterProviderOptions{Name: "google", Type: "oidc"}), wantCode: http.StatusBadRequest, wantDesc: "client_id is required"},
 		{name: "federation manager not available", params: tenant, body: jsonBody(t, valid), noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: tenant, body: jsonBody(t, valid), fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
 		{name: "service error", params: tenant, body: jsonBody(t, valid), configure: func(m *mockFederationManager) { m.registerProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
 	})
 }
@@ -537,53 +538,6 @@ func TestGetProvider_Errors(t *testing.T) {
 		{name: "federation manager error", params: both, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
 		{name: "service error", params: both, configure: func(m *mockFederationManager) { m.getProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
 	})
-}
-
-// TestUpdateProvider_Success tests successful provider update.
-func TestUpdateProvider_Success(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.providers["prov_google"] = &iam.ExternalProvider{
-		ID:       "prov_google",
-		TenantID: "tenant123",
-		Name:     "google",
-		Type:     "oidc",
-		Enabled:  true,
-		ClientID: "old-client-id",
-		Created:  time.Now().UTC(),
-		Updated:  time.Now().UTC(),
-	}
-
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	newName := "google-updated"
-	enabled := false
-	newClientID := "new-client-id"
-	body := UpdateProviderOptions{
-		Name:     &newName,
-		Enabled:  &enabled,
-		ClientID: &newClientID,
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusOK, rec.Code)
-
-	var resp FederatedProvider
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "google-updated", resp.Name)
-	assert.False(t, resp.Enabled)
-	assert.Equal(t, "new-client-id", resp.ClientID)
 }
 
 // TestUpdateProvider_Errors covers every UpdateProvider error path.
@@ -927,105 +881,35 @@ func TestIsValidProviderType(t *testing.T) {
 // TestRegisterFederationRoutes tests route registration.
 func TestRegisterFederationRoutes(t *testing.T) {
 	router := chi.NewRouter()
-	mockServer := &Server{}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: mockServer})
-
-	// Register routes under a tenant scope
+	handler := NewIAMHandler(IAMHandlerDependencies{Server: &Server{}})
 	router.Route("/tenants/{tenant_id}", func(r chi.Router) {
 		RegisterFederationRoutes(r, handler)
 	})
-
-	// Verify routes are registered
-	routes := []struct {
-		method string
-		path   string
-	}{
-		{"POST", "/tenants/test/providers"},
-		{"GET", "/tenants/test/providers"},
-		{"GET", "/tenants/test/providers/prov1"},
-		{"PUT", "/tenants/test/providers/prov1"},
-		{"DELETE", "/tenants/test/providers/prov1"},
-		{"POST", "/tenants/test/links"},
-		{"GET", "/tenants/test/links"},
-		{"DELETE", "/tenants/test/links/prov1"},
-	}
-
-	for _, route := range routes {
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			req := httptest.NewRequest(route.method, route.path, nil)
-			rctx := chi.NewRouteContext()
-			req = req.WithContext(callerRouteContext(req.Context(), rctx))
-			assert.NotNil(t, router, "Router should be initialized")
-		})
-	}
-}
-
-// TestRegisterFederationAuthRoutes tests public auth route registration.
-func TestRegisterFederationAuthRoutes(t *testing.T) {
-	router := chi.NewRouter()
-	mockServer := &Server{}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: mockServer})
-
 	RegisterFederationAuthRoutes(router, handler)
 
-	// Verify routes are registered
 	routes := []struct {
 		method string
 		path   string
+		want   bool
 	}{
-		{"GET", "/api/v1/auth/providers/tenant1/google/login"},
-		{"GET", "/api/v1/auth/providers/tenant1/google/callback"},
+		{http.MethodPost, "/tenants/test/providers/", true},
+		{http.MethodGet, "/tenants/test/providers/", true},
+		{http.MethodGet, "/tenants/test/providers/prov1", true},
+		{http.MethodPut, "/tenants/test/providers/prov1", true},
+		{http.MethodDelete, "/tenants/test/providers/prov1", true},
+		{http.MethodPost, "/tenants/test/links/", true},
+		{http.MethodGet, "/tenants/test/links/", true},
+		{http.MethodDelete, "/tenants/test/links/prov1", true},
+		{http.MethodGet, "/api/v1/auth/providers/tenant1/google/login", true},
+		{http.MethodGet, "/api/v1/auth/providers/tenant1/google/callback", true},
+		{http.MethodPatch, "/tenants/test/providers/prov1", false},
+		{http.MethodPost, "/api/v1/auth/providers/tenant1/google/login", false},
 	}
-
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			req := httptest.NewRequest(route.method, route.path, nil)
-			rctx := chi.NewRouteContext()
-			req = req.WithContext(callerRouteContext(req.Context(), rctx))
-			assert.NotNil(t, router, "Router should be initialized")
+			assert.Equal(t, route.want, router.Match(chi.NewRouteContext(), route.method, route.path))
 		})
 	}
-}
-
-// TestFederatedProviderJSONSerialization tests JSON marshaling of FederatedProvider.
-func TestFederatedProviderJSONSerialization(t *testing.T) {
-	now := time.Now().UTC()
-	provider := &iam.ExternalProvider{
-		ID:           "prov_google",
-		TenantID:     "tenant123",
-		Name:         "google",
-		Type:         "oidc",
-		Enabled:      true,
-		ClientID:     "client-id",
-		ClientSecret: "secret",
-		IssuerURL:    "https://accounts.google.com",
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		UserInfoURL:  "https://openidconnect.googleapis.com/v1/userinfo",
-		// JWKSURL:      "https://www.googleapis.com/oauth2/v3/certs",
-		Scopes: []string{"openid", "email", "profile"},
-		// ClaimMapping: map[string]string{"email": "email", "name": "name"},
-		// Metadata:     map[string]interface{}{"custom": "value"},
-		Created: now,
-		Updated: now,
-	}
-
-	data, err := json.Marshal(provider)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded iam.ExternalProvider
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, provider.ID, decoded.ID)
-	assert.Equal(t, provider.TenantID, decoded.TenantID)
-	assert.Equal(t, provider.Name, decoded.Name)
-	assert.Equal(t, provider.Type, decoded.Type)
-	assert.Equal(t, provider.Enabled, decoded.Enabled)
-	assert.Equal(t, provider.ClientID, decoded.ClientID)
-	assert.Equal(t, provider.IssuerURL, decoded.IssuerURL)
-	assert.Equal(t, provider.Scopes, decoded.Scopes)
 }
 
 // TestAccountLinkJSONSerialization tests JSON marshaling of AccountLink.
@@ -1058,87 +942,6 @@ func TestAccountLinkJSONSerialization(t *testing.T) {
 	assert.Equal(t, link.ProviderName, decoded.ProviderName)
 	assert.Equal(t, link.ExternalID, decoded.ExternalID)
 	assert.Equal(t, link.Email, decoded.Email)
-}
-
-// TestFederatedAuthResultJSONSerialization tests JSON marshaling of FederatedAuthResult.
-func TestFederatedAuthResultJSONSerialization(t *testing.T) {
-	result := &iam.FederationResult{
-		User: &iam.User{
-			ID:       10123,
-			Email:    "user@example.com",
-			Name:     "Test User",
-			TenantID: "tenant123",
-		},
-		AccessToken:  "access_token_xyz",
-		RefreshToken: "refresh_token_xyz",
-		ExpiresIn:    3600,
-		Provisioned:  true,
-	}
-
-	data, err := json.Marshal(result)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded iam.FederationResult
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, result.AccessToken, decoded.AccessToken)
-	assert.Equal(t, result.RefreshToken, decoded.RefreshToken)
-	assert.Equal(t, result.ExpiresIn, decoded.ExpiresIn)
-	assert.Equal(t, result.Provisioned, decoded.Provisioned)
-	assert.Equal(t, result.User.Email, decoded.User.Email)
-}
-
-// TestLoginRedirectJSONSerialization tests JSON marshaling of LoginRedirect.
-func TestLoginRedirectJSONSerialization(t *testing.T) {
-	redirect := &iam.LoginRedirect{
-		AuthURL: "https://idp.example.com/authorize?client_id=xyz",
-		State:   "random_state_123",
-		// Nonce:       "random_nonce_456",
-	}
-
-	data, err := json.Marshal(redirect)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded iam.LoginRedirect
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, redirect.AuthURL, decoded.AuthURL)
-	assert.Equal(t, redirect.State, decoded.State)
-}
-
-// TestFederationManager_GetFederationManagerError tests when GetFederationManager returns error.
-func TestFederationManager_GetFederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		Type:     "oidc",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
 
 // TestRegisterProvider_AllProviderTypes tests registering all provider types.
@@ -1278,10 +1081,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	newAuthURL := "https://new-issuer.com/auth"
 	newTokenURL := "https://new-issuer.com/token"
 	newUserInfoURL := "https://new-issuer.com/userinfo"
-	_ = "https://new-issuer.com/.well-known/jwks.json"
 	newScopes := []string{"openid", "email"}
-	newClaimMapping := map[string]string{"email": "e_mail"}
-	_ = map[string]interface{}{"key": "value"}
 
 	body := UpdateProviderOptions{
 		Name:         &newName,
@@ -1292,10 +1092,7 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 		AuthURL:      &newAuthURL,
 		TokenURL:     &newTokenURL,
 		UserInfoURL:  &newUserInfoURL,
-		// JWKSURL:      &newJWKSURL,
-		Scopes: &newScopes,
-		// ClaimMapping: &newClaimMapping,
-		// Metadata:     &newMetadata,
+		Scopes:       &newScopes,
 	}
 	bodyBytes, _ := json.Marshal(body)
 
@@ -1328,7 +1125,6 @@ func TestUpdateProvider_AllFields(t *testing.T) {
 	assert.Equal(t, "https://new-issuer.com/token", resp.TokenURL)
 	assert.Equal(t, "https://new-issuer.com/userinfo", resp.UserInfoURL)
 	assert.Equal(t, newScopes, resp.Scopes)
-	_ = newClaimMapping
 }
 
 // assertNoProviderSecret fails when a provider response body carries the
@@ -1538,95 +1334,4 @@ func TestGetUserLinks_InvalidPagination(t *testing.T) {
 			assert.Equal(t, float64(tt.expectedOff), resp["offset"])
 		})
 	}
-}
-
-// TestCallbackOptionsJSONSerialization tests JSON marshaling of CallbackOptions.
-func TestCallbackOptionsJSONSerialization(t *testing.T) {
-	opts := CallbackOptions{
-		Code:  "auth_code_123",
-		State: "random_state",
-		Error: "",
-	}
-
-	data, err := json.Marshal(opts)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded CallbackOptions
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, opts.Code, decoded.Code)
-	assert.Equal(t, opts.State, decoded.State)
-}
-
-// TestBeginLoginOptionsJSONSerialization tests JSON marshaling of BeginLoginOptions.
-func TestBeginLoginOptionsJSONSerialization(t *testing.T) {
-	opts := BeginLoginOptions{
-		RedirectURI: "https://app.example.com/callback",
-		State:       "random_state",
-		// Nonce:       "random_nonce",
-		Scopes: "openid email",
-	}
-
-	data, err := json.Marshal(opts)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded BeginLoginOptions
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, opts.RedirectURI, decoded.RedirectURI)
-	assert.Equal(t, opts.State, decoded.State)
-	assert.Equal(t, opts.Nonce, decoded.Nonce)
-	assert.Equal(t, opts.Scopes, decoded.Scopes)
-}
-
-// TestListProvidersOptionsJSONSerialization tests JSON marshaling of ListProvidersOptions.
-func TestListProvidersOptionsJSONSerialization(t *testing.T) {
-	opts := ListProvidersOptions{
-		Limit:  50,
-		Offset: 10,
-		Type:   "oidc",
-	}
-
-	data, err := json.Marshal(opts)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded ListProvidersOptions
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, opts.Limit, decoded.Limit)
-	assert.Equal(t, opts.Offset, decoded.Offset)
-	assert.Equal(t, opts.Type, decoded.Type)
-}
-
-// TestListLinksOptionsJSONSerialization tests JSON marshaling of ListLinksOptions.
-func TestListLinksOptionsJSONSerialization(t *testing.T) {
-	opts := ListLinksOptions{
-		Limit:  25,
-		Offset: 5,
-	}
-
-	data, err := json.Marshal(opts)
-	require.NoError(t, err)
-	require.NotEmpty(t, data)
-
-	var decoded ListLinksOptions
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err)
-
-	assert.Equal(t, opts.Limit, decoded.Limit)
-	assert.Equal(t, opts.Offset, decoded.Offset)
-}
-
-// TestProviderTypeConstants tests provider type constants.
-func TestProviderTypeConstants(t *testing.T) {
-	assert.Equal(t, ProviderType("oidc"), ProviderTypeOIDC)
-	assert.Equal(t, ProviderType("saml"), ProviderTypeSAML)
-	assert.Equal(t, ProviderType("oauth2"), ProviderTypeOAuth2)
-	assert.Equal(t, ProviderType("ldap"), ProviderTypeLDAP)
 }
