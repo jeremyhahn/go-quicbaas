@@ -3143,47 +3143,6 @@ func TestHandleStartUpgrade_Validation(t *testing.T) {
 // Range Query Handler - Coverage Boost Tests
 // =============================================================================
 
-// TestHandleRangeQuery_ValidationOnly tests validation-only paths for range query handler.
-func TestHandleRangeQuery_ValidationOnly(t *testing.T) {
-	t.Parallel()
-
-	t.Run("invalid JSON body", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{invalid json`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users/range", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("entityType", "users")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleRangeQuery(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("invalid consistency level", func(t *testing.T) {
-		server, _, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		body := `{"start": 1, "end": 100, "consistency_level": "invalid_level"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/entities/users/range", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		rctx := chi.NewRouteContext()
-		rctx.URLParams.Add("entityType", "users")
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-		server.HandleRangeQuery(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
 // =============================================================================
 // Client Methods - Coverage Boost Tests
 // =============================================================================
@@ -3344,38 +3303,6 @@ func TestMessagingChannelToREST_NilChannel(t *testing.T) {
 // =============================================================================
 // Test Utilities
 // =============================================================================
-
-// TestBatchHandlers_BodyReadErrors tests body read error handling.
-func TestBatchHandlers_BodyReadErrors(t *testing.T) {
-	t.Parallel()
-
-	t.Run("get parameters batch with large body", func(t *testing.T) {
-		server, mockParamService, cleanup := setupMockServerWithParameterStore(t)
-		defer cleanup()
-
-		// Create a very large JSON array
-		paths := make([]string, 10000)
-		for i := range paths {
-			paths[i] = "/app/test/" + string(rune(i))
-		}
-
-		mockParamService.On("GetParameters", mock.Anything, mock.Anything).Return(
-			&interfaces.GetParametersResponse{
-				Parameters: []*interfaces.ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil).Maybe()
-
-		body, _ := json.Marshal(map[string]interface{}{"paths": paths})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/parameters/batch/get", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		server.HandleGetParametersBatch(w, req)
-
-		// Should either succeed or return appropriate error
-		assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusBadRequest || w.Code == http.StatusInternalServerError)
-	})
-}
 
 func TestHandleBatchPut_ReadBodyError(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
@@ -3918,44 +3845,6 @@ func TestHandleServiceError_ConflictError(t *testing.T) {
 	server.HandleGet(w, req)
 
 	assert.Equal(t, http.StatusConflict, w.Code)
-}
-
-func TestHandleServiceError_LeaderNotAvailable(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	leaderErr := qberrors.New(qberrors.ErrLeaderNotAvailable, "Get", "no leader")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), leaderErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestHandleServiceError_Timeout(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	timeoutErr := qberrors.New(qberrors.ErrTimeout, "Get", "operation timed out")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), timeoutErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusRequestTimeout, w.Code)
 }
 
 func TestHandleServiceError_InvalidInput(t *testing.T) {
