@@ -42,6 +42,13 @@ func TestNewChatService(t *testing.T) {
 }
 
 func TestChatService_Chat(t *testing.T) {
+	messages := []ChatMessage{
+		{Role: ChatRoleSystem, Content: "You are helpful."},
+		{Role: ChatRoleUser, Content: "Hello"},
+		{Role: ChatRoleAssistant, Content: "Hi there!"},
+	}
+	opts := &ModelOptions{Temperature: 0.7, TopP: 0.9}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/chat" {
 			t.Errorf("expected path /api/chat, got %s", r.URL.Path)
@@ -60,14 +67,16 @@ func TestChatService_Chat(t *testing.T) {
 		if req.Stream {
 			t.Error("expected stream to be false")
 		}
-		if len(req.Messages) != 1 {
-			t.Fatalf("expected 1 message, got %d", len(req.Messages))
+		if len(req.Messages) != len(messages) {
+			t.Fatalf("expected %d messages, got %d", len(messages), len(req.Messages))
 		}
-		if req.Messages[0].Role != ChatRoleUser {
-			t.Errorf("expected role 'user', got %s", req.Messages[0].Role)
+		for i, msg := range messages {
+			if req.Messages[i] != msg {
+				t.Errorf("message %d: expected %+v, got %+v", i, msg, req.Messages[i])
+			}
 		}
-		if req.Messages[0].Content != "Hello" {
-			t.Errorf("expected content 'Hello', got %s", req.Messages[0].Content)
+		if req.Options == nil || req.Options.Temperature != 0.7 || req.Options.TopP != 0.9 {
+			t.Errorf("expected options %+v, got %+v", opts, req.Options)
 		}
 
 		resp := ChatResponse{
@@ -92,11 +101,7 @@ func TestChatService_Chat(t *testing.T) {
 	svc := NewChatService(client, "llama3")
 	ctx := context.Background()
 
-	messages := []ChatMessage{
-		{Role: ChatRoleUser, Content: "Hello"},
-	}
-
-	resp, err := svc.Chat(ctx, messages, nil)
+	resp, err := svc.Chat(ctx, messages, opts)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -353,60 +358,9 @@ func TestChatService_ChatWithModel(t *testing.T) {
 	}
 }
 
-func TestChatService_Chat_WithOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("failed to decode request: %v", err)
-		}
-		if req.Options == nil {
-			t.Fatal("expected options to be set")
-		}
-		if req.Options.Temperature != 0.7 {
-			t.Errorf("expected temperature 0.7, got %f", req.Options.Temperature)
-		}
-		if req.Options.TopP != 0.9 {
-			t.Errorf("expected top_p 0.9, got %f", req.Options.TopP)
-		}
-
-		resp := ChatResponse{
-			Model:     "llama3",
-			CreatedAt: time.Now().Format(time.RFC3339),
-			Message: ChatMessage{
-				Role:    ChatRoleAssistant,
-				Content: "Response with options.",
-			},
-			Done: true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	messages := []ChatMessage{
-		{Role: ChatRoleUser, Content: "Hello"},
-	}
-	opts := &ModelOptions{
-		Temperature: 0.7,
-		TopP:        0.9,
-	}
-
-	resp, err := svc.Chat(ctx, messages, opts)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if resp.Message.Content != "Response with options." {
-		t.Errorf("expected 'Response with options.', got %s", resp.Message.Content)
-	}
-}
-
 func TestChatService_Generate(t *testing.T) {
+	opts := &ModelOptions{Temperature: 0.5, Seed: 42, Stop: []string{"\n"}}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/generate" {
 			t.Errorf("expected path /api/generate, got %s", r.URL.Path)
@@ -431,6 +385,10 @@ func TestChatService_Generate(t *testing.T) {
 		if req.System != "" {
 			t.Errorf("expected empty system prompt, got %s", req.System)
 		}
+		if req.Options == nil || req.Options.Temperature != 0.5 || req.Options.Seed != 42 ||
+			len(req.Options.Stop) != 1 || req.Options.Stop[0] != "\n" {
+			t.Errorf("expected options %+v, got %+v", opts, req.Options)
+		}
 
 		resp := GenerateResponse{
 			Model:         "llama3",
@@ -451,7 +409,7 @@ func TestChatService_Generate(t *testing.T) {
 	svc := NewChatService(client, "llama3")
 	ctx := context.Background()
 
-	resp, err := svc.Generate(ctx, "Tell me a joke", nil)
+	resp, err := svc.Generate(ctx, "Tell me a joke", opts)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -598,110 +556,5 @@ func TestChatService_Generate_ModelNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrModelNotFound) {
 		t.Errorf("expected ErrModelNotFound, got %v", err)
-	}
-}
-
-func TestChatService_Chat_MultipleMessages(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req ChatRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("failed to decode request: %v", err)
-		}
-		if len(req.Messages) != 3 {
-			t.Fatalf("expected 3 messages, got %d", len(req.Messages))
-		}
-		if req.Messages[0].Role != ChatRoleSystem {
-			t.Errorf("expected first message role 'system', got %s", req.Messages[0].Role)
-		}
-		if req.Messages[1].Role != ChatRoleUser {
-			t.Errorf("expected second message role 'user', got %s", req.Messages[1].Role)
-		}
-		if req.Messages[2].Role != ChatRoleAssistant {
-			t.Errorf("expected third message role 'assistant', got %s", req.Messages[2].Role)
-		}
-
-		resp := ChatResponse{
-			Model:     "llama3",
-			CreatedAt: time.Now().Format(time.RFC3339),
-			Message: ChatMessage{
-				Role:    ChatRoleAssistant,
-				Content: "Continued conversation.",
-			},
-			Done: true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	messages := []ChatMessage{
-		{Role: ChatRoleSystem, Content: "You are helpful."},
-		{Role: ChatRoleUser, Content: "Hello"},
-		{Role: ChatRoleAssistant, Content: "Hi there!"},
-	}
-
-	resp, err := svc.Chat(ctx, messages, nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if resp.Message.Content != "Continued conversation." {
-		t.Errorf("expected 'Continued conversation.', got %s", resp.Message.Content)
-	}
-}
-
-func TestChatService_Generate_WithOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req GenerateRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("failed to decode request: %v", err)
-		}
-		if req.Options == nil {
-			t.Fatal("expected options to be set")
-		}
-		if req.Options.Temperature != 0.5 {
-			t.Errorf("expected temperature 0.5, got %f", req.Options.Temperature)
-		}
-		if req.Options.Seed != 42 {
-			t.Errorf("expected seed 42, got %d", req.Options.Seed)
-		}
-		if len(req.Options.Stop) != 1 || req.Options.Stop[0] != "\n" {
-			t.Errorf("expected stop [\\n], got %v", req.Options.Stop)
-		}
-
-		resp := GenerateResponse{
-			Model:     "llama3",
-			CreatedAt: time.Now().Format(time.RFC3339),
-			Response:  "Deterministic output.",
-			Done:      true,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	opts := &ModelOptions{
-		Temperature: 0.5,
-		Seed:        42,
-		Stop:        []string{"\n"},
-	}
-
-	resp, err := svc.Generate(ctx, "Hello", opts)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if resp.Response != "Deterministic output." {
-		t.Errorf("expected 'Deterministic output.', got %s", resp.Response)
 	}
 }
