@@ -145,6 +145,12 @@ func TestReadXKMSBody(t *testing.T) {
 		require.ErrorAs(t, err, &invalidReqErr)
 		assert.Contains(t, invalidReqErr.Detail, "invalid JSON body")
 	})
+
+	t.Run("returns error when the body cannot be read", func(t *testing.T) {
+		err := readXKMSBody(httptest.NewRequest(http.MethodPost, "/", errReader(0)), &struct{}{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to read request body")
+	})
 }
 
 // =============================================================================
@@ -1783,8 +1789,10 @@ func TestXKMS91_Seal(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		// Exercises handler through xkms.Seal path
-		assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
+		// The handler passes no KeyAttributes, so the software backend
+		// rejects the seal and the handler maps that to 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "Seal: failed to seal data")
 	})
 
 	t.Run("exercises seal with backend path", func(t *testing.T) {
@@ -1796,8 +1804,10 @@ func TestXKMS91_Seal(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		// Exercises xkms.SealWithBackend path
-		assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
+		// The handler passes no KeyAttributes, so the software backend
+		// rejects the seal and the handler maps that to 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "Seal: failed to seal data")
 	})
 
 	t.Run("exercises seal with AAD path", func(t *testing.T) {
@@ -1809,8 +1819,10 @@ func TestXKMS91_Seal(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		// Exercises seal path with AAD options
-		assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
+		// The handler passes no KeyAttributes, so the software backend
+		// rejects the seal and the handler maps that to 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "Seal: failed to seal data")
 	})
 
 	t.Run("seal with invalid backend returns error", func(t *testing.T) {
@@ -1865,8 +1877,9 @@ func TestXKMS91_Unseal(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		// Exercises xkms.Unseal path
-		assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
+		// The handler maps the backend's unseal failure to 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "Unseal:")
 	})
 
 	t.Run("exercises unseal with backend path", func(t *testing.T) {
@@ -1879,8 +1892,9 @@ func TestXKMS91_Unseal(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		server.router.ServeHTTP(w, req)
-		// Exercises xkms.UnsealWithBackend path
-		assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, w.Code)
+		// The handler maps the backend's unseal failure to 500.
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Contains(t, w.Body.String(), "Unseal:")
 	})
 }
 
@@ -2322,274 +2336,64 @@ func TestXKMS91_GeneratePIVCSR(t *testing.T) {
 // PIN Handlers - when initialized (all return 501 Not Implemented)
 // =============================================================================
 
-func TestXKMS91_SetSOPIN(t *testing.T) {
+func TestXKMS91_PINHandlers(t *testing.T) {
 	cleanup := initXKMSForTest(t)
 	defer cleanup()
 
 	server, _, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
 
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/set", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	const (
+		setSOPIN      = "/api/v1/xkms/pin/so/set"
+		setUserPIN    = "/api/v1/xkms/pin/user/set"
+		changeSOPIN   = "/api/v1/xkms/pin/so/change"
+		changeUserPIN = "/api/v1/xkms/pin/user/change"
+		verifySOPIN   = "/api/v1/xkms/pin/so/verify"
+		verifyUserPIN = "/api/v1/xkms/pin/user/verify"
+		lockout       = "/api/v1/xkms/pin/lockout"
+		resetLockout  = "/api/v1/xkms/pin/lockout/reset"
+	)
 
-	t.Run("missing new_so_pin returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.SetSOPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/set", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		want   int
+	}{
+		{"SetSOPIN invalid body", http.MethodPost, setSOPIN, `{bad`, http.StatusBadRequest},
+		{"SetSOPIN missing new_so_pin", http.MethodPost, setSOPIN, `{}`, http.StatusBadRequest},
+		{"SetSOPIN valid request", http.MethodPost, setSOPIN, `{"new_so_pin":"123456"}`, http.StatusNotImplemented},
+		{"SetUserPIN invalid body", http.MethodPost, setUserPIN, `{bad`, http.StatusBadRequest},
+		{"SetUserPIN missing new_user_pin", http.MethodPost, setUserPIN, `{}`, http.StatusBadRequest},
+		{"SetUserPIN valid request", http.MethodPost, setUserPIN, `{"so_pin":"123456","new_user_pin":"654321"}`, http.StatusNotImplemented},
+		{"ChangeSOPIN invalid body", http.MethodPost, changeSOPIN, `{bad`, http.StatusBadRequest},
+		{"ChangeSOPIN missing required fields", http.MethodPost, changeSOPIN, `{}`, http.StatusBadRequest},
+		{"ChangeSOPIN valid request", http.MethodPost, changeSOPIN, `{"current_so_pin":"123456","new_so_pin":"654321"}`, http.StatusNotImplemented},
+		{"ChangeUserPIN invalid body", http.MethodPost, changeUserPIN, `{bad`, http.StatusBadRequest},
+		{"ChangeUserPIN missing required fields", http.MethodPost, changeUserPIN, `{}`, http.StatusBadRequest},
+		{"ChangeUserPIN valid request", http.MethodPost, changeUserPIN, `{"current_user_pin":"654321","new_user_pin":"111111"}`, http.StatusNotImplemented},
+		{"VerifySOPIN invalid body", http.MethodPost, verifySOPIN, `{bad`, http.StatusBadRequest},
+		{"VerifySOPIN missing so_pin", http.MethodPost, verifySOPIN, `{}`, http.StatusBadRequest},
+		{"VerifySOPIN valid request", http.MethodPost, verifySOPIN, `{"so_pin":"123456"}`, http.StatusNotImplemented},
+		{"VerifyUserPIN invalid body", http.MethodPost, verifyUserPIN, `{bad`, http.StatusBadRequest},
+		{"VerifyUserPIN missing user_pin", http.MethodPost, verifyUserPIN, `{}`, http.StatusBadRequest},
+		{"VerifyUserPIN valid request", http.MethodPost, verifyUserPIN, `{"user_pin":"654321"}`, http.StatusNotImplemented},
+		{"GetLockoutStatus", http.MethodGet, lockout, "", http.StatusNotImplemented},
+		{"ResetLockout invalid body", http.MethodPost, resetLockout, `{bad`, http.StatusBadRequest},
+		{"ResetLockout missing so_pin", http.MethodPost, resetLockout, `{}`, http.StatusBadRequest},
+		{"ResetLockout valid request", http.MethodPost, resetLockout, `{"so_pin":"123456"}`, http.StatusNotImplemented},
+	}
 
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.SetSOPINRequest{
-			NewSOPIN: "123456",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewReader([]byte(tt.body)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			server.router.ServeHTTP(w, req)
+			assert.Equal(t, tt.want, w.Code)
 		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/set", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_SetUserPIN(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/set", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing new_user_pin returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.SetUserPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/set", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.SetUserPINRequest{
-			SOPIN:      "123456",
-			NewUserPIN: "654321",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/set", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_ChangeSOPIN(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/change", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing required fields returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ChangeSOPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/change", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ChangeSOPINRequest{
-			CurrentSOPIN: "123456",
-			NewSOPIN:     "654321",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/change", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_ChangeUserPIN(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/change", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing required fields returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ChangeUserPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/change", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ChangeUserPINRequest{
-			CurrentUserPIN: "654321",
-			NewUserPIN:     "111111",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/change", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_VerifySOPIN(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/verify", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing so_pin returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.VerifySOPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/verify", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.VerifySOPINRequest{
-			SOPIN: "123456",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/verify", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_VerifyUserPIN(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/verify", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing user_pin returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.VerifyUserPINRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/verify", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.VerifyUserPINRequest{
-			UserPIN: "654321",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/verify", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_GetLockoutStatus(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("returns 501", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/pin/lockout", nil)
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-}
-
-func TestXKMS91_ResetLockout(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	server, _, srvCleanup := setupMockServer(t)
-	defer srvCleanup()
-
-	t.Run("invalid body returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/lockout/reset", bytes.NewReader([]byte(`{bad`)))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("missing so_pin returns 400", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ResetLockoutRequest{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/lockout/reset", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("valid request returns 501", func(t *testing.T) {
-		body, _ := json.Marshal(transportTypes.ResetLockoutRequest{
-			SOPIN: "123456",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/lockout/reset", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
+	}
 }
 
 // =============================================================================
@@ -2617,117 +2421,38 @@ func TestXKMS91_HandlersEmptyKeyID(t *testing.T) {
 	server, _, srvCleanup := setupMockServer(t)
 	defer srvCleanup()
 
-	t.Run("GetKey empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/keys/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSGetKey(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"GetKey empty keyID", http.MethodGet, "/api/v1/xkms/keys/", server.HandleXKMSGetKey},
+		{"DeleteKey empty keyID", http.MethodDelete, "/api/v1/xkms/keys/", server.HandleXKMSDeleteKey},
+		{"RotateKey empty keyID", http.MethodPost, "/api/v1/xkms/keys//rotate", server.HandleXKMSRotateKey},
+		{"Sign empty keyID", http.MethodPost, "/api/v1/xkms/keys//sign", server.HandleXKMSSign},
+		{"Verify empty keyID", http.MethodPost, "/api/v1/xkms/keys//verify", server.HandleXKMSVerify},
+		{"Encrypt empty keyID", http.MethodPost, "/api/v1/xkms/keys//encrypt", server.HandleXKMSEncrypt},
+		{"Decrypt empty keyID", http.MethodPost, "/api/v1/xkms/keys//decrypt", server.HandleXKMSDecrypt},
+		{"GetCert empty keyID", http.MethodGet, "/api/v1/xkms/certs/", server.HandleXKMSGetCert},
+		{"DeleteCert empty keyID", http.MethodDelete, "/api/v1/xkms/certs/", server.HandleXKMSDeleteCert},
+		{"CertExists empty keyID", http.MethodHead, "/api/v1/xkms/certs/", server.HandleXKMSCertExists},
+		{"ListKeyVersions empty keyID", http.MethodGet, "/api/v1/xkms/keys//versions", server.HandleXKMSListKeyVersions},
+		{"EnableKeyVersion empty params", http.MethodPost, "/api/v1/xkms/keys//versions//enable", server.HandleXKMSEnableKeyVersion},
+		{"DisableKeyVersion empty params", http.MethodPost, "/api/v1/xkms/keys//versions//disable", server.HandleXKMSDisableKeyVersion},
+		{"EnableAllKeyVersions empty keyID", http.MethodPost, "/api/v1/xkms/keys//versions/enable-all", server.HandleXKMSEnableAllKeyVersions},
+		{"DisableAllKeyVersions empty keyID", http.MethodPost, "/api/v1/xkms/keys//versions/disable-all", server.HandleXKMSDisableAllKeyVersions},
+		{"GetBackend empty backendID", http.MethodGet, "/api/v1/xkms/backends/", server.HandleXKMSGetBackend},
+	}
 
-	t.Run("DeleteKey empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/keys/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSDeleteKey(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("RotateKey empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//rotate", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSRotateKey(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("Sign empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//sign", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSSign(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("Verify empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//verify", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSVerify(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("Encrypt empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//encrypt", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSEncrypt(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("Decrypt empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//decrypt", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSDecrypt(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("GetCert empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSGetCert(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("DeleteCert empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSDeleteCert(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("CertExists empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSCertExists(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("ListKeyVersions empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/keys//versions", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSListKeyVersions(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("EnableKeyVersion empty params returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//versions//enable", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSEnableKeyVersion(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("DisableKeyVersion empty params returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//versions//disable", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSDisableKeyVersion(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("EnableAllKeyVersions empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//versions/enable-all", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSEnableAllKeyVersions(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("DisableAllKeyVersions empty keyID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys//versions/disable-all", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSDisableAllKeyVersions(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("GetBackend empty backendID returns 400", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/backends/", nil)
-		w := httptest.NewRecorder()
-		server.HandleXKMSGetBackend(w, req)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name+" returns 400", func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			w := httptest.NewRecorder()
+			tt.handler(w, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -2765,16 +2490,6 @@ func TestXKMS91_Sign_Error(t *testing.T) {
 		server.router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
-}
-
-// =============================================================================
-// readXKMSBody - io.ReadAll error path
-// =============================================================================
-
-func TestXKMS91_ReadXKMSBody_ReadError(t *testing.T) {
-	err := readXKMSBody(httptest.NewRequest(http.MethodPost, "/", errReader(0)), &struct{}{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read request body")
 }
 
 // errReader is an io.Reader that always returns an error.
