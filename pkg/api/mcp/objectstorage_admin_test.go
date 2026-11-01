@@ -400,35 +400,14 @@ func TestObjectAdminGetStorageStats_Success(t *testing.T) {
 	registry := newObjAdminRegistry(t)
 	ctx := context.Background()
 
-	tests := []struct {
-		name string
-		args map[string]interface{}
-	}{
-		{
-			name: "default",
-			args: map[string]interface{}{},
-		},
-		{
-			name: "with breakdowns",
-			args: map[string]interface{}{
-				"include_backends": true,
-				"include_tenants":  true,
-			},
-		},
-	}
+	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", map[string]interface{}{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", tc.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-
-			resultMap, ok := result.(map[string]interface{})
-			require.True(t, ok)
-			assert.Contains(t, resultMap, "total_objects")
-			assert.Contains(t, resultMap, "total_bytes")
-		})
-	}
+	resultMap, ok := result.(map[string]interface{})
+	require.True(t, ok)
+	assert.Contains(t, resultMap, "total_objects")
+	assert.Contains(t, resultMap, "total_bytes")
 }
 
 // =============================================================================
@@ -730,9 +709,11 @@ func TestObjectAdminTools_MissingRequired(t *testing.T) {
 // GetStorageStats - Backend and Tenant Stats Branches
 // =============================================================================
 
-func TestObjectAdminGetStorageStats_WithBackendStats(t *testing.T) {
+func TestObjectAdminGetStorageStats_WithBreakdowns(t *testing.T) {
+	var gotReq *service.GetStorageStatsRequest
 	adminSvc := &mockObjectStorageAdminService{
 		getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
+			gotReq = req
 			return &service.GetStorageStatsResponse{
 				TotalObjects:    2000,
 				TotalBytes:      2 * 1024 * 1024 * 1024,
@@ -757,41 +738,6 @@ func TestObjectAdminGetStorageStats_WithBackendStats(t *testing.T) {
 						TotalSize:   1024 * 1024 * 1024,
 					},
 				},
-			}, nil
-		},
-	}
-	registry := newObjAdminRegistryWithMock(t, adminSvc)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", map[string]interface{}{
-		"include_backends": true,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Contains(t, resultMap, "backend_stats")
-
-	// After marshalResult JSON round-trip, slices become []interface{}
-	backends, ok := resultMap["backend_stats"].([]interface{})
-	require.True(t, ok)
-	assert.Len(t, backends, 2)
-
-	first, ok := backends[0].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "local", first["name"])
-}
-
-func TestObjectAdminGetStorageStats_WithTenantStats(t *testing.T) {
-	adminSvc := &mockObjectStorageAdminService{
-		getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
-			return &service.GetStorageStatsResponse{
-				TotalObjects:    1000,
-				TotalBytes:      1024 * 1024,
-				TotalBackends:   1,
-				HealthyBackends: 1,
-				CalculatedAt:    time.Now().Unix(),
 				TenantStats: []*service.TenantStorageStats{
 					{
 						TenantID:     "tenant-1",
@@ -810,23 +756,32 @@ func TestObjectAdminGetStorageStats_WithTenantStats(t *testing.T) {
 	ctx := context.Background()
 
 	result, err := registry.ExecuteTool(ctx, "quicbaas_object_admin_get_storage_stats", map[string]interface{}{
-		"include_tenants": true,
+		"include_backends": true,
+		"include_tenants":  true,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	require.NotNil(t, gotReq)
+	assert.True(t, gotReq.IncludeBackends)
+	assert.True(t, gotReq.IncludeTenants)
 
 	resultMap, ok := result.(map[string]interface{})
 	require.True(t, ok)
-	assert.Contains(t, resultMap, "tenant_stats")
 
 	// After marshalResult JSON round-trip, slices become []interface{}
+	backends, ok := resultMap["backend_stats"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, backends, 2)
+	firstBackend, ok := backends[0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "local", firstBackend["name"])
+
 	tenants, ok := resultMap["tenant_stats"].([]interface{})
 	require.True(t, ok)
 	assert.Len(t, tenants, 1)
-
-	first, ok := tenants[0].(map[string]interface{})
+	firstTenant, ok := tenants[0].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, "tenant-1", first["tenant_id"])
+	assert.Equal(t, "tenant-1", firstTenant["tenant_id"])
 }
 
 // =============================================================================
