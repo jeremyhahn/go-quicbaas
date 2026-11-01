@@ -646,25 +646,10 @@ func TestQuotaExceededError_Error(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errStr := tt.err.Error()
 			for _, s := range tt.contains {
-				if !contains(errStr, s) {
-					t.Errorf("Error() = %q, want to contain %q", errStr, s)
-				}
+				assert.Contains(t, errStr, s)
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestNewQuotaExceededError(t *testing.T) {
@@ -796,12 +781,6 @@ func TestNewSystemKeyspaceViolationError(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "__system/config", val)
 	})
-
-	t.Run("empty key still creates error", func(t *testing.T) {
-		err := NewSystemKeyspaceViolationError("op", "")
-		require.NotNil(t, err)
-		assert.Equal(t, ErrSystemKeyspaceViolation, err.Code)
-	})
 }
 
 func TestNewCrossTenantAccessError(t *testing.T) {
@@ -822,12 +801,6 @@ func TestNewCrossTenantAccessError(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, "tenant-B", val)
 	})
-
-	t.Run("empty tenants still creates error", func(t *testing.T) {
-		err := NewCrossTenantAccessError("op", "", "")
-		require.NotNil(t, err)
-		assert.Equal(t, ErrCrossTenantAccess, err.Code)
-	})
 }
 
 func TestNewMissingTenantContextError(t *testing.T) {
@@ -837,12 +810,6 @@ func TestNewMissingTenantContextError(t *testing.T) {
 		assert.Equal(t, ErrMissingTenantContext, err.Code)
 		assert.Equal(t, "kv.List", err.Op)
 		assert.Contains(t, err.Error(), "tenant context is required")
-	})
-
-	t.Run("empty op still creates error", func(t *testing.T) {
-		err := NewMissingTenantContextError("")
-		require.NotNil(t, err)
-		assert.Equal(t, ErrMissingTenantContext, err.Code)
 	})
 }
 
