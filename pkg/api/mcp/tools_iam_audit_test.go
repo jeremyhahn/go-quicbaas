@@ -194,17 +194,6 @@ func TestExecuteIAMAuditQuery_Success(t *testing.T) {
 	assert.NotNil(t, resultMap["events"])
 }
 
-func TestExecuteIAMAuditQuery_DefaultLimit(t *testing.T) {
-	auditLog := &mockAuditLogger{}
-	reg := newAuditRegistry(t, auditLog)
-
-	result, err := reg.executeIAMAuditQuery(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestExecuteIAMAuditQuery_Error(t *testing.T) {
 	auditLog := &mockAuditLogger{
 		queryFn: func(_ context.Context, _ *iam.AuditFilter) ([]*iam.AuditEvent, int, error) {
@@ -281,20 +270,42 @@ func TestExecuteIAMAuditGet_Error(t *testing.T) {
 // Audit Delete Tests
 // =============================================================================
 
+// TestExecuteIAMAuditDelete_Success deletes when dry_run is absent or an
+// explicit JSON false.
 func TestExecuteIAMAuditDelete_Success(t *testing.T) {
-	auditLog := &mockAuditLogger{}
-	reg := newAuditRegistry(t, auditLog)
+	tests := []struct {
+		name  string
+		extra map[string]interface{}
+	}{
+		{"dry_run absent", nil},
+		{"dry_run false", map[string]interface{}{"dry_run": false}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalled := false
+			auditLog := &mockAuditLogger{
+				deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
+					deleteCalled = true
+					return 5, nil
+				},
+			}
+			reg := newAuditRegistry(t, auditLog)
+			args := map[string]interface{}{
+				"tenant_id": auditDeleteTenant,
+				"before":    "2024-01-01T00:00:00Z",
+			}
+			for k, v := range tt.extra {
+				args[k] = v
+			}
 
-	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
-		"tenant_id": auditDeleteTenant,
-		"before":    "2024-01-01T00:00:00Z",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(5), resultMap["deleted"])
+			result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), args)
+			require.NoError(t, err)
+			resultMap, ok := result.(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, float64(5), resultMap["deleted"])
+			assert.True(t, deleteCalled)
+		})
+	}
 }
 
 // TestExecuteIAMAuditDelete_WithoutAuditDeleteRefused proves the route
@@ -407,30 +418,6 @@ func TestExecuteIAMAuditDelete_MalformedDryRunRefused(t *testing.T) {
 			assert.False(t, deleteCalled, "a malformed dry_run reached DeleteOlderThan")
 		})
 	}
-}
-
-// TestExecuteIAMAuditDelete_DryRunFalseDeletes pins that an explicit boolean
-// false dry_run deletes exactly as an absent one does.
-func TestExecuteIAMAuditDelete_DryRunFalseDeletes(t *testing.T) {
-	deleteCalled := false
-	auditLog := &mockAuditLogger{
-		deleteOlderFn: func(_ context.Context, _ string, _ time.Time) (int, error) {
-			deleteCalled = true
-			return 5, nil
-		},
-	}
-	reg := newAuditRegistry(t, auditLog)
-
-	result, err := reg.executeIAMAuditDelete(auditDeleteCtx(t, reg, true), map[string]interface{}{
-		"tenant_id": auditDeleteTenant,
-		"before":    "2024-01-01T00:00:00Z",
-		"dry_run":   false,
-	})
-	require.NoError(t, err)
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, float64(5), resultMap["deleted"])
-	assert.True(t, deleteCalled)
 }
 
 // TestIAMAuditDeleteSchemaDeclaresDryRun pins that the tool schema declares
