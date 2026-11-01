@@ -164,16 +164,44 @@ func TestKVParameterManager_Store_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestKVParameterManager_Store_ClosedManager(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	pm.closed.Store(true)
+func TestKVParameterManager_ClosedManager(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(pm *kvParameterManager) error
+	}{
+		{"Store", func(pm *kvParameterManager) error {
+			return pm.Store(ctx, "/app/key", []byte("val"), nil, false)
+		}},
+		{"Get", func(pm *kvParameterManager) error {
+			_, _, err := pm.Get(ctx, "/app/key", false)
+			return err
+		}},
+		{"Delete", func(pm *kvParameterManager) error {
+			return pm.Delete(ctx, "/app/key")
+		}},
+		{"List", func(pm *kvParameterManager) error {
+			_, _, err := pm.List(ctx, "", true, 100, "")
+			return err
+		}},
+		{"SearchByTags", func(pm *kvParameterManager) error {
+			_, _, err := pm.SearchByTags(ctx, map[string]string{"env": "prod"}, "", 100, "")
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
+			pm.closed.Store(true)
 
-	err := pm.Store(context.Background(), "/app/key", []byte("val"), nil, false)
-	require.Error(t, err)
+			err := tt.call(pm)
+			require.Error(t, err)
 
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
+			var dErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &dErr))
+			assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
+		})
+	}
 }
 
 func TestKVParameterManager_StoreWithOptions_EmptyPath(t *testing.T) {
@@ -251,7 +279,7 @@ func TestKVParameterManager_StoreWithOptions_PutFails(t *testing.T) {
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
 
-func TestKVParameterManager_StoreWithOptions_NilLogger(t *testing.T) {
+func TestKVParameterManager_NilLogger(t *testing.T) {
 	transport := &mockKVTransport{
 		getFn: func(_ context.Context, _ string) ([]byte, error) {
 			return nil, &qrdbtransport.KeyNotFoundError{Key: "test"}
@@ -259,27 +287,56 @@ func TestKVParameterManager_StoreWithOptions_NilLogger(t *testing.T) {
 		putFn: func(_ context.Context, _ string, _ []byte) error {
 			return nil
 		},
+		scanFn: func(_ context.Context, _ string) (map[string][]byte, error) {
+			return nil, errors.New("scan failed")
+		},
 	}
 	pm := newTestKVParamManagerNoLogger(newMockProvider(transport))
 
-	// Should not panic with nil logger
+	// A nil logger must not panic on the logging success and error paths.
 	err := pm.StoreWithOptions(context.Background(), "/app/key", []byte("val"), nil, false, nil)
 	require.NoError(t, err)
+
+	keys, err := pm.scanKeys(context.Background(), "param:")
+	require.NoError(t, err)
+	assert.Nil(t, keys)
+
+	require.NoError(t, pm.Close())
 }
 
-func TestKVParameterManager_StoreWithOptions_ClientProviderError(t *testing.T) {
-	provider := &mockParamClientProvider{
-		transport:   &mockKVTransport{},
-		forShardErr: errors.New("provider unavailable"),
+func TestKVParameterManager_ClientProviderError(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(pm *kvParameterManager) error
+	}{
+		{"StoreWithOptions", func(pm *kvParameterManager) error {
+			return pm.StoreWithOptions(ctx, "/app/key", []byte("val"), nil, false, nil)
+		}},
+		{"Get", func(pm *kvParameterManager) error {
+			_, _, err := pm.Get(ctx, "/app/key", false)
+			return err
+		}},
+		{"Delete", func(pm *kvParameterManager) error {
+			return pm.Delete(ctx, "/app/key")
+		}},
 	}
-	pm := newTestKVParameterManager(t, provider)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mockParamClientProvider{
+				transport:   &mockKVTransport{},
+				forShardErr: errors.New("provider unavailable"),
+			}
+			pm := newTestKVParameterManager(t, provider)
 
-	err := pm.StoreWithOptions(context.Background(), "/app/key", []byte("val"), nil, false, nil)
-	require.Error(t, err)
+			err := tt.call(pm)
+			require.Error(t, err)
 
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
+			var dErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &dErr))
+			assert.Equal(t, dberrors.ErrInternal, dErr.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -312,18 +369,6 @@ func TestKVParameterManager_Get_Success(t *testing.T) {
 	assert.Equal(t, "string", meta.Type)
 }
 
-func TestKVParameterManager_Get_ClosedManager(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	pm.closed.Store(true)
-
-	_, _, err := pm.Get(context.Background(), "/app/key", false)
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
-}
-
 func TestKVParameterManager_Get_NotFound(t *testing.T) {
 	transport := &mockKVTransport{
 		getFn: func(_ context.Context, key string) ([]byte, error) {
@@ -334,21 +379,6 @@ func TestKVParameterManager_Get_NotFound(t *testing.T) {
 
 	_, _, err := pm.Get(context.Background(), "/app/missing", false)
 	require.Error(t, err)
-}
-
-func TestKVParameterManager_Get_ClientProviderError(t *testing.T) {
-	provider := &mockParamClientProvider{
-		transport:   &mockKVTransport{},
-		forShardErr: errors.New("provider unavailable"),
-	}
-	pm := newTestKVParameterManager(t, provider)
-
-	_, _, err := pm.Get(context.Background(), "/app/key", false)
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
 
 func TestKVParameterManager_Get_InvalidJSON(t *testing.T) {
@@ -412,18 +442,6 @@ func TestKVParameterManager_Delete_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestKVParameterManager_Delete_ClosedManager(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	pm.closed.Store(true)
-
-	err := pm.Delete(context.Background(), "/app/key")
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
-}
-
 func TestKVParameterManager_Delete_NotFound(t *testing.T) {
 	transport := &mockKVTransport{
 		getFn: func(_ context.Context, key string) ([]byte, error) {
@@ -455,51 +473,9 @@ func TestKVParameterManager_Delete_DeleteFails(t *testing.T) {
 	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
 }
 
-func TestKVParameterManager_Delete_NilLogger(t *testing.T) {
-	transport := &mockKVTransport{
-		getFn: func(_ context.Context, _ string) ([]byte, error) {
-			return []byte("exists"), nil
-		},
-		deleteFn: func(_ context.Context, _ string) error {
-			return nil
-		},
-	}
-	pm := newTestKVParamManagerNoLogger(newMockProvider(transport))
-
-	err := pm.Delete(context.Background(), "/app/key")
-	require.NoError(t, err)
-}
-
-func TestKVParameterManager_Delete_ClientProviderError(t *testing.T) {
-	provider := &mockParamClientProvider{
-		transport:   &mockKVTransport{},
-		forShardErr: errors.New("provider unavailable"),
-	}
-	pm := newTestKVParameterManager(t, provider)
-
-	err := pm.Delete(context.Background(), "/app/key")
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInternal, dErr.Code)
-}
-
 // =============================================================================
 // List Tests
 // =============================================================================
-
-func TestKVParameterManager_List_ClosedManager(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	pm.closed.Store(true)
-
-	_, _, err := pm.List(context.Background(), "", true, 100, "")
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
-}
 
 func TestKVParameterManager_List_EmptyResult(t *testing.T) {
 	transport := &mockKVTransport{
@@ -734,18 +710,6 @@ func TestKVParameterManager_DeleteBatch_PartialFailure(t *testing.T) {
 // SearchByTags Tests
 // =============================================================================
 
-func TestKVParameterManager_SearchByTags_ClosedManager(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	pm.closed.Store(true)
-
-	_, _, err := pm.SearchByTags(context.Background(), map[string]string{"env": "prod"}, "", 100, "")
-	require.Error(t, err)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrUnavailable, dErr.Code)
-}
-
 func TestKVParameterManager_SearchByTags_NoMatches(t *testing.T) {
 	transport := &mockKVTransport{
 		scanFn: func(_ context.Context, _ string) (map[string][]byte, error) {
@@ -795,12 +759,6 @@ func TestKVParameterManager_Close_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestKVParameterManager_Close_NilLogger(t *testing.T) {
-	pm := newTestKVParamManagerNoLogger(newMockProvider(&mockKVTransport{}))
-	err := pm.Close()
-	require.NoError(t, err)
-}
-
 // =============================================================================
 // ScanKeys Tests
 // =============================================================================
@@ -815,19 +773,6 @@ func TestKVParameterManager_ScanKeys_ScanError(t *testing.T) {
 
 	keys, err := pm.scanKeys(context.Background(), "param:")
 	require.NoError(t, err) // Scan errors return nil, nil
-	assert.Nil(t, keys)
-}
-
-func TestKVParameterManager_ScanKeys_NilLogger(t *testing.T) {
-	transport := &mockKVTransport{
-		scanFn: func(_ context.Context, _ string) (map[string][]byte, error) {
-			return nil, errors.New("scan failed")
-		},
-	}
-	pm := newTestKVParamManagerNoLogger(newMockProvider(transport))
-
-	keys, err := pm.scanKeys(context.Background(), "param:")
-	require.NoError(t, err)
 	assert.Nil(t, keys)
 }
 
