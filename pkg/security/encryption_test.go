@@ -72,6 +72,15 @@ func TestNewEncryptionManager(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "unsupported algorithm",
+			config: &EncryptionConfig{
+				Enabled:     true,
+				Algorithm:   "INVALID-ALGO",
+				KeyProvider: "local",
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -292,6 +301,7 @@ func TestKeyring_RotateKeyWithHistory(t *testing.T) {
 	// Should be able to get both keys
 	assert.NotNil(t, kr.GetKey(1))
 	assert.NotNil(t, kr.GetKey(2))
+	assert.Nil(t, kr.GetKey(99), "unknown version returns nil")
 }
 
 func TestKeyring_GetKeyMetadata(t *testing.T) {
@@ -1540,6 +1550,7 @@ func TestEncryptionManager_EncryptAfterRotate(t *testing.T) {
 	plaintext := []byte("data after rotation")
 	ciphertext, err := em.Encrypt(plaintext)
 	require.NoError(t, err)
+	assert.Equal(t, byte(2), ciphertext[0], "ciphertext carries the rotated key version")
 
 	decrypted, err := em.Decrypt(ciphertext)
 	require.NoError(t, err)
