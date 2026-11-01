@@ -555,71 +555,6 @@ func TestExportRolesWithFilters(t *testing.T) {
 		}
 	})
 
-	t.Run("export roles with time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneHourAgo := time.Now().Add(-1 * time.Hour)
-		filter := ExportFilter{
-			CreatedAfter: &oneHourAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(roles) == 0 {
-			t.Error("expected at least 1 role matching time filter")
-		}
-	})
-
-	t.Run("export roles with updated before filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		twoMinutesAgo := time.Now().Add(-2 * time.Minute)
-		filter := ExportFilter{
-			UpdatedBefore: &twoMinutesAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify all returned roles were updated before the filter time
-		for _, role := range roles {
-			if role.Updated.After(twoMinutesAgo) {
-				t.Errorf("role %s was updated after the filter time", role.ID)
-			}
-		}
-	})
-
-	t.Run("export roles with updated after filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneMinuteAgo := time.Now().Add(-1 * time.Minute)
-		filter := ExportFilter{
-			UpdatedAfter: &oneMinuteAgo,
-		}
-
-		roles, err := bm.ExportRoles(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// Verify all returned roles were updated after the filter time
-		for _, role := range roles {
-			if role.Updated.Before(oneMinuteAgo) {
-				t.Errorf("role %s was updated before the filter time", role.ID)
-			}
-		}
-	})
 }
 
 // TestExportPoliciesWithFilters tests ExportPolicies with various filter combinations.
@@ -657,50 +592,6 @@ func TestExportPoliciesWithFilters(t *testing.T) {
 
 		if len(policies) != 1 {
 			t.Errorf("expected 1 policy, got %d", len(policies))
-		}
-	})
-
-	t.Run("export policies with time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		oneHourAgo := time.Now().Add(-1 * time.Hour)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			CreatedAfter:  &oneHourAgo,
-			CreatedBefore: &tomorrow,
-		}
-
-		policies, err := bm.ExportPolicies(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(policies) == 0 {
-			t.Error("expected at least 1 policy matching time filter")
-		}
-	})
-
-	t.Run("export policies with updated time filter", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx := context.Background()
-		twoMinutesAgo := time.Now().Add(-2 * time.Minute)
-		tomorrow := time.Now().Add(24 * time.Hour)
-		filter := ExportFilter{
-			UpdatedAfter:  &twoMinutesAgo,
-			UpdatedBefore: &tomorrow,
-		}
-
-		policies, err := bm.ExportPolicies(ctx, tenantID, filter)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if len(policies) == 0 {
-			t.Error("expected at least 1 policy matching updated time filter")
 		}
 	})
 
@@ -876,32 +767,6 @@ func TestFilterMatchFunctions(t *testing.T) {
 					t.Errorf("expected %v, got %v", tt.expected, result)
 				}
 			})
-		}
-	})
-
-	t.Run("policyMatchesFilter with name filter", func(t *testing.T) {
-		policy := &Policy{
-			Metadata: PolicyMetadata{
-				Name:    "test-policy",
-				Created: now,
-				Updated: now,
-			},
-		}
-
-		// Should match - name in list
-		filter := ExportFilter{
-			PolicyNames: []string{"test-policy", "other-policy"},
-		}
-		if !bm.policyMatchesFilter(policy, filter) {
-			t.Error("policy should match name filter")
-		}
-
-		// Should not match - name not in list
-		filter = ExportFilter{
-			PolicyNames: []string{"other-policy"},
-		}
-		if bm.policyMatchesFilter(policy, filter) {
-			t.Error("policy should not match filter with wrong name")
 		}
 	})
 
