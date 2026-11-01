@@ -43,6 +43,8 @@ type MockQuicBaaS struct {
 	ListFunc            func(ctx context.Context, req *service.ListRequest, stream chan<- *service.ListResponse) error
 	WatchFunc           func(ctx context.Context, req *service.WatchRequest, stream chan<- *service.WatchResponse) (int64, error)
 	ListEntityTypesFunc func(ctx context.Context, req *service.ListEntityTypesRequest) (*service.ListEntityTypesResponse, error)
+	CompareAndSwapFunc  func(ctx context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error)
+	PutIfAbsentFunc     func(ctx context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error)
 
 	// Batch Service function fields
 	BatchPutFunc    func(ctx context.Context, req *service.BatchPutRequest) (*service.BatchPutResponse, error)
@@ -187,6 +189,20 @@ func (m *MockQuicBaaS) Put(ctx context.Context, req *service.PutRequest) (*servi
 		return m.PutFunc(ctx, req)
 	}
 	return &service.PutResponse{}, nil
+}
+
+func (m *MockQuicBaaS) CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (*service.ConditionalPutResponse, error) {
+	if m.CompareAndSwapFunc != nil {
+		return m.CompareAndSwapFunc(ctx, req)
+	}
+	return &service.ConditionalPutResponse{}, nil
+}
+
+func (m *MockQuicBaaS) PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (*service.ConditionalPutResponse, error) {
+	if m.PutIfAbsentFunc != nil {
+		return m.PutIfAbsentFunc(ctx, req)
+	}
+	return &service.ConditionalPutResponse{}, nil
 }
 
 func (m *MockQuicBaaS) Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error) {

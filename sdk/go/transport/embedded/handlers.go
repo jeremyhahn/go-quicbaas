@@ -37,6 +37,22 @@ func handlePut(ctx context.Context, svc service.QuicBaaS, req interface{}) (inte
 	return svc.Put(ctx, r)
 }
 
+func handleCompareAndSwap(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.CompareAndSwapRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "CompareAndSwap", "*service.CompareAndSwapRequest", typeNameOf(req))
+	}
+	return svc.CompareAndSwap(ctx, r)
+}
+
+func handlePutIfAbsent(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
+	r, ok := req.(*service.PutIfAbsentRequest)
+	if !ok {
+		return nil, NewInvalidRequestTypeError("quicbaas.KV", "PutIfAbsent", "*service.PutIfAbsentRequest", typeNameOf(req))
+	}
+	return svc.PutIfAbsent(ctx, r)
+}
+
 func handleGet(ctx context.Context, svc service.QuicBaaS, req interface{}) (interface{}, error) {
 	r, ok := req.(*service.GetRequest)
 	if !ok {

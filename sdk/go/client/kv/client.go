@@ -34,6 +34,16 @@ type Client interface {
 	// Put stores a key-value pair.
 	Put(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error)
 
+	// CompareAndSwap atomically replaces an existing entity's value when it
+	// equals req.Expect, reporting whether the swap happened. A precondition
+	// miss returns false with a nil error.
+	CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (bool, error)
+
+	// PutIfAbsent atomically stores an entity only when it does not exist,
+	// reporting whether it was stored. A present entity returns false with a
+	// nil error.
+	PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (bool, error)
+
 	// Get retrieves a value by key.
 	Get(ctx context.Context, req *service.GetRequest) (*service.GetResponse, error)
 
@@ -176,6 +186,43 @@ func (c *client) Put(ctx context.Context, req *service.PutRequest) (*service.Put
 	}
 
 	return putResp, nil
+}
+
+func (c *client) CompareAndSwap(ctx context.Context, req *service.CompareAndSwapRequest) (bool, error) {
+	if req == nil {
+		return false, errors.NewInvalidInput("kv.CompareAndSwap", "request is required")
+	}
+	if req.EntityType == "" {
+		return false, errors.NewInvalidInput("kv.CompareAndSwap", "entity type is required")
+	}
+	return c.conditionalPut(ctx, "CompareAndSwap", req)
+}
+
+func (c *client) PutIfAbsent(ctx context.Context, req *service.PutIfAbsentRequest) (bool, error) {
+	if req == nil {
+		return false, errors.NewInvalidInput("kv.PutIfAbsent", "request is required")
+	}
+	if req.EntityType == "" {
+		return false, errors.NewInvalidInput("kv.PutIfAbsent", "entity type is required")
+	}
+	return c.conditionalPut(ctx, "PutIfAbsent", req)
+}
+
+// conditionalPut sends a conditional write and reports whether it applied.
+func (c *client) conditionalPut(ctx context.Context, method string, req interface{}) (bool, error) {
+	op := "kv." + method
+	resp, err := c.transport.Request(ctx, serviceName, method, req)
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, errors.NewInternal(op, "nil response from server")
+	}
+	condResp, ok := resp.(*service.ConditionalPutResponse)
+	if !ok {
+		return false, errors.NewInternal(op, "invalid response type")
+	}
+	return condResp.Applied, nil
 }
 
 // Get retrieves a value by key.

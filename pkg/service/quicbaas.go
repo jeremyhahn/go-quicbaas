@@ -967,6 +967,91 @@ func (k *kvService) Put(ctx context.Context, req *PutRequest) (*PutResponse, err
 	return resp, nil
 }
 
+// CompareAndSwap replaces an existing entity's value when it equals
+// req.Expect. qrdb evaluates the precondition in one transaction, so racing
+// callers cannot both win.
+func (k *kvService) CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (*ConditionalPutResponse, error) {
+	if req == nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.CompareAndSwap", Err: &api.NilInputError{Name: "request"}}
+	}
+	// A nil Expect would mean "absent" to qrdb; this verb only swaps an
+	// existing entity, so nil is normalized to the empty value.
+	expect := req.Expect
+	if expect == nil {
+		expect = []byte{}
+	}
+	return k.conditionalPut(ctx, "CompareAndSwap", req.EntityType, req.ID, req.ShardID, expect, req.Set)
+}
+
+// PutIfAbsent stores an entity only when it does not exist. It is qrdb's
+// CompareAndSwap with a nil expect, whose precondition is that the key's
+// create-revision is 0.
+func (k *kvService) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*ConditionalPutResponse, error) {
+	if req == nil {
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: "service.PutIfAbsent", Err: &api.NilInputError{Name: "request"}}
+	}
+	return k.conditionalPut(ctx, "PutIfAbsent", req.EntityType, req.ID, req.ShardID, nil, req.Data)
+}
+
+// conditionalPut builds the tenant-aware key for the entity and delegates the
+// conditional write to qrdb's Coordinator.CompareAndSwap.
+func (k *kvService) conditionalPut(ctx context.Context, method, entityType string, id, shardID uint64, expect, set []byte) (*ConditionalPutResponse, error) {
+	op := "service." + method
+	start := time.Now()
+	if k.svc.metrics != nil {
+		k.svc.metrics.activeRequests.Inc()
+		defer func() {
+			k.svc.metrics.activeRequests.Dec()
+			k.svc.metrics.requestDuration.With(method).Observe(time.Since(start).Seconds())
+		}()
+	}
+
+	if entityType == "" {
+		k.countRequest(method, "invalid")
+		return nil, &errors.QBError{Code: errors.ErrInvalidInput, Op: op, Err: &api.RequiredFieldError{Field: "entity type"}}
+	}
+	if err := contextError(ctx, op); err != nil {
+		return nil, err
+	}
+	if shardID == 0 {
+		shardID = 1
+	}
+
+	key, err := k.svc.keyspaceResolver.BuildKey(ctx, entityType, id)
+	if err != nil {
+		k.countRequest(method, "invalid")
+		return nil, err
+	}
+	client, err := k.svc.qrdbForShard(shardID)
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+	coordinator, err := client.Coordination()
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+	applied, err := coordinator.CompareAndSwap(ctx, string(key), expect, set)
+	if err != nil {
+		k.countRequest(method, "error")
+		return nil, &errors.QBError{Code: errors.ErrRaft, Op: op, Err: err}
+	}
+
+	k.countRequest(method, "success")
+	if applied && k.svc.cacheManager != nil {
+		_ = k.svc.cacheManager.Set(context.Background(), string(key), set)
+	}
+	return &ConditionalPutResponse{Applied: applied}, nil
+}
+
+// countRequest records one request outcome when metrics are enabled.
+func (k *kvService) countRequest(method, outcome string) {
+	if k.svc.metrics != nil {
+		k.svc.metrics.requestsTotal.With(method, outcome).Inc()
+	}
+}
+
 func (k *kvService) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
 	start := time.Now()
 	if k.svc.metrics != nil {
@@ -4569,6 +4654,14 @@ func (o *operationsService) GetUpgradeStatus(ctx context.Context, req *GetUpgrad
 
 func (s *quicBaaS) Put(ctx context.Context, req *PutRequest) (*PutResponse, error) {
 	return s.kvService.Put(ctx, req)
+}
+
+func (s *quicBaaS) CompareAndSwap(ctx context.Context, req *CompareAndSwapRequest) (*ConditionalPutResponse, error) {
+	return s.kvService.CompareAndSwap(ctx, req)
+}
+
+func (s *quicBaaS) PutIfAbsent(ctx context.Context, req *PutIfAbsentRequest) (*ConditionalPutResponse, error) {
+	return s.kvService.PutIfAbsent(ctx, req)
 }
 
 func (s *quicBaaS) Get(ctx context.Context, req *GetRequest) (*GetResponse, error) {
