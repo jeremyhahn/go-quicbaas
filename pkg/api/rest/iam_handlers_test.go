@@ -299,29 +299,31 @@ func TestIAMHandler_Token_InvalidRequest(t *testing.T) {
 	}
 }
 
-func TestIAMHandler_UserInfo_MissingToken(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_UserInfo_Unauthorized(t *testing.T) {
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing token", authorization: ""},
+		{name: "non-bearer scheme", authorization: "Basic invalid"},
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.UserInfo(w, req)
+			req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
+			handler.UserInfo(w, req)
 
-func TestIAMHandler_UserInfo_InvalidTokenFormat(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/oauth2/userinfo", nil)
-	req.Header.Set("Authorization", "Basic invalid")
-	w := httptest.NewRecorder()
-
-	handler.UserInfo(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
 }
 
 func TestIAMHandler_Revoke_MissingToken(t *testing.T) {
@@ -513,24 +515,6 @@ func TestIAMHandler_CreateUser_GroupsIsNotAUserField(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	_, present := resp["groups"]
 	assert.False(t, present, "the user response must carry no group list")
-}
-
-func TestIAMHandler_CreateUser_Success(t *testing.T) {
-	_, _, memStorage, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	ctx := context.Background()
-	_ = memStorage.CreateTenant(ctx, &iam.Tenant{ID: "tenant1", Name: "Tenant 1"})
-
-	body := `{"email": "newuser@example.com", "username": "newuser", "name": "New User"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant1/users", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	req = withChiParams(req, map[string]string{"tenant_id": "tenant1"})
-	w := httptest.NewRecorder()
-
-	handler.CreateUser(w, req)
-
-	assert.Equal(t, http.StatusCreated, w.Code)
 }
 
 // TestIAMHandler_CreateUser_ResponseShape is a regression test for the bug
@@ -739,10 +723,6 @@ func TestIAMHandler_DeleteRole_Success(t *testing.T) {
 }
 
 // =============================================================================
-// OAuth Metadata Handler Tests
-// =============================================================================
-
-// =============================================================================
 // IAM Error Response Tests
 // =============================================================================
 
@@ -801,26 +781,6 @@ func TestIAMHandler_RegisterRoutes(t *testing.T) {
 	} {
 		assert.True(t, registered[route], "route %q not registered", route)
 	}
-}
-
-// =============================================================================
-// IAM Middleware Tests
-// =============================================================================
-
-func TestIAMMiddleware_TenantContext(t *testing.T) {
-	// Create a test handler that checks tenant context
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify context propagation
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Test the middleware if it exists in the IAM module
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/users", nil)
-	w := httptest.NewRecorder()
-
-	testHandler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // TestIAMHandler_CreateUser_WithRoles proves the REST body schema accepts a
