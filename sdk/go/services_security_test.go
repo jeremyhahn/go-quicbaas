@@ -1205,7 +1205,7 @@ func TestPIV_GeneratePIVCSR_Paths(t *testing.T) {
 // =============================================================================
 
 func TestAuthFactors_Add_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
 		name string
 		req  *AuthFactorEnrollRequest
@@ -1214,10 +1214,16 @@ func TestAuthFactors_Add_Validation(t *testing.T) {
 		{"nil req", nil, context.Background()},
 		{"missing factor", &AuthFactorEnrollRequest{Subject: "s"}, context.Background()},
 		{"missing subject", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
-		{"nil ctx", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, nil},
+		{"nil ctx", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, nilCtx},
+		{"unsupported factor type", &AuthFactorEnrollRequest{FactorName: "totp", Subject: "s"}, context.Background()},
+		// fido2 without credential_id must fail closed: storing a fido2 factor
+		// without the credentialID lookup key would make it unresolvable at login.
+		{"fido2 without credential_id", &AuthFactorEnrollRequest{FactorName: "fido2", Subject: "s"}, context.Background()},
+		{"mtls without credential_sha256", &AuthFactorEnrollRequest{FactorName: "mtls", Subject: "s"}, context.Background()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
 			if _, err := c.Add(tc.ctx, tc.req); err == nil || !sdkerrors.IsInvalidInput(err) {
 				t.Errorf("expected InvalidInput, got %v", err)
 			}
@@ -1251,46 +1257,23 @@ func TestAuthFactors_Add_FailsClosedWithoutStore(t *testing.T) {
 	}
 }
 
-func TestAuthFactors_Add_RejectsUnknownType(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "totp", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput for unsupported factor type, got %v", err)
-	}
-}
-
-func TestAuthFactors_Add_FIDO2RequiresCredentialID(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	// fido2 without credential_id must fail closed: storing a fido2 factor
-	// without the credentialID lookup key would make it unresolvable at login.
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "fido2", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when fido2 credential_id is absent, got %v", err)
-	}
-}
-
-func TestAuthFactors_Add_MTLSRequiresCredentialSHA256(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.Add(context.Background(), &AuthFactorEnrollRequest{
-		FactorName: "mtls", Subject: "s",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when mtls credential_sha256 is absent, got %v", err)
-	}
-}
-
 func TestAuthFactors_List_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
-	if _, err := c.List(nil, ""); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
+	var nilCtx context.Context
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		subject string
+	}{
+		{"nil ctx", nilCtx, "user-1"},
+		{"empty subject", context.Background(), ""},
 	}
-}
-
-func TestAuthFactors_List_RequiresSubject(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	if _, err := c.List(context.Background(), ""); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when subject is empty, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
+			if _, err := c.List(tc.ctx, tc.subject); err == nil || !sdkerrors.IsInvalidInput(err) {
+				t.Errorf("expected InvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -1323,7 +1306,7 @@ func TestAuthFactors_Remove_FailsClosedWithoutStore(t *testing.T) {
 }
 
 func TestAuthFactors_Rotate_Validation(t *testing.T) {
-	c := &authFactorsImpl{t: &mockTransport{}}
+	var nilCtx context.Context
 	tests := []struct {
 		name  string
 		oldID string
@@ -1333,24 +1316,17 @@ func TestAuthFactors_Rotate_Validation(t *testing.T) {
 		{"empty old id", "", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
 		{"nil new factor", "old", nil, context.Background()},
 		{"missing new factor name", "old", &AuthFactorEnrollRequest{}, context.Background()},
-		{"nil ctx", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, nil},
+		{"nil ctx", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, nilCtx},
+		// A new factor without a subject cannot resolve a uint64 user id.
+		{"missing new factor subject", "old", &AuthFactorEnrollRequest{FactorName: "fido2"}, context.Background()},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			c := newAuthFactorsImplNoStore()
 			if _, err := c.Rotate(tc.ctx, tc.oldID, tc.nf); err == nil || !sdkerrors.IsInvalidInput(err) {
 				t.Errorf("expected InvalidInput, got %v", err)
 			}
 		})
-	}
-}
-
-func TestAuthFactors_Rotate_RequiresNewSubject(t *testing.T) {
-	c := newAuthFactorsImplNoStore()
-	// A new factor without a subject cannot resolve a uint64 user id.
-	if _, err := c.Rotate(context.Background(), "old", &AuthFactorEnrollRequest{
-		FactorName: "fido2",
-	}); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Fatalf("expected InvalidInput when new factor subject is empty, got %v", err)
 	}
 }
 
