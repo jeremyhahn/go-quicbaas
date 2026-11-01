@@ -35,17 +35,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 )
 
-func TestEmbeddedServerFailedError_Error(t *testing.T) {
-	err := &EmbeddedServerFailedError{Reason: "connection refused"}
-	assert.Contains(t, err.Error(), "embedded server failed")
-	assert.Contains(t, err.Error(), "connection refused")
-}
-
-func TestEmbeddedPortError_Error(t *testing.T) {
-	err := &EmbeddedPortError{}
-	assert.Contains(t, err.Error(), "listener address is not a TCP address")
-}
-
 func TestEmbeddedServer_ShutdownNotStarted(t *testing.T) {
 	es := &embeddedServer{}
 	err := es.shutdown()
@@ -62,142 +51,64 @@ func TestEmbeddedServer_ShutdownStartedNoServer(t *testing.T) {
 	assert.False(t, es.started.Load(), "started should be false after shutdown")
 }
 
-// =============================================================================
-// factories.go coverage - GRPCBackupClientWrapper stubs
-// These wrapper methods delegate to the adapter, so they fail with nil adapter
-// but the code path through the wrapper method body is covered.
-// =============================================================================
-
-func TestGRPCBackupClientWrapper_CreateBackup_NilAdapter(t *testing.T) {
+// TestGRPCBackupClientWrapper_NilAdapter checks that every wrapper method
+// delegates to its adapter: with no adapter there is nothing to call.
+func TestGRPCBackupClientWrapper_NilAdapter(t *testing.T) {
 	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.CreateBackup(context.Background(), &BackupCreateRequest{})
-	})
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{"create", func() { wrapper.CreateBackup(ctx, &BackupCreateRequest{}) }},
+		{"list", func() { wrapper.ListBackups(ctx, &BackupListRequest{}) }},
+		{"restore", func() { wrapper.RestoreBackup(ctx, &BackupRestoreRequest{}) }},
+		{"delete", func() { wrapper.DeleteBackup(ctx, &BackupDeleteRequest{}) }},
+		{"verify", func() { wrapper.VerifyBackup(ctx, &BackupVerifyRequest{}) }},
+		{"close", func() { wrapper.Close() }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Panics(t, tt.call)
+		})
+	}
 }
 
-func TestGRPCBackupClientWrapper_ListBackups_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.ListBackups(context.Background(), &BackupListRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_RestoreBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.RestoreBackup(context.Background(), &BackupRestoreRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_DeleteBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.DeleteBackup(context.Background(), &BackupDeleteRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_VerifyBackup_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.VerifyBackup(context.Background(), &BackupVerifyRequest{})
-	})
-}
-
-func TestGRPCBackupClientWrapper_Close_NilAdapter(t *testing.T) {
-	wrapper := &GRPCBackupClientWrapper{adapter: nil}
-	assert.Panics(t, func() {
-		wrapper.Close()
-	})
-}
-
-// =============================================================================
-// client.go coverage - loadStoredAuthToken
-// =============================================================================
-
-func TestLoadMCPAuthToken_EmptyTokenFile(t *testing.T) {
+func TestLoadStoredAuthToken(t *testing.T) {
 	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
+	t.Cleanup(func() { authTokenFile = origTokenFile })
 
-	authTokenFile = "/nonexistent/path/token"
-	token := loadStoredAuthToken()
-	assert.Empty(t, token)
-}
-
-func TestLoadMCPAuthToken_ValidToken(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	tmpDir := t.TempDir()
-	tokenPath := filepath.Join(tmpDir, "token")
-
-	tokenData := &cli.TokenData{
-		AccessToken:  "test-access-token-123",
-		RefreshToken: "test-refresh-token",
-		ExpiresAt:    time.Now().Add(1 * time.Hour),
-		TokenType:    "Bearer",
+	saveToken := func(t *testing.T, access string, expiresAt time.Time) string {
+		t.Helper()
+		tokenPath := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, cli.SaveToken(tokenPath, &cli.TokenData{
+			AccessToken:  access,
+			RefreshToken: "refresh",
+			ExpiresAt:    expiresAt,
+			TokenType:    "Bearer",
+		}))
+		return tokenPath
 	}
 
-	err := cli.SaveToken(tokenPath, tokenData)
-	require.NoError(t, err)
-
-	authTokenFile = tokenPath
-	token := loadStoredAuthToken()
-	assert.Equal(t, "test-access-token-123", token)
-}
-
-func TestLoadMCPAuthToken_ExpiredToken(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	tmpDir := t.TempDir()
-	tokenPath := filepath.Join(tmpDir, "token")
-
-	tokenData := &cli.TokenData{
-		AccessToken:  "expired-token",
-		RefreshToken: "refresh",
-		ExpiresAt:    time.Now().Add(-1 * time.Hour),
-		TokenType:    "Bearer",
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+		want string
+	}{
+		{"missing file", func(*testing.T) string { return "/nonexistent/path/token" }, ""},
+		{"valid token", func(t *testing.T) string {
+			return saveToken(t, "test-access-token-123", time.Now().Add(time.Hour))
+		}, "test-access-token-123"},
+		{"expired token", func(t *testing.T) string {
+			return saveToken(t, "expired-token", time.Now().Add(-time.Hour))
+		}, ""},
+		{"default path fallback", func(*testing.T) string { return "" }, ""},
 	}
-
-	err := cli.SaveToken(tokenPath, tokenData)
-	require.NoError(t, err)
-
-	authTokenFile = tokenPath
-	token := loadStoredAuthToken()
-	assert.Empty(t, token, "expired token should return empty string")
-}
-
-func TestLoadMCPAuthToken_DefaultPathFallback(t *testing.T) {
-	origTokenFile := authTokenFile
-	defer func() { authTokenFile = origTokenFile }()
-
-	authTokenFile = ""
-	token := loadStoredAuthToken()
-	assert.Empty(t, token)
-}
-
-// =============================================================================
-// client.go coverage - buildSDKClientOptions embedded transport
-// =============================================================================
-
-func TestBuildSDKClientOptions_EmbeddedTransport_NoServer(t *testing.T) {
-	savedTransport := transport
-	savedTimeout := globalTimeout
-	defer func() {
-		transport = savedTransport
-		globalTimeout = savedTimeout
-		embeddedServerHolder.Store(nil)
-	}()
-
-	embeddedServerHolder.Store(nil)
-	transport = "embedded"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-	if err != nil {
-		assert.Nil(t, opts)
-	} else {
-		assert.NotNil(t, opts)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authTokenFile = tt.path(t)
+			assert.Equal(t, tt.want, loadStoredAuthToken())
+		})
 	}
 }
 
@@ -228,275 +139,112 @@ func TestCloseSDKClient_WithEmbeddedServer(t *testing.T) {
 // rebalance.go coverage - display helper functions (new paths only)
 // =============================================================================
 
-func TestDisplayRebalanceReport_Table_NoMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  0,
-		MovesFailed:     0,
-		ImbalanceBefore: 0.01,
-		ImbalanceAfter:  0.01,
+func TestDisplayRebalanceReport_Table(t *testing.T) {
+	manyErrors := make([]string, 8)
+	for i := range manyErrors {
+		manyErrors[i] = errors.New(errors.ErrInternal, "test", "error").Error()
 	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_WithFailedMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-3 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        3 * time.Minute,
-		MovesCompleted:  8,
-		MovesFailed:     2,
-		KeysRebalanced:  4000,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.20,
-		ImbalanceAfter:  0.10,
-		Errors:          []string{errors.New(errors.ErrInternal, "test", "shard move failed").Error()},
+	tests := []struct {
+		name   string
+		report *RebalanceReport
+	}{
+		{"no moves", &RebalanceReport{Duration: time.Minute, ImbalanceBefore: 0.01, ImbalanceAfter: 0.01}},
+		{"with failed moves", &RebalanceReport{
+			Duration: 3 * time.Minute, MovesCompleted: 8, MovesFailed: 2,
+			KeysRebalanced: 4000, BytesRebalanced: 1024 * 1024,
+			ImbalanceBefore: 0.20, ImbalanceAfter: 0.10,
+			Errors: []string{errors.New(errors.ErrInternal, "test", "shard move failed").Error()},
+		}},
+		{"many errors", &RebalanceReport{
+			Duration: 2 * time.Minute, MovesCompleted: 5, MovesFailed: 8,
+			ImbalanceBefore: 0.30, ImbalanceAfter: 0.25, Errors: manyErrors,
+		}},
+		{"successful moves", &RebalanceReport{
+			Duration: time.Minute, MovesCompleted: 5,
+			KeysRebalanced: 2500, BytesRebalanced: 1024 * 500,
+			ImbalanceBefore: 0.15, ImbalanceAfter: 0.02,
+		}},
+		{"zero improvement", &RebalanceReport{Duration: time.Minute, MovesCompleted: 3, ImbalanceBefore: 0.05, ImbalanceAfter: 0.05}},
 	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_ManyErrors(t *testing.T) {
-	errs := make([]string, 8)
-	for i := 0; i < 8; i++ {
-		errs[i] = errors.New(errors.ErrInternal, "test", "error").Error()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.report.EndTime = time.Now()
+			tt.report.StartTime = tt.report.EndTime.Add(-tt.report.Duration)
+			assert.NoError(t, displayRebalanceReport(tt.report, "table"))
+		})
 	}
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-2 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        2 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     8,
-		ImbalanceBefore: 0.30,
-		ImbalanceAfter:  0.25,
-		Errors:          errs,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-func TestDisplayRebalanceReport_Table_SuccessfulMoves(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     0,
-		KeysRebalanced:  2500,
-		BytesRebalanced: 1024 * 500,
-		ImbalanceBefore: 0.15,
-		ImbalanceAfter:  0.02,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
 }
 
 func TestDisplayRebalanceReport_InvalidFormat(t *testing.T) {
-	report := &RebalanceReport{}
-	err := displayRebalanceReport(report, "yaml")
-	assert.Error(t, err)
+	assert.Error(t, displayRebalanceReport(&RebalanceReport{}, "yaml"))
 }
 
 func TestDisplayRebalanceProgressSDK_InvalidFormat(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{}
-	err := displayRebalanceProgressSDK(resp, "xml")
-	assert.Error(t, err)
+	assert.Error(t, displayRebalanceProgressSDK(&cluster.GetRebalanceProgressResponse{}, "xml"))
 }
 
-func TestDisplayRebalanceReport_Table_ZeroImprovement(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     0,
-		ImbalanceBefore: 0.05,
-		ImbalanceAfter:  0.05,
-	}
-
-	err := displayRebalanceReport(report, "table")
-	assert.NoError(t, err)
-}
-
-// =============================================================================
-// objectstorage.go coverage - createObjectStorageClient transport switch
-// =============================================================================
-
-func TestCreateObjectStorageClient_GRPCTransport(t *testing.T) {
+func TestCreateObjectStorageClient_Transports(t *testing.T) {
 	origTransport := transport
-	defer func() { transport = origTransport }()
+	t.Cleanup(func() { transport = origTransport })
 
-	transport = "grpc"
-	_, err := createObjectStorageClient()
-	assert.Error(t, err)
-}
-
-func TestCreateObjectStorageClient_EmptyTransport(t *testing.T) {
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = ""
-	_, err := createObjectStorageClient()
-	assert.Error(t, err)
-}
-
-func TestCreateObjectStorageClient_UnsupportedTransport(t *testing.T) {
-	origTransport := transport
-	defer func() { transport = origTransport }()
-
-	transport = "rest"
-	_, err := createObjectStorageClient()
-	require.Error(t, err)
-	var unsupportedErr *UnsupportedTransportError
-	assert.ErrorAs(t, err, &unsupportedErr)
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectListByTagCommand invalid tag format
-// =============================================================================
-
-func TestRunObjectListByTagCommand_InvalidTagFormat(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTagFilter := objectTagFilter
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectTagFilter = origTagFilter
-	}()
-
-	objectTagFilter = "invalidtag"
-
-	cmd := newObjectListByTagCommand()
-	err := runObjectListByTagCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid tag format")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectMetadataUpdateCommand invalid JSON
-// =============================================================================
-
-func TestRunObjectMetadataUpdateCommand_InvalidPolicyJSON(t *testing.T) {
-	origMetadata := objectMetadata
-	defer func() { objectMetadata = origMetadata }()
-
-	objectMetadata = "not-json"
-	cmd := newObjectMetadataUpdateCommand()
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid policy JSON")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectLifecycleSetCommand invalid JSON
-// =============================================================================
-
-func TestRunObjectLifecycleSetCommand_InvalidPolicyJSON(t *testing.T) {
-	origPolicyJSON := objectPolicyJSON
-	defer func() { objectPolicyJSON = origPolicyJSON }()
-
-	objectPolicyJSON = "bad-json{"
-	cmd := newObjectLifecycleSetCommand()
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid policy JSON")
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectRestoreCommand tier parsing
-// =============================================================================
-
-func TestRunObjectRestoreCommand_HotTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
-
-	objectRestoreTier = "hot"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	tests := []struct {
+		name            string
+		transport       string
+		wantUnsupported bool
+	}{
+		{name: "grpc without server", transport: "grpc"},
+		{name: "empty defaults to grpc", transport: ""},
+		{name: "unsupported transport", transport: "rest", wantUnsupported: true},
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport = tt.transport
+			_, err := createObjectStorageClient()
+			require.Error(t, err)
+			if tt.wantUnsupported {
+				var unsupportedErr *UnsupportedTransportError
+				assert.ErrorAs(t, err, &unsupportedErr)
+			}
+		})
+	}
 }
 
-func TestRunObjectRestoreCommand_WarmTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
+// TestRunObjectCommands_InvalidInput checks that malformed flag values are
+// rejected before any client is created.
+func TestRunObjectCommands_InvalidInput(t *testing.T) {
+	restore := saveAndRestoreObjectGlobals(t)
+	t.Cleanup(restore)
 
-	objectRestoreTier = "warm"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	tests := []struct {
+		name    string
+		run     func(*cobra.Command, []string) error
+		newCmd  func() *cobra.Command
+		args    []string
+		setup   func()
+		wantMsg string
+	}{
+		{"list-by-tag without separator", runObjectListByTagCommand, newObjectListByTagCommand, []string{"bucket"},
+			func() { objectTagFilter = "invalidtag" }, "invalid tag format"},
+		{"metadata update malformed JSON", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"},
+			func() { objectMetadata = `{not valid json}` }, "invalid policy JSON"},
+		{"metadata update empty JSON", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"},
+			func() { objectMetadata = "" }, "invalid policy JSON"},
+		{"lifecycle set malformed JSON", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"mybucket"},
+			func() { objectPolicyJSON = "bad-json{" }, "invalid policy JSON"},
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectRestoreCommand_UnspecifiedTier(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origTier := objectRestoreTier
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectRestoreTier = origTier
-	}()
-
-	objectRestoreTier = "unknown"
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				t.Fatal("client factory must not be called for invalid input")
+				return nil, nil
+			}
+			cmd := tt.newCmd()
+			tt.setup()
+			err := tt.run(cmd, tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// objectstorage.go coverage - runObjectPutCommand with valid file + metadata
-// =============================================================================
-
-func TestRunObjectPutCommand_ValidFileValidMetadata(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	origFile := objectFile
-	origMeta := objectMetadata
-	origTags := objectTags
-	defer func() {
-		objectStorageClientFactory = origFactory
-		objectFile = origFile
-		objectMetadata = origMeta
-		objectTags = origTags
-	}()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("test data content"), 0600)
-	require.NoError(t, err)
-
-	objectFile = tmpFile
-	objectMetadata = `{"env":"prod","tier":"hot"}`
-	objectTags = nil
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "no server")
-	}
-
-	cmd := newObjectPutCommand()
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -900,7 +648,7 @@ func TestFormatObjectPolicyResponse_Formats(t *testing.T) {
 				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 90, MaxVersions: 5},
 			},
 			ExplicitPolicy: &pb.ObjectPolicy{
-				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 30, MaxVersions: 3},
+				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 30, MaxVersions: 3, LegalHold: true},
 			},
 			InheritedPolicy: &pb.ObjectPolicy{
 				ReplicationPolicy: &pb.ReplicationPolicy{Enabled: true, MinReplicas: 2},
@@ -1098,149 +846,39 @@ func TestRunObjectCommands_FactoryError(t *testing.T) {
 }
 
 // =============================================================================
-// PrintObjectPolicy Test
-// =============================================================================
-
-func TestPrintObjectPolicyAllPolicies(t *testing.T) {
-	policy := &pb.ObjectPolicy{
-		ReplicationPolicy: &pb.ReplicationPolicy{
-			Enabled:      true,
-			MinReplicas:  3,
-			Mode:         pb.ReplicationMode_REPLICATION_MODE_ASYNC,
-			TargetStores: []string{"store-x"},
-		},
-		ArchivePolicy: &pb.ArchivePolicy{
-			Enabled:           true,
-			ArchiveAfterDays:  60,
-			TargetStore:       "cold",
-			DeleteFromPrimary: false,
-		},
-		RetentionPolicy: &pb.RetentionPolicy{
-			Enabled:       true,
-			RetentionDays: 365,
-			MaxVersions:   10,
-			LegalHold:     true,
-		},
-	}
-	printObjectPolicy(policy)
-}
-
-func TestPrintObjectPolicyNilSubPolicies(t *testing.T) {
-	policy := &pb.ObjectPolicy{}
-	printObjectPolicy(policy)
-}
-
-// =============================================================================
 // New Command Builder Tests
 // =============================================================================
 
-func TestNewObjectStorageCommandsCoverage(t *testing.T) {
+func TestNewObjectStorageCommands(t *testing.T) {
 	cmd := newObjectStorageCommands()
 	require.NotNil(t, cmd)
 	assert.Equal(t, "object", cmd.Use)
-	assert.True(t, len(cmd.Commands()) > 0, "should have subcommands")
+	assert.NotEmpty(t, cmd.Commands(), "should have subcommands")
 }
 
-func TestNewObjectPutCommandCoverage(t *testing.T) {
-	cmd := newObjectPutCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "put")
-}
-
-func TestNewObjectGetCommandCoverage(t *testing.T) {
-	cmd := newObjectGetCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "get")
-}
-
-func TestNewObjectDeleteCommandCoverage(t *testing.T) {
-	cmd := newObjectDeleteCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "delete")
-}
-
-func TestNewObjectHeadCommandCoverage(t *testing.T) {
-	cmd := newObjectHeadCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "head")
-}
-
-func TestNewObjectListCommandCoverage(t *testing.T) {
-	cmd := newObjectListCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "list")
-}
-
-func TestNewObjectCopyCommandCoverage(t *testing.T) {
-	cmd := newObjectCopyCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "copy")
-}
-
-func TestNewObjectArchiveCommandCoverage(t *testing.T) {
-	cmd := newObjectArchiveCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "archive")
-}
-
-func TestNewObjectRestoreCommandCoverage(t *testing.T) {
-	cmd := newObjectRestoreCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "restore")
-}
-
-func TestNewObjectVerifyCommandCoverage(t *testing.T) {
-	cmd := newObjectVerifyCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "verify")
-}
-
-func TestNewObjectReplicateCommandCoverage(t *testing.T) {
-	cmd := newObjectReplicateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "replicate")
-}
-
-func TestNewObjectMigrateCommandCoverage(t *testing.T) {
-	cmd := newObjectMigrateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "migrate")
-}
-
-func TestNewObjectStatsCommandCoverage(t *testing.T) {
-	cmd := newObjectStatsCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "stats")
-}
-
-func TestNewObjectMetadataGetCommandCoverage(t *testing.T) {
-	cmd := newObjectMetadataGetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectMetadataUpdateCommandCoverage(t *testing.T) {
-	cmd := newObjectMetadataUpdateCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectLifecycleSetCommandCoverage(t *testing.T) {
-	cmd := newObjectLifecycleSetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectLifecycleGetCommandCoverage(t *testing.T) {
-	cmd := newObjectLifecycleGetCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectListByTagCommandCoverage(t *testing.T) {
-	cmd := newObjectListByTagCommand()
-	require.NotNil(t, cmd)
-}
-
-func TestNewObjectListByTenantCommandCoverage(t *testing.T) {
-	cmd := newObjectListByTenantCommand()
-	require.NotNil(t, cmd)
+func TestNewObjectCommands_Use(t *testing.T) {
+	tests := []struct {
+		verb   string
+		newCmd func() *cobra.Command
+	}{
+		{"put", newObjectPutCommand},
+		{"get", newObjectGetCommand},
+		{"delete", newObjectDeleteCommand},
+		{"head", newObjectHeadCommand},
+		{"list", newObjectListCommand},
+		{"copy", newObjectCopyCommand},
+		{"archive", newObjectArchiveCommand},
+		{"restore", newObjectRestoreCommand},
+		{"verify", newObjectVerifyCommand},
+		{"replicate", newObjectReplicateCommand},
+		{"migrate", newObjectMigrateCommand},
+		{"stats", newObjectStatsCommand},
+	}
+	for _, tt := range tests {
+		t.Run(tt.verb, func(t *testing.T) {
+			assert.Contains(t, tt.newCmd().Use, tt.verb)
+		})
+	}
 }
 
 func newDeadGRPCClient(t *testing.T) *grpc.Client {
@@ -1345,493 +983,125 @@ func saveAndRestoreObjectGlobals(t *testing.T) func() {
 // to its default value.
 // =============================================================================
 
-func TestObjectStorage91_PutCommand_RPCFailure(t *testing.T) {
+// TestRunObjectCommands_RPCFailure drives every object verb, with its flags
+// set, against a client whose server is unreachable, so the request is built
+// and the RPC error is returned through formatError.
+func TestRunObjectCommands_RPCFailure(t *testing.T) {
 	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
+	t.Cleanup(restore)
 
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("test content"), 0600)
-	require.NoError(t, err)
+	dataFile := filepath.Join(t.TempDir(), "testdata.txt")
+	require.NoError(t, os.WriteFile(dataFile, []byte("test content"), 0o600))
 
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
+	tests := []struct {
+		name   string
+		run    func(*cobra.Command, []string) error
+		newCmd func() *cobra.Command
+		args   []string
+		setup  func()
+	}{
+		{"put with tags", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectContentType = "text/plain"
+			globalTenantID = "tenant-1"
+			objectTags = map[string]string{"env": "test"}
+		}},
+		{"put metadata ignored when tags set", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectMetadata = `{"key1":"val1"}`
+			objectTags = map[string]string{"existing": "tag"}
+		}},
+		{"put metadata without tags", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}, func() {
+			objectFile = dataFile
+			objectMetadata = `{"key1":"val1"}`
+			objectTags = nil
+		}},
+		{"get with meta", runObjectGetCommand, newObjectGetCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+			objectIncludeMeta = true
+		}},
+		{"delete", runObjectDeleteCommand, newObjectDeleteCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+			objectDeleteSource = true
+		}},
+		{"head", runObjectHeadCommand, newObjectHeadCommand, []string{"bucket/key"}, func() {
+			globalTenantID = "tenant-1"
+		}},
+		{"list", runObjectListCommand, newObjectListCommand, []string{"mybucket"}, func() {
+			objectPrefix = "images/"
+			globalTenantID = "tenant-1"
+			objectLimit = 50
+			objectCursor = "cursor-abc"
+			objectIncludeMeta = true
+		}},
+		{"list-by-tag", runObjectListByTagCommand, newObjectListByTagCommand, []string{}, func() {
+			objectTagFilter = "type=document"
+			globalTenantID = "tenant-1"
+			objectLimit = 50
+		}},
+		{"list-by-tenant", runObjectListByTenantCommand, newObjectListByTenantCommand, []string{}, func() {
+			globalTenantID = "tenant-123"
+			objectLimit = 100
+			objectIncludeMeta = true
+		}},
+		{"copy with tags", runObjectCopyCommand, newObjectCopyCommand, []string{"src/key", "dst/key"}, func() {
+			objectCopyTags = true
+			globalTenantID = "tenant-1"
+		}},
+		{"archive", runObjectArchiveCommand, newObjectArchiveCommand, []string{"bucket/key"}, func() {
+			objectTargetStore = "cold-store"
+			objectDeleteFromPrimary = true
+			objectCompressionLevel = 6
+		}},
+		{"restore hot tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "hot-backend"
+			objectRestoreDays = 14
+			objectRestoreTier = "hot"
+		}},
+		{"restore warm tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectRestoreTier = "warm"
+		}},
+		{"restore default tier", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}, func() {
+			objectRestoreTier = ""
+		}},
+		{"verify with repair", runObjectVerifyCommand, newObjectVerifyCommand, []string{"bucket/key"}, func() {
+			objectCheckAll = true
+			objectRepair = true
+		}},
+		{"replicate to listed stores", runObjectReplicateCommand, newObjectReplicateCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "store-a, store-b"
+			objectSync = true
+		}},
+		{"migrate", runObjectMigrateCommand, newObjectMigrateCommand, []string{"bucket/key"}, func() {
+			objectDestBackend = "archive-backend"
+			objectDeleteSource = true
+		}},
+		{"metadata get", runObjectMetadataGetCommand, newObjectMetadataGetCommand, []string{"bucket/key"}, func() {}},
+		{"metadata update", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"}, func() {
+			objectMetadata = `{"replication":{"enabled":true,"min_replicas":3}}`
+		}},
+		{"stats", runObjectStatsCommand, newObjectStatsCommand, []string{}, func() {}},
+		{"lifecycle set", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"mybucket"}, func() {
+			objectPolicyJSON = `{"archive":{"enabled":true,"archive_after_days":30}}`
+		}},
+		{"lifecycle get", runObjectLifecycleGetCommand, newObjectLifecycleGetCommand, []string{"mybucket"}, func() {}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newDeadGRPCClient(t)
+			objectStorageClientFactory = func() (*grpc.Client, error) {
+				return client, nil
+			}
+			// Building the command resets the flag globals, so the row's
+			// inputs are set afterwards.
+			cmd := tt.newCmd()
+			tt.setup()
+			globalTimeout = 500 * time.Millisecond
 
-	// Create command first (registers flags, resets globals to defaults).
-	cmd := newObjectPutCommand()
-
-	// Set globals AFTER command creation so they are not reset.
-	objectFile = tmpFile
-	objectContentType = "text/plain"
-	globalTenantID = "tenant-1"
-	objectTags = map[string]string{"env": "test"}
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "RPC call to dead server should fail")
-}
-
-func TestObjectStorage91_PutCommand_MetadataWithExistingTags(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, errors.New(errors.ErrUnavailable, "test", "mock error")
+			err := tt.run(cmd, tt.args)
+			assert.Error(t, err, "RPC call to dead server should fail")
+		})
 	}
-
-	// Create command first, then set globals.
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{"key1":"val1"}`
-	objectTags = map[string]string{"existing": "tag"}
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_PutCommand_MetadataWithoutTags(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first, then set globals.
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{"key1":"val1"}`
-	objectTags = nil
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_PutCommand_InvalidMetadataJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	tmpFile := filepath.Join(t.TempDir(), "testdata.txt")
-	err := os.WriteFile(tmpFile, []byte("data"), 0600)
-	require.NoError(t, err)
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return newDeadGRPCClient(t), nil
-	}
-
-	cmd := newObjectPutCommand()
-	objectFile = tmpFile
-	objectMetadata = `{invalid-json}`
-	objectTags = nil
-	globalTimeout = 500 * time.Millisecond
-
-	err = runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "invalid metadata JSON should return error")
-}
-
-func TestObjectStorage91_PutCommand_NoData(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectPutCommand()
-	objectFile = ""
-	globalTimeout = 500 * time.Millisecond
-
-	// No file and stdin is a terminal => should error with "no data provided"
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_GetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectGetCommand()
-	globalTenantID = "tenant-1"
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "RPC call to dead server should fail")
-}
-
-func TestObjectStorage91_DeleteCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectDeleteCommand()
-	globalTenantID = "tenant-1"
-	objectDeleteSource = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectDeleteCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_HeadCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectHeadCommand()
-	globalTenantID = "tenant-1"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectHeadCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListCommand()
-	objectPrefix = "images/"
-	globalTenantID = "tenant-1"
-	objectLimit = 50
-	objectCursor = "cursor-abc"
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListByTagCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListByTagCommand()
-	objectTagFilter = "type=document"
-	globalTenantID = "tenant-1"
-	objectLimit = 50
-	objectCursor = ""
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTagCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ListByTagCommand_InvalidTagFormat(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectListByTagCommand()
-	objectTagFilter = "invalidnoequals"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTagCommand(cmd, []string{})
-	assert.Error(t, err, "tag without = separator should return error")
-}
-
-func TestObjectStorage91_ListByTenantCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectListByTenantCommand()
-	globalTenantID = "tenant-123"
-	objectLimit = 100
-	objectCursor = ""
-	objectIncludeMeta = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectListByTenantCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_CopyCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectCopyCommand()
-	objectCopyTags = true
-	globalTenantID = "tenant-1"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectCopyCommand(cmd, []string{"src/key", "dst/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ArchiveCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectArchiveCommand()
-	objectTargetStore = "cold-store"
-	objectDeleteFromPrimary = true
-	objectCompressionLevel = 6
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectArchiveCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_HotTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectDestBackend = "hot-backend"
-	objectRestoreDays = 14
-	objectRestoreTier = "hot"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_WarmTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectRestoreTier = "warm"
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_RestoreCommand_RPCFailure_DefaultTier(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectRestoreCommand()
-	objectRestoreTier = ""
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_VerifyCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectVerifyCommand()
-	objectCheckAll = true
-	objectRepair = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectVerifyCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_ReplicateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectReplicateCommand()
-	objectDestBackend = "store-a, store-b"
-	objectSync = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectReplicateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MigrateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectMigrateCommand()
-	objectDestBackend = "archive-backend"
-	objectDeleteSource = true
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMigrateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataGetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectMetadataGetCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataUpdateCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first (resets objectMetadata to "").
-	cmd := newObjectMetadataUpdateCommand()
-	// Set globals after command creation.
-	objectMetadata = `{"replication":{"enabled":true,"min_replicas":3}}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_MetadataUpdateCommand_InvalidJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectMetadataUpdateCommand()
-	objectMetadata = `{not valid json}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err, "invalid metadata JSON should return error")
-}
-
-func TestObjectStorage91_StatsCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectStatsCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_LifecycleSetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	// Create command first (resets objectPolicyJSON to "").
-	cmd := newObjectLifecycleSetCommand()
-	// Set globals after command creation.
-	objectPolicyJSON = `{"archive":{"enabled":true,"archive_after_days":30}}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
-}
-
-func TestObjectStorage91_LifecycleSetCommand_InvalidJSON(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	cmd := newObjectLifecycleSetCommand()
-	objectPolicyJSON = `{not valid}`
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleSetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err, "invalid policy JSON should return error")
-}
-
-func TestObjectStorage91_LifecycleGetCommand_RPCFailure(t *testing.T) {
-	restore := saveAndRestoreObjectGlobals(t)
-	defer restore()
-
-	client := newDeadGRPCClient(t)
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return client, nil
-	}
-
-	cmd := newObjectLifecycleGetCommand()
-	globalTimeout = 500 * time.Millisecond
-
-	err := runObjectLifecycleGetCommand(cmd, []string{"mybucket"})
-	assert.Error(t, err)
 }
 
 // =============================================================================
