@@ -31,6 +31,7 @@ import (
 	restapi "github.com/jeremyhahn/go-quicbaas/pkg/api/rest"
 	"github.com/jeremyhahn/go-quicbaas/pkg/apimodule"
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
+	"github.com/jeremyhahn/go-quicbaas/pkg/iam"
 	"github.com/jeremyhahn/go-quicbaas/pkg/routing"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 	qbshards "github.com/jeremyhahn/go-quicbaas/pkg/shards"
@@ -688,7 +689,13 @@ func (s *Server) unifiedModuleServerOptions(serverOpts []qrdbsdk.ServerOption) (
 		xkmssdk.WithServiceModuleWebAuthn(quicbaasWebAuthnConfigToXKMS(
 			s.config.IAM.WebAuthn, s.config.IAM.SelfServiceRegistration.Enabled)),
 		xkmssdk.WithServiceModuleWebAuthnCredentialStoreDecorator(webauthnCredentialStoreDecorator),
-		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{}),
+		// One key signs every platform token the node validates: the module's
+		// session tokens use the quicbaas OIDC key, issuer and audience (#2134).
+		xkmssdk.WithServiceModuleSession(&xkmssdk.ServiceModuleSessionOptions{
+			SigningKeyCN: iam.OIDCSigningKeyCN,
+			Issuer:       s.getIssuerURL(),
+			Audience:     []string{s.getIssuerURL()},
+		}),
 		// The xkms module serves its OWN PIV login at /api/v1/auth/login/piv.
 		// Since go-xkms v0.49.0-alpha it checks the slot attestation itself,
 		// so it has to be told that the operator accepted unattested login.
