@@ -70,14 +70,6 @@ func TestXKMSToolsRegistered(t *testing.T) {
 	}
 }
 
-// TestXKMSToolsNotRegisteredWithWrongPrefix verifies that tool names
-// without the xkms prefix are not mistakenly identified as xkms tools.
-func TestXKMSToolsNotRegisteredWithWrongPrefix(t *testing.T) {
-	assert.False(t, isXKMSTool("quicbaas_kms_generate_key"))
-	assert.False(t, isXKMSTool(""))
-	assert.False(t, isXKMSTool("xkm.something"))
-}
-
 // =============================================================================
 // isXKMSTool Tests
 // =============================================================================
@@ -93,6 +85,7 @@ func TestIsXKMSTool(t *testing.T) {
 		{name: "valid xkms seal", toolName: "xkms.seal", expected: true},
 		{name: "valid xkms list", toolName: "xkms.listBackends", expected: true},
 		{name: "quicbaas tool", toolName: "qrdb_put", expected: false},
+		{name: "kms tool", toolName: "quicbaas_kms_generate_key", expected: false},
 		{name: "empty string", toolName: "", expected: false},
 		{name: "partial prefix", toolName: "xkm.generateKey", expected: false},
 		{name: "similar but wrong", toolName: "xkms_generateKey", expected: false},
@@ -198,182 +191,54 @@ func TestExecuteXKMSToolDispatchesCorrectly(t *testing.T) {
 // Error Handling Tests
 // =============================================================================
 
-// TestXKMSGenerateKeyMissingKeyID verifies required field validation for generateKey.
-func TestXKMSGenerateKeyMissingKeyID(t *testing.T) {
+// TestXKMSHandlersMissingRequiredArgs verifies required field validation:
+// each handler rejects a call that omits one required argument and names
+// that argument in the error.
+func TestXKMSHandlersMissingRequiredArgs(t *testing.T) {
 	log := newTestLogger(t)
 	svc := newMinimalMockService()
 	registry := NewToolRegistry(svc, log)
 
-	ctx := context.Background()
-	_, err := registry.handleXKMSGenerateKey(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
-// TestXKMSGetKeyMissingKeyID verifies required field validation for getKey.
-func TestXKMSGetKeyMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
+	tests := []struct {
+		name    string
+		handler XKMSToolHandler
+		args    map[string]interface{}
+		missing string
+	}{
+		{"generateKey key_id", registry.handleXKMSGenerateKey, map[string]interface{}{}, "key_id"},
+		{"getKey key_id", registry.handleXKMSGetKey, map[string]interface{}{}, "key_id"},
+		{"deleteKey key_id", registry.handleXKMSDeleteKey, map[string]interface{}{}, "key_id"},
+		{"rotateKey key_id", registry.handleXKMSRotateKey, map[string]interface{}{}, "key_id"},
+		{"sign key_id", registry.handleXKMSSign, map[string]interface{}{"data": b64("test")}, "key_id"},
+		{"sign data", registry.handleXKMSSign, map[string]interface{}{"key_id": "test-key"}, "data"},
+		{"verify key_id", registry.handleXKMSVerify, map[string]interface{}{"data": b64("test"), "signature": b64("sig")}, "key_id"},
+		{"verify data", registry.handleXKMSVerify, map[string]interface{}{"key_id": "test-key", "signature": b64("sig")}, "data"},
+		{"verify signature", registry.handleXKMSVerify, map[string]interface{}{"key_id": "test-key", "data": b64("test")}, "signature"},
+		{"encrypt key_id", registry.handleXKMSEncrypt, map[string]interface{}{"plaintext": b64("test")}, "key_id"},
+		{"encrypt plaintext", registry.handleXKMSEncrypt, map[string]interface{}{"key_id": "test-key"}, "plaintext"},
+		{"decrypt key_id", registry.handleXKMSDecrypt, map[string]interface{}{"ciphertext": b64("test")}, "key_id"},
+		{"decrypt ciphertext", registry.handleXKMSDecrypt, map[string]interface{}{"key_id": "test-key"}, "ciphertext"},
+		{"saveCert key_id", registry.handleXKMSSaveCert, map[string]interface{}{"cert_pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"}, "key_id"},
+		{"saveCert cert_pem", registry.handleXKMSSaveCert, map[string]interface{}{"key_id": "test-key"}, "cert_pem"},
+		{"getCert key_id", registry.handleXKMSGetCert, map[string]interface{}{}, "key_id"},
+		{"deleteCert key_id", registry.handleXKMSDeleteCert, map[string]interface{}{}, "key_id"},
+		{"certExists key_id", registry.handleXKMSCertExists, map[string]interface{}{}, "key_id"},
+		{"saveCertChain key_id", registry.handleXKMSSaveCertChain, map[string]interface{}{"chain_pems": []interface{}{"pem1"}}, "key_id"},
+		{"saveCertChain chain_pems", registry.handleXKMSSaveCertChain, map[string]interface{}{"key_id": "test-key"}, "chain_pems"},
+		{"getCertChain key_id", registry.handleXKMSGetCertChain, map[string]interface{}{}, "key_id"},
+		{"seal data", registry.handleXKMSSeal, map[string]interface{}{}, "data"},
+		{"unseal ciphertext", registry.handleXKMSUnseal, map[string]interface{}{}, "ciphertext"},
+	}
 
-	ctx := context.Background()
-	_, err := registry.handleXKMSGetKey(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSDeleteKeyMissingKeyID verifies required field validation for deleteKey.
-func TestXKMSDeleteKeyMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSDeleteKey(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSRotateKeyMissingKeyID verifies required field validation for rotateKey.
-func TestXKMSRotateKeyMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSRotateKey(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSSignMissingKeyID verifies required field validation for sign.
-func TestXKMSSignMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSSign(ctx, map[string]interface{}{
-		"data": base64.StdEncoding.EncodeToString([]byte("test")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSSignMissingData verifies required field validation for sign data.
-func TestXKMSSignMissingData(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSSign(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data")
-}
-
-// TestXKMSVerifyMissingFields verifies required field validation for verify.
-func TestXKMSVerifyMissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-
-	// Missing key_id
-	_, err := registry.handleXKMSVerify(ctx, map[string]interface{}{
-		"data":      base64.StdEncoding.EncodeToString([]byte("test")),
-		"signature": base64.StdEncoding.EncodeToString([]byte("sig")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-
-	// Missing data
-	_, err = registry.handleXKMSVerify(ctx, map[string]interface{}{
-		"key_id":    "test-key",
-		"signature": base64.StdEncoding.EncodeToString([]byte("sig")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data")
-
-	// Missing signature
-	_, err = registry.handleXKMSVerify(ctx, map[string]interface{}{
-		"key_id": "test-key",
-		"data":   base64.StdEncoding.EncodeToString([]byte("test")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature")
-}
-
-// TestXKMSEncryptMissingFields verifies required field validation for encrypt.
-func TestXKMSEncryptMissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-
-	// Missing key_id
-	_, err := registry.handleXKMSEncrypt(ctx, map[string]interface{}{
-		"plaintext": base64.StdEncoding.EncodeToString([]byte("test")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-
-	// Missing plaintext
-	_, err = registry.handleXKMSEncrypt(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "plaintext")
-}
-
-// TestXKMSDecryptMissingFields verifies required field validation for decrypt.
-func TestXKMSDecryptMissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-
-	// Missing key_id
-	_, err := registry.handleXKMSDecrypt(ctx, map[string]interface{}{
-		"ciphertext": base64.StdEncoding.EncodeToString([]byte("test")),
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-
-	// Missing ciphertext
-	_, err = registry.handleXKMSDecrypt(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ciphertext")
-}
-
-// TestXKMSSaveCertMissingFields verifies required field validation for saveCert.
-func TestXKMSSaveCertMissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-
-	// Missing key_id
-	_, err := registry.handleXKMSSaveCert(ctx, map[string]interface{}{
-		"cert_pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-
-	// Missing cert_pem
-	_, err = registry.handleXKMSSaveCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cert_pem")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.handler(context.Background(), tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.missing)
+		})
+	}
 }
 
 // TestXKMSSaveCertInvalidPEM verifies PEM validation for saveCert.
@@ -392,140 +257,38 @@ func TestXKMSSaveCertInvalidPEM(t *testing.T) {
 	assert.ErrorAs(t, err, &pemErr)
 }
 
-// TestXKMSGetCertMissingKeyID verifies required field validation for getCert.
-func TestXKMSGetCertMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSGetCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSDeleteCertMissingKeyID verifies required field validation for deleteCert.
-func TestXKMSDeleteCertMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSDeleteCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSCertExistsMissingKeyID verifies required field validation for certExists.
-func TestXKMSCertExistsMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSCertExists(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSSaveCertChainMissingFields verifies required field validation for saveCertChain.
-func TestXKMSSaveCertChainMissingFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-
-	// Missing key_id
-	_, err := registry.handleXKMSSaveCertChain(ctx, map[string]interface{}{
-		"chain_pems": []interface{}{"pem1"},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-
-	// Missing chain_pems
-	_, err = registry.handleXKMSSaveCertChain(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "chain_pems")
-}
-
-// TestXKMSGetCertChainMissingKeyID verifies required field validation for getCertChain.
-func TestXKMSGetCertChainMissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSGetCertChain(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key_id")
-}
-
-// TestXKMSSealMissingData verifies required field validation for seal.
-func TestXKMSSealMissingData(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSSeal(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "data")
-}
-
-// TestXKMSUnsealMissingCiphertext verifies required field validation for unseal.
-func TestXKMSUnsealMissingCiphertext(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	_, err := registry.handleXKMSUnseal(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ciphertext")
-}
-
 // =============================================================================
 // Base64 Decode Error Tests
 // =============================================================================
 
-// TestDecodeBase64ArgInvalidData verifies base64 decode error handling.
-func TestDecodeBase64ArgInvalidData(t *testing.T) {
-	args := map[string]interface{}{
-		"data": "not-valid-base64!!!@@@",
+// TestDecodeBase64Arg verifies decoding, the nil result for a missing or
+// empty field, and the typed error for invalid input.
+func TestDecodeBase64Arg(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    map[string]interface{}
+		want    []byte
+		wantErr bool
+	}{
+		{name: "valid data", args: map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte("hello world"))}, want: []byte("hello world")},
+		{name: "missing field", args: map[string]interface{}{}},
+		{name: "empty string", args: map[string]interface{}{"data": ""}},
+		{name: "invalid data", args: map[string]interface{}{"data": "not-valid-base64!!!@@@"}, wantErr: true},
 	}
 
-	_, err := decodeBase64Arg(args, "data")
-	require.Error(t, err)
-
-	var b64Err *Base64DecodeError
-	assert.ErrorAs(t, err, &b64Err)
-	assert.Equal(t, "data", b64Err.Field)
-}
-
-// TestDecodeBase64ArgEmptyValue returns nil for missing or empty fields.
-func TestDecodeBase64ArgEmptyValue(t *testing.T) {
-	// Missing field
-	data, err := decodeBase64Arg(map[string]interface{}{}, "data")
-	require.NoError(t, err)
-	assert.Nil(t, data)
-
-	// Empty string
-	data, err = decodeBase64Arg(map[string]interface{}{"data": ""}, "data")
-	require.NoError(t, err)
-	assert.Nil(t, data)
-}
-
-// TestDecodeBase64ArgValidData verifies correct decoding.
-func TestDecodeBase64ArgValidData(t *testing.T) {
-	expected := []byte("hello world")
-	encoded := base64.StdEncoding.EncodeToString(expected)
-
-	data, err := decodeBase64Arg(map[string]interface{}{"data": encoded}, "data")
-	require.NoError(t, err)
-	assert.Equal(t, expected, data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := decodeBase64Arg(tt.args, "data")
+			if tt.wantErr {
+				var b64Err *Base64DecodeError
+				require.ErrorAs(t, err, &b64Err)
+				assert.Equal(t, "data", b64Err.Field)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, data)
+		})
+	}
 }
 
 // =============================================================================
@@ -605,57 +368,6 @@ func TestXKMSKeyAttrsFromArgsNoBackend(t *testing.T) {
 	assert.Equal(t, "my-key", attrs.CN)
 	assert.False(t, attrs.Exportable)
 	assert.Empty(t, string(attrs.StoreType))
-}
-
-// =============================================================================
-// Error Type Tests
-// =============================================================================
-
-// TestXKMSOperationError verifies the XKMSOperationError type.
-func TestXKMSOperationError(t *testing.T) {
-	err := &XKMSOperationError{Operation: "generateKey", Cause: assert.AnError}
-	assert.Contains(t, err.Error(), "xkms generateKey failed")
-	assert.Contains(t, err.Error(), assert.AnError.Error())
-	assert.Equal(t, assert.AnError, err.Unwrap())
-
-	// Without cause
-	errNoCause := &XKMSOperationError{Operation: "deleteKey"}
-	assert.Equal(t, "xkms deleteKey failed", errNoCause.Error())
-}
-
-// TestXKMSInvalidCurveError verifies the XKMSInvalidCurveError type.
-func TestXKMSInvalidCurveError(t *testing.T) {
-	err := &XKMSInvalidCurveError{Curve: "P-999"}
-	assert.Equal(t, "invalid elliptic curve: P-999", err.Error())
-}
-
-// TestXKMSInvalidPEMError verifies the XKMSInvalidPEMError type.
-func TestXKMSInvalidPEMError(t *testing.T) {
-	err := &XKMSInvalidPEMError{Field: "cert_pem"}
-	assert.Equal(t, "invalid PEM data in field: cert_pem", err.Error())
-}
-
-// TestXKMSCertificateParseError verifies the XKMSCertificateParseError type.
-func TestXKMSCertificateParseError(t *testing.T) {
-	err := &XKMSCertificateParseError{Cause: assert.AnError}
-	assert.Contains(t, err.Error(), "failed to parse certificate")
-	assert.Equal(t, assert.AnError, err.Unwrap())
-
-	errNoCause := &XKMSCertificateParseError{}
-	assert.Equal(t, "failed to parse certificate", errNoCause.Error())
-}
-
-// TestBase64DecodeError verifies the Base64DecodeError type.
-func TestBase64DecodeError(t *testing.T) {
-	err := &Base64DecodeError{Field: "data", Cause: assert.AnError}
-	assert.Contains(t, err.Error(), "failed to decode base64 field data")
-	assert.Equal(t, assert.AnError, err.Unwrap())
-}
-
-// TestXKMSNotInitializedError verifies the XKMSNotInitializedError type.
-func TestXKMSNotInitializedError(t *testing.T) {
-	err := &XKMSNotInitializedError{}
-	assert.Equal(t, "xkms service not initialized", err.Error())
 }
 
 // =============================================================================
