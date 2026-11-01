@@ -1266,34 +1266,6 @@ func TestGetUserLinks(t *testing.T) {
 			wantErr:       false,
 		},
 		{
-			name:     "success with links",
-			userID:   0,
-			tenantID: "tenant1",
-			setup: func(m *DefaultFederationManager, ps *MemoryProviderStorage, ls *MemoryFederationStorage, is *IdentityStore) uint64 {
-				ctx := context.Background()
-				user, _ := is.CreateUser(ctx, "tenant1", CreateUserOptions{
-					ID:       "user-123",
-					Email:    "user@example.com",
-					Username: "testuser",
-				})
-
-				for i := 0; i < 2; i++ {
-					link := &FederatedIdentity{
-						ID:         fmt.Sprintf("link-%d", i),
-						UserID:     user.ID,
-						TenantID:   "tenant1",
-						ProviderID: fmt.Sprintf("provider-%d", i),
-						ExternalID: fmt.Sprintf("external-%d", i),
-					}
-					_ = ls.CreateLink(ctx, link)
-				}
-
-				return user.ID
-			},
-			expectedCount: 2,
-			wantErr:       false,
-		},
-		{
 			name:     "success filters by tenant",
 			userID:   0,
 			tenantID: "tenant1",
@@ -2637,6 +2609,8 @@ func TestProcessAuthentication_JITProvision(t *testing.T) {
 	require.NotNil(t, result)
 	assert.True(t, result.Provisioned)
 	assert.NotEmpty(t, result.User.ID)
+	assert.Equal(t, "New User", result.User.Name)
+	assert.Equal(t, "newuser@example.com", result.User.Email)
 }
 
 func TestProcessAuthentication_NoExternalID(t *testing.T) {
@@ -2691,22 +2665,6 @@ func TestProcessAuthentication_JITDisabled(t *testing.T) {
 // =============================================================================
 // Federation: provisionUser tests
 // =============================================================================
-
-func TestProvisionUser_Success(t *testing.T) {
-	manager, _, _, _, _, _ := setupTestFederationManager(t)
-	ctx := context.Background()
-
-	provider := createTestProvider("tenant1", "okta")
-	provider.ApplyDefaults()
-	provider.ID = "provider-1"
-
-	user, err := manager.provisionUser(ctx, provider, "tenant1", "ext-1", "provisioned@example.com", "Provisioned User", nil)
-	require.NoError(t, err)
-	require.NotNil(t, user)
-	assert.NotEmpty(t, user.ID)
-	assert.Equal(t, "Provisioned User", user.Name)
-	assert.Equal(t, "provisioned@example.com", user.Email)
-}
 
 func TestProvisionUser_NoEmail_Error(t *testing.T) {
 	manager, _, _, _, _, _ := setupTestFederationManager(t)
@@ -2784,55 +2742,34 @@ func TestProvisionUser_WithDefaultRoles(t *testing.T) {
 // =============================================================================
 
 func TestGenerateTokenResult_WithoutOIDCProvider(t *testing.T) {
-	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
-	ctx := context.Background()
+	for _, provisioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("provisioned=%t", provisioned), func(t *testing.T) {
+			manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
+			ctx := context.Background()
 
-	user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "tokenuser@example.com",
-		Username: "tokenuser",
-		Name:     "Token User",
-	})
-	require.NoError(t, err)
+			user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
+				Email:    "tokenuser@example.com",
+				Username: "tokenuser",
+				Name:     "Token User",
+			})
+			require.NoError(t, err)
 
-	identity := &FederatedIdentity{
-		ID:         "identity-1",
-		UserID:     user.ID,
-		TenantID:   "tenant1",
-		ProviderID: "provider-1",
-		ExternalID: "ext-1",
+			identity := &FederatedIdentity{
+				ID:         "identity-1",
+				UserID:     user.ID,
+				TenantID:   "tenant1",
+				ProviderID: "provider-1",
+				ExternalID: "ext-1",
+			}
+
+			result, err := manager.generateTokenResult(ctx, user, identity, provisioned, nil)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, user.ID, result.User.ID)
+			assert.Empty(t, result.AccessToken) // No OIDC provider set
+			assert.Equal(t, provisioned, result.Provisioned)
+		})
 	}
-
-	result, err := manager.generateTokenResult(ctx, user, identity, false, nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, user.ID, result.User.ID)
-	assert.Empty(t, result.AccessToken) // No OIDC provider set
-	assert.False(t, result.Provisioned)
-}
-
-func TestGenerateTokenResult_Provisioned(t *testing.T) {
-	manager, _, _, _, identityStore, _ := setupTestFederationManager(t)
-	ctx := context.Background()
-
-	user, err := identityStore.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "provuser@example.com",
-		Username: "provuser",
-		Name:     "Provisioned User",
-	})
-	require.NoError(t, err)
-
-	identity := &FederatedIdentity{
-		ID:         "identity-2",
-		UserID:     user.ID,
-		TenantID:   "tenant1",
-		ProviderID: "provider-1",
-		ExternalID: "ext-2",
-	}
-
-	result, err := manager.generateTokenResult(ctx, user, identity, true, nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.Provisioned)
 }
 
 // =============================================================================
