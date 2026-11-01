@@ -1980,60 +1980,53 @@ func TestBackendDispatcher_RoutesToRemoteBackendWhenResolverMatches(t *testing.T
 	}
 }
 
-func TestBackendDispatcher_FallsBackToLocalWhenResolverDeclines(t *testing.T) {
+func TestBackendDispatcher_LocalLookupWithoutRemoteMatch(t *testing.T) {
 	t.Parallel()
 
-	local := &mockAgentBackend{backendType: "local"}
-
-	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
-		"acp": local,
-	}, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("NewAgentService: %v", err)
-	}
-	svcImpl := svc.(*agentServiceImpl)
-
-	svcImpl.SetRemoteBackendResolver(func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
-		return nil, false
-	})
-
-	got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "")
-	if err != nil {
-		t.Fatalf("lookupBackendCtx: %v", err)
-	}
-	if got != local {
-		t.Fatalf("expected local backend, got %T", got)
-	}
-}
-
-func TestBackendDispatcher_NilResolverUsesLocalLookup(t *testing.T) {
-	t.Parallel()
-
-	local := &mockAgentBackend{backendType: "local"}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
-		"acp": local,
-	}, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("NewAgentService: %v", err)
-	}
-	svcImpl := svc.(*agentServiceImpl)
-
-	got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "")
-	if err != nil {
-		t.Fatalf("lookupBackendCtx: %v", err)
-	}
-	if got != local {
-		t.Fatalf("expected local, got %T", got)
+	tests := []struct {
+		name     string
+		resolver func(ctx context.Context, name, projectID string) (AgentBackend, bool)
+	}{
+		{
+			name: "resolver declines",
+			resolver: func(ctx context.Context, name, projectID string) (AgentBackend, bool) {
+				return nil, false
+			},
+		},
+		{name: "nil resolver", resolver: nil},
 	}
 
-	// Unknown backend with nil resolver should still surface BackendNotFoundError.
-	if _, err := svcImpl.lookupBackendCtx(context.Background(), "missing", ""); err == nil {
-		t.Fatal("expected not-found error for missing backend")
-	} else {
-		var nfe *BackendNotFoundError
-		if !errors.As(err, &nfe) {
-			t.Fatalf("expected *BackendNotFoundError, got %T", err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			local := &mockAgentBackend{backendType: "local"}
+			svc, err := NewAgentService(NewInMemoryAgentStore(), map[string]AgentBackend{
+				"acp": local,
+			}, &agentTestLogger{})
+			if err != nil {
+				t.Fatalf("NewAgentService: %v", err)
+			}
+			svcImpl := svc.(*agentServiceImpl)
+			if tt.resolver != nil {
+				svcImpl.SetRemoteBackendResolver(tt.resolver)
+			}
+
+			got, err := svcImpl.lookupBackendCtx(context.Background(), "acp", "")
+			if err != nil {
+				t.Fatalf("lookupBackendCtx: %v", err)
+			}
+			if got != local {
+				t.Fatalf("expected local backend, got %T", got)
+			}
+
+			// An unknown backend still surfaces BackendNotFoundError.
+			_, err = svcImpl.lookupBackendCtx(context.Background(), "missing", "")
+			var nfe *BackendNotFoundError
+			if !errors.As(err, &nfe) {
+				t.Fatalf("expected *BackendNotFoundError, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
