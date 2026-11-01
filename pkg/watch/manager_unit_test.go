@@ -466,163 +466,88 @@ func TestSendEvent_WithFilters(t *testing.T) {
 	}
 }
 
-// TestSendEvent_ContextCancelled verifies handling of cancelled context.
+// TestSendEvent_ContextCancelled verifies that sendEvent returns instead of
+// blocking when the watch's context is cancelled and its channel is full.
 func TestSendEvent_ContextCancelled(t *testing.T) {
 	mgr := NewManager()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
+	// An unbuffered channel with no reader leaves ctx.Done as the only
+	// ready case, so sendEvent returns only through the cancellation path.
 	watch := &Watch{
-		ID:      1,
-		Filters: WatchFilters{},
-		Events:  make(chan *WatchEvent, 1),
-		ctx:     ctx,
-		cancel:  cancel,
+		ID:     1,
+		Events: make(chan *WatchEvent),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
-	event := &WatchEvent{
-		Type: PUT,
-		Kv: &KeyValue{
-			Key:   []byte("key"),
-			Value: []byte("value"),
-		},
+	mgr.sendEvent(watch, &WatchEvent{Type: PUT, Kv: &KeyValue{Key: []byte("key"), Value: []byte("value")}})
+}
+
+// TestNotify verifies that NotifyPut and NotifyDelete deliver events to exact
+// and prefix watches that match the key, and to no watch otherwise.
+func TestNotify(t *testing.T) {
+	tests := []struct {
+		name      string
+		watchKey  []byte // nil registers no watch
+		rangeEnd  []byte
+		delete    bool
+		key       []byte
+		value     []byte
+		prevValue []byte
+		revision  int64
+		wantEvent bool
+	}{
+		{name: "put with no watches", key: []byte("key"), value: []byte("value"), revision: 1},
+		{name: "delete with no watches", delete: true, key: []byte("key"), prevValue: []byte("prev-value"), revision: 1},
+		{name: "put exact match", watchKey: []byte("test-key"), key: []byte("test-key"), value: []byte("test-value"), revision: 1, wantEvent: true},
+		{name: "put prefix match", watchKey: []byte("/config/"), rangeEnd: getPrefix([]byte("/config/")), key: []byte("/config/server"), value: []byte("localhost"), revision: 1, wantEvent: true},
+		{name: "put no match", watchKey: []byte("key-a"), key: []byte("key-b"), value: []byte("value"), revision: 1},
+		{name: "delete exact match", watchKey: []byte("test-key"), delete: true, key: []byte("test-key"), prevValue: []byte("old-value"), revision: 2, wantEvent: true},
 	}
 
-	// Should not panic or block - this is the important guarantee
-	// The implementation uses a select, so there's a race:
-	// - It might send to channel (buffered, so doesn't block)
-	// - It might detect cancelled context first
-	// Both outcomes are acceptable as long as it doesn't block
-	assert.NotPanics(t, func() {
-		mgr.sendEvent(watch, event)
-	})
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-// TestNotifyPut_NoWatches verifies fast path when no watches exist.
-func TestNotifyPut_NoWatches(t *testing.T) {
-	mgr := NewManager()
+			var watch *Watch
+			if tt.watchKey != nil {
+				var err error
+				watch, err = mgr.addInternal(tt.watchKey, tt.rangeEnd, 0, WatchFilters{}, &mockWatchStream{ctx: ctx}, &watchOptions{}, true)
+				require.NoError(t, err)
+			}
 
-	// Should return immediately without error
-	assert.NotPanics(t, func() {
-		mgr.NotifyPut([]byte("key"), nil, []byte("value"), 1, 1)
-	})
+			if tt.delete {
+				mgr.NotifyDelete(tt.key, tt.prevValue, tt.revision, 1)
+			} else {
+				mgr.NotifyPut(tt.key, nil, tt.value, tt.revision, 1)
+			}
 
-	// Verify watchCount is still 0
-	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestNotifyDelete_NoWatches verifies fast path when no watches exist.
-func TestNotifyDelete_NoWatches(t *testing.T) {
-	mgr := NewManager()
-
-	// Should return immediately without error
-	assert.NotPanics(t, func() {
-		mgr.NotifyDelete([]byte("key"), []byte("prev-value"), 1, 1)
-	})
-
-	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestNotify_ExactMatch verifies exact key notification.
-func TestNotify_ExactMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("test-key"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify PUT
-	mgr.NotifyPut([]byte("test-key"), nil, []byte("test-value"), 1, 1)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, PUT, event.Type)
-		assert.Equal(t, []byte("test-key"), event.Kv.Key)
-		assert.Equal(t, []byte("test-value"), event.Kv.Value)
-		assert.Equal(t, int64(1), event.Revision)
-		assert.Equal(t, int64(1), event.Kv.ModRevision)
-	default:
-		t.Error("Expected event not received")
-	}
-}
-
-// TestNotify_PrefixMatch verifies prefix key notification.
-func TestNotify_PrefixMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	prefix := []byte("/config/")
-	rangeEnd := getPrefix(prefix)
-
-	watch, err := mgr.addInternal(prefix, rangeEnd, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify PUT for key matching prefix
-	mgr.NotifyPut([]byte("/config/server"), nil, []byte("localhost"), 1, 1)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, PUT, event.Type)
-		assert.Equal(t, []byte("/config/server"), event.Kv.Key)
-		assert.Equal(t, []byte("localhost"), event.Kv.Value)
-	default:
-		t.Error("Expected event not received")
-	}
-}
-
-// TestNotify_NoMatch verifies non-matching keys don't trigger events.
-func TestNotify_NoMatch(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("key-a"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify for different key
-	mgr.NotifyPut([]byte("key-b"), nil, []byte("value"), 1, 1)
-
-	// Should not receive event
-	select {
-	case <-watch.Events:
-		t.Error("Should not receive event for non-matching key")
-	default:
-		// Expected
-	}
-}
-
-// TestNotify_DeleteEvent verifies DELETE event handling.
-func TestNotify_DeleteEvent(t *testing.T) {
-	mgr := NewManager()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	stream := &mockWatchStream{ctx: ctx}
-	watch, err := mgr.addInternal([]byte("test-key"), nil, 0, WatchFilters{}, stream, &watchOptions{}, true)
-	require.NoError(t, err)
-
-	// Notify DELETE
-	mgr.NotifyDelete([]byte("test-key"), []byte("old-value"), 2, 2)
-
-	// Check event received
-	select {
-	case event := <-watch.Events:
-		assert.Equal(t, DELETE, event.Type)
-		assert.Equal(t, []byte("test-key"), event.Kv.Key)
-		assert.Nil(t, event.Kv.Value) // DELETE events have nil value
-		assert.NotNil(t, event.PrevKv)
-		assert.Equal(t, []byte("old-value"), event.PrevKv.Value)
-		assert.Equal(t, int64(2), event.Revision)
-	default:
-		t.Error("Expected event not received")
+			if watch == nil {
+				return
+			}
+			select {
+			case event := <-watch.Events:
+				require.True(t, tt.wantEvent, "event delivered for a key the watch does not match")
+				assert.Equal(t, tt.key, event.Kv.Key)
+				assert.Equal(t, tt.value, event.Kv.Value)
+				assert.Equal(t, tt.revision, event.Revision)
+				if tt.delete {
+					assert.Equal(t, DELETE, event.Type)
+					require.NotNil(t, event.PrevKv)
+					assert.Equal(t, tt.prevValue, event.PrevKv.Value)
+				} else {
+					assert.Equal(t, PUT, event.Type)
+					assert.Equal(t, tt.revision, event.Kv.ModRevision)
+				}
+			default:
+				assert.False(t, tt.wantEvent, "expected event not received")
+			}
+		})
 	}
 }
 
