@@ -282,6 +282,13 @@ func (p *OIDCProvider) Authorize(ctx context.Context, req *AuthorizeRequest) (*A
 		return nil, err
 	}
 
+	// A user of one tenant must not obtain a code for another tenant's
+	// client. The client is valid, so the refusal is redirected
+	// (RFC 6749 §4.1.2.1). An unscoped request keeps the unscoped lookup.
+	if req.TenantID != "" && app.TenantID != req.TenantID {
+		return nil, NewOAuthError(ErrOAuthAccessDenied, "client does not belong to the user's tenant")
+	}
+
 	if !contains(app.GrantTypes, GrantTypeAuthorizationCode) {
 		return nil, NewOAuthError(ErrOAuthUnauthorizedClient, "authorization_code grant not allowed for this client")
 	}

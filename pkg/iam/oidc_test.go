@@ -341,6 +341,81 @@ func TestOIDCValidateAuthorizeRequest(t *testing.T) {
 }
 
 // Test Authorize
+// createCrossTenantOIDCProvider registers a confidential client of
+// "tenant-B" and a user 123 in both "tenant-A" and "tenant-B", so a test can
+// present one tenant's grant to the other tenant's client.
+func createCrossTenantOIDCProvider(t *testing.T) (*OIDCProvider, *mockTokenStorage) {
+	t.Helper()
+	provider, _, appStorage, tokenStorage, memStorage := createTestOIDCProvider(t)
+	ctx := context.Background()
+	for _, tenantID := range []string{"tenant-A", "tenant-B"} {
+		addUserToMemStorage(ctx, memStorage, &User{
+			ID:        123,
+			TenantID:  tenantID,
+			Email:     "user@" + tenantID + ".example",
+			Lifecycle: LifecycleActive,
+			Roles:     []string{"user"},
+		})
+	}
+	if err := appStorage.CreateApp(ctx, &Application{
+		ClientID:      "tenant-b-client",
+		ClientSecret:  currentSecretHash(t, "test-secret"),
+		TenantID:      "tenant-B",
+		RedirectURIs:  []string{"https://app.example/cb"},
+		ResponseTypes: []string{ResponseTypeCode},
+		GrantTypes:    []string{GrantTypeAuthorizationCode, GrantTypeRefreshToken},
+	}); err != nil {
+		t.Fatalf("CreateApp() error = %v", err)
+	}
+	return provider, tokenStorage
+}
+
+// TestOIDCAuthorize_CrossTenantClientRefused checks that a user of one tenant
+// cannot obtain a code for another tenant's client. The client and redirect
+// URI are valid, so the refusal is redirected as access_denied
+// (RFC 6749 §4.1.2.1), never a direct error.
+func TestOIDCAuthorize_CrossTenantClientRefused(t *testing.T) {
+	provider, _ := createCrossTenantOIDCProvider(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		wantErr  bool
+	}{
+		{name: "other tenant is access_denied", tenantID: "tenant-A", wantErr: true},
+		{name: "client tenant succeeds", tenantID: "tenant-B"},
+		{name: "no tenant keeps unscoped behaviour", tenantID: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := authorizeRequestFor("tenant-b-client")
+			req.TenantID = tt.tenantID
+			resp, err := provider.Authorize(ctx, req)
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("Authorize() error = %v", err)
+				}
+				if resp.Code == "" {
+					t.Error("Authorize() returned no code")
+				}
+				return
+			}
+			var oauthErr *OAuthError
+			if !errors.As(err, &oauthErr) || oauthErr.ErrorCode != ErrOAuthAccessDenied {
+				t.Fatalf("Authorize() error = %v, want %s", err, ErrOAuthAccessDenied)
+			}
+			var directErr *AuthorizeDirectError
+			if errors.As(err, &directErr) {
+				t.Errorf("Authorize() error = %v is direct; a refusal after client validation must be redirected", err)
+			}
+			if resp != nil {
+				t.Errorf("Authorize() response = %+v, want nil", resp)
+			}
+		})
+	}
+}
+
 func TestOIDCAuthorize(t *testing.T) {
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()
