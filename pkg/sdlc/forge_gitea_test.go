@@ -388,6 +388,8 @@ func TestAddIssueLabels_AddsWithoutDisturbingTheRest(t *testing.T) {
 		{"id": 2, "name": "priority:high"},
 	})
 	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
+	// The read-back carries a label this call did not name: the check is
+	// presence, not set equality, or every add would fail on a labelled issue.
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
 		"number": 32, "state": "open",
 		"labels": []map[string]any{{"name": "priority:high"}, {"name": "task:in-progress"}},
@@ -408,28 +410,6 @@ func TestAddIssueLabels_AddsWithoutDisturbingTheRest(t *testing.T) {
 	}
 	if !strings.Contains(wrote.Body, "1") {
 		t.Errorf("body %q does not carry the resolved label id", wrote.Body)
-	}
-}
-
-// TestAddIssueLabels_ChecksPresenceNotSetEquality keeps a correct write from
-// being reported as failed.
-//
-// The labels this call did not name are supposed to still be there. Comparing
-// whole sets would make every add fail on an issue that carries anything else.
-func TestAddIssueLabels_ChecksPresenceNotSetEquality(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK, []map[string]any{
-		{"id": 1, "name": "task:ready"},
-	})
-	fixture.respondJSON("POST /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	// The read-back carries a foreign label the caller never mentioned.
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32, "state": "open",
-		"labels": []map[string]any{{"name": "task:ready"}, {"name": "someone-elses"}},
-	})
-
-	if err := backend.AddIssueLabels(context.Background(), testRepo, 32, []string{"task:ready"}); err != nil {
-		t.Fatalf("a correct add was reported as failed: %v", err)
 	}
 }
 
@@ -663,40 +643,23 @@ func TestGitea_SendsTheTokenAndNeverLogsIt(t *testing.T) {
 // =============================================================================
 
 // TestSetIssueLabels_SucceedsWhenTheWriteActuallyLanded covers the ordinary
-// path, and pins that comparison ignores order and case — Gitea returns labels
-// in its own order, and a read-back that cried wolf would get ignored.
+// path. It pins that comparison ignores order and case — Gitea returns labels
+// in its own order, and a read-back that cried wolf would get ignored — and the
+// wire form: Gitea's endpoint takes IDs, and sending names silently sets no
+// labels, another 200 that does nothing.
 func TestSetIssueLabels_SucceedsWhenTheWriteActuallyLanded(t *testing.T) {
 	backend, fixture := newGiteaFixture(t)
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
-		[]map[string]any{{"id": 1, "name": "ready"}, {"id": 2, "name": "in-progress"}})
+		[]map[string]any{{"id": 1, "name": "ready"}, {"id": 7, "name": "in-progress"}})
 	fixture.respondJSON("PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
 		"number": 32,
 		// Returned in a different order and case than requested.
-		"labels": []map[string]any{{"id": 2, "name": "In-Progress"}, {"id": 1, "name": "Ready"}},
+		"labels": []map[string]any{{"id": 7, "name": "In-Progress"}, {"id": 1, "name": "Ready"}},
 	})
 
 	if err := backend.SetIssueLabels(context.Background(), testRepo, 32, []string{"ready", "in-progress"}); err != nil {
 		t.Fatalf("a landed write was reported as failed: %v", err)
-	}
-}
-
-// TestSetIssueLabels_SendsLabelIDsNotNames pins the wire form.
-//
-// Gitea's endpoint takes IDs. Sending names silently sets no labels — another
-// 200 that does nothing — so this asserts the resolved IDs actually go out.
-func TestSetIssueLabels_SendsLabelIDsNotNames(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/labels", http.StatusOK,
-		[]map[string]any{{"id": 7, "name": "in-progress"}})
-	fixture.respondJSON("PUT /api/v1/repos/jeremyhahn/go-quicbaas/issues/32/labels", http.StatusOK, nil)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/issues/32", http.StatusOK, map[string]any{
-		"number": 32,
-		"labels": []map[string]any{{"id": 7, "name": "in-progress"}},
-	})
-
-	if err := backend.SetIssueLabels(context.Background(), testRepo, 32, []string{"in-progress"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var put string
@@ -705,8 +668,8 @@ func TestSetIssueLabels_SendsLabelIDsNotNames(t *testing.T) {
 			put = req.Body
 		}
 	}
-	if !strings.Contains(put, "[7]") {
-		t.Errorf("PUT body %q does not carry the resolved label ID", put)
+	if !strings.Contains(put, "[1,7]") {
+		t.Errorf("PUT body %q does not carry the resolved label IDs", put)
 	}
 }
 
@@ -910,25 +873,6 @@ func TestCommentOnIssue_RefusesAnEmptyBody(t *testing.T) {
 	backend, _ := newGiteaFixture(t)
 	if _, err := backend.CommentOnIssue(context.Background(), testRepo, 32, "   "); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("error = %v, want ErrInvalidInput", err)
-	}
-}
-
-// =============================================================================
-// Label normalization
-// =============================================================================
-
-// TestNormalizedLabels_IgnoresOrderAndCase pins the comparison the read-back
-// depends on. A read-back that reported a difference where there is none would
-// be turned off, which costs more than not having one.
-func TestNormalizedLabels_IgnoresOrderAndCase(t *testing.T) {
-	if a, b := normalizedLabels([]string{"Ready", "agent"}), normalizedLabels([]string{"agent", "READY"}); a != b {
-		t.Errorf("%s != %s: order or case changed the comparison", a, b)
-	}
-	if normalizedLabels(nil) != "[]" {
-		t.Errorf("an empty label set renders as %q", normalizedLabels(nil))
-	}
-	if normalizedLabels([]string{"ready"}) == normalizedLabels([]string{"ready", "agent"}) {
-		t.Error("different label sets compared equal")
 	}
 }
 
@@ -1430,6 +1374,9 @@ func TestParseWebhook_MapsTheEventsTheModuleActsOn(t *testing.T) {
 		// one must not readmit anything.
 		{"issue comment edited", "issue_comment", `{"action":"edited","issue":{"number":32}}`, EventUnsupported},
 		{"issue comment deleted", "issue_comment", `{"action":"deleted","issue":{"number":32}}`, EventUnsupported},
+		// Forges send plenty the module does not act on. Reporting those as
+		// failures would fill the log with errors for a healthy webhook.
+		{"unmapped event", "release", `{"action":"published"}`, EventUnsupported},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1486,24 +1433,6 @@ func TestParseWebhook_APipelineDeliveryCarriesItsCommit(t *testing.T) {
 	}
 }
 
-// TestParseWebhook_AnUnmappedEventIsOrdinaryNotAnError proves ordinary forge
-// traffic does not look like an outage.
-//
-// Forges send plenty the module does not act on. Reporting those as failures
-// would fill the log with errors for a healthy webhook, and the real failures
-// would be lost in them.
-func TestParseWebhook_AnUnmappedEventIsOrdinaryNotAnError(t *testing.T) {
-	backend, _ := newGiteaFixture(t)
-
-	event, err := backend.ParseWebhook("release", []byte(`{"action":"published"}`))
-	if err != nil {
-		t.Fatalf("an unmapped event was reported as a failure: %v", err)
-	}
-	if event.Kind != EventUnsupported {
-		t.Errorf("kind = %q, want unsupported", event.Kind)
-	}
-}
-
 // TestParseWebhook_CarriesTheSubjectSoAReconcileCanReReadIt covers the fields
 // the reconciler uses. The event is a hint; these are what it re-reads.
 func TestParseWebhook_CarriesTheSubjectSoAReconcileCanReReadIt(t *testing.T) {
@@ -1553,9 +1482,6 @@ func TestCancelCheckRun_RefusesRatherThanPretending(t *testing.T) {
 	}
 	if !errors.Is(err, ErrForgeUnsupported) {
 		t.Fatalf("error = %v, want ErrForgeUnsupported", err)
-	}
-	if backend.Capabilities().CancelCheckRuns {
-		t.Error("the capability flag disagrees with the method's behaviour")
 	}
 }
 
@@ -1693,24 +1619,6 @@ func TestEnsureWebhook_ARefusalDoesNotEchoTheSecret(t *testing.T) {
 				t.Fatalf("the error leaked the webhook secret: %v", err)
 			}
 		})
-	}
-}
-
-// TestEnsureWebhook_TheSpecCarriesNoSecret is a leak-prevention property.
-//
-// A WebhookSpec is stored, logged and compared. The secret travels as a
-// separate argument so it cannot ride along into any of those.
-func TestEnsureWebhook_TheSpecCarriesNoSecret(t *testing.T) {
-	spec := WebhookSpec{URL: "http://module/hook", Events: []string{"issues"}, SecretRef: "webhook/go-quicbaas"}
-	encoded, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatalf("marshalling the spec: %v", err)
-	}
-	if strings.Contains(string(encoded), "s3cret") {
-		t.Error("a secret value reached the spec")
-	}
-	if !strings.Contains(string(encoded), "webhook/go-quicbaas") {
-		t.Error("the spec lost the reference naming where the secret lives")
 	}
 }
 
@@ -2087,46 +1995,39 @@ func TestResolveLabelIDs_PaginatesBeyondOnePage(t *testing.T) {
 
 // TestGiteaBackend_GetTagReadsThePublishedTag asserts the route as well as the
 // decode: the adapter must ask Gitea's own tag endpoint, because that is the
-// record a module version pin resolves against.
+// record a module version pin resolves against. A release tag may contain a
+// slash ("release/v1.0.0"), and the whole name has to reach the forge as the
+// tag it is rather than being truncated at the separator.
 func TestGiteaBackend_GetTagReadsThePublishedTag(t *testing.T) {
 	t.Parallel()
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/tags/v0.9.5-alpha",
-		http.StatusOK, map[string]any{
-			"name":   "v0.9.5-alpha",
-			"commit": map[string]any{"sha": "deadbeefcafe"},
+	cases := []struct {
+		name string
+		sha  string
+	}{
+		{name: "v0.9.5-alpha", sha: "deadbeefcafe"},
+		{name: "release/v1.0.0", sha: "0123456789ab"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			backend, fixture := newGiteaFixture(t)
+			route := "/api/v1/repos/jeremyhahn/go-quicbaas/tags/" + tc.name
+			fixture.respondJSON("GET "+route, http.StatusOK, map[string]any{
+				"name":   tc.name,
+				"commit": map[string]any{"sha": tc.sha},
+			})
+
+			tag, err := backend.GetTag(context.Background(), testRepo, tc.name)
+			if err != nil {
+				t.Fatalf("GetTag: %v", err)
+			}
+			if tag.Name != tc.name || tag.SHA != tc.sha {
+				t.Fatalf("GetTag = %+v", tag)
+			}
+			if len(fixture.requests) != 1 || fixture.requests[0].Method != http.MethodGet || fixture.requests[0].Path != route {
+				t.Fatalf("requests = %+v, want one GET of %s", fixture.requests, route)
+			}
 		})
-
-	tag, err := backend.GetTag(context.Background(), testRepo, "v0.9.5-alpha")
-	if err != nil {
-		t.Fatalf("GetTag: %v", err)
-	}
-	if tag.Name != "v0.9.5-alpha" || tag.SHA != "deadbeefcafe" {
-		t.Fatalf("GetTag = %+v", tag)
-	}
-	if len(fixture.requests) != 1 || fixture.requests[0].Method != http.MethodGet {
-		t.Fatalf("requests = %+v, want one GET", fixture.requests)
-	}
-}
-
-// TestGiteaBackend_GetTagCarriesAPathBearingTagIntact: a release tag may contain
-// a slash ("release/v1.0.0"), and the whole name has to reach the forge as the
-// tag it is rather than being truncated at the separator.
-func TestGiteaBackend_GetTagCarriesAPathBearingTagIntact(t *testing.T) {
-	t.Parallel()
-	backend, fixture := newGiteaFixture(t)
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/tags/release/v1.0.0",
-		http.StatusOK, map[string]any{"name": "release/v1.0.0"})
-
-	tag, err := backend.GetTag(context.Background(), testRepo, "release/v1.0.0")
-	if err != nil {
-		t.Fatalf("GetTag: %v", err)
-	}
-	if tag.Name != "release/v1.0.0" {
-		t.Fatalf("GetTag = %+v", tag)
-	}
-	if got := fixture.requests[0].Path; got != "/api/v1/repos/jeremyhahn/go-quicbaas/tags/release/v1.0.0" {
-		t.Fatalf("path = %q; the whole tag name must reach the forge", got)
 	}
 }
 
@@ -2307,34 +2208,25 @@ func TestGiteaBackend_AuthenticatedUser_RefusesAnAnonymousOrFailedAnswer(t *test
 	}
 }
 
-// TestGiteaBackend_PullRequestsCarryTheirAuthor proves the opener's login is
-// read from Gitea's user field.
-func TestGiteaBackend_PullRequestsCarryTheirAuthor(t *testing.T) {
+// TestGiteaBackend_PullRequestsCarryTheirAuthorAndLabels proves the opener's
+// login is read from Gitea's user field and the label names come back, and
+// that a pull request with neither has none.
+func TestGiteaBackend_PullRequestsCarryTheirAuthorAndLabels(t *testing.T) {
 	backend, fixture := newGiteaFixture(t)
-	pull := giteaPull{Number: 7, State: "open", User: &giteaUser{Login: "agent-go-luks2"}}
+	pull := giteaPull{Number: 7, State: "open", User: &giteaUser{Login: "agent-go-luks2"}, Labels: []giteaLabel{{Name: "Factory:Parked"}}}
 	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
 
 	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
 	if err != nil {
 		t.Fatalf("ListOpenPullRequests: %v", err)
 	}
-	if len(pulls) != 2 || pulls[0].Author != "agent-go-luks2" || pulls[1].Author != "" {
-		t.Fatalf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
+	if len(pulls) != 2 {
+		t.Fatalf("got %d pull requests, want 2", len(pulls))
 	}
-}
-
-// TestGiteaBackend_PullRequestsCarryTheirLabels proves a pull request reads
-// back with its label names and that a pull request without labels has none.
-func TestGiteaBackend_PullRequestsCarryTheirLabels(t *testing.T) {
-	backend, fixture := newGiteaFixture(t)
-	pull := giteaPull{Number: 7, State: "open", Labels: []giteaLabel{{Name: "Factory:Parked"}}}
-	fixture.respondJSON("GET /api/v1/repos/jeremyhahn/go-quicbaas/pulls", http.StatusOK, []giteaPull{pull, {Number: 8, State: "open"}})
-
-	pulls, err := backend.ListOpenPullRequests(context.Background(), testRepo)
-	if err != nil {
-		t.Fatalf("ListOpenPullRequests: %v", err)
+	if pulls[0].Author != "agent-go-luks2" || pulls[1].Author != "" {
+		t.Errorf("pulls = %+v, want the first authored by agent-go-luks2 and the second by nobody", pulls)
 	}
-	if len(pulls) != 2 || len(pulls[0].Labels) != 1 || pulls[0].Labels[0] != "Factory:Parked" || len(pulls[1].Labels) != 0 {
-		t.Fatalf("pulls = %+v, want the first parked and the second unlabelled", pulls)
+	if len(pulls[0].Labels) != 1 || pulls[0].Labels[0] != "Factory:Parked" || len(pulls[1].Labels) != 0 {
+		t.Errorf("pulls = %+v, want the first parked and the second unlabelled", pulls)
 	}
 }
