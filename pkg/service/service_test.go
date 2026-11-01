@@ -726,11 +726,7 @@ func TestServiceBuilder_WithTimeSeriesStorage(t *testing.T) {
 
 	result := builder.WithTimeSeriesStorage(mockTSStorage)
 
-	// Verify it returns the builder for chaining
-	assert.NotNil(t, result)
-
-	// Verify we can still use the builder
-	assert.NotNil(t, builder)
+	assert.Same(t, builder, result, "WithTimeSeriesStorage should return the same builder for chaining")
 }
 
 func TestClusterService_RebalanceCluster_NilRaftNode(t *testing.T) {
@@ -1044,61 +1040,6 @@ func TestServiceAccessors_Embedding(t *testing.T) {
 	assert.Nil(t, embeddingService)
 }
 
-func TestTimeSeriesMethods_WritePoint(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-
-	req := &WritePointRequest{
-		Metric:    "cpu",
-		Timestamp: time.Now(),
-		Value:     1.0,
-		Tags:      map[string]string{"host": "server1"},
-	}
-
-	_, err := impl.WritePoint(nil, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not configured")
-}
-
-func TestTimeSeriesMethods_WriteBatch(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "cpu", Timestamp: time.Now(), Value: 1.0},
-		},
-	}
-
-	_, err := impl.WriteBatch(nil, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not configured")
-}
-
-func TestTimeSeriesMethods_TSQuery(t *testing.T) {
-	svc := createTestService(t)
-	defer svc.Close()
-
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-
-	req := &TSQueryRequest{
-		Metric:    "cpu",
-		StartTime: time.Now().Add(-1 * time.Hour),
-		EndTime:   time.Now(),
-	}
-
-	_, err := impl.TSQuery(nil, req)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not configured")
-}
-
 func TestAuthServiceImpl_Logout_NilManager(t *testing.T) {
 	svc := &quicBaaS{}
 	authSvc := &authService{svc: svc}
@@ -1149,87 +1090,48 @@ func TestClusterServiceImpl_CreateShard_ValidationError(t *testing.T) {
 	assert.Contains(t, err.Error(), "shard")
 }
 
-func TestServiceBuilder_WithKMSManager(t *testing.T) {
-	tests := []struct {
-		name       string
-		kmsManager interface{}
+func TestServiceBuilder_WithUntypedDependency(t *testing.T) {
+	setters := []struct {
+		name  string
+		set   func(ServiceBuilder, interface{}) ServiceBuilder
+		field func(*serviceBuilder) interface{}
 	}{
 		{
-			name:       "with nil KMS manager",
-			kmsManager: nil,
+			name:  "WithKMSManager",
+			set:   func(b ServiceBuilder, v interface{}) ServiceBuilder { return b.WithKMSManager(v) },
+			field: func(sb *serviceBuilder) interface{} { return sb.kmsManager },
 		},
 		{
-			name:       "with string (invalid type)",
-			kmsManager: "invalid",
+			name:  "WithSecretsManager",
+			set:   func(b ServiceBuilder, v interface{}) ServiceBuilder { return b.WithSecretsManager(v) },
+			field: func(sb *serviceBuilder) interface{} { return sb.secretsManager },
+		},
+		{
+			name:  "WithCryptoService",
+			set:   func(b ServiceBuilder, v interface{}) ServiceBuilder { return b.WithCryptoService(v) },
+			field: func(sb *serviceBuilder) interface{} { return sb.cryptoService },
 		},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			builder := NewServiceBuilder()
-			result := builder.WithKMSManager(tt.kmsManager)
-
-			sb, ok := result.(*serviceBuilder)
-			require.True(t, ok)
-			assert.Equal(t, tt.kmsManager, sb.kmsManager)
-			assert.Same(t, builder, result, "WithKMSManager should return the same builder for chaining")
-		})
-	}
-}
-
-func TestServiceBuilder_WithSecretsManager(t *testing.T) {
-	tests := []struct {
-		name           string
-		secretsManager interface{}
+	values := []struct {
+		name  string
+		value interface{}
 	}{
-		{
-			name:           "with nil secrets manager",
-			secretsManager: nil,
-		},
-		{
-			name:           "with string (invalid type)",
-			secretsManager: "invalid",
-		},
+		{"nil", nil},
+		{"string (invalid type)", "invalid"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			builder := NewServiceBuilder()
-			result := builder.WithSecretsManager(tt.secretsManager)
+	for _, s := range setters {
+		for _, v := range values {
+			t.Run(s.name+"/"+v.name, func(t *testing.T) {
+				builder := NewServiceBuilder()
+				result := s.set(builder, v.value)
 
-			sb, ok := result.(*serviceBuilder)
-			require.True(t, ok)
-			assert.Equal(t, tt.secretsManager, sb.secretsManager)
-			assert.Same(t, builder, result, "WithSecretsManager should return the same builder for chaining")
-		})
-	}
-}
-
-func TestServiceBuilder_WithCryptoService(t *testing.T) {
-	tests := []struct {
-		name          string
-		cryptoService interface{}
-	}{
-		{
-			name:          "with nil crypto service",
-			cryptoService: nil,
-		},
-		{
-			name:          "with string (invalid type)",
-			cryptoService: "invalid",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			builder := NewServiceBuilder()
-			result := builder.WithCryptoService(tt.cryptoService)
-
-			sb, ok := result.(*serviceBuilder)
-			require.True(t, ok)
-			assert.Equal(t, tt.cryptoService, sb.cryptoService)
-			assert.Same(t, builder, result, "WithCryptoService should return the same builder for chaining")
-		})
+				sb, ok := result.(*serviceBuilder)
+				require.True(t, ok)
+				assert.Equal(t, v.value, s.field(sb))
+				assert.Same(t, builder, result, "%s should return the same builder for chaining", s.name)
+			})
+		}
 	}
 }
 
@@ -2066,134 +1968,62 @@ func TestConsistencyLevel_String(t *testing.T) {
 	}
 }
 
-func TestServiceImpl_DeleteSeries_Delegation(t *testing.T) {
+func TestServiceImpl_TimeSeries_NotConfigured_Delegation(t *testing.T) {
 	svc := &quicBaaS{
 		timeSeriesService: &timeSeriesService{
 			tsStorage: nil,
 		},
 	}
+	ctx := context.Background()
 
-	req := &TSDeleteRequest{
-		Metric: "test.metric",
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"DeleteSeries", func() error {
+			_, err := svc.DeleteSeries(ctx, &TSDeleteRequest{Metric: "test.metric"})
+			return err
+		}},
+		{"SetRetentionPolicy", func() error {
+			_, err := svc.SetRetentionPolicy(ctx, &TSSetRetentionPolicyRequest{
+				Metric: "test.metric",
+				Policy: &TSRetentionPolicy{Duration: 24 * time.Hour},
+			})
+			return err
+		}},
+		{"ListMetrics", func() error {
+			_, err := svc.ListMetrics(ctx, &TSListMetricsRequest{})
+			return err
+		}},
+		{"WritePoint", func() error {
+			_, err := svc.WritePoint(ctx, &WritePointRequest{Metric: "test.metric", Value: 42.5})
+			return err
+		}},
+		{"WriteBatch", func() error {
+			_, err := svc.WriteBatch(ctx, &WriteBatchRequest{
+				Points: []*WritePointRequest{{Metric: "metric1", Value: 1.0}},
+			})
+			return err
+		}},
+		{"TSQuery", func() error {
+			_, err := svc.TSQuery(ctx, &TSQueryRequest{Metric: "test.metric"})
+			return err
+		}},
+		{"GetRetentionPolicy", func() error {
+			_, err := svc.GetRetentionPolicy(ctx, &TSGetRetentionPolicyRequest{Metric: "test.metric"})
+			return err
+		}},
 	}
 
-	_, err := svc.DeleteSeries(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_SetRetentionPolicy_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+			qbErr, ok := err.(*dberrors.QBError)
+			require.True(t, ok)
+			assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
+		})
 	}
-
-	req := &TSSetRetentionPolicyRequest{
-		Metric: "test.metric",
-		Policy: &TSRetentionPolicy{
-			Duration: 24 * time.Hour,
-		},
-	}
-
-	_, err := svc.SetRetentionPolicy(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_ListMetrics_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
-	}
-
-	req := &TSListMetricsRequest{}
-
-	_, err := svc.ListMetrics(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_WritePoint_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
-	}
-
-	req := &WritePointRequest{
-		Metric: "test.metric",
-		Value:  42.5,
-	}
-
-	_, err := svc.WritePoint(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_WriteBatch_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
-	}
-
-	req := &WriteBatchRequest{
-		Points: []*WritePointRequest{
-			{Metric: "metric1", Value: 1.0},
-		},
-	}
-
-	_, err := svc.WriteBatch(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_TSQuery_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
-	}
-
-	req := &TSQueryRequest{
-		Metric: "test.metric",
-	}
-
-	_, err := svc.TSQuery(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
-}
-
-func TestServiceImpl_GetRetentionPolicy_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		timeSeriesService: &timeSeriesService{
-			tsStorage: nil,
-		},
-	}
-
-	req := &TSGetRetentionPolicyRequest{
-		Metric: "test.metric",
-	}
-
-	_, err := svc.GetRetentionPolicy(context.Background(), req)
-	assert.Error(t, err)
-	qbErr, ok := err.(*dberrors.QBError)
-	require.True(t, ok)
-	assert.Equal(t, dberrors.ErrNotImplemented, qbErr.Code)
 }
 
 func TestQueryService_Query_EmptyEntityType(t *testing.T) {
@@ -2247,46 +2077,37 @@ func TestServiceImpl_ScanIndex_Delegation(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestServiceImpl_CreateAuthRole_Delegation(t *testing.T) {
+func TestServiceImpl_AuthRole_Delegation(t *testing.T) {
 	svc := &quicBaaS{
 		rbacService: &rbacService{
 			svc: &quicBaaS{},
 		},
 	}
+	ctx := context.Background()
 
-	req := &AuthCreateRoleRequest{}
-
-	// This will likely fail but we're testing delegation
-	_, err := svc.CreateAuthRole(context.Background(), req)
-	assert.Error(t, err)
-}
-
-func TestServiceImpl_DeleteAuthRole_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		rbacService: &rbacService{
-			svc: &quicBaaS{},
-		},
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"CreateAuthRole", func() error {
+			_, err := svc.CreateAuthRole(ctx, &AuthCreateRoleRequest{})
+			return err
+		}},
+		{"DeleteAuthRole", func() error {
+			_, err := svc.DeleteAuthRole(ctx, &AuthDeleteRoleRequest{})
+			return err
+		}},
+		{"ListAuthRoles", func() error {
+			_, err := svc.ListAuthRoles(ctx, &AuthListRolesRequest{})
+			return err
+		}},
 	}
 
-	req := &AuthDeleteRoleRequest{}
-
-	// This will likely fail but we're testing delegation
-	_, err := svc.DeleteAuthRole(context.Background(), req)
-	assert.Error(t, err)
-}
-
-func TestServiceImpl_ListAuthRoles_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		rbacService: &rbacService{
-			svc: &quicBaaS{},
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Error(t, tt.call())
+		})
 	}
-
-	req := &AuthListRolesRequest{}
-
-	// This will likely fail but we're testing delegation
-	_, err := svc.ListAuthRoles(context.Background(), req)
-	assert.Error(t, err)
 }
 
 func TestServiceImpl_TimeSeriesQuery_Delegation(t *testing.T) {
