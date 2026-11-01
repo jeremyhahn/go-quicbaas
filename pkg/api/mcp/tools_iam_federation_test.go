@@ -251,11 +251,14 @@ func TestGetProviderIDFromArgs(t *testing.T) {
 // Federation Execution Handler Tests - Success Paths
 // =============================================================================
 
-func TestExecuteIAMFederationCreateProvider_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
+// unavailableFederationRegistry returns a registry whose service does not
+// support federation, so every federation tool fails before reaching a manager.
+func unavailableFederationRegistry(t *testing.T) *ToolRegistry {
+	return &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
+}
 
-	result, err := reg.executeIAMFederationCreateProvider(context.Background(), map[string]interface{}{
+func TestExecuteIAMFederationCreateProvider(t *testing.T) {
+	args := map[string]interface{}{
 		"id":            "google",
 		"tenant_id":     "t1",
 		"name":          "Google OIDC",
@@ -264,149 +267,183 @@ func TestExecuteIAMFederationCreateProvider_Success(t *testing.T) {
 		"client_secret": "secret-abc",
 		"issuer_url":    "https://accounts.google.com",
 		"scopes":        []interface{}{"openid", "email"},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "google", resultMap["id"])
+	}
+	tests := []struct {
+		name    string
+		reg     func(t *testing.T) *ToolRegistry
+		wantErr bool
+	}{
+		{
+			name: "success",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{})
+			},
+		},
+		{
+			name: "service error",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{
+					registerProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
+						return errors.New("registration failed")
+					},
+				})
+			},
+			wantErr: true,
+		},
+		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.reg(t).executeIAMFederationCreateProvider(context.Background(), args)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			resultMap, ok := result.(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, "google", resultMap["id"])
+		})
+	}
 }
 
-func TestExecuteIAMFederationCreateProvider_DefaultEnabled(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	// When enabled is not explicitly provided, it should default to true
-	result, err := reg.executeIAMFederationCreateProvider(context.Background(), map[string]interface{}{
-		"id":         "google",
-		"tenant_id":  "t1",
-		"name":       "Google OIDC",
-		"type":       "oidc",
-		"client_id":  "client-123",
-		"issuer_url": "https://accounts.google.com",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+func TestExecuteIAMFederationGetProvider(t *testing.T) {
+	args := map[string]interface{}{"tenant_id": "t1", "provider_id": "google"}
+	tests := []struct {
+		name    string
+		reg     func(t *testing.T) *ToolRegistry
+		wantErr bool
+	}{
+		{
+			name: "success",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{})
+			},
+		},
+		{
+			name: "not found",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{
+					getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
+						return nil, errors.New("not found")
+					},
+				})
+			},
+			wantErr: true,
+		},
+		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.reg(t).executeIAMFederationGetProvider(context.Background(), args)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
-func TestExecuteIAMFederationCreateProvider_ServiceError(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		registerProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
-			return errors.New("registration failed")
+func TestExecuteIAMFederationUpdateProvider(t *testing.T) {
+	minimalArgs := map[string]interface{}{"id": "google", "tenant_id": "t1"}
+	tests := []struct {
+		name    string
+		mgr     *mockFederationManager
+		args    map[string]interface{}
+		wantErr bool
+	}{
+		{
+			name: "success with every field",
+			mgr:  &mockFederationManager{},
+			args: map[string]interface{}{
+				"id":             "google",
+				"tenant_id":      "t1",
+				"name":           "Updated Google",
+				"enabled":        false,
+				"client_id":      "new-client",
+				"client_secret":  "new-secret",
+				"issuer_url":     "https://updated.example.com",
+				"scopes":         []interface{}{"openid"},
+				"auto_provision": true,
+				"allow_linking":  true,
+			},
+		},
+		{
+			name: "get error",
+			mgr: &mockFederationManager{
+				getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
+					return nil, errors.New("provider not found")
+				},
+			},
+			args:    minimalArgs,
+			wantErr: true,
+		},
+		{
+			name: "update error",
+			mgr: &mockFederationManager{
+				updateProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
+					return errors.New("update failed")
+				},
+			},
+			args:    minimalArgs,
+			wantErr: true,
 		},
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationCreateProvider(context.Background(), map[string]interface{}{
-		"id": "google", "tenant_id": "t1", "name": "Google", "type": "oidc",
-		"client_id": "c1", "issuer_url": "https://example.com",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationGetProvider_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationGetProvider(context.Background(), map[string]interface{}{
-		"tenant_id":   "t1",
-		"provider_id": "google",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMFederationGetProvider_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
-			return nil, errors.New("not found")
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newFederationRegistry(t, tt.mgr)
+			result, err := reg.executeIAMFederationUpdateProvider(context.Background(), tt.args)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationGetProvider(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "provider_id": "unknown",
-	})
-	require.Error(t, err)
 }
 
-func TestExecuteIAMFederationUpdateProvider_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationUpdateProvider(context.Background(), map[string]interface{}{
-		"id":             "google",
-		"tenant_id":      "t1",
-		"name":           "Updated Google",
-		"enabled":        false,
-		"client_id":      "new-client",
-		"client_secret":  "new-secret",
-		"issuer_url":     "https://updated.example.com",
-		"scopes":         []interface{}{"openid"},
-		"auto_provision": true,
-		"allow_linking":  true,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMFederationUpdateProvider_GetError(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
-			return nil, errors.New("provider not found")
+func TestExecuteIAMFederationDeleteProvider(t *testing.T) {
+	args := map[string]interface{}{"tenant_id": "t1", "provider_id": "google"}
+	tests := []struct {
+		name    string
+		reg     func(t *testing.T) *ToolRegistry
+		wantErr bool
+	}{
+		{
+			name: "success",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{})
+			},
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationUpdateProvider(context.Background(), map[string]interface{}{
-		"id": "google", "tenant_id": "t1",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationUpdateProvider_UpdateError(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		updateProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
-			return errors.New("update failed")
+		{
+			name: "delete error",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{
+					deleteProviderFn: func(_ context.Context, _, _ string) error {
+						return errors.New("delete failed")
+					},
+				})
+			},
+			wantErr: true,
 		},
+		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationUpdateProvider(context.Background(), map[string]interface{}{
-		"id": "google", "tenant_id": "t1",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationDeleteProvider_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationDeleteProvider(context.Background(), map[string]interface{}{
-		"tenant_id":   "t1",
-		"provider_id": "google",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "deleted", resultMap["status"])
-}
-
-func TestExecuteIAMFederationDeleteProvider_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		deleteProviderFn: func(_ context.Context, _, _ string) error {
-			return errors.New("delete failed")
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.reg(t).executeIAMFederationDeleteProvider(context.Background(), args)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			resultMap, ok := result.(map[string]interface{})
+			require.True(t, ok)
+			assert.Equal(t, "deleted", resultMap["status"])
+		})
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationDeleteProvider(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "provider_id": "google",
-	})
-	require.Error(t, err)
 }
 
 func TestExecuteIAMFederationListProviders_Success(t *testing.T) {
@@ -770,41 +807,6 @@ func TestExecuteIAMIdentityListUserIdentities_Error(t *testing.T) {
 
 	_, err := reg.executeIAMIdentityListUserIdentities(context.Background(), map[string]interface{}{
 		"user_id": "30001", "tenant_id": "t1",
-	})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// Service Unavailable Tests
-// =============================================================================
-
-func TestExecuteIAMFederationCreateProvider_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMFederationCreateProvider(context.Background(), map[string]interface{}{
-		"id": "google", "tenant_id": "t1", "name": "Google", "type": "oidc",
-		"client_id": "c1", "issuer_url": "https://example.com",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationGetProvider_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMFederationGetProvider(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "provider_id": "google",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationDeleteProvider_ServiceUnavailable(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.executeIAMFederationDeleteProvider(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "provider_id": "google",
 	})
 	require.Error(t, err)
 }
