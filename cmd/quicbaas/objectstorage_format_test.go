@@ -109,16 +109,41 @@ func TestFormatObjectPutResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectPutResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.PutObjectResponse{
-		Key:      "mybucket/mykey",
-		Size:     1024,
-		Version:  1,
-		Checksum: []byte{0x01, 0x02, 0x03, 0x04},
+func TestFormatObjectResponsesInvalidFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		format func() error
+	}{
+		{"put", func() error { return formatObjectPutResponse(&pb.PutObjectResponse{Key: "mybucket/mykey"}) }},
+		{"get", func() error {
+			return formatObjectGetResponse(&pb.GetObjectResponse{Key: "mybucket/mykey", Found: true})
+		}},
+		{"delete", func() error { return formatObjectDeleteResponse(&pb.DeleteObjectResponse{Key: "mybucket/mykey"}) }},
+		{"head", func() error { return formatObjectHeadResponse(&pb.HeadObjectResponse{Key: "mybucket/mykey"}) }},
+		{"list", func() error { return formatObjectListResponse(&pb.ListObjectsResponse{}) }},
+		{"list-by-tag", func() error { return formatObjectListByTagResponse(&pb.ListByTagResponse{}) }},
+		{"list-by-tenant", func() error { return formatObjectListByTenantResponse(&pb.ListByTenantResponse{}) }},
+		{"copy", func() error { return formatObjectCopyResponse(&pb.CopyObjectResponse{Key: "mybucket/copy-key"}) }},
+		{"archive", func() error { return formatObjectArchiveResponse(&pb.ArchiveObjectResponse{Key: "mybucket/mykey"}) }},
+		{"restore", func() error { return formatObjectRestoreResponse(&pb.RestoreObjectResponse{Key: "mybucket/mykey"}) }},
+		{"verify", func() error { return formatObjectVerifyResponse(&pb.VerifyObjectResponse{Key: "mybucket/mykey"}) }},
+		{"replicate", func() error { return formatObjectReplicateResponse(&pb.ReplicateObjectResponse{Key: "mybucket/mykey"}) }},
+		{"migrate", func() error { return formatObjectMigrateResponse(&pb.MigrateObjectResponse{Key: "mybucket/mykey"}) }},
+		{"stats", func() error { return formatObjectStatsResponse(&pb.ListBackendsResponse{}) }},
+		{"lifecycle", func() error {
+			return formatObjectLifecycleResponse("mybucket", &pb.GetObjectPolicyResponse{Key: "mybucket/mykey", Policy: &pb.ObjectPolicy{}})
+		}},
 	}
-	err := formatObjectPutResponse(resp)
-	assert.Error(t, err)
+
+	saved := objectOutputFormat
+	t.Cleanup(func() { objectOutputFormat = saved })
+	objectOutputFormat = "invalid-format"
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Error(t, tt.format())
+		})
+	}
 }
 
 func TestFormatObjectGetResponse(t *testing.T) {
@@ -203,17 +228,6 @@ func TestFormatObjectGetResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectGetResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.GetObjectResponse{
-		Key:   "mybucket/mykey",
-		Value: []byte("hello world"),
-		Found: true,
-	}
-	err := formatObjectGetResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectDeleteResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -296,16 +310,6 @@ func TestFormatObjectDeleteResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectDeleteResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.DeleteObjectResponse{
-		Key:     "mybucket/mykey",
-		Deleted: true,
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectHeadResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -384,16 +388,6 @@ func TestFormatObjectHeadResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectHeadResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.HeadObjectResponse{
-		Key:    "mybucket/mykey",
-		Exists: true,
-	}
-	err := formatObjectHeadResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectListResponse(t *testing.T) {
@@ -478,16 +472,6 @@ func TestFormatObjectListResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectListResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ListObjectsResponse{
-		Objects: []*pb.ObjectInfo{},
-		Total:   0,
-	}
-	err := formatObjectListResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectListByTagResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -548,16 +532,6 @@ func TestFormatObjectListByTagResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectListByTagResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ListByTagResponse{
-		Keys:  []string{},
-		Total: 0,
-	}
-	err := formatObjectListByTagResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectListByTenantResponse(t *testing.T) {
@@ -643,16 +617,6 @@ func TestFormatObjectListByTenantResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectListByTenantResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ListByTenantResponse{
-		Objects: []*pb.ObjectInfo{},
-		Total:   0,
-	}
-	err := formatObjectListByTenantResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectCopyResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -707,16 +671,6 @@ func TestFormatObjectCopyResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectCopyResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.CopyObjectResponse{
-		Key:     "mybucket/copy-key",
-		Version: 1,
-	}
-	err := formatObjectCopyResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectArchiveResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -768,16 +722,6 @@ func TestFormatObjectArchiveResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectArchiveResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ArchiveObjectResponse{
-		Key:     "mybucket/mykey",
-		Success: true,
-	}
-	err := formatObjectArchiveResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectRestoreResponse(t *testing.T) {
@@ -843,16 +787,6 @@ func TestFormatObjectRestoreResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectRestoreResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.RestoreObjectResponse{
-		Key:     "mybucket/mykey",
-		Success: true,
-	}
-	err := formatObjectRestoreResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectVerifyResponse(t *testing.T) {
@@ -939,16 +873,6 @@ func TestFormatObjectVerifyResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectVerifyResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.VerifyObjectResponse{
-		Key:   "mybucket/mykey",
-		Valid: true,
-	}
-	err := formatObjectVerifyResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectReplicateResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1003,16 +927,6 @@ func TestFormatObjectReplicateResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectReplicateResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ReplicateObjectResponse{
-		Key:     "mybucket/mykey",
-		Success: true,
-	}
-	err := formatObjectReplicateResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectMigrateResponse(t *testing.T) {
@@ -1083,16 +997,6 @@ func TestFormatObjectMigrateResponse(t *testing.T) {
 	}
 }
 
-func TestFormatObjectMigrateResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.MigrateObjectResponse{
-		Key:     "mybucket/mykey",
-		Success: true,
-	}
-	err := formatObjectMigrateResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatObjectStatsResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1157,16 +1061,6 @@ func TestFormatObjectStatsResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectStatsResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.ListBackendsResponse{
-		Backends: []*pb.BackendInfo{},
-		Total:    0,
-	}
-	err := formatObjectStatsResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatObjectLifecycleResponse(t *testing.T) {
@@ -1235,16 +1129,6 @@ func TestFormatObjectLifecycleResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatObjectLifecycleResponseInvalidFormat(t *testing.T) {
-	objectOutputFormat = "invalid-format"
-	resp := &pb.GetObjectPolicyResponse{
-		Key:    "mybucket/mykey",
-		Policy: &pb.ObjectPolicy{},
-	}
-	err := formatObjectLifecycleResponse("mybucket", resp)
-	assert.Error(t, err)
 }
 
 // =============================================================================
