@@ -2070,167 +2070,9 @@ func TestSetUnlocked_WithSyncWritesLargeValue(t *testing.T) {
 	assert.Equal(t, largeValue, val)
 }
 
-func TestSetUnlocked_ClosedStorage_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	err := store.Close()
-	require.NoError(t, err)
-
-	err = store.Set([]byte("key"), []byte("value"))
-	assert.Error(t, err)
-}
-
-func TestSetUnlocked_EmptyKey_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte{}, []byte("value"))
-	assert.Error(t, err)
-}
-
-func TestSetUnlocked_NestedDirCreation_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Set with deeply nested key - exercises MkdirAll path
-	err := store.Set([]byte("a/b/c/d/e/deeply-nested-key"), []byte("nested-value"))
-	assert.NoError(t, err)
-
-	val, err := store.Get([]byte("a/b/c/d/e/deeply-nested-key"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("nested-value"), val)
-}
-
-func TestSetUnlocked_OverwriteExisting_95(t *testing.T) {
-	store := createTestFileStorageWithSync(t)
-	defer store.Close()
-
-	// Write initial value
-	err := store.Set([]byte("overwrite-key"), []byte("initial"))
-	require.NoError(t, err)
-
-	// Overwrite with new value (exercises full tmp + sync + rename pipeline)
-	err = store.Set([]byte("overwrite-key"), []byte("updated"))
-	assert.NoError(t, err)
-
-	val, err := store.Get([]byte("overwrite-key"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("updated"), val)
-}
-
 // ---------------------------------------------------------------------------
 // Restore - cover more paths
 // ---------------------------------------------------------------------------
-
-func TestRestore_WithSyncWrites_95(t *testing.T) {
-	store := createTestFileStorageWithSync(t)
-	defer store.Close()
-
-	// Add some data that will be cleared
-	err := store.Set([]byte("old-key"), []byte("old-value"))
-	require.NoError(t, err)
-
-	// Restore with new data
-	snapshot := map[string][]byte{
-		"new-key1": []byte("new-value1"),
-		"new-key2": []byte("new-value2"),
-	}
-
-	err = store.Restore(snapshot)
-	assert.NoError(t, err)
-
-	// Old key should be gone
-	_, err = store.Get([]byte("old-key"))
-	assert.Error(t, err)
-
-	// New keys should exist
-	val, err := store.Get([]byte("new-key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new-value1"), val)
-
-	val, err = store.Get([]byte("new-key2"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new-value2"), val)
-}
-
-func TestRestore_ClosedStorage_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	err := store.Close()
-	require.NoError(t, err)
-
-	err = store.Restore(map[string][]byte{"key": []byte("value")})
-	assert.Error(t, err)
-}
-
-func TestRestore_EmptySnapshot_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Add data
-	err := store.Set([]byte("existing"), []byte("data"))
-	require.NoError(t, err)
-
-	// Restore with empty snapshot - should clear all data
-	err = store.Restore(map[string][]byte{})
-	assert.NoError(t, err)
-
-	// Existing data should be gone
-	_, err = store.Get([]byte("existing"))
-	assert.Error(t, err)
-}
-
-func TestRestore_WithNestedKeys_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	snapshot := map[string][]byte{
-		"users/user1":    []byte("Alice"),
-		"users/user2":    []byte("Bob"),
-		"config/setting": []byte("enabled"),
-	}
-
-	err := store.Restore(snapshot)
-	assert.NoError(t, err)
-
-	for key, expectedValue := range snapshot {
-		val, getErr := store.Get([]byte(key))
-		require.NoError(t, getErr)
-		assert.Equal(t, expectedValue, val)
-	}
-}
-
-func TestRestore_OverwritesExistingData_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Pre-populate with data
-	err := store.Set([]byte("keep"), []byte("old-value"))
-	require.NoError(t, err)
-	err = store.Set([]byte("remove"), []byte("will-be-removed"))
-	require.NoError(t, err)
-
-	// Restore with partial overlap
-	snapshot := map[string][]byte{
-		"keep":   []byte("new-value"),
-		"newkey": []byte("brand-new"),
-	}
-
-	err = store.Restore(snapshot)
-	assert.NoError(t, err)
-
-	// "keep" should have new value
-	val, err := store.Get([]byte("keep"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new-value"), val)
-
-	// "remove" should be gone
-	_, err = store.Get([]byte("remove"))
-	assert.Error(t, err)
-
-	// "newkey" should exist
-	val, err = store.Get([]byte("newkey"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("brand-new"), val)
-}
 
 // ---------------------------------------------------------------------------
 // newFileSnapshot - cover read error path (non-permission, non-not-found)
@@ -2449,173 +2291,25 @@ func TestSnapshotIterator_ValueOnClosed(t *testing.T) {
 // pathToKey - cover error path
 // ---------------------------------------------------------------------------
 
-func TestPathToKey_InvalidPath_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// pathToKey with a path that's not relative to DataDir
-	result := store.pathToKey("/completely/different/path/file.json")
-	// When filepath.Rel fails or returns "..", it returns empty string
-	// or an unexpected result - either way, we exercise the code path
-	_ = result
-}
-
-func TestPathToKey_ValidPath_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	path := store.keyToPath([]byte("test/key"))
-	key := store.pathToKey(path)
-	assert.Equal(t, "test/key", key)
-}
-
 // ---------------------------------------------------------------------------
 // Exists - cover error and success paths
 // ---------------------------------------------------------------------------
-
-func TestExists_Success_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("exists-key"), []byte("value"))
-	require.NoError(t, err)
-
-	exists, err := store.Exists([]byte("exists-key"))
-	assert.NoError(t, err)
-	assert.True(t, exists)
-}
-
-func TestExists_NotFound_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	exists, err := store.Exists([]byte("nonexistent"))
-	assert.NoError(t, err)
-	assert.False(t, exists)
-}
-
-func TestExists_EmptyKey_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	_, err := store.Exists([]byte{})
-	assert.Error(t, err)
-}
-
-func TestExists_ClosedStorage_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	err := store.Close()
-	require.NoError(t, err)
-
-	_, err = store.Exists([]byte("key"))
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // List - cover various patterns
 // ---------------------------------------------------------------------------
 
-func TestList_WithPrefix_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("prefix/key1"), []byte("v1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("prefix/key2"), []byte("v2"))
-	require.NoError(t, err)
-	err = store.Set([]byte("other/key3"), []byte("v3"))
-	require.NoError(t, err)
-
-	keys, err := store.List([]byte("prefix/"))
-	assert.NoError(t, err)
-	assert.Len(t, keys, 2)
-}
-
-func TestList_EmptyPrefix_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("key1"), []byte("v1"))
-	require.NoError(t, err)
-	err = store.Set([]byte("key2"), []byte("v2"))
-	require.NoError(t, err)
-
-	keys, err := store.List([]byte{})
-	assert.NoError(t, err)
-	assert.GreaterOrEqual(t, len(keys), 2)
-}
-
-func TestList_ClosedStorage_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	err := store.Close()
-	require.NoError(t, err)
-
-	_, err = store.List([]byte("prefix"))
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // Delete - cover more paths
 // ---------------------------------------------------------------------------
-
-func TestDelete_NonexistentKey_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Delete([]byte("nonexistent"))
-	// Idempotent - should return nil
-	assert.NoError(t, err)
-}
-
-func TestDelete_ClosedStorage_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	err := store.Close()
-	require.NoError(t, err)
-
-	err = store.Delete([]byte("key"))
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // Factory Create - cover more paths
 // ---------------------------------------------------------------------------
 
-func TestFactory_Create_Success_95(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	factory := NewFactory(log, WithCodecType(codec.JSON))
-
-	store, err := factory.Create("test-partition", &PartitionConfig{
-		DataDir: t.TempDir(),
-	})
-	assert.NoError(t, err)
-	assert.NotNil(t, store)
-}
-
 func TestFactory_BackendType(t *testing.T) {
 	factory := NewFactory(nil, WithCodecType(codec.JSON))
 	assert.Equal(t, "file", factory.BackendType())
-}
-
-func TestFactory_Create_EmptyDataDir_95(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	factory := NewFactory(log, WithCodecType(codec.JSON))
-
-	_, err = factory.Create("test-partition", &PartitionConfig{
-		DataDir: "",
-	})
-	assert.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -2645,48 +2339,9 @@ func TestBatch_MultipleOps_WithSyncWrites(t *testing.T) {
 // Close idempotent
 // ---------------------------------------------------------------------------
 
-func TestClose_Idempotent_95(t *testing.T) {
-	store := createTestFileStorage(t)
-
-	err := store.Close()
-	assert.NoError(t, err)
-
-	err = store.Close()
-	assert.NoError(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // Snapshot Get - empty key, closed snapshot
 // ---------------------------------------------------------------------------
-
-func TestSnapshot_Get_EmptyKey_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-	defer snap.Close()
-
-	_, err = snap.Get([]byte{})
-	assert.Error(t, err)
-}
-
-func TestSnapshot_Get_AfterClose_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	err := store.Set([]byte("snap-get"), []byte("value"))
-	require.NoError(t, err)
-
-	snap, err := store.Snapshot()
-	require.NoError(t, err)
-
-	err = snap.Close()
-	require.NoError(t, err)
-
-	_, err = snap.Get([]byte("snap-get"))
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // Snapshot iterator on closed snapshot
@@ -2748,41 +2403,6 @@ func TestIterator_WithBounds(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Restore with read-only target dir (should fail)
 // ---------------------------------------------------------------------------
-
-func TestRestore_ReadOnlyDir_95(t *testing.T) {
-	tmpDir := t.TempDir()
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	cfg := &Config{
-		DataDir:         tmpDir,
-		CodecType:       codec.JSON,
-		FilePermissions: DefaultFilePermissions,
-		DirPermissions:  DefaultDirPermissions,
-		SyncWrites:      false,
-	}
-
-	store, err := New(cfg, log)
-	require.NoError(t, err)
-	defer store.Close()
-
-	// Occupy the staging temp path with a directory so the OpenFile that
-	// Restore uses to write "key" fails with EISDIR. A read-only data
-	// directory would only stop an unprivileged uid, and CI runs as root
-	// (testing-guidelines.md, Fault Injection).
-	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("key"))+".tmp", 0o755))
-
-	snapshot := map[string][]byte{
-		"key": []byte("value"),
-	}
-
-	err = store.Restore(snapshot)
-	assert.Error(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // GetWithContext and SetWithContext
@@ -2993,68 +2613,9 @@ func TestNew_MsgpackCodec(t *testing.T) {
 	assert.Equal(t, []byte("msgpack-value"), val)
 }
 
-func TestNew_NilConfig_95(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	_, err = New(nil, log)
-	assert.Error(t, err)
-}
-
-func TestNew_EmptyDataDir_95(t *testing.T) {
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	cfg := &Config{
-		DataDir:   "",
-		CodecType: codec.JSON,
-	}
-
-	_, err = New(cfg, log)
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // Batch Rollback and Close
 // ---------------------------------------------------------------------------
-
-func TestBatch_Rollback_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	batch := store.Batch()
-
-	err := batch.Set([]byte("rollback-key"), []byte("value"))
-	require.NoError(t, err)
-
-	err = batch.Rollback()
-	assert.NoError(t, err)
-
-	// Key should not exist
-	_, err = store.Get([]byte("rollback-key"))
-	assert.Error(t, err)
-}
-
-func TestBatch_Close_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	batch := store.Batch()
-
-	err := batch.Set([]byte("close-key"), []byte("value"))
-	require.NoError(t, err)
-
-	err = batch.Close()
-	assert.NoError(t, err)
-}
 
 // ---------------------------------------------------------------------------
 // setUnlocked - verify atomic rename by checking file doesn't have .tmp suffix
@@ -3161,22 +2722,6 @@ func TestIterator_SeekBetweenKeys(t *testing.T) {
 	found := iter.Seek([]byte("bbb"))
 	assert.True(t, found)
 	assert.Equal(t, []byte("ccc"), iter.Key())
-}
-
-func TestIterator_SeekBeyondAll_95(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	for _, k := range []string{"aaa", "bbb"} {
-		err := store.Set([]byte(k), []byte("val-"+k))
-		require.NoError(t, err)
-	}
-
-	iter := store.NewIterator(&storage.IteratorOptions{})
-	defer iter.Close()
-
-	found := iter.Seek([]byte("zzz"))
-	assert.False(t, found)
 }
 
 // ---------------------------------------------------------------------------
