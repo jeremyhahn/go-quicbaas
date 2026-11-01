@@ -237,25 +237,24 @@ func TestDataDirectoryCreation(t *testing.T) {
 
 // TestGetSocketDir tests the getSocketDir function.
 func TestGetSocketDir(t *testing.T) {
-	t.Run("AbsolutePath", func(t *testing.T) {
-		dir := getSocketDir("/var/run/quicbaas/quicbaas.sock")
-		assert.Equal(t, "/var/run/quicbaas", dir)
-	})
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"absolute path", "/var/run/quicbaas/quicbaas.sock", "/var/run/quicbaas"},
+		{"deep path", "/a/b/c/d/e.sock", "/a/b/c/d"},
+		{"trailing slash", "/var/run/", "/var/run"},
+		{"root level", "/db.sock", ""},
+		{"no directory", "quicbaas.sock", ""},
+		{"empty path", "", ""},
+	}
 
-	t.Run("TmpPath", func(t *testing.T) {
-		dir := getSocketDir("/tmp/quicbaas.sock")
-		assert.Equal(t, "/tmp", dir)
-	})
-
-	t.Run("NoDirectory", func(t *testing.T) {
-		dir := getSocketDir("quicbaas.sock")
-		assert.Equal(t, "", dir)
-	})
-
-	t.Run("EmptyPath", func(t *testing.T) {
-		dir := getSocketDir("")
-		assert.Equal(t, "", dir)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, getSocketDir(tt.input))
+		})
+	}
 }
 
 // TestConfigValidation tests configuration validation.
@@ -530,26 +529,6 @@ func TestPrepareDaemon(t *testing.T) {
 // Consolidated from coverage_92_test.go
 // =============================================================================
 
-// TestApplyRaftFlags_NoChanges tests applyRaftFlags when no flags are changed.
-func TestApplyRaftFlags_NoChanges(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	originalNodeID := cfg.Raft.NodeID
-	originalRaftAddr := cfg.Raft.RaftAddress
-
-	cmd := newTestCmdWithRaftFlags()
-	raftAddress = ""
-
-	// Do not change any flags
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-
-	// Original values should be preserved
-	assert.Equal(t, originalNodeID, cfg.Raft.NodeID)
-	assert.Equal(t, originalRaftAddr, cfg.Raft.RaftAddress)
-}
-
 // TestRunNode_DiscoveryNotChanged tests runNode when discovery flag is not changed
 // (uses default multicast). Verifies config is set correctly without starting a server.
 func TestRunNode_DiscoveryNotChanged(t *testing.T) {
@@ -625,37 +604,6 @@ func TestRunNode_StaticDiscoveryNoJoinAddresses(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestApplyServerFlags_DataDirChangedOnly tests data-dir flag in isolation.
-func TestApplyServerFlags_DataDirChangedOnly(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithServerFlags()
-
-	err := cmd.Flags().Set("data-dir", "/custom/data/path")
-	require.NoError(t, err)
-
-	applyServerFlags(cmd)
-	assert.Equal(t, "/custom/data/path", cfg.Storage.DataDir)
-}
-
-// TestApplyServerFlags_HTTPPortZero tests that http-port=0 disables REST.
-func TestApplyServerFlags_HTTPPortZero(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithServerFlags()
-
-	err := cmd.Flags().Set("http-port", "0")
-	require.NoError(t, err)
-
-	applyServerFlags(cmd)
-	assert.Equal(t, 0, cfg.Server.REST.Port)
-	assert.False(t, cfg.Server.REST.Enabled)
-}
-
 // TestValidateRoutingConfig_EmptyShards tests validation with empty shards
 // but non-empty pins (should fail).
 func TestValidateRoutingConfig_EmptyShards(t *testing.T) {
@@ -695,77 +643,9 @@ func TestValidateRoutingConfig_OneInvalidPin(t *testing.T) {
 	assert.Contains(t, err.Error(), "999")
 }
 
-// TestGetSocketDir_RootSlash tests getSocketDir with just a root slash.
-func TestGetSocketDir_RootSlash(t *testing.T) {
-	result := getSocketDir("/socket.sock")
-	assert.Equal(t, "", result)
-}
-
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
-
-// TestApplyRaftFlagsHostnameResolution tests the hostname resolution branch
-// in applyRaftFlags when raft-address is empty but raft-port is changed.
-func TestApplyRaftFlagsHostnameResolution(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithRaftFlags()
-
-	// Ensure raft-address global is empty
-	viper.Reset()
-	raftAddress = ""
-	err := cmd.Flags().Set("raft-port", "65000")
-	require.NoError(t, err)
-
-	require.NoError(t, applyRaftFlags(cmd, stubHostname("node-a")))
-
-	assert.Equal(t, "node-a:65000", cfg.Raft.RaftAddress)
-	assertDerivedListenAddr(t, "node-a:65000")
-}
-
-// TestApplyRaftFlagsWithDirectAddress tests when raft-address is set directly.
-func TestApplyRaftFlagsWithDirectAddress(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithRaftFlags()
-
-	// Set the global raftAddress variable directly (as cobra would)
-	raftAddress = "10.0.0.50:63500"
-
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-
-	assert.Equal(t, "10.0.0.50:63500", cfg.Raft.RaftAddress)
-	assertDerivedListenAddr(t, "10.0.0.50:63500")
-
-	// Reset global
-	raftAddress = ""
-}
-
-// TestGetSocketDir_VariousFormats tests getSocketDir with additional path formats.
-func TestGetSocketDir_VariousFormats(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"nested path", "/var/run/quicbaas/sockets/db.sock", "/var/run/quicbaas/sockets"},
-		{"root level", "/db.sock", ""},
-		{"single component", "db.sock", ""},
-		{"multiple slashes", "/a/b/c/d/e.sock", "/a/b/c/d"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := getSocketDir(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
 
 // TestRunStartAppliesServerFlags verifies that runStart applies server flags correctly.
 func TestRunStartAppliesServerFlags(t *testing.T) {
@@ -827,21 +707,6 @@ func TestRunClusterAppliesFlags(t *testing.T) {
 	// Exercise prepareDaemon for logging coverage
 	err = prepareDaemon("cluster")
 	assert.NoError(t, err)
-}
-
-// TestApplyServerFlagsGRPCDisabled verifies gRPC disabled when port is 0.
-func TestApplyServerFlagsGRPCDisabled(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithServerFlags()
-
-	err := cmd.Flags().Set("grpc-port", "0")
-	require.NoError(t, err)
-
-	applyServerFlags(cmd)
-	assert.False(t, cfg.Server.GRPC.Enabled)
 }
 
 // =============================================================================
@@ -992,87 +857,87 @@ func assertDerivedListenAddr(t *testing.T, want string) {
 
 // TestApplyServerFlags tests the applyServerFlags function.
 func TestApplyServerFlags(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
+	log = createTestLogger(t)
 
-	t.Run("applies unix socket when changed", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
+	tests := []struct {
+		name  string
+		flags map[string]string
+		check func(t *testing.T)
+	}{
+		{
+			name:  "applies unix socket when changed",
+			flags: map[string]string{"unix-socket": "/custom/path.sock"},
+			check: func(t *testing.T) {
+				assert.Equal(t, "/custom/path.sock", cfg.Server.Unix.Socket)
+				assert.True(t, cfg.Server.Unix.Enabled)
+			},
+		},
+		{
+			name:  "disables unix socket when empty",
+			flags: map[string]string{"unix-socket": ""},
+			check: func(t *testing.T) {
+				assert.Equal(t, "", cfg.Server.Unix.Socket)
+				assert.False(t, cfg.Server.Unix.Enabled)
+			},
+		},
+		{
+			name:  "applies http port when changed",
+			flags: map[string]string{"http-port": "8080"},
+			check: func(t *testing.T) {
+				assert.Equal(t, 8080, cfg.Server.REST.Port)
+				assert.True(t, cfg.Server.REST.Enabled)
+			},
+		},
+		{
+			name:  "disables http when port is 0",
+			flags: map[string]string{"http-port": "0"},
+			check: func(t *testing.T) {
+				assert.Equal(t, 0, cfg.Server.REST.Port)
+				assert.False(t, cfg.Server.REST.Enabled)
+			},
+		},
+		{
+			name:  "applies grpc port when changed",
+			flags: map[string]string{"grpc-port": "9090"},
+			check: func(t *testing.T) {
+				assert.Equal(t, 9090, cfg.Server.GRPC.Port)
+				assert.True(t, cfg.Server.GRPC.Enabled)
+			},
+		},
+		{
+			name:  "disables grpc when port is 0",
+			flags: map[string]string{"grpc-port": "0"},
+			check: func(t *testing.T) {
+				assert.False(t, cfg.Server.GRPC.Enabled)
+			},
+		},
+		{
+			name:  "applies data-dir when changed",
+			flags: map[string]string{"data-dir": "/custom/data"},
+			check: func(t *testing.T) {
+				assert.Equal(t, "/custom/data", cfg.Storage.DataDir)
+			},
+		},
+		{
+			name: "does not apply unchanged flags",
+			check: func(t *testing.T) {
+				assert.Equal(t, config.Default().Server.Unix.Socket, cfg.Server.Unix.Socket)
+			},
+		},
+	}
 
-		err := cmd.Flags().Set("unix-socket", "/custom/path.sock")
-		require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg = config.Default()
+			cmd := newTestCmdWithServerFlags()
+			for name, value := range tt.flags {
+				require.NoError(t, cmd.Flags().Set(name, value))
+			}
 
-		applyServerFlags(cmd)
-		assert.Equal(t, "/custom/path.sock", cfg.Server.Unix.Socket)
-		assert.True(t, cfg.Server.Unix.Enabled)
-	})
-
-	t.Run("disables unix socket when empty", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
-
-		err := cmd.Flags().Set("unix-socket", "")
-		require.NoError(t, err)
-
-		applyServerFlags(cmd)
-		assert.Equal(t, "", cfg.Server.Unix.Socket)
-		assert.False(t, cfg.Server.Unix.Enabled)
-	})
-
-	t.Run("applies http port when changed", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
-
-		err := cmd.Flags().Set("http-port", "8080")
-		require.NoError(t, err)
-
-		applyServerFlags(cmd)
-		assert.Equal(t, 8080, cfg.Server.REST.Port)
-		assert.True(t, cfg.Server.REST.Enabled)
-	})
-
-	t.Run("disables http when port is 0", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
-
-		err := cmd.Flags().Set("http-port", "0")
-		require.NoError(t, err)
-
-		applyServerFlags(cmd)
-		assert.False(t, cfg.Server.REST.Enabled)
-	})
-
-	t.Run("applies grpc port when changed", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
-
-		err := cmd.Flags().Set("grpc-port", "9090")
-		require.NoError(t, err)
-
-		applyServerFlags(cmd)
-		assert.Equal(t, 9090, cfg.Server.GRPC.Port)
-		assert.True(t, cfg.Server.GRPC.Enabled)
-	})
-
-	t.Run("applies data-dir when changed", func(t *testing.T) {
-		cfg = config.Default()
-		cmd := newTestCmdWithServerFlags()
-
-		err := cmd.Flags().Set("data-dir", "/custom/data")
-		require.NoError(t, err)
-
-		applyServerFlags(cmd)
-		assert.Equal(t, "/custom/data", cfg.Storage.DataDir)
-	})
-
-	t.Run("does not apply unchanged flags", func(t *testing.T) {
-		cfg = config.Default()
-		originalSocket := cfg.Server.Unix.Socket
-		cmd := newTestCmdWithServerFlags()
-
-		applyServerFlags(cmd)
-		assert.Equal(t, originalSocket, cfg.Server.Unix.Socket)
-	})
+			applyServerFlags(cmd)
+			tt.check(t)
+		})
+	}
 }
 
 // TestApplyRaftFlags tests the applyRaftFlags function.
@@ -1631,27 +1496,6 @@ func setupTestLogger(t *testing.T) *logger.Logger {
 // Consolidated from coverage_93_test.go
 // =============================================================================
 
-// TestApplyRaftFlags_RaftPortWithHostnameResolution tests the raft-port
-// branch where hostname is resolved (can't force os.Hostname to fail).
-func TestApplyRaftFlags_RaftPortWithHostnameResolution(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithRaftFlags()
-
-	// Clear raft address and set raft-port
-	viper.Reset()
-	raftAddress = ""
-	err := cmd.Flags().Set("raft-port", "63099")
-	require.NoError(t, err)
-
-	require.NoError(t, applyRaftFlags(cmd, stubHostname("node-c")))
-
-	assert.Equal(t, "node-c:63099", cfg.Raft.RaftAddress)
-	assertDerivedListenAddr(t, "node-c:63099")
-}
-
 // TestValidateRoutingConfig_LargeShardList tests validation with many shards.
 func TestValidateRoutingConfig_LargeShardList(t *testing.T) {
 	shards := make([]uint64, 100)
@@ -1700,64 +1544,6 @@ func TestRunNode_KubernetesDiscovery(t *testing.T) {
 	// Exercise prepareDaemon for logging coverage
 	err = prepareDaemon("node")
 	assert.NoError(t, err)
-}
-
-// TestGetSocketDir_DeepPath tests getSocketDir with a deeply nested path.
-func TestGetSocketDir_DeepPath(t *testing.T) {
-	result := getSocketDir("/a/b/c/d/e/f/g/socket.sock")
-	assert.Equal(t, "/a/b/c/d/e/f/g", result)
-}
-
-// TestGetSocketDir_TrailingSlash tests getSocketDir with trailing slash.
-func TestGetSocketDir_TrailingSlash(t *testing.T) {
-	result := getSocketDir("/var/run/")
-	assert.Equal(t, "/var/run", result)
-}
-
-// TestApplyServerFlags_AllFlagsChanged tests all server flags changing.
-func TestApplyServerFlags_AllFlagsChanged(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithServerFlags()
-
-	require.NoError(t, cmd.Flags().Set("unix-socket", "/var/run/custom.sock"))
-	require.NoError(t, cmd.Flags().Set("http-port", "8080"))
-	require.NoError(t, cmd.Flags().Set("grpc-port", "9090"))
-	require.NoError(t, cmd.Flags().Set("data-dir", "/data/custom"))
-
-	applyServerFlags(cmd)
-
-	assert.Equal(t, "/var/run/custom.sock", cfg.Server.Unix.Socket)
-	assert.True(t, cfg.Server.Unix.Enabled)
-	assert.Equal(t, 8080, cfg.Server.REST.Port)
-	assert.True(t, cfg.Server.REST.Enabled)
-	assert.Equal(t, 9090, cfg.Server.GRPC.Port)
-	assert.True(t, cfg.Server.GRPC.Enabled)
-	assert.Equal(t, "/data/custom", cfg.Storage.DataDir)
-}
-
-// TestApplyRaftFlags_AllFlagsChanged tests all raft flags changing.
-func TestApplyRaftFlags_AllFlagsChanged(t *testing.T) {
-	testLog := createTestLogger(t)
-	log = testLog
-
-	cfg = config.Default()
-	cmd := newTestCmdWithRaftFlags()
-
-	require.NoError(t, cmd.Flags().Set("node-id", "99"))
-
-	// When raftAddress is set, it takes precedence
-	raftAddress = "10.0.0.1:63000"
-
-	require.NoError(t, applyRaftFlags(cmd, os.Hostname))
-
-	assert.Equal(t, uint64(99), cfg.Raft.NodeID)
-	assert.Equal(t, "10.0.0.1:63000", cfg.Raft.RaftAddress)
-	assertDerivedListenAddr(t, "10.0.0.1:63000")
-
-	raftAddress = ""
 }
 
 // TestRunStart_ConfigSetup tests runStart config setup by verifying the config
