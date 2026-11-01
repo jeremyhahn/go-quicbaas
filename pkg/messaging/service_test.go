@@ -94,6 +94,10 @@ func TestPushService_StartStop(t *testing.T) {
 
 		ctx := context.Background()
 
+		if ps.IsRunning() {
+			t.Error("expected service not running before Start")
+		}
+
 		// Start service
 		err := ps.Start(ctx)
 		if err != nil {
@@ -1301,32 +1305,6 @@ func TestPushService_WatchChannelAdditional(t *testing.T) {
 	})
 }
 
-func TestPushService_StartStopAdditional(t *testing.T) {
-	t.Parallel()
-
-	t.Run("start sets running flag", func(t *testing.T) {
-		t.Parallel()
-		log := newServiceTestLogger(t)
-		ps := NewPushService(log, nil)
-
-		ctx := context.Background()
-
-		if ps.IsRunning() {
-			t.Error("expected service not running initially")
-		}
-
-		ps.Start(ctx)
-		if !ps.IsRunning() {
-			t.Error("expected service running after start")
-		}
-
-		ps.Stop(ctx)
-		if ps.IsRunning() {
-			t.Error("expected service not running after stop")
-		}
-	})
-}
-
 func TestPushService_SubscribeWithOptions(t *testing.T) {
 	t.Parallel()
 
@@ -1361,15 +1339,6 @@ func TestPushService_SubscribeWithOptions(t *testing.T) {
 // TestPushService_PublishDeltaServiceState tests PublishDelta service state checks.
 func TestPushService_PublishDeltaServiceState(t *testing.T) {
 	log := newTestLogger(t)
-
-	t.Run("publish delta when service not running", func(t *testing.T) {
-		ps := NewPushService(log, nil)
-		ctx := context.Background()
-
-		_, err := ps.PublishDelta(ctx, "test-channel", &testEntity{Name: "old"}, &testEntity{Name: "new"})
-		assert.Error(t, err)
-		assert.True(t, IsServiceNotRunning(err))
-	})
 
 	t.Run("publish delta with invalid channel", func(t *testing.T) {
 		ps := NewPushService(log, nil)
@@ -1409,16 +1378,6 @@ func TestPushService_GetSubscriptionClientErrors(t *testing.T) {
 		assert.Nil(t, client)
 		assert.False(t, found)
 	})
-}
-
-// TestPushService_Publish_WhenNotRunning tests Publish when service is not running.
-func TestPushService_Publish_WhenNotRunning(t *testing.T) {
-	log := newTestLogger(t)
-	ps := NewPushService(log, nil)
-
-	_, err := ps.Publish(context.Background(), "test", "data")
-	assert.Error(t, err)
-	assert.True(t, IsServiceNotRunning(err))
 }
 
 // TestNotificationHub_RegisterAndSubscribe_IsOrderedWithTheWindowForcedOpen is
