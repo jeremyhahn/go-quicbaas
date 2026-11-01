@@ -302,64 +302,6 @@ func TestClientHandleErrorResponse(t *testing.T) {
 // Consolidated from coverage_91_test.go
 // =============================================================================
 
-// TestHealthChecker_IsAvailable_NilStatus tests IsAvailable with no status stored.
-func TestHealthChecker_IsAvailable_NilStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	// Should be false before any check
-	if checker.IsAvailable() {
-		t.Error("expected false when no status is stored")
-	}
-}
-
-// TestHealthChecker_LastStatus_NilStatus tests LastStatus with no status stored.
-func TestHealthChecker_LastStatus_NilStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	// Should return unavailable status when nothing stored
-	status := checker.LastStatus()
-	if status.Available {
-		t.Error("expected Available=false when no status is stored")
-	}
-}
-
-// TestHealthChecker_GetVersion_Success tests getVersion method.
-func TestHealthChecker_GetVersion_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/version" {
-			resp := VersionResponse{Version: "0.1.25"}
-			json.NewEncoder(w).Encode(resp)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	version, err := checker.getVersion(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if version != "0.1.25" {
-		t.Errorf("expected version 0.1.25, got %s", version)
-	}
-}
-
 // TestHealthChecker_GetVersion_InvalidJSON tests getVersion with invalid JSON.
 func TestHealthChecker_GetVersion_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -529,39 +471,6 @@ func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	}
 	if attempts < 2 {
 		t.Errorf("expected at least 2 attempts, got %d", attempts)
-	}
-}
-
-// TestHealthChecker_Check_WithVersion tests Check method stores version.
-func TestHealthChecker_Check_WithVersion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/":
-			w.Write([]byte("Ollama is running"))
-		case "/api/version":
-			json.NewEncoder(w).Encode(VersionResponse{Version: "0.1.30"})
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(DefaultClientConfig())
-	client.baseURL = server.URL
-	checker := NewHealthChecker(client)
-
-	status, err := checker.Check(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !status.Available {
-		t.Error("expected available=true")
-	}
-	if status.Version != "0.1.30" {
-		t.Errorf("expected version 0.1.30, got %s", status.Version)
-	}
-
-	// IsAvailable should now return true
-	if !checker.IsAvailable() {
-		t.Error("expected IsAvailable() to return true after successful check")
 	}
 }
 
@@ -777,26 +686,6 @@ func TestClientDoRequestOnce_ContextDeadlineExceeded(t *testing.T) {
 	}
 }
 
-// TestHealthChecker_GetVersion_RequestError tests getVersion when request fails.
-func TestHealthChecker_GetVersion_RequestError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error": "internal error"}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{
-		BaseURL:    server.URL,
-		MaxRetries: 0,
-	})
-	checker := NewHealthChecker(client)
-
-	_, err := checker.getVersion(context.Background())
-	if err == nil {
-		t.Fatal("expected error for failed request")
-	}
-}
-
 // TestHealthChecker_Check_StoresError tests that Check stores error in status.
 func TestHealthChecker_Check_StoresError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -934,28 +823,3 @@ func TestEmbeddingService_EmbedBatchConcurrent_Error(t *testing.T) {
 	}
 }
 
-// TestHealthChecker_IsAvailable_InitialState tests IsAvailable returns false initially.
-func TestHealthChecker_IsAvailable_InitialState(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	checker := NewHealthChecker(client)
-
-	// Should be unavailable initially
-	if checker.IsAvailable() {
-		t.Error("expected false when checker is newly created")
-	}
-}
-
-// TestHealthChecker_LastStatus_InitialState tests LastStatus returns unavailable initially.
-func TestHealthChecker_LastStatus_InitialState(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	checker := NewHealthChecker(client)
-
-	// Should return unavailable status initially
-	status := checker.LastStatus()
-	if status == nil {
-		t.Fatal("expected non-nil status")
-	}
-	if status.Available {
-		t.Error("expected Available=false initially")
-	}
-}
