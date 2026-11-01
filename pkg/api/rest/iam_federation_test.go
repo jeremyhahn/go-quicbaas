@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -273,6 +274,81 @@ func createFederationTestHandler(fedMgr *mockFederationManager) (*IAMHandler, *S
 	return handler, server
 }
 
+// federationHandlerFunc is an IAMHandler method expression such as
+// (*IAMHandler).RegisterProvider.
+type federationHandlerFunc func(*IAMHandler, http.ResponseWriter, *http.Request)
+
+// federationErrorCase is one error path of a federation handler.
+type federationErrorCase struct {
+	name string
+	// params are the chi URL params; target carries any query string.
+	params map[string]string
+	target string
+	body   io.Reader
+	// configure sets the mock federation manager's injected errors.
+	configure func(*mockFederationManager)
+	// fedMgrErr makes GetFederationManager fail; noService leaves the
+	// server without a service, so no federation manager is available.
+	fedMgrErr error
+	noService bool
+	wantCode  int
+	// wantDesc, when set, must appear in the IAMAPIError description.
+	wantDesc string
+}
+
+// jsonBody marshals v into a request body.
+func jsonBody(t *testing.T, v any) io.Reader {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	return bytes.NewReader(b)
+}
+
+// runFederationErrorCases serves each case through fn and checks the status
+// and, when the case names one, the error description.
+func runFederationErrorCases(t *testing.T, method string, fn federationHandlerFunc, cases []federationErrorCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fedMgr := newMockFederationManager()
+			if tc.configure != nil {
+				tc.configure(fedMgr)
+			}
+			server := &Server{}
+			if !tc.noService {
+				server.service = &mockServiceWithFederation{
+					fedMgr:      fedMgr,
+					fedMgrErr:   tc.fedMgrErr,
+					auditLogger: &mockAuditLogger{},
+				}
+			}
+			handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
+
+			target := tc.target
+			if target == "" {
+				target = "/"
+			}
+			req := httptest.NewRequest(method, target, tc.body)
+			req.Header.Set("Content-Type", "application/json")
+			rctx := chi.NewRouteContext()
+			for k, v := range tc.params {
+				rctx.URLParams.Add(k, v)
+			}
+			req = req.WithContext(callerRouteContext(req.Context(), rctx))
+
+			rec := httptest.NewRecorder()
+			fn(handler, rec, req)
+
+			assert.Equal(t, tc.wantCode, rec.Code)
+			if tc.wantDesc != "" {
+				var resp IAMAPIError
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+				assert.Contains(t, resp.ErrorDescription, tc.wantDesc)
+			}
+		})
+	}
+}
+
 // TestRegisterProvider_Success tests successful provider registration.
 func TestRegisterProvider_Success(t *testing.T) {
 	fedMgr := newMockFederationManager()
@@ -311,204 +387,21 @@ func TestRegisterProvider_Success(t *testing.T) {
 	assert.Equal(t, "google-client-id", resp.ClientID)
 }
 
-// TestRegisterProvider_MissingTenantID tests provider registration with missing tenant ID.
-func TestRegisterProvider_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		Type:     "oidc",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants//providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	// No tenant_id in URL params
-	rctx := chi.NewRouteContext()
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, ErrBadRequest, resp.Error)
-	assert.Contains(t, resp.ErrorDescription, "tenant ID is required")
-}
-
-// TestRegisterProvider_InvalidJSON tests provider registration with invalid JSON.
-func TestRegisterProvider_InvalidJSON(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, ErrBadRequest, resp.Error)
-	assert.Contains(t, resp.ErrorDescription, "invalid JSON body")
-}
-
-// TestRegisterProvider_MissingName tests provider registration with missing name.
-func TestRegisterProvider_MissingName(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Type:     "oidc",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "provider name is required")
-}
-
-// TestRegisterProvider_MissingType tests provider registration with missing type.
-func TestRegisterProvider_MissingType(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "provider type is required")
-}
-
-// TestRegisterProvider_InvalidType tests provider registration with invalid type.
-func TestRegisterProvider_InvalidType(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		Type:     ProviderType("invalid"),
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "invalid provider type")
-}
-
-// TestRegisterProvider_MissingClientID tests provider registration with missing client ID.
-func TestRegisterProvider_MissingClientID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Name: "google",
-		Type: "oidc",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "client_id is required")
-}
-
-// TestRegisterProvider_FederationManagerNotAvailable tests when federation manager is not available.
-func TestRegisterProvider_FederationManagerNotAvailable(t *testing.T) {
-	// Use a service that doesn't implement GetFederationManager
-	server := &Server{
-		service: nil, // No service
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		Type:     "oidc",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+// TestRegisterProvider_Errors covers every RegisterProvider error path.
+func TestRegisterProvider_Errors(t *testing.T) {
+	tenant := map[string]string{"tenant_id": "tenant123"}
+	valid := RegisterProviderOptions{Name: "google", Type: "oidc", ClientID: "google-client-id"}
+	runFederationErrorCases(t, http.MethodPost, (*IAMHandler).RegisterProvider, []federationErrorCase{
+		{name: "missing tenant ID", body: jsonBody(t, valid), wantCode: http.StatusBadRequest, wantDesc: "tenant ID is required"},
+		{name: "invalid JSON", params: tenant, body: bytes.NewReader([]byte("invalid json")), wantCode: http.StatusBadRequest, wantDesc: "invalid JSON body"},
+		{name: "body read error", params: tenant, body: &fedErrorReader{}, wantCode: http.StatusBadRequest, wantDesc: "failed to read request body"},
+		{name: "missing name", params: tenant, body: jsonBody(t, RegisterProviderOptions{Type: "oidc", ClientID: "google-client-id"}), wantCode: http.StatusBadRequest, wantDesc: "provider name is required"},
+		{name: "missing type", params: tenant, body: jsonBody(t, RegisterProviderOptions{Name: "google", ClientID: "google-client-id"}), wantCode: http.StatusBadRequest, wantDesc: "provider type is required"},
+		{name: "invalid type", params: tenant, body: jsonBody(t, RegisterProviderOptions{Name: "google", Type: "invalid", ClientID: "google-client-id"}), wantCode: http.StatusBadRequest, wantDesc: "invalid provider type"},
+		{name: "missing client ID", params: tenant, body: jsonBody(t, RegisterProviderOptions{Name: "google", Type: "oidc"}), wantCode: http.StatusBadRequest, wantDesc: "client_id is required"},
+		{name: "federation manager not available", params: tenant, body: jsonBody(t, valid), noService: true, wantCode: http.StatusInternalServerError},
+		{name: "service error", params: tenant, body: jsonBody(t, valid), configure: func(m *mockFederationManager) { m.registerProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestListProviders_Success tests successful provider listing.
@@ -743,65 +636,19 @@ func TestUpdateProvider_Success(t *testing.T) {
 	assert.Equal(t, "new-client-id", resp.ClientID)
 }
 
-// TestUpdateProvider_MissingTenantID tests update provider without tenant ID.
-func TestUpdateProvider_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := UpdateProviderOptions{}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//providers/prov_google", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestUpdateProvider_MissingProviderID tests update provider without provider ID.
-func TestUpdateProvider_MissingProviderID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := UpdateProviderOptions{}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestUpdateProvider_InvalidJSON tests update provider with invalid JSON.
-func TestUpdateProvider_InvalidJSON(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", bytes.NewReader([]byte("invalid")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestUpdateProvider_Errors covers every UpdateProvider error path.
+func TestUpdateProvider_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "provider_id": "prov_google"}
+	fedMgrErr := errors.New("federation manager unavailable")
+	runFederationErrorCases(t, http.MethodPut, (*IAMHandler).UpdateProvider, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"provider_id": "prov_google"}, body: jsonBody(t, UpdateProviderOptions{}), wantCode: http.StatusBadRequest},
+		{name: "missing provider ID", params: map[string]string{"tenant_id": "tenant123"}, body: jsonBody(t, UpdateProviderOptions{}), wantCode: http.StatusBadRequest},
+		{name: "invalid JSON", params: both, body: bytes.NewReader([]byte("invalid")), wantCode: http.StatusBadRequest},
+		{name: "body read error", params: both, body: &fedErrorReader{}, wantCode: http.StatusBadRequest, wantDesc: "failed to read request body"},
+		{name: "federation manager not available", params: both, body: jsonBody(t, UpdateProviderOptions{}), noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, body: jsonBody(t, UpdateProviderOptions{}), fedMgrErr: fedMgrErr, wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, body: jsonBody(t, UpdateProviderOptions{}), configure: func(m *mockFederationManager) { m.updateProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestDeleteProvider_Success tests successful provider deletion.
@@ -829,38 +676,16 @@ func TestDeleteProvider_Success(t *testing.T) {
 	assert.Empty(t, fedMgr.providers)
 }
 
-// TestDeleteProvider_MissingTenantID tests delete provider without tenant ID.
-func TestDeleteProvider_MissingTenantID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants//providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.DeleteProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestDeleteProvider_MissingProviderID tests delete provider without provider ID.
-func TestDeleteProvider_MissingProviderID(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/providers/", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.DeleteProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+// TestDeleteProvider_Errors covers every DeleteProvider error path.
+func TestDeleteProvider_Errors(t *testing.T) {
+	both := map[string]string{"tenant_id": "tenant123", "provider_id": "prov_google"}
+	runFederationErrorCases(t, http.MethodDelete, (*IAMHandler).DeleteProvider, []federationErrorCase{
+		{name: "missing tenant ID", params: map[string]string{"provider_id": "prov_google"}, wantCode: http.StatusBadRequest},
+		{name: "missing provider ID", params: map[string]string{"tenant_id": "tenant123"}, wantCode: http.StatusBadRequest},
+		{name: "federation manager not available", params: both, noService: true, wantCode: http.StatusInternalServerError},
+		{name: "federation manager error", params: both, fedMgrErr: errors.New("federation manager unavailable"), wantCode: http.StatusInternalServerError},
+		{name: "service error", params: both, configure: func(m *mockFederationManager) { m.deleteProviderErr = errors.New("service error") }, wantCode: http.StatusInternalServerError},
+	})
 }
 
 // TestBeginFederatedLogin_Success tests successful federated login initiation.
@@ -1615,32 +1440,6 @@ func TestLoginRedirectJSONSerialization(t *testing.T) {
 	assert.Equal(t, redirect.State, decoded.State)
 }
 
-// TestRegisterProvider_ServiceError tests provider registration with service error.
-func TestRegisterProvider_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.registerProviderErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := RegisterProviderOptions{
-		Name:     "google",
-		Type:     "oidc",
-		ClientID: "google-client-id",
-	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
 // TestListProviders_ServiceError tests provider listing with service error.
 func TestListProviders_ServiceError(t *testing.T) {
 	fedMgr := newMockFederationManager()
@@ -1674,48 +1473,6 @@ func TestGetProvider_ServiceError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUpdateProvider_ServiceError tests provider update with service error.
-func TestUpdateProvider_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.updateProviderErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	body := UpdateProviderOptions{}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestDeleteProvider_ServiceError tests provider deletion with service error.
-func TestDeleteProvider_ServiceError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	fedMgr.deleteProviderErr = errors.New("service error")
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.DeleteProvider(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
@@ -2200,53 +1957,6 @@ func (e *fedErrorReader) Read(p []byte) (n int, err error) {
 	return 0, errors.New("simulated read error")
 }
 
-// TestRegisterProvider_BodyReadError tests provider registration with body read error.
-func TestRegisterProvider_BodyReadError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenants/tenant123/providers", &fedErrorReader{})
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.RegisterProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "failed to read request body")
-}
-
-// TestUpdateProvider_BodyReadError tests provider update with body read error.
-func TestUpdateProvider_BodyReadError(t *testing.T) {
-	fedMgr := newMockFederationManager()
-	handler, _ := createFederationTestHandler(fedMgr)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", &fedErrorReader{})
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var resp IAMAPIError
-	err := json.Unmarshal(rec.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.ErrorDescription, "failed to read request body")
-}
-
 // TestLinkAccount_BodyReadError tests account linking with body read error.
 func TestLinkAccount_BodyReadError(t *testing.T) {
 	fedMgr := newMockFederationManager()
@@ -2314,58 +2024,6 @@ func TestGetProvider_FederationManagerError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUpdateProvider_FederationManagerError tests when GetFederationManager returns error.
-func TestUpdateProvider_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := UpdateProviderOptions{}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestDeleteProvider_FederationManagerError tests when GetFederationManager returns error.
-func TestDeleteProvider_FederationManagerError(t *testing.T) {
-	mockSvc := &mockServiceWithFederation{
-		fedMgr:    newMockFederationManager(),
-		fedMgrErr: errors.New("federation manager unavailable"),
-	}
-	server := &Server{
-		service: mockSvc,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.DeleteProvider(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
@@ -2533,50 +2191,6 @@ func TestGetProvider_FederationManagerNotAvailable(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	handler.GetProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestUpdateProvider_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestUpdateProvider_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	body := UpdateProviderOptions{}
-	bodyBytes, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant123/providers/prov_google", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.UpdateProvider(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-// TestDeleteProvider_FederationManagerNotAvailable tests when service doesn't support federation.
-func TestDeleteProvider_FederationManagerNotAvailable(t *testing.T) {
-	server := &Server{
-		service: nil,
-	}
-	handler := NewIAMHandler(IAMHandlerDependencies{Server: server})
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/tenants/tenant123/providers/prov_google", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant123")
-	rctx.URLParams.Add("provider_id", "prov_google")
-	req = req.WithContext(callerRouteContext(req.Context(), rctx))
-
-	rec := httptest.NewRecorder()
-	handler.DeleteProvider(rec, req)
 
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 }
