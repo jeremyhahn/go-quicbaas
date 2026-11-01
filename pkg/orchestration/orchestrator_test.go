@@ -696,7 +696,11 @@ func TestAgentService_CloseSession(t *testing.T) {
 	backends := map[string]AgentBackend{
 		"mock": &mockAgentBackend{},
 	}
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
+	store := NewInMemoryAgentStore()
+	svc, err := NewAgentService(store, backends, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
 
 	// Spawn a session
 	spawnResp, err := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
@@ -726,6 +730,15 @@ func TestAgentService_CloseSession(t *testing.T) {
 	}
 	if statusResp.State != SessionStateClosed {
 		t.Errorf("expected closed state, got %q", statusResp.State)
+	}
+
+	// The store record itself is updated to closed.
+	record, err := store.GetSession(context.Background(), "", spawnResp.SessionID)
+	if err != nil {
+		t.Fatalf("expected session in store, got error: %v", err)
+	}
+	if record.Status != SessionStateClosed {
+		t.Errorf("expected closed status in store, got %q", record.Status)
 	}
 }
 
@@ -1063,43 +1076,6 @@ func TestAgentService_SpawnSession_PersistsToStore(t *testing.T) {
 	}
 	if record.LastActivity == 0 {
 		t.Error("expected non-zero last activity timestamp")
-	}
-}
-
-func TestAgentService_CloseSession_UpdatesStore(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	backends := map[string]AgentBackend{
-		"mock": &mockAgentBackend{},
-	}
-	svc, err := NewAgentService(store, backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	spawnResp, err := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend:   "mock",
-		ProjectID: "proj-close",
-	})
-	if err != nil {
-		t.Fatalf("failed to spawn: %v", err)
-	}
-
-	_, err = svc.CloseSession(context.Background(), &CloseSessionRequest{
-		SessionID: spawnResp.SessionID,
-	})
-	if err != nil {
-		t.Fatalf("failed to close: %v", err)
-	}
-
-	// Verify the store record was updated to closed
-	record, err := store.GetSession(context.Background(), "", spawnResp.SessionID)
-	if err != nil {
-		t.Fatalf("expected session in store, got error: %v", err)
-	}
-	if record.Status != SessionStateClosed {
-		t.Errorf("expected closed status in store, got %q", record.Status)
 	}
 }
 
@@ -1648,9 +1624,9 @@ func TestSubscribeJobEvents_ReceivesEvents(t *testing.T) {
 	cancel()
 }
 
-// TestSubscribeJobEvents_InvalidJob verifies that subscribing to a non-existent
-// job returns a JobNotFoundError.
-func TestSubscribeJobEvents_InvalidJob(t *testing.T) {
+// TestSubscribeJobEvents_InvalidInput verifies that subscribing with an empty
+// tenant ID, an empty job ID or an unknown job returns the typed error.
+func TestSubscribeJobEvents_InvalidInput(t *testing.T) {
 	t.Parallel()
 
 	backends := map[string]AgentBackend{"mock": &mockAgentBackend{}}
@@ -1659,15 +1635,48 @@ func TestSubscribeJobEvents_InvalidJob(t *testing.T) {
 		t.Fatalf("failed to create service: %v", err)
 	}
 
-	ctx := context.Background()
-	_, subErr := svc.SubscribeJobEvents(ctx, "tenant-x", "nonexistent-job")
-	if subErr == nil {
-		t.Fatal("expected error for non-existent job, got nil")
+	tests := []struct {
+		name     string
+		tenantID string
+		jobID    string
+		check    func(error) bool
+		wantErr  string
+	}{
+		{
+			name:     "nonexistent job",
+			tenantID: "tenant-x",
+			jobID:    "nonexistent-job",
+			check: func(err error) bool {
+				var notFound *JobNotFoundError
+				return errors.As(err, &notFound)
+			},
+			wantErr: "JobNotFoundError",
+		},
+		{
+			name:     "empty tenant ID",
+			tenantID: "",
+			jobID:    "some-job",
+			check:    func(err error) bool { return errors.Is(err, ErrTenantIDRequired) },
+			wantErr:  "ErrTenantIDRequired",
+		},
+		{
+			name:     "empty job ID",
+			tenantID: "tenant-x",
+			jobID:    "",
+			check:    func(err error) bool { return errors.Is(err, ErrJobNotFound) },
+			wantErr:  "ErrJobNotFound",
+		},
 	}
 
-	var notFound *JobNotFoundError
-	if !errors.As(subErr, &notFound) {
-		t.Fatalf("expected JobNotFoundError, got %T: %v", subErr, subErr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, subErr := svc.SubscribeJobEvents(context.Background(), tt.tenantID, tt.jobID)
+			if !tt.check(subErr) {
+				t.Fatalf("expected %s, got %T: %v", tt.wantErr, subErr, subErr)
+			}
+		})
 	}
 }
 
@@ -1772,48 +1781,6 @@ done:
 	}
 	if received > 64 {
 		t.Fatalf("expected at most 64 events (buffer size), got %d", received)
-	}
-}
-
-// TestSubscribeJobEvents_EmptyTenantID verifies that an empty tenant ID
-// returns the appropriate error.
-func TestSubscribeJobEvents_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	backends := map[string]AgentBackend{"mock": &mockAgentBackend{}}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	ctx := context.Background()
-	_, subErr := svc.SubscribeJobEvents(ctx, "", "some-job")
-	if subErr == nil {
-		t.Fatal("expected error for empty tenant ID, got nil")
-	}
-	if !errors.Is(subErr, ErrTenantIDRequired) {
-		t.Fatalf("expected ErrTenantIDRequired, got %v", subErr)
-	}
-}
-
-// TestSubscribeJobEvents_EmptyJobID verifies that an empty job ID
-// returns the appropriate error.
-func TestSubscribeJobEvents_EmptyJobID(t *testing.T) {
-	t.Parallel()
-
-	backends := map[string]AgentBackend{"mock": &mockAgentBackend{}}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create service: %v", err)
-	}
-
-	ctx := context.Background()
-	_, subErr := svc.SubscribeJobEvents(ctx, "tenant-x", "")
-	if subErr == nil {
-		t.Fatal("expected error for empty job ID, got nil")
-	}
-	if !errors.Is(subErr, ErrJobNotFound) {
-		t.Fatalf("expected ErrJobNotFound, got %v", subErr)
 	}
 }
 
