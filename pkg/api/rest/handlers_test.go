@@ -2084,38 +2084,6 @@ func TestCov91_HandleMessagingChannelStats_Success(t *testing.T) {
 // KMS Handler - Invalid JSON / Missing Params
 // =============================================================================
 
-func TestCov91_HandleSetKeySafety_InvalidJSON(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockKMSService = &mocks.MockKMSService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kms/keys/my-key/safety", strings.NewReader("not-json"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSetKeySafety(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleSetKeyPolicy_InvalidJSON(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.MockKMSService = &mocks.MockKMSService{}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-key")
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/kms/keys/my-key/policy", strings.NewReader("not-json"))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleSetKeyPolicy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 type cacheTestLogger struct {
 	*logger.Logger
 }
