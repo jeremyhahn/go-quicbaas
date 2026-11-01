@@ -350,18 +350,33 @@ func TestMsgDedupStats_MissingChannel(t *testing.T) {
 	assert.Contains(t, err.Error(), "channel is required")
 }
 
-func TestMsgServiceNotAvailable(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
+// TestToolFamily_ServiceNotConfigured checks that a tool fails when the
+// service behind its family is not configured.
+func TestToolFamily_ServiceNotConfigured(t *testing.T) {
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	registry := NewToolRegistry(&extendedMockService{}, log)
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "events",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "not configured")
+	tests := []struct {
+		name        string
+		tool        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{"messaging", "quicbaas_msg_create_channel", map[string]interface{}{"name": "events"}, "not configured"},
+		{"embedding", "quicbaas_embedding_generate", map[string]interface{}{"text": "test"}, "embedding service not configured"},
+		{"ollama", "quicbaas_ollama_embed", map[string]interface{}{"text": "test"}, "ollama service not configured"},
+		{"parameter", "quicbaas_parameter_get", map[string]interface{}{"path": "/app/config"}, "parameter store service not configured"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestIsMsgTool(t *testing.T) {
@@ -528,18 +543,39 @@ func TestHandleMsgCreateChannel_InvalidTTL(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid ttl format")
 }
 
-func TestExecuteMsgTool_UnknownTool(t *testing.T) {
+// TestExecuteToolFamily_UnknownTool checks that each tool family's executor
+// rejects a tool name it does not route.
+func TestExecuteToolFamily_UnknownTool(t *testing.T) {
 	svc := &extendedMockService{
 		messagingSvc: &mockMessagingService{},
+		embeddingSvc: &mockEmbeddingService{},
+		ollamaSvc:    &mockOllamaService{},
+		parameterSvc: &mockParameterStoreService{},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
 	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.executeMsgTool(ctx, "quicbaas_msg_unknown_tool", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_msg_unknown_tool")
+	type executor func(context.Context, string, map[string]interface{}) (interface{}, error)
+	tests := []struct {
+		name    string
+		execute executor
+		tool    string
+	}{
+		{"messaging", registry.executeMsgTool, "quicbaas_msg_unknown_tool"},
+		{"embedding", registry.executeEmbeddingTool, "quicbaas_embedding_unknown"},
+		{"ollama", registry.executeOllamaTool, "quicbaas_ollama_unknown"},
+		{"parameter", registry.executeParameterTool, "quicbaas_parameter_unknown"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := tc.execute(context.Background(), tc.tool, map[string]interface{}{})
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), "unknown tool: "+tc.tool)
+		})
+	}
 }
 
 func TestHandleMsgCreateChannel_WithMaxSubscribers(t *testing.T) {
@@ -857,34 +893,6 @@ func TestHandleEmbeddingBatch_WithResultError(t *testing.T) {
 	assert.Equal(t, 1, resultMap["error_count"])
 }
 
-func TestExecuteEmbeddingTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		embeddingSvc: &mockEmbeddingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeEmbeddingTool(ctx, "quicbaas_embedding_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_embedding_unknown")
-}
-
-func TestEmbeddingServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_embedding_generate", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "embedding service not configured")
-}
-
 // =============================================================================
 // Ollama Service Error Path Tests
 // =============================================================================
@@ -1016,34 +1024,6 @@ func TestHandleOllamaModelList_ServiceError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "list models failed")
-}
-
-func TestExecuteOllamaTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		ollamaSvc: &mockOllamaService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeOllamaTool(ctx, "quicbaas_ollama_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_ollama_unknown")
-}
-
-func TestOllamaServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_ollama_embed", map[string]interface{}{
-		"text": "test",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "ollama service not configured")
 }
 
 // =============================================================================
@@ -1374,34 +1354,6 @@ func TestHandleParameterSearch_WithOptionalFields(t *testing.T) {
 	resultMap := result.(map[string]interface{})
 	assert.Equal(t, true, resultMap["has_more"])
 	assert.Equal(t, "search-cursor", resultMap["next_cursor"])
-}
-
-func TestExecuteParameterTool_UnknownTool(t *testing.T) {
-	svc := &extendedMockService{
-		parameterSvc: &mockParameterStoreService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.executeParameterTool(ctx, "quicbaas_parameter_unknown", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unknown tool: quicbaas_parameter_unknown")
-}
-
-func TestParameterServiceNotConfigured(t *testing.T) {
-	svc := &extendedMockService{}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_parameter_get", map[string]interface{}{
-		"path": "/app/config",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "parameter store service not configured")
 }
 
 // =============================================================================
