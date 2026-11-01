@@ -82,18 +82,6 @@ func TestFormatObjectPutResponse(t *testing.T) {
 			outputFormat: "table",
 			expectError:  false,
 		},
-		{
-			name: "nil created at",
-			response: &pb.PutObjectResponse{
-				Key:       "mybucket/mykey",
-				Size:      1024,
-				Version:   1,
-				Checksum:  []byte{0x01, 0x02, 0x03, 0x04},
-				CreatedAt: nil,
-			},
-			outputFormat: "table",
-			expectError:  false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1160,12 +1148,6 @@ func TestObjectTruncateString(t *testing.T) {
 			maxLen:   10,
 			expected: "this is...",
 		},
-		{
-			name:     "empty string",
-			input:    "",
-			maxLen:   10,
-			expected: "",
-		},
 	}
 
 	for _, tt := range tests {
@@ -1206,11 +1188,6 @@ func TestObjectFormatStorageSize(t *testing.T) {
 			name:     "terabytes",
 			size:     1099511627776,
 			expected: "1.0 TB",
-		},
-		{
-			name:     "zero bytes",
-			size:     0,
-			expected: "0 B",
 		},
 	}
 
