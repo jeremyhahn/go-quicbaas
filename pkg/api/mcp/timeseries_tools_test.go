@@ -4,7 +4,6 @@ package mcp
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +40,7 @@ func TestTimeSeriesTools_Registration(t *testing.T) {
 			if tool.Name == expectedTool {
 				found = true
 				assert.NotEmpty(t, tool.Description, "Tool %s should have a description", expectedTool)
-				assert.NotNil(t, tool.InputSchema, "Tool %s should have an input schema", expectedTool)
+				assert.Equal(t, "object", tool.InputSchema["type"], "Tool %s schema should be object type", expectedTool)
 				break
 			}
 		}
@@ -130,50 +129,6 @@ func TestTimeSeriesTools_SchemaValidation(t *testing.T) {
 	}
 }
 
-// TestTimeSeriesTools_ToolNamingConvention verifies naming follows QuicBaaS conventions
-func TestTimeSeriesTools_ToolNamingConvention(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	mockService := testutil.NewMockQuicBaaS()
-	registry := NewToolRegistry(mockService, log)
-	tools := registry.ListTools()
-
-	timeSeriesToolCount := 0
-	for _, tool := range tools {
-		if strings.HasPrefix(tool.Name, "qrdb_ts_") {
-			timeSeriesToolCount++
-			// All TimeSeries tools should start with quicbaas_ts_ and have content after
-			assert.True(t, len(tool.Name) > len("qrdb_ts_"), "Tool %s should have content after prefix", tool.Name)
-		}
-	}
-
-	// Should have at least 7 time series tools
-	assert.GreaterOrEqual(t, timeSeriesToolCount, 7, "Should have at least 7 TimeSeries tools")
-}
-
-// TestTimeSeriesTools_AllToolsHaveDescriptions verifies all tools have meaningful descriptions
-func TestTimeSeriesTools_AllToolsHaveDescriptions(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	mockService := testutil.NewMockQuicBaaS()
-	registry := NewToolRegistry(mockService, log)
-	tools := registry.ListTools()
-
-	for _, tool := range tools {
-		if strings.HasPrefix(tool.Name, "qrdb_ts_") {
-			assert.NotEmpty(t, tool.Name, "Tool should have a name")
-			assert.NotEmpty(t, tool.Description, "Tool %s should have a description", tool.Name)
-			assert.NotNil(t, tool.InputSchema, "Tool %s should have an input schema", tool.Name)
-
-			schemaType, ok := tool.InputSchema["type"].(string)
-			assert.True(t, ok, "Tool %s schema should have type", tool.Name)
-			assert.Equal(t, "object", schemaType, "Tool %s schema should be object type", tool.Name)
-		}
-	}
-}
-
 // TestTimeSeriesTools_NoDuplicateNames verifies tool names are unique
 func TestTimeSeriesTools_NoDuplicateNames(t *testing.T) {
 	log, err := logger.New(logger.Default())
@@ -188,30 +143,6 @@ func TestTimeSeriesTools_NoDuplicateNames(t *testing.T) {
 		assert.False(t, seen[tool.Name], "Tool name %s should be unique", tool.Name)
 		seen[tool.Name] = true
 	}
-}
-
-// TestTimeSeriesTools_ProtoServiceParity verifies MCP tools align with gRPC proto service
-func TestTimeSeriesTools_ProtoServiceParity(t *testing.T) {
-	log, err := logger.New(logger.Default())
-	require.NoError(t, err)
-
-	mockService := testutil.NewMockQuicBaaS()
-	registry := NewToolRegistry(mockService, log)
-	tools := registry.ListTools()
-
-	// Build tool map
-	toolMap := make(map[string]bool)
-	for _, tool := range tools {
-		toolMap[tool.Name] = true
-	}
-
-	assert.True(t, toolMap["qrdb_ts_write_point"], "Should have write_point tool")
-	assert.True(t, toolMap["qrdb_ts_write_batch"], "Should have write_batch tool")
-	assert.True(t, toolMap["qrdb_ts_query"], "Should have query tool")
-	assert.True(t, toolMap["qrdb_ts_delete_series"], "Should have delete_series tool")
-	assert.True(t, toolMap["qrdb_ts_get_retention_policy"], "Should have get_retention_policy tool")
-	assert.True(t, toolMap["qrdb_ts_set_retention_policy"], "Should have set_retention_policy tool")
-	assert.True(t, toolMap["qrdb_ts_list_metrics"], "Should have list_metrics tool")
 }
 
 // =============================================================================
