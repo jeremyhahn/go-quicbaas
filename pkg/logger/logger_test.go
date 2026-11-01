@@ -917,174 +917,92 @@ func TestLogger_ConsoleFormatWithColor(t *testing.T) {
 
 // TestLogger_WithAttrs tests the strongly-typed slog attributes method.
 func TestLogger_WithAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
+	tests := []struct {
+		name  string
+		apply func(*Logger) *Logger
+		want  map[string]interface{}
+	}{
+		{
+			name: "several attrs in one call",
+			apply: func(l *Logger) *Logger {
+				return l.WithAttrs(
+					slog.String("service", "quicbaas"),
+					slog.Int("port", 8080),
+					slog.Bool("debug", true),
+				)
+			},
+			want: map[string]interface{}{"service": "quicbaas", "port": int64(8080), "debug": true},
+		},
+		{
+			name: "chained calls accumulate",
+			apply: func(l *Logger) *Logger {
+				return l.
+					WithAttrs(slog.String("service", "quicbaas")).
+					WithAttrs(slog.Int("version", 1)).
+					WithAttrs(slog.Bool("production", false))
+			},
+			want: map[string]interface{}{"service": "quicbaas", "version": int64(1), "production": false},
+		},
+		{
+			name:  "no attrs",
+			apply: func(l *Logger) *Logger { return l.WithAttrs() },
+			want:  map[string]interface{}{},
+		},
 	}
 
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: "debug", Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
 
-	// Test WithAttrs with various slog attribute types
-	attrLogger := logger.WithAttrs(
-		slog.String("service", "quicbaas"),
-		slog.Int("port", 8080),
-		slog.Bool("debug", true),
-	)
+			attrLogger := tt.apply(logger)
+			if attrLogger == nil {
+				t.Fatal("WithAttrs() returned nil logger")
+			}
 
-	if attrLogger == nil {
-		t.Error("WithAttrs() returned nil logger")
-	}
-
-	// Verify fields are stored
-	fields := attrLogger.GetFields()
-	if fields["service"] != "quicbaas" {
-		t.Errorf("WithAttrs() service = %v, want quicbaas", fields["service"])
-	}
-	if fields["port"] != int64(8080) {
-		t.Errorf("WithAttrs() port = %v, want 8080", fields["port"])
-	}
-	if fields["debug"] != true {
-		t.Errorf("WithAttrs() debug = %v, want true", fields["debug"])
-	}
-}
-
-// TestLogger_InfoAttrs tests info logging with strongly-typed attributes.
-func TestLogger_InfoAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.InfoAttrs("test message",
-		slog.String("key", "value"),
-		slog.Int("count", 42),
-		slog.Duration("elapsed", time.Second),
-	)
-}
-
-// TestLogger_DebugAttrs tests debug logging with strongly-typed attributes.
-func TestLogger_DebugAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.DebugAttrs("debug message",
-		slog.String("component", "test"),
-		slog.Int64("bytes", 1024),
-	)
-}
-
-// TestLogger_WarnAttrs tests warning logging with strongly-typed attributes.
-func TestLogger_WarnAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "warn",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.WarnAttrs("warning message",
-		slog.String("reason", "test"),
-		slog.Float64("threshold", 0.95),
-	)
-}
-
-// TestLogger_ErrorAttrs tests error logging with strongly-typed attributes.
-func TestLogger_ErrorAttrs(t *testing.T) {
-	config := LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Should not panic
-	logger.ErrorAttrs("error message",
-		slog.String("error_code", "E001"),
-		slog.Any("details", map[string]string{"key": "value"}),
-	)
-}
-
-// TestLogger_WithAttrsChaining tests chaining WithAttrs calls.
-func TestLogger_WithAttrsChaining(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	}
-
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	// Chain multiple WithAttrs calls
-	chainedLogger := logger.
-		WithAttrs(slog.String("service", "quicbaas")).
-		WithAttrs(slog.Int("version", 1)).
-		WithAttrs(slog.Bool("production", false))
-
-	fields := chainedLogger.GetFields()
-	if fields["service"] != "quicbaas" {
-		t.Errorf("chained WithAttrs() service = %v, want quicbaas", fields["service"])
-	}
-	if fields["version"] != int64(1) {
-		t.Errorf("chained WithAttrs() version = %v, want 1", fields["version"])
-	}
-	if fields["production"] != false {
-		t.Errorf("chained WithAttrs() production = %v, want false", fields["production"])
+			fields := attrLogger.GetFields()
+			if len(fields) != len(tt.want) {
+				t.Errorf("WithAttrs() fields = %v, want %v", fields, tt.want)
+			}
+			for key, want := range tt.want {
+				if fields[key] != want {
+					t.Errorf("WithAttrs() %s = %v, want %v", key, fields[key], want)
+				}
+			}
+		})
 	}
 }
 
-// TestLogger_WithAttrsEmpty tests WithAttrs with no attributes.
-func TestLogger_WithAttrsEmpty(t *testing.T) {
-	config := LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
+func TestLogger_LevelAttrs(t *testing.T) {
+	tests := []struct {
+		level string
+		log   func(*Logger)
+	}{
+		{"debug", func(l *Logger) {
+			l.DebugAttrs("debug message", slog.String("component", "test"), slog.Int64("bytes", 1024))
+		}},
+		{"info", func(l *Logger) {
+			l.InfoAttrs("test message", slog.String("key", "value"), slog.Duration("elapsed", time.Second))
+		}},
+		{"warn", func(l *Logger) {
+			l.WarnAttrs("warning message", slog.String("reason", "test"), slog.Float64("threshold", 0.95))
+		}},
+		{"error", func(l *Logger) {
+			l.ErrorAttrs("error message", slog.Any("details", map[string]string{"key": "value"}))
+		}},
 	}
 
-	logger, err := New(config)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			logger, err := New(LogConfig{Level: tt.level, Format: "json", Output: "stdout"})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			tt.log(logger)
+		})
 	}
-
-	// Call WithAttrs with no attributes
-	emptyLogger := logger.WithAttrs()
-	if emptyLogger == nil {
-		t.Error("WithAttrs() with no args returned nil")
-	}
-
-	// Should still work
-	emptyLogger.Info("message without attrs")
 }
 
 // TestNewAdapter tests the NewAdapter function.
