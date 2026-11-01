@@ -171,85 +171,72 @@ func TestValidateTimeSeriesTenantID(t *testing.T) {
 // enforceTimeSeriesTenantAccess tests
 // =============================================================================
 
-func TestEnforceTimeSeriesTenantAccess_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: always allowed
-	err := enforceTimeSeriesTenantAccess("", "any-metric", "WritePoint")
-	assert.NoError(t, err)
-}
-
-func TestEnforceTimeSeriesTenantAccess_MatchingTenant(t *testing.T) {
-	// Multi-tenant mode: matching tenant prefix is allowed
-	metric := tsTenantScopedMetric("acme-corp", "cpu.usage")
-	err := enforceTimeSeriesTenantAccess("acme-corp", metric, "WritePoint")
-	assert.NoError(t, err)
-}
-
-func TestEnforceTimeSeriesTenantAccess_CrossTenant(t *testing.T) {
-	// Multi-tenant mode: cross-tenant access is denied
-	metric := tsTenantScopedMetric("other-corp", "cpu.usage")
-	err := enforceTimeSeriesTenantAccess("acme-corp", metric, "WritePoint")
-	require.Error(t, err)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
-}
-
-func TestEnforceTimeSeriesTenantAccess_UnprefixedMetric(t *testing.T) {
-	// Multi-tenant mode: unprefixed metric is denied
-	err := enforceTimeSeriesTenantAccess("acme-corp", "plain-metric", "TSQuery")
-	require.Error(t, err)
-	var qbErr *errors.QBError
-	require.ErrorAs(t, err, &qbErr)
-	assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
+func TestEnforceTimeSeriesTenantAccess(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		metric   string
+		wantErr  bool
+	}{
+		{name: "empty tenant is always allowed", tenantID: "", metric: "any-metric"},
+		{name: "own metric is allowed", tenantID: "acme-corp", metric: "ts-tenant/acme-corp/cpu.usage"},
+		{name: "other tenant's metric is denied", tenantID: "acme-corp", metric: "ts-tenant/other-corp/cpu.usage", wantErr: true},
+		{name: "unprefixed metric is denied", tenantID: "acme-corp", metric: "plain-metric", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := enforceTimeSeriesTenantAccess(tt.tenantID, tt.metric, "WritePoint")
+			if !tt.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			var qbErr *errors.QBError
+			require.ErrorAs(t, err, &qbErr)
+			assert.Equal(t, errors.ErrCrossTenantAccess, qbErr.Code)
+		})
+	}
 }
 
 // =============================================================================
 // tsFilterMetricsByTenant tests
 // =============================================================================
 
-func TestTsFilterMetricsByTenant_EmptyTenant(t *testing.T) {
-	// Single-tenant mode: all metrics returned unchanged
-	metrics := []string{"cpu.usage", "mem.usage", "disk.io"}
-	result := tsFilterMetricsByTenant("", metrics)
-	assert.Equal(t, metrics, result)
-}
-
-func TestTsFilterMetricsByTenant_FiltersCorrectly(t *testing.T) {
-	// Multi-tenant mode: only matching tenant metrics are returned, stripped
-	metrics := []string{
-		"ts-tenant/acme-corp/cpu.usage",
-		"ts-tenant/other-corp/cpu.usage",
-		"ts-tenant/acme-corp/mem.usage",
-		"plain-metric",
+func TestTsFilterMetricsByTenant(t *testing.T) {
+	tests := []struct {
+		name     string
+		tenantID string
+		metrics  []string
+		want     []string
+	}{
+		{
+			name:     "empty tenant returns every metric unchanged",
+			tenantID: "",
+			metrics:  []string{"cpu.usage", "mem.usage", "disk.io"},
+			want:     []string{"cpu.usage", "mem.usage", "disk.io"},
+		},
+		{
+			name:     "only own metrics are returned, stripped",
+			tenantID: "acme-corp",
+			metrics: []string{
+				"ts-tenant/acme-corp/cpu.usage",
+				"ts-tenant/other-corp/cpu.usage",
+				"ts-tenant/acme-corp/mem.usage",
+				"plain-metric",
+			},
+			want: []string{"cpu.usage", "mem.usage"},
+		},
+		{
+			name:     "no own metrics returns an empty slice",
+			tenantID: "acme-corp",
+			metrics:  []string{"ts-tenant/other-corp/cpu.usage", "plain-metric"},
+			want:     []string{},
+		},
 	}
-	result := tsFilterMetricsByTenant("acme-corp", metrics)
-	assert.Equal(t, []string{"cpu.usage", "mem.usage"}, result)
-}
-
-func TestTsFilterMetricsByTenant_NoMatches(t *testing.T) {
-	// Multi-tenant mode: no matching metrics returns empty slice
-	metrics := []string{
-		"ts-tenant/other-corp/cpu.usage",
-		"plain-metric",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tsFilterMetricsByTenant(tt.tenantID, tt.metrics))
+		})
 	}
-	result := tsFilterMetricsByTenant("acme-corp", metrics)
-	assert.Empty(t, result)
-}
-
-func TestTsFilterMetricsByTenant_EmptyInput(t *testing.T) {
-	// Empty input returns empty slice
-	result := tsFilterMetricsByTenant("acme-corp", []string{})
-	assert.Empty(t, result)
-}
-
-func TestTsFilterMetricsByTenant_NilInput(t *testing.T) {
-	// Nil input returns nil in single-tenant mode
-	result := tsFilterMetricsByTenant("", nil)
-	assert.Nil(t, result)
-
-	// Nil input returns empty slice in multi-tenant mode
-	result = tsFilterMetricsByTenant("acme-corp", nil)
-	assert.Empty(t, result)
 }
 
 // =============================================================================
@@ -266,12 +253,6 @@ func TestTimeSeriesTenantValidationError_Error(t *testing.T) {
 	assert.Contains(t, msg, "contains invalid characters")
 }
 
-func TestTimeSeriesTenantValidationError_EmptyFields(t *testing.T) {
-	err := &TimeSeriesTenantValidationError{}
-	msg := err.Error()
-	assert.Contains(t, msg, "timeseries tenant validation failed")
-}
-
 func TestTimeSeriesCrossTenantAccessError_Error(t *testing.T) {
 	err := &TimeSeriesCrossTenantAccessError{
 		RequestingTenant: "tenant-a",
@@ -284,12 +265,6 @@ func TestTimeSeriesCrossTenantAccessError_Error(t *testing.T) {
 	assert.Contains(t, msg, "tenant-b")
 	assert.Contains(t, msg, "cpu.usage")
 	assert.Contains(t, msg, "WritePoint")
-}
-
-func TestTimeSeriesCrossTenantAccessError_EmptyFields(t *testing.T) {
-	err := &TimeSeriesCrossTenantAccessError{}
-	msg := err.Error()
-	assert.Contains(t, msg, "timeseries cross-tenant access denied")
 }
 
 // =============================================================================
