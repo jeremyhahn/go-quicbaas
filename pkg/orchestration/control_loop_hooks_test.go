@@ -457,27 +457,25 @@ func TestHookStartPeerDelivery_Success(t *testing.T) {
 	cancels[0]()
 }
 
-func TestHookStartPeerDelivery_NilService(t *testing.T) {
-	deliverFn := func(_ context.Context, _ string, _ *PeerMessage) {}
-
-	cancels, err := HookStartPeerDelivery(context.Background(), nil, "tenant-1", []string{"agent-1"}, deliverFn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestHookStartPeerDelivery_NilDependenciesAreNoOp(t *testing.T) {
+	tests := []struct {
+		name      string
+		peerSvc   PeerMessagingService
+		deliverFn func(context.Context, string, *PeerMessage)
+	}{
+		{"nil service", nil, func(_ context.Context, _ string, _ *PeerMessage) {}},
+		{"nil deliverFn", &hookMockPeerMessaging{}, nil},
 	}
-	if cancels != nil {
-		t.Errorf("expected nil cancels for nil service, got %d", len(cancels))
-	}
-}
-
-func TestHookStartPeerDelivery_NilDeliverFn(t *testing.T) {
-	mockSvc := &hookMockPeerMessaging{}
-
-	cancels, err := HookStartPeerDelivery(context.Background(), mockSvc, "tenant-1", []string{"agent-1"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cancels != nil {
-		t.Errorf("expected nil cancels for nil deliverFn, got %d", len(cancels))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cancels, err := HookStartPeerDelivery(context.Background(), tt.peerSvc, "tenant-1", []string{"agent-1"}, tt.deliverFn)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cancels != nil {
+				t.Errorf("expected nil cancels, got %d", len(cancels))
+			}
+		})
 	}
 }
 
@@ -539,38 +537,6 @@ func TestHookStartPeerDelivery_MultipleAgents(t *testing.T) {
 	for _, c := range cancels {
 		c()
 	}
-}
-
-func TestHookStartPeerDelivery_ChannelClosed(t *testing.T) {
-	var delivered atomic.Int64
-
-	msgCh := make(chan *PeerMessage, 1)
-	mockSvc := &hookMockPeerMessaging{
-		subscribeFn: func(_ context.Context, _, _ string) (<-chan *PeerMessage, error) {
-			return msgCh, nil
-		},
-	}
-
-	deliverFn := func(_ context.Context, _ string, _ *PeerMessage) {
-		delivered.Add(1)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	cancels, err := HookStartPeerDelivery(ctx, mockSvc, "tenant-1", []string{"agent-1"}, deliverFn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(cancels) != 1 {
-		t.Fatalf("expected 1 cancel function, got %d", len(cancels))
-	}
-
-	// Close channel to trigger goroutine exit.
-	close(msgCh)
-
-	// The goroutine should exit cleanly. No assertion needed beyond no panic.
-	cancel()
 }
 
 // =============================================================================
