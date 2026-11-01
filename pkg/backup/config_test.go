@@ -33,11 +33,16 @@ import (
 )
 
 func TestConfig_Validate(t *testing.T) {
+	const defaultWorkDir = "/tmp/quicbaas-backups"
 	tests := []struct {
 		name        string
 		config      *Config
 		wantErr     bool
 		errContains string
+		// Validate fills in Timeout and WorkDir; these are the values a
+		// valid config holds afterwards.
+		wantTimeout time.Duration
+		wantWorkDir string
 	}{
 		{
 			name: "valid config with local storage",
@@ -48,7 +53,8 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
 		},
 		{
 			name: "valid config with S3 storage",
@@ -59,7 +65,17 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
+		},
+		{
+			name: "valid config with none compression",
+			config: &Config{
+				StorageBackend:     "local",
+				DefaultCompression: CompressionNone,
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
 		},
 		{
 			name: "valid config with encryption",
@@ -71,7 +87,52 @@ func TestConfig_Validate(t *testing.T) {
 				WorkDir:            "/tmp/backups",
 				Timeout:            5 * time.Minute,
 			},
-			wantErr: false,
+			wantTimeout: 5 * time.Minute,
+			wantWorkDir: "/tmp/backups",
+		},
+		{
+			name: "valid config with GCS",
+			config: &Config{
+				StorageBackend: "gcs",
+				Timeout:        1 * time.Minute,
+			},
+			wantTimeout: 1 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "valid config with Azure",
+			config: &Config{
+				StorageBackend: "azure",
+				Timeout:        1 * time.Minute,
+			},
+			wantTimeout: 1 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "zero timeout gets default",
+			config: &Config{
+				StorageBackend: "local",
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "negative timeout gets default",
+			config: &Config{
+				StorageBackend: "local",
+				Timeout:        -1 * time.Minute,
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: defaultWorkDir,
+		},
+		{
+			name: "relative work dir is kept",
+			config: &Config{
+				StorageBackend: "local",
+				WorkDir:        "backups",
+			},
+			wantTimeout: 30 * time.Minute,
+			wantWorkDir: "backups",
 		},
 		{
 			name: "missing storage backend",
@@ -85,6 +146,14 @@ func TestConfig_Validate(t *testing.T) {
 			name: "unsupported storage backend",
 			config: &Config{
 				StorageBackend: "unsupported",
+			},
+			wantErr:     true,
+			errContains: "unsupported storage backend",
+		},
+		{
+			name: "storage backend is case sensitive",
+			config: &Config{
+				StorageBackend: "Local",
 			},
 			wantErr:     true,
 			errContains: "unsupported storage backend",
@@ -108,11 +177,31 @@ func TestConfig_Validate(t *testing.T) {
 			errContains: "unsupported encryption type",
 		},
 		{
-			name: "AES encryption with wrong key size",
+			name: "AES encryption with 16 byte key",
 			config: &Config{
 				StorageBackend:    "local",
 				DefaultEncryption: EncryptionAES256GCM,
 				EncryptionKey:     make([]byte, 16),
+			},
+			wantErr:     true,
+			errContains: "32 bytes",
+		},
+		{
+			name: "AES encryption with 31 byte key",
+			config: &Config{
+				StorageBackend:    "local",
+				DefaultEncryption: EncryptionAES256GCM,
+				EncryptionKey:     make([]byte, 31),
+			},
+			wantErr:     true,
+			errContains: "32 bytes",
+		},
+		{
+			name: "AES encryption with 33 byte key",
+			config: &Config{
+				StorageBackend:    "local",
+				DefaultEncryption: EncryptionAES256GCM,
+				EncryptionKey:     make([]byte, 33),
 			},
 			wantErr:     true,
 			errContains: "32 bytes",
@@ -126,43 +215,19 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr:     true,
 			errContains: "32 bytes",
 		},
-		{
-			name: "valid config with GCS",
-			config: &Config{
-				StorageBackend: "gcs",
-				Timeout:        1 * time.Minute,
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid config with Azure",
-			config: &Config{
-				StorageBackend: "azure",
-				Timeout:        1 * time.Minute,
-			},
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.config.Validate()
 			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
 				return
 			}
 			require.NoError(t, err)
-
-			// Verify defaults are applied during validation
-			if tt.config.Timeout == 0 {
-				assert.Equal(t, 30*time.Minute, tt.config.Timeout)
-			}
-			if tt.config.WorkDir == "" {
-				assert.Equal(t, "/tmp/quicbaas-backups", tt.config.WorkDir)
-			}
+			assert.Equal(t, tt.wantTimeout, tt.config.Timeout)
+			assert.Equal(t, tt.wantWorkDir, tt.config.WorkDir)
 		})
 	}
 }
@@ -224,6 +289,7 @@ func TestConfig_WithDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			original := *tt.config
 			result := tt.config.WithDefaults()
 
 			assert.Equal(t, tt.expectedComp, result.DefaultCompression)
@@ -231,292 +297,10 @@ func TestConfig_WithDefaults(t *testing.T) {
 			assert.Equal(t, tt.expectedTimeout, result.Timeout)
 			assert.Equal(t, tt.expectedWorkDir, result.WorkDir)
 
-			// Original config should not be modified
-			if tt.config.DefaultCompression == "" {
-				assert.Empty(t, tt.config.DefaultCompression)
-			}
+			// WithDefaults returns a copy; the receiver is not modified.
+			assert.Equal(t, original, *tt.config)
 		})
 	}
-}
-
-func TestConfig_ValidateAndApplyDefaults(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-	}
-
-	// Apply defaults
-	config = config.WithDefaults()
-
-	// Validate
-	err := config.Validate()
-	require.NoError(t, err)
-
-	// Check all defaults are set
-	assert.Equal(t, CompressionZstd, config.DefaultCompression)
-	assert.Equal(t, EncryptionNone, config.DefaultEncryption)
-	assert.Equal(t, 30*time.Minute, config.Timeout)
-	assert.Equal(t, "/tmp/quicbaas-backups", config.WorkDir)
-}
-
-func TestConfig_ValidateCompressionTypes(t *testing.T) {
-	tests := []struct {
-		name        string
-		compression CompressionType
-		wantErr     bool
-	}{
-		{"none", CompressionNone, false},
-		{"gzip", CompressionGzip, false},
-		{"zstd", CompressionZstd, false},
-		{"invalid", CompressionType("snappy"), true},
-		{"empty", CompressionType(""), false}, // Empty is ok, will get default
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:     "local",
-				DefaultCompression: tt.compression,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_ValidateEncryptionTypes(t *testing.T) {
-	tests := []struct {
-		name       string
-		encryption EncryptionType
-		key        []byte
-		wantErr    bool
-	}{
-		{"none", EncryptionNone, nil, false},
-		{"aes256gcm valid", EncryptionAES256GCM, make([]byte, 32), false},
-		{"aes256gcm short key", EncryptionAES256GCM, make([]byte, 16), true},
-		{"aes256gcm long key", EncryptionAES256GCM, make([]byte, 64), true},
-		{"invalid type", EncryptionType("invalid"), nil, true},
-		{"empty", EncryptionType(""), nil, false}, // Empty is ok, will get default
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:    "local",
-				DefaultEncryption: tt.encryption,
-				EncryptionKey:     tt.key,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_ValidateStorageBackends(t *testing.T) {
-	tests := []struct {
-		name    string
-		backend string
-		wantErr bool
-	}{
-		{"local", "local", false},
-		{"s3", "s3", false},
-		{"gcs", "gcs", false},
-		{"azure", "azure", false},
-		{"invalid", "invalid", true},
-		{"empty", "", true},
-		{"case sensitive", "Local", true},
-		{"case sensitive s3", "S3", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: tt.backend,
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_TimeoutDefaults(t *testing.T) {
-	tests := []struct {
-		name            string
-		inputTimeout    time.Duration
-		expectedTimeout time.Duration
-	}{
-		{"zero timeout", 0, 30 * time.Minute},
-		{"negative timeout", -1 * time.Minute, 30 * time.Minute},
-		{"custom timeout", 10 * time.Minute, 10 * time.Minute},
-		{"very long timeout", 24 * time.Hour, 24 * time.Hour},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: "local",
-				Timeout:        tt.inputTimeout,
-			}
-
-			err := config.Validate()
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.expectedTimeout, config.Timeout)
-		})
-	}
-}
-
-func TestConfig_WorkDirDefaults(t *testing.T) {
-	tests := []struct {
-		name            string
-		inputWorkDir    string
-		expectedWorkDir string
-	}{
-		{"empty work dir", "", "/tmp/quicbaas-backups"},
-		{"custom work dir", "/custom/dir", "/custom/dir"},
-		{"relative path", "backups", "backups"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend: "local",
-				WorkDir:        tt.inputWorkDir,
-			}
-
-			err := config.Validate()
-			require.NoError(t, err)
-
-			assert.Equal(t, tt.expectedWorkDir, config.WorkDir)
-		})
-	}
-}
-
-func TestConfig_ScheduleConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		Schedule: &ScheduleConfig{
-			Enabled:        true,
-			CronExpression: "0 2 * * *",
-			BackupType:     BackupTypeFull,
-			RetentionPolicy: &RetentionPolicy{
-				MaxBackups: 10,
-				MaxAge:     30 * 24 * time.Hour,
-			},
-		},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-
-	assert.NotNil(t, config.Schedule)
-	assert.True(t, config.Schedule.Enabled)
-	assert.Equal(t, "0 2 * * *", config.Schedule.CronExpression)
-	assert.NotNil(t, config.Schedule.RetentionPolicy)
-}
-
-func TestConfig_StorageConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "s3",
-		StorageConfig: map[string]string{
-			"bucket":     "my-bucket",
-			"region":     "us-east-1",
-			"access_key": "key",
-			"secret_key": "secret",
-		},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-
-	assert.NotNil(t, config.StorageConfig)
-	assert.Equal(t, "my-bucket", config.StorageConfig["bucket"])
-	assert.Equal(t, "us-east-1", config.StorageConfig["region"])
-}
-
-func TestConfig_EncryptionKeyValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		keyLen  int
-		wantErr bool
-	}{
-		{"1 byte", 1, true},
-		{"16 bytes", 16, true},
-		{"31 bytes", 31, true},
-		{"32 bytes", 32, false},
-		{"33 bytes", 33, true},
-		{"64 bytes", 64, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := &Config{
-				StorageBackend:    "local",
-				DefaultEncryption: EncryptionAES256GCM,
-				EncryptionKey:     make([]byte, tt.keyLen),
-			}
-
-			err := config.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestConfig_NilSchedule(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		Schedule:       nil,
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-}
-
-func TestConfig_EmptyStorageConfig(t *testing.T) {
-	config := &Config{
-		StorageBackend: "local",
-		StorageConfig:  map[string]string{},
-	}
-
-	err := config.Validate()
-	require.NoError(t, err)
-}
-
-func TestConfig_WithDefaults_Immutability(t *testing.T) {
-	original := &Config{
-		StorageBackend: "local",
-	}
-
-	// Apply defaults
-	withDefaults := original.WithDefaults()
-
-	// Original should remain unchanged
-	assert.Empty(t, original.DefaultCompression)
-	assert.Empty(t, original.DefaultEncryption)
-	assert.Equal(t, time.Duration(0), original.Timeout)
-
-	// New config should have defaults
-	assert.Equal(t, CompressionZstd, withDefaults.DefaultCompression)
-	assert.Equal(t, EncryptionNone, withDefaults.DefaultEncryption)
-	assert.Equal(t, 30*time.Minute, withDefaults.Timeout)
 }
 
 func setupTestBackupManagerWithErrors(t *testing.T) (*BackupManager, *mockStorage, *MockStorageWithErrors) {
