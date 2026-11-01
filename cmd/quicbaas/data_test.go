@@ -440,7 +440,7 @@ func TestRunPutCommand(t *testing.T) {
 		},
 		{
 			name: "successful put with JSON validation",
-			args: []string{"user", "john", `{"name":"John Doe"}`},
+			args: []string{"user", "john", `{"name":"John Doe","email":"john@example.com","age":30}`},
 			flags: map[string]interface{}{
 				"json":        true,
 				"output":      "json",
@@ -448,6 +448,8 @@ func TestRunPutCommand(t *testing.T) {
 			},
 			mockSetup: func(m *mockKVClient) {
 				m.PutFunc = func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
+					assert.Equal(t, `{"name":"John Doe","email":"john@example.com","age":30}`, string(req.Data),
+						"validated JSON must reach the store unchanged")
 					assert.Equal(t, service.ConsistencyLevelStrong, req.Consistency)
 					return &service.PutResponse{
 						ID:        req.ID,
@@ -1210,6 +1212,23 @@ func TestRunListCommand(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "successful list with table output and next cursor",
+			args: []string{"user"},
+			mockSetup: func(m *mockKVClient) {
+				m.ListFunc = func(ctx context.Context, req *service.ListRequest) (*service.ListResponse, error) {
+					return &service.ListResponse{
+						Entities: []*service.Entity{
+							{ID: 1, Data: []byte("value1"), Timestamp: time.Now().UnixNano()},
+							{ID: 2, Data: []byte("value2"), Timestamp: time.Now().UnixNano()},
+						},
+						TotalCount:    2,
+						NextPageToken: "next-page-token",
+					}, nil
+				}
+			},
+			expectError: false,
+		},
+		{
 			name: "successful list with custom limit",
 			args: []string{"user"},
 			flags: map[string]interface{}{
@@ -1569,84 +1588,6 @@ func TestRunQueryCommand(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestRunPutCommandValidJSON tests put command with valid JSON and json flag.
-func TestRunPutCommandValidJSON(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	// Reset the SDK client singleton
-	resetSDKClient()
-
-	validJSON := `{"name":"John Doe","email":"john@example.com","age":30}`
-
-	mockKV := &mockKVClient{
-		PutFunc: func(ctx context.Context, req *service.PutRequest) (*service.PutResponse, error) {
-			// Verify the JSON was accepted
-			var data map[string]interface{}
-			err := json.Unmarshal(req.Data, &data)
-			assert.NoError(t, err)
-			assert.Equal(t, "John Doe", data["name"])
-			assert.Equal(t, "john@example.com", data["email"])
-			assert.Equal(t, float64(30), data["age"])
-
-			return &service.PutResponse{
-				ID:        req.ID,
-				Version:   1,
-				Timestamp: time.Now().UnixNano(),
-			}, nil
-		},
-	}
-
-	mockClient := &mockSDKClient{
-		kvClient: mockKV,
-	}
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return mockClient, nil
-	}
-
-	jsonInput = true
-	defer func() { jsonInput = false }()
-
-	cmd := &cobra.Command{}
-	err := runPutCommand(cmd, []string{"user", "john", validJSON})
-	assert.NoError(t, err)
-}
-
-// TestListCommandWithNextCursor tests list command that returns a next cursor.
-func TestListCommandWithNextCursor(t *testing.T) {
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	// Reset the SDK client singleton
-	resetSDKClient()
-
-	mockKV := &mockKVClient{
-		ListFunc: func(ctx context.Context, req *service.ListRequest) (*service.ListResponse, error) {
-			return &service.ListResponse{
-				Entities: []*service.Entity{
-					{ID: 1, Data: []byte("value1"), Timestamp: time.Now().UnixNano()},
-					{ID: 2, Data: []byte("value2"), Timestamp: time.Now().UnixNano()},
-				},
-				TotalCount:    2,
-				NextPageToken: "next-page-token",
-			}, nil
-		},
-	}
-
-	mockClient := &mockSDKClient{
-		kvClient: mockKV,
-	}
-
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return mockClient, nil
-	}
-
-	cmd := &cobra.Command{}
-	err := runListCommand(cmd, []string{"user"})
-	assert.NoError(t, err)
 }
 
 // TestQueryCommandWithMultipleResults tests query returning multiple items.
