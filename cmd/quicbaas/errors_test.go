@@ -196,6 +196,29 @@ func TestCLIErrors(t *testing.T) {
 				assert.Nil(t, inner.Unwrap())
 			},
 		},
+		{
+			name: "JobFailed",
+			err:  NewJobFailedError("op", "job_123", "timeout exceeded"),
+			code: qberrors.ErrInternal,
+			msg:  "job job_123 failed: timeout exceeded",
+			as: func(t *testing.T, err error) {
+				var inner *JobFailedError
+				require.True(t, errors.As(err, &inner))
+				assert.Equal(t, "job_123", inner.JobID)
+				assert.Equal(t, "timeout exceeded", inner.Message)
+			},
+		},
+		{
+			name: "JobFailedNoMessage",
+			err:  NewJobFailedError("op", "job_456", ""),
+			code: qberrors.ErrInternal,
+			msg:  "job job_456 failed",
+			as: func(t *testing.T, err error) {
+				var inner *JobFailedError
+				require.True(t, errors.As(err, &inner))
+				assert.Empty(t, inner.Message)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -280,31 +303,21 @@ func TestParseKMSDecryptResponse_UnmarshalError(t *testing.T) {
 }
 
 // =============================================================================
-// DEK Parse Function Error Paths
-// =============================================================================
-
-// =============================================================================
 // Backend/Safety Parse Function Error Paths
 // =============================================================================
 
-func TestParseBackendStatusResponse_UnmarshalError(t *testing.T) {
-	_, err := parseBackendStatusResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseBackendTestResponse_UnmarshalError(t *testing.T) {
-	_, err := parseBackendTestResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseSafetyCheckResponse_UnmarshalError(t *testing.T) {
-	_, err := parseSafetyCheckResponse("not-a-map")
-	assert.Error(t, err)
-}
-
-func TestParseSafetyReportResponse_UnmarshalError(t *testing.T) {
-	_, err := parseSafetyReportResponse("not-a-map")
-	assert.Error(t, err)
+func TestParseBackendSafetyResponses_UnmarshalError(t *testing.T) {
+	parsers := map[string]func(interface{}) error{
+		"BackendStatus": func(v interface{}) error { _, err := parseBackendStatusResponse(v); return err },
+		"BackendTest":   func(v interface{}) error { _, err := parseBackendTestResponse(v); return err },
+		"SafetyCheck":   func(v interface{}) error { _, err := parseSafetyCheckResponse(v); return err },
+		"SafetyReport":  func(v interface{}) error { _, err := parseSafetyReportResponse(v); return err },
+	}
+	for name, parse := range parsers {
+		t.Run(name, func(t *testing.T) {
+			assert.Error(t, parse("not-a-map"))
+		})
+	}
 }
 
 // =============================================================================
@@ -329,68 +342,22 @@ func TestToJSONMap_UnmarshalToMapFailure(t *testing.T) {
 // getBytes Edge Cases
 // =============================================================================
 
-func TestGetBytes_ByteSliceValue(t *testing.T) {
-	data := map[string]interface{}{
-		"binary": []byte{0x01, 0x02, 0x03},
+func TestGetBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		data map[string]interface{}
+		key  string
+		want []byte
+	}{
+		{name: "ByteSliceValue", data: map[string]interface{}{"binary": []byte{0x01, 0x02, 0x03}}, key: "binary", want: []byte{0x01, 0x02, 0x03}},
+		{name: "StringValue", data: map[string]interface{}{"text": "hello"}, key: "text", want: []byte("hello")},
+		{name: "NilMap", data: nil, key: "key", want: nil},
+		{name: "AbsentKey", data: map[string]interface{}{}, key: "missing", want: nil},
+		{name: "NonStringNonByte", data: map[string]interface{}{"number": 42}, key: "number", want: nil},
 	}
-	result := getBytes(data, "binary")
-	assert.Equal(t, []byte{0x01, 0x02, 0x03}, result)
-}
-
-func TestGetBytes_StringValue(t *testing.T) {
-	data := map[string]interface{}{
-		"text": "hello",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, getBytes(tt.data, tt.key))
+		})
 	}
-	result := getBytes(data, "text")
-	assert.Equal(t, []byte("hello"), result)
-}
-
-func TestGetBytes_NilMap(t *testing.T) {
-	result := getBytes(nil, "key")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_AbsentKey(t *testing.T) {
-	data := map[string]interface{}{}
-	result := getBytes(data, "missing")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_NonStringNonByte(t *testing.T) {
-	data := map[string]interface{}{
-		"number": 42,
-	}
-	result := getBytes(data, "number")
-	assert.Nil(t, result)
-}
-
-func TestJobFailedError(t *testing.T) {
-	t.Run("ErrorMessageWithDetails", func(t *testing.T) {
-		err := &JobFailedError{JobID: "job_123", Message: "timeout exceeded"}
-		assert.Equal(t, "job job_123 failed: timeout exceeded", err.Error())
-	})
-
-	t.Run("ErrorMessageWithoutDetails", func(t *testing.T) {
-		err := &JobFailedError{JobID: "job_456", Message: ""}
-		assert.Equal(t, "job job_456 failed", err.Error())
-	})
-
-	t.Run("NewJobFailedError", func(t *testing.T) {
-		qbErr := NewJobFailedError("orchestrator.run", "job_789", "agent crashed")
-		require.NotNil(t, qbErr)
-		assert.Equal(t, qberrors.ErrInternal, qbErr.Code)
-		assert.Equal(t, "orchestrator.run", qbErr.Op)
-
-		var jobErr *JobFailedError
-		ok := errors.As(qbErr.Err, &jobErr)
-		require.True(t, ok)
-		assert.Equal(t, "job_789", jobErr.JobID)
-		assert.Equal(t, "agent crashed", jobErr.Message)
-	})
-
-	t.Run("NewJobFailedErrorNoMessage", func(t *testing.T) {
-		qbErr := NewJobFailedError("orchestrator.run", "job_empty", "")
-		require.NotNil(t, qbErr)
-		assert.Contains(t, qbErr.Error(), "job job_empty failed")
-	})
 }
