@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -589,150 +590,99 @@ func TestXMLRenderer_ValidOutput(t *testing.T) {
 
 // TestSmartTruncate_FirstResultTooLarge tests when first result exceeds limit
 // This covers truncation.go:49-58 (the path where first result is truncated)
-func TestSmartTruncate_FirstResultTooLarge(t *testing.T) {
+func TestSmartTruncate_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// Create a single very large result
-	largeContent := strings.Repeat("word ", 2000)
-	results := []Result{
-		{Content: largeContent, FusionScore: 0.9},
+	tests := []struct {
+		name          string
+		content       string
+		maxTokens     int
+		wantTruncated bool
+	}{
+		// availableTokens = 500 - 200 = 300, so the first result's content is cut.
+		{name: "first result too large is truncated", content: strings.Repeat("word ", 2000), maxTokens: 500, wantTruncated: true},
+		{name: "result that fits is kept whole", content: strings.Repeat("word ", 100), maxTokens: 500},
 	}
 
-	// Set maxTokens to 500 (availableTokens = 500 - 200 = 300)
-	// This should trigger line 49-58 where first result is truncated
-	truncated := SmartTruncate(results, 500, tokenizer)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncated := SmartTruncate([]Result{{Content: tt.content, FusionScore: 0.9}}, tt.maxTokens, tokenizer)
+			if len(truncated) != 1 {
+				t.Fatalf("SmartTruncate() returned %d results, want 1", len(truncated))
+			}
 
-	// Should return 1 result
-	if len(truncated) != 1 {
-		t.Errorf("Expected 1 result, got %d", len(truncated))
-	}
-
-	// Content should be truncated (shorter than original)
-	if len(truncated) > 0 {
-		if len(truncated[0].Content) >= len(largeContent) {
-			t.Errorf("Content was not truncated: got %d, expected < %d",
-				len(truncated[0].Content), len(largeContent))
-		}
+			gotTruncated := len(truncated[0].Content) < len(tt.content)
+			if gotTruncated != tt.wantTruncated {
+				t.Errorf("SmartTruncate() content length %d of %d, want truncated=%t",
+					len(truncated[0].Content), len(tt.content), tt.wantTruncated)
+			}
+		})
 	}
 }
 
-// TestSmartTruncate_EmptyFallback tests the fallback path at line 64-69
-// This covers the case where no results fit and we need to add the first one
-func TestSmartTruncate_EmptyFallback(t *testing.T) {
+func TestTruncateContent_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// This test is tricky - we need a case where the loop completes without adding anything
-	// but that's actually hard to trigger because line 49-58 catches the first-too-large case
-	// So this path (64-69) is actually defensive code that may not be reachable in practice
-
-	// Create results
-	results := []Result{
-		{Content: strings.Repeat("word ", 100), FusionScore: 0.9},
+	tests := []struct {
+		name      string
+		content   string
+		maxTokens int
+		check     func(t *testing.T, content, result string)
+	}{
+		{
+			name:      "empty content",
+			content:   "",
+			maxTokens: 100,
+			check: func(t *testing.T, _, result string) {
+				if result != "" {
+					t.Errorf("TruncateContent() = %q, want empty string", result)
+				}
+			},
+		},
+		{
+			name:      "truncated content ends with ellipsis",
+			content:   "one two three four five six seven eight nine ten eleven twelve",
+			maxTokens: 5,
+			check: func(t *testing.T, content, result string) {
+				if len(result) >= len(content) {
+					t.Errorf("TruncateContent() = %q, want it shorter than the input", result)
+				}
+				if !strings.HasSuffix(result, "...") {
+					t.Errorf("TruncateContent() = %q, want a %q suffix", result, "...")
+				}
+			},
+		},
 	}
 
-	// Use a token limit that would hit the fallback
-	truncated := SmartTruncate(results, 500, tokenizer)
-
-	// Should return at least 1 result
-	if len(truncated) == 0 {
-		t.Error("Expected at least 1 result")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.check(t, tt.content, TruncateContent(tt.content, tt.maxTokens, tokenizer))
+		})
 	}
 }
 
-// TestTruncateContent_EmptyWords tests edge case with no words
-// This covers truncation.go:88-90
-func TestTruncateContent_EmptyWords(t *testing.T) {
+func TestFitResults_EdgeCases(t *testing.T) {
 	tokenizer := NewSimpleTokenizer()
 
-	// Empty content
-	result := TruncateContent("", 100, tokenizer)
-	if result != "" {
-		t.Errorf("Expected empty string, got %q", result)
-	}
-}
-
-// TestTruncateContent_BestFitZero tests when no words fit
-// This covers truncation.go:109-111 (return "..." when bestFit is 0)
-func TestTruncateContent_BestFitZero(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Create content where bestFit would be 0
-	// We need content that when split into words, even the first word doesn't fit
-	longWord := strings.Repeat("verylongword", 1000)
-
-	// Use very low token limit
-	result := TruncateContent(longWord, 2, tokenizer)
-
-	// With bestFit = 0, should return "..."
-	// Note: This depends on tokenizer behavior, may not always be "..."
-	if len(result) > 1000 {
-		t.Logf("Content not truncated to '...', got length %d", len(result))
-	}
-}
-
-// TestTruncateContent_AddEllipsis tests that ellipsis is added when truncated
-// This covers truncation.go:114-116
-func TestTruncateContent_AddEllipsis(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Content that will be truncated
-	content := "one two three four five six seven eight nine ten eleven twelve"
-	result := TruncateContent(content, 5, tokenizer)
-
-	// Should be truncated
-	if len(result) >= len(content) {
-		t.Error("Content should be truncated")
+	tests := []struct {
+		name      string
+		results   []Result
+		maxTokens int
+		want      []int
+	}{
+		{name: "empty results below overhead", results: []Result{}, maxTokens: 100, want: []int{}},
+		// maxTokens below the formatting overhead still keeps the first result.
+		{name: "limit below overhead keeps first", results: []Result{{Content: "test"}}, maxTokens: 100, want: []int{0}},
+		{name: "first result too large is kept", results: []Result{{Content: strings.Repeat("word ", 1000)}}, maxTokens: 300, want: []int{0}},
 	}
 
-	// If truncated, should have ellipsis
-	words := strings.Fields(content)
-	resultWords := strings.Fields(strings.TrimSuffix(result, "..."))
-
-	if len(resultWords) < len(words) {
-		// Was truncated, should have ...
-		if !strings.HasSuffix(result, "...") {
-			t.Error("Truncated content should end with '...'")
-		}
-	}
-}
-
-// TestFitResults_ZeroAvailableTokens tests edge case
-// This covers truncation.go:140-145
-func TestFitResults_ZeroAvailableTokens(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Empty results with low token limit
-	indices := FitResults([]Result{}, 100, tokenizer)
-	if len(indices) != 0 {
-		t.Errorf("Expected empty indices, got %v", indices)
-	}
-
-	// Results with very low token limit (negative after overhead)
-	results := []Result{{Content: "test"}}
-	indices = FitResults(results, 100, tokenizer)
-
-	// Should return at least first index
-	if len(indices) != 1 || indices[0] != 0 {
-		t.Errorf("Expected [0], got %v", indices)
-	}
-}
-
-// TestFitResults_FirstDoesntFit tests fallback at line 154-159
-// When first result doesn't fit, return [0] anyway
-func TestFitResults_FirstDoesntFit(t *testing.T) {
-	tokenizer := NewSimpleTokenizer()
-
-	// Create result that's too large
-	results := []Result{
-		{Content: strings.Repeat("word ", 1000)},
-	}
-
-	// Low token limit that won't fit first result
-	indices := FitResults(results, 300, tokenizer)
-
-	// Should still include first result (fallback at line 158)
-	if len(indices) != 1 || indices[0] != 0 {
-		t.Errorf("Expected [0], got %v", indices)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			indices := FitResults(tt.results, tt.maxTokens, tokenizer)
+			if !slices.Equal(indices, tt.want) {
+				t.Errorf("FitResults() = %v, want %v", indices, tt.want)
+			}
+		})
 	}
 }
 
