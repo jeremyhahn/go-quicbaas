@@ -927,6 +927,9 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 			if searchReq.Tags["env"] != "production" {
 				t.Errorf("unexpected tag value: %s", searchReq.Tags["env"])
 			}
+			if searchReq.Prefix != "/app/config/" {
+				t.Errorf("expected prefix /app/config/, got %s", searchReq.Prefix)
+			}
 			return &SearchByTagsResponse{
 				Parameters: []*ParameterValue{
 					{Path: "/app/config/a", Tags: map[string]string{"env": "production"}},
@@ -942,6 +945,7 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 
 	resp, err := c.SearchByTags(ctx, &SearchByTagsRequest{
 		Tags:       map[string]string{"env": "production"},
+		Prefix:     "/app/config/",
 		WithValues: true,
 	})
 	if err != nil {
@@ -956,49 +960,67 @@ func TestClient_SearchByTags_Success(t *testing.T) {
 }
 
 func TestClient_SearchByTags_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SearchByTagsResponse{
-				Parameters: []*ParameterValue{},
-				Timestamp:  time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}}
+	validResp := &SearchByTagsResponse{
+		Parameters: []*ParameterValue{},
+		Timestamp:  time.Now(),
+	}
 
 	tests := []struct {
-		name    string
-		req     *SearchByTagsRequest
-		wantErr bool
+		name     string
+		req      *SearchByTagsRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty tags",
-			req:     &SearchByTagsRequest{Tags: map[string]string{}},
-			wantErr: true,
+			name:     "empty tags",
+			req:      &SearchByTagsRequest{Tags: map[string]string{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "valid request",
-			req:     &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}},
-			wantErr: false,
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewTimeout("test", "request timed out"),
+			wantErr:  true,
+			wantCode: errors.CodeTimeout,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name: "valid request",
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.SearchByTags(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SearchByTags() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SearchByTags() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
 	}
@@ -1022,39 +1044,6 @@ func TestClient_SearchByTags_NilResponse(t *testing.T) {
 	}
 	if resp.Parameters == nil {
 		t.Error("expected non-nil parameters slice")
-	}
-}
-
-func TestClient_SearchByTags_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewTimeout("test", "request timed out")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SearchByTags(ctx, &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsTimeout(err) {
-		t.Errorf("expected Timeout error, got %v", err)
-	}
-}
-
-func TestClient_SearchByTags_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SearchByTags(ctx, &SearchByTagsRequest{Tags: map[string]string{"env": "prod"}})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
@@ -1168,38 +1157,5 @@ func TestClient_ListParameters_WithPagination(t *testing.T) {
 	}
 	if resp2.HasMore {
 		t.Error("expected HasMore to be false")
-	}
-}
-
-func TestClient_SearchByTags_WithPrefixFilter(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			searchReq := req.(*SearchByTagsRequest)
-			if searchReq.Prefix != "/app/config/" {
-				t.Errorf("expected prefix /app/config/, got %s", searchReq.Prefix)
-			}
-			if searchReq.Tags["env"] != "prod" {
-				t.Errorf("expected env=prod tag, got %s", searchReq.Tags["env"])
-			}
-			return &SearchByTagsResponse{
-				Parameters: []*ParameterValue{
-					{Path: "/app/config/a", Tags: map[string]string{"env": "prod"}},
-				},
-				Timestamp: time.Now(),
-			}, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	resp, err := c.SearchByTags(ctx, &SearchByTagsRequest{
-		Tags:   map[string]string{"env": "prod"},
-		Prefix: "/app/config/",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.Parameters) != 1 {
-		t.Errorf("expected 1 parameter, got %d", len(resp.Parameters))
 	}
 }
