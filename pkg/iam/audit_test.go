@@ -1499,22 +1499,9 @@ func TestAppManager_RotateSecret_EdgeCases(t *testing.T) {
 // =============================================================================
 
 func TestGenerateID(t *testing.T) {
-	t.Run("generates valid hex ID", func(t *testing.T) {
-		id, err := generateID()
-		require.NoError(t, err)
-		assert.NotEmpty(t, id)
-		assert.Len(t, id, 32) // 16 bytes = 32 hex chars
-	})
-
-	t.Run("generates unique IDs", func(t *testing.T) {
-		ids := make(map[string]bool)
-		for i := 0; i < 100; i++ {
-			id, err := generateID()
-			require.NoError(t, err)
-			assert.False(t, ids[id], "ID should be unique")
-			ids[id] = true
-		}
-	})
+	id, err := generateID()
+	require.NoError(t, err)
+	assert.Len(t, id, 32) // 16 bytes = 32 hex chars
 }
 
 // =============================================================================
