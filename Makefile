@@ -5559,8 +5559,9 @@ DEPS_CHECK_MODULES := . sdk/go
 # The JSON fields scripts/depscheck reads, written by a template rather than
 # `-json`: `-json` also resolves each module's retractions and deprecation,
 # which fetches go.mod files into the module cache and stalls on the toolchain
-# image's read-only cache.
-DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
+# image's read-only cache. Update carries the latest release's time: depscheck
+# reports a release younger than 7 days and fails one with no time (#1704).
+DEPS_CHECK_TEMPLATE := {"Path":"{{.Path}}","Version":"{{.Version}}","Main":{{.Main}}{{with .Update}},"Update":{"Version":"{{.Version}}"{{with .Time}},"Time":"{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}"{{end}}}{{end}}{{with .Replace}},"Replace":{"Path":"{{.Path}}"}{{end}}{{with .Error}},"Error":{"Err":{{printf "%q" .Err}}}{{end}}}
 
 # The go command keeps the checksum database's state in $GOPATH/pkg/sumdb, and
 # the toolchain image's GOPATH is read-only, so deps-check points GOPATH at a
