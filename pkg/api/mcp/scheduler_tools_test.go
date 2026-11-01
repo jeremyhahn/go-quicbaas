@@ -45,12 +45,24 @@ func TestSchedulerCreateJob_Success(t *testing.T) {
 				"name": "full-job", "handler": "cleanup", "type": "recurring",
 				"description": "full test", "owner_type": "tenant",
 				"schedule": "*/5 * * * *", "priority": float64(5),
-				"max_retries": float64(3),
-				"execute_at":  time.Now().Add(time.Hour).Format(time.RFC3339),
-				"delay":       "30s",
-				"timeout":     "5m",
-				"payload":     base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`)),
-				"labels":      map[string]interface{}{"env": "test"},
+				"max_retries":       float64(3),
+				"execute_at":        time.Now().Add(time.Hour).Format(time.RFC3339),
+				"delay":             "30s",
+				"timeout":           "5m",
+				"payload":           base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`)),
+				"labels":            map[string]interface{}{"env": "test"},
+				"owner_id":          "admin-001",
+				"target_tenant_id":  "tenant-789",
+				"idempotency_key":   "backup-2025-02-01",
+				"dedup_key":         "backup-daily",
+				"dedup_window_mins": float64(1440),
+			},
+		},
+		{
+			name: "non-string labels are dropped",
+			args: map[string]interface{}{
+				"name": "test-job", "handler": "test-handler", "type": "recurring",
+				"labels": map[string]interface{}{"valid": "value", "invalid": float64(42), "bool": true},
 			},
 		},
 	}
@@ -94,7 +106,7 @@ func TestSchedulerCreateJob_Errors(t *testing.T) {
 				"name": "test", "handler": "backup", "type": "one-shot",
 				"execute_at": "not-a-date",
 			},
-			errContains: "invalid execute_at",
+			errContains: "invalid execute_at format",
 		},
 		{
 			name: "invalid delay",
@@ -110,7 +122,7 @@ func TestSchedulerCreateJob_Errors(t *testing.T) {
 				"name": "test", "handler": "backup", "type": "one-shot",
 				"timeout": "bad-timeout",
 			},
-			errContains: "invalid timeout",
+			errContains: "invalid timeout format",
 		},
 		{
 			name: "invalid payload encoding",
@@ -118,7 +130,7 @@ func TestSchedulerCreateJob_Errors(t *testing.T) {
 				"name": "test", "handler": "backup", "type": "one-shot",
 				"payload": "not-base64!!!",
 			},
-			errContains: "invalid payload",
+			errContains: "invalid payload encoding",
 		},
 	}
 
@@ -146,15 +158,37 @@ func TestSchedulerCreateJob_ServiceNotAvailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "not available")
 }
 
-func TestSchedulerGetJob_Success(t *testing.T) {
+// TestSchedulerTools_Success checks that each scheduler tool taking a job_id,
+// and the status tool, returns a result when the service succeeds.
+func TestSchedulerTools_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
+	jobID := map[string]interface{}{"job_id": float64(1)}
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{
-		"job_id": float64(42),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
+	tests := []struct {
+		tool string
+		args map[string]interface{}
+	}{
+		{"quicbaas_scheduler_get_job", map[string]interface{}{"job_id": float64(42)}},
+		{"quicbaas_scheduler_update_job", map[string]interface{}{
+			"job_id": float64(1), "name": "updated-job", "schedule": "*/10 * * * *",
+		}},
+		{"quicbaas_scheduler_delete_job", jobID},
+		{"quicbaas_scheduler_trigger_job", jobID},
+		{"quicbaas_scheduler_pause_job", jobID},
+		{"quicbaas_scheduler_resume_job", jobID},
+		{"quicbaas_scheduler_cancel_job", jobID},
+		{"quicbaas_scheduler_job_history", jobID},
+		{"quicbaas_scheduler_status", map[string]interface{}{}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.tool, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, tc.tool, tc.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+		})
+	}
 }
 
 // TestSchedulerTools_MissingID checks that every job-scoped scheduler tool
@@ -187,17 +221,6 @@ func TestSchedulerTools_MissingID(t *testing.T) {
 	}
 }
 
-func TestSchedulerUpdateJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id": float64(1), "name": "updated-job", "schedule": "*/10 * * * *",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 func TestSchedulerListJobs_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
@@ -218,81 +241,6 @@ func TestSchedulerListJobs_Success(t *testing.T) {
 			require.NotNil(t, result)
 		})
 	}
-}
-
-func TestSchedulerDeleteJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_delete_job", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerTriggerJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_trigger_job", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerPauseJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_pause_job", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerResumeJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_resume_job", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerCancelJob_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_cancel_job", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerJobHistory_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_job_history", map[string]interface{}{
-		"job_id": float64(1),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestSchedulerStatus_Success(t *testing.T) {
-	registry := newSchedulerRegistry(t)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_status", map[string]interface{}{})
-	require.NoError(t, err)
-	require.NotNil(t, result)
 }
 
 func TestIsSchedulerTool(t *testing.T) {
@@ -838,152 +786,6 @@ func TestExecuteSchedulerListJobs_WithOwnerTypeAndLabels(t *testing.T) {
 // =============================================================================
 // Scheduler Create Job Tests (additional coverage)
 // =============================================================================
-
-func TestExecuteSchedulerCreateJob_AllParameters(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-				return &service.CreateSchedulerJobResponse{
-					Job: &service.SchedulerJob{
-						ID:          1,
-						Name:        req.Name,
-						Type:        req.Type,
-						Handler:     req.Handler,
-						Description: req.Description,
-						Schedule:    req.Schedule,
-						Priority:    req.Priority,
-						Status:      service.SchedulerJobStatusPending,
-						CreatedAt:   time.Now(),
-					},
-					Timestamp: time.Now(),
-				}, nil
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// Encode a test payload
-	testPayload := base64.StdEncoding.EncodeToString([]byte(`{"action":"backup"}`))
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":              "full-backup-job",
-		"type":              "recurring",
-		"handler":           "backup-handler",
-		"description":       "Full system backup",
-		"schedule":          "0 2 * * *",
-		"priority":          float64(10),
-		"max_retries":       float64(3),
-		"execute_at":        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-		"timeout":           "2h",
-		"payload":           testPayload,
-		"owner_id":          "admin-001",
-		"target_tenant_id":  "tenant-789",
-		"idempotency_key":   "backup-2025-02-01",
-		"dedup_key":         "backup-daily",
-		"dedup_window_mins": float64(1440),
-		"labels": map[string]interface{}{
-			"type": "backup",
-			"env":  "production",
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteSchedulerCreateJob_InvalidExecuteAt(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":       "test-job",
-		"type":       "one-shot",
-		"handler":    "test-handler",
-		"execute_at": "not-a-valid-timestamp",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid execute_at format")
-}
-
-func TestExecuteSchedulerCreateJob_InvalidTimeout(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":    "test-job",
-		"type":    "one-shot",
-		"handler": "test-handler",
-		"timeout": "invalid-duration",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid timeout format")
-}
-
-func TestExecuteSchedulerCreateJob_InvalidPayload(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":    "test-job",
-		"type":    "one-shot",
-		"handler": "test-handler",
-		"payload": "not-valid-base64!!@@",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid payload encoding")
-}
-
-func TestExecuteSchedulerCreateJob_WithLabelsNonString(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-				return &service.CreateSchedulerJobResponse{
-					Job: &service.SchedulerJob{
-						ID:        1,
-						Name:      req.Name,
-						Type:      req.Type,
-						Handler:   req.Handler,
-						Status:    service.SchedulerJobStatusPending,
-						CreatedAt: time.Now(),
-					},
-					Timestamp: time.Now(),
-				}, nil
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":    "test-job",
-		"type":    "recurring",
-		"handler": "test-handler",
-		"labels": map[string]interface{}{
-			"valid":   "value",
-			"invalid": float64(42),
-			"bool":    true,
-		},
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
 
 // =============================================================================
 // Helper Function Tests (additional coverage)
