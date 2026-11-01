@@ -23,23 +23,6 @@ import (
 	"testing"
 )
 
-func TestNewBuilder(t *testing.T) {
-	builder := NewBuilder()
-
-	if builder == nil {
-		t.Fatal("NewBuilder() returned nil")
-	}
-}
-
-func TestNewBuilderWithConfig(t *testing.T) {
-	config := DefaultConfig().WithMaxTokens(5000)
-	builder := NewBuilderWithConfig(config)
-
-	if builder == nil {
-		t.Fatal("NewBuilderWithConfig() returned nil")
-	}
-}
-
 func TestBuilder_Build(t *testing.T) {
 	builder := NewBuilder()
 
@@ -230,8 +213,12 @@ func TestBuilder_Build_Citations(t *testing.T) {
 					t.Errorf("Citation %d has index %d", i, citation.Index)
 				}
 
-				if citation.FilePath == "" {
-					t.Errorf("Citation %d has empty file path", i)
+				if citation.FilePath != context.Results[i].Metadata.FilePath {
+					t.Errorf("Citation %d has file path %q, want %q", i, citation.FilePath, context.Results[i].Metadata.FilePath)
+				}
+
+				if citation.Score != context.Results[i].FusionScore {
+					t.Errorf("Citation %d has score %v, want %v", i, citation.Score, context.Results[i].FusionScore)
 				}
 			}
 		})
@@ -415,50 +402,6 @@ func TestFilterEmptyResults(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestBuildCitations(t *testing.T) {
-	results := []Result{
-		{
-			Content:     "test 1",
-			FusionScore: 0.95,
-			Metadata: Metadata{
-				FilePath:  "file1.go",
-				StartLine: 10,
-				EndLine:   20,
-			},
-		},
-		{
-			Content:     "test 2",
-			FusionScore: 0.85,
-			Metadata: Metadata{
-				FilePath:  "file2.go",
-				StartLine: 30,
-				EndLine:   40,
-			},
-		},
-	}
-
-	citations := buildCitations(results)
-
-	if len(citations) != len(results) {
-		t.Errorf("buildCitations() returned %d citations, want %d",
-			len(citations), len(results))
-	}
-
-	for i, citation := range citations {
-		if citation.Index != i+1 {
-			t.Errorf("Citation %d has index %d, want %d", i, citation.Index, i+1)
-		}
-
-		if citation.FilePath != results[i].Metadata.FilePath {
-			t.Errorf("Citation %d has wrong file path", i)
-		}
-
-		if citation.Score != results[i].FusionScore {
-			t.Errorf("Citation %d has wrong score", i)
-		}
 	}
 }
 
