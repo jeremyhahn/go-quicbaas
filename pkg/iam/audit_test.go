@@ -664,8 +664,29 @@ func TestAuditLogger_Log(t *testing.T) {
 	assert.Equal(t, event.ID, retrieved.ID)
 }
 
+// signallingAuditStorage reports every saved event on saved, so a test can
+// wait for the async worker without sleeping.
+type signallingAuditStorage struct {
+	*MemoryAuditStorage
+	saved chan string
+}
+
+func newSignallingAuditStorage() *signallingAuditStorage {
+	return &signallingAuditStorage{
+		MemoryAuditStorage: NewMemoryAuditStorage(),
+		saved:              make(chan string, 1),
+	}
+}
+
+func (s *signallingAuditStorage) SaveEvent(ctx context.Context, event *AuditEvent) error {
+	err := s.MemoryAuditStorage.SaveEvent(ctx, event)
+	s.saved <- event.ID
+	return err
+}
+
 func TestAuditLogger_LogAsync(t *testing.T) {
-	logger, err := NewAuditLogger()
+	storage := newSignallingAuditStorage()
+	logger, err := NewAuditLogger(WithAuditStorage(storage))
 	require.NoError(t, err)
 	defer logger.Close()
 
@@ -677,19 +698,20 @@ func TestAuditLogger_LogAsync(t *testing.T) {
 		Outcome:   AuditOutcomeSuccess,
 	}
 
-	// Log async
 	logger.LogAsync(event)
 
 	// Event should have ID and timestamp set
 	assert.NotEmpty(t, event.ID)
 	assert.False(t, event.Timestamp.IsZero())
 
-	// Wait a bit for async processing
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case id := <-storage.saved:
+		assert.Equal(t, event.ID, id)
+	case <-time.After(5 * time.Second):
+		t.Fatal("async worker did not save the event")
+	}
 
-	// Should be retrievable
-	ctx := context.Background()
-	retrieved, err := logger.GetEvent(ctx, "tenant1", event.ID)
+	retrieved, err := logger.GetEvent(context.Background(), "tenant1", event.ID)
 	require.NoError(t, err)
 	assert.Equal(t, event.ID, retrieved.ID)
 }
@@ -885,10 +907,10 @@ func TestAuditLogger_LogAdminAction(t *testing.T) {
 }
 
 func TestAuditLogger_Close(t *testing.T) {
-	logger, err := NewAuditLogger()
+	storage := newSignallingAuditStorage()
+	logger, err := NewAuditLogger(WithAuditStorage(storage))
 	require.NoError(t, err)
 
-	// Log async event
 	event := &AuditEvent{
 		TenantID:  "tenant1",
 		EventType: AuditEventAuthentication,
@@ -898,9 +920,14 @@ func TestAuditLogger_Close(t *testing.T) {
 	}
 	logger.LogAsync(event)
 
-	// Close should drain async events
-	err = logger.Close()
-	require.NoError(t, err)
+	// Close returns only after the queued event has been saved.
+	require.NoError(t, logger.Close())
+	select {
+	case id := <-storage.saved:
+		assert.Equal(t, event.ID, id)
+	default:
+		t.Fatal("Close returned before the queued event was saved")
+	}
 }
 
 // Helper function to create time pointers
