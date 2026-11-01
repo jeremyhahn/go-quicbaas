@@ -372,36 +372,19 @@ func TestParseSecretsListResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, 10, resp.TotalCount)
 }
 
-func TestParseSecretsListResponse_EmptySecrets(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets":     []interface{}{},
-		"has_more":    false,
-		"total_count": float64(0),
+func TestParseSecretsListResponse_NoUsableEntries(t *testing.T) {
+	tests := map[string]map[string]interface{}{
+		"empty secrets list":  {"secrets": []interface{}{}, "has_more": false, "total_count": float64(0)},
+		"no secrets key":      {},
+		"non-map entry skips": {"secrets": []interface{}{"not-a-map"}},
 	}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets)
-}
-
-func TestParseSecretsListResponse_NoSecrets(t *testing.T) {
-	input := map[string]interface{}{}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets)
-}
-
-func TestParseSecretsListResponse_InvalidSecretEntry(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": []interface{}{
-			"not-a-map", // should be skipped
-		},
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parseSecretsListResponse(input)
+			require.NoError(t, err)
+			assert.Empty(t, resp.Secrets)
+		})
 	}
-
-	resp, err := parseSecretsListResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Secrets) // invalid entry skipped
 }
 
 func TestParseSecretsGetByPrefixResponse_ValidInput(t *testing.T) {
@@ -433,32 +416,27 @@ func TestParseSecretsGetByPrefixResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, 1, resp.TotalCount)
 }
 
-func TestParseSecretsGetByPrefixResponse_RawStringData(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": map[string]interface{}{
-			"app/db": map[string]interface{}{
-				"password": "not-base64!!!",
-			},
-		},
+func TestParseSecretsGetByPrefixResponse_Data(t *testing.T) {
+	tests := map[string]struct {
+		value interface{}
+		want  []byte
+	}{
+		"non-base64 string is kept raw": {value: "not-base64!!!", want: []byte("not-base64!!!")},
+		"direct bytes are kept":         {value: []byte("raw-bytes"), want: []byte("raw-bytes")},
 	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			input := map[string]interface{}{
+				"secrets": map[string]interface{}{
+					"app/db": map[string]interface{}{"password": tt.value},
+				},
+			}
 
-	resp, err := parseSecretsGetByPrefixResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("not-base64!!!"), resp.Secrets["app/db"]["password"])
-}
-
-func TestParseSecretsGetByPrefixResponse_BytesData(t *testing.T) {
-	input := map[string]interface{}{
-		"secrets": map[string]interface{}{
-			"app/db": map[string]interface{}{
-				"password": []byte("raw-bytes"),
-			},
-		},
+			resp, err := parseSecretsGetByPrefixResponse(input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resp.Secrets["app/db"]["password"])
+		})
 	}
-
-	resp, err := parseSecretsGetByPrefixResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, []byte("raw-bytes"), resp.Secrets["app/db"]["password"])
 }
 
 func TestParseSecretsGetByPrefixResponse_InvalidPathData(t *testing.T) {
@@ -518,24 +496,18 @@ func TestParseSecretsListVersionsResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "admin", resp.Versions[0].CreatedBy)
 }
 
-func TestParseSecretsListVersionsResponse_InvalidVersionEntry(t *testing.T) {
-	input := map[string]interface{}{
-		"versions": []interface{}{
-			"not-a-map",
-		},
+func TestParseSecretsListVersionsResponse_NoUsableEntries(t *testing.T) {
+	tests := map[string]map[string]interface{}{
+		"no versions key":     {},
+		"non-map entry skips": {"versions": []interface{}{"not-a-map"}},
 	}
-
-	resp, err := parseSecretsListVersionsResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Versions)
-}
-
-func TestParseSecretsListVersionsResponse_NoVersions(t *testing.T) {
-	input := map[string]interface{}{}
-
-	resp, err := parseSecretsListVersionsResponse(input)
-	require.NoError(t, err)
-	assert.Empty(t, resp.Versions)
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parseSecretsListVersionsResponse(input)
+			require.NoError(t, err)
+			assert.Empty(t, resp.Versions)
+		})
+	}
 }
 
 func TestParseSecretsRollbackResponse_ValidInput(t *testing.T) {
@@ -602,101 +574,45 @@ func TestToJSONMap_NilInput(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-func TestGetString_ValidKey(t *testing.T) {
-	m := map[string]interface{}{"name": "test"}
-	assert.Equal(t, "test", getString(m, "name"))
-}
+// TestMapGetters checks each typed map getter on a matching value, a missing
+// key and a value of the wrong type.
+func TestMapGetters(t *testing.T) {
+	str := func(m map[string]interface{}) interface{} { return getString(m, "k") }
+	i64 := func(m map[string]interface{}) interface{} { return getInt64(m, "k") }
+	boolean := func(m map[string]interface{}) interface{} { return getBool(m, "k") }
+	nested := func(m map[string]interface{}) interface{} { return getMap(m, "k") }
+	raw := func(m map[string]interface{}) interface{} { return getBytes(m, "k") }
 
-func TestGetString_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.Equal(t, "", getString(m, "name"))
-}
-
-func TestGetString_NonStringValue(t *testing.T) {
-	m := map[string]interface{}{"name": 123}
-	assert.Equal(t, "", getString(m, "name"))
-}
-
-func TestGetInt64_ValidFloat64(t *testing.T) {
-	m := map[string]interface{}{"count": float64(42)}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_ValidInt(t *testing.T) {
-	m := map[string]interface{}{"count": 42}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_ValidInt64(t *testing.T) {
-	m := map[string]interface{}{"count": int64(42)}
-	assert.Equal(t, int64(42), getInt64(m, "count"))
-}
-
-func TestGetInt64_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.Equal(t, int64(0), getInt64(m, "count"))
-}
-
-func TestGetInt64_NonNumeric(t *testing.T) {
-	m := map[string]interface{}{"count": "not-a-number"}
-	assert.Equal(t, int64(0), getInt64(m, "count"))
-}
-
-func TestGetBool_ValidTrue(t *testing.T) {
-	m := map[string]interface{}{"flag": true}
-	assert.True(t, getBool(m, "flag"))
-}
-
-func TestGetBool_ValidFalse(t *testing.T) {
-	m := map[string]interface{}{"flag": false}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetBool_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetBool_NonBool(t *testing.T) {
-	m := map[string]interface{}{"flag": "yes"}
-	assert.False(t, getBool(m, "flag"))
-}
-
-func TestGetMap_ValidMap(t *testing.T) {
-	inner := map[string]interface{}{"nested": "value"}
-	m := map[string]interface{}{"data": inner}
-	result := getMap(m, "data")
-	assert.Equal(t, "value", result["nested"])
-}
-
-func TestGetMap_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	result := getMap(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetMap_NonMap(t *testing.T) {
-	m := map[string]interface{}{"data": "not-a-map"}
-	result := getMap(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_ValidBytes(t *testing.T) {
-	m := map[string]interface{}{"data": []byte("hello")}
-	result := getBytes(m, "data")
-	assert.Equal(t, []byte("hello"), result)
-}
-
-func TestGetBytes_MissingKey(t *testing.T) {
-	m := map[string]interface{}{}
-	result := getBytes(m, "data")
-	assert.Nil(t, result)
-}
-
-func TestGetBytes_NonBytes(t *testing.T) {
-	m := map[string]interface{}{"data": "a-string"}
-	result := getBytes(m, "data")
-	assert.Equal(t, []byte("a-string"), result)
+	tests := []struct {
+		name string
+		get  func(map[string]interface{}) interface{}
+		in   map[string]interface{}
+		want interface{}
+	}{
+		{"string value", str, map[string]interface{}{"k": "test"}, "test"},
+		{"string missing", str, map[string]interface{}{}, ""},
+		{"string wrong type", str, map[string]interface{}{"k": 123}, ""},
+		{"int64 from float64", i64, map[string]interface{}{"k": float64(42)}, int64(42)},
+		{"int64 from int", i64, map[string]interface{}{"k": 42}, int64(42)},
+		{"int64 from int64", i64, map[string]interface{}{"k": int64(42)}, int64(42)},
+		{"int64 missing", i64, map[string]interface{}{}, int64(0)},
+		{"int64 wrong type", i64, map[string]interface{}{"k": "not-a-number"}, int64(0)},
+		{"bool true", boolean, map[string]interface{}{"k": true}, true},
+		{"bool false", boolean, map[string]interface{}{"k": false}, false},
+		{"bool missing", boolean, map[string]interface{}{}, false},
+		{"bool wrong type", boolean, map[string]interface{}{"k": "yes"}, false},
+		{"map value", nested, map[string]interface{}{"k": map[string]interface{}{"nested": "value"}}, map[string]interface{}{"nested": "value"}},
+		{"map missing", nested, map[string]interface{}{}, map[string]interface{}(nil)},
+		{"map wrong type", nested, map[string]interface{}{"k": "not-a-map"}, map[string]interface{}(nil)},
+		{"bytes value", raw, map[string]interface{}{"k": []byte("hello")}, []byte("hello")},
+		{"bytes from string", raw, map[string]interface{}{"k": "a-string"}, []byte("a-string")},
+		{"bytes missing", raw, map[string]interface{}{}, []byte(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.get(tt.in))
+		})
+	}
 }
 
 // =============================================================================
