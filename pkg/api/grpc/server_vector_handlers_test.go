@@ -295,66 +295,46 @@ func (m *MockImportVectorsStream) GetResponse() *pb.ImportVectorsResponse {
 // CreateNamespace Tests
 // =============================================================================
 
-func TestCreateNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), nil)
-
+// requireVectorInvalidArgument asserts that a vector handler rejected its
+// request with codes.InvalidArgument and a message containing want.
+func requireVectorInvalidArgument(t *testing.T, err error, want string) {
+	t.Helper()
 	require.Error(t, err)
-	assert.Nil(t, resp)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "request is nil")
+	assert.Contains(t, st.Message(), want)
 }
 
-func TestCreateNamespace_NilConfig(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "config is required")
-}
-
-func TestCreateNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
-		Config: &pb.NamespaceConfig{
-			Namespace:  "",
-			Dimensions: 128,
+func TestCreateNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.CreateNamespaceRequest
+		wantMsg string
+	}{
+		{"nil request", nil, "request is nil"},
+		{"nil config", &pb.CreateNamespaceRequest{}, "config is required"},
+		{
+			"empty namespace",
+			&pb.CreateNamespaceRequest{Config: &pb.NamespaceConfig{Namespace: "", Dimensions: 128}},
+			"namespace name is required",
 		},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "namespace name is required")
-}
-
-func TestCreateNamespace_InvalidDimensions(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), &pb.CreateNamespaceRequest{
-		Config: &pb.NamespaceConfig{
-			Namespace:  "test-ns",
-			Dimensions: 0,
+		{
+			"zero dimensions",
+			&pb.CreateNamespaceRequest{Config: &pb.NamespaceConfig{Namespace: "test-ns", Dimensions: 0}},
+			"dimensions must be positive",
 		},
-	})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "dimensions must be positive")
+			resp, err := srv.CreateNamespace(tenantctx.WithSystem(context.Background()), tt.req)
+
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestCreateNamespace_Success(t *testing.T) {
@@ -405,30 +385,24 @@ func TestCreateNamespace_ServiceError(t *testing.T) {
 // UpdateNamespace Tests
 // =============================================================================
 
-func TestUpdateNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestUpdateNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.UpdateNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.UpdateNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateNamespace(tenantctx.WithSystem(context.Background()), &pb.UpdateNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestUpdateNamespace_Success(t *testing.T) {
@@ -534,30 +508,24 @@ func TestUpdateNamespace_CreateNamespaceError(t *testing.T) {
 // DeleteNamespace Tests
 // =============================================================================
 
-func TestDeleteNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestDeleteNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.DeleteNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.DeleteNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestDeleteNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.DeleteNamespace(tenantctx.WithSystem(context.Background()), &pb.DeleteNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestDeleteNamespace_Success(t *testing.T) {
@@ -2304,30 +2272,24 @@ func TestGetClusterStats_ClusterStatusError(t *testing.T) {
 // CompactNamespace Tests
 // =============================================================================
 
-func TestCompactNamespace_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestCompactNamespace_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.CompactNamespaceRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.CompactNamespaceRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestCompactNamespace_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.CompactNamespace(tenantctx.WithSystem(context.Background()), &pb.CompactNamespaceRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestCompactNamespace_Success(t *testing.T) {
