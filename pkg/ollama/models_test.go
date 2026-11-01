@@ -25,83 +25,67 @@ import (
 	"time"
 )
 
-func TestNewModelService(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	service := NewModelService(client)
-
-	if service == nil {
-		t.Fatal("expected non-nil service")
-	}
-}
-
-func TestModelService_List_Success(t *testing.T) {
-	expectedModels := []ModelInfo{
+func TestModelService_List(t *testing.T) {
+	tests := []struct {
+		name   string
+		models []ModelInfo
+	}{
 		{
-			Name:       "nomic-embed-text",
-			ModifiedAt: time.Now(),
-			Size:       1000000,
-			Digest:     "sha256:abc123",
+			name: "two models",
+			models: []ModelInfo{
+				{
+					Name:       "nomic-embed-text",
+					ModifiedAt: time.Now(),
+					Size:       1000000,
+					Digest:     "sha256:abc123",
+				},
+				{
+					Name:       "llama3.2",
+					ModifiedAt: time.Now(),
+					Size:       5000000,
+					Digest:     "sha256:def456",
+				},
+			},
 		},
 		{
-			Name:       "llama3.2",
-			ModifiedAt: time.Now(),
-			Size:       5000000,
-			Digest:     "sha256:def456",
+			name:   "empty",
+			models: []ModelInfo{},
 		},
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/tags" {
-			t.Errorf("expected path /api/tags, got %s", r.URL.Path)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/tags" {
+					t.Errorf("expected path /api/tags, got %s", r.URL.Path)
+				}
 
-		if r.Method != "GET" {
-			t.Errorf("expected GET method, got %s", r.Method)
-		}
+				if r.Method != "GET" {
+					t.Errorf("expected GET method, got %s", r.Method)
+				}
 
-		resp := ListModelsResponse{Models: expectedModels}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(ListModelsResponse{Models: tt.models})
+			}))
+			defer server.Close()
 
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	service := NewModelService(client)
+			service := NewModelService(NewClient(ClientConfig{BaseURL: server.URL}))
 
-	models, err := service.List(context.Background())
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+			models, err := service.List(context.Background())
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
 
-	if len(models) != len(expectedModels) {
-		t.Fatalf("expected %d models, got %d", len(expectedModels), len(models))
-	}
+			if len(models) != len(tt.models) {
+				t.Fatalf("expected %d models, got %d", len(tt.models), len(models))
+			}
 
-	for i, m := range models {
-		if m.Name != expectedModels[i].Name {
-			t.Errorf("expected model name %s, got %s", expectedModels[i].Name, m.Name)
-		}
-	}
-}
-
-func TestModelService_List_Empty(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := ListModelsResponse{Models: []ModelInfo{}}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL})
-	service := NewModelService(client)
-
-	models, err := service.List(context.Background())
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if len(models) != 0 {
-		t.Errorf("expected 0 models, got %d", len(models))
+			for i, m := range models {
+				if m.Name != tt.models[i].Name {
+					t.Errorf("expected model name %s, got %s", tt.models[i].Name, m.Name)
+				}
+			}
+		})
 	}
 }
 
