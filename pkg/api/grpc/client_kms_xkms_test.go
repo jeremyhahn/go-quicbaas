@@ -59,6 +59,9 @@ func (s *recordingKeystoreServer) GenerateKey(_ context.Context, req *xkmssdk.Pr
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.generateReq = req
+	if req.GetKeyId() == "" || req.GetBackend() == "" || req.GetKeyType() == "" || req.GetAlgorithm() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id, backend, key_type and algorithm are required")
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -73,6 +76,9 @@ func (s *recordingKeystoreServer) ListKeys(_ context.Context, req *xkmssdk.Proto
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listReq = req
+	if req.GetBackend() == "" {
+		return nil, status.Error(codes.InvalidArgument, "backend is required")
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -83,6 +89,9 @@ func (s *recordingKeystoreServer) DeleteKey(_ context.Context, req *xkmssdk.Prot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteReq = req
+	if req.GetKeyId() == "" || req.GetBackend() == "" {
+		return nil, status.Error(codes.InvalidArgument, "key_id and backend are required")
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -127,43 +136,61 @@ func TestClientKMSGenerateKey_XKMSKeystore(t *testing.T) {
 		wantKeySize   int32
 		wantCurve     string
 		wantAlgorithm string
+		wantBackend   string
 		wantServAlg   service.KeyAlgorithm
 	}{
 		{
 			name:          "AES-256-GCM",
 			attrs:         &xkmssdk.KeyAttributes{SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM},
-			wantKeyType:   "symmetric",
+			wantKeyType:   "secret",
 			wantKeySize:   256,
-			wantAlgorithm: "aes-256-gcm",
+			wantAlgorithm: "aes256-gcm",
+			wantBackend:   "software",
 			wantServAlg:   service.KeyAlgAES256GCM,
 		},
 		{
-			name: "RSA-2048",
+			name: "RSA-3072",
 			attrs: &xkmssdk.KeyAttributes{
 				KeyAlgorithm:  x509.RSA,
-				RSAAttributes: &xkmssdk.RSAAttributes{KeySize: 2048},
+				RSAAttributes: &xkmssdk.RSAAttributes{KeySize: 3072},
 			},
-			wantKeyType: "rsa",
-			wantKeySize: 2048,
-			wantServAlg: service.KeyAlgRSA2048,
+			wantKeyType:   "signing",
+			wantKeySize:   3072,
+			wantAlgorithm: "rsa",
+			wantBackend:   "software",
+			wantServAlg:   service.KeyAlgRSA3072,
 		},
 		{
-			name: "ECDSA-P256",
+			name: "ECDSA-P384",
 			attrs: &xkmssdk.KeyAttributes{
 				KeyAlgorithm:  x509.ECDSA,
-				ECCAttributes: &xkmssdk.ECCAttributes{Curve: elliptic.P256()},
+				ECCAttributes: &xkmssdk.ECCAttributes{Curve: elliptic.P384()},
 			},
-			wantKeyType: "ecdsa",
-			wantKeySize: 256,
-			wantCurve:   "P-256",
-			wantServAlg: service.KeyAlgECDSAP256,
+			wantKeyType:   "signing",
+			wantCurve:     "P-384",
+			wantAlgorithm: "ecdsa",
+			wantBackend:   "software",
+			wantServAlg:   service.KeyAlgECDSAP384,
 		},
 		{
-			name:        "Ed25519",
-			attrs:       &xkmssdk.KeyAttributes{KeyAlgorithm: x509.Ed25519},
-			wantKeyType: "ed25519",
-			wantKeySize: 256,
-			wantServAlg: service.KeyAlgEd25519,
+			name:          "Ed25519",
+			attrs:         &xkmssdk.KeyAttributes{KeyAlgorithm: x509.Ed25519},
+			wantKeyType:   "signing",
+			wantAlgorithm: "ed25519",
+			wantBackend:   "software",
+			wantServAlg:   service.KeyAlgEd25519,
+		},
+		{
+			name: "named backend",
+			attrs: &xkmssdk.KeyAttributes{
+				StoreType:          xkmssdk.StorePKCS11,
+				SymmetricAlgorithm: xkmssdk.SymmetricAES128GCM,
+			},
+			wantKeyType:   "secret",
+			wantKeySize:   128,
+			wantAlgorithm: "aes128-gcm",
+			wantBackend:   string(xkmssdk.StorePKCS11),
+			wantServAlg:   service.KeyAlgAES128GCM,
 		},
 	}
 
@@ -188,6 +215,7 @@ func TestClientKMSGenerateKey_XKMSKeystore(t *testing.T) {
 			assert.Equal(t, tt.wantKeySize, got.GetKeySize())
 			assert.Equal(t, tt.wantCurve, got.GetCurve())
 			assert.Equal(t, tt.wantAlgorithm, got.GetAlgorithm())
+			assert.Equal(t, tt.wantBackend, got.GetBackend())
 			assert.False(t, got.GetExportable())
 
 			assert.Equal(t, "key-"+tt.name, resp.Key.KeyID)
@@ -236,6 +264,7 @@ func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, int32(2), got.GetLimit())
 	assert.Equal(t, int32(0), got.GetOffset())
+	assert.Equal(t, "software", got.GetBackend())
 
 	require.Len(t, resp.Keys, 2)
 	assert.Equal(t, "k1", resp.Keys[0].KeyID)
@@ -247,10 +276,16 @@ func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	assert.Equal(t, "2", resp.NextCursor)
 
 	// The cursor is the xkms.v1 offset of the next page.
-	_, err = client.KMSListKeys(context.Background(), &service.ListKeysRequest{Limit: 2, Cursor: resp.NextCursor})
+	// A backend the caller names in the filter is the one listed.
+	_, err = client.KMSListKeys(context.Background(), &service.ListKeysRequest{
+		Limit:  2,
+		Cursor: resp.NextCursor,
+		Filter: map[string]string{"backend": string(xkmssdk.StorePKCS11)},
+	})
 	require.NoError(t, err)
 	fake.mu.Lock()
 	assert.Equal(t, int32(2), fake.listReq.GetOffset())
+	assert.Equal(t, string(xkmssdk.StorePKCS11), fake.listReq.GetBackend())
 	fake.mu.Unlock()
 }
 
@@ -289,6 +324,7 @@ func TestClientKMSDeleteKey_XKMSKeystore(t *testing.T) {
 	defer fake.mu.Unlock()
 	require.NotNil(t, fake.deleteReq)
 	assert.Equal(t, "k1", fake.deleteReq.GetKeyId())
+	assert.Equal(t, "software", fake.deleteReq.GetBackend())
 }
 
 func TestClientKMSDeleteKey_XKMSKeystoreNotFound(t *testing.T) {
