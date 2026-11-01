@@ -237,17 +237,31 @@ func TestExecuteObjectListByTenant_WithTags(t *testing.T) {
 // Object Migrate - Missing Key, Delete From Source
 // =============================================================================
 
-func TestExecuteObjectMigrate_MissingKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
+func TestExecuteObjectTools_MissingRequiredArgument(t *testing.T) {
+	registry := newTestObjectStorageRegistry(&mockObjectStorageService{})
 
-	args := map[string]interface{}{
-		"target_backend": "s3",
+	tests := []struct {
+		name    string
+		execute func(context.Context, map[string]interface{}) (interface{}, error)
+		args    map[string]interface{}
+		wantErr string
+	}{
+		{"migrate without key", registry.executeObjectMigrate, map[string]interface{}{"target_backend": "s3"}, "key is required"},
+		{"archive without key", registry.executeObjectArchive, map[string]interface{}{"target_store": "glacier"}, "key is required"},
+		{"restore without key", registry.executeObjectRestore, map[string]interface{}{"target_backend": "local"}, "key is required"},
+		{"verify without key", registry.executeObjectVerify, map[string]interface{}{"stores": []interface{}{"local", "s3"}}, "key is required"},
+		{"tenant quotas with empty tenant", registry.executeObjectTenantQuotas, map[string]interface{}{"tenant_id": ""}, "tenant_id is required"},
+		{"set tenant quotas with empty tenant", registry.executeObjectSetTenantQuotas, map[string]interface{}{"tenant_id": "", "max_storage_bytes": float64(1024 * 1024 * 1024)}, "tenant_id is required"},
+		{"tenant usage with empty tenant", registry.executeObjectTenantUsage, map[string]interface{}{"tenant_id": ""}, "tenant_id is required"},
 	}
 
-	_, err := registry.executeObjectMigrate(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key is required")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.execute(context.Background(), tt.args)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 func TestExecuteObjectMigrate_DeleteFromSourceFalse(t *testing.T) {
@@ -284,19 +298,6 @@ func TestExecuteObjectMigrate_DeleteFromSourceFalse(t *testing.T) {
 // Object Archive - Missing Key, Delete From Primary
 // =============================================================================
 
-func TestExecuteObjectArchive_MissingKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"target_store": "glacier",
-	}
-
-	_, err := registry.executeObjectArchive(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key is required")
-}
-
 func TestExecuteObjectArchive_DeleteFromPrimaryFalse(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	registry := newTestObjectStorageRegistry(mockSvc)
@@ -330,35 +331,9 @@ func TestExecuteObjectArchive_DeleteFromPrimaryFalse(t *testing.T) {
 // Object Restore - Missing Key
 // =============================================================================
 
-func TestExecuteObjectRestore_MissingKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"target_backend": "local",
-	}
-
-	_, err := registry.executeObjectRestore(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key is required")
-}
-
 // =============================================================================
 // Object Verify - Missing Key
 // =============================================================================
-
-func TestExecuteObjectVerify_MissingKey(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"stores": []interface{}{"local", "s3"},
-	}
-
-	_, err := registry.executeObjectVerify(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "key is required")
-}
 
 // =============================================================================
 // Object Head - With Existing Object, Tags, and Tenant ID
@@ -512,19 +487,6 @@ func TestExecuteObjectListBackends_MultipleBackends(t *testing.T) {
 // Object Tenant Quotas - Missing Tenant ID Edge Case
 // =============================================================================
 
-func TestExecuteObjectTenantQuotas_EmptyTenantID(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"tenant_id": "",
-	}
-
-	_, err := registry.executeObjectTenantQuotas(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant_id is required")
-}
-
 func TestExecuteObjectTenantQuotas_WithUsage(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	registry := newTestObjectStorageRegistry(mockSvc)
@@ -557,20 +519,6 @@ func TestExecuteObjectTenantQuotas_WithUsage(t *testing.T) {
 // Object Set Tenant Quotas - Edge Cases
 // =============================================================================
 
-func TestExecuteObjectSetTenantQuotas_EmptyTenantID(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"tenant_id":         "",
-		"max_storage_bytes": float64(1024 * 1024 * 1024),
-	}
-
-	_, err := registry.executeObjectSetTenantQuotas(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant_id is required")
-}
-
 func TestExecuteObjectSetTenantQuotas_WithAllQuotas(t *testing.T) {
 	mockSvc := &mockObjectStorageService{}
 	registry := newTestObjectStorageRegistry(mockSvc)
@@ -601,19 +549,6 @@ func TestExecuteObjectSetTenantQuotas_WithAllQuotas(t *testing.T) {
 // =============================================================================
 // Object Tenant Usage - Edge Cases
 // =============================================================================
-
-func TestExecuteObjectTenantUsage_EmptyTenantID(t *testing.T) {
-	mockSvc := &mockObjectStorageService{}
-	registry := newTestObjectStorageRegistry(mockSvc)
-
-	args := map[string]interface{}{
-		"tenant_id": "",
-	}
-
-	_, err := registry.executeObjectTenantUsage(context.Background(), args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tenant_id is required")
-}
 
 // =============================================================================
 // Mock IAM Service
@@ -939,9 +874,11 @@ func TestGetIAMService_Success(t *testing.T) {
 // executeIAMTool router tests
 // =============================================================================
 
-func TestExecuteIAMTool_RoutesToTenantOps(t *testing.T) {
+func TestExecuteIAMTool_Routes(t *testing.T) {
 	reg := newIAMTestRegistry(&mockIAMService{})
 	ctx := tenantctx.WithTenant(context.Background(), "t1")
+
+	policyMap := map[string]interface{}{"name": "test-policy", "spec_yaml": "rules: []"}
 
 	tests := []struct {
 		name     string
@@ -954,26 +891,6 @@ func TestExecuteIAMTool_RoutesToTenantOps(t *testing.T) {
 		{"tenant_delete", "quicbaas_iam_tenant_delete", map[string]interface{}{"id": "t1"}},
 		{"tenant_list", "quicbaas_iam_tenant_list", map[string]interface{}{}},
 		{"tenant_provision", "quicbaas_iam_tenant_provision", map[string]interface{}{"tenant_id": "t1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
-}
-
-func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"user_create", "quicbaas_iam_user_create", map[string]interface{}{"tenant_id": "t1", "email": "u@ex.com", "name": "User"}},
 		{"user_get", "quicbaas_iam_user_get", map[string]interface{}{"tenant_id": "t1", "user_id": "30001"}},
 		{"user_update", "quicbaas_iam_user_update", map[string]interface{}{"tenant_id": "t1", "user_id": "30001", "email": "new@ex.com", "name": "Updated", "suspended": true, "locked": false}},
@@ -981,53 +898,11 @@ func TestExecuteIAMTool_RoutesToUserOps(t *testing.T) {
 		{"user_list", "quicbaas_iam_user_list", map[string]interface{}{"tenant_id": "t1"}},
 		{"user_assign_role", "quicbaas_iam_user_assign_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
 		{"user_revoke_role", "quicbaas_iam_user_revoke_role", map[string]interface{}{"user_id": "30001", "role_id": "r1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
-}
-
-func TestExecuteIAMTool_RoutesToRoleOps(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"role_create", "quicbaas_iam_role_create", map[string]interface{}{"tenant_id": "t1", "name": "admin", "description": "Admin role", "permissions": []interface{}{"read", "write"}}},
 		{"role_get", "quicbaas_iam_role_get", map[string]interface{}{"tenant_id": "t1", "role_id": "r1"}},
 		{"role_update", "quicbaas_iam_role_update", map[string]interface{}{"tenant_id": "t1", "role_id": "r1", "name": "updated", "description": "desc", "permissions": []interface{}{"read"}}},
 		{"role_delete", "quicbaas_iam_role_delete", map[string]interface{}{"tenant_id": "t1", "role_id": "r1"}},
 		{"role_list", "quicbaas_iam_role_list", map[string]interface{}{"tenant_id": "t1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
-}
-
-func TestExecuteIAMTool_RoutesToPolicyOps(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	policyMap := map[string]interface{}{"name": "test-policy", "spec_yaml": "rules: []"}
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"policy_create", "quicbaas_iam_policy_create", map[string]interface{}{"tenant_id": "t1", "policy": policyMap}},
 		{"policy_get", "quicbaas_iam_policy_get", map[string]interface{}{"tenant_id": "t1", "name": "p1"}},
 		{"policy_update", "quicbaas_iam_policy_update", map[string]interface{}{"tenant_id": "t1", "name": "p1", "policy": policyMap}},
@@ -1037,26 +912,6 @@ func TestExecuteIAMTool_RoutesToPolicyOps(t *testing.T) {
 			"policy": policyMap,
 			"check":  map[string]interface{}{"subject": map[string]interface{}{"id": "u1"}, "action": "read", "resource": "data"},
 		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := reg.executeIAMTool(ctx, tt.toolName, tt.args)
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
-}
-
-func TestExecuteIAMTool_RoutesToAppOps(t *testing.T) {
-	reg := newIAMTestRegistry(&mockIAMService{})
-	ctx := tenantctx.WithTenant(context.Background(), "t1")
-
-	tests := []struct {
-		name     string
-		toolName string
-		args     map[string]interface{}
-	}{
 		{"app_register", "quicbaas_iam_app_register", map[string]interface{}{
 			"tenant_id":      "t1",
 			"name":           "my-app",
