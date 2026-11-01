@@ -179,25 +179,6 @@ func TestCacheWarmerDependenciesNilLoggerError(t *testing.T) {
 }
 
 // =============================================================================
-// Cache Command Nil Config Tests
-// =============================================================================
-
-func TestCacheConfigCommandNilConfigError(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheConfigCommand()
-	cacheOutputFmt = "table"
-
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-// =============================================================================
 // Logger Adapter Tests
 // =============================================================================
 
@@ -473,41 +454,38 @@ func TestClusterStatusJSONNilValues(t *testing.T) {
 // Cache Enable/Disable Command Tests
 // =============================================================================
 
-func TestCacheEnableCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
+func TestCacheCommands_NilConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		args    []string
+		wantMsg string
+	}{
+		{name: "enable", factory: newCacheEnableCommand, args: []string{"user"}, wantMsg: "configuration not initialized"},
+		{name: "disable", factory: newCacheDisableCommand, args: []string{"user"}, wantMsg: "configuration not initialized"},
+		{name: "config", factory: newCacheConfigCommand, args: []string{}, wantMsg: "configuration not initialized"},
+		{name: "warm", factory: newCacheWarmCommand, args: []string{}, wantMsg: "configuration not initialized"},
+		{name: "stats", factory: newCacheStatsCommand, args: []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg := cfg
+			origFmt := cacheOutputFmt
+			defer func() {
+				cfg = origCfg
+				cacheOutputFmt = origFmt
+			}()
+			cfg = nil
+			cacheOutputFmt = "table"
 
-	cfg = nil
-
-	cmd := newCacheEnableCommand()
-	err := cmd.RunE(cmd, []string{"user"})
-	assert.Error(t, err)
-}
-
-func TestCacheDisableCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheDisableCommand()
-	err := cmd.RunE(cmd, []string{"user"})
-	assert.Error(t, err)
-}
-
-func TestCacheStatsCommandNilConfig(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	cmd := newCacheStatsCommand()
-	cacheOutputFmt = "table"
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
+			cmd := tt.factory()
+			err := cmd.RunE(cmd, tt.args)
+			require.Error(t, err)
+			if tt.wantMsg != "" {
+				assert.Contains(t, err.Error(), tt.wantMsg)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -550,61 +528,6 @@ func TestCreateSDKClientWithValidAddressOpt(t *testing.T) {
 	_, err := createSDKClient()
 	// We expect an error since there's no server, but it shouldn't be ErrEmptyAddress
 	assert.NotEqual(t, ErrEmptyAddress, err)
-}
-
-// =============================================================================
-// Initialize Cache Registry Tests
-// =============================================================================
-
-func TestInitializeCacheRegistryWithValidConfigOpt(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	registry, err := initializeCacheRegistry()
-	assert.NoError(t, err)
-	assert.NotNil(t, registry)
-}
-
-func TestInitializeCacheRegistryNilConfigOpt(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	_, err := initializeCacheRegistry()
-	assert.Error(t, err)
 }
 
 // =============================================================================
@@ -1330,77 +1253,39 @@ func TestRemaining91_NewClusterStatusCommand_InvalidOutputFormat(t *testing.T) {
 
 // node.go coverage
 
-func TestRemaining91_RunNodeList_TableOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
+func TestRemaining91_RunNodeList_OutputFormats(t *testing.T) {
+	tests := []struct {
+		format  string
+		wantErr bool
+	}{
+		{format: "table"},
+		{format: "json"},
+		{format: "xml", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			origLog := log
+			origNodeMgr := currentNodeManager
+			origFmt := nodeOutputFormat
+			defer func() {
+				log = origLog
+				currentNodeManager = origNodeMgr
+				nodeOutputFormat = origFmt
+			}()
 
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
+			log = createTestLoggerForRemaining91(t)
+			currentNodeManager = nil
 
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "table"
-	err := runNodeList(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeList_JSONOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "json"
-	err := runNodeList(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeList_InvalidFormat(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	cmd := newNodeListCommand()
-	nodeOutputFormat = "xml"
-	err := runNodeList(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_GetNodeManager_CreatesNew(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	mgr, err := getNodeManager()
-	require.NoError(t, err)
-	assert.NotNil(t, mgr)
+			cmd := newNodeListCommand()
+			nodeOutputFormat = tt.format
+			err := runNodeList(cmd, []string{})
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRemaining91_GetNodeManager_ReturnsCached(t *testing.T) {
@@ -1416,6 +1301,7 @@ func TestRemaining91_GetNodeManager_ReturnsCached(t *testing.T) {
 
 	mgr1, err := getNodeManager()
 	require.NoError(t, err)
+	require.NotNil(t, mgr1)
 	mgr2, err := getNodeManager()
 	require.NoError(t, err)
 	assert.Equal(t, mgr1, mgr2)
@@ -1452,42 +1338,33 @@ func TestRemaining91_GetNodeManager_WithCustomFlags(t *testing.T) {
 	assert.NotNil(t, mgr)
 }
 
-func TestRemaining91_RunNodeAdd_Success(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
+func TestRemaining91_RunNodeAdd_OutputFormats(t *testing.T) {
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"node-test-1", "10.0.0.1:50051"}},
+		{format: "json", args: []string{"node-test-2", "10.0.0.2:50051"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			origLog := log
+			origNodeMgr := currentNodeManager
+			origFmt := nodeOutputFormat
+			defer func() {
+				log = origLog
+				currentNodeManager = origNodeMgr
+				nodeOutputFormat = origFmt
+			}()
 
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
+			log = createTestLoggerForRemaining91(t)
+			currentNodeManager = nil
 
-	addCmd := newNodeAddCommand()
-	nodeOutputFormat = "table"
-	err := runNodeAdd(addCmd, []string{"node-test-1", "10.0.0.1:50051"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunNodeAdd_JSONOutput(t *testing.T) {
-	origLog := log
-	origNodeMgr := currentNodeManager
-	origFmt := nodeOutputFormat
-	defer func() {
-		log = origLog
-		currentNodeManager = origNodeMgr
-		nodeOutputFormat = origFmt
-	}()
-
-	log = createTestLoggerForRemaining91(t)
-	currentNodeManager = nil
-
-	addCmd := newNodeAddCommand()
-	nodeOutputFormat = "json"
-	err := runNodeAdd(addCmd, []string{"node-test-2", "10.0.0.2:50051"})
-	assert.NoError(t, err)
+			addCmd := newNodeAddCommand()
+			nodeOutputFormat = tt.format
+			assert.NoError(t, runNodeAdd(addCmd, tt.args))
+		})
+	}
 }
 
 func TestRemaining91_RunNodeRemove_Success(t *testing.T) {
@@ -1578,16 +1455,6 @@ func TestRemaining91_RunNodeReplace_NonExistentOld(t *testing.T) {
 
 // cache.go coverage
 
-func TestRemaining91_RunCacheWarmCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheWarmCommand()
-	err := runCacheWarmCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
 func TestRemaining91_RunCacheWarmCommand_NoPrefixes(t *testing.T) {
 	origCfg := cfg
 	origLog := log
@@ -1600,56 +1467,6 @@ func TestRemaining91_RunCacheWarmCommand_NoPrefixes(t *testing.T) {
 	err := runCacheWarmCommand(cmd, []string{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prefix")
-}
-
-func TestRemaining91_InitializeCacheWarmerDependencies_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_InitializeCacheWarmerDependencies_NilLogger(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() { cfg = origCfg; log = origLog }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = nil
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-}
-
-func TestRemaining91_RunCacheEnableCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_RunCacheDisableCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRemaining91_RunCacheConfigCommand_NilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-	cfg = nil
-	cmd := newCacheConfigCommand()
-	err := runCacheConfigCommand(cmd, []string{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
 }
 
 func TestRemaining91_RunCacheConfigCommand_WithEntity(t *testing.T) {
@@ -1725,16 +1542,6 @@ func TestRemaining91_InitializeCacheRegistry_Success(t *testing.T) {
 
 // client.go coverage
 
-func TestRemaining91_CreateSDKClient_EmptyAddress(t *testing.T) {
-	origAddr := address
-	defer func() { address = origAddr; resetSDKClient() }()
-	resetSDKClient()
-	address = ""
-	client, err := createSDKClient()
-	assert.Nil(t, client)
-	require.Error(t, err)
-}
-
 func TestRemaining91_CreateSDKClient_ReturnsExisting(t *testing.T) {
 	defer func() { resetSDKClient() }()
 	resetSDKClient()
@@ -1744,67 +1551,6 @@ func TestRemaining91_CreateSDKClient_ReturnsExisting(t *testing.T) {
 	result, err := createSDKClient()
 	require.NoError(t, err)
 	assert.Same(t, mock, result)
-}
-
-func TestRemaining91_BuildSDKClientOptions_QUICTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "quic"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_RESTTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "rest"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_UnixTransport(t *testing.T) {
-	origT := transport
-	origAddr := address
-	origTimeout := globalTimeout
-	defer func() { transport = origT; address = origAddr; globalTimeout = origTimeout }()
-	transport = "unix"
-	address = "/tmp/test.sock"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_MCPTransport(t *testing.T) {
-	origT := transport
-	origTimeout := globalTimeout
-	defer func() { transport = origT; globalTimeout = origTimeout }()
-	transport = "mcp"
-	globalTimeout = 5 * time.Second
-	opts, err := buildSDKClientOptions()
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestRemaining91_BuildSDKClientOptions_UnsupportedTransport(t *testing.T) {
-	origT := transport
-	defer func() { transport = origT }()
-	transport = "bad_proto"
-	opts, err := buildSDKClientOptions()
-	assert.Nil(t, opts)
-	require.Error(t, err)
-}
-
-func TestRemaining91_CloseSDKClient_NilClient(t *testing.T) {
-	resetSDKClient()
-	err := closeSDKClient()
-	assert.NoError(t, err)
 }
 
 func TestRemaining91_BuildSDKClientOptions_ZeroTimeout(t *testing.T) {
