@@ -154,12 +154,6 @@ func TestRegistrationSessionStore_Delete(t *testing.T) {
 	assert.False(t, ok, "deleted session should not be retrievable")
 }
 
-func TestRegistrationSessionStore_GetMissing(t *testing.T) {
-	store := &registrationSessionStore{}
-	_, ok := store.get("nonexistent")
-	assert.False(t, ok)
-}
-
 // newRegSession is a constructor helper for tests.
 func newRegSession(tenantID, tenantName, email, isolationMode string, ttlSeconds int) *registrationSession {
 	return &registrationSession{
@@ -193,63 +187,57 @@ func TestRegisterSelfBegin_DisabledReturns403(t *testing.T) {
 	assert.Equal(t, ErrSelfRegistrationDisabled, body["error"])
 }
 
-func TestRegisterSelfBegin_MissingTenantName(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		Email:       "user@acme.com",
-		DisplayName: "Alice",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_MissingEmail(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName:  "Acme",
-		DisplayName: "Alice",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_MissingDisplayName(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
-		Enabled: true,
-	})
-	defer cleanup()
-
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName: "Acme",
-		Email:      "user@acme.com",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRegisterSelfBegin_InvalidIsolationModeRejected(t *testing.T) {
-	handler, cleanup := buildHandlerWithRegEnabled(t, config.IAMSelfServiceRegistrationConfig{
+func TestRegisterSelfBegin_InvalidRequestReturns400(t *testing.T) {
+	keyspaceOnly := config.IAMSelfServiceRegistrationConfig{
 		Enabled:               true,
 		AllowedIsolationModes: []string{"keyspace"},
 		DefaultIsolationMode:  "keyspace",
-	})
-	defer cleanup()
+	}
+	tests := []struct {
+		name    string
+		body    string
+		wantErr string
+	}{
+		{
+			name: "missing tenant name",
+			body: `{"email":"user@acme.com","display_name":"Alice"}`,
+		},
+		{
+			name: "missing email",
+			body: `{"tenant_name":"Acme","display_name":"Alice"}`,
+		},
+		{
+			name: "missing display name",
+			body: `{"tenant_name":"Acme","email":"user@acme.com"}`,
+		},
+		{
+			name:    "isolation mode not allowed",
+			body:    `{"tenant_name":"Acme","email":"user@acme.com","display_name":"Alice","isolation_mode":"barrier"}`,
+			wantErr: ErrIsolationModeNotAllowed,
+		},
+		{
+			name: "invalid JSON",
+			body: "{not json",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, cleanup := buildHandlerWithRegEnabled(t, keyspaceOnly)
+			defer cleanup()
 
-	w := postJSON(t, handler.RegisterSelfBegin, SelfRegisterBeginRequest{
-		TenantName:    "Acme",
-		Email:         "user@acme.com",
-		DisplayName:   "Alice",
-		IsolationMode: "barrier",
-	})
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	var body map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, ErrIsolationModeNotAllowed, body["error"])
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			handler.RegisterSelfBegin(w, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			if tt.wantErr != "" {
+				var body map[string]interface{}
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+				assert.Equal(t, tt.wantErr, body["error"])
+			}
+		})
+	}
 }
 
 func TestRegisterSelfBegin_DefaultIsolationModeApplied(t *testing.T) {
