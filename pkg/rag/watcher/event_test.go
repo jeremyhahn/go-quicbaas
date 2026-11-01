@@ -136,176 +136,156 @@ func TestEvent_Fields(t *testing.T) {
 	assert.Equal(t, "/old/path.txt", event.OldPath)
 }
 
-func TestAddRecursive_ShouldExclude(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a subdirectory that matches an exclude pattern
-	excludeDir := filepath.Join(tmpDir, "node_modules")
-	err := os.Mkdir(excludeDir, 0755)
-	require.NoError(t, err)
-
-	// Create another nested directory inside node_modules
-	nestedDir := filepath.Join(excludeDir, "nested")
-	err = os.Mkdir(nestedDir, 0755)
-	require.NoError(t, err)
-
-	// Create a regular directory that should be watched
-	regularDir := filepath.Join(tmpDir, "src")
-	err = os.Mkdir(regularDir, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		Exclude:       []string{"node_modules", "**/node_modules/**"},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
+// TestAddRecursive_Exclusions checks which entries a recursive walk watches
+// under exclude patterns, IgnoreHidden, and plain files.
+func TestAddRecursive_Exclusions(t *testing.T) {
+	tests := []struct {
+		name         string
+		dirs         []string
+		files        []string
+		exclude      []string
+		ignoreHidden bool
+		watched      []string
+		notWatched   []string
+	}{
+		{
+			name:       "excluded directory and its children",
+			dirs:       []string{"node_modules/nested", "src"},
+			exclude:    []string{"node_modules", "**/node_modules/**"},
+			watched:    []string{"src"},
+			notWatched: []string{"node_modules", "node_modules/nested"},
+		},
+		{
+			name:       "nested excluded directory",
+			dirs:       []string{"a/b/c/vendor", "a/b/c/lib"},
+			exclude:    []string{"vendor", "**/vendor/**"},
+			watched:    []string{"a/b/c", "a/b/c/lib"},
+			notWatched: []string{"a/b/c/vendor"},
+		},
+		{
+			name:         "several patterns with hidden ignored",
+			dirs:         []string{"node_modules", "vendor", ".cache", "build", "dist", "src"},
+			exclude:      []string{"node_modules", "vendor", "build", "dist"},
+			ignoreHidden: true,
+			watched:      []string{"src"},
+			notWatched:   []string{"node_modules", "vendor", ".cache", "build", "dist"},
+		},
+		{
+			name:         "hidden directory only",
+			dirs:         []string{".hidden", "normal"},
+			ignoreHidden: true,
+			watched:      []string{"normal"},
+			notWatched:   []string{".hidden"},
+		},
+		{
+			name:       "plain files are skipped",
+			dirs:       []string{"subdir"},
+			files:      []string{"file.txt"},
+			watched:    []string{"subdir"},
+			notWatched: []string{"file.txt"},
+		},
 	}
 
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			for _, d := range tt.dirs {
+				require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, d), 0755))
+			}
+			for _, f := range tt.files {
+				require.NoError(t, os.WriteFile(filepath.Join(tmpDir, f), []byte("test"), 0644))
+			}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+			w, err := New(Config{
+				Paths:         []string{tmpDir},
+				Recursive:     true,
+				Exclude:       tt.exclude,
+				IgnoreHidden:  tt.ignoreHidden,
+				DebounceDelay: 50 * time.Millisecond,
+				BatchInterval: 100 * time.Millisecond,
+				BufferSize:    100,
+			})
+			require.NoError(t, err)
+			defer w.Stop()
 
-	err = w.Start(ctx)
-	require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, w.Start(ctx))
 
-	// Wait for initialization using timer
-	timer := time.NewTimer(500 * time.Millisecond)
-	<-timer.C
-
-	// The watcher should have started successfully
-	// and excluded the node_modules directory
+			fw := w.(*fsWatcher)
+			fw.mu.RLock()
+			defer fw.mu.RUnlock()
+			for _, p := range tt.watched {
+				assert.Contains(t, fw.paths, filepath.Join(tmpDir, p), "%s should be watched", p)
+			}
+			for _, p := range tt.notWatched {
+				assert.NotContains(t, fw.paths, filepath.Join(tmpDir, p), "%s should not be watched", p)
+			}
+		})
+	}
 }
 
-// TestAddRecursive_NestedExclude tests nested exclude patterns.
-func TestAddRecursive_NestedExclude(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create deep nested structure
-	deepPath := filepath.Join(tmpDir, "a", "b", "c", "vendor")
-	err := os.MkdirAll(deepPath, 0755)
-	require.NoError(t, err)
-
-	// Create another directory at the same level
-	siblingDir := filepath.Join(tmpDir, "a", "b", "c", "lib")
-	err = os.Mkdir(siblingDir, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		Exclude:       []string{"vendor", "**/vendor/**"},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
+// TestAddRecursive_Symlinks checks that a recursive walk never watches a
+// symlink's own path, whatever the link points at, and that Start succeeds
+// for links to directories, to files and to nothing. addRecursive skips every
+// non-directory entry before its symlink branch, and a symlink's DirEntry is
+// never a directory, so a followed link to a directory is not watched either.
+func TestAddRecursive_Symlinks(t *testing.T) {
+	tests := []struct {
+		name           string
+		target         string // "dir", "file" or "missing"
+		followSymlinks bool
+	}{
+		{name: "to directory, followed", target: "dir", followSymlinks: true},
+		{name: "to directory, not followed", target: "dir", followSymlinks: false},
+		{name: "to file, followed", target: "file", followSymlinks: true},
+		{name: "broken, followed", target: "missing", followSymlinks: true},
 	}
 
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			realDir := filepath.Join(tmpDir, "real")
+			require.NoError(t, os.Mkdir(realDir, 0755))
+			realFile := filepath.Join(tmpDir, "file.txt")
+			require.NoError(t, os.WriteFile(realFile, []byte("test"), 0644))
+			subDir := filepath.Join(tmpDir, "subdir")
+			require.NoError(t, os.Mkdir(subDir, 0755))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+			targets := map[string]string{
+				"dir":     realDir,
+				"file":    realFile,
+				"missing": filepath.Join(tmpDir, "nonexistent"),
+			}
+			linkPath := filepath.Join(subDir, "link")
+			require.NoError(t, os.Symlink(targets[tt.target], linkPath))
 
-	err = w.Start(ctx)
-	require.NoError(t, err)
+			w, err := New(Config{
+				Paths:          []string{tmpDir},
+				Recursive:      true,
+				FollowSymlinks: tt.followSymlinks,
+				DebounceDelay:  50 * time.Millisecond,
+				BatchInterval:  100 * time.Millisecond,
+				BufferSize:     100,
+			})
+			require.NoError(t, err)
+			defer w.Stop()
 
-	// Wait for initialization using timer
-	timer := time.NewTimer(500 * time.Millisecond)
-	<-timer.C
-}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, w.Start(ctx))
 
-// TestAddRecursive_SymlinkToValidDir tests symlink pointing to a valid directory.
-// Note: Due to the current code structure, symlinks are checked after IsDir(),
-// which means symlinks to directories are skipped because entry.IsDir() returns false
-// for symlinks. This test documents the current behavior.
-func TestAddRecursive_SymlinkToValidDir(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create target directory
-	targetDir := filepath.Join(tmpDir, "target")
-	err := os.Mkdir(targetDir, 0755)
-	require.NoError(t, err)
-
-	// Create subdir for symlinks
-	subDir := filepath.Join(tmpDir, "subdir")
-	err = os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
-
-	// Create a symlink to the target directory
-	linkPath := filepath.Join(subDir, "link_to_target")
-	err = os.Symlink(targetDir, linkPath)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:          []string{tmpDir},
-		Recursive:      true,
-		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
+			fw := w.(*fsWatcher)
+			fw.mu.RLock()
+			_, hasLink := fw.paths[linkPath]
+			_, hasReal := fw.paths[realDir]
+			_, hasSub := fw.paths[subDir]
+			fw.mu.RUnlock()
+			assert.False(t, hasLink, "symlink path itself must not be watched")
+			assert.True(t, hasReal, "real directory should be watched")
+			assert.True(t, hasSub, "subdirectory should be watched")
+		})
 	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Should start without error
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Wait for initialization using timer
-	timer := time.NewTimer(500 * time.Millisecond)
-	<-timer.C
-}
-
-// TestAddRecursive_MultipleExcludePatterns tests multiple exclude patterns.
-func TestAddRecursive_MultipleExcludePatterns(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create multiple directories that should be excluded
-	dirs := []string{"node_modules", "vendor", ".cache", "build", "dist"}
-	for _, d := range dirs {
-		path := filepath.Join(tmpDir, d)
-		err := os.Mkdir(path, 0755)
-		require.NoError(t, err)
-	}
-
-	// Create a directory that should be included
-	srcDir := filepath.Join(tmpDir, "src")
-	err := os.Mkdir(srcDir, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		IgnoreHidden:  true, // Will exclude .cache
-		Exclude:       []string{"node_modules", "vendor", "build", "dist"},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Wait for initialization using timer
-	timer := time.NewTimer(500 * time.Millisecond)
-	<-timer.C
 }
 
 // TestProcessEvents_ExcludeInEvent tests that excluded paths in events are filtered.
@@ -630,73 +610,6 @@ func TestAddRecursive_ErrorReadDir(t *testing.T) {
 		// It's OK if it errors on unreadable directories
 		assert.Contains(t, err.Error(), "permission denied")
 	}
-}
-
-// TestAddRecursive_SymlinkError tests symlink error handling in addRecursive.
-func TestAddRecursive_SymlinkError(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a broken symlink
-	brokenLink := filepath.Join(tmpDir, "broken")
-	err := os.Symlink("/nonexistent/target", brokenLink)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:          []string{tmpDir},
-		Recursive:      true,
-		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Should handle broken symlink gracefully
-	err = w.Start(ctx)
-	require.NoError(t, err)
-}
-
-// TestAddRecursive_SymlinkToFile tests symlink pointing to a file.
-func TestAddRecursive_SymlinkToFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "subdir")
-	err := os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
-
-	// Create a file
-	testFile := filepath.Join(tmpDir, "file.txt")
-	err = os.WriteFile(testFile, []byte("test"), 0644)
-	require.NoError(t, err)
-
-	// Create symlink to file in subdir
-	fileLink := filepath.Join(subDir, "filelink")
-	err = os.Symlink(testFile, fileLink)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:          []string{tmpDir},
-		Recursive:      true,
-		FollowSymlinks: true,
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
 }
 
 // TestAddRecursive_WatcherAddError tests error handling when watcher.Add fails.
@@ -1310,106 +1223,6 @@ func TestWatcher_AddPath_NonExistent(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestWatcher_AddRecursive_WithSymlinks tests recursive watching with symlinks.
-func TestWatcher_AddRecursive_WithSymlinks(t *testing.T) {
-	tmpDir := t.TempDir()
-	realDir := filepath.Join(tmpDir, "real")
-	err := os.Mkdir(realDir, 0755)
-	require.NoError(t, err)
-
-	// Create a symlink
-	linkDir := filepath.Join(tmpDir, "link")
-	err = os.Symlink(realDir, linkDir)
-	require.NoError(t, err, "symlink creation must succeed on Linux")
-
-	// Test with FollowSymlinks = false (default)
-	config := Config{
-		Paths:          []string{tmpDir},
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
-		Recursive:      true,
-		FollowSymlinks: false,
-		IgnoreHidden:   false,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Create file in symlinked directory via symlink path - should NOT be watched
-	testFile := filepath.Join(linkDir, "test.txt")
-	err = os.WriteFile(testFile, []byte("content"), 0644)
-	require.NoError(t, err)
-
-	// The real directory is being watched, so we'll get an event
-	// This test verifies that the symlink directory itself is not added to the watcher
-	// Even though the real directory generates events
-	select {
-	case <-w.Events():
-		// OK - the real directory is watched, just not via the symlink
-	case <-time.After(5 * time.Second):
-		// Also OK - system dependent
-	}
-}
-
-// TestWatcher_AddRecursive_FollowSymlinks tests recursive watching following symlinks.
-func TestWatcher_AddRecursive_FollowSymlinks(t *testing.T) {
-	tmpDir := t.TempDir()
-	realDir := filepath.Join(tmpDir, "real")
-	err := os.Mkdir(realDir, 0755)
-	require.NoError(t, err)
-
-	// Create a symlink
-	linkDir := filepath.Join(tmpDir, "link")
-	err = os.Symlink(realDir, linkDir)
-	require.NoError(t, err, "symlink creation must succeed on Linux")
-
-	// Test with FollowSymlinks = true
-	config := Config{
-		Paths:          []string{tmpDir},
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
-		Recursive:      true,
-		FollowSymlinks: true,
-		IgnoreHidden:   false,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Create file in symlinked directory - should be watched
-	testFile := filepath.Join(realDir, "test.txt")
-	err = os.WriteFile(testFile, []byte("content"), 0644)
-	require.NoError(t, err)
-
-	// Should receive event
-	select {
-	case event := <-w.Events():
-		assert.Contains(t, event.Path, "test.txt")
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for symlink watch event on Linux")
-	}
-}
-
 // TestWatcher_RemovePath_WithError tests removing a path that fails.
 func TestWatcher_RemovePath_WithError(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1646,51 +1459,6 @@ func TestWatcher_ErrorHandling(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 }
 
-func TestAddRecursive_SymlinkToDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a real directory
-	realDir := filepath.Join(tmpDir, "real_directory")
-	err := os.Mkdir(realDir, 0755)
-	require.NoError(t, err)
-
-	// Create a subdirectory in real directory
-	subDir := filepath.Join(realDir, "subdir")
-	err = os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
-
-	// Create a symlink to the real directory
-	linkDir := filepath.Join(tmpDir, "link_to_real")
-	err = os.Symlink(realDir, linkDir)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:          []string{tmpDir},
-		Recursive:      true,
-		FollowSymlinks: true, // Follow symlinks
-		DebounceDelay:  50 * time.Millisecond,
-		BatchInterval:  100 * time.Millisecond,
-		BufferSize:     100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// The symlink should be resolved and the real directory watched
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	_, hasReal := fw.paths[realDir]
-	fw.mu.RUnlock()
-	assert.True(t, hasReal, "real directory should be in watched paths")
-}
-
 // TestAddPath_AddError tests addPath when watcher.Add fails.
 // This is difficult to trigger without reaching OS limits, but we can test the path exists check.
 func TestAddPath_StatError(t *testing.T) {
@@ -1909,91 +1677,6 @@ func TestProcessEvents_StopCh(t *testing.T) {
 
 	// Give time for goroutines to exit
 	time.Sleep(500 * time.Millisecond)
-}
-
-// TestAddRecursive_HiddenDirSkipped tests skipping hidden directories.
-func TestAddRecursive_HiddenDirIgnored(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create hidden directory
-	hiddenDir := filepath.Join(tmpDir, ".hidden")
-	err := os.Mkdir(hiddenDir, 0755)
-	require.NoError(t, err)
-
-	// Create normal directory
-	normalDir := filepath.Join(tmpDir, "normal")
-	err = os.Mkdir(normalDir, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		IgnoreHidden:  true, // Ignore hidden
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Hidden dir should NOT be watched
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	_, hasHidden := fw.paths[hiddenDir]
-	_, hasNormal := fw.paths[normalDir]
-	fw.mu.RUnlock()
-	assert.False(t, hasHidden, "hidden directory should not be watched")
-	assert.True(t, hasNormal, "normal directory should be watched")
-}
-
-// TestAddRecursive_FileEntry tests that files are skipped in addRecursive.
-func TestAddRecursive_SkipFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create a file (not a directory)
-	testFile := filepath.Join(tmpDir, "file.txt")
-	err := os.WriteFile(testFile, []byte("test"), 0644)
-	require.NoError(t, err)
-
-	// Create a subdirectory
-	subDir := filepath.Join(tmpDir, "subdir")
-	err = os.Mkdir(subDir, 0755)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     true,
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// File should not be in paths, only directories
-	fw := w.(*fsWatcher)
-	fw.mu.RLock()
-	_, hasFile := fw.paths[testFile]
-	_, hasSubDir := fw.paths[subDir]
-	fw.mu.RUnlock()
-	assert.False(t, hasFile, "file should not be in watched paths")
-	assert.True(t, hasSubDir, "subdirectory should be in watched paths")
 }
 
 // TestRemovePath_WatcherRemoveFails tests RemovePath when watcher.Remove returns an error.
