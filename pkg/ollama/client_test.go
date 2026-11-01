@@ -258,8 +258,18 @@ func TestIsConnectionRefused(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "generic error",
+			name:     "non-net error",
 			err:      ErrRequestFailed,
+			expected: false,
+		},
+		{
+			name:     "net op error with ECONNREFUSED",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			expected: true,
+		},
+		{
+			name:     "net op error with ETIMEDOUT",
+			err:      &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT},
 			expected: false,
 		},
 	}
@@ -316,69 +326,65 @@ func TestClientDoRequest_GatewayTimeout(t *testing.T) {
 	}
 }
 
-func TestClientHandleErrorResponse_UnknownStatus(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-	err := client.handleErrorResponse(418, []byte("I'm a teapot"))
-	if err == nil {
-		t.Fatal("expected error")
+func TestClientHandleErrorResponse(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		expected   error
+	}{
+		{
+			name:       "unknown status",
+			statusCode: http.StatusTeapot,
+			body:       "I'm a teapot",
+			expected:   ErrRequestFailed,
+		},
+		{
+			name:       "bad request with empty body",
+			statusCode: http.StatusBadRequest,
+			body:       "",
+			expected:   ErrInvalidInput,
+		},
+		{
+			name:       "bad request with plain text body",
+			statusCode: http.StatusBadRequest,
+			body:       "plain text error",
+			expected:   ErrInvalidInput,
+		},
+		{
+			name:       "not found naming a model",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"model 'xyz' not found"}`,
+			expected:   ErrModelNotFound,
+		},
+		{
+			name:       "not found without a model",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"resource not found"}`,
+			expected:   ErrRequestFailed,
+		},
+		{
+			name:       "bad gateway",
+			statusCode: http.StatusBadGateway,
+			body:       `{"error":"bad gateway"}`,
+			expected:   ErrOllamaUnavailable,
+		},
 	}
-	if !errors.Is(err, ErrRequestFailed) {
-		t.Errorf("expected ErrRequestFailed, got %v", err)
-	}
-}
 
-func TestClientHandleErrorResponse_EmptyBody(t *testing.T) {
 	client := NewClient(DefaultClientConfig())
-	err := client.handleErrorResponse(http.StatusBadRequest, []byte(""))
-	if err == nil {
-		t.Fatal("expected error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := client.handleErrorResponse(tt.statusCode, []byte(tt.body))
+			if !errors.Is(err, tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, err)
+			}
+		})
 	}
 }
 
 // =============================================================================
 // Consolidated from coverage_91_test.go
 // =============================================================================
-
-// TestIsConnectionRefused_NilError tests isConnectionRefused with nil error.
-func TestIsConnectionRefused_NilError(t *testing.T) {
-	if isConnectionRefused(nil) {
-		t.Error("expected false for nil error")
-	}
-}
-
-// TestIsConnectionRefused_NonNetError tests isConnectionRefused with non-net error.
-func TestIsConnectionRefused_NonNetError(t *testing.T) {
-	err := errors.New("some random error")
-	if isConnectionRefused(err) {
-		t.Error("expected false for non-net error")
-	}
-}
-
-// TestIsConnectionRefused_NetOpError tests isConnectionRefused with net.OpError.
-func TestIsConnectionRefused_NetOpError(t *testing.T) {
-	// Create a connection refused error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ECONNREFUSED,
-	}
-	if !isConnectionRefused(opErr) {
-		t.Error("expected true for connection refused error")
-	}
-}
-
-// TestIsConnectionRefused_OtherNetError tests isConnectionRefused with other net error.
-func TestIsConnectionRefused_OtherNetError(t *testing.T) {
-	// Create a different network error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ETIMEDOUT,
-	}
-	if isConnectionRefused(opErr) {
-		t.Error("expected false for timeout error")
-	}
-}
 
 // TestHealthChecker_IsAvailable_NilStatus tests IsAvailable with no status stored.
 func TestHealthChecker_IsAvailable_NilStatus(t *testing.T) {
@@ -602,46 +608,6 @@ func TestClientDoRequestOnce_NilBody(t *testing.T) {
 	}
 }
 
-// TestClientHandleErrorResponse_NotFoundWithModel tests 404 with model in message.
-func TestClientHandleErrorResponse_NotFoundWithModel(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusNotFound, []byte(`{"error":"model 'xyz' not found"}`))
-	if !errors.Is(err, ErrModelNotFound) {
-		t.Errorf("expected ErrModelNotFound, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_NotFoundGeneric tests 404 without model.
-func TestClientHandleErrorResponse_NotFoundGeneric(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusNotFound, []byte(`{"error":"resource not found"}`))
-	if !errors.Is(err, ErrRequestFailed) {
-		t.Errorf("expected ErrRequestFailed for generic 404, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_BadGateway tests 502 error.
-func TestClientHandleErrorResponse_BadGateway(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusBadGateway, []byte(`{"error":"bad gateway"}`))
-	if !errors.Is(err, ErrOllamaUnavailable) {
-		t.Errorf("expected ErrOllamaUnavailable, got %v", err)
-	}
-}
-
-// TestClientHandleErrorResponse_ServiceUnavailable tests 503 error.
-func TestClientHandleErrorResponse_ServiceUnavailable(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	err := client.handleErrorResponse(http.StatusServiceUnavailable, []byte(`{"error":"service unavailable"}`))
-	if !errors.Is(err, ErrOllamaUnavailable) {
-		t.Errorf("expected ErrOllamaUnavailable, got %v", err)
-	}
-}
-
 // TestClientDoRequest_RetrySuccess tests retry logic success.
 func TestClientDoRequest_RetrySuccess(t *testing.T) {
 	attempts := 0
@@ -726,43 +692,6 @@ func TestHealthChecker_Check_WithVersion(t *testing.T) {
 // =============================================================================
 // Consolidated from coverage_boost_test.go
 // =============================================================================
-
-// TestIsConnectionRefused_WithOpError tests isConnectionRefused with net.OpError wrapping ECONNREFUSED.
-func TestIsConnectionRefused_WithOpError(t *testing.T) {
-	// Create a proper net.OpError with ECONNREFUSED
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ECONNREFUSED,
-	}
-
-	if !isConnectionRefused(opErr) {
-		t.Error("expected true for connection refused error")
-	}
-}
-
-// TestIsConnectionRefused_WithOtherSyscallError tests isConnectionRefused with other syscall errors.
-func TestIsConnectionRefused_WithOtherSyscallError(t *testing.T) {
-	// Create a net.OpError with a different error
-	opErr := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: syscall.ETIMEDOUT,
-	}
-
-	if isConnectionRefused(opErr) {
-		t.Error("expected false for timeout error")
-	}
-}
-
-// TestIsConnectionRefused_WithWrappedError tests isConnectionRefused with wrapped error.
-func TestIsConnectionRefused_WithWrappedError(t *testing.T) {
-	// Non-net.OpError should return false
-	wrappedErr := errors.New("connection error")
-	if isConnectionRefused(wrappedErr) {
-		t.Error("expected false for non-OpError")
-	}
-}
 
 // TestModelService_List_RequestError tests List when the request fails.
 func TestModelService_List_RequestError(t *testing.T) {
@@ -1026,20 +955,6 @@ func TestHealthChecker_Check_StoresError(t *testing.T) {
 	lastStatus := checker.LastStatus()
 	if lastStatus.Error == "" {
 		t.Error("expected LastStatus().Error to be set")
-	}
-}
-
-// TestClientHandleErrorResponse_InvalidJSONBody tests handleErrorResponse with invalid JSON.
-func TestClientHandleErrorResponse_InvalidJSONBody(t *testing.T) {
-	client := NewClient(DefaultClientConfig())
-
-	// Body that's not valid JSON but not empty
-	err := client.handleErrorResponse(http.StatusBadRequest, []byte("plain text error"))
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
 }
 
