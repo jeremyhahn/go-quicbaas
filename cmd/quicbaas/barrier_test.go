@@ -955,34 +955,48 @@ func TestSharesFileErrorsNameTheInvokingVerb(t *testing.T) {
 // Errors
 // =============================================================================
 
-// TestBarrierSharesFileError_UnwrapAndMessage verifies wrap semantics.
-func TestBarrierSharesFileError_UnwrapAndMessage(t *testing.T) {
+// TestBarrierErrors_Message checks that each typed barrier error names its
+// inputs, and that BarrierSharesFileError wraps its cause.
+func TestBarrierErrors_Message(t *testing.T) {
 	inner := errors.New("permission denied")
-	err := &BarrierSharesFileError{Path: "/x", Err: inner}
-	assert.Contains(t, err.Error(), "/x")
-	assert.Contains(t, err.Error(), "permission denied")
-	assert.ErrorIs(t, err, inner)
-}
-
-// TestBarrierSharesFileEmptyError_Message verifies the error string.
-func TestBarrierSharesFileEmptyError_Message(t *testing.T) {
-	err := &BarrierSharesFileEmptyError{Path: "/empty"}
-	assert.True(t, strings.Contains(err.Error(), "/empty"))
-}
-
-// TestPINsNotAllowedError_Message verifies the error string.
-func TestPINsNotAllowedError_Message(t *testing.T) {
-	err := &PINsNotAllowedError{Strategy: "none", Op: "init"}
-	assert.Contains(t, err.Error(), "none")
-	assert.Contains(t, err.Error(), "init")
-	assert.Contains(t, err.Error(), "--so-pin")
-}
-
-// TestBarrierShareInputError_Message verifies the error string.
-func TestBarrierShareInputError_Message(t *testing.T) {
-	err := &BarrierShareInputError{Reason: "test reason"}
-	assert.Contains(t, err.Error(), "test reason")
-	assert.Contains(t, err.Error(), "barrier unseal-shares")
+	tests := []struct {
+		name    string
+		err     error
+		want    []string
+		wrapped error
+	}{
+		{
+			name:    "shares file unreadable",
+			err:     &BarrierSharesFileError{Path: "/x", Err: inner},
+			want:    []string{"/x", "permission denied"},
+			wrapped: inner,
+		},
+		{
+			name: "shares file empty",
+			err:  &BarrierSharesFileEmptyError{Path: "/empty"},
+			want: []string{"/empty"},
+		},
+		{
+			name: "PINs not allowed",
+			err:  &PINsNotAllowedError{Strategy: "none", Op: "init"},
+			want: []string{"none", "init", "--so-pin"},
+		},
+		{
+			name: "share input defaults to unseal-shares",
+			err:  &BarrierShareInputError{Reason: "test reason"},
+			want: []string{"test reason", "barrier unseal-shares"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, want := range tc.want {
+				assert.Contains(t, tc.err.Error(), want)
+			}
+			if tc.wrapped != nil {
+				assert.ErrorIs(t, tc.err, tc.wrapped)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1039,89 +1053,64 @@ func TestRunBarrierRootToken_RequiresAQuorum(t *testing.T) {
 
 // TestRunBarrierEnableEncryption_SendsTheMigration verifies the tenant scope
 // and strategy parameters reach the server.
+//
+// The scope rows pin the client half of go-quicbaas#990: a server that drops
+// the body tenant_id migrates the SYSTEM barrier and says so in `scope`. The
+// verb must not report that as the tenant migration the operator asked for,
+// and the scope check applies only when --tenant was given.
 func TestRunBarrierEnableEncryption_SendsTheMigration(t *testing.T) {
-	resetBarrierFlags()
-	fb := &fakeBarrierClient{
-		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "tenant"}, nil
-		},
+	tests := []struct {
+		name         string
+		tenantID     string
+		scope        string
+		wantMismatch bool
+		wantOut      string
+	}{
+		{name: "tenant migration", tenantID: "acme", scope: "tenant", wantOut: "started"},
+		{name: "tenant asked, system migrated", tenantID: "acme", scope: "system", wantMismatch: true},
+		{name: "system migration needs no tenant", scope: "system", wantOut: "system"},
 	}
-	restore := withFakeBarrier(fb)
-	defer restore()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resetBarrierFlags()
+			fb := &fakeBarrierClient{
+				enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
+					return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: tc.scope}, nil
+				},
+			}
+			restore := withFakeBarrier(fb)
+			defer restore()
 
-	barrierTenantID = "acme"
-	barrierStrategy = "shamir"
-	barrierThreshold = 2
-	barrierTotalShares = 3
+			barrierTenantID = tc.tenantID
+			barrierStrategy = "shamir"
+			barrierThreshold = 2
+			barrierTotalShares = 3
 
-	cmd := &cobra.Command{Use: "enable-encryption"}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	require.NoError(t, runBarrierEnableEncryptionCommand(cmd, nil))
+			cmd := &cobra.Command{Use: "enable-encryption"}
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			err := runBarrierEnableEncryptionCommand(cmd, nil)
 
-	req := fb.lastEnableEncReq
-	require.NotNil(t, req)
-	assert.Equal(t, "acme", req.TenantID)
-	assert.Equal(t, "shamir", req.Strategy)
-	assert.Equal(t, 2, req.ShamirThreshold)
-	assert.Equal(t, 3, req.ShamirTotal)
-	assert.Contains(t, out.String(), "started")
-}
+			req := fb.lastEnableEncReq
+			require.NotNil(t, req)
+			assert.Equal(t, tc.tenantID, req.TenantID)
+			assert.Equal(t, "shamir", req.Strategy)
+			assert.Equal(t, 2, req.ShamirThreshold)
+			assert.Equal(t, 3, req.ShamirTotal)
 
-// TestRunBarrierEnableEncryption_RefusesAWrongScope pins the client half of
-// go-quicbaas#990: a server that drops the body tenant_id migrates the SYSTEM
-// barrier and says so in `scope`. The verb must not report that as the tenant
-// migration the operator asked for.
-func TestRunBarrierEnableEncryption_RefusesAWrongScope(t *testing.T) {
-	resetBarrierFlags()
-	fb := &fakeBarrierClient{
-		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "system"}, nil
-		},
+			if tc.wantMismatch {
+				var mismatch *BarrierScopeMismatchError
+				require.ErrorAs(t, err, &mismatch)
+				assert.Equal(t, tc.tenantID, mismatch.TenantID)
+				assert.Equal(t, tc.scope, mismatch.Scope)
+				assert.NotContains(t, out.String(), "migration_started",
+					"a migration of the wrong barrier must not be rendered as success")
+				return
+			}
+			require.NoError(t, err)
+			assert.Contains(t, out.String(), tc.wantOut)
+		})
 	}
-	restore := withFakeBarrier(fb)
-	defer restore()
-
-	barrierTenantID = "acme"
-	barrierStrategy = "shamir"
-	barrierThreshold = 2
-	barrierTotalShares = 3
-
-	cmd := &cobra.Command{Use: "enable-encryption"}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	err := runBarrierEnableEncryptionCommand(cmd, nil)
-
-	var mismatch *BarrierScopeMismatchError
-	require.ErrorAs(t, err, &mismatch)
-	assert.Equal(t, "acme", mismatch.TenantID)
-	assert.Equal(t, "system", mismatch.Scope)
-	assert.NotContains(t, out.String(), "migration_started",
-		"a migration of the wrong barrier must not be rendered as success")
-}
-
-// TestRunBarrierEnableEncryption_SystemScopeNeedsNoTenant asserts the scope
-// check only applies when --tenant was given.
-func TestRunBarrierEnableEncryption_SystemScopeNeedsNoTenant(t *testing.T) {
-	resetBarrierFlags()
-	fb := &fakeBarrierClient{
-		enableEncryptionFunc: func(_ context.Context, _ *qrdbtransport.BarrierEnableEncryptionRequest) (*qrdbtransport.BarrierEnableEncryptionResponse, error) {
-			return &qrdbtransport.BarrierEnableEncryptionResponse{Status: "migration_started", Scope: "system"}, nil
-		},
-	}
-	restore := withFakeBarrier(fb)
-	defer restore()
-
-	barrierStrategy = "shamir"
-	barrierThreshold = 2
-	barrierTotalShares = 3
-
-	cmd := &cobra.Command{Use: "enable-encryption"}
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	require.NoError(t, runBarrierEnableEncryptionCommand(cmd, nil))
-	assert.Empty(t, fb.lastEnableEncReq.TenantID)
-	assert.Contains(t, out.String(), "system")
 }
 
 // TestRunBarrierEnableEncryption_ValidatesLocally verifies combinations the
