@@ -1063,42 +1063,37 @@ func TestKeyValueSerializationHelpers(t *testing.T) {
 	assert.Equal(t, io.EOF, err)
 }
 
-func TestKeyValueSerialization_EmptyKeyValue(t *testing.T) {
-	var buf bytes.Buffer
-
-	// Write empty key and value
-	err := writeKeyValue(&buf, []byte{}, []byte{})
-	require.NoError(t, err)
-
-	// Read back
-	reader := bytes.NewReader(buf.Bytes())
-	key, value, err := readKeyValue(reader)
-	require.NoError(t, err)
-	assert.Empty(t, key)
-	assert.Empty(t, value)
-}
-
-func TestKeyValueSerialization_LargeValues(t *testing.T) {
-	var buf bytes.Buffer
-
+func TestKeyValueSerialization_RoundTrip(t *testing.T) {
 	largeKey := make([]byte, 10000)
-	largeValue := make([]byte, 100000)
-
 	for i := range largeKey {
 		largeKey[i] = byte(i % 256)
 	}
+	largeValue := make([]byte, 100000)
 	for i := range largeValue {
 		largeValue[i] = byte(i % 256)
 	}
 
-	err := writeKeyValue(&buf, largeKey, largeValue)
-	require.NoError(t, err)
+	tests := []struct {
+		name  string
+		key   []byte
+		value []byte
+	}{
+		{name: "empty key and value", key: []byte{}, value: []byte{}},
+		{name: "large key and value", key: largeKey, value: largeValue},
+	}
 
-	reader := bytes.NewReader(buf.Bytes())
-	key, value, err := readKeyValue(reader)
-	require.NoError(t, err)
-	assert.Equal(t, largeKey, key)
-	assert.Equal(t, largeValue, value)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, writeKeyValue(&buf, tt.key, tt.value))
+
+			key, value, err := readKeyValue(bytes.NewReader(buf.Bytes()))
+			require.NoError(t, err)
+			// bytes.Equal treats an empty read-back as equal to []byte{}.
+			assert.True(t, bytes.Equal(tt.key, key))
+			assert.True(t, bytes.Equal(tt.value, value))
+		})
+	}
 }
 
 // TestNewBackupManager_WithSchedule moved to manager_integration_test.go
@@ -1193,33 +1188,36 @@ func TestReadUint32_InsufficientData(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestReadKeyValue_TruncatedKey(t *testing.T) {
-	var buf bytes.Buffer
+func TestReadKeyValue_Truncated(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(t *testing.T, buf *bytes.Buffer)
+	}{
+		{
+			name: "key length without key data",
+			write: func(t *testing.T, buf *bytes.Buffer) {
+				require.NoError(t, writeUint32(buf, 10))
+			},
+		},
+		{
+			name: "value length without value data",
+			write: func(t *testing.T, buf *bytes.Buffer) {
+				require.NoError(t, writeUint32(buf, 4))
+				buf.WriteString("test")
+				require.NoError(t, writeUint32(buf, 100))
+			},
+		},
+	}
 
-	// Write a key length but no key data
-	err := writeUint32(&buf, 10)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			tt.write(t, &buf)
 
-	reader := bytes.NewReader(buf.Bytes())
-	_, _, err = readKeyValue(reader)
-	assert.Error(t, err)
-}
-
-func TestReadKeyValue_TruncatedValue(t *testing.T) {
-	var buf bytes.Buffer
-
-	// Write key
-	err := writeUint32(&buf, 4)
-	require.NoError(t, err)
-	buf.Write([]byte("test"))
-
-	// Write value length but no value data
-	err = writeUint32(&buf, 100)
-	require.NoError(t, err)
-
-	reader := bytes.NewReader(buf.Bytes())
-	_, _, err = readKeyValue(reader)
-	assert.Error(t, err)
+			_, _, err := readKeyValue(bytes.NewReader(buf.Bytes()))
+			assert.Error(t, err)
+		})
+	}
 }
 
 // TestBackupManager_ListBackupsLimit moved to manager_integration_test.go
