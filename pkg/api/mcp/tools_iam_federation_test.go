@@ -248,7 +248,7 @@ func TestGetProviderIDFromArgs(t *testing.T) {
 }
 
 // =============================================================================
-// Federation Execution Handler Tests - Success Paths
+// Federation Execution Handler Tests
 // =============================================================================
 
 // federationToolCase is one row of a federation tool table. With unavailable
@@ -571,192 +571,145 @@ func TestExecuteIAMFederationHandleCallback(t *testing.T) {
 	})
 }
 
-func TestExecuteIAMFederationLinkAccount_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
+// resultField returns a check that the tool result is a map whose key equals want.
+func resultField(key string, want interface{}) func(t *testing.T, result interface{}) {
+	return func(t *testing.T, result interface{}) {
+		resultMap, ok := result.(map[string]interface{})
+		require.True(t, ok)
+		assert.Equal(t, want, resultMap[key])
+	}
+}
 
-	result, err := reg.executeIAMFederationLinkAccount(context.Background(), map[string]interface{}{
+func TestExecuteIAMFederationLinkAccount(t *testing.T) {
+	args := map[string]interface{}{
 		"user_id":        "30001",
 		"tenant_id":      "t1",
 		"provider_id":    "google",
 		"external_token": "ext-token-123",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "linked", resultMap["status"])
-}
-
-func TestExecuteIAMFederationLinkAccount_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
-			return errors.New("link failed")
-		},
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationLinkAccount(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationUnlinkAccount_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationUnlinkAccount(context.Background(), map[string]interface{}{
-		"user_id":     "30001",
-		"tenant_id":   "t1",
-		"provider_id": "google",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "unlinked", resultMap["status"])
-}
-
-func TestExecuteIAMFederationUnlinkAccount_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
-			return errors.New("unlink failed")
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationLinkAccount, []federationToolCase{
+		{name: "success", mgr: &mockFederationManager{}, args: args, check: resultField("status", "linked")},
+		{
+			name: "link error",
+			mgr: &mockFederationManager{
+				linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
+					return errors.New("link failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationUnlinkAccount(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1", "provider_id": "google",
 	})
-	require.Error(t, err)
 }
 
-func TestExecuteIAMFederationGetUserLinks_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationGetUserLinks(context.Background(), map[string]interface{}{
-		"user_id":   "30001",
-		"tenant_id": "t1",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.NotNil(t, resultMap["links"])
-}
-
-func TestExecuteIAMFederationGetUserLinks_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
-			return nil, errors.New("get links failed")
+func TestExecuteIAMFederationUnlinkAccount(t *testing.T) {
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "provider_id": "google"}
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationUnlinkAccount, []federationToolCase{
+		{name: "success", mgr: &mockFederationManager{}, args: args, check: resultField("status", "unlinked")},
+		{
+			name: "unlink error",
+			mgr: &mockFederationManager{
+				unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
+					return errors.New("unlink failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationGetUserLinks(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1",
 	})
-	require.Error(t, err)
+}
+
+func TestExecuteIAMFederationGetUserLinks(t *testing.T) {
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationGetUserLinks, []federationToolCase{
+		{
+			name: "success",
+			mgr:  &mockFederationManager{},
+			args: args,
+			check: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok)
+				assert.NotNil(t, resultMap["links"])
+			},
+		},
+		{
+			name: "get links error",
+			mgr: &mockFederationManager{
+				getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
+					return nil, errors.New("get links failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
+		},
+	})
 }
 
 // =============================================================================
 // Identity Execution Handler Tests
 // =============================================================================
 
-func TestExecuteIAMIdentityLink_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMIdentityLink(context.Background(), map[string]interface{}{
+func TestExecuteIAMIdentityLink(t *testing.T) {
+	args := map[string]interface{}{
 		"user_id":        "30001",
 		"tenant_id":      "t1",
 		"provider_id":    "google",
 		"external_token": "ext-token-123",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "linked", resultMap["status"])
-}
-
-func TestExecuteIAMIdentityLink_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
-			return errors.New("identity link failed")
-		},
 	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMIdentityLink(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1", "provider_id": "google", "external_token": "tok",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMIdentityUnlink_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMIdentityUnlink(context.Background(), map[string]interface{}{
-		"user_id":     "30001",
-		"tenant_id":   "t1",
-		"provider_id": "google",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "unlinked", resultMap["status"])
-}
-
-func TestExecuteIAMIdentityUnlink_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
-			return errors.New("identity unlink failed")
+	runFederationToolCases(t, (*ToolRegistry).executeIAMIdentityLink, []federationToolCase{
+		{name: "success", mgr: &mockFederationManager{}, args: args, check: resultField("status", "linked")},
+		{
+			name: "link error",
+			mgr: &mockFederationManager{
+				linkAccountFn: func(_ context.Context, _ uint64, _, _, _ string) error {
+					return errors.New("identity link failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMIdentityUnlink(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1", "provider_id": "google",
 	})
-	require.Error(t, err)
 }
 
-func TestExecuteIAMIdentityListUserIdentities_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMIdentityListUserIdentities(context.Background(), map[string]interface{}{
-		"user_id":   "30001",
-		"tenant_id": "t1",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.NotNil(t, resultMap["identities"])
-}
-
-func TestExecuteIAMIdentityListUserIdentities_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
-			return nil, errors.New("list identities failed")
+func TestExecuteIAMIdentityUnlink(t *testing.T) {
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1", "provider_id": "google"}
+	runFederationToolCases(t, (*ToolRegistry).executeIAMIdentityUnlink, []federationToolCase{
+		{name: "success", mgr: &mockFederationManager{}, args: args, check: resultField("status", "unlinked")},
+		{
+			name: "unlink error",
+			mgr: &mockFederationManager{
+				unlinkAccountFn: func(_ context.Context, _ uint64, _, _ string) error {
+					return errors.New("identity unlink failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMIdentityListUserIdentities(context.Background(), map[string]interface{}{
-		"user_id": "30001", "tenant_id": "t1",
 	})
-	require.Error(t, err)
+}
+
+func TestExecuteIAMIdentityListUserIdentities(t *testing.T) {
+	args := map[string]interface{}{"user_id": "30001", "tenant_id": "t1"}
+	runFederationToolCases(t, (*ToolRegistry).executeIAMIdentityListUserIdentities, []federationToolCase{
+		{
+			name: "success",
+			mgr:  &mockFederationManager{},
+			args: args,
+			check: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok)
+				assert.NotNil(t, resultMap["identities"])
+			},
+		},
+		{
+			name: "list identities error",
+			mgr: &mockFederationManager{
+				getUserLinksFn: func(_ context.Context, _ uint64, _ string) ([]*iam.FederatedIdentity, error) {
+					return nil, errors.New("list identities failed")
+				},
+			},
+			args:    args,
+			wantErr: true,
+		},
+	})
 }
