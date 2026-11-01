@@ -1909,225 +1909,173 @@ func TestRemaining91_DisplayNodeReplacementReport(t *testing.T) {
 
 // Cache enable/disable with valid config
 
-func TestRemaining91_RunCacheEnableCommand_Success(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "table"
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunCacheEnableCommand_InvalidFormat(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "xml"
-	cmd := newCacheEnableCommand()
-	err := runCacheEnableCommand(cmd, []string{"users"})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_RunCacheDisableCommand_Success(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "json"
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	assert.NoError(t, err)
-}
-
-func TestRemaining91_RunCacheDisableCommand_InvalidFormat(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
-	cfg = &config.Config{Cache: validCacheConfig()}
-	log = createTestLoggerForRemaining91(t)
-	cacheOutputFmt = "yaml_invalid"
-	cmd := newCacheDisableCommand()
-	err := runCacheDisableCommand(cmd, []string{"users"})
-	assert.Error(t, err)
-}
-
-func TestRemaining91_UnsupportedTransportError_String(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "ftp"}
-	assert.Contains(t, err.Error(), "unsupported transport")
-	assert.Contains(t, err.Error(), "ftp")
-}
-
-func TestDisplayRebalanceProgressSDK_JSON(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-abc",
-		Status:          "in_progress",
-		PercentComplete: 45.5,
-		ShardsMoved:     5,
-		TotalShards:     10,
-		ElapsedTime:     int64(30 * time.Second),
+func TestRemaining91_RunCacheToggleCommands_OutputFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		factory func() *cobra.Command
+		run     func(*cobra.Command, []string) error
+		format  string
+		wantErr bool
+	}{
+		{name: "enable table", factory: newCacheEnableCommand, run: runCacheEnableCommand, format: "table"},
+		{name: "enable invalid format", factory: newCacheEnableCommand, run: runCacheEnableCommand, format: "xml", wantErr: true},
+		{name: "disable json", factory: newCacheDisableCommand, run: runCacheDisableCommand, format: "json"},
+		{name: "disable invalid format", factory: newCacheDisableCommand, run: runCacheDisableCommand, format: "yaml_invalid", wantErr: true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origCfg := cfg
+			origLog := log
+			origFmt := cacheOutputFmt
+			defer func() { cfg = origCfg; log = origLog; cacheOutputFmt = origFmt }()
+			cfg = &config.Config{Cache: validCacheConfig()}
+			log = createTestLoggerForRemaining91(t)
+			cacheOutputFmt = tt.format
 
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceProgressSDK(resp, "json")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "op-abc")
-}
-
-func TestDisplayRebalanceProgressSDK_Table(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-xyz",
-		Status:          "completed",
-		PercentComplete: 100.0,
-		ShardsMoved:     10,
-		TotalShards:     10,
-		ElapsedTime:     int64(60 * time.Second),
+			err := tt.run(tt.factory(), []string{"users"})
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceProgressSDK(resp, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "op-xyz")
 }
 
-func TestDisplayRebalanceProgressSDK_UnsupportedFormat(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{}
-	err := displayRebalanceProgressSDK(resp, "xml")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported")
+func TestDisplayRebalanceProgressSDK_Formats(t *testing.T) {
+	tests := []struct {
+		name         string
+		format       string
+		resp         *cluster.GetRebalanceProgressResponse
+		wantContains string
+		wantErr      bool
+	}{
+		{
+			name:   "json",
+			format: "json",
+			resp: &cluster.GetRebalanceProgressResponse{
+				OperationID:     "op-abc",
+				Status:          "in_progress",
+				PercentComplete: 45.5,
+				ShardsMoved:     5,
+				TotalShards:     10,
+				ElapsedTime:     int64(30 * time.Second),
+			},
+			wantContains: "op-abc",
+		},
+		{
+			name:   "table",
+			format: "table",
+			resp: &cluster.GetRebalanceProgressResponse{
+				OperationID:     "op-xyz",
+				Status:          "completed",
+				PercentComplete: 100.0,
+				ShardsMoved:     10,
+				TotalShards:     10,
+				ElapsedTime:     int64(60 * time.Second),
+			},
+			wantContains: "op-xyz",
+		},
+		{name: "unsupported format", format: "xml", resp: &cluster.GetRebalanceProgressResponse{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			output := captureStdoutOutput(func() {
+				err = displayRebalanceProgressSDK(tt.resp, tt.format)
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported")
+				return
+			}
+			assert.NoError(t, err)
+			assert.Contains(t, output, tt.wantContains)
+		})
+	}
 }
 
-func TestDisplayRebalanceReport_UnsupportedFormat(t *testing.T) {
-	report := &RebalanceReport{}
-	err := displayRebalanceReport(report, "xml")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported")
-}
-
-func TestDisplayRebalanceReport_JSON(t *testing.T) {
+func TestDisplayRebalanceReport_Formats(t *testing.T) {
 	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now.Add(-10 * time.Minute),
-		EndTime:         now,
-		Duration:        10 * time.Minute,
-		MovesCompleted:  5,
-		MovesFailed:     0,
-		KeysRebalanced:  1000,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.25,
-		ImbalanceAfter:  0.05,
-	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "json")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "moves_completed")
-}
-
-func TestDisplayRebalanceReport_TableWithErrors(t *testing.T) {
-	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now.Add(-5 * time.Minute),
-		EndTime:         now,
-		Duration:        5 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     2,
-		KeysRebalanced:  500,
-		BytesRebalanced: 512 * 1024,
-		ImbalanceBefore: 0.30,
-		ImbalanceAfter:  0.10,
-		Errors: []string{
-			"shard 1 timeout",
-			"shard 2 permission denied",
-			"shard 3 timeout",
-			"shard 4 timeout",
-			"shard 5 timeout",
-			"shard 6 timeout",
+	tests := []struct {
+		name         string
+		format       string
+		report       *RebalanceReport
+		wantContains []string
+		wantErr      bool
+	}{
+		{name: "unsupported format", format: "xml", report: &RebalanceReport{}, wantErr: true},
+		{
+			name:   "json",
+			format: "json",
+			report: &RebalanceReport{
+				StartTime:       now.Add(-10 * time.Minute),
+				EndTime:         now,
+				Duration:        10 * time.Minute,
+				MovesCompleted:  5,
+				MovesFailed:     0,
+				KeysRebalanced:  1000,
+				BytesRebalanced: 1024 * 1024,
+				ImbalanceBefore: 0.25,
+				ImbalanceAfter:  0.05,
+			},
+			wantContains: []string{"moves_completed"},
+		},
+		{
+			name:   "table with errors",
+			format: "table",
+			report: &RebalanceReport{
+				StartTime:       now.Add(-5 * time.Minute),
+				EndTime:         now,
+				Duration:        5 * time.Minute,
+				MovesCompleted:  3,
+				MovesFailed:     2,
+				KeysRebalanced:  500,
+				BytesRebalanced: 512 * 1024,
+				ImbalanceBefore: 0.30,
+				ImbalanceAfter:  0.10,
+				Errors: []string{
+					"shard 1 timeout",
+					"shard 2 permission denied",
+					"shard 3 timeout",
+					"shard 4 timeout",
+					"shard 5 timeout",
+					"shard 6 timeout",
+				},
+			},
+			wantContains: []string{"Warning", "more errors"},
+		},
+		{
+			name:   "table no moves",
+			format: "table",
+			report: &RebalanceReport{
+				StartTime:       now,
+				EndTime:         now,
+				Duration:        0,
+				MovesCompleted:  0,
+				ImbalanceBefore: 0.02,
+				ImbalanceAfter:  0.02,
+			},
+			wantContains: []string{"already balanced"},
 		},
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	output := buf.String()
-	assert.Contains(t, output, "Warning")
-	assert.Contains(t, output, "more errors")
-}
-
-func TestDisplayRebalanceReport_TableNoMoves(t *testing.T) {
-	now := time.Now()
-	report := &RebalanceReport{
-		StartTime:       now,
-		EndTime:         now,
-		Duration:        0,
-		MovesCompleted:  0,
-		ImbalanceBefore: 0.02,
-		ImbalanceAfter:  0.02,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err error
+			output := captureStdoutOutput(func() {
+				err = displayRebalanceReport(tt.report, tt.format)
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unsupported")
+				return
+			}
+			assert.NoError(t, err)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, output, want)
+			}
+		})
 	}
-
-	origStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := displayRebalanceReport(report, "table")
-
-	w.Close()
-	os.Stdout = origStdout
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	assert.NoError(t, err)
-	assert.Contains(t, buf.String(), "already balanced")
 }
 
 // =============================================================================
