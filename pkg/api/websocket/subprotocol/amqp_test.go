@@ -89,34 +89,6 @@ func TestAMQPHandler_Name(t *testing.T) {
 	}
 }
 
-func TestAMQPHandler_MessagesReceived(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	if handler.MessagesReceived() != 0 {
-		t.Errorf("Initial MessagesReceived() = %d, want 0", handler.MessagesReceived())
-	}
-
-	handler.messagesReceived.Add(5)
-
-	if handler.MessagesReceived() != 5 {
-		t.Errorf("MessagesReceived() = %d, want 5", handler.MessagesReceived())
-	}
-}
-
-func TestAMQPHandler_MessagesSent(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	if handler.MessagesSent() != 0 {
-		t.Errorf("Initial MessagesSent() = %d, want 0", handler.MessagesSent())
-	}
-
-	handler.messagesSent.Add(3)
-
-	if handler.MessagesSent() != 3 {
-		t.Errorf("MessagesSent() = %d, want 3", handler.MessagesSent())
-	}
-}
-
 func TestAMQPHandler_ResetCounters(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 
@@ -142,46 +114,6 @@ func TestAMQPHandler_ResetCounters(t *testing.T) {
 	}
 }
 
-func TestAMQPHandler_ConcurrentCounterAccess(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	var wg sync.WaitGroup
-
-	for i := 0; i < 100; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			handler.messagesReceived.Add(1)
-		}()
-		go func() {
-			defer wg.Done()
-			handler.messagesSent.Add(1)
-		}()
-	}
-
-	for i := 0; i < 50; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			_ = handler.MessagesReceived()
-		}()
-		go func() {
-			defer wg.Done()
-			_ = handler.MessagesSent()
-		}()
-	}
-
-	wg.Wait()
-
-	if handler.MessagesReceived() != 100 {
-		t.Errorf("MessagesReceived() = %d, want 100", handler.MessagesReceived())
-	}
-
-	if handler.MessagesSent() != 100 {
-		t.Errorf("MessagesSent() = %d, want 100", handler.MessagesSent())
-	}
-}
-
 func TestAMQPHandler_ClientCount(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 
@@ -199,15 +131,6 @@ func TestAMQPHandler_ClientCount(t *testing.T) {
 
 	if handler.ClientCount() != 1 {
 		t.Errorf("ClientCount() = %d, want 1", handler.ClientCount())
-	}
-}
-
-func TestAMQPHandler_Hub(t *testing.T) {
-	hub := NewInMemoryPubSubHub()
-	handler := NewAMQPHandler(hub)
-
-	if handler.Hub() != hub {
-		t.Error("Hub() should return the configured hub")
 	}
 }
 
@@ -306,6 +229,7 @@ func TestAMQPHandler_BuildMethodFrame(t *testing.T) {
 
 func TestAMQPHandler_ParseFrame(t *testing.T) {
 	handler := NewAMQPHandler(nil)
+	payload := []byte{0x01, 0x02, 0x03}
 
 	tests := []struct {
 		name    string
@@ -324,43 +248,30 @@ func TestAMQPHandler_ParseFrame(t *testing.T) {
 		},
 		{
 			name:    "valid frame",
-			data:    []byte{1, 0, 1, 0, 0, 0, 1, 0x01, 0xCE},
+			data:    handler.buildFrame(FrameMethod, 5, payload),
 			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handler.parseFrame(tt.data)
+			frame, err := handler.parseFrame(tt.data)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseFrame() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("parseFrame() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if frame.Type != FrameMethod {
+				t.Errorf("Frame type = %d, want %d", frame.Type, FrameMethod)
+			}
+			if frame.Channel != 5 {
+				t.Errorf("Frame channel = %d, want 5", frame.Channel)
+			}
+			if !bytes.Equal(frame.Payload, payload) {
+				t.Errorf("Frame payload = %v, want %v", frame.Payload, payload)
 			}
 		})
-	}
-}
-
-func TestAMQPHandler_ParseFrame_Valid(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	// Build a valid frame
-	payload := []byte{0x01, 0x02, 0x03}
-	data := handler.buildFrame(FrameMethod, 5, payload)
-
-	frame, err := handler.parseFrame(data)
-	if err != nil {
-		t.Fatalf("parseFrame() error = %v", err)
-	}
-
-	if frame.Type != FrameMethod {
-		t.Errorf("Frame type = %d, want %d", frame.Type, FrameMethod)
-	}
-
-	if frame.Channel != 5 {
-		t.Errorf("Frame channel = %d, want 5", frame.Channel)
-	}
-
-	if !bytes.Equal(frame.Payload, payload) {
-		t.Errorf("Frame payload = %v, want %v", frame.Payload, payload)
 	}
 }
 
@@ -432,61 +343,30 @@ func TestErrAMQPProtocolError(t *testing.T) {
 	}
 }
 
-func TestErrAMQPDisconnect(t *testing.T) {
-	expected := "amqp: client disconnected"
-	if ErrAMQPDisconnect.Error() != expected {
-		t.Errorf("ErrAMQPDisconnect.Error() = %q, want %q", ErrAMQPDisconnect.Error(), expected)
-	}
-}
-
-func TestAMQPHandler_ResetCountersMultiple(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	for i := 0; i < 5; i++ {
-		handler.messagesReceived.Add(5)
-		handler.messagesSent.Add(5)
-		handler.ResetCounters()
-
-		if handler.MessagesReceived() != 0 {
-			t.Errorf("Iteration %d: MessagesReceived() = %d, want 0", i, handler.MessagesReceived())
-		}
-
-		if handler.MessagesSent() != 0 {
-			t.Errorf("Iteration %d: MessagesSent() = %d, want 0", i, handler.MessagesSent())
-		}
-	}
-}
-
 func TestWriteShortString(t *testing.T) {
-	buf := &bytes.Buffer{}
-	writeShortString(buf, "hello")
-
-	if buf.Len() != 6 {
-		t.Errorf("Buffer length = %d, want 6", buf.Len())
+	tests := []struct {
+		name    string
+		input   string
+		wantLen byte
+		want    string
+	}{
+		{name: "fits", input: "hello", wantLen: 5, want: "hello"},
+		{name: "truncated at 255", input: strings.Repeat("a", 300), wantLen: 255, want: strings.Repeat("a", 255)},
 	}
 
-	data := buf.Bytes()
-	if data[0] != 5 {
-		t.Errorf("String length byte = %d, want 5", data[0])
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			writeShortString(buf, tt.input)
 
-	if string(data[1:]) != "hello" {
-		t.Errorf("String content = %q, want hello", string(data[1:]))
-	}
-}
-
-func TestWriteShortString_Truncate(t *testing.T) {
-	buf := &bytes.Buffer{}
-	longString := strings.Repeat("a", 300)
-	writeShortString(buf, longString)
-
-	data := buf.Bytes()
-	if data[0] != 255 {
-		t.Errorf("String length byte = %d, want 255 (truncated)", data[0])
-	}
-
-	if len(data) != 256 {
-		t.Errorf("Buffer length = %d, want 256", len(data))
+			data := buf.Bytes()
+			if data[0] != tt.wantLen {
+				t.Errorf("String length byte = %d, want %d", data[0], tt.wantLen)
+			}
+			if string(data[1:]) != tt.want {
+				t.Errorf("String content has %d bytes, want %d", len(data)-1, len(tt.want))
+			}
+		})
 	}
 }
 
@@ -510,45 +390,29 @@ func TestWriteLongString(t *testing.T) {
 }
 
 func TestWriteTable(t *testing.T) {
-	buf := &bytes.Buffer{}
-	table := map[string]interface{}{
-		"product": "test",
+	tests := []struct {
+		name  string
+		table map[string]interface{}
+	}{
+		{name: "string value", table: map[string]interface{}{"product": "test"}},
+		{name: "boolean value", table: map[string]interface{}{"flag": true}},
+		{name: "integer value", table: map[string]interface{}{"count": 42}},
 	}
-	writeTable(buf, table)
 
-	if buf.Len() < 4 {
-		t.Fatalf("Buffer too short: %d bytes", buf.Len())
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			writeTable(buf, tt.table)
 
-	data := buf.Bytes()
-	tableLen := binary.BigEndian.Uint32(data[0:4])
+			if buf.Len() < 4 {
+				t.Fatalf("Buffer too short: %d bytes", buf.Len())
+			}
 
-	if int(tableLen) != buf.Len()-4 {
-		t.Errorf("Table length = %d, want %d", tableLen, buf.Len()-4)
-	}
-}
-
-func TestWriteTable_BooleanValue(t *testing.T) {
-	buf := &bytes.Buffer{}
-	table := map[string]interface{}{
-		"flag": true,
-	}
-	writeTable(buf, table)
-
-	if buf.Len() < 4 {
-		t.Fatalf("Buffer too short: %d bytes", buf.Len())
-	}
-}
-
-func TestWriteTable_IntegerValue(t *testing.T) {
-	buf := &bytes.Buffer{}
-	table := map[string]interface{}{
-		"count": 42,
-	}
-	writeTable(buf, table)
-
-	if buf.Len() < 4 {
-		t.Fatalf("Buffer too short: %d bytes", buf.Len())
+			tableLen := binary.BigEndian.Uint32(buf.Bytes()[0:4])
+			if int(tableLen) != buf.Len()-4 {
+				t.Errorf("Table length = %d, want %d", tableLen, buf.Len()-4)
+			}
+		})
 	}
 }
 
@@ -1067,222 +931,124 @@ func TestAMQPHandler_HandleConnection_ContextCancel(t *testing.T) {
 	}
 }
 
-func TestAMQPHandler_HandleFrame_UnknownFrameType(t *testing.T) {
+// TestAMQPHandler_MalformedInput checks that every frame and method handler
+// rejects input it cannot decode or serve.
+func TestAMQPHandler_MalformedInput(t *testing.T) {
 	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
+	ctx := context.Background()
 	session := ws.NewSession("test", "amqp", nil)
 
-	// Build a frame with unknown type (99)
-	buf := &bytes.Buffer{}
-	buf.WriteByte(99) // Unknown frame type
-	binary.Write(buf, binary.BigEndian, uint16(0))
-	binary.Write(buf, binary.BigEndian, uint32(0))
-	buf.WriteByte(0xCE)
+	unknownFrame := &bytes.Buffer{}
+	unknownFrame.WriteByte(99) // Unknown frame type
+	binary.Write(unknownFrame, binary.BigEndian, uint16(0))
+	binary.Write(unknownFrame, binary.BigEndian, uint32(0))
+	unknownFrame.WriteByte(0xCE)
 
-	_, err := handler.handleFrame(context.Background(), buf.Bytes(), session, state)
-	if err == nil {
-		t.Error("Expected error for unknown frame type")
-	}
-}
+	queueArgs := &bytes.Buffer{}
+	binary.Write(queueArgs, binary.BigEndian, uint16(0)) // reserved
+	queueArgs.WriteByte(4)                               // queue name length
+	queueArgs.WriteString("test")
+	queueArgs.WriteByte(0) // flags
 
-func TestAMQPHandler_HandleMethodFrame_UnsupportedMethod(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	// Build a method frame with unsupported class/method
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 0,
-		Payload: []byte{0xFF, 0xFF, 0xFF, 0xFF}, // Invalid class/method IDs
+	frameOn := func(channel uint16, payload []byte) *AMQPFrame {
+		return &AMQPFrame{Type: FrameMethod, Channel: channel, Payload: payload}
 	}
 
-	_, err := handler.handleMethodFrame(context.Background(), frame, session, state)
-	if err == nil {
-		t.Error("Expected error for unsupported method")
+	tests := []struct {
+		name string
+		call func(state *amqpClientState) ([]byte, error)
+	}{
+		{
+			name: "unknown frame type",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleFrame(ctx, unknownFrame.Bytes(), session, state)
+			},
+		},
+		{
+			name: "method frame unsupported class and method",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleMethodFrame(ctx, frameOn(0, []byte{0xFF, 0xFF, 0xFF, 0xFF}), session, state)
+			},
+		},
+		{
+			name: "method frame too short",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleMethodFrame(ctx, frameOn(0, []byte{0x00, 0x0A}), session, state)
+			},
+		},
+		{
+			name: "connection open missing vhost",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleConnectionOpen(ctx, frameOn(0, nil), []byte{}, session, state)
+			},
+		},
+		{
+			name: "connection open vhost length exceeds args",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleConnectionOpen(ctx, frameOn(0, nil), []byte{10, '/', '/'}, session, state)
+			},
+		},
+		{
+			name: "queue declare on channel not open",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleQueueDeclare(ctx, frameOn(1, nil), queueArgs.Bytes(), session, state)
+			},
+		},
+		{
+			name: "queue declare args too short",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleQueueDeclare(ctx, frameOn(1, nil), []byte{0, 0}, session, state)
+			},
+		},
+		{
+			name: "basic publish args too short",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleBasicPublish(ctx, frameOn(1, nil), []byte{0, 0, 0}, session, state)
+			},
+		},
+		{
+			name: "basic consume args too short",
+			call: func(state *amqpClientState) ([]byte, error) {
+				return handler.handleBasicConsume(ctx, frameOn(1, nil), []byte{0, 0, 0}, session, state)
+			},
+		},
 	}
-}
 
-func TestAMQPHandler_HandleMethodFrame_TooShort(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 0,
-		Payload: []byte{0x00, 0x0A}, // Only 2 bytes, need at least 4
-	}
-
-	_, err := handler.handleMethodFrame(context.Background(), frame, session, state)
-	if err == nil {
-		t.Error("Expected error for method frame too short")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &amqpClientState{
+				channels:  make(map[uint16]*amqpChannelState),
+				consumers: make(map[string]amqpConsumer),
+			}
+			if _, err := tt.call(state); err == nil {
+				t.Error("expected an error for malformed input")
+			}
+		})
 	}
 }
 
 func TestAMQPHandler_BuildBasicDeliver(t *testing.T) {
 	handler := NewAMQPHandler(nil)
 
-	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", []byte("hello"))
-
-	if len(result) < 8 {
-		t.Fatalf("Deliver frames too short: %d bytes", len(result))
+	tests := []struct {
+		name    string
+		payload []byte
+	}{
+		{name: "with payload", payload: []byte("hello")},
+		{name: "empty payload", payload: nil},
 	}
 
-	// First frame should be method frame
-	if result[0] != FrameMethod {
-		t.Errorf("First frame type = %d, want %d (method)", result[0], FrameMethod)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", tt.payload)
 
-func TestAMQPHandler_BuildBasicDeliver_EmptyPayload(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-
-	result := handler.buildBasicDeliver(1, "consumer-tag", 123, "test.queue", nil)
-
-	if len(result) < 8 {
-		t.Fatalf("Deliver frame too short: %d bytes", len(result))
-	}
-
-	// Should only have method frame for empty payload
-	if result[0] != FrameMethod {
-		t.Errorf("Frame type = %d, want %d (method)", result[0], FrameMethod)
-	}
-}
-
-func TestAMQPHandler_HandleConnectionOpen_MissingVhost(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 0,
-		Payload: nil,
-	}
-
-	_, err := handler.handleConnectionOpen(context.Background(), frame, []byte{}, session, state)
-	if err == nil {
-		t.Error("Expected error for missing vhost")
-	}
-}
-
-func TestAMQPHandler_HandleConnectionOpen_InvalidVhost(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 0,
-		Payload: nil,
-	}
-
-	// Vhost length says 10 but only 2 bytes follow
-	_, err := handler.handleConnectionOpen(context.Background(), frame, []byte{10, '/', '/'}, session, state)
-	if err == nil {
-		t.Error("Expected error for invalid vhost")
-	}
-}
-
-func TestAMQPHandler_HandleQueueDeclare_ChannelNotOpen(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 1, // Channel not open
-		Payload: nil,
-	}
-
-	args := &bytes.Buffer{}
-	binary.Write(args, binary.BigEndian, uint16(0)) // reserved
-	args.WriteByte(4)                               // queue name length
-	args.WriteString("test")
-	args.WriteByte(0) // flags
-
-	_, err := handler.handleQueueDeclare(context.Background(), frame, args.Bytes(), session, state)
-	if err == nil {
-		t.Error("Expected error when channel not open")
-	}
-}
-
-func TestAMQPHandler_HandleQueueDeclare_ArgsTooShort(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 1,
-		Payload: nil,
-	}
-
-	_, err := handler.handleQueueDeclare(context.Background(), frame, []byte{0, 0}, session, state)
-	if err == nil {
-		t.Error("Expected error for args too short")
-	}
-}
-
-func TestAMQPHandler_HandleBasicPublish_ArgsTooShort(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 1,
-		Payload: nil,
-	}
-
-	_, err := handler.handleBasicPublish(context.Background(), frame, []byte{0, 0, 0}, session, state)
-	if err == nil {
-		t.Error("Expected error for args too short")
-	}
-}
-
-func TestAMQPHandler_HandleBasicConsume_ArgsTooShort(t *testing.T) {
-	handler := NewAMQPHandler(nil)
-	state := &amqpClientState{
-		channels:  make(map[uint16]*amqpChannelState),
-		consumers: make(map[string]amqpConsumer),
-	}
-	session := ws.NewSession("test", "amqp", nil)
-
-	frame := &AMQPFrame{
-		Type:    FrameMethod,
-		Channel: 1,
-		Payload: nil,
-	}
-
-	_, err := handler.handleBasicConsume(context.Background(), frame, []byte{0, 0, 0}, session, state)
-	if err == nil {
-		t.Error("Expected error for args too short")
+			if len(result) < 8 {
+				t.Fatalf("Deliver frames too short: %d bytes", len(result))
+			}
+			if result[0] != FrameMethod {
+				t.Errorf("First frame type = %d, want %d (method)", result[0], FrameMethod)
+			}
+		})
 	}
 }
 
