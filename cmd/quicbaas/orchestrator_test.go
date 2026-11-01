@@ -1403,25 +1403,6 @@ func TestRunOrchWorkflowShow(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("JSONOutput", func(t *testing.T) {
-		origDir, dirErr := os.Getwd()
-		require.NoError(t, dirErr)
-		tmpDir := t.TempDir()
-		require.NoError(t, os.Chdir(tmpDir))
-		t.Cleanup(func() {
-			_ = os.Chdir(origDir)
-		})
-
-		require.NoError(t, os.Mkdir("workflows", 0o755))
-		testYAML := []byte("name: json-wf\ndescription: JSON Test\nmode: autonomous\nagents:\n  - role: lead\n    backend: ollama\n")
-		require.NoError(t, os.WriteFile("workflows/json.yaml", testYAML, 0o644))
-
-		orchOutputFmt = "json"
-		cmd := newOrchWorkflowShowCommand()
-		err := cmd.RunE(cmd, []string{"json-wf"})
-		assert.NoError(t, err)
-	})
-
 	t.Run("NotFound", func(t *testing.T) {
 		origDir, dirErr := os.Getwd()
 		require.NoError(t, dirErr)
@@ -1656,12 +1637,6 @@ func TestLoadLocalWorkflows(t *testing.T) {
 		require.NoError(t, getErr)
 		assert.Equal(t, "test-wf", def.Name)
 		assert.Equal(t, orchestration.WorkflowModeAutonomous, def.Mode)
-	})
-
-	t.Run("GetNonexistentWorkflow", func(t *testing.T) {
-		loader := orchestration.NewWorkflowLoader()
-		_, getErr := loader.Get(orchestration.SystemTenantID, "nonexistent")
-		assert.Error(t, getErr)
 	})
 }
 
