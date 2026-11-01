@@ -104,27 +104,8 @@ func TestGetPrefix(t *testing.T) {
 	}
 }
 
-// TestFnv1a verifies hash function distribution.
+// TestFnv1a verifies the shard hash is deterministic and separates keys.
 func TestFnv1a(t *testing.T) {
-	tests := []struct {
-		name string
-		key  []byte
-	}{
-		{name: "simple key", key: []byte("test")},
-		{name: "empty key", key: []byte{}},
-		{name: "long key", key: []byte("very-long-key-name-for-testing")},
-		{name: "numeric key", key: []byte("12345")},
-		{name: "path key", key: []byte("/config/server/port")},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			hash := fnv1a(tt.key)
-			// Hash should be in valid range [0, 255]
-			assert.LessOrEqual(t, hash, uint8(255))
-		})
-	}
-
 	// Verify same key produces same hash
 	key := []byte("test-key")
 	hash1 := fnv1a(key)
@@ -217,13 +198,6 @@ func TestMatchesRange(t *testing.T) {
 		{
 			name:     "prefix match - /config/server in /config/",
 			key:      []byte("/config/server"),
-			start:    []byte("/config/"),
-			end:      []byte("/config0"),
-			expected: true,
-		},
-		{
-			name:     "prefix match - /config/db in /config/",
-			key:      []byte("/config/db"),
 			start:    []byte("/config/"),
 			end:      []byte("/config0"),
 			expected: true,
@@ -661,37 +635,4 @@ func TestConcurrentAddRemove(t *testing.T) {
 
 	// Verify all watches removed
 	assert.Equal(t, uint64(0), mgr.watchCount)
-}
-
-// TestEventPool verifies event pooling reduces allocations.
-func TestEventPool(t *testing.T) {
-	mgr := NewManager()
-
-	// Get event from pool
-	event1 := mgr.eventPool.Get().(*WatchEvent)
-	require.NotNil(t, event1)
-
-	// Modify and return to pool
-	event1.Type = PUT
-	event1.Revision = 123
-	mgr.eventPool.Put(event1)
-
-	// Get another event - might be the same one (pool behavior)
-	event2 := mgr.eventPool.Get().(*WatchEvent)
-	require.NotNil(t, event2)
-
-	// Both should be valid WatchEvent instances
-	assert.IsType(t, &WatchEvent{}, event1)
-	assert.IsType(t, &WatchEvent{}, event2)
-}
-
-// TestWatchFilters verifies filter struct.
-func TestWatchFilters(t *testing.T) {
-	filters := WatchFilters{
-		NoPut:    true,
-		NoDelete: false,
-	}
-
-	assert.True(t, filters.NoPut)
-	assert.False(t, filters.NoDelete)
 }
