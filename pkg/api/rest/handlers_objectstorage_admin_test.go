@@ -239,71 +239,43 @@ func TestHandleUpdateObjectBackend_Success(t *testing.T) {
 // =============================================================================
 
 func TestHandleDeleteObjectBackend_Success(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/admin/object-backends/{name}", s.HandleDeleteObjectBackend)
-
-	body := `{"force":true}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/object-backends/test-backend", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.DeleteBackendResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.True(t, resp.Deleted)
-}
-
-func TestHandleDeleteObjectBackend_WithMigration(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
-			return &service.DeleteBackendResponse{
-				Name:            req.Name,
-				Deleted:         true,
-				MigratedObjects: 50,
-			}, nil
-		},
+	tests := []struct {
+		name string
+		path string
+		body string
+		want service.DeleteBackendRequest
+	}{
+		{"force in body", "/api/v1/admin/object-backends/test-backend", `{"force":true}`,
+			service.DeleteBackendRequest{Name: "test-backend", Force: true}},
+		{"migrate_to in body", "/api/v1/admin/object-backends/test-backend", `{"migrate_to":"target-backend"}`,
+			service.DeleteBackendRequest{Name: "test-backend", MigrateTo: "target-backend"}},
+		{"query parameters", "/api/v1/admin/object-backends/test-backend?force=true&migrate_to=target", "",
+			service.DeleteBackendRequest{Name: "test-backend", MigrateTo: "target", Force: true}},
 	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
 
-	r := chi.NewRouter()
-	r.Delete("/api/v1/admin/object-backends/{name}", s.HandleDeleteObjectBackend)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *service.DeleteBackendRequest
+			svc := &mockObjectStorageAdminService{
+				deleteBackendFunc: func(ctx context.Context, req *service.DeleteBackendRequest) (*service.DeleteBackendResponse, error) {
+					got = req
+					return &service.DeleteBackendResponse{Name: req.Name, Deleted: true, MigratedObjects: 50}, nil
+				},
+			}
 
-	body := `{"migrate_to":"target-backend"}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/object-backends/test-backend", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			w := serveObjectStorageAdmin(svc, http.MethodDelete, tt.path, tt.body)
 
-	r.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, *got)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.DeleteBackendResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, int64(50), resp.MigratedObjects)
-}
-
-func TestHandleDeleteObjectBackend_WithQueryParams(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/admin/object-backends/{name}", s.HandleDeleteObjectBackend)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/admin/object-backends/test-backend?force=true&migrate_to=target", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+			var resp service.DeleteBackendResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "test-backend", resp.Name)
+			assert.True(t, resp.Deleted)
+			assert.Equal(t, int64(50), resp.MigratedObjects)
+		})
+	}
 }
 
 // =============================================================================
@@ -311,48 +283,28 @@ func TestHandleDeleteObjectBackend_WithQueryParams(t *testing.T) {
 // =============================================================================
 
 func TestHandleSetObjectBackendStatus_Success(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
+	tests := []struct {
+		name    string
+		body    string
+		enabled bool
+	}{
+		{"enable", `{"enabled":true}`, true},
+		{"disable", `{"enabled":false}`, false},
+	}
 
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := serveObjectStorageAdmin(&mockObjectStorageAdminService{}, http.MethodPut,
+				"/api/v1/admin/object-backends/test-backend/status", tt.body)
 
-	body := `{"enabled":true}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			assert.Equal(t, http.StatusOK, w.Code)
 
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.SetBackendStatusResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.True(t, resp.Enabled)
-}
-
-func TestHandleSetObjectBackendStatus_Disable(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/admin/object-backends/{name}/status", s.HandleSetObjectBackendStatus)
-
-	body := `{"enabled":false}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/admin/object-backends/test-backend/status", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.SetBackendStatusResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.False(t, resp.Enabled)
+			var resp service.SetBackendStatusResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "test-backend", resp.Name)
+			assert.Equal(t, tt.enabled, resp.Enabled)
+		})
+	}
 }
 
 // =============================================================================
@@ -360,71 +312,46 @@ func TestHandleSetObjectBackendStatus_Disable(t *testing.T) {
 // =============================================================================
 
 func TestHandleGetStorageStats_Success(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/stats", s.HandleGetStorageStats)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/stats", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.GetStorageStatsResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1000000), resp.TotalBytes)
-	assert.Equal(t, int64(100), resp.TotalObjects)
-}
-
-func TestHandleGetStorageStats_WithBackends(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{
-		getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
-			return &service.GetStorageStatsResponse{
-				TotalBytes:   1000000,
-				TotalObjects: 100,
-				BackendStats: []*service.BackendInfo{
-					{Name: "backend1", Type: "local"},
-					{Name: "backend2", Type: "s3"},
-				},
-				CalculatedAt: time.Now().UnixNano(),
-			}, nil
-		},
+	tests := []struct {
+		name string
+		path string
+		want service.GetStorageStatsRequest
+	}{
+		{"totals only", "/api/v1/admin/storage/stats", service.GetStorageStatsRequest{}},
+		{"with backends", "/api/v1/admin/storage/stats?backends=true", service.GetStorageStatsRequest{IncludeBackends: true}},
+		{"with tenants", "/api/v1/admin/storage/stats?tenants=true", service.GetStorageStatsRequest{IncludeTenants: true}},
 	}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
 
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/stats", s.HandleGetStorageStats)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *service.GetStorageStatsRequest
+			svc := &mockObjectStorageAdminService{
+				getStorageStatsFunc: func(ctx context.Context, req *service.GetStorageStatsRequest) (*service.GetStorageStatsResponse, error) {
+					got = req
+					return &service.GetStorageStatsResponse{
+						TotalBytes:   1000000,
+						TotalObjects: 100,
+						BackendStats: []*service.BackendInfo{
+							{Name: "backend1", Type: "local"},
+							{Name: "backend2", Type: "s3"},
+						},
+					}, nil
+				},
+			}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/stats?backends=true", nil)
-	w := httptest.NewRecorder()
+			w := serveObjectStorageAdmin(svc, http.MethodGet, tt.path, "")
 
-	r.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, *got)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp service.GetStorageStatsResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Len(t, resp.BackendStats, 2)
-}
-
-func TestHandleGetStorageStats_WithTenants(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/admin/storage/stats", s.HandleGetStorageStats)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/storage/stats?tenants=true", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+			var resp service.GetStorageStatsResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, int64(1000000), resp.TotalBytes)
+			assert.Equal(t, int64(100), resp.TotalObjects)
+			assert.Len(t, resp.BackendStats, 2)
+		})
+	}
 }
 
 // =============================================================================
@@ -432,57 +359,38 @@ func TestHandleGetStorageStats_WithTenants(t *testing.T) {
 // =============================================================================
 
 func TestHandleRunGarbageCollection_Success(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
+	tests := []struct {
+		name string
+		body string
+		want service.RunGarbageCollectionRequest
+	}{
+		{"backends and aggressive", `{"backends":["backend1","backend2"],"dry_run":false,"aggressive":true}`,
+			service.RunGarbageCollectionRequest{Backends: []string{"backend1", "backend2"}, Aggressive: true}},
+		{"dry run", `{"dry_run":true}`, service.RunGarbageCollectionRequest{DryRun: true}},
+		{"empty body", "", service.RunGarbageCollectionRequest{}},
+	}
 
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/storage/gc", s.HandleRunGarbageCollection)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *service.RunGarbageCollectionRequest
+			svc := &mockObjectStorageAdminService{
+				runGarbageCollectionFunc: func(ctx context.Context, req *service.RunGarbageCollectionRequest) (*service.RunGarbageCollectionResponse, error) {
+					got = req
+					return &service.RunGarbageCollectionResponse{OperationID: "gc-operation-123"}, nil
+				},
+			}
 
-	body := `{"backends":["backend1","backend2"],"dry_run":false,"aggressive":true}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/storage/gc", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			w := serveObjectStorageAdmin(svc, http.MethodPost, "/api/v1/admin/storage/gc", tt.body)
 
-	r.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusAccepted, w.Code)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, *got)
 
-	assert.Equal(t, http.StatusAccepted, w.Code)
-
-	var resp service.RunGarbageCollectionResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, resp.OperationID)
-}
-
-func TestHandleRunGarbageCollection_EmptyBody(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/storage/gc", s.HandleRunGarbageCollection)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/storage/gc", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
-}
-
-func TestHandleRunGarbageCollection_DryRun(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/storage/gc", s.HandleRunGarbageCollection)
-
-	body := `{"dry_run":true}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/storage/gc", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
+			var resp service.RunGarbageCollectionResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.NotEmpty(t, resp.OperationID)
+		})
+	}
 }
 
 // =============================================================================
@@ -541,58 +449,39 @@ func TestHandleRepairObject_Success(t *testing.T) {
 // =============================================================================
 
 func TestHandleCompactObjectBackend_Success(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
+	tests := []struct {
+		name       string
+		body       string
+		aggressive bool
+	}{
+		{"default", `{"aggressive":false}`, false},
+		{"aggressive", `{"aggressive":true}`, true},
+		{"empty body", "", false},
+	}
 
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends/{name}/compact", s.HandleCompactObjectBackend)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *service.CompactBackendRequest
+			svc := &mockObjectStorageAdminService{
+				compactBackendFunc: func(ctx context.Context, req *service.CompactBackendRequest) (*service.CompactBackendResponse, error) {
+					got = req
+					return &service.CompactBackendResponse{Name: req.Name, OperationID: "compact-operation-123"}, nil
+				},
+			}
 
-	body := `{"aggressive":false}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends/test-backend/compact", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+			w := serveObjectStorageAdmin(svc, http.MethodPost,
+				"/api/v1/admin/object-backends/test-backend/compact", tt.body)
 
-	r.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusAccepted, w.Code)
+			require.NotNil(t, got)
+			assert.Equal(t, service.CompactBackendRequest{Name: "test-backend", Aggressive: tt.aggressive}, *got)
 
-	assert.Equal(t, http.StatusAccepted, w.Code)
-
-	var resp service.CompactBackendResponse
-	err := json.Unmarshal(w.Body.Bytes(), &resp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-backend", resp.Name)
-	assert.NotEmpty(t, resp.OperationID)
-}
-
-func TestHandleCompactObjectBackend_Aggressive(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends/{name}/compact", s.HandleCompactObjectBackend)
-
-	body := `{"aggressive":true}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends/test-backend/compact", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
-}
-
-func TestHandleCompactObjectBackend_EmptyBody(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/admin/object-backends/{name}/compact", s.HandleCompactObjectBackend)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/object-backends/test-backend/compact", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
+			var resp service.CompactBackendResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, "test-backend", resp.Name)
+			assert.NotEmpty(t, resp.OperationID)
+		})
+	}
 }
 
 // =============================================================================
@@ -791,52 +680,6 @@ func TestObjectStorageAdmin_ServiceError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := serveObjectStorageAdmin(tt.svc, tt.method, tt.path, tt.body)
 			assert.Equal(t, tt.status, w.Code)
-		})
-	}
-}
-
-func TestRegisterObjectStorageAdminRoutes(t *testing.T) {
-	mockAdminSvc := &mockObjectStorageAdminService{}
-	s := newTestObjectStorageAdminServer(mockAdminSvc)
-
-	r := chi.NewRouter()
-	r.Route("/api/v1", func(r chi.Router) {
-		mountObjectStorageAdminTestRoutes(s, r)
-	})
-
-	// Test that routes are registered by making requests
-	tests := []struct {
-		method string
-		path   string
-		body   string
-		status int
-	}{
-		{http.MethodPost, "/api/v1/admin/object-backends", `{"name":"test","type":"local","tier":"hot"}`, http.StatusCreated},
-		{http.MethodPut, "/api/v1/admin/object-backends/test", `{}`, http.StatusOK},
-		{http.MethodDelete, "/api/v1/admin/object-backends/test", `{"force":true}`, http.StatusOK},
-		{http.MethodPut, "/api/v1/admin/object-backends/test/status", `{"enabled":true}`, http.StatusOK},
-		{http.MethodPost, "/api/v1/admin/object-backends/test/compact", `{}`, http.StatusAccepted},
-		{http.MethodGet, "/api/v1/admin/storage/stats", "", http.StatusOK},
-		{http.MethodPost, "/api/v1/admin/storage/gc", `{}`, http.StatusAccepted},
-		{http.MethodGet, "/api/v1/admin/storage/gc/progress?operation_id=test", "", http.StatusOK},
-		{http.MethodPost, "/api/v1/admin/objects/repair", `{"key":"test"}`, http.StatusOK},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
-			var bodyReader io.Reader
-			if tt.body != "" {
-				bodyReader = bytes.NewReader([]byte(tt.body))
-			}
-			req := httptest.NewRequest(tt.method, tt.path, bodyReader)
-			if tt.body != "" {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			w := httptest.NewRecorder()
-
-			r.ServeHTTP(w, req)
-
-			assert.Equal(t, tt.status, w.Code, "Failed for %s %s", tt.method, tt.path)
 		})
 	}
 }
