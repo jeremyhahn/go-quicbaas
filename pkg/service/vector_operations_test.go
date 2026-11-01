@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -106,50 +107,39 @@ func TestVecListNamespaces_WithPrefix(t *testing.T) {
 }
 
 func TestVecListNamespaces_Pagination(t *testing.T) {
-	svc, storage := newBasicVecSvc(t)
-
-	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-		nsList := make([]interfaces.VectorNamespaceInfo, 5)
-		for i := range nsList {
-			nsList[i] = interfaces.VectorNamespaceInfo{Name: "ns-" + string(rune('a'+i)), Dimension: 128}
-		}
-		return nsList, nil
+	tests := []struct {
+		name    string
+		count   int
+		limit   int
+		offset  int
+		wantLen int
+	}{
+		{name: "limit and offset", count: 5, limit: 2, offset: 1, wantLen: 2},
+		{name: "offset beyond count", count: 1, offset: 100, wantLen: 0},
+		{name: "default limit", count: 150, wantLen: 100},
+		{name: "limit capped at 1000", count: 1500, limit: 5000, wantLen: 1000},
 	}
 
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Limit:  2,
-		Offset: 1,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 5, resp.TotalCount)
-	assert.Len(t, resp.Namespaces, 2)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newBasicVecSvc(t)
+			storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
+				nsList := make([]interfaces.VectorNamespaceInfo, tt.count)
+				for i := range nsList {
+					nsList[i] = interfaces.VectorNamespaceInfo{Name: fmt.Sprintf("ns-%d", i), Dimension: 128}
+				}
+				return nsList, nil
+			}
 
-func TestVecListNamespaces_LimitCapping(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Limit: 5000,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestVecListNamespaces_OffsetBeyondCount(t *testing.T) {
-	svc, storage := newBasicVecSvc(t)
-
-	storage.listNamespacesFn = func(ctx context.Context) ([]interfaces.VectorNamespaceInfo, error) {
-		return []interfaces.VectorNamespaceInfo{
-			{Name: "ns-a", Dimension: 128},
-		}, nil
+			resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
+				Limit:  tt.limit,
+				Offset: tt.offset,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.count, resp.TotalCount)
+			assert.Len(t, resp.Namespaces, tt.wantLen)
+		})
 	}
-
-	resp, err := svc.ListNamespaces(tenantctx.WithSystem(context.Background()), &ListNamespacesRequest{
-		Offset: 100,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1, resp.TotalCount)
-	assert.Empty(t, resp.Namespaces)
 }
 
 func TestVecListNamespaces_TenantFiltering(t *testing.T) {
