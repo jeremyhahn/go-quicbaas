@@ -553,115 +553,110 @@ func TestBarrierUnseal_DoesNotAcceptShareFlag(t *testing.T) {
 // unseal-shares
 // =============================================================================
 
-// TestBarrierUnsealShares_RequiresInput rejects empty input.
-func TestBarrierUnsealShares_RequiresInput(t *testing.T) {
-	defer resetBarrierFlags()
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierShareInputError
-	require.ErrorAs(t, err, &typed)
-	assert.Contains(t, typed.Error(), "one of --share")
+// TestBarrierUnsealShares checks each share input mode of unseal-shares:
+// the shares that reach the SDK, or the typed error a bad input returns.
+func TestBarrierUnsealShares(t *testing.T) {
+	runShareInputCases(t, newBarrierUnsealSharesCommand,
+		func(fc *fakeBarrierClient) []string {
+			if fc.lastUnsealSharesReq == nil {
+				return nil
+			}
+			return fc.lastUnsealSharesReq.Shares
+		},
+		[]shareInputCase{
+			{
+				name:    "no input",
+				args:    []string{},
+				wantErr: new(*BarrierShareInputError),
+				wantMsg: []string{"one of --share"},
+			},
+			{
+				name:     "share and shares-file together",
+				fileBody: "a\n",
+				args:     []string{"--share", "a", "--shares-file", sharesFileArg},
+				wantErr:  new(*BarrierShareInputError),
+				wantMsg:  []string{"exactly one"},
+			},
+			{
+				name:       "repeatable share flag",
+				args:       []string{"--share", "a", "--share", "b", "--share", "c"},
+				wantShares: []string{"a", "b", "c"},
+			},
+			{
+				name:       "file lines skip blanks and comments",
+				fileBody:   "share-a\n\n# a comment\nshare-b\n   share-c   \n",
+				args:       []string{"--shares-file", sharesFileArg},
+				wantShares: []string{"share-a", "share-b", "share-c"},
+			},
+			{
+				name:     "file with no shares",
+				fileBody: "# only comments\n\n",
+				args:     []string{"--shares-file", sharesFileArg},
+				wantErr:  new(*BarrierSharesFileEmptyError),
+			},
+			{
+				name:    "missing file",
+				args:    []string{"--shares-file", sharesFileArg},
+				wantErr: new(*BarrierSharesFileError),
+			},
+		})
 }
 
-// TestBarrierUnsealShares_MutuallyExclusive rejects --share + --shares-file.
-func TestBarrierUnsealShares_MutuallyExclusive(t *testing.T) {
-	defer resetBarrierFlags()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shares.txt")
-	require.NoError(t, os.WriteFile(path, []byte("a\n"), 0o600))
+// sharesFileArg in a shareInputCase's args stands for the path of the case's
+// shares file, which exists only when fileBody is set.
+const sharesFileArg = "{shares-file}"
 
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{"--share", "a", "--shares-file", path})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierShareInputError
-	require.ErrorAs(t, err, &typed)
-	assert.Contains(t, typed.Error(), "exactly one")
+// shareInputCase is one share input to a quorum verb (unseal-shares,
+// recovery recover) and the outcome it must produce.
+type shareInputCase struct {
+	name       string
+	fileBody   string
+	args       []string
+	wantShares []string
+	wantErr    any // pointer to a typed error pointer, for require.ErrorAs
+	wantMsg    []string
 }
 
-// TestBarrierUnsealShares_RepeatableShareFlag passes a repeatable
-// --share through to the SDK.
-func TestBarrierUnsealShares_RepeatableShareFlag(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
+// runShareInputCases executes newCmd once per case against a fake barrier
+// client and checks either the typed error or the shares that reached the
+// SDK, as read by gotShares.
+func runShareInputCases(t *testing.T, newCmd func() *cobra.Command, gotShares func(*fakeBarrierClient) []string, cases []shareInputCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			fc := &fakeBarrierClient{}
+			defer withFakeBarrier(fc)()
 
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{"--share", "a", "--share", "b", "--share", "c"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+			path := filepath.Join(t.TempDir(), "shares.txt")
+			if tc.fileBody != "" {
+				require.NoError(t, os.WriteFile(path, []byte(tc.fileBody), 0o600))
+			}
+			args := make([]string, len(tc.args))
+			for i, arg := range tc.args {
+				args[i] = strings.ReplaceAll(arg, sharesFileArg, path)
+			}
 
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastUnsealSharesReq)
-	assert.Equal(t, []string{"a", "b", "c"}, fc.lastUnsealSharesReq.Shares)
-}
+			cmd := newCmd()
+			cmd.SetArgs(args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			err := cmd.Execute()
 
-// TestBarrierUnsealShares_ReadsLines reads one share per line, ignoring
-// blanks/comments.
-func TestBarrierUnsealShares_ReadsLines(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "shares.txt")
-	body := "share-a\n\n# a comment\nshare-b\n   share-c   \n"
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{"--shares-file", path})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastUnsealSharesReq)
-	assert.Equal(t, []string{"share-a", "share-b", "share-c"}, fc.lastUnsealSharesReq.Shares)
-}
-
-// TestBarrierUnsealShares_EmptyFile rejects files with no shares.
-func TestBarrierUnsealShares_EmptyFile(t *testing.T) {
-	defer resetBarrierFlags()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "empty.txt")
-	require.NoError(t, os.WriteFile(path, []byte("# only comments\n\n"), 0o600))
-
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{"--shares-file", path})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierSharesFileEmptyError
-	require.ErrorAs(t, err, &typed)
-}
-
-// TestBarrierUnsealShares_FileMissing rejects non-existent paths.
-func TestBarrierUnsealShares_FileMissing(t *testing.T) {
-	defer resetBarrierFlags()
-	cmd := newBarrierUnsealSharesCommand()
-	cmd.SetArgs([]string{"--shares-file", "/nonexistent/shares.txt"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierSharesFileError
-	require.ErrorAs(t, err, &typed)
+			if tc.wantErr != nil {
+				require.Error(t, err)
+				require.ErrorAs(t, err, tc.wantErr)
+				for _, msg := range tc.wantMsg {
+					assert.Contains(t, err.Error(), msg)
+				}
+				assert.Nil(t, gotShares(fc), "a rejected input reached the SDK")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantShares, gotShares(fc), "the shares did not reach the SDK")
+		})
+	}
 }
 
 // =============================================================================
@@ -863,91 +858,45 @@ func TestBarrierRecoveryGenerate_Success(t *testing.T) {
 // recovery recover
 // =============================================================================
 
-// TestBarrierRecoveryRecover_RequiresShare rejects empty input. The verb
-// shares resolveUnsealShares with its siblings now, so it reports the same
-// typed error and names both input modes rather than only --share (#227).
-func TestBarrierRecoveryRecover_RequiresShare(t *testing.T) {
-	defer resetBarrierFlags()
-	cmd := newBarrierRecoveryRecoverCommand()
-	cmd.SetArgs([]string{})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierShareInputError
-	require.ErrorAs(t, err, &typed)
-	assert.Contains(t, typed.Error(), "one of --share")
-	assert.Contains(t, typed.Error(), "--shares-file")
-	assert.Contains(t, typed.Error(), "barrier recovery recover")
-}
-
-// TestBarrierRecoveryRecover_Success forwards repeatable shares.
-func TestBarrierRecoveryRecover_Success(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	cmd := newBarrierRecoveryRecoverCommand()
-	cmd.SetArgs([]string{"--share", "k1", "--share", "k2"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastRecoverReq)
-	assert.Equal(t, []string{"k1", "k2"}, fc.lastRecoverReq.Keys)
-}
-
-// TestBarrierRecoveryRecover_ReadsSharesFile is the fix for #227: a recovery
-// quorum can be supplied off argv.
-//
-// The assertion is the KEYS THAT REACHED THE SDK, not that the command ran.
-// A test that only checked for a nil error would pass against a build where
-// --shares-file parses and is then ignored, which is the failure mode worth
-// guarding: the flag existing is not the same as the flag being read.
-func TestBarrierRecoveryRecover_ReadsSharesFile(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "recovery.txt")
-	body := "key-a\n\n# an officer's note\nkey-b\n   key-c   \n"
-	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-
-	cmd := newBarrierRecoveryRecoverCommand()
-	cmd.SetArgs([]string{"--shares-file", path})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastRecoverReq)
-	assert.Equal(t, []string{"key-a", "key-b", "key-c"}, fc.lastRecoverReq.Keys,
-		"--shares-file was accepted but its keys did not reach the SDK")
-}
-
-// TestBarrierRecoveryRecover_MutuallyExclusive rejects --share + --shares-file,
-// matching unseal-shares and root-token.
-func TestBarrierRecoveryRecover_MutuallyExclusive(t *testing.T) {
-	defer resetBarrierFlags()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "recovery.txt")
-	require.NoError(t, os.WriteFile(path, []byte("key-a\n"), 0o600))
-
-	cmd := newBarrierRecoveryRecoverCommand()
-	cmd.SetArgs([]string{"--share", "key-a", "--shares-file", path})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	var typed *BarrierShareInputError
-	require.ErrorAs(t, err, &typed)
-	assert.Contains(t, typed.Error(), "exactly one")
+// TestBarrierRecoveryRecover checks each share input mode of recovery
+// recover. The verb shares resolveUnsealShares with its siblings, so empty
+// input reports the same typed error and names both input modes (#227).
+func TestBarrierRecoveryRecover(t *testing.T) {
+	runShareInputCases(t, newBarrierRecoveryRecoverCommand,
+		func(fc *fakeBarrierClient) []string {
+			if fc.lastRecoverReq == nil {
+				return nil
+			}
+			return fc.lastRecoverReq.Keys
+		},
+		[]shareInputCase{
+			{
+				name:    "no input",
+				args:    []string{},
+				wantErr: new(*BarrierShareInputError),
+				wantMsg: []string{"one of --share", "--shares-file", "barrier recovery recover"},
+			},
+			{
+				name:       "repeatable share flag",
+				args:       []string{"--share", "k1", "--share", "k2"},
+				wantShares: []string{"k1", "k2"},
+			},
+			{
+				// #227: a recovery quorum can be supplied off argv, and the
+				// keys must reach the SDK, not just parse.
+				name:       "shares-file",
+				fileBody:   "key-a\n\n# an officer's note\nkey-b\n   key-c   \n",
+				args:       []string{"--shares-file", sharesFileArg},
+				wantShares: []string{"key-a", "key-b", "key-c"},
+			},
+			{
+				name:     "share and shares-file together",
+				fileBody: "key-a\n",
+				args:     []string{"--share", "key-a", "--shares-file", sharesFileArg},
+				wantErr:  new(*BarrierShareInputError),
+				wantMsg:  []string{"exactly one"},
+			},
+		})
 }
 
 // TestBarrierRecoveryRecover_UsesItsOwnSharesFileVariable proves the two
