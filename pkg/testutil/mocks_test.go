@@ -56,268 +56,271 @@ func TestNewMockQuicBaaS(t *testing.T) {
 // Sub-Service Accessor Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_KMS_DefaultReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	kms := m.KMS()
-	assert.NotNil(t, kms)
-	// When no override is set, the accessor returns the mock itself.
-	assert.Equal(t, m, kms)
-}
+// TestMockQuicBaaS_Accessors covers every service accessor: what it returns
+// with no override (the mock itself, or nil), what it returns when its
+// override field is set, and the DisableKMS switch.
+func TestMockQuicBaaS_Accessors(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup configures the mock; it returns the override it installed,
+		// or nil when the row exercises the default.
+		setup func(m *MockQuicBaaS) *MockQuicBaaS
+		get   func(m *MockQuicBaaS) any
+		// want is "self", "override" or "nil".
+		want string
+	}{
+		{
+			name: "KMS default returns self",
+			get:  func(m *MockQuicBaaS) any { return m.KMS() },
+			want: "self",
+		},
+		{
+			name: "KMS returns override",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				o := NewMockQuicBaaS()
+				m.KMSService = o
+				return o
+			},
+			get:  func(m *MockQuicBaaS) any { return m.KMS() },
+			want: "override",
+		},
+		{
+			name: "KMS disabled returns nil",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				m.DisableKMS = true
+				return nil
+			},
+			get:  func(m *MockQuicBaaS) any { return m.KMS() },
+			want: "nil",
+		},
+		{
+			name: "KMS disabled takes precedence over override",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				m.KMSService = NewMockQuicBaaS()
+				m.DisableKMS = true
+				return nil
+			},
+			get:  func(m *MockQuicBaaS) any { return m.KMS() },
+			want: "nil",
+		},
+		{
+			name: "Secrets returns self",
+			get:  func(m *MockQuicBaaS) any { return m.Secrets() },
+			want: "self",
+		},
+		{
+			name: "Crypto default returns self",
+			get:  func(m *MockQuicBaaS) any { return m.Crypto() },
+			want: "self",
+		},
+		{
+			name: "Crypto returns override",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				o := NewMockQuicBaaS()
+				m.CryptoService = o
+				return o
+			},
+			get:  func(m *MockQuicBaaS) any { return m.Crypto() },
+			want: "override",
+		},
+		{
+			name: "Vector default returns self",
+			get:  func(m *MockQuicBaaS) any { return m.Vector() },
+			want: "self",
+		},
+		{
+			name: "Vector returns override",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				o := NewMockQuicBaaS()
+				m.VectorService = o
+				return o
+			},
+			get:  func(m *MockQuicBaaS) any { return m.Vector() },
+			want: "override",
+		},
+		{
+			name: "Embedding returns nil by default",
+			get:  func(m *MockQuicBaaS) any { return m.Embedding() },
+			want: "nil",
+		},
+		{
+			name: "Ollama returns nil by default",
+			get:  func(m *MockQuicBaaS) any { return m.Ollama() },
+			want: "nil",
+		},
+		{
+			name: "Certificate returns nil by default",
+			get:  func(m *MockQuicBaaS) any { return m.Certificate() },
+			want: "nil",
+		},
+		{
+			name: "DynamicSecrets returns nil by default",
+			get:  func(m *MockQuicBaaS) any { return m.DynamicSecrets() },
+			want: "nil",
+		},
+		{
+			name: "ObjectStorageService returns self",
+			get:  func(m *MockQuicBaaS) any { return m.ObjectStorageService() },
+			want: "self",
+		},
+		{
+			name: "ObjectStorageAdminService returns self",
+			get:  func(m *MockQuicBaaS) any { return m.ObjectStorageAdminService() },
+			want: "self",
+		},
+		{
+			name: "ParameterStoreService default returns self",
+			get:  func(m *MockQuicBaaS) any { return m.ParameterStoreService() },
+			want: "self",
+		},
+		{
+			name: "ParameterStoreService returns override",
+			setup: func(m *MockQuicBaaS) *MockQuicBaaS {
+				o := NewMockQuicBaaS()
+				m.ParameterStoreSvc = o
+				return o
+			},
+			get:  func(m *MockQuicBaaS) any { return m.ParameterStoreService() },
+			want: "override",
+		},
+		{
+			name: "ObjectTransferService returns self",
+			get:  func(m *MockQuicBaaS) any { return m.ObjectTransferService() },
+			want: "self",
+		},
+		{
+			name: "Scheduler returns self",
+			get:  func(m *MockQuicBaaS) any { return m.Scheduler() },
+			want: "self",
+		},
+	}
 
-func TestMockQuicBaaS_KMS_WithOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	override := NewMockQuicBaaS()
-	m.KMSService = override
-	kms := m.KMS()
-	assert.Equal(t, override, kms)
-}
-
-func TestMockQuicBaaS_KMS_DisabledReturnsNil(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.DisableKMS = true
-	assert.Nil(t, m.KMS())
-}
-
-func TestMockQuicBaaS_KMS_DisabledTakesPrecedenceOverOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.KMSService = NewMockQuicBaaS()
-	m.DisableKMS = true
-	assert.Nil(t, m.KMS())
-}
-
-func TestMockQuicBaaS_Secrets_ReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.Secrets())
-}
-
-func TestMockQuicBaaS_Crypto_DefaultReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.Crypto())
-}
-
-func TestMockQuicBaaS_Crypto_WithOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	override := NewMockQuicBaaS()
-	m.CryptoService = override
-	assert.Equal(t, override, m.Crypto())
-}
-
-func TestMockQuicBaaS_Vector_DefaultReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.Vector())
-}
-
-func TestMockQuicBaaS_Vector_WithOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	override := NewMockQuicBaaS()
-	m.VectorService = override
-	assert.Equal(t, override, m.Vector())
-}
-
-func TestMockQuicBaaS_Embedding_ReturnsNilByDefault(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Nil(t, m.Embedding())
-}
-
-func TestMockQuicBaaS_Ollama_ReturnsNilByDefault(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Nil(t, m.Ollama())
-}
-
-func TestMockQuicBaaS_Certificate_ReturnsNilByDefault(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Nil(t, m.Certificate())
-}
-
-func TestMockQuicBaaS_DynamicSecrets_ReturnsNilByDefault(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Nil(t, m.DynamicSecrets())
-}
-
-func TestMockQuicBaaS_ObjectStorageService_ReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.ObjectStorageService())
-}
-
-func TestMockQuicBaaS_ObjectStorageAdminService_ReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.ObjectStorageAdminService())
-}
-
-func TestMockQuicBaaS_ParameterStoreService_DefaultReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.ParameterStoreService())
-}
-
-func TestMockQuicBaaS_ParameterStoreService_WithOverride(t *testing.T) {
-	m := NewMockQuicBaaS()
-	override := NewMockQuicBaaS()
-	m.ParameterStoreSvc = override
-	assert.Equal(t, override, m.ParameterStoreService())
-}
-
-func TestMockQuicBaaS_ObjectTransferService_ReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.ObjectTransferService())
-}
-
-func TestMockQuicBaaS_Scheduler_ReturnsSelf(t *testing.T) {
-	m := NewMockQuicBaaS()
-	assert.Equal(t, m, m.Scheduler())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewMockQuicBaaS()
+			var override *MockQuicBaaS
+			if tt.setup != nil {
+				override = tt.setup(m)
+			}
+			got := tt.get(m)
+			switch tt.want {
+			case "self":
+				assert.Same(t, m, got)
+			case "override":
+				require.NotNil(t, override)
+				assert.Same(t, override, got)
+			default:
+				assert.Nil(t, got)
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
 // KV Service Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_Put_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.PutRequest{EntityType: "test", Data: []byte("v1")}
-	expected := &service.PutResponse{}
-	m.On("Put", ctx, req).Return(expected, nil)
-
-	resp, err := m.Put(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
+// mockCall describes one testify-backed method of MockQuicBaaS: the
+// expectation it registers and the call that must hit it.
+type mockCall struct {
+	method string
+	args   []any
+	// ok is the value returned on the success path.
+	ok any
+	// fail is the zero value returned alongside the error.
+	fail any
+	// errOnly marks methods that return only an error.
+	errOnly bool
+	call    func(m *MockQuicBaaS) (any, error)
 }
 
-func TestMockQuicBaaS_Put_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.PutRequest{EntityType: "test"}
-	m.On("Put", ctx, req).Return((*service.PutResponse)(nil), errTest)
-
-	resp, err := m.Put(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+func (c mockCall) returns(v any, err error) []any {
+	if c.errOnly {
+		return []any{err}
+	}
+	return []any{v, err}
 }
 
-func TestMockQuicBaaS_Get_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.GetRequest{EntityType: "test", ID: 1}
-	expected := &service.GetResponse{Data: []byte("v1")}
-	m.On("Get", ctx, req).Return(expected, nil)
+// runMockCalls checks, for every method, that the mock returns the
+// registered value on success and the registered error on failure.
+func runMockCalls(t *testing.T, calls []mockCall) {
+	t.Helper()
+	for _, c := range calls {
+		t.Run(c.method+"/success", func(t *testing.T) {
+			m := NewMockQuicBaaS()
+			m.On(c.method, c.args...).Return(c.returns(c.ok, nil)...)
 
-	resp, err := m.Get(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
+			got, err := c.call(m)
+			require.NoError(t, err)
+			assert.Equal(t, c.ok, got)
+			m.AssertExpectations(t)
+		})
+		t.Run(c.method+"/error", func(t *testing.T) {
+			m := NewMockQuicBaaS()
+			m.On(c.method, c.args...).Return(c.returns(c.fail, errTest)...)
+
+			got, err := c.call(m)
+			require.ErrorIs(t, err, errTest)
+			assert.Equal(t, c.fail, got)
+			m.AssertExpectations(t)
+		})
+	}
 }
 
-func TestMockQuicBaaS_Get_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
+func TestMockQuicBaaS_KV(t *testing.T) {
 	ctx := context.Background()
-	req := &service.GetRequest{EntityType: "missing"}
-	m.On("Get", ctx, req).Return((*service.GetResponse)(nil), errTest)
+	putReq := &service.PutRequest{EntityType: "test", Data: []byte("v1")}
+	getReq := &service.GetRequest{EntityType: "test", ID: 1}
+	deleteReq := &service.DeleteRequest{EntityType: "test", ID: 1}
+	listReq := &service.ListRequest{EntityType: "test"}
+	listStream := make(chan<- *service.ListResponse, 1)
+	watchReq := &service.WatchRequest{}
+	watchStream := make(chan<- *service.WatchResponse, 1)
+	typesReq := &service.ListEntityTypesRequest{}
 
-	resp, err := m.Get(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Delete_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.DeleteRequest{EntityType: "test", ID: 1}
-	expected := &service.DeleteResponse{}
-	m.On("Delete", ctx, req).Return(expected, nil)
-
-	resp, err := m.Delete(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Delete_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.DeleteRequest{EntityType: "missing"}
-	m.On("Delete", ctx, req).Return((*service.DeleteResponse)(nil), errTest)
-
-	resp, err := m.Delete(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_List_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListRequest{EntityType: "test"}
-	stream := make(chan<- *service.ListResponse, 1)
-	m.On("List", ctx, req, stream).Return(nil)
-
-	err := m.List(ctx, req, stream)
-	assert.NoError(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_List_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListRequest{}
-	stream := make(chan<- *service.ListResponse, 1)
-	m.On("List", ctx, req, stream).Return(errTest)
-
-	err := m.List(ctx, req, stream)
-	assert.ErrorIs(t, err, errTest)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Watch_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.WatchRequest{}
-	stream := make(chan<- *service.WatchResponse, 1)
-	m.On("Watch", ctx, req, stream).Return(int64(42), nil)
-
-	revision, err := m.Watch(ctx, req, stream)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(42), revision)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Watch_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.WatchRequest{}
-	stream := make(chan<- *service.WatchResponse, 1)
-	m.On("Watch", ctx, req, stream).Return(int64(0), errTest)
-
-	revision, err := m.Watch(ctx, req, stream)
-	assert.ErrorIs(t, err, errTest)
-	assert.Equal(t, int64(0), revision)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListEntityTypes_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListEntityTypesRequest{}
-	expected := &service.ListEntityTypesResponse{}
-	m.On("ListEntityTypes", ctx, req).Return(expected, nil)
-
-	resp, err := m.ListEntityTypes(ctx, req)
-	assert.NoError(t, err)
-	assert.Equal(t, expected, resp)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_ListEntityTypes_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	ctx := context.Background()
-	req := &service.ListEntityTypesRequest{}
-	m.On("ListEntityTypes", ctx, req).Return((*service.ListEntityTypesResponse)(nil), errTest)
-
-	resp, err := m.ListEntityTypes(ctx, req)
-	assert.ErrorIs(t, err, errTest)
-	assert.Nil(t, resp)
-	m.AssertExpectations(t)
+	runMockCalls(t, []mockCall{
+		{
+			method: "Put",
+			args:   []any{ctx, putReq},
+			ok:     &service.PutResponse{},
+			fail:   (*service.PutResponse)(nil),
+			call:   func(m *MockQuicBaaS) (any, error) { return m.Put(ctx, putReq) },
+		},
+		{
+			method: "Get",
+			args:   []any{ctx, getReq},
+			ok:     &service.GetResponse{Data: []byte("v1")},
+			fail:   (*service.GetResponse)(nil),
+			call:   func(m *MockQuicBaaS) (any, error) { return m.Get(ctx, getReq) },
+		},
+		{
+			method: "Delete",
+			args:   []any{ctx, deleteReq},
+			ok:     &service.DeleteResponse{},
+			fail:   (*service.DeleteResponse)(nil),
+			call:   func(m *MockQuicBaaS) (any, error) { return m.Delete(ctx, deleteReq) },
+		},
+		{
+			method:  "List",
+			args:    []any{ctx, listReq, listStream},
+			errOnly: true,
+			call:    func(m *MockQuicBaaS) (any, error) { return nil, m.List(ctx, listReq, listStream) },
+		},
+		{
+			method: "Watch",
+			args:   []any{ctx, watchReq, watchStream},
+			ok:     int64(42),
+			fail:   int64(0),
+			call:   func(m *MockQuicBaaS) (any, error) { return m.Watch(ctx, watchReq, watchStream) },
+		},
+		{
+			method: "ListEntityTypes",
+			args:   []any{ctx, typesReq},
+			ok:     &service.ListEntityTypesResponse{},
+			fail:   (*service.ListEntityTypesResponse)(nil),
+			call:   func(m *MockQuicBaaS) (any, error) { return m.ListEntityTypes(ctx, typesReq) },
+		},
+	})
 }
 
 // ---------------------------------------------------------------------------
