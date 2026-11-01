@@ -505,62 +505,82 @@ func TestSeedNamedAdminGroup_NoneFound(t *testing.T) {
 
 // -------------------- configureGroupsScope --------------------
 
-func TestConfigureGroupsScope_AlreadyExists(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/scopes",
-		okJSON([]map[string]interface{}{{"id": "s1", "name": "groups"}}))
-	p := newTestProvisioner(t, r)
-	if err := p.configureGroupsScope(context.Background(), "https://acme.okta.com", "tok"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestConfigureGroupsScope(t *testing.T) {
+	const scopesPath = "/api/v1/authorizationServers/default/scopes"
+	tests := []struct {
+		name        string
+		list        http.HandlerFunc
+		create      http.HandlerFunc
+		baseURL     string
+		wantCreated bool
+		wantOp      string
+	}{
+		{
+			name: "already exists",
+			list: okJSON([]map[string]interface{}{{"id": "s1", "name": "groups"}}),
+		},
+		{
+			name: "creates when missing",
+			list: okJSON([]map[string]interface{}{{"id": "s1", "name": "email"}}),
+			create: func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "s2", "name": "groups"})
+			},
+			wantCreated: true,
+		},
+		{
+			name:   "list error",
+			list:   errStatus(http.StatusForbidden, "E0000006", "denied"),
+			wantOp: "list_scopes",
+		},
+		{
+			name:   "list decode error",
+			list:   rawBody(http.StatusOK, "nope"),
+			wantOp: "list_scopes",
+		},
+		{
+			name:        "create error",
+			list:        okJSON([]interface{}{}),
+			create:      errStatus(http.StatusBadRequest, "E0000001", "bad"),
+			wantCreated: true,
+			wantOp:      "create_scope",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			wantOp:  "list_scopes",
+		},
 	}
-}
-
-func TestConfigureGroupsScope_CreatesWhenMissing(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/scopes", okJSON([]map[string]interface{}{{"id": "s1", "name": "email"}}))
-	created := false
-	r.on("POST", "/api/v1/authorizationServers/default/scopes", func(w http.ResponseWriter, _ *http.Request) {
-		created = true
-		writeJSON(w, http.StatusCreated, map[string]interface{}{"id": "s2", "name": "groups"})
-	})
-	p := newTestProvisioner(t, r)
-	if err := p.configureGroupsScope(context.Background(), "https://acme.okta.com", "tok"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.list != nil {
+				r.on("GET", scopesPath, tc.list)
+			}
+			created := false
+			if tc.create != nil {
+				r.on("POST", scopesPath, func(w http.ResponseWriter, req *http.Request) {
+					created = true
+					tc.create(w, req)
+				})
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			err := p.configureGroupsScope(context.Background(), baseURL, "tok")
+			if created != tc.wantCreated {
+				t.Errorf("created = %v, want %v", created, tc.wantCreated)
+			}
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
-	if !created {
-		t.Error("expected scope to be created")
-	}
-}
-
-func TestConfigureGroupsScope_ListError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/scopes", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsScope(context.Background(), "https://acme.okta.com", "tok")
-	assertProvOp(t, err, "list_scopes")
-}
-
-func TestConfigureGroupsScope_ListDecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/scopes", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsScope(context.Background(), "https://acme.okta.com", "tok")
-	assertProvOp(t, err, "list_scopes")
-}
-
-func TestConfigureGroupsScope_CreateError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/authorizationServers/default/scopes", okJSON([]interface{}{}))
-	r.on("POST", "/api/v1/authorizationServers/default/scopes", errStatus(http.StatusBadRequest, "E0000001", "bad"))
-	p := newTestProvisioner(t, r)
-	err := p.configureGroupsScope(context.Background(), "https://acme.okta.com", "tok")
-	assertProvOp(t, err, "create_scope")
-}
-
-func TestConfigureGroupsScope_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	err := p.configureGroupsScope(context.Background(), "://bad", "tok")
-	assertProvOp(t, err, "list_scopes")
 }
 
 // -------------------- configureGroupsClaim --------------------
@@ -747,136 +767,179 @@ func TestConfigureAccessPolicy_RequestError(t *testing.T) {
 
 // -------------------- findAppByLabel / findGroupByName --------------------
 
-func TestFindAppByLabel_Found(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", okJSON([]map[string]interface{}{
-		{"id": "a1", "label": "Other App"},
-		{"id": "a2", "label": "Acme App"},
-	}))
-	p := newTestProvisioner(t, r)
-	app, err := p.findAppByLabel(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestFindAppByLabel(t *testing.T) {
+	tests := []struct {
+		name      string
+		handler   http.HandlerFunc
+		baseURL   string
+		label     string
+		wantQuery string
+		wantID    string
+		wantOp    string
+	}{
+		{
+			name: "found",
+			handler: okJSON([]map[string]interface{}{
+				{"id": "a1", "label": "Other App"},
+				{"id": "a2", "label": "Acme App"},
+			}),
+			label:  "Acme App",
+			wantID: "a2",
+		},
+		{
+			name:    "not found",
+			handler: okJSON([]map[string]interface{}{{"id": "a1", "label": "Other"}}),
+			label:   "Acme App",
+		},
+		{
+			name:    "http error",
+			handler: errStatus(http.StatusForbidden, "E0000006", "denied"),
+			label:   "Acme App",
+			wantOp:  "find_app",
+		},
+		{
+			name:    "decode error",
+			handler: rawBody(http.StatusOK, "nope"),
+			label:   "Acme App",
+			wantOp:  "find_app",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			label:   "Acme App",
+			wantOp:  "find_app",
+		},
+		{
+			// A single-word label is sent as the whole search term.
+			name:      "single-word label",
+			handler:   okJSON([]map[string]interface{}{{"id": "a1", "label": "Acme"}}),
+			label:     "Acme",
+			wantQuery: "Acme",
+			wantID:    "a1",
+		},
 	}
-	if app == nil || app.ID != "a2" {
-		t.Errorf("app = %+v, want id a2", app)
-	}
-}
-
-func TestFindAppByLabel_NotFound(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", okJSON([]map[string]interface{}{{"id": "a1", "label": "Other"}}))
-	p := newTestProvisioner(t, r)
-	app, err := p.findAppByLabel(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if app != nil {
-		t.Errorf("app = %+v, want nil", app)
-	}
-}
-
-func TestFindAppByLabel_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	_, err := p.findAppByLabel(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "find_app")
-}
-
-func TestFindAppByLabel_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	_, err := p.findAppByLabel(context.Background(), "https://acme.okta.com", "tok", "Acme App")
-	assertProvOp(t, err, "find_app")
-}
-
-func TestFindAppByLabel_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.findAppByLabel(context.Background(), "://bad", "tok", "Acme App")
-	assertProvOp(t, err, "find_app")
-}
-
-func TestFindAppByLabel_SingleWordLabel(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/apps", func(w http.ResponseWriter, req *http.Request) {
-		// single-word label means searchTerm == label.
-		if req.URL.Query().Get("q") != "Acme" {
-			t.Errorf("q = %q, want Acme", req.URL.Query().Get("q"))
-		}
-		writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "a1", "label": "Acme"}})
-	})
-	p := newTestProvisioner(t, r)
-	app, err := p.findAppByLabel(context.Background(), "https://acme.okta.com", "tok", "Acme")
-	if err != nil || app == nil {
-		t.Fatalf("app=%+v err=%v", app, err)
-	}
-}
-
-func TestFindGroupByName_Found(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", okJSON([]map[string]interface{}{
-		{"id": "g1", "profile": map[string]interface{}{"name": "Acme Auditors"}},
-		{"id": "g2", "profile": map[string]interface{}{"name": "Acme Administrators"}},
-	}))
-	p := newTestProvisioner(t, r)
-	g, err := p.findGroupByName(context.Background(), "https://acme.okta.com", "tok", "Acme Administrators")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if g == nil || g.ID != "g2" {
-		t.Errorf("group = %+v, want id g2", g)
-	}
-}
-
-func TestFindGroupByName_NotFound(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", okJSON([]map[string]interface{}{{"id": "g1", "profile": map[string]interface{}{"name": "Other"}}}))
-	p := newTestProvisioner(t, r)
-	g, err := p.findGroupByName(context.Background(), "https://acme.okta.com", "tok", "Acme Administrators")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if g != nil {
-		t.Errorf("group = %+v, want nil", g)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.on("GET", "/api/v1/apps", func(w http.ResponseWriter, req *http.Request) {
+					if tc.wantQuery != "" && req.URL.Query().Get("q") != tc.wantQuery {
+						t.Errorf("q = %q, want %q", req.URL.Query().Get("q"), tc.wantQuery)
+					}
+					tc.handler(w, req)
+				})
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			app, err := p.findAppByLabel(context.Background(), baseURL, "tok", tc.label)
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantID == "" {
+				if app != nil {
+					t.Errorf("app = %+v, want nil", app)
+				}
+				return
+			}
+			if app == nil || app.ID != tc.wantID {
+				t.Errorf("app = %+v, want id %s", app, tc.wantID)
+			}
+		})
 	}
 }
 
-func TestFindGroupByName_HTTPError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	_, err := p.findGroupByName(context.Background(), "https://acme.okta.com", "tok", "Acme Administrators")
-	assertProvOp(t, err, "find_group")
-}
-
-func TestFindGroupByName_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	_, err := p.findGroupByName(context.Background(), "https://acme.okta.com", "tok", "Acme Administrators")
-	assertProvOp(t, err, "find_group")
-}
-
-func TestFindGroupByName_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.findGroupByName(context.Background(), "://bad", "tok", "Acme Administrators")
-	assertProvOp(t, err, "find_group")
-}
-
-func TestFindGroupByName_SingleWordName(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Query().Get("q") != "Admins" {
-			t.Errorf("q = %q, want Admins", req.URL.Query().Get("q"))
-		}
-		writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "g1", "profile": map[string]interface{}{"name": "Admins"}}})
-	})
-	p := newTestProvisioner(t, r)
-	g, err := p.findGroupByName(context.Background(), "https://acme.okta.com", "tok", "Admins")
-	if err != nil || g == nil {
-		t.Fatalf("g=%+v err=%v", g, err)
+func TestFindGroupByName(t *testing.T) {
+	tests := []struct {
+		name      string
+		handler   http.HandlerFunc
+		baseURL   string
+		group     string
+		wantQuery string
+		wantID    string
+		wantOp    string
+	}{
+		{
+			name: "found",
+			handler: okJSON([]map[string]interface{}{
+				{"id": "g1", "profile": map[string]interface{}{"name": "Acme Auditors"}},
+				{"id": "g2", "profile": map[string]interface{}{"name": "Acme Administrators"}},
+			}),
+			group:  "Acme Administrators",
+			wantID: "g2",
+		},
+		{
+			name:    "not found",
+			handler: okJSON([]map[string]interface{}{{"id": "g1", "profile": map[string]interface{}{"name": "Other"}}}),
+			group:   "Acme Administrators",
+		},
+		{
+			name:    "http error",
+			handler: errStatus(http.StatusForbidden, "E0000006", "denied"),
+			group:   "Acme Administrators",
+			wantOp:  "find_group",
+		},
+		{
+			name:    "decode error",
+			handler: rawBody(http.StatusOK, "nope"),
+			group:   "Acme Administrators",
+			wantOp:  "find_group",
+		},
+		{
+			name:    "request error",
+			baseURL: "://bad",
+			group:   "Acme Administrators",
+			wantOp:  "find_group",
+		},
+		{
+			// A single-word name is sent as the whole search term.
+			name:      "single-word name",
+			handler:   okJSON([]map[string]interface{}{{"id": "g1", "profile": map[string]interface{}{"name": "Admins"}}}),
+			group:     "Admins",
+			wantQuery: "Admins",
+			wantID:    "g1",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.on("GET", "/api/v1/groups", func(w http.ResponseWriter, req *http.Request) {
+					if tc.wantQuery != "" && req.URL.Query().Get("q") != tc.wantQuery {
+						t.Errorf("q = %q, want %q", req.URL.Query().Get("q"), tc.wantQuery)
+					}
+					tc.handler(w, req)
+				})
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			g, err := p.findGroupByName(context.Background(), baseURL, "tok", tc.group)
+			if tc.wantOp != "" {
+				assertProvOp(t, err, tc.wantOp)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantID == "" {
+				if g != nil {
+					t.Errorf("group = %+v, want nil", g)
+				}
+				return
+			}
+			if g == nil || g.ID != tc.wantID {
+				t.Errorf("group = %+v, want id %s", g, tc.wantID)
+			}
+		})
 	}
 }
 
