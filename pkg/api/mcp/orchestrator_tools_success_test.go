@@ -88,27 +88,102 @@ func TestExecuteAgentDiscover_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestExecuteAgentDiscover_MissingRootPath(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
+func TestExecuteAgentTools_MissingArgument(t *testing.T) {
+	tests := []struct {
+		name  string
+		tool  string
+		args  map[string]interface{}
+		field string
+	}{
+		{"discover root_path", "quicbaas_orchestrator_discover", map[string]interface{}{}, "root_path"},
+		{"register name", "quicbaas_orchestrator_register", map[string]interface{}{"path": "/tmp"}, "name"},
+		{"register path", "quicbaas_orchestrator_register", map[string]interface{}{"name": "proj"}, "path"},
+		{"spawn backend", "quicbaas_orchestrator_spawn", map[string]interface{}{"tenant_id": "t1", "project_id": "proj-1"}, "agent_id, pool_id or backend"},
+		{"spawn project_id", "quicbaas_orchestrator_spawn", map[string]interface{}{"tenant_id": "t1", "backend": "claude"}, "project_id"},
+		{"prompt prompt", "quicbaas_orchestrator_prompt", map[string]interface{}{"tenant_id": "t1"}, "prompt"},
+		{"status session_id", "quicbaas_orchestrator_status", map[string]interface{}{"tenant_id": "t1"}, "session_id"},
+		{"close session_id", "quicbaas_orchestrator_close", map[string]interface{}{"tenant_id": "t1"}, "session_id"},
+		{"decompose backend", "quicbaas_orchestrator_decompose", map[string]interface{}{"task": "test"}, "backend"},
+		{"decompose task", "quicbaas_orchestrator_decompose", map[string]interface{}{"backend": "claude"}, "task"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newFleetRegistry(t, &mockAgentService{})
 
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_discover", map[string]interface{}{})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "root_path"))
+			_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), tt.tool, tt.args)
+			require.Error(t, err)
+			assert.True(t, isRequiredFieldError(err, tt.field))
+		})
+	}
 }
 
-func TestExecuteAgentDiscover_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		discoverFn: func(_ context.Context, _ *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
-			return nil, errors.New("discovery failed")
-		},
+func TestExecuteAgentTools_ServiceError(t *testing.T) {
+	failure := errors.New("agent service failed")
+	tests := []struct {
+		name     string
+		tool     string
+		agentSvc *mockAgentService
+		args     map[string]interface{}
+	}{
+		{"discover", "quicbaas_orchestrator_discover", &mockAgentService{
+			discoverFn: func(_ context.Context, _ *orchestration.DiscoverProjectsRequest) (*orchestration.DiscoverProjectsResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"root_path": "/tmp"}},
+		{"register", "quicbaas_orchestrator_register", &mockAgentService{
+			registerFn: func(_ context.Context, _ *orchestration.RegisterProjectRequest) (*orchestration.RegisterProjectResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"name": "proj", "path": "/tmp"}},
+		{"list", "quicbaas_orchestrator_list", &mockAgentService{
+			listProjectsFn: func(_ context.Context, _ *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{}},
+		{"spawn", "quicbaas_orchestrator_spawn", &mockAgentService{
+			spawnFn: func(_ context.Context, _ *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"tenant_id": "t1", "backend": "claude", "project_id": "proj-1"}},
+		{"prompt", "quicbaas_orchestrator_prompt", &mockAgentService{
+			promptFn: func(_ context.Context, _ *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"tenant_id": "t1", "prompt": "test"}},
+		{"status", "quicbaas_orchestrator_status", &mockAgentService{
+			statusFn: func(_ context.Context, _ *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"tenant_id": "t1", "session_id": "sess-1"}},
+		{"close", "quicbaas_orchestrator_close", &mockAgentService{
+			closeFn: func(_ context.Context, _ *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"tenant_id": "t1", "session_id": "sess-1"}},
+		{"list sessions", "quicbaas_orchestrator_list_sessions", &mockAgentService{
+			listSessionsFn: func(_ context.Context, _ *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"tenant_id": "t1"}},
+		{"list backends", "quicbaas_orchestrator_list_backends", &mockAgentService{
+			listBackendsFn: func(_ context.Context) ([]*orchestration.AgentBackendInfo, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{}},
+		{"decompose", "quicbaas_orchestrator_decompose", &mockAgentService{
+			decomposeFn: func(_ context.Context, _ *orchestration.DecomposeTaskRequest) (*orchestration.DecomposeTaskResponse, error) {
+				return nil, failure
+			},
+		}, map[string]interface{}{"backend": "claude", "task": "test"}},
 	}
-	reg := newFleetRegistry(t, agentSvc)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := newFleetRegistry(t, tt.agentSvc)
 
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_discover", map[string]interface{}{
-		"root_path": "/tmp",
-	})
-	require.Error(t, err)
+			_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), tt.tool, tt.args)
+			require.Error(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -131,42 +206,6 @@ func TestExecuteAgentRegister_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestExecuteAgentRegister_MissingName(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_register", map[string]interface{}{
-		"path": "/tmp",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "name"))
-}
-
-func TestExecuteAgentRegister_MissingPath(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_register", map[string]interface{}{
-		"name": "proj",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "path"))
-}
-
-func TestExecuteAgentRegister_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		registerFn: func(_ context.Context, _ *orchestration.RegisterProjectRequest) (*orchestration.RegisterProjectResponse, error) {
-			return nil, errors.New("register failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_register", map[string]interface{}{
-		"name": "proj", "path": "/tmp",
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Agent List Tests
 // =============================================================================
@@ -181,18 +220,6 @@ func TestExecuteAgentList_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestExecuteAgentList_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		listProjectsFn: func(_ context.Context, _ *orchestration.ListProjectsRequest) (*orchestration.ListProjectsResponse, error) {
-			return nil, errors.New("list failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list", map[string]interface{}{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -230,44 +257,6 @@ func TestExecuteAgentSpawn_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestExecuteAgentSpawn_MissingBackend(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_spawn", map[string]interface{}{
-		"tenant_id":  "t1",
-		"project_id": "proj-1",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "agent_id, pool_id or backend"))
-}
-
-func TestExecuteAgentSpawn_MissingProjectID(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_spawn", map[string]interface{}{
-		"tenant_id": "t1",
-		"backend":   "claude",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "project_id"))
-}
-
-func TestExecuteAgentSpawn_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		spawnFn: func(_ context.Context, _ *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-			return nil, errors.New("spawn failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_spawn", map[string]interface{}{
-		"tenant_id": "t1", "backend": "claude", "project_id": "proj-1",
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Agent Prompt Tests
 // =============================================================================
@@ -298,29 +287,6 @@ func TestExecuteAgentPrompt_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestExecuteAgentPrompt_MissingPrompt(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_prompt", map[string]interface{}{"tenant_id": "t1"})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "prompt"))
-}
-
-func TestExecuteAgentPrompt_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		promptFn: func(_ context.Context, _ *orchestration.PromptSessionRequest) (*orchestration.PromptSessionResponse, error) {
-			return nil, errors.New("prompt failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_prompt", map[string]interface{}{
-		"tenant_id": "t1", "prompt": "test",
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Agent Status Tests
 // =============================================================================
@@ -334,29 +300,6 @@ func TestExecuteAgentStatus_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestExecuteAgentStatus_MissingSessionID(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_status", map[string]interface{}{"tenant_id": "t1"})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "session_id"))
-}
-
-func TestExecuteAgentStatus_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		statusFn: func(_ context.Context, _ *orchestration.SessionStatusRequest) (*orchestration.SessionStatusResponse, error) {
-			return nil, errors.New("status check failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_status", map[string]interface{}{
-		"tenant_id": "t1", "session_id": "sess-1",
-	})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -374,29 +317,6 @@ func TestExecuteAgentClose_Success(t *testing.T) {
 	require.NotNil(t, result)
 }
 
-func TestExecuteAgentClose_MissingSessionID(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_close", map[string]interface{}{"tenant_id": "t1"})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "session_id"))
-}
-
-func TestExecuteAgentClose_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		closeFn: func(_ context.Context, _ *orchestration.CloseSessionRequest) (*orchestration.CloseSessionResponse, error) {
-			return nil, errors.New("close failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_close", map[string]interface{}{
-		"tenant_id": "t1", "session_id": "sess-1",
-	})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Agent List Sessions Tests
 // =============================================================================
@@ -410,18 +330,6 @@ func TestExecuteAgentListSessions_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestExecuteAgentListSessions_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		listSessionsFn: func(_ context.Context, _ *orchestration.ListSessionsRequest) (*orchestration.ListSessionsResponse, error) {
-			return nil, errors.New("list sessions failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list_sessions", map[string]interface{}{"tenant_id": "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -441,18 +349,6 @@ func TestExecuteAgentListBackends_Success(t *testing.T) {
 	result, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestExecuteAgentListBackends_Error(t *testing.T) {
-	agentSvc := &mockAgentService{
-		listBackendsFn: func(_ context.Context) ([]*orchestration.AgentBackendInfo, error) {
-			return nil, errors.New("list backends failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_list_backends", map[string]interface{}{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -552,42 +448,6 @@ func TestExecuteAgentDecompose_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestExecuteAgentDecompose_MissingBackend(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_decompose", map[string]interface{}{
-		"task": "test",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "backend"))
-}
-
-func TestExecuteAgentDecompose_MissingTask(t *testing.T) {
-	agentSvc := &mockAgentService{}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_decompose", map[string]interface{}{
-		"backend": "claude",
-	})
-	require.Error(t, err)
-	assert.True(t, isRequiredFieldError(err, "task"))
-}
-
-func TestExecuteAgentDecompose_ServiceError(t *testing.T) {
-	agentSvc := &mockAgentService{
-		decomposeFn: func(_ context.Context, _ *orchestration.DecomposeTaskRequest) (*orchestration.DecomposeTaskResponse, error) {
-			return nil, errors.New("decompose failed")
-		},
-	}
-	reg := newFleetRegistry(t, agentSvc)
-
-	_, err := reg.executeAgentTool(tenantctx.WithTenant(context.Background(), "t1"), "quicbaas_orchestrator_decompose", map[string]interface{}{
-		"backend": "claude", "task": "test",
-	})
-	require.Error(t, err)
 }
 
 // =============================================================================
