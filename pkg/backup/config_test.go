@@ -557,7 +557,7 @@ func TestListBackups_InvalidNextToken(t *testing.T) {
 	result, err := manager.listBackups(ctx, 10, "invalid-token-that-does-not-exist")
 	require.NoError(t, err)
 	// Should return 1 backup (all backups since token doesn't exist)
-	assert.GreaterOrEqual(t, len(result.Backups), 0)
+	assert.Len(t, result.Backups, 1)
 }
 
 // TestListBackups_ListError tests listBackups when backend list fails.
