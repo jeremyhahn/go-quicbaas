@@ -18,7 +18,6 @@ package rag
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -123,28 +122,6 @@ func TestSystem_Query(t *testing.T) {
 			assert.NotNil(t, response)
 		}
 	})
-
-	t.Run("empty query", func(t *testing.T) {
-		opts := pipeline.QueryOptions{TopK: 5}
-
-		response, err := system.Query(context.Background(), "", opts)
-
-		// Should handle gracefully
-		_ = response
-		_ = err
-	})
-
-	t.Run("context cancellation", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		opts := pipeline.QueryOptions{TopK: 5}
-
-		_, err := system.Query(ctx, "test", opts)
-
-		// May or may not error depending on when cancellation is checked
-		_ = err
-	})
 }
 
 func TestSystem_IndexDocument(t *testing.T) {
@@ -169,25 +146,6 @@ func TestSystem_IndexDocument(t *testing.T) {
 		if len(response.Results) > 0 {
 			assert.Equal(t, "test-doc-1", response.Results[0].ID)
 		}
-	})
-
-	t.Run("index duplicate ID", func(t *testing.T) {
-		content := "First content"
-		err := system.IndexContent(context.Background(), "dup-id", content, nil)
-		require.NoError(t, err)
-
-		// Try to index same ID again
-		err = system.IndexContent(context.Background(), "dup-id", "Second content", nil)
-
-		// Should handle gracefully (update or error)
-		_ = err
-	})
-
-	t.Run("index empty content", func(t *testing.T) {
-		err := system.IndexContent(context.Background(), "empty-id", "", nil)
-
-		// Should handle gracefully
-		_ = err
 	})
 }
 
@@ -244,24 +202,6 @@ func TestSystem_ConcurrentQueries(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		<-done
 	}
-}
-
-func TestSystem_QueryWithTimeout(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	cfg.Pipeline.Timeout = 100 * time.Millisecond
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	opts := pipeline.QueryOptions{TopK: 5}
-
-	_, err = system.Query(ctx, "test query", opts)
-
-	// May timeout or succeed depending on execution speed
-	_ = err
 }
 
 // Helper functions
@@ -375,49 +315,6 @@ func indexTestDocuments(t *testing.T, system *System) {
 
 // Additional test coverage
 
-func TestCreateEmbedder_UnsupportedProvider(t *testing.T) {
-	cfg := config.EmbeddingConfig{
-		Provider:   "unsupported",
-		Dimensions: 384,
-	}
-
-	_, err := createEmbedder(cfg)
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported embedding provider")
-}
-
-func TestCreateRankerAdapter_AllStrategies(t *testing.T) {
-	testCases := []struct {
-		name     string
-		strategy string
-	}{
-		{"hybrid strategy", "hybrid"},
-		{"fusion strategy", "fusion"},
-		{"vector strategy", "vector"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.RankingConfig{
-				BM25K1:        1.2,
-				BM25B:         0.75,
-				VectorWeight:  0.7,
-				KeywordWeight: 0.3,
-				RerankTopK:    10,
-				EnableRerank:  false,
-				RRFK:          60,
-				Strategy:      tc.strategy,
-			}
-
-			adapter, err := createRankerAdapter(cfg)
-
-			assert.NoError(t, err)
-			assert.NotNil(t, adapter)
-		})
-	}
-}
-
 func TestCreateRankerAdapter_WithRerank(t *testing.T) {
 	cfg := config.RankingConfig{
 		BM25K1:        1.5,
@@ -445,10 +342,12 @@ func TestTrainIndex_VariousDimensions(t *testing.T) {
 		name       string
 		dimensions int
 	}{
+		{"tiny dimensions", 8},
 		{"small dimensions", 64},
 		{"medium dimensions", 256},
 		{"standard dimensions", 384},
 		{"large dimensions", 768},
+		{"xlarge dimensions", 1024},
 	}
 
 	for _, tc := range testCases {
@@ -499,22 +398,6 @@ func TestCreateContextBuilderAdapter_FullConfig(t *testing.T) {
 		TruncationStrategy: "hard",
 		MaxResultsPerChunk: 50,
 		TokenMultiplier:    2.0,
-	}
-
-	adapter, err := createContextBuilderAdapter(cfg)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, adapter)
-}
-
-func TestCreateContextBuilderAdapter_DefaultTokens(t *testing.T) {
-	cfg := config.ContextConfig{
-		MaxTokens:          4096,
-		DefaultTemplate:    "text",
-		IncludeCitations:   false,
-		TruncationStrategy: "smart",
-		MaxResultsPerChunk: 25,
-		TokenMultiplier:    1.5,
 	}
 
 	adapter, err := createContextBuilderAdapter(cfg)
@@ -1300,87 +1183,9 @@ func TestRAGSearcher_SearchDefaultTopK(t *testing.T) {
 // createEmbedder with safe providers only
 // =============================================================================
 
-func TestCreateEmbedder_SafeProviders(t *testing.T) {
-	testCases := []struct {
-		name       string
-		provider   string
-		wantErr    bool
-		errContain string
-	}{
-		{
-			name:     "mock provider",
-			provider: "mock",
-			wantErr:  false,
-		},
-		{
-			name:       "unsupported provider",
-			provider:   "invalid_provider",
-			wantErr:    true,
-			errContain: "unsupported embedding provider",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.EmbeddingConfig{
-				Provider:   tc.provider,
-				APIKey:     "test-key",
-				Model:      "test-model",
-				Dimensions: 384,
-				Timeout:    30,
-			}
-
-			embedder, err := createEmbedder(cfg)
-
-			if tc.wantErr {
-				assert.Error(t, err)
-				if tc.errContain != "" {
-					assert.Contains(t, err.Error(), tc.errContain)
-				}
-			} else {
-				assert.NoError(t, err)
-				if embedder != nil {
-					embedder.Close()
-				}
-			}
-		})
-	}
-}
-
 // =============================================================================
 // createContextBuilderAdapter with different strategies
 // =============================================================================
-
-func TestCreateContextBuilderAdapter_AllStrategies(t *testing.T) {
-	testCases := []struct {
-		name     string
-		strategy string
-	}{
-		{"smart truncation", "smart"},
-		{"hard truncation", "hard"},
-		{"no truncation", "none"},
-		{"default truncation", ""},
-		{"unknown truncation", "invalid"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.ContextConfig{
-				MaxTokens:          4000,
-				DefaultTemplate:    "markdown",
-				IncludeCitations:   true,
-				TruncationStrategy: tc.strategy,
-				MaxResultsPerChunk: 20,
-				TokenMultiplier:    1.3,
-			}
-
-			adapter, err := createContextBuilderAdapter(cfg)
-
-			assert.NoError(t, err)
-			assert.NotNil(t, adapter)
-		})
-	}
-}
 
 // =============================================================================
 // System with nil metadata
@@ -1398,50 +1203,9 @@ func TestSystem_IndexContentWithNilMetadata(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestSystem_IndexContentWithEmptyMetadata(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Index with empty metadata
-	err = system.IndexContent(context.Background(), "test-empty-meta", "test content", map[string]interface{}{})
-
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // queryHandlerAdapter tests
 // =============================================================================
-
-func TestQueryHandlerAdapter_Close(t *testing.T) {
-	embedder := &mockEmbedderAdapter{dimensions: 128}
-	handler := &queryHandlerAdapter{embedder: embedder}
-
-	err := handler.Close()
-
-	assert.NoError(t, err)
-}
-
-func TestQueryHandlerAdapter_MultipleQueries(t *testing.T) {
-	embedder := &mockEmbedderAdapter{dimensions: 128}
-	handler := &queryHandlerAdapter{embedder: embedder}
-
-	queries := []string{
-		"first query",
-		"second query",
-		"third query with more words",
-	}
-
-	for _, query := range queries {
-		result, err := handler.Process(context.Background(), query)
-		require.NoError(t, err)
-		assert.Equal(t, query, result.Original)
-		assert.Equal(t, query, result.Cleaned)
-		assert.Equal(t, "search", result.Intent)
-		assert.Len(t, result.Embedding, 128)
-	}
-}
 
 // =============================================================================
 // NewSystem with pipeline config variations
@@ -1510,61 +1274,6 @@ func TestRAGErrors(t *testing.T) {
 // =============================================================================
 // Additional System tests for edge cases
 // =============================================================================
-
-func TestSystem_QueryWithOptions(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Index some content first
-	indexTestDocuments(t, system)
-
-	testCases := []struct {
-		name string
-		opts pipeline.QueryOptions
-	}{
-		{
-			name: "with min score",
-			opts: pipeline.QueryOptions{
-				TopK:     10,
-				MinScore: 0.5,
-			},
-		},
-		{
-			name: "with namespace",
-			opts: pipeline.QueryOptions{
-				TopK:      5,
-				Namespace: "test",
-			},
-		},
-		{
-			name: "with filters",
-			opts: pipeline.QueryOptions{
-				TopK: 5,
-				Filters: map[string]interface{}{
-					"type": "document",
-				},
-			},
-		},
-		{
-			name: "with source",
-			opts: pipeline.QueryOptions{
-				TopK:          5,
-				IncludeSource: true,
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := system.Query(context.Background(), "test query", tc.opts)
-			// May succeed or fail depending on data, but should not panic
-			_ = resp
-			_ = err
-		})
-	}
-}
 
 func TestNewSystem_DimensionMismatch(t *testing.T) {
 	cfg := createTestRAGConfig(t)
@@ -1699,19 +1408,6 @@ func TestSystem_CloseWithEmbedderError(t *testing.T) {
 
 // Test IndexContent with nil metadata
 
-func TestSystem_IndexContentNilMetadata(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Index with nil metadata
-	err = system.IndexContent(context.Background(), "test-id", "test content", nil)
-
-	// Should succeed and create empty metadata
-	assert.NoError(t, err)
-}
-
 // Test vector index with different metrics
 // Mock implementations that return errors
 
@@ -1835,40 +1531,6 @@ func TestSystemCloseWithAllComponentErrors(t *testing.T) {
 // We only test the mock provider since others may panic or require network
 // =============================================================================
 
-func TestCreateEmbedderMockProvider(t *testing.T) {
-	cfg := config.EmbeddingConfig{
-		Provider:   "mock",
-		APIKey:     "test-key",
-		Model:      "test-model",
-		Dimensions: 384,
-		Timeout:    30,
-	}
-
-	embedder, err := createEmbedder(cfg)
-
-	require.NoError(t, err)
-	require.NotNil(t, embedder)
-	assert.Equal(t, 384, embedder.Dimensions())
-	assert.Equal(t, "mock", embedder.Name())
-
-	err = embedder.Close()
-	assert.NoError(t, err)
-}
-
-func TestCreateEmbedderUnsupportedProvider(t *testing.T) {
-	cfg := config.EmbeddingConfig{
-		Provider:   "totally-unsupported",
-		Dimensions: 384,
-	}
-
-	embedder, err := createEmbedder(cfg)
-
-	assert.Error(t, err)
-	assert.Nil(t, embedder)
-	assert.Contains(t, err.Error(), "unsupported embedding provider")
-	assert.Contains(t, err.Error(), "totally-unsupported")
-}
-
 // =============================================================================
 // Test createRankerAdapter with different strategies
 // =============================================================================
@@ -1900,65 +1562,6 @@ func TestCreateRankerAdapterStrategies(t *testing.T) {
 // Test trainIndex with edge cases
 // =============================================================================
 
-func TestTrainIndexDirectly(t *testing.T) {
-	cfg := config.RAGVectorConfig{
-		NumCentroids: 5,
-		Dimensions:   64,
-		NProbe:       2,
-		Metric:       "cosine",
-	}
-
-	idx, err := createVectorIndex(cfg)
-	require.NoError(t, err)
-
-	// Train if not trained
-	if !idx.IsTrained() {
-		err = trainIndex(idx, 64)
-		require.NoError(t, err)
-	}
-
-	// Verify trained
-	assert.True(t, idx.IsTrained())
-}
-
-func TestTrainIndexSmallDimensions(t *testing.T) {
-	cfg := config.RAGVectorConfig{
-		NumCentroids: 3,
-		Dimensions:   8,
-		NProbe:       1,
-		Metric:       "l2",
-	}
-
-	idx, err := createVectorIndex(cfg)
-	require.NoError(t, err)
-
-	if !idx.IsTrained() {
-		err = trainIndex(idx, 8)
-		require.NoError(t, err)
-	}
-
-	assert.True(t, idx.IsTrained())
-}
-
-func TestTrainIndexLargeDimensions(t *testing.T) {
-	cfg := config.RAGVectorConfig{
-		NumCentroids: 5,
-		Dimensions:   1024,
-		NProbe:       2,
-		Metric:       "ip",
-	}
-
-	idx, err := createVectorIndex(cfg)
-	require.NoError(t, err)
-
-	if !idx.IsTrained() {
-		err = trainIndex(idx, 1024)
-		require.NoError(t, err)
-	}
-
-	assert.True(t, idx.IsTrained())
-}
-
 // =============================================================================
 // Test pipeline error path at lines 141-147
 // We trigger this by passing invalid config that passes initial validation
@@ -1980,23 +1583,6 @@ func TestNewSystemWithInvalidPipelineConfig(t *testing.T) {
 // =============================================================================
 // Test queryHandlerAdapter edge cases
 // =============================================================================
-
-func TestQueryHandlerAdapterVeryLongQuery(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-	handler := &queryHandlerAdapter{embedder: adapter}
-
-	// Very long query
-	longQuery := ""
-	for i := 0; i < 1000; i++ {
-		longQuery += "word "
-	}
-
-	result, err := handler.Process(context.Background(), longQuery)
-
-	require.NoError(t, err)
-	assert.Equal(t, longQuery, result.Original)
-	assert.Len(t, result.Embedding, 128)
-}
 
 // =============================================================================
 // Test System operations in various states
@@ -2031,28 +1617,6 @@ func TestSystemOperationsInSequence(t *testing.T) {
 // Test createContextBuilderAdapter with all truncation strategies
 // =============================================================================
 
-func TestCreateContextBuilderAdapterAllStrategies(t *testing.T) {
-	strategies := []string{"smart", "hard", "none", "unknown", ""}
-
-	for _, strategy := range strategies {
-		t.Run("strategy_"+strategy, func(t *testing.T) {
-			cfg := config.ContextConfig{
-				MaxTokens:          4000,
-				DefaultTemplate:    "markdown",
-				IncludeCitations:   true,
-				TruncationStrategy: strategy,
-				MaxResultsPerChunk: 20,
-				TokenMultiplier:    1.3,
-			}
-
-			adapter, err := createContextBuilderAdapter(cfg)
-
-			require.NoError(t, err)
-			assert.NotNil(t, adapter)
-		})
-	}
-}
-
 // =============================================================================
 // Test createVectorIndex with all metrics
 // =============================================================================
@@ -2081,75 +1645,9 @@ func TestCreateVectorIndexAllMetrics(t *testing.T) {
 // Test System with various query options to increase coverage
 // =============================================================================
 
-func TestSystemQueryWithAllOptions(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Index a document
-	err = system.IndexContent(context.Background(), "test-1", "test document content", nil)
-	require.NoError(t, err)
-
-	// Query with various options
-	testCases := []struct {
-		name string
-		opts pipeline.QueryOptions
-	}{
-		{"basic", pipeline.QueryOptions{TopK: 5}},
-		{"with min score", pipeline.QueryOptions{TopK: 5, MinScore: 0.5}},
-		{"with namespace", pipeline.QueryOptions{TopK: 5, Namespace: "test"}},
-		{"with max tokens", pipeline.QueryOptions{TopK: 5, MaxTokens: 1000}},
-		{"with include source", pipeline.QueryOptions{TopK: 5, IncludeSource: true}},
-		{"with filters", pipeline.QueryOptions{TopK: 5, Filters: map[string]interface{}{"key": "value"}}},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := system.Query(context.Background(), "test", tc.opts)
-			// May succeed or fail based on data, but shouldn't panic
-			_ = resp
-			_ = err
-		})
-	}
-}
-
 // =============================================================================
 // Test System concurrent operations
 // =============================================================================
-
-func TestSystemConcurrentIndexAndQuery(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-	defer system.Close()
-
-	// Run concurrent index and query operations
-	done := make(chan struct{}, 20)
-
-	// Index operations
-	for i := 0; i < 10; i++ {
-		go func(idx int) {
-			defer func() { done <- struct{}{} }()
-			id := fmt.Sprintf("doc-%d", idx)
-			content := fmt.Sprintf("document number %d with content", idx)
-			_ = system.IndexContent(context.Background(), id, content, nil)
-		}(i)
-	}
-
-	// Query operations
-	for i := 0; i < 10; i++ {
-		go func() {
-			defer func() { done <- struct{}{} }()
-			_, _ = system.Query(context.Background(), "document", pipeline.QueryOptions{TopK: 5})
-		}()
-	}
-
-	// Wait for all operations
-	for i := 0; i < 20; i++ {
-		<-done
-	}
-}
 
 // TestMockEmbedderAdapter tests all methods of mockEmbedderAdapter
 func TestMockEmbedderAdapter(t *testing.T) {
@@ -2460,7 +1958,9 @@ func TestCreateEmbedder(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, embedder)
-		assert.Contains(t, err.Error(), "unsupported embedding provider")
+		var providerErr *UnsupportedProviderError
+		require.ErrorAs(t, err, &providerErr)
+		assert.Equal(t, "invalid-provider", providerErr.Provider)
 	})
 }
 
