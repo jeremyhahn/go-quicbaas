@@ -847,15 +847,19 @@ func TestMemoryConsentStorage_UpdateConsent_ToGranted(t *testing.T) {
 // BatchProcessor - processUsers with UpdateExisting and SkipDuplicates
 // =============================================================================
 
+// updateCapableTenantMgr stores created users by email and reports each one on
+// created, so a test can wait for the batch goroutine without sleeping.
 type updateCapableTenantMgr struct {
 	*mockTenantManager
-	users map[string]*User
+	users   map[string]*User
+	created chan *User
 }
 
 func newUpdateCapableTenantMgr() *updateCapableTenantMgr {
 	return &updateCapableTenantMgr{
 		mockTenantManager: newMockTenantManager(),
 		users:             make(map[string]*User),
+		created:           make(chan *User, 16),
 	}
 }
 
@@ -865,6 +869,7 @@ func (m *updateCapableTenantMgr) CreateUser(ctx context.Context, user *User) err
 		return ErrUserAlreadyExists
 	}
 	m.users[key] = user
+	m.created <- user
 	return nil
 }
 
@@ -874,15 +879,6 @@ func (m *updateCapableTenantMgr) GetUserByEmail(ctx context.Context, tenantID, e
 		return user, nil
 	}
 	return nil, ErrUserNotFound
-}
-
-func (m *updateCapableTenantMgr) UpdateUser(ctx context.Context, user *User) error {
-	key := user.TenantID + ":" + user.Email
-	if _, exists := m.users[key]; !exists {
-		return ErrUserNotFound
-	}
-	m.users[key] = user
-	return nil
 }
 
 // =============================================================================
@@ -1011,18 +1007,16 @@ func TestBatchProcessor_ProcessUsers_WithRoles(t *testing.T) {
 		},
 	}
 
-	op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportUsers failed: %v", err)
-	}
-	require.Eventually(t, func() bool {
-		saved, err := storage.GetOperation(ctx, op.ID)
-		return err == nil && saved.Progress.Succeeded == 1
-	}, 5*time.Second, 10*time.Millisecond, "expected 1 success")
-
-	user, err := tenantMgr.GetUserByEmail(ctx, tenantID, "rolesgroups@test.com")
+	_, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{})
 	require.NoError(t, err)
-	assert.Len(t, user.Roles, 2)
+
+	select {
+	case user := <-tenantMgr.created:
+		assert.Equal(t, "rolesgroups@test.com", user.Email)
+		assert.ElementsMatch(t, []string{"admin", "viewer"}, user.Roles)
+	case <-time.After(5 * time.Second):
+		t.Fatal("batch import did not create the user")
+	}
 }
 
 // =============================================================================
