@@ -686,41 +686,6 @@ func TestPool_EnsureMinConnectionsAtMax(t *testing.T) {
 	}
 }
 
-// TestRequestStream_SendMsgError tests RequestStream when initial SendMsg fails.
-func TestRequestStream_SendMsgError(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	// RequestStream with non-nil req will try to send and may fail
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", "initial-request")
-	if stream != nil {
-		stream.Close()
-	}
-	// Just verify it doesn't panic - actual error depends on server behavior
-	_ = err
-}
-
 // mockPooledConnServer provides a server for pooled connection tests.
 type mockPooledConnServer struct {
 	lis    *bufconn.Listener
@@ -809,18 +774,23 @@ func TestPool_IsHealthyConnections(t *testing.T) {
 
 // TestPool_IsExpiredWithZeroMaxAge tests isExpired when MaxAge is zero.
 func TestPool_IsExpiredWithZeroMaxAge(t *testing.T) {
-	p := &Pool{
-		cfg: &PoolConfig{
-			MaxAge: 0, // Never expires
-		},
+	tests := []struct {
+		name   string
+		maxAge time.Duration
+	}{
+		{name: "zero max age", maxAge: 0},
+		{name: "negative max age", maxAge: -time.Hour},
 	}
 
-	pc := &pooledConn{
-		createdAt: time.Now().Add(-24 * time.Hour),
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Pool{cfg: &PoolConfig{MaxAge: tt.maxAge}}
+			pc := &pooledConn{createdAt: time.Now().Add(-24 * time.Hour)}
 
-	if p.isExpired(pc) {
-		t.Error("expected not expired when MaxAge is 0")
+			if p.isExpired(pc) {
+				t.Errorf("expected not expired when MaxAge is %v", tt.maxAge)
+			}
+		})
 	}
 }
 
@@ -1499,73 +1469,51 @@ func TestTransport_RequestWithRetry_NonRetryableError(t *testing.T) {
 
 // TestTransport_RequestStream tests the RequestStream method.
 func TestTransport_RequestStream(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
+	tests := []struct {
+		name    string
+		req     interface{}
+		wantErr bool
+	}{
+		// Stream creation is lazy, so an unknown method still opens a stream.
+		{name: "no initial request", req: nil, wantErr: false},
+		// A non-proto initial request fails to marshal on SendMsg.
+		{name: "initial request send fails", req: "initial-request", wantErr: true},
 	}
 
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := newTestServer()
+			defer ts.stop()
 
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
+			p, err := NewPool("bufnet", ts.dialOpts(), &PoolConfig{MinSize: 1, MaxSize: 2, MaxAge: time.Hour})
+			if err != nil {
+				t.Fatalf("failed to create pool: %v", err)
+			}
 
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", nil)
-	// The RequestStream method may return a stream even for non-existent services
-	// (since stream creation is lazy). Just verify we get some response.
-	if stream != nil {
-		stream.Close()
-	}
-	// Just verify the call doesn't panic - actual error may come from using the stream
-	_ = err
-}
+			tr := &Transport{
+				cfg:  &transport.Config{Timeout: 5 * time.Second},
+				pool: p,
+			}
+			defer tr.Close()
 
-// TestTransport_RequestStreamWithInitialRequest tests RequestStream with initial request.
-func TestTransport_RequestStreamWithInitialRequest(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
+			stream, err := tr.RequestStream(context.Background(), "test.Service", "StreamMethod", tt.req)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if stream == nil {
+				t.Fatal("expected non-nil stream")
+			}
+			if err := stream.Close(); err != nil {
+				t.Errorf("stream close: %v", err)
+			}
+		})
 	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	tr := &Transport{
-		cfg: &transport.Config{
-			Timeout: 5 * time.Second,
-		},
-		pool: p,
-	}
-	defer tr.Close()
-
-	ctx := context.Background()
-	stream, err := tr.RequestStream(ctx, "test.Service", "StreamMethod", "initial-request")
-	// The RequestStream method may return a stream even for non-existent services
-	// Just verify we get some response.
-	if stream != nil {
-		stream.Close()
-	}
-	_ = err
 }
 
 // TestTransport_CloseWithPoolAndConn tests closing transport with both pool and conn.
@@ -1605,23 +1553,6 @@ func TestTransport_CloseWithPoolAndConn(t *testing.T) {
 
 	if !tr.closed.Load() {
 		t.Error("expected transport to be marked closed")
-	}
-}
-
-// TestPool_NegativeMaxAge tests that negative MaxAge never expires.
-func TestPool_NegativeMaxAge(t *testing.T) {
-	p := &Pool{
-		cfg: &PoolConfig{
-			MaxAge: -time.Hour,
-		},
-	}
-
-	pc := &pooledConn{
-		createdAt: time.Now().Add(-10 * time.Hour),
-	}
-
-	if p.isExpired(pc) {
-		t.Error("expected not expired when MaxAge is negative")
 	}
 }
 
