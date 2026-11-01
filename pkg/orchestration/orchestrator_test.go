@@ -137,6 +137,18 @@ func (m *mockAgentBackend) ToolGuidance() string {
 // Constructor Tests
 // =============================================================================
 
+// newAgentServiceForTest builds an AgentService over an in-memory store with
+// no backends registered.
+func newAgentServiceForTest(t *testing.T) AgentService {
+	t.Helper()
+
+	svc, err := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	return svc
+}
+
 func TestNewAgentService(t *testing.T) {
 	t.Parallel()
 
@@ -153,27 +165,28 @@ func TestNewAgentService(t *testing.T) {
 	}
 }
 
-func TestNewAgentService_NilLogger(t *testing.T) {
+func TestNewAgentService_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewAgentService(NewInMemoryAgentStore(), nil, nil)
-	if err == nil {
-		t.Fatal("expected error for nil logger")
+	tests := []struct {
+		name    string
+		store   AgentStore
+		logger  interfaces.Logger
+		wantErr error
+	}{
+		{name: "nil logger", store: NewInMemoryAgentStore(), logger: nil, wantErr: ErrAgentServiceUnavailable},
+		{name: "nil store", store: nil, logger: &agentTestLogger{}, wantErr: ErrAgentStoreRequired},
 	}
-	if !errors.Is(err, ErrAgentServiceUnavailable) {
-		t.Fatalf("expected ErrAgentServiceUnavailable, got %v", err)
-	}
-}
 
-func TestNewAgentService_NilStore(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	_, err := NewAgentService(nil, nil, &agentTestLogger{})
-	if err == nil {
-		t.Fatal("expected error for nil store")
-	}
-	if !errors.Is(err, ErrAgentStoreRequired) {
-		t.Fatalf("expected ErrAgentStoreRequired, got %v", err)
+			_, err := NewAgentService(tt.store, nil, tt.logger)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -299,37 +312,28 @@ func TestAgentService_RegisterProject(t *testing.T) {
 	}
 }
 
-func TestAgentService_RegisterProject_EmptyName(t *testing.T) {
+func TestAgentService_RegisterProject_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.RegisterProject(context.Background(), &RegisterProjectRequest{
-		Name: "",
-		Path: "/tmp/test",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
+	tests := []struct {
+		name    string
+		req     *RegisterProjectRequest
+		wantErr error
+	}{
+		{name: "empty name", req: &RegisterProjectRequest{Name: "", Path: "/tmp/test"}, wantErr: ErrProjectNameRequired},
+		{name: "empty path", req: &RegisterProjectRequest{Name: "test", Path: ""}, wantErr: ErrProjectPathRequired},
 	}
-	if !errors.Is(err, ErrProjectNameRequired) {
-		t.Fatalf("expected ErrProjectNameRequired, got %v", err)
-	}
-}
 
-func TestAgentService_RegisterProject_EmptyPath(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.RegisterProject(context.Background(), &RegisterProjectRequest{
-		Name: "test",
-		Path: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty path")
-	}
-	if !errors.Is(err, ErrProjectPathRequired) {
-		t.Fatalf("expected ErrProjectPathRequired, got %v", err)
+			_, err := svc.RegisterProject(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -424,36 +428,28 @@ func TestAgentService_SpawnSession(t *testing.T) {
 	}
 }
 
-func TestAgentService_SpawnSession_BackendNotFound(t *testing.T) {
+func TestAgentService_SpawnSession_InvalidBackend(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend:   "nonexistent",
-		ProjectID: "proj-123",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent backend")
+	tests := []struct {
+		name    string
+		req     *SpawnSessionRequest
+		wantErr error
+	}{
+		{name: "backend not found", req: &SpawnSessionRequest{Backend: "nonexistent", ProjectID: "proj-123"}, wantErr: ErrBackendNotFound},
+		{name: "empty backend", req: &SpawnSessionRequest{Backend: ""}, wantErr: ErrBackendRequired},
 	}
-	if !errors.Is(err, ErrBackendNotFound) {
-		t.Fatalf("expected ErrBackendNotFound, got %v", err)
-	}
-}
 
-func TestAgentService_SpawnSession_EmptyBackend(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty backend")
-	}
-	if !errors.Is(err, ErrBackendRequired) {
-		t.Fatalf("expected ErrBackendRequired, got %v", err)
+			_, err := svc.SpawnSession(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -963,37 +959,28 @@ func TestAgentService_DecomposeTask(t *testing.T) {
 	}
 }
 
-func TestAgentService_DecomposeTask_EmptyTask(t *testing.T) {
+func TestAgentService_DecomposeTask_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.DecomposeTask(context.Background(), &DecomposeTaskRequest{
-		Backend: "mock",
-		Task:    "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty task")
+	tests := []struct {
+		name    string
+		req     *DecomposeTaskRequest
+		wantErr error
+	}{
+		{name: "empty task", req: &DecomposeTaskRequest{Backend: "mock", Task: ""}, wantErr: ErrTaskRequired},
+		{name: "empty backend", req: &DecomposeTaskRequest{Backend: "", Task: "some task"}, wantErr: ErrBackendRequired},
 	}
-	if !errors.Is(err, ErrTaskRequired) {
-		t.Fatalf("expected ErrTaskRequired, got %v", err)
-	}
-}
 
-func TestAgentService_DecomposeTask_EmptyBackend(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.DecomposeTask(context.Background(), &DecomposeTaskRequest{
-		Backend: "",
-		Task:    "some task",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty backend")
-	}
-	if !errors.Is(err, ErrBackendRequired) {
-		t.Fatalf("expected ErrBackendRequired, got %v", err)
+			_, err := svc.DecomposeTask(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -1106,37 +1093,28 @@ func TestAgentService_RegisterBackend(t *testing.T) {
 	}
 }
 
-func TestAgentService_RegisterBackend_NilBackend(t *testing.T) {
+func TestAgentService_RegisterBackend_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	err := svc.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "test",
-		Backend: nil,
-	})
-	if err == nil {
-		t.Fatal("expected error for nil backend")
+	tests := []struct {
+		name    string
+		req     *RegisterBackendRequest
+		wantErr error
+	}{
+		{name: "nil backend", req: &RegisterBackendRequest{Name: "test", Backend: nil}, wantErr: ErrBackendNilRequired},
+		{name: "empty name", req: &RegisterBackendRequest{Name: "", Backend: &mockAgentBackend{}}, wantErr: ErrBackendNameRequired},
 	}
-	if !errors.Is(err, ErrBackendNilRequired) {
-		t.Fatalf("expected ErrBackendNilRequired, got %v", err)
-	}
-}
 
-func TestAgentService_RegisterBackend_EmptyName(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	err := svc.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "",
-		Backend: &mockAgentBackend{},
-	})
-	if err == nil {
-		t.Fatal("expected error for empty name")
-	}
-	if !errors.Is(err, ErrBackendNameRequired) {
-		t.Fatalf("expected ErrBackendNameRequired, got %v", err)
+			err := svc.RegisterBackend(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -2043,51 +2021,16 @@ func TestSubscribeJobEvents_MultipleSubscribers(t *testing.T) {
 // BackendToolGuidance Tests
 // =============================================================================
 
-func TestBackendToolGuidance_KnownBackend(t *testing.T) {
+func TestBackendToolGuidance(t *testing.T) {
 	t.Parallel()
 
-	// Use a real ACPBackend configured for opencode, which returns non-empty guidance.
+	// A real ACPBackend configured for opencode returns non-empty guidance;
+	// Ollama and unregistered backends return none.
 	backends := map[string]AgentBackend{
 		"opencode": NewACPBackend(ACPBackendConfig{
 			Command:      "opencode",
 			DefaultModel: "some-model",
 		}),
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create agent service: %v", err)
-	}
-
-	guidance := svc.BackendToolGuidance("opencode")
-	if guidance == "" {
-		t.Fatal("expected non-empty guidance for opencode backend")
-	}
-	if !strings.Contains(guidance, "description") {
-		t.Error("opencode guidance should mention 'description' field requirement")
-	}
-}
-
-func TestBackendToolGuidance_UnknownBackend(t *testing.T) {
-	t.Parallel()
-
-	backends := map[string]AgentBackend{
-		"mock": &mockAgentBackend{},
-	}
-	svc, err := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-	if err != nil {
-		t.Fatalf("failed to create agent service: %v", err)
-	}
-
-	guidance := svc.BackendToolGuidance("nonexistent-backend")
-	if guidance != "" {
-		t.Errorf("expected empty guidance for non-existent backend, got %q", guidance)
-	}
-}
-
-func TestBackendToolGuidance_OllamaBackend(t *testing.T) {
-	t.Parallel()
-
-	backends := map[string]AgentBackend{
 		"ollama": NewOllamaBackend(OllamaBackendConfig{
 			DefaultModel: "tinyllama",
 		}),
@@ -2097,9 +2040,31 @@ func TestBackendToolGuidance_OllamaBackend(t *testing.T) {
 		t.Fatalf("failed to create agent service: %v", err)
 	}
 
-	guidance := svc.BackendToolGuidance("ollama")
-	if guidance != "" {
-		t.Errorf("expected empty guidance for ollama backend, got %q", guidance)
+	tests := []struct {
+		name         string
+		backend      string
+		wantContains string
+	}{
+		{name: "opencode mentions description field", backend: "opencode", wantContains: "description"},
+		{name: "ollama has no guidance", backend: "ollama"},
+		{name: "unknown backend has no guidance", backend: "nonexistent-backend"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			guidance := svc.BackendToolGuidance(tt.backend)
+			if tt.wantContains == "" {
+				if guidance != "" {
+					t.Errorf("expected empty guidance for %s, got %q", tt.backend, guidance)
+				}
+				return
+			}
+			if !strings.Contains(guidance, tt.wantContains) {
+				t.Errorf("guidance for %s should mention %q, got %q", tt.backend, tt.wantContains, guidance)
+			}
+		})
 	}
 }
 
