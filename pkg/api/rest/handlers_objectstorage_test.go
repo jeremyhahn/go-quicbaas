@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1124,89 +1125,54 @@ func TestHandleGetTenantQuotas_Success(t *testing.T) {
 // Error Handling Tests
 // =============================================================================
 
-func TestHandleObjectStorageError_NotFound(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound}
+// TestHandleObjectStorageError maps each service error kind to its HTTP
+// status: every QBError code with its own mapping, a code with none, and an
+// error that is not a QBError.
+func TestHandleObjectStorageError(t *testing.T) {
+	getFails := func(err error) *mockObjectStorageService {
+		return &mockObjectStorageService{getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
+			return nil, err
+		}}
+	}
+	putFails := func(err error) *mockObjectStorageService {
+		return &mockObjectStorageService{putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
+			return nil, err
+		}}
+	}
+	get := func(name, target string, err error, want int) objectHandlerCase {
+		return objectHandlerCase{name: name, mock: getFails(err), handler: (*Server).HandleGetObject,
+			method: http.MethodGet, route: "/api/v1/objects/*", target: target, wantStatus: want}
+	}
+	put := func(name, target string, err error, want int) objectHandlerCase {
+		return objectHandlerCase{name: name, mock: putFails(err), handler: (*Server).HandlePutObject,
+			method: http.MethodPut, route: "/api/v1/objects/*", target: target, body: "data", wantStatus: want}
+	}
+
+	tests := []objectHandlerCase{
+		get("NotFound", "/api/v1/objects/missing.txt", &errors.QBError{Code: errors.ErrNotFound}, http.StatusNotFound),
+		get("Forbidden", "/api/v1/objects/protected.txt", &errors.QBError{Code: errors.ErrForbidden}, http.StatusForbidden),
+		put("QuotaExceeded", "/api/v1/objects/large.bin", &errors.QBError{Code: errors.ErrResourceExhausted}, http.StatusTooManyRequests),
+		put("InvalidInput", "/api/v1/objects/test.txt",
+			&errors.QBError{Code: errors.ErrInvalidInput, Err: &errors.MessageError{Message: "invalid input"}}, http.StatusBadRequest),
+		get("Timeout", "/api/v1/objects/test.txt",
+			&errors.QBError{Code: errors.ErrTimeout, Err: &errors.MessageError{Message: "timeout"}}, http.StatusGatewayTimeout),
+		get("Storage", "/api/v1/objects/test.txt",
+			&errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}, http.StatusInternalServerError),
+		get("UnmappedCode", "/api/v1/objects/test.txt",
+			&errors.QBError{Code: errors.ErrRaft, Err: &errors.MessageError{Message: "raft error"}}, http.StatusInternalServerError),
+		get("NonQBError", "/api/v1/objects/test.txt", &errors.MessageError{Message: "generic error"}, http.StatusInternalServerError),
+		{
+			name: "AlreadyExists",
+			mock: &mockObjectStorageService{copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
+				return nil, &errors.QBError{Code: errors.ErrAlreadyExists}
+			}},
+			handler: (*Server).HandleCopyObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/copy", body: `{"destination_key":"existing.txt"}`,
+			wantStatus: http.StatusConflict,
 		},
 	}
-	s := newTestObjectStorageServer(mockObjService)
 
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/missing.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_Forbidden(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrForbidden}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/protected.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_QuotaExceeded(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrResourceExhausted}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandlePutObject)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/large.bin", bytes.NewReader([]byte("data")))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusTooManyRequests {
-		t.Errorf("expected status %d, got %d", http.StatusTooManyRequests, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_AlreadyExists(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrAlreadyExists}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleCopyObject)
-
-	body := `{"destination_key":"existing.txt"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/copy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusConflict {
-		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
-	}
+	runObjectHandlerCases(t, tests)
 }
 
 // =============================================================================
@@ -1471,470 +1437,219 @@ func TestHandleObjectAction_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHandleObjectStorageError_InvalidInput(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrInvalidInput, Err: &errors.MessageError{Message: "invalid input"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
+// objectHandlerCase is one request to one object storage handler, mounted on
+// its route, and the HTTP status the handler must answer with.
+type objectHandlerCase struct {
+	name       string
+	mock       *mockObjectStorageService
+	handler    func(*Server, http.ResponseWriter, *http.Request)
+	method     string
+	route      string
+	target     string
+	body       string
+	wantStatus int
+}
 
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandlePutObject)
+// runObjectHandlerCases serves each case through a chi router and checks the
+// response status. An empty body is sent as a nil body.
+func runObjectHandlerCases(t *testing.T, tests []objectHandlerCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestObjectStorageServer(tt.mock)
+			r := chi.NewRouter()
+			r.MethodFunc(tt.method, tt.route, func(w http.ResponseWriter, req *http.Request) {
+				tt.handler(s, w, req)
+			})
 
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt", bytes.NewReader([]byte("data")))
-	w := httptest.NewRecorder()
+			var body io.Reader
+			if tt.body != "" {
+				body = strings.NewReader(tt.body)
+			}
+			req := httptest.NewRequest(tt.method, tt.target, body)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
 
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+			if w.Code != tt.wantStatus {
+				t.Errorf("expected status %d, got %d", tt.wantStatus, w.Code)
+			}
+		})
 	}
 }
 
-func TestHandleObjectStorageError_Timeout(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrTimeout, Err: &errors.MessageError{Message: "timeout"}}
+// TestObjectHandlers_ServiceError drives every object storage handler with a
+// service that fails, and checks the QBError code maps to the HTTP status.
+func TestObjectHandlers_ServiceError(t *testing.T) {
+	storageErr := &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
+	notFoundErr := &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
+	forbiddenErr := &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
+
+	tests := []objectHandlerCase{
+		{
+			name: "PutObject",
+			mock: &mockObjectStorageService{putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandlePutObject, method: http.MethodPut,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt", body: "data",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "DeleteObject",
+			mock: &mockObjectStorageService{deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleDeleteObject, method: http.MethodDelete,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/nonexistent.txt",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "ListObjects",
+			mock: &mockObjectStorageService{listObjectsFunc: func(ctx context.Context, req *service.ListObjectsRequest) (*service.ListObjectsResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleListObjects, method: http.MethodGet,
+			route: "/api/v1/objects", target: "/api/v1/objects",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "ListByTag",
+			mock: &mockObjectStorageService{listByTagFunc: func(ctx context.Context, req *service.ListByTagRequest) (*service.ListByTagResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleListByTag, method: http.MethodGet,
+			route: "/api/v1/objects/by-tag", target: "/api/v1/objects/by-tag?name=env",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "ListByTenant",
+			mock: &mockObjectStorageService{listByTenantFunc: func(ctx context.Context, req *service.ListByTenantRequest) (*service.ListByTenantResponse, error) {
+				return nil, forbiddenErr
+			}},
+			handler: (*Server).HandleListByTenant, method: http.MethodGet,
+			route: "/api/v1/objects/by-tenant/{tenant}", target: "/api/v1/objects/by-tenant/tenant1",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "HeadObject",
+			mock: &mockObjectStorageService{headObjectFunc: func(ctx context.Context, req *service.HeadObjectRequest) (*service.HeadObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleHeadObject, method: http.MethodHead,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "CopyObject",
+			mock: &mockObjectStorageService{copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleCopyObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/nonexistent.txt/copy", body: `{"destination_key":"backup/test.txt"}`,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "ReplicateObject",
+			mock: &mockObjectStorageService{replicateObjectFunc: func(ctx context.Context, req *service.ReplicateObjectRequest) (*service.ReplicateObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleReplicateObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/replicate", body: `{"targets":["replica1"]}`,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "MigrateObject",
+			mock: &mockObjectStorageService{migrateObjectFunc: func(ctx context.Context, req *service.MigrateObjectRequest) (*service.MigrateObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleMigrateObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/migrate", body: `{"target_backend":"archive"}`,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "ArchiveObject",
+			mock: &mockObjectStorageService{archiveObjectFunc: func(ctx context.Context, req *service.ArchiveObjectRequest) (*service.ArchiveObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleArchiveObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/archive",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "RestoreObject",
+			mock: &mockObjectStorageService{restoreObjectFunc: func(ctx context.Context, req *service.RestoreObjectRequest) (*service.RestoreObjectResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleRestoreObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/restore",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "VerifyObject",
+			mock: &mockObjectStorageService{verifyObjectFunc: func(ctx context.Context, req *service.VerifyObjectRequest) (*service.VerifyObjectResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleVerifyObject, method: http.MethodPost,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/verify",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "GetObjectPolicy",
+			mock: &mockObjectStorageService{getObjectPolicyFunc: func(ctx context.Context, req *service.GetObjectPolicyRequest) (*service.GetObjectPolicyResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleGetObjectPolicy, method: http.MethodGet,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/nonexistent.txt/policy",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "SetObjectPolicy",
+			mock: &mockObjectStorageService{setObjectPolicyFunc: func(ctx context.Context, req *service.SetObjectPolicyRequest) (*service.SetObjectPolicyResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleSetObjectPolicy, method: http.MethodPut,
+			route: "/api/v1/objects/*", target: "/api/v1/objects/nonexistent.txt/policy", body: `{"replication_policy":{"enabled":true}}`,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "ListObjectBackends",
+			mock: &mockObjectStorageService{listBackendsFunc: func(ctx context.Context, req *service.ListBackendsRequest) (*service.ListBackendsResponse, error) {
+				return nil, storageErr
+			}},
+			handler: (*Server).HandleListObjectBackends, method: http.MethodGet,
+			route: "/api/v1/backends", target: "/api/v1/backends",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "GetObjectBackendHealth",
+			mock: &mockObjectStorageService{getBackendHealthFunc: func(ctx context.Context, req *service.GetBackendHealthRequest) (*service.GetBackendHealthResponse, error) {
+				return nil, notFoundErr
+			}},
+			handler: (*Server).HandleGetObjectBackendHealth, method: http.MethodGet,
+			route: "/api/v1/backends/{name}/health", target: "/api/v1/backends/nonexistent/health",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "GetTenantUsage",
+			mock: &mockObjectStorageService{getTenantUsageFunc: func(ctx context.Context, req *service.GetTenantUsageRequest) (*service.GetTenantUsageResponse, error) {
+				return nil, forbiddenErr
+			}},
+			handler: (*Server).HandleGetTenantUsage, method: http.MethodGet,
+			route: "/api/v1/tenants/{tenant}/usage", target: "/api/v1/tenants/tenant1/usage",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "GetTenantQuotas",
+			mock: &mockObjectStorageService{getTenantQuotasFunc: func(ctx context.Context, req *service.GetTenantQuotasRequest) (*service.GetTenantQuotasResponse, error) {
+				return nil, forbiddenErr
+			}},
+			handler: (*Server).HandleGetTenantQuotas, method: http.MethodGet,
+			route: "/api/v1/tenants/{tenant}/quotas", target: "/api/v1/tenants/tenant1/quotas",
+			wantStatus: http.StatusForbidden,
 		},
 	}
-	s := newTestObjectStorageServer(mockObjService)
 
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusGatewayTimeout {
-		t.Errorf("expected status %d, got %d", http.StatusGatewayTimeout, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_Storage(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_NonQBError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &errors.MessageError{Message: "generic error"}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandlePutObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandlePutObject)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/test.txt", bytes.NewReader([]byte("data")))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleDeleteObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Delete("/api/v1/objects/*", s.HandleDeleteObject)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/objects/nonexistent.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleListObjects_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		listObjectsFunc: func(ctx context.Context, req *service.ListObjectsRequest) (*service.ListObjectsResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects", s.HandleListObjects)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleListByTag_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		listByTagFunc: func(ctx context.Context, req *service.ListByTagRequest) (*service.ListByTagResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/by-tag", s.HandleListByTag)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/by-tag?name=env", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleListByTenant_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		listByTenantFunc: func(ctx context.Context, req *service.ListByTenantRequest) (*service.ListByTenantResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/by-tenant/{tenant}", s.HandleListByTenant)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/by-tenant/tenant1", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
-	}
-}
-
-func TestHandleHeadObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		headObjectFunc: func(ctx context.Context, req *service.HeadObjectRequest) (*service.HeadObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Head("/api/v1/objects/*", s.HandleHeadObject)
-
-	req := httptest.NewRequest(http.MethodHead, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleCopyObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		copyObjectFunc: func(ctx context.Context, req *service.CopyObjectRequest) (*service.CopyObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "source not found"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleCopyObject)
-
-	body := `{"destination_key":"backup/test.txt"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/nonexistent.txt/copy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleReplicateObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		replicateObjectFunc: func(ctx context.Context, req *service.ReplicateObjectRequest) (*service.ReplicateObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "replication failed"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleReplicateObject)
-
-	body := `{"targets":["replica1"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/replicate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleMigrateObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		migrateObjectFunc: func(ctx context.Context, req *service.MigrateObjectRequest) (*service.MigrateObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "migration failed"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleMigrateObject)
-
-	body := `{"target_backend":"archive"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/migrate", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleArchiveObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		archiveObjectFunc: func(ctx context.Context, req *service.ArchiveObjectRequest) (*service.ArchiveObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "archive failed"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleArchiveObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/archive", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleRestoreObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		restoreObjectFunc: func(ctx context.Context, req *service.RestoreObjectRequest) (*service.RestoreObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not archived"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleRestoreObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/restore", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleVerifyObject_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		verifyObjectFunc: func(ctx context.Context, req *service.VerifyObjectRequest) (*service.VerifyObjectResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "verify failed"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/*", s.HandleVerifyObject)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/test.txt/verify", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleGetObjectPolicy_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectPolicyFunc: func(ctx context.Context, req *service.GetObjectPolicyRequest) (*service.GetObjectPolicyResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObjectPolicy)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/nonexistent.txt/policy", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleSetObjectPolicy_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		setObjectPolicyFunc: func(ctx context.Context, req *service.SetObjectPolicyRequest) (*service.SetObjectPolicyResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "not found"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/objects/*", s.HandleSetObjectPolicy)
-
-	body := `{"replication_policy":{"enabled":true}}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/nonexistent.txt/policy", strings.NewReader(body))
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleListObjectBackends_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		listBackendsFunc: func(ctx context.Context, req *service.ListBackendsRequest) (*service.ListBackendsResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrStorage, Err: &errors.MessageError{Message: "storage error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/backends", s.HandleListObjectBackends)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-}
-
-func TestHandleGetObjectBackendHealth_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getBackendHealthFunc: func(ctx context.Context, req *service.GetBackendHealthRequest) (*service.GetBackendHealthResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrNotFound, Err: &errors.MessageError{Message: "backend not found"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/backends/{name}/health", s.HandleGetObjectBackendHealth)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends/nonexistent/health", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, w.Code)
-	}
-}
-
-func TestHandleGetTenantUsage_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getTenantUsageFunc: func(ctx context.Context, req *service.GetTenantUsageRequest) (*service.GetTenantUsageResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/tenants/{tenant}/usage", s.HandleGetTenantUsage)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/usage", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
-	}
-}
-
-func TestHandleGetTenantQuotas_ServiceError(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getTenantQuotasFunc: func(ctx context.Context, req *service.GetTenantQuotasRequest) (*service.GetTenantQuotasResponse, error) {
-			return nil, &errors.QBError{Code: errors.ErrForbidden, Err: &errors.MessageError{Message: "forbidden"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/tenants/{tenant}/quotas", s.HandleGetTenantQuotas)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenants/tenant1/quotas", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected status %d, got %d", http.StatusForbidden, w.Code)
-	}
+	runObjectHandlerCases(t, tests)
 }
 
 func TestHandlePutObject_InvalidTagsJSON(t *testing.T) {
@@ -2728,28 +2443,6 @@ func TestHandleGetObjectPolicy_WithPolicy(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-func TestHandleObjectStorageError_DefaultCase(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			// Use an error code that doesn't have specific handling
-			return nil, &errors.QBError{Code: errors.ErrRaft, Err: &errors.MessageError{Message: "raft error"}}
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/*", s.HandleGetObject)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/test.txt", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, w.Code)
 	}
 }
 
