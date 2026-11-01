@@ -38,8 +38,17 @@ const (
 	xkmsKeystoreDeleteKey   = "/xkms.v1.KeystoreService/DeleteKey"
 )
 
+// xkmsKeyPurposeSecret and xkmsKeyPurposeSigning are the key purposes an
+// xkms.v1 GenerateKeyRequest carries in key_type.
+const (
+	xkmsKeyPurposeSecret  = "secret"
+	xkmsKeyPurposeSigning = "signing"
+)
+
 // xkmsKeySpec is the key_type, key_size, curve and algorithm an xkms.v1
-// GenerateKeyRequest carries for one key algorithm.
+// GenerateKeyRequest carries for one key algorithm. key_type is the key's
+// purpose; algorithm selects the key, with key_size for RSA and symmetric
+// keys and curve for ECDSA.
 type xkmsKeySpec struct {
 	keyType   string
 	keySize   int32
@@ -50,44 +59,71 @@ type xkmsKeySpec struct {
 // xkmsKeySpecs maps each key algorithm the client generates onto its xkms.v1
 // key spec.
 var xkmsKeySpecs = map[pb.KeyAlgorithm]xkmsKeySpec{
-	pb.KeyAlgorithm_KEY_ALG_AES_128_GCM:        {keyType: "symmetric", keySize: 128, algorithm: "aes-128-gcm"},
-	pb.KeyAlgorithm_KEY_ALG_AES_192_GCM:        {keyType: "symmetric", keySize: 192, algorithm: "aes-192-gcm"},
-	pb.KeyAlgorithm_KEY_ALG_AES_256_GCM:        {keyType: "symmetric", keySize: 256, algorithm: "aes-256-gcm"},
-	pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305:  {keyType: "symmetric", keySize: 256, algorithm: "chacha20-poly1305"},
-	pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305: {keyType: "symmetric", keySize: 256, algorithm: "xchacha20-poly1305"},
-	pb.KeyAlgorithm_KEY_ALG_RSA_2048:           {keyType: "rsa", keySize: 2048},
-	pb.KeyAlgorithm_KEY_ALG_RSA_3072:           {keyType: "rsa", keySize: 3072},
-	pb.KeyAlgorithm_KEY_ALG_RSA_4096:           {keyType: "rsa", keySize: 4096},
-	pb.KeyAlgorithm_KEY_ALG_ECDSA_P256:         {keyType: "ecdsa", keySize: 256, curve: "P-256"},
-	pb.KeyAlgorithm_KEY_ALG_ECDSA_P384:         {keyType: "ecdsa", keySize: 384, curve: "P-384"},
-	pb.KeyAlgorithm_KEY_ALG_ECDSA_P521:         {keyType: "ecdsa", keySize: 521, curve: "P-521"},
-	pb.KeyAlgorithm_KEY_ALG_ED25519:            {keyType: "ed25519", keySize: 256},
+	pb.KeyAlgorithm_KEY_ALG_AES_128_GCM:        {keyType: xkmsKeyPurposeSecret, keySize: 128, algorithm: string(kctypes.SymmetricAES128GCM)},
+	pb.KeyAlgorithm_KEY_ALG_AES_192_GCM:        {keyType: xkmsKeyPurposeSecret, keySize: 192, algorithm: string(kctypes.SymmetricAES192GCM)},
+	pb.KeyAlgorithm_KEY_ALG_AES_256_GCM:        {keyType: xkmsKeyPurposeSecret, keySize: 256, algorithm: string(kctypes.SymmetricAES256GCM)},
+	pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305:  {keyType: xkmsKeyPurposeSecret, keySize: 256, algorithm: string(kctypes.SymmetricChaCha20Poly1305)},
+	pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305: {keyType: xkmsKeyPurposeSecret, keySize: 256, algorithm: string(kctypes.SymmetricXChaCha20Poly1305)},
+	pb.KeyAlgorithm_KEY_ALG_RSA_2048:           {keyType: xkmsKeyPurposeSigning, keySize: 2048, algorithm: "rsa"},
+	pb.KeyAlgorithm_KEY_ALG_RSA_3072:           {keyType: xkmsKeyPurposeSigning, keySize: 3072, algorithm: "rsa"},
+	pb.KeyAlgorithm_KEY_ALG_RSA_4096:           {keyType: xkmsKeyPurposeSigning, keySize: 4096, algorithm: "rsa"},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P256:         {keyType: xkmsKeyPurposeSigning, curve: "P-256", algorithm: "ecdsa"},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P384:         {keyType: xkmsKeyPurposeSigning, curve: "P-384", algorithm: "ecdsa"},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P521:         {keyType: xkmsKeyPurposeSigning, curve: "P-521", algorithm: "ecdsa"},
+	pb.KeyAlgorithm_KEY_ALG_ED25519:            {keyType: xkmsKeyPurposeSigning, algorithm: "ed25519"},
 }
 
-// xkmsKeyAlgorithms is xkmsKeySpecs inverted, to name the algorithm of a key
-// an xkms.v1 ListKeys returns.
-var xkmsKeyAlgorithms = invertXKMSKeySpecs(xkmsKeySpecs)
-
-func invertXKMSKeySpecs(specs map[pb.KeyAlgorithm]xkmsKeySpec) map[xkmsKeySpec]pb.KeyAlgorithm {
-	out := make(map[xkmsKeySpec]pb.KeyAlgorithm, len(specs))
-	for alg, spec := range specs {
-		out[spec] = alg
-	}
-	return out
+// xkmsListedKey is the shape of an xkms.v1 KeyInfo that names its key: the
+// algorithm, with key_size for RSA and curve for ECDSA. key_type is the key's
+// purpose and names no algorithm.
+type xkmsListedKey struct {
+	algorithm string
+	keySize   int32
+	curve     string
 }
 
-// xkmsServiceKeyAlgorithm names the algorithm of an xkms.v1 KeyInfo. Only a
-// symmetric key's algorithm string tells its cipher apart, so it is matched
-// for symmetric keys alone; an unknown key keeps the algorithm xkms reports.
+// xkmsListedKeyAlgorithms names the algorithm of each key shape an xkms.v1
+// ListKeys returns.
+var xkmsListedKeyAlgorithms = map[xkmsListedKey]pb.KeyAlgorithm{
+	{algorithm: string(kctypes.SymmetricAES128GCM)}:         pb.KeyAlgorithm_KEY_ALG_AES_128_GCM,
+	{algorithm: string(kctypes.SymmetricAES192GCM)}:         pb.KeyAlgorithm_KEY_ALG_AES_192_GCM,
+	{algorithm: string(kctypes.SymmetricAES256GCM)}:         pb.KeyAlgorithm_KEY_ALG_AES_256_GCM,
+	{algorithm: string(kctypes.SymmetricChaCha20Poly1305)}:  pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305,
+	{algorithm: string(kctypes.SymmetricXChaCha20Poly1305)}: pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305,
+	{algorithm: "RSA", keySize: 2048}:                       pb.KeyAlgorithm_KEY_ALG_RSA_2048,
+	{algorithm: "RSA", keySize: 3072}:                       pb.KeyAlgorithm_KEY_ALG_RSA_3072,
+	{algorithm: "RSA", keySize: 4096}:                       pb.KeyAlgorithm_KEY_ALG_RSA_4096,
+	{algorithm: "ECDSA", curve: "P-256"}:                    pb.KeyAlgorithm_KEY_ALG_ECDSA_P256,
+	{algorithm: "ECDSA", curve: "P-384"}:                    pb.KeyAlgorithm_KEY_ALG_ECDSA_P384,
+	{algorithm: "ECDSA", curve: "P-521"}:                    pb.KeyAlgorithm_KEY_ALG_ECDSA_P521,
+	{algorithm: "Ed25519"}:                                  pb.KeyAlgorithm_KEY_ALG_ED25519,
+}
+
+// xkmsServiceKeyAlgorithm names the algorithm of an xkms.v1 KeyInfo. The
+// server sets key_size only for RSA and curve only for ECDSA, so each is kept
+// only for its algorithm; an unknown key keeps the algorithm xkms reports.
 func xkmsServiceKeyAlgorithm(info *kctypes.ProtoKeyInfo) service.KeyAlgorithm {
-	spec := xkmsKeySpec{keyType: info.GetKeyType(), keySize: info.GetKeySize(), curve: info.GetCurve()}
-	if spec.keyType == "symmetric" {
-		spec.algorithm = info.GetAlgorithm()
+	listed := xkmsListedKey{algorithm: info.GetAlgorithm()}
+	if listed.algorithm == "RSA" {
+		listed.keySize = info.GetKeySize()
 	}
-	if alg, ok := xkmsKeyAlgorithms[spec]; ok {
+	if listed.algorithm == "ECDSA" {
+		listed.curve = info.GetCurve()
+	}
+	if alg, ok := xkmsListedKeyAlgorithms[listed]; ok {
 		return convertProtoToServiceKeyAlgorithm(alg)
 	}
 	return service.KeyAlgorithm(info.GetAlgorithm())
+}
+
+// xkmsBackend is the xkms.v1 backend a request names, or the node's default
+// backend when it names none: pkg/server/lifecycle.go registers the node's
+// xkms backend as its DefaultBackend, string(kctypes.StoreSoftware).
+func xkmsBackend(named string) string {
+	if named != "" {
+		return named
+	}
+	return string(kctypes.StoreSoftware)
 }
 
 // KMSGenerateKey creates a new cryptographic key with the specified parameters
@@ -112,6 +148,7 @@ func (c *Client) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyReq
 
 	xkmsReq := &kctypes.ProtoGenerateKeyRequest{
 		KeyId:      req.Name,
+		Backend:    xkmsBackend(string(req.KeyAttributes.StoreType)),
 		KeyType:    spec.keyType,
 		KeySize:    spec.keySize,
 		Curve:      spec.curve,
@@ -250,7 +287,7 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 	}
 
 	xkmsReq := &kctypes.ProtoListKeysRequest{
-		Backend:   req.Filter["backend"],
+		Backend:   xkmsBackend(req.Filter["backend"]),
 		Partition: req.Filter["partition"],
 		Limit:     limit,
 		Offset:    offset,
@@ -337,7 +374,9 @@ func (c *Client) KMSDeleteKey(ctx context.Context, req *service.DeleteKeyRequest
 		return nil, err
 	}
 
-	xkmsReq := &kctypes.ProtoDeleteKeyRequest{KeyId: req.KeyID}
+	// service.DeleteKeyRequest names no backend, so the key is deleted from
+	// the node's default backend.
+	xkmsReq := &kctypes.ProtoDeleteKeyRequest{KeyId: req.KeyID, Backend: xkmsBackend("")}
 	xkmsResp := &kctypes.ProtoDeleteKeyResponse{}
 	if err := c.conn.Invoke(ctx, xkmsKeystoreDeleteKey, xkmsReq, xkmsResp); err != nil {
 		return nil, convertError(err)

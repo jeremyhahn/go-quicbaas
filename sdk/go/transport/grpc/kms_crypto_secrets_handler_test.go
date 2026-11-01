@@ -116,8 +116,8 @@ func TestKMSHandler_GenerateKey_Success(t *testing.T) {
 	if fake.lastGenName != "my-key" {
 		t.Errorf("server saw key id %q, want %q", fake.lastGenName, "my-key")
 	}
-	if fake.lastGenAlgorithm != "aes-256-gcm" {
-		t.Errorf("server saw algorithm %q, want aes-256-gcm", fake.lastGenAlgorithm)
+	if fake.lastGenAlgorithm != "aes256-gcm" {
+		t.Errorf("server saw algorithm %q, want aes256-gcm", fake.lastGenAlgorithm)
 	}
 
 	// The response must round-trip as the canonical service type the SDK

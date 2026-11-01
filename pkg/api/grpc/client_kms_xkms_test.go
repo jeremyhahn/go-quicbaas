@@ -248,32 +248,39 @@ func TestClientKMSGenerateKey_XKMSKeystoreAlreadyExists(t *testing.T) {
 func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	fake := &recordingKeystoreServer{
 		listKeys: []*xkmssdk.ProtoKeyInfo{
-			{KeyId: "k1", KeyType: "symmetric", Algorithm: "aes-256-gcm", KeySize: 256, KeyVersion: 2},
-			{KeyId: "k2", KeyType: "ecdsa", KeySize: 384, Curve: "P-384", KeyVersion: 1},
+			{KeyId: "k1", KeyType: "SECRET", Algorithm: "aes256-gcm", KeyVersion: 2},
+			{KeyId: "k2", KeyType: "SIGNING", Algorithm: "ECDSA", Curve: "P-384", KeyVersion: 1},
+			{KeyId: "k3", KeyType: "SIGNING", Algorithm: "RSA", KeySize: 4096, KeyVersion: 1},
+			{KeyId: "k4", KeyType: "SIGNING", Algorithm: "Ed25519", KeyVersion: 1},
+			{KeyId: "k5", KeyType: "SIGNING", Algorithm: "ML-DSA-65", KeyVersion: 1},
 		},
-		total: 5,
+		total: 9,
 	}
 	client := newXKMSKeystoreClient(t, fake)
 
-	resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Limit: 2})
+	resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Limit: 5})
 	require.NoError(t, err)
 
 	fake.mu.Lock()
 	got := fake.listReq
 	fake.mu.Unlock()
 	require.NotNil(t, got)
-	assert.Equal(t, int32(2), got.GetLimit())
+	assert.Equal(t, int32(5), got.GetLimit())
 	assert.Equal(t, int32(0), got.GetOffset())
 	assert.Equal(t, "software", got.GetBackend())
 
-	require.Len(t, resp.Keys, 2)
+	require.Len(t, resp.Keys, 5)
 	assert.Equal(t, "k1", resp.Keys[0].KeyID)
 	assert.Equal(t, uint64(2), resp.Keys[0].Version)
 	assert.Equal(t, service.KeyAlgAES256GCM, resp.Keys[0].Algorithm)
 	assert.Equal(t, service.KeyAlgECDSAP384, resp.Keys[1].Algorithm)
-	assert.Equal(t, 5, resp.TotalCount)
+	assert.Equal(t, service.KeyAlgRSA4096, resp.Keys[2].Algorithm)
+	assert.Equal(t, service.KeyAlgEd25519, resp.Keys[3].Algorithm)
+	// An algorithm the client has no name for keeps the name xkms reports.
+	assert.Equal(t, service.KeyAlgorithm("ML-DSA-65"), resp.Keys[4].Algorithm)
+	assert.Equal(t, 9, resp.TotalCount)
 	assert.True(t, resp.HasMore)
-	assert.Equal(t, "2", resp.NextCursor)
+	assert.Equal(t, "5", resp.NextCursor)
 
 	// The cursor is the xkms.v1 offset of the next page.
 	// A backend the caller names in the filter is the one listed.
@@ -284,7 +291,7 @@ func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	})
 	require.NoError(t, err)
 	fake.mu.Lock()
-	assert.Equal(t, int32(2), fake.listReq.GetOffset())
+	assert.Equal(t, int32(5), fake.listReq.GetOffset())
 	assert.Equal(t, string(xkmssdk.StorePKCS11), fake.listReq.GetBackend())
 	fake.mu.Unlock()
 }
