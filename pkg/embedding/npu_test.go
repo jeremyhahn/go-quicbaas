@@ -1050,62 +1050,55 @@ func TestNPUProviderRegistersWithManager(t *testing.T) {
 // The sidecar must not serve a different model
 // -----------------------------------------------------------------------------
 
-// TestNPUProviderRejectsADifferentModel guards a silent index-corruption path. A
+// TestNPUProviderServedModelCheck guards a silent index-corruption path. A
 // vector's meaning depends on the model that produced it, and two models of the
 // same width yield mutually incomparable vectors -- so a mismatch has no visible
-// symptom until retrieval quality collapses. It must be an error.
-func TestNPUProviderRejectsADifferentModel(t *testing.T) {
-	sidecar := newRecordingSidecar(t)
-	sidecar.respond = func(w http.ResponseWriter, req npuEmbedRequest) {
-		sidecar.writeJSON(w, npuEmbedResponse{
-			Embeddings: [][]float32{vec(DefaultNPUDimensions, 0)},
-			Model:      "some-other-model",
-			Dimensions: DefaultNPUDimensions,
-			Device:     "NPU",
+// symptom until retrieval quality collapses. It must be an error. A sidecar
+// that omits the field is not asserting a different model, so that is accepted.
+func TestNPUProviderServedModelCheck(t *testing.T) {
+	tests := []struct {
+		name        string
+		servedModel string
+		wantErr     bool
+	}{
+		{name: "a different model is rejected", servedModel: "some-other-model", wantErr: true},
+		{name: "an omitted model is accepted", servedModel: "", wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sidecar := newRecordingSidecar(t)
+			sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
+				sidecar.writeJSON(w, npuEmbedResponse{
+					Embeddings: [][]float32{vec(DefaultNPUDimensions, 0)},
+					Model:      tt.servedModel,
+					Dimensions: DefaultNPUDimensions,
+					Device:     "NPU",
+				})
+			}
+			srv := startSidecar(t, sidecar)
+			p := newTestProvider(t, srv, nil)
+
+			_, err := p.Embed(context.Background(), "text")
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("an omitted model field must be accepted: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrNPUModelMismatch) {
+				t.Errorf("error %v does not match ErrNPUModelMismatch", err)
+			}
+			var typed *NPUModelMismatchError
+			if !errors.As(err, &typed) {
+				t.Fatalf("error %v is not an *NPUModelMismatchError", err)
+			}
+			if typed.Requested != DefaultNPUModel || typed.Served != tt.servedModel {
+				t.Errorf("typed = {Requested:%q Served:%q}", typed.Requested, typed.Served)
+			}
 		})
-	}
-	srv := startSidecar(t, sidecar)
-	p := newTestProvider(t, srv, nil)
-
-	_, err := p.Embed(context.Background(), "text")
-	if err == nil {
-		t.Fatal("a sidecar serving a different model must be an error")
-	}
-	if !errors.Is(err, ErrNPUModelMismatch) {
-		t.Errorf("error %v does not match ErrNPUModelMismatch", err)
-	}
-
-	var typed *NPUModelMismatchError
-	if !errors.As(err, &typed) {
-		t.Fatalf("error %v is not an *NPUModelMismatchError", err)
-	}
-	if typed.Requested != DefaultNPUModel || typed.Served != "some-other-model" {
-		t.Errorf("typed = {Requested:%q Served:%q}", typed.Requested, typed.Served)
 	}
 }
 
-// TestNPUProviderAcceptsAnUnreportedModel keeps the check from being brittle: a
-// sidecar that omits the field is not asserting a different model.
-func TestNPUProviderAcceptsAnUnreportedModel(t *testing.T) {
-	sidecar := newRecordingSidecar(t)
-	sidecar.respond = func(w http.ResponseWriter, _ npuEmbedRequest) {
-		sidecar.writeJSON(w, npuEmbedResponse{
-			Embeddings: [][]float32{vec(DefaultNPUDimensions, 0)},
-			Dimensions: DefaultNPUDimensions,
-			Device:     "NPU",
-		})
-	}
-	srv := startSidecar(t, sidecar)
-	p := newTestProvider(t, srv, nil)
-
-	if _, err := p.Embed(context.Background(), "text"); err != nil {
-		t.Fatalf("an omitted model field must be accepted: %v", err)
-	}
-}
-
-// TestNPUProviderUnreachableMapsToProviderUnavailable is the end-to-end form of
-// the error-classification property: a down sidecar must look like an
-// unavailable backend to the service layer, not an internal fault.
 // TestNPUProviderRejectsADeclaredWidthMismatch covers the sidecar's own
 // `dimensions` field disagreeing with configuration, which is distinct from the
 // vectors themselves being the wrong width.
