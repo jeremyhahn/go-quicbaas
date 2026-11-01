@@ -821,60 +821,41 @@ func TestNewObjectStorageService_Success(t *testing.T) {
 	require.NotNil(t, svc)
 }
 
-func TestNewObjectStorageService_NilCatalogManager(t *testing.T) {
+func TestNewObjectStorageService_NilDependency(t *testing.T) {
+	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
 	resolver := newObjstoreMockConfigResolver()
 	logger := newObjstoreMockLogger()
 
-	svc, err := NewObjectStorageService(nil, backendMgr, resolver, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
+	tests := []struct {
+		name  string
+		build func() (ObjectStorageService, error)
+	}{
+		{"nil catalog manager", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(nil, backendMgr, resolver, nil, logger)
+		}},
+		{"nil backend manager", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, nil, resolver, nil, logger)
+		}},
+		{"nil config resolver", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, backendMgr, nil, nil, logger)
+		}},
+		{"nil logger", func() (ObjectStorageService, error) {
+			return NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, nil)
+		}},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, err := tt.build()
+			require.Error(t, err)
+			require.Nil(t, svc)
 
-func TestNewObjectStorageService_NilBackendManager(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	svc, err := NewObjectStorageService(catalogMgr, nil, resolver, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewObjectStorageService_NilConfigResolver(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	logger := newObjstoreMockLogger()
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, nil, nil, logger)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewObjectStorageService_NilLogger(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	resolver := newObjstoreMockConfigResolver()
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, nil)
-	require.Error(t, err)
-	require.Nil(t, svc)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -928,72 +909,35 @@ func TestPutObject_WithTags(t *testing.T) {
 	assert.Equal(t, "quicbaas", entry.Tags["project"])
 }
 
-func TestPutObject_NilRequest(t *testing.T) {
+func TestPutObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
-	resp, err := svc.PutObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_EmptyKey(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:   "",
-		Value: []byte("test data"),
+	tests := []struct {
+		name string
+		req  *PutObjectRequest
+	}{
+		{"nil request", nil},
+		{"empty key", &PutObjectRequest{Key: "", Value: []byte("test data")}},
+		{"empty value", &PutObjectRequest{Key: "test:empty", Value: []byte{}}},
+		{"checksum mismatch", &PutObjectRequest{
+			Key:      "test:checksum",
+			Value:    []byte("test data"),
+			Checksum: []byte("invalid checksum"),
+		}},
 	}
 
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := svc.PutObject(ctx, tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_EmptyValue(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:   "test:empty",
-		Value: []byte{},
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
 	}
-
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestPutObject_ChecksumMismatch(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &PutObjectRequest{
-		Key:      "test:checksum",
-		Value:    []byte("test data"),
-		Checksum: []byte("invalid checksum"),
-	}
-
-	resp, err := svc.PutObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestPutObject_QuotaExceeded(t *testing.T) {
@@ -1168,31 +1112,29 @@ func TestGetObject_NotFound(t *testing.T) {
 	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
 }
 
-func TestGetObject_NilRequest(t *testing.T) {
+func TestGetObject_InvalidRequest(t *testing.T) {
 	svc, _, _, _ := createObjstoreTestService(t)
 	ctx := tenantctx.WithSystem(context.Background())
 
-	resp, err := svc.GetObject(ctx, nil)
-	require.Error(t, err)
-	require.Nil(t, resp)
+	tests := []struct {
+		name string
+		req  *GetObjectRequest
+	}{
+		{"nil request", nil},
+		{"empty key", &GetObjectRequest{Key: ""}},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := svc.GetObject(ctx, tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
 
-func TestGetObject_EmptyKey(t *testing.T) {
-	svc, _, _, _ := createObjstoreTestService(t)
-	ctx := tenantctx.WithSystem(context.Background())
-
-	req := &GetObjectRequest{Key: ""}
-	resp, err := svc.GetObject(ctx, req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-
-	var qbErr *dberrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+		})
+	}
 }
 
 func TestGetObject_CrossTenantDenied(t *testing.T) {
