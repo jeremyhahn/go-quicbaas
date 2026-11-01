@@ -140,50 +140,56 @@ func createTestJob(name string, ownerType scheduler.OwnerType, ownerID string) *
 	}
 }
 
-func TestNewStorage(t *testing.T) {
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	if storage == nil {
-		t.Fatal("expected non-nil storage")
-	}
-	if storage.kv != kv {
-		t.Error("expected KVStore to be set")
-	}
-}
-
 func TestCreateJob_Success(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("test-job", scheduler.OwnerTypeSystem, "")
-
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name           string
+		ownerType      scheduler.OwnerType
+		ownerID        string
+		targetTenantID string
+		// getTenantID is the keyspace the job must be readable from.
+		getTenantID string
+	}{
+		{name: "system job", ownerType: scheduler.OwnerTypeSystem},
+		{name: "tenant job", ownerType: scheduler.OwnerTypeTenant, ownerID: "tenant-123", getTenantID: "tenant-123"},
+		// Delegated jobs live in the system keyspace.
+		{name: "delegated job", ownerType: scheduler.OwnerTypeDelegated, targetTenantID: "target-tenant"},
 	}
 
-	// Verify job was assigned an ID
-	if job.ID == 0 {
-		t.Error("expected job ID to be assigned")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	// Verify timestamps were set
-	if job.CreatedAt.IsZero() {
-		t.Error("expected CreatedAt to be set")
-	}
-	if job.UpdatedAt.IsZero() {
-		t.Error("expected UpdatedAt to be set")
-	}
+			job := createTestJob("test-job", tt.ownerType, tt.ownerID)
+			job.TargetTenantID = tt.targetTenantID
 
-	// Verify job was stored
-	retrieved, err := storage.GetJob(ctx, job.ID, "")
-	if err != nil {
-		t.Fatalf("failed to retrieve job: %v", err)
-	}
-	if retrieved.Name != job.Name {
-		t.Errorf("expected name %s, got %s", job.Name, retrieved.Name)
+			if err := storage.CreateJob(ctx, job); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if job.ID == 0 {
+				t.Error("expected job ID to be assigned")
+			}
+			if job.CreatedAt.IsZero() {
+				t.Error("expected CreatedAt to be set")
+			}
+			if job.UpdatedAt.IsZero() {
+				t.Error("expected UpdatedAt to be set")
+			}
+
+			retrieved, err := storage.GetJob(ctx, job.ID, tt.getTenantID)
+			if err != nil {
+				t.Fatalf("failed to retrieve job: %v", err)
+			}
+			if retrieved.Name != job.Name {
+				t.Errorf("expected name %s, got %s", job.Name, retrieved.Name)
+			}
+			if retrieved.OwnerID != tt.ownerID {
+				t.Errorf("expected owner ID %q, got %q", tt.ownerID, retrieved.OwnerID)
+			}
+			if retrieved.TargetTenantID != tt.targetTenantID {
+				t.Errorf("expected target tenant ID %q, got %q", tt.targetTenantID, retrieved.TargetTenantID)
+			}
+		})
 	}
 }
 
@@ -228,51 +234,6 @@ func TestCreateJob_WithExistingID(t *testing.T) {
 	// Verify ID was preserved
 	if job.ID != 999 {
 		t.Errorf("expected job ID 999, got %d", job.ID)
-	}
-}
-
-func TestCreateJob_TenantJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("tenant-job", scheduler.OwnerTypeTenant, "tenant-123")
-
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify job was stored in tenant keyspace
-	retrieved, err := storage.GetJob(ctx, job.ID, "tenant-123")
-	if err != nil {
-		t.Fatalf("failed to retrieve tenant job: %v", err)
-	}
-	if retrieved.OwnerID != "tenant-123" {
-		t.Errorf("expected owner ID tenant-123, got %s", retrieved.OwnerID)
-	}
-}
-
-func TestCreateJob_DelegatedJob(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job := createTestJob("delegated-job", scheduler.OwnerTypeDelegated, "")
-	job.TargetTenantID = "target-tenant"
-
-	err := storage.CreateJob(ctx, job)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Delegated jobs should be stored in system keyspace
-	retrieved, err := storage.GetJob(ctx, job.ID, "")
-	if err != nil {
-		t.Fatalf("failed to retrieve delegated job: %v", err)
-	}
-	if retrieved.TargetTenantID != "target-tenant" {
-		t.Errorf("expected target tenant ID target-tenant, got %s", retrieved.TargetTenantID)
 	}
 }
 
