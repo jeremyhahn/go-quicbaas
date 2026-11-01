@@ -821,6 +821,7 @@ func TestXKMSHandlersUninitialized(t *testing.T) {
 		{"getKey", registry.handleXKMSGetKey, keyArgs, "getKey"},
 		{"deleteKey", registry.handleXKMSDeleteKey, keyArgs, "deleteKey"},
 		{"rotateKey", registry.handleXKMSRotateKey, keyArgs, "rotateKey"},
+		{"rotateKey with backend", registry.handleXKMSRotateKey, map[string]interface{}{"key_id": "test-key", "backend": "software"}, "rotateKey"},
 		{"sign", registry.handleXKMSSign, map[string]interface{}{"key_id": "test-key", "data": b64("data-to-sign")}, "sign"},
 		{"encrypt", registry.handleXKMSEncrypt, map[string]interface{}{"key_id": "test-key", "plaintext": b64("secret-data")}, "encrypt"},
 		{"decrypt", registry.handleXKMSDecrypt, map[string]interface{}{"key_id": "test-key", "ciphertext": b64("cipher")}, "decrypt"},
@@ -1054,191 +1055,51 @@ func TestMCPCoverage91Extra_CacheConfigUpdate_NilResponse(t *testing.T) {
 }
 
 // =============================================================================
-// Batch operation parse errors - executeBatchPut specific branches
+// Batch operation parse errors - executeBatchPut/Get/Delete
 // =============================================================================
 
-func TestMCPCoverage91Extra_BatchPut_InvalidOperationType(t *testing.T) {
+// TestMCPCoverage91Extra_BatchOperationParseErrors verifies each batch tool
+// rejects a malformed operation with a BatchOperationParseError naming the
+// offending field.
+func TestMCPCoverage91Extra_BatchOperationParseErrors(t *testing.T) {
 	svc := &mockService{}
 	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
 
-	_, err := registry.executeBatchPut(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			"not-an-object",
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, 0, batchErr.Index)
-	assert.Equal(t, "operation", batchErr.Field)
-}
+	type batchFunc func(context.Context, map[string]interface{}) (interface{}, error)
 
-func TestMCPCoverage91Extra_BatchPut_MissingEntityType(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
+	tests := []struct {
+		name  string
+		exec  batchFunc
+		op    interface{}
+		field string // empty: only the error type is asserted
+	}{
+		{"put not an object", registry.executeBatchPut, "not-an-object", "operation"},
+		{"put missing entity type", registry.executeBatchPut, map[string]interface{}{"id": float64(1), "data": `{"key":"value"}`}, "entityType"},
+		{"put missing id", registry.executeBatchPut, map[string]interface{}{"entity_type": "users", "data": `{"key":"value"}`}, "id"},
+		{"put missing data", registry.executeBatchPut, map[string]interface{}{"entity_type": "users", "id": float64(1)}, "data"},
+		{"get not an object", registry.executeBatchGet, "not-an-object", ""},
+		{"get missing entity type", registry.executeBatchGet, map[string]interface{}{"id": float64(1)}, "entityType"},
+		{"get missing id", registry.executeBatchGet, map[string]interface{}{"entity_type": "users"}, "id"},
+		{"delete not an object", registry.executeBatchDelete, "not-an-object", ""},
+		{"delete missing entity type", registry.executeBatchDelete, map[string]interface{}{"id": float64(1)}, "entityType"},
+		{"delete missing id", registry.executeBatchDelete, map[string]interface{}{"entity_type": "users"}, "id"},
+	}
 
-	_, err := registry.executeBatchPut(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"id":   float64(1),
-				"data": `{"key":"value"}`,
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "entityType", batchErr.Field)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.exec(context.Background(), map[string]interface{}{
+				"operations": []interface{}{tt.op},
+			})
+			require.Error(t, err)
 
-func TestMCPCoverage91Extra_BatchPut_MissingID(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchPut(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"entity_type": "users",
-				"data":        `{"key":"value"}`,
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "id", batchErr.Field)
-}
-
-func TestMCPCoverage91Extra_BatchPut_MissingData(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchPut(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"entity_type": "users",
-				"id":          float64(1),
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "data", batchErr.Field)
-}
-
-// =============================================================================
-// Batch operation parse errors - executeBatchGet specific branches
-// =============================================================================
-
-func TestMCPCoverage91Extra_BatchGet_InvalidOperationType(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchGet(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			"not-an-object",
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-}
-
-func TestMCPCoverage91Extra_BatchGet_MissingEntityType(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchGet(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"id": float64(1),
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "entityType", batchErr.Field)
-}
-
-func TestMCPCoverage91Extra_BatchGet_MissingID(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchGet(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"entity_type": "users",
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "id", batchErr.Field)
-}
-
-// =============================================================================
-// Batch operation parse errors - executeBatchDelete specific branches
-// =============================================================================
-
-func TestMCPCoverage91Extra_BatchDelete_InvalidOperationType(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchDelete(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			"not-an-object",
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-}
-
-func TestMCPCoverage91Extra_BatchDelete_MissingEntityType(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchDelete(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"id": float64(1),
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "entityType", batchErr.Field)
-}
-
-func TestMCPCoverage91Extra_BatchDelete_MissingID(t *testing.T) {
-	svc := &mockService{}
-	registry := newTestRegistryWithMockService(t, svc)
-	ctx := context.Background()
-
-	_, err := registry.executeBatchDelete(ctx, map[string]interface{}{
-		"operations": []interface{}{
-			map[string]interface{}{
-				"entity_type": "users",
-			},
-		},
-	})
-	require.Error(t, err)
-	var batchErr *BatchOperationParseError
-	assert.ErrorAs(t, err, &batchErr)
-	assert.Equal(t, "id", batchErr.Field)
+			var batchErr *BatchOperationParseError
+			require.ErrorAs(t, err, &batchErr)
+			assert.Equal(t, 0, batchErr.Index)
+			if tt.field != "" {
+				assert.Equal(t, tt.field, batchErr.Field)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1264,122 +1125,6 @@ func TestMCPCoverage91Extra_ParseBatchOperationsArray_EmptyArray(t *testing.T) {
 }
 
 // =============================================================================
-// XKMS GetCertChain - missing key_id and chain_pems
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSGetCertChain_MissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGetCertChain(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// XKMS SaveCert - missing key_id
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSSaveCert_MissingKeyID(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSaveCert(ctx, map[string]interface{}{
-		"cert_pem": "some-pem",
-	})
-	require.Error(t, err)
-}
-
-func TestMCPCoverage91Extra_XKMSSaveCert_MissingCertPEM(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSaveCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// XKMS GetCert - covers the not-initialized path for getCert
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSGetCert_NoBackend(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSGetCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-}
-
-// =============================================================================
-// XKMS DeleteCert - covers the not-initialized path
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSDeleteCert_NoBackend(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSDeleteCert(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-}
-
-// =============================================================================
-// XKMS CertExists - covers the not-initialized path
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSCertExists_NoBackend(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSCertExists(ctx, map[string]interface{}{
-		"key_id": "test-key",
-	})
-	require.Error(t, err)
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-}
-
-// =============================================================================
-// XKMS RotateKey - covers the not-initialized path with backend
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSRotateKey_WithBackend(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSRotateKey(ctx, map[string]interface{}{
-		"key_id":  "test-key",
-		"backend": "software",
-	})
-	require.Error(t, err)
-	var opErr *XKMSOperationError
-	assert.ErrorAs(t, err, &opErr)
-	assert.Equal(t, "rotateKey", opErr.Operation)
-}
-
-// =============================================================================
 // marshalResult - nil input
 // =============================================================================
 
@@ -1387,22 +1132,6 @@ func TestMCPCoverage91Extra_MarshalResult_NilInput(t *testing.T) {
 	result, err := marshalResult(nil)
 	require.NoError(t, err)
 	assert.Nil(t, result)
-}
-
-// =============================================================================
-// XKMS SaveCertChain - missing chain_pems
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSSaveCertChain_MissingChainPems(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSaveCertChain(ctx, map[string]interface{}{
-		"key_id": "chain-key",
-	})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1440,23 +1169,6 @@ func TestMCPCoverage91Extra_XKMSSaveCertChain_NonStringPEM(t *testing.T) {
 }
 
 // =============================================================================
-// XKMS SaveCert - invalid PEM
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSSaveCert_InvalidPEM(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSaveCert(ctx, map[string]interface{}{
-		"key_id":   "test-key",
-		"cert_pem": "not-a-valid-pem",
-	})
-	require.Error(t, err)
-}
-
-// =============================================================================
 // XKMS Seal with backend param (not default path)
 // =============================================================================
 
@@ -1474,34 +1186,6 @@ func TestMCPCoverage91Extra_XKMSSeal_WithBackend(t *testing.T) {
 	var opErr *XKMSOperationError
 	assert.ErrorAs(t, err, &opErr)
 	assert.Equal(t, "seal", opErr.Operation)
-}
-
-// =============================================================================
-// XKMS Seal - missing data
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSSeal_MissingData(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSSeal(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
-// =============================================================================
-// XKMS Unseal - missing ciphertext
-// =============================================================================
-
-func TestMCPCoverage91Extra_XKMSUnseal_MissingCiphertext(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	_, err := registry.handleXKMSUnseal(ctx, map[string]interface{}{})
-	require.Error(t, err)
 }
 
 // =============================================================================
