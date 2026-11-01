@@ -41,6 +41,9 @@ func TestMsgCreateChannel_Success(t *testing.T) {
 			"buffer_size": float64(256), "max_history": float64(100),
 			"persistent": "true", "ttl": "24h",
 		}},
+		{"with max subscribers", map[string]interface{}{
+			"name": "events", "max_subscribers": float64(100),
+		}},
 	}
 
 	for _, tc := range tests {
@@ -52,14 +55,27 @@ func TestMsgCreateChannel_Success(t *testing.T) {
 	}
 }
 
-func TestMsgCreateChannel_MissingName(t *testing.T) {
+func TestMsgCreateChannel_Errors(t *testing.T) {
 	registry := newMessagingRegistry(t)
 	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name is required")
+	tests := []struct {
+		name        string
+		args        map[string]interface{}
+		errContains string
+	}{
+		{"missing name", map[string]interface{}{}, "name is required"},
+		{"invalid ttl", map[string]interface{}{"name": "events", "ttl": "invalid-duration"}, "invalid ttl format"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
+	}
 }
 
 func TestMsgDeleteChannel_Success(t *testing.T) {
@@ -565,23 +581,6 @@ func TestMsgTools_ServiceError(t *testing.T) {
 	}
 }
 
-func TestHandleMsgCreateChannel_InvalidTTL(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "events",
-		"ttl":  "invalid-duration",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "invalid ttl format")
-}
-
 // TestExecuteToolFamily_UnknownTool checks that each tool family's executor
 // rejects a tool name it does not route.
 func TestExecuteToolFamily_UnknownTool(t *testing.T) {
@@ -615,22 +614,6 @@ func TestExecuteToolFamily_UnknownTool(t *testing.T) {
 			assert.Contains(t, err.Error(), "unknown tool: "+tc.tool)
 		})
 	}
-}
-
-func TestHandleMsgCreateChannel_WithMaxSubscribers(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name":            "events",
-		"max_subscribers": float64(100),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
 }
 
 // =============================================================================
