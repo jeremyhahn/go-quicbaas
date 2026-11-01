@@ -65,10 +65,16 @@ func TestParseOutputFormat(t *testing.T) {
 			result, err := ParseOutputFormat(tc.input)
 			if tc.wantErr {
 				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				assert.Equal(t, tc.expected, result)
+				return
 			}
+			assert.NoError(t, err)
 			assert.Equal(t, tc.expected, result)
+
+			// The canonical name of a format parses back to itself.
+			roundTrip, err := ParseOutputFormat(string(result))
+			assert.NoError(t, err)
+			assert.Equal(t, result, roundTrip)
 		})
 	}
 }
@@ -202,6 +208,12 @@ func TestFetch_WriteAsFiles(t *testing.T) {
 			name:    "key filter matching nothing skips the secret",
 			secrets: database,
 			keys:    []string{"nonexistent"},
+		},
+		{
+			name:        "secret with no data is counted but writes nothing",
+			secrets:     []SecretData{{Path: "apps/myapp/empty", Data: map[string]string{}}},
+			stripPrefix: true,
+			wantSecrets: 1,
 		},
 		{
 			name:    "no secrets writes nothing",
@@ -618,46 +630,4 @@ func TestFetch_FilePermissions(t *testing.T) {
 	info, err := os.Stat(file)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-// TestOutputFormat_String tests OutputFormat string representation.
-func TestOutputFormat_String(t *testing.T) {
-	assert.Equal(t, "file", string(OutputFormatFile))
-	assert.Equal(t, "env", string(OutputFormatEnv))
-	assert.Equal(t, "json", string(OutputFormatJSON))
-}
-
-// TestSecretData_Empty tests SecretData with empty data map.
-func TestSecretData_Empty(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/empty",
-				Data: map[string]string{}, // Empty data
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		StripPrefix: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// No files should be written for empty data
-	assert.Equal(t, 1, result.SecretsCount)
-	assert.Equal(t, 0, result.KeysCount)
-	assert.Empty(t, result.FilesWritten)
 }
