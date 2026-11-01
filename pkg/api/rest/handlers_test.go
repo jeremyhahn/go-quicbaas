@@ -3525,99 +3525,39 @@ func TestHandleServiceError_ConflictError(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
-func TestHandleServiceError_InvalidInput(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
+func TestHandleServiceError_StatusMapping(t *testing.T) {
+	tests := []struct {
+		name           string
+		code           qberrors.ErrorCode
+		expectedStatus int
+	}{
+		{"invalid input", qberrors.ErrInvalidInput, http.StatusBadRequest},
+		{"forbidden", qberrors.ErrForbidden, http.StatusForbidden},
+		{"unauthorized", qberrors.ErrUnauthorized, http.StatusUnauthorized},
+		{"unavailable", qberrors.ErrUnavailable, http.StatusServiceUnavailable},
+		{"internal", qberrors.ErrInternal, http.StatusInternalServerError},
+	}
 
-	validationErr := qberrors.New(qberrors.ErrInvalidInput, "Get", "bad input")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), validationErr)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServer(t)
+			defer cleanup()
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
+			svcErr := qberrors.New(tt.code, "Get", tt.name)
+			mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), svcErr)
 
-	server.HandleGet(w, req)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", "users")
+			rctx.URLParams.Add("id", "1")
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+			server.HandleGet(w, req)
 
-func TestHandleServiceError_Forbidden(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	forbiddenErr := qberrors.New(qberrors.ErrForbidden, "Get", "access denied")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), forbiddenErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-}
-
-func TestHandleServiceError_Unauthorized(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	unauthorizedErr := qberrors.New(qberrors.ErrUnauthorized, "Get", "not authorized")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unauthorizedErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestHandleServiceError_Unavailable(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	unavailableErr := qberrors.New(qberrors.ErrUnavailable, "Get", "service unavailable")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), unavailableErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestHandleServiceError_Internal(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	internalErr := qberrors.New(qberrors.ErrInternal, "Get", "internal error")
-	mockService.On("Get", mock.Anything, mock.Anything).Return((*service.GetResponse)(nil), internalErr)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("id", "1")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-
-	server.HandleGet(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, tt.expectedStatus, w.Code)
+		})
+	}
 }
 
 func TestHandleSetParameter_ReadBodyError(t *testing.T) {
