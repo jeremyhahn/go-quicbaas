@@ -162,60 +162,32 @@ func TestACMEServer_RegisterChallenge_Idempotent(t *testing.T) {
 	}
 }
 
-func TestACMEServer_Issue_InvalidInput(t *testing.T) {
-	srv := newACMEServer(&mockTransport{})
+func TestACMEServer_Issue_Errors(t *testing.T) {
 	csr := []byte("csr-bytes")
+	var nilCtx context.Context
 
 	tests := []struct {
-		name string
-		csr  []byte
-		typ  string
-		ctx  context.Context
+		name    string
+		ctx     context.Context
+		csr     []byte
+		typ     string
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty csr", nil, "http-01", context.Background()},
-		{"empty challenge type", csr, "", context.Background()},
-		{"nil context", csr, "http-01", nil},
+		{"empty csr", context.Background(), nil, "http-01", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"empty challenge type", context.Background(), csr, "", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil context", nilCtx, csr, "http-01", &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), csr, "http-01", respondWith(nil, errBoom), isAnyError},
+		{"nil response", context.Background(), csr, "http-01", respondWith(nil, nil), isAnyError},
+		{"invalid response type", context.Background(), csr, "http-01", respondWith("not the right type", nil), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := srv.Issue(tc.ctx, tc.csr, tc.typ, "challenge-value")
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			_, err := newACMEServer(tc.tr).Issue(tc.ctx, tc.csr, tc.typ, "challenge-value")
+			if err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestACMEServer_Issue_TransportError(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected transport error to propagate")
-	}
-}
-
-func TestACMEServer_Issue_NilResponse(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, nil
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected error for nil response")
-	}
-}
-
-func TestACMEServer_Issue_InvalidResponseType(t *testing.T) {
-	mt := &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return "not the right type", nil
-	}}
-	srv := newACMEServer(mt)
-	_, err := srv.Issue(context.Background(), []byte("csr"), "http-01", "value")
-	if err == nil {
-		t.Fatal("expected invalid response type error")
 	}
 }
 
@@ -444,91 +416,58 @@ func TestTrust_PublishDANE_HappyPath(t *testing.T) {
 	}
 }
 
-func TestTrust_CrossSignedRootPool_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
-	if _, err := s.CrossSignedRootPool(nil); err == nil || !sdkerrors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput, got %v", err)
-	}
-}
-
-func TestTrust_CrossSignedRootPool_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error to propagate")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_NilResponse_ReturnsEmptyPool(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_InvalidResponseType(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return "wrong", nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error for invalid response type")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_DecodesPEM(t *testing.T) {
+func TestTrust_CrossSignedRootPool(t *testing.T) {
 	cert := makeSelfSignedCert(t)
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{
-			RootPEMs: [][]byte{pemEncode(cert.Raw)},
-		}, nil
-	}}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_DecodesDER(t *testing.T) {
-	cert := makeSelfSignedCert(t)
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{
-			RootPEMs: [][]byte{cert.Raw}, // DER fallback
-		}, nil
-	}}}
-	pool, err := s.CrossSignedRootPool(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if pool == nil {
-		t.Fatal("expected non-nil pool")
-	}
-}
-
-func TestTrust_CrossSignedRootPool_BadPEM(t *testing.T) {
+	oneCertPool := x509.NewCertPool()
+	oneCertPool.AddCert(cert)
 	bogusPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a cert")})
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{bogusPEM}}, nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error parsing invalid PEM cert")
+	var nilCtx context.Context
+
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		tr       *mockTransport
+		wantPool *x509.CertPool
+		wantErr  func(error) bool
+	}{
+		{name: "nil context", ctx: nilCtx, tr: &mockTransport{}, wantErr: sdkerrors.IsInvalidInput},
+		{name: "transport error", ctx: context.Background(), tr: respondWith(nil, errBoom), wantErr: isAnyError},
+		{name: "nil response is an empty pool", ctx: context.Background(), tr: &mockTransport{}, wantPool: x509.NewCertPool()},
+		{name: "invalid response type", ctx: context.Background(), tr: respondWith("wrong", nil), wantErr: isAnyError},
+		{name: "decodes PEM", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{pemEncode(cert.Raw)}}, nil), wantPool: oneCertPool},
+		{name: "decodes DER fallback", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{cert.Raw}}, nil), wantPool: oneCertPool},
+		{name: "bad PEM certificate", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{bogusPEM}}, nil), wantErr: isAnyError},
+		{name: "bad DER certificate", ctx: context.Background(), tr: respondWith(&TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{[]byte("totally invalid")}}, nil), wantErr: isAnyError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &trustServiceImpl{t: tt.tr}
+			pool, err := s.CrossSignedRootPool(tt.ctx)
+			if tt.wantErr != nil {
+				if err == nil || !tt.wantErr(err) {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !pool.Equal(tt.wantPool) {
+				t.Error("pool does not hold the expected roots")
+			}
+		})
 	}
 }
 
-func TestTrust_CrossSignedRootPool_BadDER(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return &TrustCrossSignedRootPoolResponse{RootPEMs: [][]byte{[]byte("totally invalid")}}, nil
-	}}}
-	if _, err := s.CrossSignedRootPool(context.Background()); err == nil {
-		t.Fatal("expected error parsing invalid DER cert")
-	}
+// isAnyError accepts every non-nil error; table rows use it where the
+// verb's contract is only that the failure is reported.
+func isAnyError(err error) bool { return err != nil }
+
+// respondWith returns a transport whose every request answers resp, err.
+func respondWith(resp interface{}, err error) *mockTransport {
+	return &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+		return resp, err
+	}}
 }
 
 func TestTrust_CrossSignedRoots_ReturnsEachRootInOrder(t *testing.T) {
