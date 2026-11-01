@@ -88,12 +88,24 @@ func listCalls() []clientCall {
 			_, err := c.ListTasks(ctx, &ListTasksRequest{TenantID: "t1"})
 			return err
 		}},
+		{"ListBackends", func(c Client, ctx context.Context) error {
+			_, err := c.ListBackends(ctx)
+			return err
+		}},
+		{"ListRunners", func(c Client, ctx context.Context) error {
+			_, err := c.ListRunners(ctx)
+			return err
+		}},
 	}
 }
 
 // unaryCalls lists the methods that reject a nil response with an error.
 func unaryCalls() []clientCall {
 	return []clientCall{
+		{"Health", func(c Client, ctx context.Context) error {
+			_, err := c.Health(ctx)
+			return err
+		}},
 		{"GetTask", func(c Client, ctx context.Context) error {
 			_, err := c.GetTask(ctx, &GetTaskRequest{TenantID: "t1", TaskID: "tk1"})
 			return err
@@ -395,31 +407,12 @@ func TestListBackends_HappyPath(t *testing.T) {
 	assert.Equal(t, 1, resp.Count)
 }
 
-func TestListBackends_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListBackends", &ListBackendsResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListBackends(nilCtx)
-	require.Error(t, err)
-}
-
-func TestListBackends_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListBackends(context.Background())
-	require.Error(t, err)
-}
-
 func TestListBackends_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListBackends(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Backends)
-}
-
-func TestListBackends_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListBackends(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -447,31 +440,12 @@ func TestListRunners_HappyPath(t *testing.T) {
 	assert.Equal(t, 1, resp.Count)
 }
 
-func TestListRunners_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "ListRunners", &ListJobRunnersResponse{}))
-	var nilCtx context.Context
-	_, err := c.ListRunners(nilCtx)
-	require.Error(t, err)
-}
-
-func TestListRunners_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.ListRunners(context.Background())
-	require.Error(t, err)
-}
-
 func TestListRunners_NilResponseReturnsEmpty(t *testing.T) {
 	c := NewClient(nilTransport())
 	resp, err := c.ListRunners(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 0, resp.Count)
 	assert.NotNil(t, resp.Runners)
-}
-
-func TestListRunners_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.ListRunners(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -483,31 +457,6 @@ func TestHealth_HappyPath(t *testing.T) {
 	resp, err := c.Health(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestHealth_NilContext(t *testing.T) {
-	c := NewClient(okTransport(t, "Health", &HealthCheckReport{}))
-	var nilCtx context.Context
-	_, err := c.Health(nilCtx)
-	require.Error(t, err)
-}
-
-func TestHealth_TransportError(t *testing.T) {
-	c := NewClient(failTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
-}
-
-func TestHealth_NilResponse(t *testing.T) {
-	c := NewClient(nilTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
-}
-
-func TestHealth_TypeMismatch(t *testing.T) {
-	c := NewClient(mismatchTransport())
-	_, err := c.Health(context.Background())
-	require.Error(t, err)
 }
 
 // =============================================================================
