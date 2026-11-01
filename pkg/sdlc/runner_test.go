@@ -1794,7 +1794,11 @@ func TestRunner_AWorkerPoolIsSpawnedByReference(t *testing.T) {
 
 // TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput: a failed
 // verification is a round, and what the command said is what the worker is
-// told.
+// told. When the rounds are spent the park states what would clear it in a
+// form the sweep can read (#759), and the comment a person reads is derived
+// from that: review that did not converge is a call reserved for the owner,
+// so the condition says owner_ruling rather than leaving prose the sweep
+// would have to report as undiagnosed.
 func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T) {
 	rig := newRunnerRig(t)
 	rig.rebindVerification(t, "false")
@@ -1812,8 +1816,15 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 	if !errors.As(err, &escalated) {
 		t.Fatalf("Run err = %v, want an escalation", err)
 	}
-	if !strings.Contains(escalated.Reason, "verification failed") {
-		t.Errorf("escalation reason = %q", escalated.Reason)
+	condition, detail, parseErr := ParseBlockedReason(escalated.Reason)
+	if parseErr != nil {
+		t.Fatalf("the park reason carries no typed condition (%v): %q", parseErr, escalated.Reason)
+	}
+	if condition.Kind != UnblockOwnerRuling {
+		t.Fatalf("the park condition is %s, want owner_ruling", condition.Kind)
+	}
+	if !strings.Contains(detail, "verification failed") {
+		t.Fatalf("the detail lost what actually happened: %q", detail)
 	}
 	prompts := rig.agents.promptTexts()
 	if len(prompts) != 2 {
@@ -1828,8 +1839,16 @@ func TestRunner_VerificationFailureGoesBackToTheWorkerWithTheOutput(t *testing.T
 	if rig.agents.sessionCount() != WorkerSessionCount {
 		t.Fatalf("a round spawned a second session: %d", rig.agents.sessionCount())
 	}
-	if comments := rig.forge.commentsOn(25); len(comments) == 0 {
-		t.Error("the escalation was not posted to the issue")
+	comments := rig.forge.commentsOn(25)
+	if len(comments) == 0 {
+		t.Fatal("the escalation was not posted to the issue")
+	}
+	body := comments[len(comments)-1].Body
+	if !strings.Contains(body, "**Cleared by:** the owner") {
+		t.Errorf("the comment does not name who clears the park:\n%s", body)
+	}
+	if strings.Contains(body, unblockMarkerOpen) {
+		t.Errorf("the machine marker reached the issue:\n%s", body)
 	}
 	if labels := rig.forge.issueLabels(25); !containsLabel(labels, "factory:escalated") && !containsLabel(labels, "factory:blocked") {
 		t.Errorf("issue labels = %v, want the park shown", labels)
@@ -1970,54 +1989,6 @@ func TestRunner_ThePostedEscalationKeepsTheFailureWithinThePublicationBudget(t *
 	}
 	if strings.Contains(body, noise) {
 		t.Errorf("the posted escalation names the harmless first line:\n%s", body)
-	}
-}
-
-// TestRunner_TheParkCarriesATypedUnblockCondition is the producer half of
-// #759: the escalation states what would clear it in a form the sweep can
-// read, and the comment a person reads is derived from that.
-//
-// Review that did not converge is a call reserved for the owner, so the
-// condition says owner_ruling rather than leaving prose the sweep would have
-// to report as undiagnosed.
-func TestRunner_TheParkCarriesATypedUnblockCondition(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "false")
-	if err := rig.rebind(context.Background(), func(b *ProjectBinding) {
-		b.Verification = []string{"false"}
-		b.MaxReviewRounds = 1
-		b.Forge.Labels[LabelEscalated] = "factory:escalated"
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rig.workerWrote()
-
-	err := rig.runner.Run(context.Background(), rig.job(t, "false"))
-	var escalated *EscalatedError
-	if !errors.As(err, &escalated) {
-		t.Fatalf("Run err = %v, want an escalation", err)
-	}
-	condition, detail, parseErr := ParseBlockedReason(escalated.Reason)
-	if parseErr != nil {
-		t.Fatalf("the park reason carries no typed condition (%v): %q", parseErr, escalated.Reason)
-	}
-	if condition.Kind != UnblockOwnerRuling {
-		t.Fatalf("the park condition is %s, want owner_ruling", condition.Kind)
-	}
-	if !strings.Contains(detail, "verification failed") {
-		t.Fatalf("the detail lost what actually happened: %q", detail)
-	}
-
-	comments := rig.forge.commentsOn(25)
-	if len(comments) == 0 {
-		t.Fatal("the escalation was not posted to the issue")
-	}
-	body := comments[len(comments)-1].Body
-	if !strings.Contains(body, "**Cleared by:** the owner") {
-		t.Fatalf("the comment does not name who clears the park:\n%s", body)
-	}
-	if strings.Contains(body, unblockMarkerOpen) {
-		t.Fatalf("the machine marker reached the issue:\n%s", body)
 	}
 }
 
