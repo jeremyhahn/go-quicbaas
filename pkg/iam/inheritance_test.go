@@ -684,10 +684,6 @@ func TestMemoryStorage_DeleteTenant_WithCascade(t *testing.T) {
 		t.Error("user should be deleted after tenant deletion")
 	}
 
-	if err == nil {
-		t.Error("group should be deleted after tenant deletion")
-	}
-
 	_, err = storage.GetRole(ctx, tenantID, "role-1")
 	if err == nil {
 		t.Error("role should be deleted after tenant deletion")
@@ -713,92 +709,46 @@ func TestMemoryStorage_DeleteTenant_NotFound(t *testing.T) {
 // matchesConsentFilter - Additional coverage
 // =============================================================================
 
-func TestMemoryConsentStorage_ListConsents_FilterByStatus(t *testing.T) {
+func TestMemoryConsentStorage_ListConsents_Filter(t *testing.T) {
 	storage := NewMemoryConsentStorage()
 	ctx := context.Background()
 
 	expires := time.Now().Add(24 * time.Hour)
-
-	// Create consents with different statuses using CreateConsent
-	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10001,
-		Purpose:   "marketing",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
+	for _, c := range []struct {
+		userID  uint64
+		purpose ConsentPurpose
+		status  ConsentStatus
+	}{
+		{userID: 10001, purpose: "marketing", status: ConsentStatusGranted},
+		{userID: 10002, purpose: "analytics", status: ConsentStatusWithdrawn},
+		{userID: 10003, purpose: "analytics", status: ConsentStatusGranted},
+	} {
+		_, err := storage.CreateConsent(ctx, CreateConsentOptions{
+			TenantID:  "tenant-1",
+			UserID:    c.userID,
+			Purpose:   c.purpose,
+			Status:    c.status,
+			Version:   "1.0",
+			ExpiresAt: &expires,
+		})
+		require.NoError(t, err)
 	}
 
-	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10002,
-		Purpose:   "analytics",
-		Status:    ConsentStatusWithdrawn,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListConsentsOptions
+		want int
+	}{
+		{name: "by status", opts: ListConsentsOptions{TenantID: "tenant-1", Status: ConsentStatusGranted}, want: 2},
+		{name: "by purpose", opts: ListConsentsOptions{TenantID: "tenant-1", Purpose: "marketing"}, want: 1},
 	}
 
-	// Filter by status
-	consents, err := storage.ListConsents(ctx, ListConsentsOptions{
-		TenantID: "tenant-1",
-		Status:   ConsentStatusGranted,
-	})
-	if err != nil {
-		t.Fatalf("ListConsents failed: %v", err)
-	}
-
-	if len(consents) != 1 {
-		t.Errorf("expected 1 consent with granted status, got %d", len(consents))
-	}
-}
-
-func TestMemoryConsentStorage_ListConsents_FilterByPurpose(t *testing.T) {
-	storage := NewMemoryConsentStorage()
-	ctx := context.Background()
-
-	expires := time.Now().Add(24 * time.Hour)
-
-	_, err := storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10001,
-		Purpose:   "marketing",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
-	}
-
-	_, err = storage.CreateConsent(ctx, CreateConsentOptions{
-		TenantID:  "tenant-1",
-		UserID:    10002,
-		Purpose:   "analytics",
-		Status:    ConsentStatusGranted,
-		Version:   "1.0",
-		ExpiresAt: &expires,
-	})
-	if err != nil {
-		t.Fatalf("CreateConsent failed: %v", err)
-	}
-
-	// Filter by purpose
-	consents, err := storage.ListConsents(ctx, ListConsentsOptions{
-		TenantID: "tenant-1",
-		Purpose:  "marketing",
-	})
-	if err != nil {
-		t.Fatalf("ListConsents failed: %v", err)
-	}
-
-	if len(consents) != 1 {
-		t.Errorf("expected 1 consent with marketing purpose, got %d", len(consents))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consents, err := storage.ListConsents(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, consents, tt.want)
+		})
 	}
 }
 
@@ -1227,71 +1177,35 @@ func TestBatchProgress_CalculateRate_WithElapsed(t *testing.T) {
 // matchesExportFilter coverage
 // =============================================================================
 
-func TestMemoryDataExportStorage_ListExportRequests_FilterByStatus(t *testing.T) {
+func TestMemoryDataExportStorage_ListExportRequests_Filter(t *testing.T) {
 	storage := NewMemoryDataExportStorage()
 	ctx := context.Background()
 
-	// Create export requests with different statuses
-	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
+	for i, userID := range []uint64{10001, 10002} {
+		_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
+			TenantID:    "tenant-1",
+			UserID:      userID,
+			RequestedBy: uint64(i + 1),
+			Format:      DataExportFormatJSON,
+		})
+		require.NoError(t, err)
 	}
 
-	// List with status filter
-	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
-		TenantID: "tenant-1",
-		Status:   DataExportStatusPending,
-	})
-	if err != nil {
-		t.Fatalf("ListExportRequests failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListExportRequestsOptions
+		want int
+	}{
+		{name: "by status", opts: ListExportRequestsOptions{TenantID: "tenant-1", Status: DataExportStatusPending}, want: 2},
+		{name: "by user", opts: ListExportRequestsOptions{TenantID: "tenant-1", UserID: 10001}, want: 1},
 	}
 
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request with pending status, got %d", len(requests))
-	}
-}
-
-func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
-	storage := NewMemoryDataExportStorage()
-	ctx := context.Background()
-
-	// Create export requests for different users
-	_, err := storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
-	}
-
-	_, err = storage.CreateExportRequest(ctx, CreateDataExportOptions{
-		TenantID:    "tenant-1",
-		UserID:      10002,
-		RequestedBy: 2,
-		Format:      DataExportFormatJSON,
-	})
-	if err != nil {
-		t.Fatalf("CreateExportRequest failed: %v", err)
-	}
-
-	// List with user filter
-	requests, err := storage.ListExportRequests(ctx, ListExportRequestsOptions{
-		TenantID: "tenant-1",
-		UserID:   10001,
-	})
-	if err != nil {
-		t.Fatalf("ListExportRequests failed: %v", err)
-	}
-
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request for user-1, got %d", len(requests))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests, err := storage.ListExportRequests(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, requests, tt.want)
+		})
 	}
 }
 
@@ -1299,67 +1213,33 @@ func TestMemoryDataExportStorage_ListExportRequests_FilterByUser(t *testing.T) {
 // matchesDeletionFilter coverage
 // =============================================================================
 
-func TestMemoryDeletionStorage_ListDeletionRequests_FilterByStatus(t *testing.T) {
+func TestMemoryDeletionStorage_ListDeletionRequests_Filter(t *testing.T) {
 	storage := NewMemoryDeletionStorage()
 	ctx := context.Background()
 
-	// Create deletion requests
-	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
+	for i, userID := range []uint64{10001, 10002} {
+		_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
+			TenantID:    "tenant-1",
+			UserID:      userID,
+			RequestedBy: uint64(i + 1),
+		})
+		require.NoError(t, err)
 	}
 
-	// List with status filter
-	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
-		TenantID: "tenant-1",
-		Status:   DeletionStatusPending,
-	})
-	if err != nil {
-		t.Fatalf("ListDeletionRequests failed: %v", err)
+	tests := []struct {
+		name string
+		opts ListDeletionRequestsOptions
+		want int
+	}{
+		{name: "by status", opts: ListDeletionRequestsOptions{TenantID: "tenant-1", Status: DeletionStatusPending}, want: 2},
+		{name: "by user", opts: ListDeletionRequestsOptions{TenantID: "tenant-1", UserID: 10001}, want: 1},
 	}
 
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request with pending status, got %d", len(requests))
-	}
-}
-
-func TestMemoryDeletionStorage_ListDeletionRequests_FilterByUser(t *testing.T) {
-	storage := NewMemoryDeletionStorage()
-	ctx := context.Background()
-
-	// Create deletion requests for different users
-	_, err := storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10001,
-		RequestedBy: 1,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
-	}
-
-	_, err = storage.CreateDeletionRequest(ctx, CreateDeletionRequestOptions{
-		TenantID:    "tenant-1",
-		UserID:      10002,
-		RequestedBy: 2,
-	})
-	if err != nil {
-		t.Fatalf("CreateDeletionRequest failed: %v", err)
-	}
-
-	// List with user filter
-	requests, err := storage.ListDeletionRequests(ctx, ListDeletionRequestsOptions{
-		TenantID: "tenant-1",
-		UserID:   10001,
-	})
-	if err != nil {
-		t.Fatalf("ListDeletionRequests failed: %v", err)
-	}
-
-	if len(requests) != 1 {
-		t.Errorf("expected 1 request for user-1, got %d", len(requests))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests, err := storage.ListDeletionRequests(ctx, tt.opts)
+			require.NoError(t, err)
+			assert.Len(t, requests, tt.want)
+		})
 	}
 }
