@@ -1059,32 +1059,26 @@ func TestBackupManager_RestoreChecksumDisabled(t *testing.T) {
 // TestBackupManager_ApplyRetentionPolicy moved to manager_integration_test.go
 // TestBackupManager_ApplyRetentionPolicyMaxAge moved to manager_integration_test.go
 
-func TestBackupManager_ApplyRetentionPolicyNilSchedule(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// No schedule configured
-	manager.config.Schedule = nil
-
-	// Should return without error
-	err := manager.ApplyRetentionPolicy(ctx)
-	require.NoError(t, err)
-}
-
-func TestBackupManager_ApplyRetentionPolicyNilRetentionPolicy(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	ctx := context.Background()
-
-	// Schedule but no retention policy
-	manager.config.Schedule = &ScheduleConfig{
-		RetentionPolicy: nil,
+func TestBackupManager_ApplyRetentionPolicyNoPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		schedule *ScheduleConfig
+	}{
+		{name: "nil schedule", schedule: nil},
+		{name: "nil retention policy", schedule: &ScheduleConfig{CronExpression: "0 0 * * *"}},
 	}
 
-	// Should return without error
-	err := manager.ApplyRetentionPolicy(ctx)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, _, _ := setupTestBackupManager(t)
+			defer manager.Close()
+
+			manager.config.Schedule = tt.schedule
+
+			// With no retention policy there is nothing to apply.
+			require.NoError(t, manager.ApplyRetentionPolicy(context.Background()))
+		})
+	}
 }
 
 func TestBackupManager_CreateBackupAllCompressionTypes(t *testing.T) {
@@ -1398,17 +1392,6 @@ func TestReadKeyValue_TruncatedValue(t *testing.T) {
 
 // TestBackupManager_ListBackupsLimit moved to manager_integration_test.go
 
-func TestBackupManager_RunScheduledBackups(t *testing.T) {
-	manager, _, _ := setupTestBackupManager(t)
-
-	// This function is a placeholder, just call it to increase coverage
-	manager.runScheduledBackups()
-
-	// Close manager
-	err := manager.Close()
-	require.NoError(t, err)
-}
-
 func TestNoneEncryptor_ReturnReadCloser(t *testing.T) {
 	encryptor := &noneEncryptor{}
 
@@ -1627,17 +1610,6 @@ func TestAES256GCM_EncryptEmptyData(t *testing.T) {
 	assert.Empty(t, decrypted)
 }
 
-// TestNewStorageBackend_MockType90 tests NewStorageBackend with mock type.
-func TestNewStorageBackend_MockType90(t *testing.T) {
-	cfg := &Config{
-		StorageBackend: "mock",
-	}
-
-	storage, err := NewStorageBackend(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, storage)
-}
-
 // TestMockStorage_PutAndGetCoverage tests MockStorage put and get operations.
 func TestMockStorage_PutAndGetCoverage(t *testing.T) {
 	storage := NewMockStorage()
@@ -1674,34 +1646,6 @@ func TestBackupManager_IsSchedulerRunning_NotStarted(t *testing.T) {
 	defer mgr.Close()
 
 	assert.False(t, mgr.IsSchedulerRunning())
-}
-
-// TestBackupManager_ApplyRetentionPolicy_NilSchedule tests ApplyRetentionPolicy
-// when schedule is nil.
-func TestBackupManager_ApplyRetentionPolicy_NilSchedule(t *testing.T) {
-	mgr, _, _ := setupTestBackupManager(t)
-	defer mgr.Close()
-
-	// The default test config has no schedule
-	mgr.config.Schedule = nil
-
-	err := mgr.ApplyRetentionPolicy(context.Background())
-	require.NoError(t, err)
-}
-
-// TestBackupManager_ApplyRetentionPolicy_NilRetention tests ApplyRetentionPolicy
-// when retention policy is nil.
-func TestBackupManager_ApplyRetentionPolicy_NilRetention(t *testing.T) {
-	mgr, _, _ := setupTestBackupManager(t)
-	defer mgr.Close()
-
-	mgr.config.Schedule = &ScheduleConfig{
-		CronExpression:  "0 0 * * *",
-		RetentionPolicy: nil,
-	}
-
-	err := mgr.ApplyRetentionPolicy(context.Background())
-	require.NoError(t, err)
 }
 
 // TestAES256GCM_LargeData tests encrypt/decrypt with larger payload.
