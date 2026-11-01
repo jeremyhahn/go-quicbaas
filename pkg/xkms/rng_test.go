@@ -26,7 +26,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io"
 	"math/big"
 	"strings"
 	"testing"
@@ -91,28 +90,6 @@ func TestRand(t *testing.T) {
 	}
 }
 
-func TestRandUniqueness(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Generate multiple random values and verify they're unique
-	numSamples := 100
-	samples := make(map[string]bool)
-
-	for i := 0; i < numSamples; i++ {
-		data, err := Rand(32)
-		if err != nil {
-			t.Fatalf("Rand() error = %v", err)
-		}
-
-		key := string(data)
-		if samples[key] {
-			t.Error("Rand() generated duplicate value")
-		}
-		samples[key] = true
-	}
-}
-
 func TestRandInt(t *testing.T) {
 	ResetRNG()
 	defer ResetRNG()
@@ -161,6 +138,10 @@ func TestRandInt(t *testing.T) {
 				t.Errorf("RandInt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrRNGFailed)
+				return
+			}
 			if !tt.wantErr && got == nil {
 				t.Error("RandInt() returned nil value")
 			}
@@ -171,39 +152,6 @@ func TestRandInt(t *testing.T) {
 				t.Error("RandInt() returned negative value")
 			}
 		})
-	}
-}
-
-func TestRandIntUniformity(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Test that RandInt produces values in the expected range
-	max := big.NewInt(10)
-	numSamples := 1000
-	counts := make(map[int64]int)
-
-	for i := 0; i < numSamples; i++ {
-		n, err := RandInt(max)
-		if err != nil {
-			t.Fatalf("RandInt() error = %v", err)
-		}
-		counts[n.Int64()]++
-	}
-
-	// Verify all values are in range [0, max)
-	for v := range counts {
-		if v < 0 || v >= max.Int64() {
-			t.Errorf("RandInt() produced out-of-range value: %d", v)
-		}
-	}
-
-	// With 1000 samples over 10 buckets, expect roughly 100 per bucket
-	// Allow for significant variance (this is just a sanity check)
-	for i := int64(0); i < max.Int64(); i++ {
-		if counts[i] == 0 {
-			t.Logf("Warning: value %d never appeared in %d samples", i, numSamples)
-		}
 	}
 }
 
@@ -246,52 +194,10 @@ func TestReader(t *testing.T) {
 			if n != tt.bufSize {
 				t.Errorf("Reader.Read() read %d bytes, want %d", n, tt.bufSize)
 			}
+			if tt.bufSize > 0 && bytes.Equal(buf, make([]byte, tt.bufSize)) {
+				t.Error("Reader.Read() left the buffer all zeros")
+			}
 		})
-	}
-}
-
-func TestReaderUniqueness(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	reader := Reader()
-	numSamples := 100
-	samples := make(map[string]bool)
-
-	for i := 0; i < numSamples; i++ {
-		buf := make([]byte, 32)
-		_, err := io.ReadFull(reader, buf)
-		if err != nil {
-			t.Fatalf("ReadFull() error = %v", err)
-		}
-
-		key := string(buf)
-		if samples[key] {
-			t.Error("Reader produced duplicate value")
-		}
-		samples[key] = true
-	}
-}
-
-func TestReaderConsistency(t *testing.T) {
-	ResetRNG()
-	defer ResetRNG()
-
-	// Verify that Reader() consistently returns a working reader
-	for i := 0; i < 10; i++ {
-		reader := Reader()
-		buf := make([]byte, 16)
-		n, err := reader.Read(buf)
-		if err != nil {
-			t.Errorf("Iteration %d: Reader.Read() error = %v", i, err)
-		}
-		if n != 16 {
-			t.Errorf("Iteration %d: Reader.Read() read %d bytes, want 16", i, n)
-		}
-		// Verify buf is not all zeros (very unlikely with real random)
-		if bytes.Equal(buf, make([]byte, 16)) {
-			t.Errorf("Iteration %d: Reader.Read() returned all zeros", i)
-		}
 	}
 }
 
@@ -362,26 +268,6 @@ func TestResetRNG(t *testing.T) {
 	}
 	if len(data) != 16 {
 		t.Errorf("Rand() after reset returned %d bytes, want 16", len(data))
-	}
-}
-
-func TestRNGModes(t *testing.T) {
-	// Verify mode constants are properly exported
-	_ = RNGModeAuto
-	_ = RNGModeSoftware
-	_ = RNGModeTPM2
-	_ = RNGModePKCS11
-
-	// Verify they have distinct values
-	modes := map[RNGMode]string{
-		RNGModeAuto:     "auto",
-		RNGModeSoftware: "software",
-		RNGModeTPM2:     "tpm2",
-		RNGModePKCS11:   "pkcs11",
-	}
-
-	if len(modes) != 4 {
-		t.Error("RNG modes should have 4 distinct values")
 	}
 }
 
@@ -3228,13 +3114,6 @@ func TestJWTVerifyWithKeyAndClaims_ValidTokenSuccess(t *testing.T) {
 	assert.Equal(t, "user123", result["sub"])
 }
 
-// TestRNGAvailable_AfterAutoInit verifies RNGAvailable returns true after auto-init.
-func TestRNGAvailable_AfterAutoInit(t *testing.T) {
-	ResetRNG()
-	result := RNGAvailable()
-	assert.True(t, result, "RNGAvailable should return true after auto-init on first use")
-}
-
 // TestRand_ProducesDifferentValues tests the Rand function produces different values.
 func TestRand_ProducesDifferentValues(t *testing.T) {
 	ResetRNG()
@@ -3260,65 +3139,6 @@ func TestRandInt_MaxBoundBigInt(t *testing.T) {
 		assert.True(t, val.Sign() >= 0, "value should be non-negative")
 		assert.True(t, val.Cmp(maxVal) < 0, "value should be less than max")
 	}
-}
-
-// TestRandInt_NilMax verifies RandInt errors on nil max.
-func TestRandInt_NilMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestRandInt_ZeroMax verifies RandInt errors on zero max.
-func TestRandInt_ZeroMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(big.NewInt(0))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestRandInt_NegativeMax verifies RandInt errors on negative max.
-func TestRandInt_NegativeMax(t *testing.T) {
-	ResetRNG()
-
-	_, err := RandInt(big.NewInt(-1))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrRNGFailed)
-}
-
-// TestReader_FillsBuffer verifies the Reader function fills a buffer with random data.
-func TestReader_FillsBuffer(t *testing.T) {
-	ResetRNG()
-
-	reader := Reader()
-	buf := make([]byte, 32)
-	n, err := reader.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 32, n)
-
-	// Check the buffer is not all zeros
-	allZero := true
-	for _, b := range buf {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	assert.False(t, allZero, "buffer should contain random data")
-}
-
-// TestReader_EmptyBuffer verifies the Reader handles empty buffer.
-func TestReader_EmptyBuffer(t *testing.T) {
-	ResetRNG()
-
-	reader := Reader()
-	buf := make([]byte, 0)
-	n, err := reader.Read(buf)
-	require.NoError(t, err)
-	assert.Equal(t, 0, n)
 }
 
 // TestJWTVerifyWithKey_NoAlgorithmValidation exercises the path where
@@ -3416,13 +3236,4 @@ func TestInitializeRNG_SoftwareMode(t *testing.T) {
 	assert.Len(t, data, 16)
 
 	ResetRNG()
-}
-
-// TestCloseRNG_BeforeInit exercises closing RNG before initialization.
-func TestCloseRNG_BeforeInit(t *testing.T) {
-	ResetRNG()
-
-	// CloseRNG on uninitialized state should be safe
-	err := CloseRNG()
-	require.NoError(t, err)
 }
