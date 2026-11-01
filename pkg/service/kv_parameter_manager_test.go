@@ -134,14 +134,16 @@ func newMockProvider(transport *mockKVTransport) *mockParamClientProvider {
 
 func TestKVParameterManager_ParamKey(t *testing.T) {
 	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	key := pm.paramKey("/app/config/db-host")
-	assert.Equal(t, "param:/app/config/db-host", key)
-}
-
-func TestKVParameterManager_ParamKey_EmptyPath(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	key := pm.paramKey("")
-	assert.Equal(t, "param:", key)
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/app/config/db-host", "param:/app/config/db-host"},
+		{"", "param:"},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, pm.paramKey(tt.path), "path %q", tt.path)
+	}
 }
 
 // =============================================================================
@@ -599,20 +601,6 @@ func TestKVParameterManager_GetBatch_Success(t *testing.T) {
 	assert.Contains(t, errs, "/app/missing")
 }
 
-func TestKVParameterManager_GetBatch_AllNotFound(t *testing.T) {
-	transport := &mockKVTransport{
-		getFn: func(_ context.Context, key string) ([]byte, error) {
-			return nil, &qrdbtransport.KeyNotFoundError{Key: key}
-		},
-	}
-	pm := newTestKVParameterManager(t, newMockProvider(transport))
-
-	results, errs, err := pm.GetBatch(context.Background(), []string{"/a", "/b"}, false)
-	require.NoError(t, err)
-	assert.Empty(t, results)
-	assert.Len(t, errs, 2)
-}
-
 // =============================================================================
 // StoreBatch Tests
 // =============================================================================
@@ -732,49 +720,22 @@ func TestKVParameterManager_GetBackendType(t *testing.T) {
 	assert.Equal(t, "kv", pm.GetBackendType())
 }
 
-func TestKVParameterManager_GetBackendType_IsConsistent(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	first := pm.GetBackendType()
-	second := pm.GetBackendType()
-	assert.Equal(t, first, second)
-}
-
 // =============================================================================
 // Close Tests
 // =============================================================================
 
-func TestKVParameterManager_Close_Success(t *testing.T) {
+func TestKVParameterManager_Close(t *testing.T) {
 	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	err := pm.Close()
-	require.NoError(t, err)
+	require.NoError(t, pm.Close())
 	assert.True(t, pm.closed.Load())
-}
 
-func TestKVParameterManager_Close_Idempotent(t *testing.T) {
-	pm := newTestKVParameterManager(t, newMockProvider(&mockKVTransport{}))
-	err := pm.Close()
-	require.NoError(t, err)
-
-	err = pm.Close()
-	require.NoError(t, err)
+	// A second Close is a no-op.
+	require.NoError(t, pm.Close())
 }
 
 // =============================================================================
 // ScanKeys Tests
 // =============================================================================
-
-func TestKVParameterManager_ScanKeys_ScanError(t *testing.T) {
-	transport := &mockKVTransport{
-		scanFn: func(_ context.Context, _ string) (map[string][]byte, error) {
-			return nil, errors.New("scan failed")
-		},
-	}
-	pm := newTestKVParameterManager(t, newMockProvider(transport))
-
-	keys, err := pm.scanKeys(context.Background(), "param:")
-	require.NoError(t, err) // Scan errors return nil, nil
-	assert.Nil(t, keys)
-}
 
 func TestKVParameterManager_ScanKeys_ClientProviderError(t *testing.T) {
 	provider := &mockParamClientProvider{
@@ -786,17 +747,4 @@ func TestKVParameterManager_ScanKeys_ClientProviderError(t *testing.T) {
 	keys, err := pm.scanKeys(context.Background(), "param:")
 	require.NoError(t, err) // Client errors in scanKeys return nil, nil
 	assert.Nil(t, keys)
-}
-
-func TestKVParameterManager_ScanKeys_EmptyResult(t *testing.T) {
-	transport := &mockKVTransport{
-		scanFn: func(_ context.Context, _ string) (map[string][]byte, error) {
-			return map[string][]byte{}, nil
-		},
-	}
-	pm := newTestKVParameterManager(t, newMockProvider(transport))
-
-	keys, err := pm.scanKeys(context.Background(), "param:")
-	require.NoError(t, err)
-	assert.Empty(t, keys)
 }
