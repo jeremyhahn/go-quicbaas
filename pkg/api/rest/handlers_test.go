@@ -143,6 +143,40 @@ func TestHandlePut(t *testing.T) {
 			},
 		},
 		{
+			name:   "update entity with wal_durable write mode",
+			method: http.MethodPut,
+			path:   "/api/v1/entities/users/1?write_mode=wal_durable",
+			body: PutRequest{
+				EntityType: "users",
+				ID:         1,
+				Data:       json.RawMessage(`{"name":"test"}`),
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
+					ID: 1, Version: 1, Timestamp: 12345,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:   "update entity with batched write mode",
+			method: http.MethodPut,
+			path:   "/api/v1/entities/users/1?write_mode=batched",
+			body: PutRequest{
+				EntityType: "users",
+				ID:         1,
+				Data:       json.RawMessage(`{"name":"test"}`),
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
+					ID: 1, Version: 1, Timestamp: 12345,
+				}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
 			name:           "missing entity type",
 			method:         http.MethodPost,
 			path:           "/api/v1/entities/",
@@ -626,6 +660,19 @@ func TestHandleQuery(t *testing.T) {
 						stream <- &service.QueryResponse{
 							Entities: []*service.Entity{},
 						}
+						close(stream)
+					}).Return(nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "query with empty result stream",
+			path: "/api/v1/query/users/name?value=test",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.ExpectedCalls = nil
+				m.On("Query", mock.Anything, mock.Anything, mock.Anything).
+					Run(func(args mock.Arguments) {
+						stream := args.Get(2).(chan<- *service.QueryResponse)
 						close(stream)
 					}).Return(nil).Once()
 			},
@@ -1395,93 +1442,6 @@ func TestHandleBatchDelete(t *testing.T) {
 		// ErrRaft returns 503 for service unavailable
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	})
-}
-
-// TestPutWithDifferentWriteModes tests HandlePut with various write modes
-func TestPutWithDifferentWriteModes(t *testing.T) {
-	t.Run("wal_durable mode", func(t *testing.T) {
-		server, mockService, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		mockService.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
-			ID: 1, Version: 1, Timestamp: 12345,
-		}, nil).Once()
-
-		putReq := PutRequest{
-			EntityType: "users",
-			ID:         1,
-			Data:       json.RawMessage(`{"name":"test"}`),
-		}
-		body, _ := json.Marshal(putReq)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/entities/users/1?write_mode=wal_durable", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		server.GetRouter().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("batched mode", func(t *testing.T) {
-		server, mockService, cleanup := setupMockServer(t)
-		defer cleanup()
-
-		mockService.On("Put", mock.Anything, mock.Anything).Return(&service.PutResponse{
-			ID: 1, Version: 1, Timestamp: 12345,
-		}, nil).Once()
-
-		putReq := PutRequest{
-			EntityType: "users",
-			ID:         1,
-			Data:       json.RawMessage(`{"name":"test"}`),
-		}
-		body, _ := json.Marshal(putReq)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/entities/users/1?write_mode=batched", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		server.GetRouter().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-}
-
-// TestQueryWithEmptyResults tests HandleQuery when stream has no results
-func TestQueryWithEmptyResults(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("Query", mock.Anything, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			stream := args.Get(2).(chan<- *service.QueryResponse)
-			close(stream)
-		}).Return(nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/query/users/name?value=test", nil)
-	w := httptest.NewRecorder()
-	server.GetRouter().ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestRangeQueryWithEmptyResults tests HandleRangeQuery with empty stream
-func TestRangeQueryWithEmptyResults(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("ScanIndex", mock.Anything, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			stream := args.Get(2).(chan<- *service.ScanResponse)
-			close(stream)
-		}).Return(nil).Once()
-
-	rangeReq := RangeQueryRequest{
-		EntityType: "users",
-		Index:      "age",
-		Start:      20,
-		End:        30,
-	}
-	body, _ := json.Marshal(rangeReq)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/query/range", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	server.GetRouter().ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestHandleListEntityTypes(t *testing.T) {
