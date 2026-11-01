@@ -1027,6 +1027,166 @@ func TestIAMServer_MissingRequiredField(t *testing.T) {
 			_, err := s.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Subject: &iampb.Subject{}, Action: "read"})
 			return err
 		}},
+		{"CreateAdminAssignment/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
+				AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, GrantedBy: "admin1",
+			})
+			return err
+		}},
+		{"CreateAdminAssignment/admin_role", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{UserId: "30001", GrantedBy: "admin1"})
+			return err
+		}},
+		{"CreateAdminAssignment/granted_by", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
+				UserId: "30001", AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
+			})
+			return err
+		}},
+		{"GetAdminAssignment/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetAdminAssignment(ctx, &iampb.GetAdminAssignmentRequest{})
+			return err
+		}},
+		{"UpdateAdminAssignment/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateAdminAssignment(ctx, &iampb.UpdateAdminAssignmentRequest{})
+			return err
+		}},
+		{"DeleteAdminAssignment/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteAdminAssignment(ctx, &iampb.DeleteAdminAssignmentRequest{})
+			return err
+		}},
+		{"CheckAdminPermission/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CheckAdminPermission(ctx, &iampb.CheckAdminPermissionRequest{Permission: "x"})
+			return err
+		}},
+		{"CheckAdminPermission/permission", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CheckAdminPermission(ctx, &iampb.CheckAdminPermissionRequest{UserId: "30001"})
+			return err
+		}},
+		{"StartImpersonation/target_user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.StartImpersonation(ctx, &iampb.StartImpersonationRequest{TenantId: "t1", Reason: "x"})
+			return err
+		}},
+		{"StartImpersonation/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.StartImpersonation(ctx, &iampb.StartImpersonationRequest{TargetUserId: "30001", Reason: "x"})
+			return err
+		}},
+		{"StartImpersonation/reason", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.StartImpersonation(ctx, &iampb.StartImpersonationRequest{TargetUserId: "30001", TenantId: "t1"})
+			return err
+		}},
+		{"EndImpersonation/session_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.EndImpersonation(ctx, &iampb.EndImpersonationRequest{})
+			return err
+		}},
+		{"GetActiveImpersonations/admin_user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetActiveImpersonations(ctx, &iampb.GetActiveImpersonationsRequest{})
+			return err
+		}},
+		{"GrantConsent/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GrantConsent(ctx, &iampb.GrantConsentRequest{
+				UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"GrantConsent/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GrantConsent(ctx, &iampb.GrantConsentRequest{
+				TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"GrantConsent/purpose", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GrantConsent(ctx, &iampb.GrantConsentRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"WithdrawConsent/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{
+				UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"WithdrawConsent/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{
+				TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"WithdrawConsent/purpose", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"GetConsent/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetConsent(ctx, &iampb.GetConsentRequest{
+				UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"GetConsent/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetConsent(ctx, &iampb.GetConsentRequest{
+				TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
+			})
+			return err
+		}},
+		{"GetConsent/purpose", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"ListUserConsents/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListUserConsents(ctx, &iampb.ListUserConsentsRequest{UserId: "30001"})
+			return err
+		}},
+		{"ListUserConsents/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListUserConsents(ctx, &iampb.ListUserConsentsRequest{TenantId: "t1"})
+			return err
+		}},
+		{"RequestExport/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestExport(ctx, &iampb.RequestExportRequest{UserId: "30001", RequestedBy: "a"})
+			return err
+		}},
+		{"RequestExport/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", RequestedBy: "a"})
+			return err
+		}},
+		{"RequestExport/requested_by", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"GetExportStatus/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetExportStatus(ctx, &iampb.GetExportStatusRequest{})
+			return err
+		}},
+		{"GenerateExport/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GenerateExport(ctx, &iampb.GenerateExportRequest{})
+			return err
+		}},
+		{"RequestDeletion/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestDeletion(ctx, &iampb.RequestDeletionRequest{UserId: "30001", RequestedBy: "a"})
+			return err
+		}},
+		{"RequestDeletion/user_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", RequestedBy: "a"})
+			return err
+		}},
+		{"RequestDeletion/requested_by", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", UserId: "30001"})
+			return err
+		}},
+		{"CancelDeletion/deletion_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CancelDeletion(ctx, &iampb.CancelDeletionRequest{CancelledBy: "admin1"})
+			return err
+		}},
+		{"CancelDeletion/cancelled_by", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CancelDeletion(ctx, &iampb.CancelDeletionRequest{DeletionId: "d1"})
+			return err
+		}},
+		{"ProcessDeletion/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ProcessDeletion(ctx, &iampb.ProcessDeletionRequest{})
+			return err
+		}},
+		{"GetDeletionStatus/id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetDeletionStatus(ctx, &iampb.GetDeletionStatusRequest{})
+			return err
+		}},
 	}
 
 	for _, tt := range tests {
@@ -1324,26 +1484,6 @@ func TestIAMServer_CreateAdminAssignment_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CreateAdminAssignment_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
-		AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN, GrantedBy: "admin1",
-	})
-	require.Error(t, err)
-
-	_, err = srv.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
-		UserId: "30001", GrantedBy: "admin1",
-	})
-	require.Error(t, err)
-
-	_, err = srv.CreateAdminAssignment(ctx, &iampb.CreateAdminAssignmentRequest{
-		UserId: "30001", AdminRole: iampb.AdminRole_ADMIN_ROLE_SUPER_ADMIN,
-	})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1355,13 +1495,6 @@ func TestIAMServer_GetAdminAssignment_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "a1", resp.Id)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetAdminAssignment_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetAdminAssignment(callerContext("t1"), &iampb.GetAdminAssignmentRequest{})
-	require.Error(t, err)
 }
 
 func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
@@ -1387,13 +1520,6 @@ func TestIAMServer_UpdateAdminAssignment_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdateAdminAssignment_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateAdminAssignment(callerContext("t1"), &iampb.UpdateAdminAssignmentRequest{})
-	require.Error(t, err)
-}
-
 func TestIAMServer_DeleteAdminAssignment_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1404,13 +1530,6 @@ func TestIAMServer_DeleteAdminAssignment_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteAdminAssignment_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteAdminAssignment(callerContext("t1"), &iampb.DeleteAdminAssignmentRequest{})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ListAdminAssignments_Success(t *testing.T) {
@@ -1443,16 +1562,6 @@ func TestIAMServer_CheckAdminPermission_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CheckAdminPermission_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CheckAdminPermission(callerContext("t1"), &iampb.CheckAdminPermissionRequest{Permission: "x"})
-	require.Error(t, err)
-
-	_, err = srv.CheckAdminPermission(callerContext("t1"), &iampb.CheckAdminPermissionRequest{UserId: "30001"})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Impersonation Operations
 // =============================================================================
@@ -1474,29 +1583,6 @@ func TestIAMServer_StartImpersonation_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_StartImpersonation_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	// Missing target_user_id.
-	_, err := srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TenantId: "t1", Reason: "x",
-	})
-	require.Error(t, err)
-
-	// Missing tenant_id.
-	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TargetUserId: "30001", Reason: "x",
-	})
-	require.Error(t, err)
-
-	// Missing reason.
-	_, err = srv.StartImpersonation(ctx, &iampb.StartImpersonationRequest{
-		TargetUserId: "30001", TenantId: "t1",
-	})
-	require.Error(t, err)
-}
-
 func TestIAMServer_EndImpersonation_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1507,13 +1593,6 @@ func TestIAMServer_EndImpersonation_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_EndImpersonation_MissingSessionID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.EndImpersonation(callerContext("t1"), &iampb.EndImpersonationRequest{})
-	require.Error(t, err)
 }
 
 func TestIAMServer_GetActiveImpersonations_Success(t *testing.T) {
@@ -1527,13 +1606,6 @@ func TestIAMServer_GetActiveImpersonations_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Sessions, 1)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetActiveImpersonations_MissingAdminUserID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetActiveImpersonations(callerContext("t1"), &iampb.GetActiveImpersonationsRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1561,26 +1633,6 @@ func TestIAMServer_GrantConsent_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_GrantConsent_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.GrantConsent(ctx, &iampb.GrantConsentRequest{
-		UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
-	})
-	require.Error(t, err)
-
-	_, err = srv.GrantConsent(ctx, &iampb.GrantConsentRequest{
-		TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING,
-	})
-	require.Error(t, err)
-
-	_, err = srv.GrantConsent(ctx, &iampb.GrantConsentRequest{
-		TenantId: "t1", UserId: "30001",
-	})
-	require.Error(t, err)
-}
-
 func TestIAMServer_WithdrawConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1599,20 +1651,6 @@ func TestIAMServer_WithdrawConsent_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_WithdrawConsent_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
-	require.Error(t, err)
-
-	_, err = srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
-	require.Error(t, err)
-
-	_, err = srv.WithdrawConsent(ctx, &iampb.WithdrawConsentRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetConsent_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1628,20 +1666,6 @@ func TestIAMServer_GetConsent_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_GetConsent_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.GetConsent(ctx, &iampb.GetConsentRequest{UserId: "30001", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
-	require.Error(t, err)
-
-	_, err = srv.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", Purpose: iampb.ConsentPurpose_CONSENT_PURPOSE_DATA_PROCESSING})
-	require.Error(t, err)
-
-	_, err = srv.GetConsent(ctx, &iampb.GetConsentRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_ListUserConsents_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1653,16 +1677,6 @@ func TestIAMServer_ListUserConsents_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, resp.Consents, 1)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_ListUserConsents_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListUserConsents(callerContext("t1"), &iampb.ListUserConsentsRequest{UserId: "30001"})
-	require.Error(t, err)
-
-	_, err = srv.ListUserConsents(callerContext("t1"), &iampb.ListUserConsentsRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1688,20 +1702,6 @@ func TestIAMServer_RequestExport_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_RequestExport_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.RequestExport(ctx, &iampb.RequestExportRequest{UserId: "30001", RequestedBy: "a"})
-	require.Error(t, err)
-
-	_, err = srv.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", RequestedBy: "a"})
-	require.Error(t, err)
-
-	_, err = srv.RequestExport(ctx, &iampb.RequestExportRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetExportStatus_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1715,13 +1715,6 @@ func TestIAMServer_GetExportStatus_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_GetExportStatus_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetExportStatus(callerContext("t1"), &iampb.GetExportStatusRequest{})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GenerateExport_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1733,13 +1726,6 @@ func TestIAMServer_GenerateExport_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "e1", resp.ExportMetadata.ExportId)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GenerateExport_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GenerateExport(callerContext("t1"), &iampb.GenerateExportRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1767,20 +1753,6 @@ func TestIAMServer_RequestDeletion_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_RequestDeletion_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{UserId: "30001", RequestedBy: "a"})
-	require.Error(t, err)
-
-	_, err = srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", RequestedBy: "a"})
-	require.Error(t, err)
-
-	_, err = srv.RequestDeletion(ctx, &iampb.RequestDeletionRequest{TenantId: "t1", UserId: "30001"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_CancelDeletion_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1791,16 +1763,6 @@ func TestIAMServer_CancelDeletion_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_CancelDeletion_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.CancelDeletion(callerContext("t1"), &iampb.CancelDeletionRequest{CancelledBy: "admin1"})
-	require.Error(t, err)
-
-	_, err = srv.CancelDeletion(callerContext("t1"), &iampb.CancelDeletionRequest{DeletionId: "d1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ProcessDeletion_Success(t *testing.T) {
@@ -1817,13 +1779,6 @@ func TestIAMServer_ProcessDeletion_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_ProcessDeletion_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ProcessDeletion(callerContext("t1"), &iampb.ProcessDeletionRequest{})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetDeletionStatus_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1835,13 +1790,6 @@ func TestIAMServer_GetDeletionStatus_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "d1", resp.Id)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetDeletionStatus_MissingID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetDeletionStatus(callerContext("t1"), &iampb.GetDeletionStatusRequest{})
-	require.Error(t, err)
 }
 
 // =============================================================================
