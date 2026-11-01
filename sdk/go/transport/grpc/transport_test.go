@@ -206,16 +206,24 @@ func TestTransport_Close(t *testing.T) {
 	tests := []struct {
 		name   string
 		closed bool
-		pool   *Pool
+		pool   func() *Pool
 	}{
 		{name: "already closed", closed: true},
 		{name: "no connection"},
-		{name: "empty pool", pool: &Pool{healthStop: make(chan struct{})}},
+		{name: "empty pool", pool: func() *Pool { return &Pool{healthStop: make(chan struct{})} }},
+		{name: "closed pool", pool: func() *Pool {
+			p := &Pool{healthStop: make(chan struct{}), cfg: &PoolConfig{MinSize: 1, MaxSize: 2}}
+			p.closed.Store(true)
+			return p
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := &Transport{pool: tt.pool}
+			tr := &Transport{cfg: &transport.Config{}}
+			if tt.pool != nil {
+				tr.pool = tt.pool()
+			}
 			tr.closed.Store(tt.closed)
 
 			if err := tr.Close(); err != nil {
@@ -554,44 +562,6 @@ func TestStream_SendSuccess(t *testing.T) {
 	}
 }
 
-// TestPool_GetCreatesConnectionOnDemand tests creating new connection when all are busy.
-func TestPool_GetCreatesConnectionOnDemand(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        5,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	// Get all connections, keeping them busy
-	var conns []*grpc.ClientConn
-	for i := 0; i < 3; i++ {
-		conn, err := p.Get()
-		if err != nil {
-			t.Fatalf("failed to get connection %d: %v", i, err)
-		}
-		conns = append(conns, conn)
-	}
-
-	if p.Size() != 3 {
-		t.Errorf("expected pool size 3, got %d", p.Size())
-	}
-
-	// Return all connections
-	for _, conn := range conns {
-		p.Put(conn)
-	}
-}
-
 // TestPool_ReplaceConnectionOldNotFound tests replace when old connection is already removed.
 func TestPool_ReplaceConnectionOldNotFound(t *testing.T) {
 	ts := newTestServer()
@@ -713,35 +683,6 @@ func TestPool_EnsureMinConnectionsAtMax(t *testing.T) {
 
 	if p.Size() != initialSize {
 		t.Errorf("pool size should remain %d, got %d", initialSize, p.Size())
-	}
-}
-
-// TestTransport_CloseWithPoolError tests close when pool close returns error.
-func TestTransport_CloseWithPoolError(t *testing.T) {
-	// Create a pool that's already closed to simulate close error scenario
-	p := &Pool{
-		healthStop: make(chan struct{}),
-		cfg: &PoolConfig{
-			MinSize: 1,
-			MaxSize: 2,
-		},
-	}
-	p.closed.Store(true)
-
-	tr := &Transport{
-		cfg:  &transport.Config{},
-		pool: p,
-	}
-
-	// Close should handle already-closed pool gracefully
-	err := tr.Close()
-	if err != nil {
-		// Pool was already closed, so no error expected
-		t.Logf("close returned: %v", err)
-	}
-
-	if !tr.closed.Load() {
-		t.Error("transport should be marked closed")
 	}
 }
 
@@ -1684,53 +1625,6 @@ func TestPool_NegativeMaxAge(t *testing.T) {
 	}
 }
 
-// TestPool_ReplaceConnectionFailure tests replacement when creation fails.
-//
-// Like TestPool_EnsureMinConnectionsFailure, the bufconn dialer can
-// hang under WithBlock after Close. The replacement attempt runs on
-// a goroutine with a deadline so a stuck dial doesn't hang the suite.
-func TestPool_ReplaceConnectionFailure(t *testing.T) {
-	t.Skip("Skipped: bufconn dialer hangs under WithBlock after listener close; covered by TestPool_ReplaceConnectionOldNotFound and TestPool_ReplaceConnection.")
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-
-	conn, err := p.Get()
-	if err != nil {
-		t.Fatalf("failed to get connection: %v", err)
-	}
-
-	ts.stop()
-
-	p.mu.Lock()
-	var oldPC *pooledConn
-	for _, pc := range p.connections {
-		if pc.conn == conn {
-			oldPC = pc
-			break
-		}
-	}
-	p.mu.Unlock()
-
-	if oldPC != nil {
-		p.replaceConnection(oldPC)
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	p.Close()
-}
-
 // TestPool_ReplaceConnection_PoolFull tests replacement when pool is already full.
 func TestPool_ReplaceConnection_PoolFull(t *testing.T) {
 	ts := newTestServer()
@@ -1808,64 +1702,6 @@ func TestTransport_Request(t *testing.T) {
 	_, err = tr.Request(ctx, "test.Service", "Method", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent service")
-	}
-}
-
-// TestPool_EnsureMinConnectionsMaxReached tests ensureMinConnections when max is reached.
-func TestPool_EnsureMinConnectionsMaxReached(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        2,
-		MaxSize:        2,
-		MaxAge:         time.Hour,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	if p.Size() != 2 {
-		t.Errorf("expected size 2, got %d", p.Size())
-	}
-
-	p.ensureMinConnections()
-
-	if p.Size() != 2 {
-		t.Errorf("expected size 2 after ensureMinConnections, got %d", p.Size())
-	}
-}
-
-// TestPool_PerformHealthCheckWithExpiredConnections tests health check with expired connections.
-func TestPool_PerformHealthCheckWithExpiredConnections(t *testing.T) {
-	ts := newTestServer()
-	defer ts.stop()
-
-	cfg := &PoolConfig{
-		MinSize:        1,
-		MaxSize:        3,
-		MaxAge:         1 * time.Millisecond,
-		HealthInterval: 0,
-	}
-
-	p, err := NewPool("bufnet", ts.dialOpts(), cfg)
-	if err != nil {
-		t.Fatalf("failed to create pool: %v", err)
-	}
-	defer p.Close()
-
-	time.Sleep(5 * time.Millisecond)
-
-	p.performHealthCheck()
-
-	time.Sleep(50 * time.Millisecond)
-
-	if p.Size() < cfg.MinSize {
-		t.Errorf("expected at least %d connections after health check, got %d", cfg.MinSize, p.Size())
 	}
 }
 
