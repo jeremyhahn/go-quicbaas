@@ -1063,39 +1063,7 @@ func TestRunMigrateCancel(t *testing.T) {
 // where proper goroutine synchronization can be achieved with real services.
 
 // TestNewMemoryStorageAdapter tests the memory storage adapter creation.
-func TestNewMemoryStorageAdapter(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	store, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	assert.NotNil(t, store)
-}
-
 // TestMemoryIteratorNewIterator tests NewIterator method.
-func TestMemoryIteratorNewIterator(t *testing.T) {
-	testLog := createTestLoggerForMigrate(t)
-	log = testLog
-
-	store, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer store.Close()
-
-	// Add test data
-	require.NoError(t, store.Set([]byte("key1"), []byte("val1")))
-
-	opts := &storage.IteratorOptions{
-		LowerBound: []byte("key0"),
-		UpperBound: []byte("key9"),
-	}
-
-	iter := store.NewIterator(opts)
-	assert.NotNil(t, iter)
-	defer iter.Close()
-}
-
 func TestMemoryStorageReaderAdapter_Get(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
@@ -1302,7 +1270,7 @@ func TestGRPCBackupAdapter_VerifyBackup(t *testing.T) {
 // grpcTLSOption tests (57.1% coverage - covering all branches)
 // --------------------------------------------------------------------------
 
-func TestGRPCTLSOption_DefaultTLS(t *testing.T) {
+func TestGRPCTLSOption(t *testing.T) {
 	// Save and restore globals
 	savedCert := tlsCert
 	savedKey := tlsKey
@@ -1313,128 +1281,36 @@ func TestGRPCTLSOption_DefaultTLS(t *testing.T) {
 		tlsCA = savedCA
 	}()
 
-	// Default: no cert, no key, no CA
-	tlsCert = ""
-	tlsKey = ""
-	tlsCA = ""
+	tests := []struct {
+		name string
+		cert string
+		key  string
+		ca   string
+	}{
+		{name: "Default TLS", cert: "", key: "", ca: ""},
+		{name: "With cert and key", cert: "/path/to/cert.pem", key: "/path/to/key.pem", ca: ""},
+		{name: "With CA only", cert: "", key: "", ca: "/path/to/ca.pem"},
+	}
 
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return default TLS option")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tlsCert = tt.cert
+			tlsKey = tt.key
+			tlsCA = tt.ca
 
-func TestGRPCTLSOption_WithCertAndKey(t *testing.T) {
-	savedCert := tlsCert
-	savedKey := tlsKey
-	savedCA := tlsCA
-	defer func() {
-		tlsCert = savedCert
-		tlsKey = savedKey
-		tlsCA = savedCA
-	}()
-
-	tlsCert = "/path/to/cert.pem"
-	tlsKey = "/path/to/key.pem"
-	tlsCA = ""
-
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return TLS option with cert/key")
-}
-
-func TestGRPCTLSOption_WithCAOnly(t *testing.T) {
-	savedCert := tlsCert
-	savedKey := tlsKey
-	savedCA := tlsCA
-	defer func() {
-		tlsCert = savedCert
-		tlsKey = savedKey
-		tlsCA = savedCA
-	}()
-
-	tlsCert = ""
-	tlsKey = ""
-	tlsCA = "/path/to/ca.pem"
-
-	opts := grpcTLSOption()
-	assert.NotEmpty(t, opts, "should return TLS option with CA only")
+			opts := grpcTLSOption()
+			assert.NotEmpty(t, opts)
+		})
+	}
 }
 
 // --------------------------------------------------------------------------
 // MigrationManager with VerifyData enabled
 // --------------------------------------------------------------------------
 
-func TestMigrationManager_MigrateWithVerifyData(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("verify-k1"), []byte("verify-v1"))
-	require.NoError(t, err)
-	err = source.Set([]byte("verify-k2"), []byte("verify-v2"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:          100,
-		Concurrency:        1,
-		VerifyData:         true,
-		DeleteSource:       false,
-		CheckpointInterval: time.Second,
-	}
-
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(2), result.KeysProcessed)
-	assert.Equal(t, int64(0), result.KeysFailed)
-
-	// Verify data actually transferred
-	v1, err := dest.Get([]byte("verify-k1"))
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("verify-v1"), v1)
-}
-
 // --------------------------------------------------------------------------
 // MigrationManager with DeleteSource enabled
 // --------------------------------------------------------------------------
-
-func TestMigrationManager_MigrateWithDeleteSource(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("del-k1"), []byte("del-v1"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:    100,
-		Concurrency:  1,
-		DeleteSource: true,
-	}
-
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(1), result.KeysProcessed)
-}
 
 // --------------------------------------------------------------------------
 // NodeReplacementManager: AddNode duplicate error
@@ -1462,31 +1338,6 @@ func TestNodeReplacementManager_AddDuplicateNode(t *testing.T) {
 // NodeReplacementManager: ReplaceNode when old node does not exist
 // succeeds silently and registers the new node.
 // --------------------------------------------------------------------------
-
-func TestNodeReplacementManager_ReplaceNodeNoOldNode(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	replacementCfg := DefaultNodeReplacementConfig()
-	mgr, err := NewNodeReplacementManager(source, replacementCfg, asInterfaceLogger(log))
-	require.NoError(t, err)
-
-	// ReplaceNode succeeds even when old node is not registered
-	report, err := mgr.ReplaceNode(context.Background(), "ghost", "new-node", "addr-new")
-	assert.NoError(t, err)
-	require.NotNil(t, report)
-	assert.True(t, report.Success)
-	assert.Equal(t, "ghost", report.OldNodeID)
-	assert.Equal(t, "new-node", report.NewNodeID)
-
-	// New node should now be registered
-	state, found := mgr.GetNodeState("new-node")
-	assert.True(t, found)
-	assert.Equal(t, "addr-new", state.Address)
-}
 
 // --------------------------------------------------------------------------
 // MigrationManager: constructor accepts nil logger (no validation)
@@ -1642,7 +1493,7 @@ func TestRunCacheWarmCommand_SuccessTable(t *testing.T) {
 // getNodeManager tests (74.1% -> higher coverage)
 // --------------------------------------------------------------------------
 
-func TestGetNodeManager_WithDefaults(t *testing.T) {
+func TestGetNodeManager_Config(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1664,55 +1515,48 @@ func TestGetNodeManager_WithDefaults(t *testing.T) {
 		nodeAutoReplace = savedAR
 	}()
 
-	currentNodeManager = nil
-	nodeHealthCheckInterval = 0
-	nodeHealthCheckTimeout = 0
-	nodeEvacuationTimeout = 0
-	nodeGracePeriod = 0
-	nodeMaxTransfers = 0
-	nodeVerifyData = true
-	nodeAutoReplace = false
+	tests := []struct {
+		name                string
+		healthCheckInterval time.Duration
+		healthCheckTimeout  time.Duration
+		evacuationTimeout   time.Duration
+		gracePeriod         time.Duration
+		maxTransfers        int
+		verifyData          bool
+		autoReplace         bool
+	}{
+		{
+			name:       "Zero values use defaults",
+			verifyData: true,
+		},
+		{
+			name:                "Custom values",
+			healthCheckInterval: 10 * time.Second,
+			healthCheckTimeout:  3 * time.Second,
+			evacuationTimeout:   15 * time.Minute,
+			gracePeriod:         2 * time.Minute,
+			maxTransfers:        5,
+			autoReplace:         true,
+		},
+	}
 
-	mgr, err := getNodeManager()
-	assert.NoError(t, err)
-	require.NotNil(t, mgr)
-	assert.Equal(t, mgr, currentNodeManager)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			currentNodeManager = nil
+			nodeHealthCheckInterval = tt.healthCheckInterval
+			nodeHealthCheckTimeout = tt.healthCheckTimeout
+			nodeEvacuationTimeout = tt.evacuationTimeout
+			nodeGracePeriod = tt.gracePeriod
+			nodeMaxTransfers = tt.maxTransfers
+			nodeVerifyData = tt.verifyData
+			nodeAutoReplace = tt.autoReplace
 
-func TestGetNodeManager_WithCustomValues(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedHCI := nodeHealthCheckInterval
-	savedHCT := nodeHealthCheckTimeout
-	savedET := nodeEvacuationTimeout
-	savedGP := nodeGracePeriod
-	savedMT := nodeMaxTransfers
-	savedVD := nodeVerifyData
-	savedAR := nodeAutoReplace
-	defer func() {
-		currentNodeManager = savedManager
-		nodeHealthCheckInterval = savedHCI
-		nodeHealthCheckTimeout = savedHCT
-		nodeEvacuationTimeout = savedET
-		nodeGracePeriod = savedGP
-		nodeMaxTransfers = savedMT
-		nodeVerifyData = savedVD
-		nodeAutoReplace = savedAR
-	}()
-
-	currentNodeManager = nil
-	nodeHealthCheckInterval = 10 * time.Second
-	nodeHealthCheckTimeout = 3 * time.Second
-	nodeEvacuationTimeout = 15 * time.Minute
-	nodeGracePeriod = 2 * time.Minute
-	nodeMaxTransfers = 5
-	nodeVerifyData = false
-	nodeAutoReplace = true
-
-	mgr, err := getNodeManager()
-	assert.NoError(t, err)
-	require.NotNil(t, mgr)
+			mgr, err := getNodeManager()
+			assert.NoError(t, err)
+			require.NotNil(t, mgr)
+			assert.Equal(t, mgr, currentNodeManager)
+		})
+	}
 }
 
 func TestGetNodeManager_Cached(t *testing.T) {
@@ -1741,7 +1585,7 @@ func TestGetNodeManager_Cached(t *testing.T) {
 // runNodeAdd / runNodeList full execution tests
 // --------------------------------------------------------------------------
 
-func TestRunNodeAdd_TableOutput(t *testing.T) {
+func TestRunNodeAdd_OutputFormats(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1751,16 +1595,28 @@ func TestRunNodeAdd_TableOutput(t *testing.T) {
 		nodeOutputFormat = savedOutput
 	}()
 
-	currentNodeManager = nil
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"test-node-add-1", "localhost:9001"}},
+		{format: "json", args: []string{"json-node-add", "localhost:9002"}},
+	}
 
-	cmd := newNodeAddCommand()
-	// Set output format AFTER command creation
-	nodeOutputFormat = "table"
-	err := cmd.RunE(cmd, []string{"test-node-add-1", "localhost:9001"})
-	assert.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			currentNodeManager = nil
+
+			cmd := newNodeAddCommand()
+			// Set output format AFTER command creation
+			nodeOutputFormat = tt.format
+			err := cmd.RunE(cmd, tt.args)
+			assert.NoError(t, err)
+		})
+	}
 }
 
-func TestRunNodeAdd_JSONOutput(t *testing.T) {
+func TestRunNodeReplace_OutputFormats(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
 	savedManager := currentNodeManager
@@ -1770,49 +1626,24 @@ func TestRunNodeAdd_JSONOutput(t *testing.T) {
 		nodeOutputFormat = savedOutput
 	}()
 
-	currentNodeManager = nil
+	tests := []struct {
+		format string
+		args   []string
+	}{
+		{format: "table", args: []string{"old-node-r", "new-node-r", "localhost:9003"}},
+		{format: "json", args: []string{"old-j-r", "new-j-r", "localhost:9004"}},
+	}
 
-	cmd := newNodeAddCommand()
-	// Set output format AFTER command creation
-	nodeOutputFormat = "json"
-	err := cmd.RunE(cmd, []string{"json-node-add", "localhost:9002"})
-	assert.NoError(t, err)
-}
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			currentNodeManager = nil
 
-func TestRunNodeReplace_TableOutput(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedOutput := nodeOutputFormat
-	defer func() {
-		currentNodeManager = savedManager
-		nodeOutputFormat = savedOutput
-	}()
-
-	currentNodeManager = nil
-
-	cmd := newNodeReplaceCommand()
-	nodeOutputFormat = "table"
-	err := cmd.RunE(cmd, []string{"old-node-r", "new-node-r", "localhost:9003"})
-	assert.NoError(t, err)
-}
-
-func TestRunNodeReplace_JSONOutput(t *testing.T) {
-	ensureTestLoggerInitialized(t)
-
-	savedManager := currentNodeManager
-	savedOutput := nodeOutputFormat
-	defer func() {
-		currentNodeManager = savedManager
-		nodeOutputFormat = savedOutput
-	}()
-
-	currentNodeManager = nil
-
-	cmd := newNodeReplaceCommand()
-	nodeOutputFormat = "json"
-	err := cmd.RunE(cmd, []string{"old-j-r", "new-j-r", "localhost:9004"})
-	assert.NoError(t, err)
+			cmd := newNodeReplaceCommand()
+			nodeOutputFormat = tt.format
+			err := cmd.RunE(cmd, tt.args)
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRunNodeList_EmptyJSON(t *testing.T) {
@@ -2238,34 +2069,64 @@ func TestMigrationManager_MigrateWithContextCancellation(t *testing.T) {
 func TestMigrationManager_MigrateSuccess(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
-
-	dest, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer dest.Close()
-
-	// Add test data
-	err = source.Set([]byte("k1"), []byte("v1"))
-	require.NoError(t, err)
-	err = source.Set([]byte("k2"), []byte("v2"))
-	require.NoError(t, err)
-
-	migrationConfig := &MigrationConfig{
-		BatchSize:   10,
-		Concurrency: 1,
+	tests := []struct {
+		name   string
+		config *MigrationConfig
+		data   map[string]string
+	}{
+		{
+			name:   "Plain copy",
+			config: &MigrationConfig{BatchSize: 10, Concurrency: 1},
+			data:   map[string]string{"k1": "v1", "k2": "v2"},
+		},
+		{
+			name: "With verify data",
+			config: &MigrationConfig{
+				BatchSize:          100,
+				Concurrency:        1,
+				VerifyData:         true,
+				CheckpointInterval: time.Second,
+			},
+			data: map[string]string{"verify-k1": "verify-v1", "verify-k2": "verify-v2"},
+		},
+		{
+			name:   "With delete source",
+			config: &MigrationConfig{BatchSize: 100, Concurrency: 1, DeleteSource: true},
+			data:   map[string]string{"del-k1": "del-v1"},
+		},
 	}
 
-	mgr, err := NewMigrationManager(source, dest, migrationConfig, asInterfaceLogger(log))
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer source.Close()
 
-	result, err := mgr.Migrate(context.Background())
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, int64(2), result.KeysProcessed)
-	assert.Equal(t, int64(0), result.KeysFailed)
-	assert.True(t, result.BytesTransferred > 0)
+			dest, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer dest.Close()
+
+			for k, v := range tt.data {
+				require.NoError(t, source.Set([]byte(k), []byte(v)))
+			}
+
+			mgr, err := NewMigrationManager(source, dest, tt.config, asInterfaceLogger(log))
+			require.NoError(t, err)
+
+			result, err := mgr.Migrate(context.Background())
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, int64(len(tt.data)), result.KeysProcessed)
+			assert.Equal(t, int64(0), result.KeysFailed)
+			assert.True(t, result.BytesTransferred > 0)
+
+			for k, v := range tt.data {
+				got, err := dest.Get([]byte(k))
+				assert.NoError(t, err)
+				assert.Equal(t, []byte(v), got)
+			}
+		})
+	}
 }
 
 func TestMigrationManager_GetProgressAndRollback(t *testing.T) {
@@ -2382,34 +2243,46 @@ func TestNodeReplacementManager_GetAllNodes(t *testing.T) {
 func TestNodeReplacementManager_ReplaceNode(t *testing.T) {
 	ensureTestLoggerInitialized(t)
 
-	source, err := createStorageFromURL("memory://")
-	require.NoError(t, err)
-	defer source.Close()
+	tests := []struct {
+		name        string
+		oldNodeID   string
+		registerOld bool
+	}{
+		{name: "Registered old node", oldNodeID: "old", registerOld: true},
+		// ReplaceNode succeeds even when old node is not registered
+		{name: "Unregistered old node", oldNodeID: "ghost", registerOld: false},
+	}
 
-	replacementCfg := DefaultNodeReplacementConfig()
-	mgr, err := NewNodeReplacementManager(source, replacementCfg, asInterfaceLogger(log))
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := createStorageFromURL("memory://")
+			require.NoError(t, err)
+			defer source.Close()
 
-	// Add old node
-	err = mgr.AddNode(context.Background(), "old", "addr-old")
-	require.NoError(t, err)
+			mgr, err := NewNodeReplacementManager(source, DefaultNodeReplacementConfig(), asInterfaceLogger(log))
+			require.NoError(t, err)
 
-	// Replace
-	report, err := mgr.ReplaceNode(context.Background(), "old", "new", "addr-new")
-	assert.NoError(t, err)
-	assert.NotNil(t, report)
-	assert.True(t, report.Success)
-	assert.Equal(t, "old", report.OldNodeID)
-	assert.Equal(t, "new", report.NewNodeID)
+			if tt.registerOld {
+				require.NoError(t, mgr.AddNode(context.Background(), tt.oldNodeID, "addr-old"))
+			}
 
-	// Old node should be gone
-	_, found := mgr.GetNodeState("old")
-	assert.False(t, found)
+			report, err := mgr.ReplaceNode(context.Background(), tt.oldNodeID, "new", "addr-new")
+			assert.NoError(t, err)
+			require.NotNil(t, report)
+			assert.True(t, report.Success)
+			assert.Equal(t, tt.oldNodeID, report.OldNodeID)
+			assert.Equal(t, "new", report.NewNodeID)
 
-	// New node should exist
-	state, found := mgr.GetNodeState("new")
-	assert.True(t, found)
-	assert.Equal(t, "addr-new", state.Address)
+			// Old node should be gone
+			_, found := mgr.GetNodeState(tt.oldNodeID)
+			assert.False(t, found)
+
+			// New node should exist
+			state, found := mgr.GetNodeState("new")
+			assert.True(t, found)
+			assert.Equal(t, "addr-new", state.Address)
+		})
+	}
 }
 
 // TestRunMigrateStartPebbleStorage tests migration with pebble storage.
