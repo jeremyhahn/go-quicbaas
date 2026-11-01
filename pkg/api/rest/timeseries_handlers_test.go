@@ -112,6 +112,25 @@ func TestHandleWritePoint(t *testing.T) {
 			requestBody:    "invalid json",
 			setupMock:      func() {},
 			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "invalid JSON")
+			},
+		},
+		{
+			name: "service_error",
+			requestBody: WritePointRequest{
+				Metric:    "cpu.usage",
+				Value:     75.5,
+				Timestamp: time.Now(),
+			},
+			setupMock: func() {
+				mockService.On("WritePoint", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "WritePoint",
+					Err:  stderrors.New("internal error"),
+				}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -541,22 +560,6 @@ func TestHandleListMetrics(t *testing.T) {
 	assert.Len(t, metrics, 3)
 }
 
-func TestCov91_HandleWritePoint_ServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.WritePointFunc = func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error) {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("write error")}
-	}
-
-	body := `{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestCov91_HandleWriteBatch_ServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -655,22 +658,6 @@ func TestCov91_HandleListMetrics_ServiceError(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCov91_HandleWritePoint_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.WritePointFunc = func(ctx context.Context, req *service.WritePointRequest) (*service.WritePointResponse, error) {
-		return &service.WritePointResponse{Success: true}, nil
-	}
-
-	body := `{"metric":"cpu.usage","value":75.5,"timestamp":"2024-01-01T00:00:00Z","tags":{"host":"server1"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCov91_HandleWriteBatch_Success(t *testing.T) {
@@ -784,41 +771,6 @@ func TestCov91_HandleListMetrics_Success(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleWritePoint_MissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"value":75.5,"timestamp":"2024-01-01T00:00:00Z"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWritePoint_MissingTimestamp(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"metric":"cpu.usage","value":75.5}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleWritePoint_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", strings.NewReader("not-json"))
-	w := httptest.NewRecorder()
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCov91_HandleWriteBatch_EmptyPoints(t *testing.T) {
@@ -1068,132 +1020,6 @@ func (m *MockTimeSeriesService) ListMetrics(ctx context.Context, req *service.TS
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*service.TSListMetricsResponse), args.Error(1)
-}
-
-func TestHandleWritePointSuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Setup mock for WritePoint
-	mockService.On("WritePoint", mock.Anything, mock.Anything).Return(&service.WritePointResponse{
-		Success: true,
-	}, nil).Once()
-
-	ts := time.Now()
-	writeReq := WritePointRequest{
-		Metric:    "cpu.usage",
-		Tags:      map[string]string{"host": "server1"},
-		Value:     75.5,
-		Timestamp: ts,
-	}
-
-	body, err := json.Marshal(writeReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp WritePointResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-}
-
-func TestHandleWritePointMissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	ts := time.Now()
-	writeReq := WritePointRequest{
-		Metric:    "",
-		Tags:      map[string]string{"host": "server1"},
-		Value:     75.5,
-		Timestamp: ts,
-	}
-
-	body, err := json.Marshal(writeReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "metric is required")
-}
-
-func TestHandleWritePointMissingTimestamp(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	writeReq := WritePointRequest{
-		Metric: "cpu.usage",
-		Tags:   map[string]string{"host": "server1"},
-		Value:  75.5,
-		// Timestamp is zero value
-	}
-
-	body, err := json.Marshal(writeReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "timestamp is required")
-}
-
-func TestHandleWritePointInvalidJSON(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", bytes.NewReader([]byte("invalid json")))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid JSON")
-}
-
-func TestHandleWritePointServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("WritePoint", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-		Code: errors.ErrInternal,
-		Op:   "WritePoint",
-		Err:  stderrors.New("internal error"),
-	}).Once()
-
-	ts := time.Now()
-	writeReq := WritePointRequest{
-		Metric:    "cpu.usage",
-		Value:     75.5,
-		Timestamp: ts,
-	}
-
-	body, err := json.Marshal(writeReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/write", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleWritePoint(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestHandleWriteBatchSuccess(t *testing.T) {
