@@ -949,38 +949,34 @@ func newFaultFileLockSvc(t *testing.T, kv *faultKVStore) *fileLockStore {
 	return svc.(*fileLockStore)
 }
 
-// TestFileLock_Release_LoadLockError covers Release's branch where loadLock
-// fails with a non-not-found store error.
-func TestFileLock_Release_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
-
-	if err := svc.Release(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected Release to surface the loadLock error")
+// TestFileLock_LoadLockError covers the branch of each method that loads the
+// lock first, where loadLock fails with a non-not-found store error.
+func TestFileLock_LoadLockError(t *testing.T) {
+	cases := []struct {
+		name   string
+		invoke func(context.Context, *fileLockStore) error
+	}{
+		{"Release", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.Release(ctx, "t", "lock-key")
+		}},
+		{"Renew", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.Renew(ctx, "t", "lock-key")
+		}},
+		{"WaitForRelease", func(ctx context.Context, svc *fileLockStore) error {
+			return svc.WaitForRelease(ctx, "t", "lock-key")
+		}},
 	}
-}
 
-// TestFileLock_Renew_LoadLockError covers Renew's loadLock-error branch.
-func TestFileLock_Renew_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := newFaultKVStore()
+			kv.getErr = errors.New("kv get down")
+			svc := newFaultFileLockSvc(t, kv)
 
-	if err := svc.Renew(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected Renew to surface the loadLock error")
-	}
-}
-
-// TestFileLock_WaitForRelease_LoadLockError covers WaitForRelease's branch where
-// the initial loadLock fails with a store error.
-func TestFileLock_WaitForRelease_LoadLockError(t *testing.T) {
-	kv := newFaultKVStore()
-	kv.getErr = errors.New("kv get down")
-	svc := newFaultFileLockSvc(t, kv)
-
-	if err := svc.WaitForRelease(context.Background(), "t", "lock-key"); err == nil {
-		t.Fatal("expected WaitForRelease to surface the loadLock error")
+			if err := tc.invoke(context.Background(), svc); err == nil {
+				t.Fatalf("expected %s to surface the loadLock error", tc.name)
+			}
+		})
 	}
 }
 
