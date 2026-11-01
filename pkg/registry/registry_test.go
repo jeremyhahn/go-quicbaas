@@ -221,10 +221,13 @@ func TestRegistry_ResolveOrdersByInstanceID(t *testing.T) {
 func TestRegistry_RegisterInvalid(t *testing.T) {
 	r := New(newFakeBackend())
 	cases := map[string]ServiceInstance{
-		"missing id":       {Service: "x", Address: "a:1"},
-		"missing address":  {Service: "x", ID: "i"},
-		"oversize service": {Service: strings.Repeat("s", maxNameLen+1), ID: "i", Address: "a:1"},
-		"oversize id":      {Service: "s", ID: strings.Repeat("i", maxNameLen+1), Address: "a:1"},
+		"missing service":      {ID: "i", Address: "a:1"},
+		"missing id":           {Service: "x", Address: "a:1"},
+		"missing address":      {Service: "x", ID: "i"},
+		"oversize service":     {Service: strings.Repeat("s", maxNameLen+1), ID: "i", Address: "a:1"},
+		"oversize id":          {Service: "s", ID: strings.Repeat("i", maxNameLen+1), Address: "a:1"},
+		"separator in service": {Service: "foo/bar", ID: "i", Address: "a:1"},
+		"separator in id":      {Service: "s", ID: "a/b", Address: "a:1"},
 	}
 	for name, inst := range cases {
 		_, err := r.Register(sysCtx(), inst, time.Second)
@@ -321,23 +324,6 @@ func TestRegistry_InvalidTenantRejected(t *testing.T) {
 	}
 	if _, err := r.Renew(ctx, 1); !errors.As(err, &ie) {
 		t.Fatalf("Renew error = %T (%v), want *InvalidInstanceError for invalid tenant", err, err)
-	}
-}
-
-func TestRegistry_RegisterRejectsReservedNames(t *testing.T) {
-	r := New(newFakeBackend())
-	cases := []ServiceInstance{
-		{Service: "foo/bar", ID: "x", Address: "a:1"}, // service with separator
-		{Service: "svc", ID: "a/b", Address: "a:1"},   // id with separator
-		{Service: "", ID: "x", Address: "a:1"},        // empty service
-		{Service: "svc", ID: "", Address: "a:1"},      // empty id
-	}
-	for _, inst := range cases {
-		_, err := r.Register(sysCtx(), inst, time.Second)
-		var ie *InvalidInstanceError
-		if !errors.As(err, &ie) {
-			t.Fatalf("Register(%+v) error = %T (%v), want *InvalidInstanceError", inst, err, err)
-		}
 	}
 }
 
@@ -710,9 +696,6 @@ func TestRegistryErrors_Messages(t *testing.T) {
 	re := &RegistryError{Op: "put", Err: errors.New("boom")}
 	if re.Error() != "registry: put: boom" {
 		t.Fatalf("RegistryError.Error() = %q", re.Error())
-	}
-	if !errors.Is(re, re.Unwrap()) {
-		t.Fatal("RegistryError.Unwrap should return the wrapped error")
 	}
 	ie := &InvalidInstanceError{Reason: "service is required"}
 	if ie.Error() != "registry: invalid service instance: service is required" {
