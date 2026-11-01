@@ -891,78 +891,8 @@ func TestNewStorageBackend_UnsupportedBackend(t *testing.T) {
 	assert.Nil(t, backend)
 }
 
-func TestMockStorage_ExistsCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Key does not exist
-	exists, err := storage.Exists(ctx, "nonexistent-key")
-	require.NoError(t, err)
-	assert.False(t, exists)
-
-	// Put a key
-	err = storage.Put("exists-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	// Key exists now
-	exists, err = storage.Exists(ctx, "exists-key")
-	require.NoError(t, err)
-	assert.True(t, exists)
-}
-
-// TestMockStorage_GetMetadataCoverage tests MockStorage.GetMetadata for various states.
-func TestMockStorage_GetMetadataCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Get metadata for non-existent key
-	_, err := storage.GetMetadata(ctx, "no-key")
-	require.Error(t, err)
-
-	// Put data without metadata
-	err = storage.Put("bare-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	meta, err := storage.GetMetadata(ctx, "bare-key")
-	require.NoError(t, err)
-	assert.NotNil(t, meta)
-
-	// Put data with metadata
-	err = storage.PutWithMetadata(ctx, "meta-key", bytes.NewReader([]byte("data")), &common.Metadata{
-		ContentType: "text/plain",
-	})
-	require.NoError(t, err)
-
-	meta, err = storage.GetMetadata(ctx, "meta-key")
-	require.NoError(t, err)
-	assert.Equal(t, "text/plain", meta.ContentType)
-}
-
-// TestMockStorage_UpdateMetadataCoverage tests MockStorage.UpdateMetadata.
-func TestMockStorage_UpdateMetadataCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Update on non-existent key
-	err := storage.UpdateMetadata(ctx, "no-key", &common.Metadata{})
-	require.Error(t, err)
-
-	// Put then update metadata
-	err = storage.Put("update-meta-key", bytes.NewReader([]byte("data")))
-	require.NoError(t, err)
-
-	err = storage.UpdateMetadata(ctx, "update-meta-key", &common.Metadata{
-		ContentType: "application/json",
-	})
-	require.NoError(t, err)
-
-	meta, err := storage.GetMetadata(ctx, "update-meta-key")
-	require.NoError(t, err)
-	assert.Equal(t, "application/json", meta.ContentType)
-}
-
-// TestMockStorage_DeleteWithContextCoverage tests MockStorage.DeleteWithContext.
-func TestMockStorage_DeleteWithContextCoverage(t *testing.T) {
+// TestMockStorage_DeleteWithContext tests MockStorage.DeleteWithContext.
+func TestMockStorage_DeleteWithContext(t *testing.T) {
 	storage := NewMockStorage()
 	ctx := context.Background()
 
@@ -977,64 +907,6 @@ func TestMockStorage_DeleteWithContextCoverage(t *testing.T) {
 	// Verify deleted
 	_, err = storage.Get("ctx-del-key")
 	require.Error(t, err)
-}
-
-// TestMockStorage_ListWithContextCoverage tests MockStorage.ListWithContext.
-func TestMockStorage_ListWithContextCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Put several keys with a prefix
-	err := storage.Put("prefix/a", bytes.NewReader([]byte("a")))
-	require.NoError(t, err)
-	err = storage.Put("prefix/b", bytes.NewReader([]byte("b")))
-	require.NoError(t, err)
-	err = storage.Put("other/c", bytes.NewReader([]byte("c")))
-	require.NoError(t, err)
-
-	keys, err := storage.ListWithContext(ctx, "prefix/")
-	require.NoError(t, err)
-	assert.Len(t, keys, 2)
-}
-
-// TestMockStorage_ListWithOptionsCoverage tests MockStorage.ListWithOptions with pagination.
-func TestMockStorage_ListWithOptionsCoverage(t *testing.T) {
-	storage := NewMockStorage()
-	ctx := context.Background()
-
-	// Put several keys
-	for i := 0; i < 5; i++ {
-		key := "list/" + string(rune('a'+i))
-		err := storage.Put(key, bytes.NewReader([]byte("data")))
-		require.NoError(t, err)
-	}
-
-	t.Run("list with nil options", func(t *testing.T) {
-		result, err := storage.ListWithOptions(ctx, nil)
-		require.NoError(t, err)
-		assert.NotNil(t, result)
-		assert.GreaterOrEqual(t, len(result.Objects), 5)
-	})
-
-	t.Run("list with prefix and max results", func(t *testing.T) {
-		result, err := storage.ListWithOptions(ctx, &common.ListOptions{
-			Prefix:     "list/",
-			MaxResults: 2,
-		})
-		require.NoError(t, err)
-		assert.Len(t, result.Objects, 2)
-	})
-}
-
-// TestMockStorage_ConfigureCoverage tests MockStorage.Configure.
-func TestMockStorage_ConfigureCoverage(t *testing.T) {
-	storage := NewMockStorage()
-
-	err := storage.Configure(map[string]string{
-		"region": "us-east-1",
-		"bucket": "test-bucket",
-	})
-	require.NoError(t, err)
 }
 
 // TestNoneCompressor_CompressDecompress tests the "none" compressor round trip.
@@ -1374,6 +1246,11 @@ func TestMockStorage_List(t *testing.T) {
 	assert.Len(t, keys, 2)
 	assert.Contains(t, keys, "prefix/key1")
 	assert.Contains(t, keys, "prefix/key2")
+
+	// ListWithContext applies the same prefix filter.
+	keys, err = storage.ListWithContext(context.Background(), "prefix/")
+	require.NoError(t, err)
+	assert.Len(t, keys, 2)
 }
 
 // TestMockStorage_ListWithOptions tests ListWithOptions method.
@@ -1407,6 +1284,11 @@ func TestMockStorage_ListWithOptions(t *testing.T) {
 	result2, err := storage.ListWithOptions(ctx, opts2)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, len(result2.Objects), 5)
+
+	// Nil options list every object.
+	all, err := storage.ListWithOptions(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, all.Objects, 10)
 }
 
 // TestMockStorage_Archive tests Archive method.
