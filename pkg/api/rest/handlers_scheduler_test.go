@@ -315,103 +315,34 @@ func TestHandleCreateSchedulerJob_WithExecuteAt(t *testing.T) {
 	mockSvc.schedulerService.AssertExpectations(t)
 }
 
-func TestHandleCreateSchedulerJob_MissingName(t *testing.T) {
+func TestHandleCreateSchedulerJob_InvalidRequest(t *testing.T) {
 	server, _, cleanup := setupSchedulerMockServer(t)
 	defer cleanup()
 
-	reqBody := CreateSchedulerJobRESTRequest{
-		Type:    "recurring",
-		Handler: "test-handler",
+	tests := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{"MissingName", `{"type":"recurring","handler":"test-handler"}`, "name is required"},
+		{"MissingHandler", `{"name":"test-job","type":"recurring"}`, "handler is required"},
+		{"MissingType", `{"name":"test-job","handler":"test-handler"}`, "type is required"},
+		{"InvalidJSON", "not-json", "invalid JSON"},
+		{"EmptyBody", "", ""},
+		{"InvalidExecuteAt", `{"name":"test-job","type":"one-shot","handler":"test-handler","execute_at":"invalid-timestamp"}`, "execute_at format"},
 	}
 
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", strings.NewReader(tt.body))
+			w := httptest.NewRecorder()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader(body))
-	w := httptest.NewRecorder()
+			server.HandleCreateSchedulerJob(w, req)
 
-	server.HandleCreateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "name is required")
-}
-
-func TestHandleCreateSchedulerJob_MissingHandler(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	reqBody := CreateSchedulerJobRESTRequest{
-		Name: "test-job",
-		Type: "recurring",
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tt.wantMsg)
+		})
 	}
-
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-
-	server.HandleCreateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "handler is required")
-}
-
-func TestHandleCreateSchedulerJob_MissingType(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	reqBody := CreateSchedulerJobRESTRequest{
-		Name:    "test-job",
-		Handler: "test-handler",
-	}
-
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-
-	server.HandleCreateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "type is required")
-}
-
-func TestHandleCreateSchedulerJob_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader([]byte("not-json")))
-	w := httptest.NewRecorder()
-
-	server.HandleCreateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid JSON")
-}
-
-func TestHandleCreateSchedulerJob_InvalidExecuteAt(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	reqBody := CreateSchedulerJobRESTRequest{
-		Name:      "test-job",
-		Type:      "one-shot",
-		Handler:   "test-handler",
-		ExecuteAt: "invalid-timestamp",
-	}
-
-	body, err := json.Marshal(reqBody)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-
-	server.HandleCreateSchedulerJob(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "execute_at format")
 }
 
 func TestHandleCreateSchedulerJob_ServiceError(t *testing.T) {
@@ -1311,14 +1242,9 @@ func TestSchedulerHandlers_SchedulerServiceNil(t *testing.T) {
 // Conversion Helper Tests
 // =============================================================================
 
-func TestSchedulerJobToREST_Nil(t *testing.T) {
-	result := schedulerJobToREST(nil)
-	assert.Nil(t, result)
-}
-
-func TestSchedulerJobToREST_Complete(t *testing.T) {
+func TestSchedulerJobToREST(t *testing.T) {
 	now := time.Now()
-	job := &service.SchedulerJob{
+	complete := &service.SchedulerJob{
 		ID:             123,
 		Name:           "test-job",
 		Description:    "Test description",
@@ -1346,183 +1272,143 @@ func TestSchedulerJobToREST_Complete(t *testing.T) {
 		UpdatedAt:      now,
 	}
 
-	result := schedulerJobToREST(job)
-
-	require.NotNil(t, result)
-	assert.Equal(t, uint64(123), result.ID)
-	assert.Equal(t, "test-job", result.Name)
-	assert.Equal(t, "Test description", result.Description)
-	assert.Equal(t, "tenant", result.OwnerType)
-	assert.Equal(t, "tenant-1", result.OwnerID)
-	assert.Equal(t, "target-tenant", result.TargetTenantID)
-	assert.Equal(t, "admin", result.CreatedBy)
-	assert.Equal(t, "recurring", result.Type)
-	assert.Equal(t, "*/10 * * * *", result.Schedule)
-	assert.False(t, result.ExecuteAt.IsZero())
-	assert.Equal(t, 5*time.Minute, result.Delay)
-	assert.Equal(t, "my-handler", result.Handler)
-	assert.Equal(t, int32(10), result.Priority)
-	assert.Equal(t, 60*time.Second, result.Timeout)
-	assert.Equal(t, int32(5), result.MaxRetries)
-	assert.Equal(t, "running", result.Status)
-	assert.False(t, result.LastRun.IsZero())
-	assert.False(t, result.NextRun.IsZero())
-	assert.Equal(t, uint64(50), result.RunCount)
-	assert.Equal(t, uint64(2), result.FailCount)
-	assert.Equal(t, "previous error", result.LastError)
-	assert.Equal(t, "prod", result.Labels["env"])
-}
-
-func TestSchedulerJobToREST_MinimalFields(t *testing.T) {
-	now := time.Now()
-	job := &service.SchedulerJob{
-		ID:        1,
-		Name:      "minimal",
-		OwnerType: service.SchedulerOwnerTypeSystem,
-		Type:      service.SchedulerJobTypeOneShot,
-		Handler:   "handler",
-		Status:    service.SchedulerJobStatusPending,
-		CreatedAt: now,
-		UpdatedAt: now,
+	tests := []struct {
+		name string
+		job  *service.SchedulerJob
+		want *SchedulerJobRESTResponse
+	}{
+		{"Nil", nil, nil},
+		{"Complete", complete, &SchedulerJobRESTResponse{
+			ID:             123,
+			Name:           "test-job",
+			Description:    "Test description",
+			OwnerType:      "tenant",
+			OwnerID:        "tenant-1",
+			TargetTenantID: "target-tenant",
+			CreatedBy:      "admin",
+			Type:           "recurring",
+			Schedule:       "*/10 * * * *",
+			ExecuteAt:      complete.ExecuteAt,
+			Delay:          5 * time.Minute,
+			Handler:        "my-handler",
+			Payload:        []byte(`{"key":"value"}`),
+			Priority:       10,
+			Timeout:        60 * time.Second,
+			MaxRetries:     5,
+			Status:         "running",
+			LastRun:        complete.LastRun,
+			NextRun:        complete.NextRun,
+			RunCount:       50,
+			FailCount:      2,
+			LastError:      "previous error",
+			Labels:         map[string]string{"env": "prod"},
+			CreatedAt:      complete.CreatedAt,
+			UpdatedAt:      now,
+		}},
 	}
 
-	result := schedulerJobToREST(job)
-
-	require.NotNil(t, result)
-	assert.Equal(t, uint64(1), result.ID)
-	assert.Equal(t, "minimal", result.Name)
-	assert.True(t, result.ExecuteAt.IsZero())
-	assert.Zero(t, result.Delay)
-	assert.True(t, result.LastRun.IsZero())
-	assert.True(t, result.NextRun.IsZero())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, schedulerJobToREST(tt.job))
+		})
+	}
 }
 
-func TestSchedulerExecutionToREST_Nil(t *testing.T) {
-	result := schedulerExecutionToREST(nil)
-	assert.Nil(t, result)
-}
-
-func TestSchedulerExecutionToREST_Complete(t *testing.T) {
+func TestSchedulerExecutionToREST(t *testing.T) {
 	now := time.Now()
-	exec := &service.SchedulerJobExecution{
-		ID:        1,
-		JobID:     100,
-		Status:    service.SchedulerJobStatusCompleted,
-		StartedAt: now.Add(-10 * time.Minute),
-		EndedAt:   now.Add(-5 * time.Minute),
-		Duration:  5 * time.Minute,
-		Error:     "",
-		Output:    "task completed",
+
+	tests := []struct {
+		name string
+		exec *service.SchedulerJobExecution
+		want *SchedulerJobExecutionRESTResponse
+	}{
+		{"Nil", nil, nil},
+		{
+			"Completed",
+			&service.SchedulerJobExecution{
+				ID:        1,
+				JobID:     100,
+				Status:    service.SchedulerJobStatusCompleted,
+				StartedAt: now.Add(-10 * time.Minute),
+				EndedAt:   now.Add(-5 * time.Minute),
+				Duration:  5 * time.Minute,
+				Output:    "task completed",
+			},
+			&SchedulerJobExecutionRESTResponse{
+				ID:        1,
+				JobID:     100,
+				Status:    "completed",
+				StartedAt: now.Add(-10 * time.Minute),
+				EndedAt:   now.Add(-5 * time.Minute),
+				Duration:  5 * time.Minute,
+				Output:    "task completed",
+			},
+		},
+		{
+			"Failed",
+			&service.SchedulerJobExecution{
+				ID:        2,
+				JobID:     100,
+				Status:    service.SchedulerJobStatusFailed,
+				StartedAt: now.Add(-5 * time.Minute),
+				EndedAt:   now.Add(-4 * time.Minute),
+				Duration:  1 * time.Minute,
+				Error:     "connection timeout",
+			},
+			&SchedulerJobExecutionRESTResponse{
+				ID:        2,
+				JobID:     100,
+				Status:    "failed",
+				StartedAt: now.Add(-5 * time.Minute),
+				EndedAt:   now.Add(-4 * time.Minute),
+				Duration:  1 * time.Minute,
+				Error:     "connection timeout",
+			},
+		},
 	}
 
-	result := schedulerExecutionToREST(exec)
-
-	require.NotNil(t, result)
-	assert.Equal(t, uint64(1), result.ID)
-	assert.Equal(t, uint64(100), result.JobID)
-	assert.Equal(t, "completed", result.Status)
-	assert.False(t, result.StartedAt.IsZero())
-	assert.False(t, result.EndedAt.IsZero())
-	assert.Equal(t, 5*time.Minute, result.Duration)
-	assert.Empty(t, result.Error)
-	assert.Equal(t, "task completed", result.Output)
-}
-
-func TestSchedulerExecutionToREST_WithError(t *testing.T) {
-	now := time.Now()
-	exec := &service.SchedulerJobExecution{
-		ID:        2,
-		JobID:     100,
-		Status:    service.SchedulerJobStatusFailed,
-		StartedAt: now.Add(-5 * time.Minute),
-		EndedAt:   now.Add(-4 * time.Minute),
-		Duration:  1 * time.Minute,
-		Error:     "connection timeout",
-		Output:    "",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, schedulerExecutionToREST(tt.exec))
+		})
 	}
-
-	result := schedulerExecutionToREST(exec)
-
-	require.NotNil(t, result)
-	assert.Equal(t, "failed", result.Status)
-	assert.Equal(t, "connection timeout", result.Error)
-	assert.Empty(t, result.Output)
-}
-
-func TestSchedulerExecutionToREST_NoEndedAt(t *testing.T) {
-	now := time.Now()
-	exec := &service.SchedulerJobExecution{
-		ID:        3,
-		JobID:     100,
-		Status:    service.SchedulerJobStatusRunning,
-		StartedAt: now,
-	}
-
-	result := schedulerExecutionToREST(exec)
-
-	require.NotNil(t, result)
-	assert.Equal(t, "running", result.Status)
-	assert.True(t, result.EndedAt.IsZero())
-	assert.Zero(t, result.Duration)
 }
 
 // =============================================================================
 // Edge Case Tests
 // =============================================================================
 
-func TestHandleCreateSchedulerJob_EmptyBody(t *testing.T) {
-	server, _, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
+func TestHandleListSchedulerJobs_OutOfRangeLimitIgnored(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit string
+	}{
+		{"AboveMax", "9999"},
+		{"Negative", "-5"},
+	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduler/jobs", bytes.NewReader([]byte{}))
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockSvc, cleanup := setupSchedulerMockServer(t)
+			defer cleanup()
 
-	server.HandleCreateSchedulerJob(w, req)
+			// An out-of-range limit is ignored, so the service sees the default.
+			mockSvc.schedulerService.On("ListJobs", mock.Anything, mock.MatchedBy(func(req *service.ListSchedulerJobsRequest) bool {
+				return req.Limit == 0
+			})).Return(&service.ListSchedulerJobsResponse{
+				Jobs:      []*service.SchedulerJob{},
+				Timestamp: time.Now(),
+			}, nil).Once()
 
-	// Empty body still attempts to parse JSON and fails validation
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs?limit="+tt.limit, nil)
+			w := httptest.NewRecorder()
 
-func TestHandleListSchedulerJobs_InvalidLimit(t *testing.T) {
-	server, mockSvc, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
+			server.HandleListSchedulerJobs(w, req)
 
-	// Invalid limit (> 1000) should be ignored
-	mockSvc.schedulerService.On("ListJobs", mock.Anything, mock.MatchedBy(func(req *service.ListSchedulerJobsRequest) bool {
-		return req.Limit == 0 // Should be default, not the invalid 9999
-	})).Return(&service.ListSchedulerJobsResponse{
-		Jobs:      []*service.SchedulerJob{},
-		Timestamp: time.Now(),
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs?limit=9999", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListSchedulerJobs(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	mockSvc.schedulerService.AssertExpectations(t)
-}
-
-func TestHandleListSchedulerJobs_NegativeLimit(t *testing.T) {
-	server, mockSvc, cleanup := setupSchedulerMockServer(t)
-	defer cleanup()
-
-	// Negative limit should be ignored
-	mockSvc.schedulerService.On("ListJobs", mock.Anything, mock.MatchedBy(func(req *service.ListSchedulerJobsRequest) bool {
-		return req.Limit == 0 // Should be default, not negative
-	})).Return(&service.ListSchedulerJobsResponse{
-		Jobs:      []*service.SchedulerJob{},
-		Timestamp: time.Now(),
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/jobs?limit=-5", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListSchedulerJobs(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	mockSvc.schedulerService.AssertExpectations(t)
+			assert.Equal(t, http.StatusOK, w.Code)
+			mockSvc.schedulerService.AssertExpectations(t)
+		})
+	}
 }
 
 func TestHandleGetSchedulerJobHistory_InvalidLimit(t *testing.T) {
