@@ -1281,45 +1281,25 @@ func TestObjectACLHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("IsEmpty", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1"}
-		if !acl.IsEmpty() {
-			t.Error("ACL with only owner should be empty")
-		}
-
-		acl.Readers = []string{"reader1"}
-		if acl.IsEmpty() {
-			t.Error("ACL with readers should not be empty")
-		}
-	})
-
-	t.Run("IsEmptyNilACL", func(t *testing.T) {
-		var acl *ObjectACL
-		if !acl.IsEmpty() {
-			t.Error("nil ACL should be empty")
-		}
-	})
-
-	t.Run("IsEmptyWithWritersOnly", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		if acl.IsEmpty() {
-			t.Error("ACL with writers should not be empty")
-		}
-	})
-
-	t.Run("IsEmptyWithAdminsOnly", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", Admins: []string{"admin1"}}
-		if acl.IsEmpty() {
-			t.Error("ACL with admins should not be empty")
-		}
-	})
-
-	t.Run("IsEmptyWithPublicRead", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", PublicRead: true}
-		if acl.IsEmpty() {
-			t.Error("ACL with public read should not be empty")
-		}
-	})
+	isEmpty := []struct {
+		name string
+		acl  *ObjectACL
+		want bool
+	}{
+		{"IsEmptyOwnerOnly", &ObjectACL{Owner: "owner1"}, true},
+		{"IsEmptyNilACL", nil, true},
+		{"IsEmptyWithReadersOnly", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, false},
+		{"IsEmptyWithWritersOnly", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, false},
+		{"IsEmptyWithAdminsOnly", &ObjectACL{Owner: "owner1", Admins: []string{"admin1"}}, false},
+		{"IsEmptyWithPublicRead", &ObjectACL{Owner: "owner1", PublicRead: true}, false},
+	}
+	for _, tc := range isEmpty {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.acl.IsEmpty(); got != tc.want {
+				t.Errorf("IsEmpty() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 
 	t.Run("GetAllPrincipals", func(t *testing.T) {
 		acl := &ObjectACL{
@@ -1356,88 +1336,35 @@ func TestObjectACLHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("GetEffectivePermissions_Owner", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1"}
-		perms := acl.GetEffectivePermissions("owner1")
-		if len(perms) != 8 {
-			t.Errorf("owner should have all 8 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_Admin", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", Admins: []string{"admin1"}}
-		perms := acl.GetEffectivePermissions("admin1")
-		if len(perms) != 8 {
-			t.Errorf("admin should have all 8 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_Reader", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}
-		perms := acl.GetEffectivePermissions("reader1")
-		if len(perms) != 2 {
-			t.Errorf("reader should have 2 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_Writer", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		perms := acl.GetEffectivePermissions("writer1")
-		// read, write, replicate, archive
-		if len(perms) != 4 {
-			t.Errorf("writer should have 4 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_PublicRead", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1", PublicRead: true}
-		perms := acl.GetEffectivePermissions("anonymous")
-		if len(perms) != 1 {
-			t.Errorf("anonymous with public read should have 1 permission, got %d", len(perms))
-		}
-	})
+	// Writers get read, write, replicate and archive; readers get read and
+	// list; duplicates across roles are counted once.
+	effective := []struct {
+		name      string
+		acl       *ObjectACL
+		principal string
+		want      int
+	}{
+		{"GetEffectivePermissions_Owner", &ObjectACL{Owner: "owner1"}, "owner1", 8},
+		{"GetEffectivePermissions_Admin", &ObjectACL{Owner: "owner1", Admins: []string{"admin1"}}, "admin1", 8},
+		{"GetEffectivePermissions_Reader", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, "reader1", 2},
+		{"GetEffectivePermissions_Writer", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", 4},
+		{"GetEffectivePermissions_PublicRead", &ObjectACL{Owner: "owner1", PublicRead: true}, "anonymous", 1},
+		{"GetEffectivePermissions_ReaderAndWriter", &ObjectACL{Owner: "owner1", Readers: []string{"user1"}, Writers: []string{"user1"}}, "user1", 5},
+		{"GetEffectivePermissions_PublicReadAndWriter", &ObjectACL{Owner: "owner1", Writers: []string{"user1"}, PublicRead: true}, "user1", 4},
+		{"GetEffectivePermissions_NoPrincipals", &ObjectACL{Owner: "owner1"}, "stranger", 0},
+	}
+	for _, tc := range effective {
+		t.Run(tc.name, func(t *testing.T) {
+			if perms := tc.acl.GetEffectivePermissions(tc.principal); len(perms) != tc.want {
+				t.Errorf("GetEffectivePermissions(%s) has %d permissions, want %d", tc.principal, len(perms), tc.want)
+			}
+		})
+	}
 
 	t.Run("GetEffectivePermissions_NilACL", func(t *testing.T) {
 		var acl *ObjectACL
-		perms := acl.GetEffectivePermissions("anyone")
-		if perms != nil {
+		if perms := acl.GetEffectivePermissions("anyone"); perms != nil {
 			t.Error("expected nil permissions for nil ACL")
-		}
-	})
-
-	t.Run("GetEffectivePermissions_ReaderAndWriter", func(t *testing.T) {
-		acl := &ObjectACL{
-			Owner:   "owner1",
-			Readers: []string{"user1"},
-			Writers: []string{"user1"},
-		}
-		perms := acl.GetEffectivePermissions("user1")
-		// read, list from reader; read (deduped), write, replicate, archive from writer
-		// Total: read, list, write, replicate, archive = 5
-		if len(perms) != 5 {
-			t.Errorf("reader+writer should have 5 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_PublicReadAndWriter", func(t *testing.T) {
-		acl := &ObjectACL{
-			Owner:      "owner1",
-			Writers:    []string{"user1"},
-			PublicRead: true,
-		}
-		perms := acl.GetEffectivePermissions("user1")
-		// public read gives read; writer gives write, replicate, archive (read already present)
-		// Total: read, write, replicate, archive = 4
-		if len(perms) != 4 {
-			t.Errorf("public read + writer should have 4 permissions, got %d", len(perms))
-		}
-	})
-
-	t.Run("GetEffectivePermissions_NoPrincipals", func(t *testing.T) {
-		acl := &ObjectACL{Owner: "owner1"}
-		perms := acl.GetEffectivePermissions("stranger")
-		if len(perms) != 0 {
-			t.Errorf("stranger should have 0 permissions, got %d", len(perms))
 		}
 	})
 }
