@@ -388,31 +388,52 @@ func TestBackendStorage_QuotaOperations(t *testing.T) {
 
 func TestBackendStorage_NotFoundErrors(t *testing.T) {
 	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
+	storage := NewBackendStorage(newMockKVStore())
 
-	// Get nonexistent tenant
-	_, err := storage.GetTenant(ctx, "nonexistent")
-	assert.Error(t, err)
-	assert.True(t, dberrors.IsNotFound(err))
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"GetTenant", func() error { _, err := storage.GetTenant(ctx, "missing"); return err }},
+		{"UpdateTenant", func() error { return storage.UpdateTenant(ctx, &Tenant{ID: "missing", Name: "Test"}) }},
+		{"DeleteTenant", func() error { return storage.DeleteTenant(ctx, "missing") }},
+		{"GetRole", func() error { _, err := storage.GetRole(ctx, "tenant", "missing"); return err }},
+		{"UpdateRole", func() error {
+			return storage.UpdateRole(ctx, &Role{ID: "missing", TenantID: "tenant", Name: "Missing"})
+		}},
+		{"DeleteRole", func() error { return storage.DeleteRole(ctx, "tenant", "missing") }},
+		{"GetApp", func() error { _, err := storage.GetApp(ctx, "missing"); return err }},
+		{"GetAppByTenant", func() error { _, err := storage.GetAppByTenant(ctx, "tenant", "missing"); return err }},
+		{"UpdateApp", func() error {
+			return storage.UpdateApp(ctx, &Application{ClientID: "missing", TenantID: "tenant", Name: "Missing"})
+		}},
+		{"DeleteApp", func() error { return storage.DeleteApp(ctx, "missing") }},
+		{"ValidateClientSecret", func() error { _, err := storage.ValidateClientSecret(ctx, "missing", "secret"); return err }},
+		{"GetPolicy", func() error { _, err := storage.GetPolicy(ctx, "tenant", "missing"); return err }},
+		{"UpdatePolicy", func() error {
+			return storage.UpdatePolicy(ctx, "tenant", &Policy{
+				APIVersion: "v1",
+				Kind:       "Policy",
+				Metadata:   PolicyMetadata{Name: "missing", Tenant: "tenant"},
+				Spec: PolicySpec{
+					Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+				},
+			})
+		}},
+		{"DeletePolicy", func() error { return storage.DeletePolicy(ctx, "tenant", "missing") }},
+		{"GetToken", func() error { _, err := storage.GetToken(ctx, "missing"); return err }},
+		{"GetTokenByValue", func() error { _, err := storage.GetTokenByValue(ctx, "missing"); return err }},
+		{"RevokeToken", func() error { return storage.RevokeToken(ctx, "missing") }},
+		{"GetAuthCode", func() error { _, err := storage.GetAuthCode(ctx, "missing"); return err }},
+	}
 
-	assert.Error(t, err)
-
-	// Get nonexistent role
-	_, err = storage.GetRole(ctx, "tenant", "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent app
-	_, err = storage.GetApp(ctx, "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent token
-	_, err = storage.GetToken(ctx, "nonexistent")
-	assert.Error(t, err)
-
-	// Get nonexistent policy
-	_, err = storage.GetPolicy(ctx, "tenant", "nonexistent")
-	assert.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+			assert.True(t, dberrors.IsNotFound(err), "want not-found, got %v", err)
+		})
+	}
 }
 
 // TestBackendStorage_ListOperations (user listing) was removed in phase C1-F:
@@ -519,16 +540,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 
 	_, err = storage.GetApp(ctx, app.ClientID)
 	assert.Error(t, err, "app should be deleted")
-}
-
-func TestBackendStorage_DeleteTenantCascade_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewBackendStorage(kv)
-
-	// Try to delete non-existent tenant
-	err := storage.DeleteTenant(ctx, "nonexistent")
-	assert.Error(t, err, "should error for non-existent tenant")
 }
 
 // Benchmark tests. The CreateUser/GetUser benchmarks were removed in phase
@@ -2311,18 +2322,6 @@ func TestBackendStorage_DeleteTenant(t *testing.T) {
 	}
 }
 
-func TestBackendStorage_DeleteTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Delete non-existent tenant
-	err := storage.DeleteTenant(ctx, "non-existent-tenant")
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
-	}
-}
-
 // =============================================================================
 // Storage Backend - UpdateTenant
 // =============================================================================
@@ -2351,19 +2350,6 @@ func TestBackendStorage_UpdateTenant(t *testing.T) {
 	}
 	if updated.Name != "Updated Name" {
 		t.Errorf("expected name 'Updated Name', got %s", updated.Name)
-	}
-}
-
-func TestBackendStorage_UpdateTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	// Update non-existent tenant
-	tenant := &Tenant{ID: "non-existent", Name: "Test"}
-	err := storage.UpdateTenant(ctx, tenant)
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
 	}
 }
 
@@ -2410,17 +2396,6 @@ func TestBackendStorage_DeleteAuthCode(t *testing.T) {
 // =============================================================================
 // Storage Backend - GetAppByTenant NotFound
 // =============================================================================
-
-func TestBackendStorage_GetAppByTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetAppByTenant(ctx, "non-tenant", "non-client")
-	if err == nil {
-		t.Error("expected error for non-existent app by tenant")
-	}
-}
 
 // =============================================================================
 // Storage Backend - DeleteApp
@@ -2807,39 +2782,6 @@ func TestBackendStorage_CreatePolicy_AlreadyExists(t *testing.T) {
 	}
 }
 
-// Test UpdatePolicy not found error path
-func TestBackendStorage_UpdatePolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "non-existent-policy", Tenant: "tenant"},
-		Spec: PolicySpec{
-			Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-		},
-	}
-
-	err := storage.UpdatePolicy(ctx, "tenant", policy)
-	if err == nil {
-		t.Error("expected error for non-existent policy")
-	}
-}
-
-// Test DeletePolicy not found error path
-func TestBackendStorage_DeletePolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeletePolicy(ctx, "tenant", "non-existent-policy")
-	if err == nil {
-		t.Error("expected error for non-existent policy")
-	}
-}
-
 // Test ListPolicies with pagination offset and limit
 func TestBackendStorage_ListPolicies_WithOffsetAndLimit(t *testing.T) {
 	ctx := context.Background()
@@ -3000,69 +2942,9 @@ func TestBackendStorage_IncrementQuotaUsage_UnknownResourceIgnored(t *testing.T)
 	}
 }
 
-// Test UpdateRole not found
-func TestBackendStorage_UpdateRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	role := &Role{
-		ID:       "non-existent-role",
-		TenantID: "tenant",
-		Name:     "Non-existent",
-	}
-
-	err := storage.UpdateRole(ctx, role)
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
-// Test DeleteRole not found
-func TestBackendStorage_DeleteRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
 // Test UpdateUser not found
 // BackendStorage UpdateUser/DeleteUser not-found tests were removed in phase
 // C1-F: BackendStorage no longer persists users (qrdb owns the user record).
-
-// Test UpdateApp not found
-func TestBackendStorage_UpdateApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	app := &Application{
-		ClientID: "non-existent-app",
-		TenantID: "tenant",
-		Name:     "Non-existent",
-	}
-
-	err := storage.UpdateApp(ctx, app)
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
-
-// Test DeleteApp not found
-func TestBackendStorage_DeleteApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.DeleteApp(ctx, "non-existent-app")
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
 
 // Test CreateTenant already exists
 func TestBackendStorage_CreateTenant_AlreadyExists(t *testing.T) {
@@ -3136,44 +3018,6 @@ func TestBackendStorage_CreateApp_AlreadyExists(t *testing.T) {
 	err := storage.CreateApp(ctx, app)
 	if err == nil {
 		t.Error("expected error for duplicate app")
-	}
-}
-
-// Test RevokeToken not found
-func TestBackendStorage_RevokeToken_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	err := storage.RevokeToken(ctx, "non-existent-token")
-	if err == nil {
-		t.Error("expected error for non-existent token")
-	}
-}
-
-// Test GetToken not found
-func TestBackendStorage_GetToken_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetToken(ctx, "non-existent-token")
-	if err == nil {
-		t.Error("expected error for non-existent token")
-	}
-}
-
-// Test ValidateClientSecret for non-existent app
-func TestBackendStorage_ValidateClientSecret_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.ValidateClientSecret(ctx, "non-existent-app", "secret")
-	if err == nil {
-		t.Error("expected error for non-existent app")
 	}
 }
 
@@ -3299,57 +3143,9 @@ func TestBackendStorage_ListTenants_WithPagination(t *testing.T) {
 	}
 }
 
-// Test GetPolicy not found
-func TestBackendStorage_GetPolicy_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetPolicy(ctx, "tenant", "non-existent-policy")
-	if err == nil {
-		t.Error("expected error for non-existent policy")
-	}
-}
-
-// Test GetRole not found
-func TestBackendStorage_GetRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
-	}
-}
-
 // Test GetUser not found
 // TestBackendStorage_GetUser_NotFound was removed in phase C1-F: BackendStorage
 // no longer persists users (qrdb owns the user record).
-
-// Test GetApp not found
-func TestBackendStorage_GetApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetApp(ctx, "non-existent-app")
-	if err == nil {
-		t.Error("expected error for non-existent app")
-	}
-}
-
-// Test GetTenant not found
-func TestBackendStorage_GetTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetTenant(ctx, "non-existent-tenant")
-	if err == nil {
-		t.Error("expected error for non-existent tenant")
-	}
-}
 
 // Test GetSettings returns empty when not set
 func TestBackendStorage_GetSettings_ReturnsEmptyWhenNotSet(t *testing.T) {
@@ -3436,30 +3232,6 @@ func TestBackendStorage_UpdateQuota_Update(t *testing.T) {
 	}
 	if retrieved.CurrentPolicies != 10 {
 		t.Errorf("expected CurrentPolicies=10, got %d", retrieved.CurrentPolicies)
-	}
-}
-
-// Test GetAuthCode not found
-func TestBackendStorage_GetAuthCode_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetAuthCode(ctx, "non-existent-code")
-	if err == nil {
-		t.Error("expected error for non-existent auth code")
-	}
-}
-
-// Test GetTokenByValue not found
-func TestBackendStorage_GetTokenByValue_NotFound(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetTokenByValue(ctx, "non-existent-token-value")
-	if err == nil {
-		t.Error("expected error for non-existent token value")
 	}
 }
 
@@ -3983,18 +3755,6 @@ func TestBackendStorage_StoreAuthCode_Roundtrip91(t *testing.T) {
 	}
 	if len(retrieved.Scope) != 2 {
 		t.Errorf("expected 2 scopes, got %d", len(retrieved.Scope))
-	}
-}
-
-// Test GetRole not found
-func TestBackendStorage_GetRole_NotFound91(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore91()
-	storage := NewBackendStorage(kv)
-
-	_, err := storage.GetRole(ctx, "tenant", "non-existent-role")
-	if err == nil {
-		t.Error("expected error for non-existent role")
 	}
 }
 
