@@ -105,6 +105,41 @@ func TestExponentialBackoff_Next(t *testing.T) {
 			wantMin: 100 * time.Millisecond,
 			wantMax: 100 * time.Millisecond,
 		},
+		{
+			name: "full jitter stays within zero and the delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   2.0,
+				Jitter:       1.0,
+			},
+			attempt: 0,
+			wantMin: 0,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "very high attempt caps at max delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 10 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   2.0,
+				Jitter:       0,
+			},
+			attempt: 100,
+			wantMin: 1 * time.Second,
+			wantMax: 1 * time.Second,
+		},
+		{
+			name: "multiplier of 1 keeps the initial delay",
+			backoff: &ExponentialBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Multiplier:   1.0,
+			},
+			attempt: 10,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
 	}
 
 	for _, tt := range tests {
@@ -175,6 +210,54 @@ func TestLinearBackoff_Next(t *testing.T) {
 			wantMin: 50 * time.Millisecond,
 			wantMax: 100 * time.Millisecond,
 		},
+		{
+			name: "zero increment keeps the initial delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Increment:    0,
+				Jitter:       0,
+			},
+			attempt: 5,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "negative attempt defaults to 0",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     1 * time.Second,
+				Increment:    50 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: -5,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "large increment below max delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     500 * time.Millisecond,
+				Increment:    200 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: 1,
+			wantMin: 300 * time.Millisecond,
+			wantMax: 300 * time.Millisecond,
+		},
+		{
+			name: "large increment capped at max delay",
+			backoff: &LinearBackoff{
+				InitialDelay: 100 * time.Millisecond,
+				MaxDelay:     500 * time.Millisecond,
+				Increment:    200 * time.Millisecond,
+				Jitter:       0,
+			},
+			attempt: 2,
+			wantMin: 500 * time.Millisecond,
+			wantMax: 500 * time.Millisecond,
+		},
 	}
 
 	for _, tt := range tests {
@@ -215,6 +298,36 @@ func TestConstantBackoff_Next(t *testing.T) {
 			attempt: 5,
 			wantMin: 100 * time.Millisecond,
 			wantMax: 200 * time.Millisecond,
+		},
+		{
+			name: "large attempt keeps the constant delay",
+			backoff: &ConstantBackoff{
+				Delay:  100 * time.Millisecond,
+				Jitter: 0,
+			},
+			attempt: 100,
+			wantMin: 100 * time.Millisecond,
+			wantMax: 100 * time.Millisecond,
+		},
+		{
+			name: "zero delay",
+			backoff: &ConstantBackoff{
+				Delay:  0,
+				Jitter: 0,
+			},
+			attempt: 5,
+			wantMin: 0,
+			wantMax: 0,
+		},
+		{
+			name: "jitter with zero delay",
+			backoff: &ConstantBackoff{
+				Delay:  0,
+				Jitter: 0.5,
+			},
+			attempt: 5,
+			wantMin: 0,
+			wantMax: 0,
 		},
 	}
 
@@ -841,145 +954,6 @@ func TestShouldRetry_WithQBError(t *testing.T) {
 		err := errors.New("standard error")
 		result := shouldRetry(cfg, err)
 		assert.False(t, result, "standard errors should not be retryable")
-	})
-}
-
-func TestExponentialBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero jitter", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       0,
-		}
-
-		// Multiple calls should return same value
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(0)
-		assert.Equal(t, d1, d2)
-	})
-
-	t.Run("full jitter", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       1.0, // 100% jitter
-		}
-
-		// Should vary between 0 and InitialDelay
-		d := backoff.Next(0)
-		assert.GreaterOrEqual(t, d, time.Duration(0))
-		assert.LessOrEqual(t, d, 100*time.Millisecond)
-	})
-
-	t.Run("very high attempt number", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 10 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   2.0,
-			Jitter:       0,
-		}
-
-		// Should cap at MaxDelay
-		d := backoff.Next(100)
-		assert.Equal(t, 1*time.Second, d)
-	})
-
-	t.Run("multiplier of 1", func(t *testing.T) {
-		backoff := &ExponentialBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Multiplier:   1.0,
-		}
-
-		// Should stay constant
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(5)
-		d3 := backoff.Next(10)
-		assert.Equal(t, d1, d2)
-		assert.Equal(t, d2, d3)
-	})
-}
-
-func TestLinearBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero increment", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Increment:    0,
-			Jitter:       0,
-		}
-
-		// Should stay at InitialDelay
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(5)
-		assert.Equal(t, 100*time.Millisecond, d1)
-		assert.Equal(t, 100*time.Millisecond, d2)
-	})
-
-	t.Run("negative attempt", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     1 * time.Second,
-			Increment:    50 * time.Millisecond,
-			Jitter:       0,
-		}
-
-		d := backoff.Next(-5)
-		assert.Equal(t, 100*time.Millisecond, d)
-	})
-
-	t.Run("large increment quickly reaches max", func(t *testing.T) {
-		backoff := &LinearBackoff{
-			InitialDelay: 100 * time.Millisecond,
-			MaxDelay:     500 * time.Millisecond,
-			Increment:    200 * time.Millisecond,
-			Jitter:       0,
-		}
-
-		d0 := backoff.Next(0)
-		d1 := backoff.Next(1)
-		d2 := backoff.Next(2)
-		d10 := backoff.Next(10)
-
-		assert.Equal(t, 100*time.Millisecond, d0)
-		assert.Equal(t, 300*time.Millisecond, d1)
-		assert.Equal(t, 500*time.Millisecond, d2)  // Capped
-		assert.Equal(t, 500*time.Millisecond, d10) // Still capped
-	})
-}
-
-func TestConstantBackoff_EdgeCases(t *testing.T) {
-	t.Run("zero delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  0,
-			Jitter: 0,
-		}
-
-		d := backoff.Next(5)
-		assert.Equal(t, time.Duration(0), d)
-	})
-
-	t.Run("jitter with zero delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  0,
-			Jitter: 0.5,
-		}
-
-		d := backoff.Next(5)
-		assert.Equal(t, time.Duration(0), d)
-	})
-
-	t.Run("different attempt numbers same delay", func(t *testing.T) {
-		backoff := &ConstantBackoff{
-			Delay:  100 * time.Millisecond,
-			Jitter: 0,
-		}
-
-		d1 := backoff.Next(0)
-		d2 := backoff.Next(100)
-		assert.Equal(t, d1, d2)
 	})
 }
 
