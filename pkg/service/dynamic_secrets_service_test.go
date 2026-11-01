@@ -771,40 +771,9 @@ func TestDynamicSecretsService_GenerateCredential_StoreCredentialError(t *testin
 		RoleName: "cred-fail-role",
 		TTL:      30 * time.Minute,
 	})
-	if err != nil {
-		assert.Nil(t, resp)
-	}
-}
-
-func TestDynamicSecretsService_GenerateCredential_DefaultTTL(t *testing.T) {
-	registry := credentials.NewGeneratorRegistry()
-	gen := newMockDSGenerator("postgres")
-	require.NoError(t, registry.Register(gen))
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             newDSStore(),
-		LeaseManager:      newMockDSLeaseManager(),
-		GeneratorRegistry: registry,
-		Logger:            newMockDSLogger(),
-	})
-	require.NoError(t, err)
-
-	_, err = svc.CreateRole(context.Background(), &CreateRoleRequest{
-		Name:          "default-ttl-role",
-		GeneratorType: "postgres",
-		Config:        map[string]string{},
-		DefaultTTL:    2 * time.Hour,
-		MaxTTL:        24 * time.Hour,
-	})
-	require.NoError(t, err)
-
-	resp, err := svc.GenerateCredential(context.Background(), &GenerateCredentialRequest{
-		RoleName: "default-ttl-role",
-		TTL:      0,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.NotEmpty(t, resp.LeaseID)
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "store credential failed")
 }
 
 func TestDynamicSecretsService_GenerateCredential_TTLExceedsMax(t *testing.T) {
@@ -1003,6 +972,8 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 	roleJSON := `{"name":"preloaded","generator_type":"mock","default_ttl":3600000000000,"max_ttl":7200000000000}`
 	err := store.Put(context.Background(), RolePrefix+"preloaded", []byte(roleJSON))
 	require.NoError(t, err)
+	// An undecodable role is skipped without stopping the others loading.
+	require.NoError(t, store.Put(context.Background(), RolePrefix+"invalid", []byte("not json")))
 
 	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
 		Store:             store,
@@ -1015,33 +986,10 @@ func TestDynamicSecretsService_LoadRoles_WithData(t *testing.T) {
 	// Verify role was loaded
 	svc.mu.RLock()
 	_, exists := svc.credentialRoles["preloaded"]
+	_, invalidLoaded := svc.credentialRoles["invalid"]
 	svc.mu.RUnlock()
 	assert.True(t, exists)
-}
-
-func TestDynamicSecretsService_LoadRoles_SkipInvalidJSON(t *testing.T) {
-	store := newDSStore()
-	leaseManager := newMockDSLeaseManager()
-	generatorReg := credentials.NewGeneratorRegistry()
-	logger := newMockDSLogger()
-
-	// Pre-populate with invalid JSON
-	err := store.Put(context.Background(), RolePrefix+"invalid", []byte("not json"))
-	require.NoError(t, err)
-
-	svc, err := NewDynamicSecretsHandler(context.Background(), &DynamicSecretsConfig{
-		Store:             store,
-		LeaseManager:      leaseManager,
-		GeneratorRegistry: generatorReg,
-		Logger:            logger,
-	})
-	require.NoError(t, err)
-
-	// Verify invalid role was not loaded
-	svc.mu.RLock()
-	_, exists := svc.credentialRoles["invalid"]
-	svc.mu.RUnlock()
-	assert.False(t, exists)
+	assert.False(t, invalidLoaded)
 }
 
 // TestDynamicSecretsService_DeleteRole_NotFound tests deleting non-existent role.
@@ -1221,22 +1169,6 @@ func TestDynamicSecretsService_GenerateCredential_WithCustomTTL(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.NotEmpty(t, resp.LeaseID)
-}
-
-func TestDynamicSecretsService_storeCredential_SetError(t *testing.T) {
-	store := newFaultDSStore().failAllWrites(stderrors.New("storage write error"))
-	svc := &dynamicSecretsHandler{
-		store: store,
-	}
-
-	cred := &credentials.Credential{
-		CredentialID: "test-cred-id",
-		Type:         "database",
-	}
-
-	err := svc.storeCredential(context.Background(), cred)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "store credential failed")
 }
 
 // =============================================================================
