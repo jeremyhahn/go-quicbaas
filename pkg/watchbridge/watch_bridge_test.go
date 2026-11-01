@@ -364,16 +364,38 @@ func TestWatchBridgeOptions(t *testing.T) {
 		}
 	})
 
-	t.Run("WithBridgeBufferSize zero uses default", func(t *testing.T) {
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
-			WithBridgeBufferSize(0))
+	t.Run("defaults", func(t *testing.T) {
+		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if bridge.options.bufferSize != 1024 {
-			t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
+		opts := bridge.options
+		if !opts.leaderOnly {
+			t.Error("expected leaderOnly to be true by default")
+		}
+		if opts.bufferSize != 1024 {
+			t.Errorf("expected bufferSize 1024, got %d", opts.bufferSize)
+		}
+		if opts.defaultChannelPrefix != "watch:" {
+			t.Errorf("expected defaultChannelPrefix 'watch:', got '%s'", opts.defaultChannelPrefix)
+		}
+		if !opts.autoCreateChannels {
+			t.Error("expected autoCreateChannels to be true by default")
 		}
 	})
+
+	for name, size := range map[string]int{"zero": 0, "negative": -1} {
+		t.Run("WithBridgeBufferSize "+name+" uses default", func(t *testing.T) {
+			bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
+				WithBridgeBufferSize(size))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if bridge.options.bufferSize != 1024 {
+				t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
+			}
+		})
+	}
 
 	t.Run("WithDefaultChannelPrefix", func(t *testing.T) {
 		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil,
@@ -649,22 +671,45 @@ func TestWatchBridgeAddMapping(t *testing.T) {
 	messagingSvc := newMockMessagingService()
 	clusterInfo := newMockClusterInfo(true)
 
-	t.Run("add mapping when stopped", func(t *testing.T) {
-		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+	addCases := []struct {
+		name       string
+		opts       []WatchBridgeOption
+		mapping    KeyChannelMapping
+		wantPrefix string
+	}{
+		{
+			name:       "default channel prefix",
+			opts:       []WatchBridgeOption{WithDefaultChannelPrefix("events:")},
+			mapping:    KeyChannelMapping{KeyPrefix: "/items/"},
+			wantPrefix: "events:/items/",
+		},
+		{
+			name:       "custom channel prefix",
+			mapping:    KeyChannelMapping{KeyPrefix: "/custom/", ChannelPrefix: "my:custom:prefix"},
+			wantPrefix: "my:custom:prefix",
+		},
+	}
+	for _, tc := range addCases {
+		t.Run("add mapping when stopped/"+tc.name, func(t *testing.T) {
+			bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil, tc.opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		err = bridge.AddMapping(KeyChannelMapping{KeyPrefix: "/new/"})
-		if err != nil {
-			t.Fatalf("failed to add mapping: %v", err)
-		}
+			err = bridge.AddMapping(tc.mapping)
+			if err != nil {
+				t.Fatalf("failed to add mapping: %v", err)
+			}
 
-		mappings := bridge.GetMappings()
-		if len(mappings) != 1 {
-			t.Fatalf("expected 1 mapping, got %d", len(mappings))
-		}
-	})
+			mappings := bridge.GetMappings()
+			if len(mappings) != 1 {
+				t.Fatalf("expected 1 mapping, got %d", len(mappings))
+			}
+			if mappings[0].ChannelPrefix != tc.wantPrefix {
+				t.Errorf("expected channel prefix %q, got %q", tc.wantPrefix, mappings[0].ChannelPrefix)
+			}
+		})
+	}
 
 	t.Run("add mapping when running fails", func(t *testing.T) {
 		bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, clusterInfo, nil)
@@ -1773,36 +1818,6 @@ func TestWatchBridgeStartContextCancellation(t *testing.T) {
 	}
 }
 
-// TestWatchBridgeAddMappingDefaultChannelPrefix tests that AddMapping generates
-// the default channel prefix when ChannelPrefix is empty.
-func TestWatchBridgeAddMappingDefaultChannelPrefix(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil,
-		WithDefaultChannelPrefix("events:"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Add a mapping with no ChannelPrefix - should use default
-	err = bridge.AddMapping(KeyChannelMapping{KeyPrefix: "/items/"})
-	if err != nil {
-		t.Fatalf("failed to add mapping: %v", err)
-	}
-
-	mappings := bridge.GetMappings()
-	if len(mappings) != 1 {
-		t.Fatalf("expected 1 mapping, got %d", len(mappings))
-	}
-	if mappings[0].ChannelPrefix != "events:/items/" {
-		t.Errorf("expected channel prefix 'events:/items/', got '%s'", mappings[0].ChannelPrefix)
-	}
-}
-
 // TestWatchBridgeAutoCreateChannelCreationError tests that auto-create handles
 // channel creation errors gracefully (including channel already exists).
 func TestWatchBridgeAutoCreateChannelCreationError(t *testing.T) {
@@ -1975,74 +1990,6 @@ func TestWatchBridgeStopDuringStoppingState(t *testing.T) {
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Second)
 	defer cleanupCancel()
 	_ = bridge.Stop(cleanupCtx)
-}
-
-// TestWatchBridgeAddMappingWithCustomChannelPrefix tests AddMapping with
-// an explicit ChannelPrefix.
-func TestWatchBridgeAddMappingWithCustomChannelPrefix(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	err = bridge.AddMapping(KeyChannelMapping{
-		KeyPrefix:     "/custom/",
-		ChannelPrefix: "my:custom:prefix",
-	})
-	if err != nil {
-		t.Fatalf("failed to add mapping: %v", err)
-	}
-
-	mappings := bridge.GetMappings()
-	if len(mappings) != 1 {
-		t.Fatalf("expected 1 mapping, got %d", len(mappings))
-	}
-	if mappings[0].ChannelPrefix != "my:custom:prefix" {
-		t.Errorf("expected channel prefix 'my:custom:prefix', got '%s'", mappings[0].ChannelPrefix)
-	}
-}
-
-// TestDefaultBridgeOptions verifies the default bridge options values.
-func TestDefaultBridgeOptions(t *testing.T) {
-	t.Parallel()
-
-	opts := defaultBridgeOptions()
-	if !opts.leaderOnly {
-		t.Error("expected leaderOnly to be true by default")
-	}
-	if opts.bufferSize != 1024 {
-		t.Errorf("expected bufferSize 1024, got %d", opts.bufferSize)
-	}
-	if opts.defaultChannelPrefix != "watch:" {
-		t.Errorf("expected defaultChannelPrefix 'watch:', got '%s'", opts.defaultChannelPrefix)
-	}
-	if !opts.autoCreateChannels {
-		t.Error("expected autoCreateChannels to be true by default")
-	}
-}
-
-// TestWithBridgeBufferSizeNegative verifies negative buffer size keeps default.
-func TestWithBridgeBufferSizeNegative(t *testing.T) {
-	t.Parallel()
-
-	log := testLoggerCov(t)
-	watchMgr := watch.NewManager()
-	messagingSvc := newMockMessagingService()
-
-	bridge, err := NewWatchBridge(log, watchMgr, messagingSvc, nil, nil,
-		WithBridgeBufferSize(-1))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if bridge.options.bufferSize != 1024 {
-		t.Errorf("expected default bufferSize 1024, got %d", bridge.options.bufferSize)
-	}
 }
 
 // -----------------------------------------------------------------------------
