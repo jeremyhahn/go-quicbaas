@@ -280,10 +280,15 @@ func TestHandleBatch_WithFuncMock(t *testing.T) {
 			},
 		},
 		{
-			name:       "put empty operations",
+			name:       "put empty operations returns an error body",
 			handler:    batchPut,
 			body:       BatchPutRequest{Operations: []BatchPutOperation{}},
 			wantStatus: http.StatusBadRequest,
+			check: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				var errResp ErrorResponse
+				require.NoError(t, json.NewDecoder(rec.Body).Decode(&errResp))
+				assert.NotEmpty(t, errResp.Error)
+			},
 		},
 		{
 			name:       "put invalid JSON",
@@ -404,68 +409,66 @@ func TestHandleBatch_WithFuncMock(t *testing.T) {
 // Query Handler Tests
 // =============================================================================
 
-func TestHandleQuery_Success_WithFuncMock(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.QueryFunc = func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error {
-		stream <- &service.QueryResponse{
-			Entities: []*service.Entity{
-				{ID: 1, EntityType: "users", Data: []byte(`{"name":"Alice"}`)},
+// TestHandleQuery_WithFuncMock drives the index query handler with one row
+// per case: the URL params, the mock's stream and the status.
+func TestHandleQuery_WithFuncMock(t *testing.T) {
+	tests := []struct {
+		name       string
+		entityType string
+		query      string
+		setup      func(m *mocks.MockQuicBaaS)
+		wantStatus int
+	}{
+		{
+			name:       "success",
+			entityType: "users",
+			query:      "?value=Alice",
+			setup: func(m *mocks.MockQuicBaaS) {
+				m.QueryFunc = func(ctx context.Context, req *service.QueryRequest, stream chan<- *service.QueryResponse) error {
+					stream <- &service.QueryResponse{
+						Entities:   []*service.Entity{{ID: 1, EntityType: "users", Data: []byte(`{"name":"Alice"}`)}},
+						TotalCount: 1,
+					}
+					close(stream)
+					return nil
+				}
 			},
-			TotalCount: 1,
-		}
-		close(stream)
-		return nil
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "missing value query param",
+			entityType: "users",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "missing entity type",
+			entityType: "",
+			query:      "?value=Alice",
+			wantStatus: http.StatusBadRequest,
+		},
 	}
 
-	// HandleQuery expects URL params, not JSON body
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/query/name?value=Alice", nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, mockService, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
+			if tt.setup != nil {
+				tt.setup(mockService)
+			}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("index", "name")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			// HandleQuery reads the value from the query string, not a JSON body.
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/"+tt.entityType+"/query/name"+tt.query, nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("type", tt.entityType)
+			rctx.URLParams.Add("index", "name")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	rec := httptest.NewRecorder()
-	server.HandleQuery(rec, req)
+			rec := httptest.NewRecorder()
+			server.HandleQuery(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
-}
-
-func TestHandleQuery_MissingValue_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	// HandleQuery requires a value query param
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities/users/query/name", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "users")
-	rctx.URLParams.Add("index", "name")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleQuery(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleQuery_MissingEntityType_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entities//query/name?value=Alice", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("type", "")
-	rctx.URLParams.Add("index", "name")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleQuery(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, tt.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -512,173 +515,100 @@ func TestHandleKMSDecrypt_ServiceNotAvailable_WithFuncMock(t *testing.T) {
 // Secrets Handler Tests
 // =============================================================================
 
-func TestHandleStoreSecret_ServiceNotAvailable_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
+// TestHandleSecrets_WithFuncMock drives the store, get and delete secret
+// handlers with one row per verb and case. The mock has no secrets service,
+// so a well-formed request reaches the service-not-available path.
+func TestHandleSecrets_WithFuncMock(t *testing.T) {
+	storeSecret := func(s *Server) http.HandlerFunc { return s.HandleStoreSecret }
+	getSecret := func(s *Server) http.HandlerFunc { return s.HandleGetSecret }
+	deleteSecret := func(s *Server) http.HandlerFunc { return s.HandleDeleteSecret }
 
-	body := `{"data": {"password": "secret123"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/myapp/db", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	tests := []struct {
+		name       string
+		handler    func(s *Server) http.HandlerFunc
+		method     string
+		path       string
+		query      string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:    "store service not available",
+			handler: storeSecret, method: http.MethodPost, path: "myapp/db",
+			body:       `{"data": {"password": "secret123"}}`,
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:    "store missing path",
+			handler: storeSecret, method: http.MethodPost, path: "",
+			body:       `{"data": {"password": "secret123"}}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "store missing data",
+			handler: storeSecret, method: http.MethodPost, path: "myapp/db",
+			body:       `{}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "store invalid algorithm",
+			handler: storeSecret, method: http.MethodPost, path: "myapp/db",
+			body:       `{"data": {"password": "secret123"}, "algorithm": "INVALID-ALGO"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "store invalid JSON",
+			handler: storeSecret, method: http.MethodPost, path: "myapp/db",
+			body:       "not-json",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "get service not available",
+			handler: getSecret, method: http.MethodGet, path: "myapp/db",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:    "get missing path",
+			handler: getSecret, method: http.MethodGet, path: "",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "get invalid version",
+			handler: getSecret, method: http.MethodGet, path: "myapp/db",
+			query:      "?version=invalid",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:    "delete service not available",
+			handler: deleteSecret, method: http.MethodDelete, path: "myapp/db",
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:    "delete missing path",
+			handler: deleteSecret, method: http.MethodDelete, path: "",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, _, cleanup := setupMockServerWithFuncMock(t)
+			defer cleanup()
 
-	rec := httptest.NewRecorder()
-	server.HandleStoreSecret(rec, req)
+			req := httptest.NewRequest(tt.method, "/api/v1/secrets/"+tt.path+tt.query, strings.NewReader(tt.body))
+			if tt.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("*", tt.path)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
+			rec := httptest.NewRecorder()
+			tt.handler(server)(rec, req)
 
-func TestHandleStoreSecret_MissingPath_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"data": {"password": "secret123"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleStoreSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleStoreSecret_MissingData_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/myapp/db", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleStoreSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleStoreSecret_InvalidAlgorithm_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"data": {"password": "secret123"}, "algorithm": "INVALID-ALGO"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/myapp/db", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleStoreSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleStoreSecret_InvalidJSON_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/myapp/db", strings.NewReader("not-json"))
-	req.Header.Set("Content-Type", "application/json")
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleStoreSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleGetSecret_ServiceNotAvailable_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/myapp/db", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleGetSecret(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-func TestHandleGetSecret_MissingPath_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleGetSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleGetSecret_InvalidVersion_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/myapp/db?version=invalid", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleGetSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleDeleteSecret_ServiceNotAvailable_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/secrets/myapp/db", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "myapp/db")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleDeleteSecret(rec, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-}
-
-func TestHandleDeleteSecret_MissingPath_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/secrets/", nil)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("*", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleDeleteSecret(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, tt.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
@@ -1030,29 +960,6 @@ func TestHandleListEntityTypes_Success_WithFuncMock(t *testing.T) {
 	err := json.NewDecoder(rec.Body).Decode(&resp)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"users", "orders", "products"}, resp.EntityTypes)
-}
-
-// =============================================================================
-// Error Response Format Tests
-// =============================================================================
-
-func TestErrorResponse_Format_WithFuncMock(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{"operations": []}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch/put", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleBatchPut(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-
-	var errResp ErrorResponse
-	err := json.NewDecoder(rec.Body).Decode(&errResp)
-	require.NoError(t, err)
-	assert.NotEmpty(t, errResp.Error)
 }
 
 // =============================================================================
