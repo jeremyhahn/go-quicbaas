@@ -401,17 +401,25 @@ func TestQRDBVectorIndex_TenantIsolation(t *testing.T) {
 // Train / IsTrained
 // ---------------------------------------------------------------------------
 
-func TestQRDBVectorIndex_Train_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 16)
-	if !idx.IsTrained() {
-		t.Fatal("should be trained from construction")
+func TestQRDBVectorIndex_NoOps(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(idx rag.VectorIndex) error
+	}{
+		{name: "Train", op: func(idx rag.VectorIndex) error { return idx.Train([][]float32{{1, 2, 3, 4}}) }},
+		{name: "Save", op: func(idx rag.VectorIndex) error { return idx.Save("/some/path") }},
+		{name: "Load", op: func(idx rag.VectorIndex) error { return idx.Load("/some/path") }},
 	}
-	// Train should always succeed.
-	if err := idx.Train([][]float32{{1, 2, 3, 4}}); err != nil {
-		t.Fatalf("Train failed: %v", err)
-	}
-	if !idx.IsTrained() {
-		t.Fatal("should remain trained after Train()")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, _ := newTestQRDBIndex(t, 16)
+			if err := tt.op(idx); err != nil {
+				t.Fatalf("%s should be a no-op, got error: %v", tt.name, err)
+			}
+			if !idx.IsTrained() {
+				t.Fatalf("should remain trained after %s", tt.name)
+			}
+		})
 	}
 }
 
@@ -419,63 +427,18 @@ func TestQRDBVectorIndex_Train_IsNoOp(t *testing.T) {
 // Add / Size / Remove
 // ---------------------------------------------------------------------------
 
-func TestQRDBVectorIndex_AddAndSize(t *testing.T) {
+func TestQRDBVectorIndex_AddRemoveSize(t *testing.T) {
 	idx, _ := newTestQRDBIndex(t, 8)
 
 	if idx.Size() != 0 {
 		t.Fatalf("empty index should have size 0, got %d", idx.Size())
 	}
-
-	vec := makeVec(8, 0.5)
-	if err := idx.Add("chunk-1", vec, map[string]interface{}{"lang": "go"}); err != nil {
+	if err := idx.Add("v1", makeVec(8, 0.3), map[string]interface{}{"lang": "go"}); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 	if idx.Size() != 1 {
-		t.Fatalf("expected size 1, got %d", idx.Size())
+		t.Fatalf("expected size 1 after Add, got %d", idx.Size())
 	}
-}
-
-func TestQRDBVectorIndex_Add_DimensionMismatch(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	err := idx.Add("v1", makeVec(4, 0.5), nil)
-	if err == nil {
-		t.Fatal("expected dimension mismatch error")
-	}
-	var dimErr *rag.VectorDimensionError
-	if !errors.As(err, &dimErr) {
-		t.Fatalf("expected VectorDimensionError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Add_UpsertError(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	client.upsertErr = errors.New("connection refused")
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
-	}
-	err = idx.Add("v1", makeVec(dims, 0.1), nil)
-	if err == nil {
-		t.Fatal("expected upsert error")
-	}
-	var upsertErr *QRDBVectorUpsertError
-	if !errors.As(err, &upsertErr) {
-		t.Fatalf("expected QRDBVectorUpsertError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Remove_Success(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-
-	if err := idx.Add("v1", makeVec(8, 0.3), nil); err != nil {
-		t.Fatalf("Add failed: %v", err)
-	}
-	if idx.Size() != 1 {
-		t.Fatalf("expected size 1 after Add")
-	}
-
 	if err := idx.Remove("v1"); err != nil {
 		t.Fatalf("Remove failed: %v", err)
 	}
@@ -484,22 +447,71 @@ func TestQRDBVectorIndex_Remove_Success(t *testing.T) {
 	}
 }
 
-func TestQRDBVectorIndex_Remove_Error(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
+func TestQRDBVectorIndex_DimensionMismatch(t *testing.T) {
+	tests := []struct {
+		name string
+		op   func(idx rag.VectorIndex) error
+	}{
+		{name: "Add", op: func(idx rag.VectorIndex) error { return idx.Add("v1", makeVec(4, 0.5), nil) }},
+		{name: "Search", op: func(idx rag.VectorIndex) error {
+			_, err := idx.Search(makeVec(4, 0.5), 5, 0)
+			return err
+		}},
 	}
-	client.deleteErr = errors.New("disk full")
-	err = idx.Remove("v1")
-	if err == nil {
-		t.Fatal("expected delete error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, _ := newTestQRDBIndex(t, 8)
+			var dimErr *rag.VectorDimensionError
+			if err := tt.op(idx); !errors.As(err, &dimErr) {
+				t.Fatalf("expected VectorDimensionError, got %T (%v)", err, err)
+			}
+		})
 	}
-	var delErr *QRDBVectorDeleteError
-	if !errors.As(err, &delErr) {
-		t.Fatalf("expected QRDBVectorDeleteError, got %T", err)
+}
+
+func TestQRDBVectorIndex_ClientErrors(t *testing.T) {
+	const dims = 4
+	tests := []struct {
+		name    string
+		inject  func(client *mockVectorClient)
+		op      func(idx rag.VectorIndex) error
+		wantErr any
+	}{
+		{
+			name:    "Add upsert fails",
+			inject:  func(c *mockVectorClient) { c.upsertErr = errors.New("connection refused") },
+			op:      func(idx rag.VectorIndex) error { return idx.Add("v1", makeVec(dims, 0.1), nil) },
+			wantErr: new(*QRDBVectorUpsertError),
+		},
+		{
+			name:    "Remove delete fails",
+			inject:  func(c *mockVectorClient) { c.deleteErr = errors.New("disk full") },
+			op:      func(idx rag.VectorIndex) error { return idx.Remove("v1") },
+			wantErr: new(*QRDBVectorDeleteError),
+		},
+		{
+			name:   "Search fails",
+			inject: func(c *mockVectorClient) { c.searchErr = errors.New("index unavailable") },
+			op: func(idx rag.VectorIndex) error {
+				_, err := idx.Search(makeVec(dims, 0.5), 5, 0)
+				return err
+			},
+			wantErr: new(*QRDBVectorSearchError),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockVectorClient()
+			cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
+			idx, err := newQRDBVectorIndex(context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("construction failed: %v", err)
+			}
+			tt.inject(client)
+			if err := tt.op(idx); !errors.As(err, tt.wantErr) {
+				t.Fatalf("expected %T, got %T (%v)", tt.wantErr, err, err)
+			}
+		})
 	}
 }
 
@@ -539,37 +551,6 @@ func TestQRDBVectorIndex_Search_Success(t *testing.T) {
 	}
 }
 
-func TestQRDBVectorIndex_Search_DimensionMismatch(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	_, err := idx.Search(makeVec(4, 0.5), 5, 0)
-	if err == nil {
-		t.Fatal("expected dimension mismatch error")
-	}
-	var dimErr *rag.VectorDimensionError
-	if !errors.As(err, &dimErr) {
-		t.Fatalf("expected VectorDimensionError, got %T", err)
-	}
-}
-
-func TestQRDBVectorIndex_Search_Error(t *testing.T) {
-	dims := 4
-	client := newMockVectorClient()
-	cfg := qrdbVectorIndexConfig{Client: client, Namespace: "ns", Dimension: dims}
-	idx, err := newQRDBVectorIndex(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("construction failed: %v", err)
-	}
-	client.searchErr = errors.New("index unavailable")
-	_, err = idx.Search(makeVec(dims, 0.5), 5, 0)
-	if err == nil {
-		t.Fatal("expected search error")
-	}
-	var searchErr *QRDBVectorSearchError
-	if !errors.As(err, &searchErr) {
-		t.Fatalf("expected QRDBVectorSearchError, got %T", err)
-	}
-}
-
 func TestQRDBVectorIndex_Search_EmptyNamespace(t *testing.T) {
 	idx, _ := newTestQRDBIndex(t, 4)
 	results, err := idx.Search(makeVec(4, 0.5), 5, 0)
@@ -584,20 +565,6 @@ func TestQRDBVectorIndex_Search_EmptyNamespace(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Save / Load (no-ops)
 // ---------------------------------------------------------------------------
-
-func TestQRDBVectorIndex_Save_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	if err := idx.Save("/some/path"); err != nil {
-		t.Fatalf("Save should be a no-op, got error: %v", err)
-	}
-}
-
-func TestQRDBVectorIndex_Load_IsNoOp(t *testing.T) {
-	idx, _ := newTestQRDBIndex(t, 8)
-	if err := idx.Load("/some/path"); err != nil {
-		t.Fatalf("Load should be a no-op, got error: %v", err)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Size with error from GetNamespaceInfo
