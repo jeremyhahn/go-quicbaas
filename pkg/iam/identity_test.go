@@ -1021,125 +1021,71 @@ func TestListRoles_TenantIsolation(t *testing.T) {
 
 // Test validation functions - low coverage
 
-func TestValidateUsername_Valid(t *testing.T) {
+func TestValidateUsername(t *testing.T) {
 	tests := []struct {
 		name     string
 		username string
+		wantErr  bool
 	}{
-		{"lowercase", "testuser"},
-		{"uppercase", "TESTUSER"},
-		{"mixed case", "TestUser"},
-		{"with numbers", "test123"},
-		{"with underscore", "test_user"},
-		{"with dash", "test-user"},
-		{"minimum length", "abc"},
-		{"maximum length", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ01"},
+		{"mixed case", "TestUser", false},
+		{"with numbers", "test123", false},
+		{"with underscore", "test_user", false},
+		{"with dash", "test-user", false},
+		{"minimum length", "abc", false},
+		{"maximum length", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ01", false},
+		{"empty", "", true},
+		{"too short", "ab", true},
+		{"too long", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ012", true},
+		{"with spaces", "test user", true},
+		{"with special chars", "test@user", true},
+		{"with dots", "test.user", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateUsername(tt.username)
-			if err != nil {
-				t.Errorf("Expected valid username, got error: %v", err)
-			}
+			assertFieldValidation(t, validateUsername(tt.username), tt.wantErr, "username")
 		})
 	}
 }
 
-func TestValidateUsername_Invalid(t *testing.T) {
+func TestValidateIDs(t *testing.T) {
 	tests := []struct {
-		name     string
-		username string
+		name      string
+		err       error
+		wantErr   bool
+		wantField string
 	}{
-		{"empty", ""},
-		{"too short", "ab"},
-		{"too long", "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ012"},
-		{"with spaces", "test user"},
-		{"with special chars", "test@user"},
-		{"with dots only", "test.user"},
+		{"valid tenant ID", validateTenantID("tenant123"), false, ""},
+		{"empty tenant ID", validateTenantID(""), true, "tenant_id"},
+		{"valid user ID", validateUserID(20123), false, ""},
+		{"zero user ID", validateUserID(0), true, "user_id"},
+		{"valid role ID", validateRoleID("role123"), false, ""},
+		{"empty role ID", validateRoleID(""), true, "role_id"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateUsername(tt.username)
-			if err == nil {
-				t.Errorf("Expected validation error for username: %s", tt.username)
-			}
-
-			var valErr *ValidationError
-			if !errors.As(err, &valErr) {
-				t.Errorf("Expected ValidationError, got %T", err)
-			}
-			if valErr.Field != "username" {
-				t.Errorf("Expected field 'username', got %s", valErr.Field)
-			}
+			assertFieldValidation(t, tt.err, tt.wantErr, tt.wantField)
 		})
 	}
 }
 
-func TestValidateTenantID_Valid(t *testing.T) {
-	err := validateTenantID("tenant123")
-	if err != nil {
-		t.Errorf("Expected valid tenant ID, got error: %v", err)
+// assertFieldValidation checks that err is nil when wantErr is false, and a
+// *ValidationError naming field otherwise.
+func assertFieldValidation(t *testing.T, err error, wantErr bool, field string) {
+	t.Helper()
+	if !wantErr {
+		if err != nil {
+			t.Errorf("Expected no error, got %v", err)
+		}
+		return
 	}
-}
-
-func TestValidateTenantID_Invalid(t *testing.T) {
-	err := validateTenantID("")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
 	var valErr *ValidationError
 	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
+		t.Fatalf("Expected ValidationError, got %T (%v)", err, err)
 	}
-	if valErr.Field != "tenant_id" {
-		t.Errorf("Expected field 'tenant_id', got %s", valErr.Field)
-	}
-}
-
-func TestValidateUserID_Valid(t *testing.T) {
-	err := validateUserID(20123)
-	if err != nil {
-		t.Errorf("Expected valid user ID, got error: %v", err)
-	}
-}
-
-func TestValidateUserID_Invalid(t *testing.T) {
-	err := validateUserID(0)
-	if err == nil {
-		t.Error("Expected error for zero user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "user_id" {
-		t.Errorf("Expected field 'user_id', got %s", valErr.Field)
-	}
-}
-
-func TestValidateRoleID_Valid(t *testing.T) {
-	err := validateRoleID("role123")
-	if err != nil {
-		t.Errorf("Expected valid role ID, got error: %v", err)
-	}
-}
-
-func TestValidateRoleID_Invalid(t *testing.T) {
-	err := validateRoleID("")
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "role_id" {
-		t.Errorf("Expected field 'role_id', got %s", valErr.Field)
+	if valErr.Field != field {
+		t.Errorf("Expected field %q, got %q", field, valErr.Field)
 	}
 }
 
