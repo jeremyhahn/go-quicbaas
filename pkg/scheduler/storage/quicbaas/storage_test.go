@@ -679,49 +679,39 @@ func TestGetJobsDueForExecution_Success(t *testing.T) {
 }
 
 func TestGetJobsDueForExecution_Limit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	now := time.Now()
-
-	// Create multiple due jobs
-	for i := 0; i < 10; i++ {
-		job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
-		job.Status = scheduler.JobStatusPending
-		job.NextRun = now.Add(-time.Hour)
-		storage.CreateJob(ctx, job)
+	tests := []struct {
+		name    string
+		dueJobs int
+		limit   int
+		want    int
+	}{
+		{name: "explicit limit", dueJobs: 10, limit: 5, want: 5},
+		{name: "zero limit defaults to 100", dueJobs: 101, limit: 0, want: 100},
 	}
 
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, now, 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
+			now := time.Now()
 
-	if len(dueJobs) != 5 {
-		t.Errorf("expected 5 due jobs with limit, got %d", len(dueJobs))
-	}
-}
+			for i := 0; i < tt.dueJobs; i++ {
+				job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
+				job.Status = scheduler.JobStatusPending
+				job.NextRun = now.Add(-time.Hour)
+				if err := storage.CreateJob(ctx, job); err != nil {
+					t.Fatalf("failed to create job: %v", err)
+				}
+			}
 
-func TestGetJobsDueForExecution_DefaultLimit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Create a due job
-	job := createTestJob("due-job", scheduler.OwnerTypeSystem, "")
-	job.Status = scheduler.JobStatusPending
-	job.NextRun = time.Now().Add(-time.Hour)
-	storage.CreateJob(ctx, job)
-
-	// Use 0 limit (should default to 100)
-	dueJobs, err := storage.GetJobsDueForExecution(ctx, time.Now(), 0)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(dueJobs) != 1 {
-		t.Errorf("expected 1 due job, got %d", len(dueJobs))
+			dueJobs, err := storage.GetJobsDueForExecution(ctx, now, tt.limit)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(dueJobs) != tt.want {
+				t.Errorf("expected %d due jobs, got %d", tt.want, len(dueJobs))
+			}
+		})
 	}
 }
 
