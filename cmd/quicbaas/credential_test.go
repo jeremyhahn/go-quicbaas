@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	stderrors "errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -352,9 +351,7 @@ func TestCredentialList_Success(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.NotNil(t, fc.lastListReq)
-	got := out.String()
-	assert.Contains(t, got, "alpha")
-	assert.Contains(t, got, "beta")
+	assert.Equal(t, "alpha\nbeta\n", out.String())
 }
 
 // TestCredentialList_EmptyTable shows the friendly empty marker.
@@ -369,7 +366,7 @@ func TestCredentialList_EmptyTable(t *testing.T) {
 	cmd.SetErr(&out)
 
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "(no credentials)")
+	assert.Equal(t, "(no credentials)\n", out.String())
 }
 
 // TestCredentialList_JSON outputs a JSON envelope.
@@ -426,6 +423,7 @@ func TestCredentialRotate_Success(t *testing.T) {
 	assert.Equal(t, int64(24*60*60), fc.lastRotateReq.GracePeriodSeconds)
 	assert.Contains(t, out.String(), "rotated my-key")
 	assert.Contains(t, out.String(), "previous v3 -> new v4")
+	assert.Contains(t, out.String(), "retrievable until")
 }
 
 // TestCredentialRotate_NoGrace verifies the no-grace branch in formatting.
@@ -537,7 +535,7 @@ func TestCredentialVersions_Success(t *testing.T) {
 				Name: req.Name,
 				Versions: []qrdbtransport.CredentialVersionInfo{
 					{Version: 1, IsCurrent: false, CreatedAtUnix: now - 86400, GraceUntilUnix: now + 3600},
-					{Version: 2, IsCurrent: true, CreatedAtUnix: now},
+					{Version: 2, IsCurrent: true},
 				},
 			}, nil
 		},
@@ -653,105 +651,6 @@ func TestCredentialGC_Success(t *testing.T) {
 // writeCredentialVersions). These exercise the format helpers directly so the
 // json + table branches are covered even when callers swap formats.
 // =============================================================================
-
-// TestWriteCredentialNames_TableNonEmpty prints one name per line.
-func TestWriteCredentialNames_TableNonEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, []string{"a", "b"}, "table"))
-	got := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	assert.Equal(t, []string{"a", "b"}, got)
-}
-
-// TestWriteCredentialNames_TableEmpty prints the friendly empty marker.
-func TestWriteCredentialNames_TableEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, nil, "table"))
-	assert.Equal(t, "(no credentials)\n", buf.String())
-}
-
-// TestWriteCredentialNames_JSON wraps the names in a map envelope.
-func TestWriteCredentialNames_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	require.NoError(t, writeCredentialNames(&buf, []string{"a"}, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"names"`)
-	assert.Contains(t, got, `"a"`)
-}
-
-// TestWriteCredentialRotateResult_TableNoGrace omits the grace tail.
-func TestWriteCredentialRotateResult_TableNoGrace(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{
-		Name: "k", PreviousVersion: 1, NewVersion: 2,
-	}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "table"))
-	got := buf.String()
-	assert.Contains(t, got, "rotated k")
-	assert.Contains(t, got, "previous v1 -> new v2")
-	assert.NotContains(t, got, "retrievable until")
-}
-
-// TestWriteCredentialRotateResult_TableWithGrace includes the grace tail.
-func TestWriteCredentialRotateResult_TableWithGrace(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{
-		Name: "k", PreviousVersion: 1, NewVersion: 2,
-		GraceUntilUnix: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
-	}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "table"))
-	assert.Contains(t, buf.String(), "retrievable until")
-}
-
-// TestWriteCredentialRotateResult_JSON wraps the response in JSON.
-func TestWriteCredentialRotateResult_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialRotateResponse{Name: "k", PreviousVersion: 1, NewVersion: 2}
-	require.NoError(t, writeCredentialRotateResult(&buf, resp, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"name": "k"`)
-	assert.Contains(t, got, `"new_version": 2`)
-}
-
-// TestWriteCredentialVersions_TableEmpty prints the friendly empty marker.
-func TestWriteCredentialVersions_TableEmpty(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{Name: "k"}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "table"))
-	assert.Contains(t, buf.String(), "(no versions)")
-}
-
-// TestWriteCredentialVersions_TableRendered includes header + rows, with
-// "-" placeholders for missing timestamps.
-func TestWriteCredentialVersions_TableRendered(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{
-		Name: "k",
-		Versions: []qrdbtransport.CredentialVersionInfo{
-			{Version: 1, IsCurrent: true},
-			{Version: 2, IsCurrent: false, CreatedAtUnix: 100, GraceUntilUnix: 200},
-		},
-	}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "table"))
-	got := buf.String()
-	assert.Contains(t, got, "VERSION")
-	assert.Contains(t, got, "yes")
-	assert.Contains(t, got, "no")
-}
-
-// TestWriteCredentialVersions_JSON wraps the response in JSON.
-func TestWriteCredentialVersions_JSON(t *testing.T) {
-	var buf bytes.Buffer
-	resp := &qrdbtransport.CredentialListVersionsResponse{
-		Name: "k",
-		Versions: []qrdbtransport.CredentialVersionInfo{
-			{Version: 1, IsCurrent: true},
-		},
-	}
-	require.NoError(t, writeCredentialVersions(&buf, resp, "json"))
-	got := buf.String()
-	assert.Contains(t, got, `"name": "k"`)
-	assert.Contains(t, got, `"versions"`)
-}
 
 // =============================================================================
 // SDK factory error path
