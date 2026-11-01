@@ -293,19 +293,34 @@ func TestEventDisplay_Render(t *testing.T) {
 		evtType string
 		message string
 		want    []string
+		roles   map[string]string // session ID to the role render records
 	}{
-		{"job started", "orchestration:job_started", "job_id=job-1 correlation_id=corr-1", []string{"Job started", "system"}},
-		{"job started empty message", "orchestration:job_started", "", []string{"Job started"}},
-		{"decomposed", "orchestration:decomposed", "work_items=5 iteration=1", []string{"Decomposed into 5 tasks (iteration 1)"}},
-		{"decomposed missing fields", "orchestration:decomposed", "", []string{"Decomposed into"}},
-		{"scheduled", "orchestration:scheduled", "waves=2 items=5", []string{"Scheduled 5 items in 2 waves"}},
-		{"task assigned skipped", "orchestration:task_assigned", "wave=1 tasks=3", nil},
-		{"task completed skipped", "orchestration:task_completed", "wave=1 tasks=3", nil},
-		{"validation result skipped", "orchestration:validation_result", "criteria=3", nil},
-		{"review approved", "orchestration:review_decision", "approved=true feedback=Looks good", []string{"Review: APPROVED"}},
-		{"review rejected", "orchestration:review_decision", "approved=false feedback=Needs more tests", []string{"Review: REJECTED -- Needs more tests"}},
-		{"redelegate", "orchestration:redelegate", "iteration=2", []string{"Re-delegating (iteration 2)"}},
-		{"redelegate empty message", "orchestration:redelegate", "", []string{"Re-delegating"}},
+		{"job started", "orchestration:job_started", "job_id=job-1 correlation_id=corr-1", []string{"Job started", "system"}, nil},
+		{"job started empty message", "orchestration:job_started", "", []string{"Job started"}, nil},
+		{"decomposed", "orchestration:decomposed", "work_items=5 iteration=1", []string{"Decomposed into 5 tasks (iteration 1)"}, nil},
+		{"decomposed missing fields", "orchestration:decomposed", "", []string{"Decomposed into"}, nil},
+		{"scheduled", "orchestration:scheduled", "waves=2 items=5", []string{"Scheduled 5 items in 2 waves"}, nil},
+		{"task assigned skipped", "orchestration:task_assigned", "wave=1 tasks=3", nil, nil},
+		{"task completed skipped", "orchestration:task_completed", "wave=1 tasks=3", nil, nil},
+		{"validation result skipped", "orchestration:validation_result", "criteria=3", nil, nil},
+		{"review approved", "orchestration:review_decision", "approved=true feedback=Looks good", []string{"Review: APPROVED"}, nil},
+		{"review rejected", "orchestration:review_decision", "approved=false feedback=Needs more tests", []string{"Review: REJECTED -- Needs more tests"}, nil},
+		{"redelegate", "orchestration:redelegate", "iteration=2", []string{"Re-delegating (iteration 2)"}, nil},
+		{"redelegate empty message", "orchestration:redelegate", "", []string{"Re-delegating"}, nil},
+		{"prompt start", "worker:prompt_start", "role=coder task=Setup project backend=claude session=sess-1", []string{"Starting: Setup", "coder"}, map[string]string{"sess-1": "coder"}},
+		{"prompt start no role", "worker:prompt_start", "task=Build session=sess-2 backend=claude", []string{"Starting: Build", "worker"}, nil},
+		{"prompt complete", "worker:prompt_complete", "role=coder task=Setup project response=Done", []string{"Finished: Setup", "coder"}, nil},
+		{"prompt complete no role", "worker:prompt_complete", "task=Build response=OK", []string{"Finished: Build"}, nil},
+		{"session spawn", "worker:session_spawn", "role=coder backend=claude persistent=true", []string{"Spawning session", "coder"}, nil},
+		{"session spawned", "worker:session_spawned", "role=reviewer session=sess-3", []string{"Session ready", "reviewer"}, map[string]string{"sess-3": "reviewer"}},
+		{"session spawned no role", "worker:session_spawned", "session=sess-4", []string{"Session ready", "worker"}, nil},
+		{"lead decompose start", "lead:decompose_start", "backend=claude model=opus-4", []string{"Decomposing task...", "lead"}, map[string]string{"lead": "lead"}},
+		{"lead work item", "lead:work_item", "title=Create project structure", []string{"-> Create project structure", "lead"}, nil},
+		{"lead work item empty title", "lead:work_item", "", []string{"->"}, nil},
+		{"lead session spawned", "lead:session_spawned", "session=lead-sess-1", []string{"Session ready"}, map[string]string{"lead-sess-1": "lead"}},
+		{"lead session spawned no session", "lead:session_spawned", "", []string{"Session ready"}, nil},
+		{"unknown type", "custom:event_type", "some details", []string{"[custom:event_type]", "some details"}, nil},
+		{"unknown type empty message", "custom:event_type", "", []string{"[custom:event_type]"}, nil},
 	}
 
 	for _, tt := range tests {
@@ -323,204 +338,11 @@ func TestEventDisplay_Render(t *testing.T) {
 			for _, w := range tt.want {
 				assert.Contains(t, output, w)
 			}
+			for session, role := range tt.roles {
+				assert.Equal(t, role, d.sessionRole[session])
+			}
 		})
 	}
-}
-
-func TestEventDisplay_Render_PromptStart(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=coder task=Setup project backend=claude session=sess-1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Starting: Setup")
-	assert.Contains(t, output, "coder")
-	assert.Equal(t, "coder", d.sessionRole["sess-1"])
-}
-
-func TestEventDisplay_Render_PromptStart_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "task=Build session=sess-2 backend=claude",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Starting: Build")
-	assert.Contains(t, output, "worker")
-}
-
-func TestEventDisplay_Render_PromptComplete(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.registerSession("sess-1", "coder")
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_complete",
-		Message: "role=coder task=Setup project response=Done",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Finished: Setup")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_PromptComplete_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_complete",
-		Message: "task=Build response=OK",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Finished: Build")
-}
-
-func TestEventDisplay_Render_SessionSpawn(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawn",
-		Message: "role=coder backend=claude persistent=true",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Spawning session")
-	assert.Contains(t, output, "coder")
-}
-
-func TestEventDisplay_Render_SessionSpawned(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawned",
-		Message: "role=reviewer session=sess-3",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Contains(t, output, "reviewer")
-	assert.Equal(t, "reviewer", d.sessionRole["sess-3"])
-}
-
-func TestEventDisplay_Render_SessionSpawned_NoRole(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:session_spawned",
-		Message: "session=sess-4",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Contains(t, output, "worker")
-}
-
-func TestEventDisplay_Render_LeadDecomposeStart(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:decompose_start",
-		Message: "backend=claude model=opus-4",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposing task...")
-	assert.Contains(t, output, "lead")
-	assert.Equal(t, "lead", d.sessionRole["lead"])
-}
-
-func TestEventDisplay_Render_LeadWorkItem(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:work_item",
-		Message: "title=Create project structure",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "-> Create project structure")
-	assert.Contains(t, output, "lead")
-}
-
-func TestEventDisplay_Render_LeadWorkItem_EmptyTitle(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:work_item",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "->")
-}
-
-func TestEventDisplay_Render_LeadSessionSpawned(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:session_spawned",
-		Message: "session=lead-sess-1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-	assert.Equal(t, "lead", d.sessionRole["lead-sess-1"])
-}
-
-func TestEventDisplay_Render_LeadSessionSpawned_NoSession(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "lead:session_spawned",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Session ready")
-}
-
-func TestEventDisplay_Render_Default(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "custom:event_type",
-		Message: "some details",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[custom:event_type]")
-	assert.Contains(t, output, "some details")
-}
-
-func TestEventDisplay_Render_Default_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "custom:event_type",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "[custom:event_type]")
 }
 
 func TestEventDisplay_Render_ToolCallInProgress(t *testing.T) {
