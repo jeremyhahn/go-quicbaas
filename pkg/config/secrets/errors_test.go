@@ -15,578 +15,179 @@ package secrets
 
 import (
 	stderrors "errors"
-	"strings"
 	"testing"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// TestSecretResolutionError_Error tests all branches of SecretResolutionError.Error()
-func TestSecretResolutionError_Error(t *testing.T) {
+// TestErrorTypes_Error checks the message of each error type, one row per
+// formatting branch of its Error method.
+func TestErrorTypes_Error(t *testing.T) {
 	tests := []struct {
-		name     string
-		err      *SecretResolutionError
-		expected string
+		name string
+		err  error
+		want string
 	}{
 		{
-			name: "with scheme, message, and cause",
-			err: &SecretResolutionError{
-				Scheme:  "kms",
-				Message: "secret not found",
-				Cause:   stderrors.New("underlying error"),
-			},
-			expected: "kms: secret not found: underlying error",
+			name: "resolution with scheme, message and cause",
+			err:  NewSecretResolutionError("kms", "secret not found", stderrors.New("underlying error")),
+			want: "kms: secret not found: underlying error",
 		},
 		{
-			name: "with scheme and message only",
-			err: &SecretResolutionError{
-				Scheme:  "vault",
-				Message: "connection timeout",
-				Cause:   nil,
-			},
-			expected: "vault: connection timeout",
+			name: "resolution with scheme and message",
+			err:  NewSecretResolutionError("vault", "connection timeout", nil),
+			want: "vault: connection timeout",
 		},
 		{
-			name: "with message only",
-			err: &SecretResolutionError{
-				Scheme:  "",
-				Message: "generic error",
-				Cause:   nil,
-			},
-			expected: "generic error",
+			name: "resolution with message only",
+			err:  NewSecretResolutionError("", "generic error", nil),
+			want: "generic error",
 		},
 		{
-			name: "empty scheme with cause",
-			err: &SecretResolutionError{
-				Scheme:  "",
-				Message: "something failed",
-				Cause:   stderrors.New("root cause"),
-			},
-			expected: ": something failed: root cause",
+			name: "not found with provider",
+			err:  &SecretNotFoundError{Path: "/secrets/db/password", Provider: "vault"},
+			want: `secret not found: path "/secrets/db/password" in provider "vault"`,
 		},
 		{
-			name: "all empty fields",
-			err: &SecretResolutionError{
-				Scheme:  "",
-				Message: "",
-				Cause:   nil,
-			},
-			expected: "",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestSecretResolutionError_Unwrap tests error unwrapping
-func TestSecretResolutionError_Unwrap(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       *SecretResolutionError
-		expectNil bool
-	}{
-		{
-			name: "with cause",
-			err: &SecretResolutionError{
-				Scheme:  "kms",
-				Message: "error",
-				Cause:   stderrors.New("root cause"),
-			},
-			expectNil: false,
+			name: "not found without provider",
+			err:  &SecretNotFoundError{Path: "/secrets/api/key"},
+			want: `secret not found: path "/secrets/api/key"`,
 		},
 		{
-			name: "without cause",
-			err: &SecretResolutionError{
-				Scheme:  "kms",
-				Message: "error",
-				Cause:   nil,
-			},
-			expectNil: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			unwrapped := tc.err.Unwrap()
-			if tc.expectNil && unwrapped != nil {
-				t.Errorf("Expected nil, got %v", unwrapped)
-			}
-			if !tc.expectNil && unwrapped == nil {
-				t.Error("Expected non-nil, got nil")
-			}
-		})
-	}
-}
-
-// TestSecretResolutionError_ErrorsIs tests errors.Is support through Unwrap
-func TestSecretResolutionError_ErrorsIs(t *testing.T) {
-	sentinel := stderrors.New("sentinel error")
-	err := &SecretResolutionError{
-		Scheme:  "test",
-		Message: "wrapped sentinel",
-		Cause:   sentinel,
-	}
-
-	if !stderrors.Is(err, sentinel) {
-		t.Error("Expected errors.Is to find sentinel error")
-	}
-
-	otherErr := stderrors.New("other error")
-	if stderrors.Is(err, otherErr) {
-		t.Error("Expected errors.Is to not find other error")
-	}
-}
-
-// TestNewSecretResolutionError tests constructor
-func TestNewSecretResolutionError(t *testing.T) {
-	cause := stderrors.New("test cause")
-	err := NewSecretResolutionError("kms", "resolution failed", cause)
-
-	if err.Scheme != "kms" {
-		t.Errorf("Expected scheme 'kms', got %s", err.Scheme)
-	}
-	if err.Message != "resolution failed" {
-		t.Errorf("Expected message 'resolution failed', got %s", err.Message)
-	}
-	if err.Cause != cause {
-		t.Errorf("Expected cause to match")
-	}
-}
-
-// TestSecretNotFoundError_Error tests all branches of SecretNotFoundError.Error()
-func TestSecretNotFoundError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *SecretNotFoundError
-		expected string
-	}{
-		{
-			name: "with provider",
-			err: &SecretNotFoundError{
-				Path:     "/secrets/db/password",
-				Provider: "vault",
-			},
-			expected: `secret not found: path "/secrets/db/password" in provider "vault"`,
+			name: "resolution failed with reason",
+			err:  &ResolutionFailedError{URI: "kms://secret/path", Reason: "connection refused"},
+			want: `failed to resolve secret URI "kms://secret/path": connection refused`,
 		},
 		{
-			name: "without provider",
-			err: &SecretNotFoundError{
-				Path:     "/secrets/api/key",
-				Provider: "",
-			},
-			expected: `secret not found: path "/secrets/api/key"`,
+			name: "resolution failed without reason",
+			err:  &ResolutionFailedError{URI: "vault://secret/path"},
+			want: `failed to resolve secret URI "vault://secret/path"`,
 		},
 		{
-			name: "empty path with provider",
-			err: &SecretNotFoundError{
-				Path:     "",
-				Provider: "kms",
-			},
-			expected: `secret not found: path "" in provider "kms"`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestResolutionFailedError_Error tests all branches
-func TestResolutionFailedError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *ResolutionFailedError
-		expected string
-	}{
-		{
-			name: "with reason",
-			err: &ResolutionFailedError{
-				URI:    "kms://secret/path",
-				Reason: "connection refused",
-			},
-			expected: `failed to resolve secret URI "kms://secret/path": connection refused`,
-		},
-		{
-			name: "without reason",
-			err: &ResolutionFailedError{
-				URI:    "vault://secret/path",
-				Reason: "",
-			},
-			expected: `failed to resolve secret URI "vault://secret/path"`,
-		},
-		{
-			name: "empty URI with reason",
-			err: &ResolutionFailedError{
-				URI:    "",
-				Reason: "unknown error",
-			},
-			expected: `failed to resolve secret URI "": unknown error`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestRemoteConnectionFailedError_Error tests all branch combinations
-func TestRemoteConnectionFailedError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *RemoteConnectionFailedError
-		contains []string
-	}{
-		{
-			name: "all fields populated",
+			name: "remote connection with provider, endpoint and cause",
 			err: &RemoteConnectionFailedError{
 				Endpoint: "https://vault.example.com:8200",
 				Provider: "vault",
 				Cause:    stderrors.New("connection refused"),
 			},
-			contains: []string{"vault KMS", "https://vault.example.com:8200", "connection refused"},
+			want: "failed to connect to vault KMS at https://vault.example.com:8200: connection refused",
 		},
 		{
-			name: "provider and endpoint only",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "https://kms.aws.com",
-				Provider: "aws",
-				Cause:    nil,
-			},
-			contains: []string{"aws KMS", "https://kms.aws.com"},
+			name: "remote connection with provider and cause",
+			err:  &RemoteConnectionFailedError{Provider: "azure", Cause: stderrors.New("auth failed")},
+			want: "failed to connect to azure KMS: auth failed",
 		},
 		{
-			name: "provider only",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "",
-				Provider: "gcp",
-				Cause:    nil,
-			},
-			contains: []string{"gcp KMS"},
+			name: "remote connection with endpoint only",
+			err:  &RemoteConnectionFailedError{Endpoint: "https://remote.host:443"},
+			want: "failed to connect to remote KMS at https://remote.host:443",
 		},
 		{
-			name: "endpoint only",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "https://remote.host:443",
-				Provider: "",
-				Cause:    nil,
-			},
-			contains: []string{"remote KMS", "https://remote.host:443"},
+			name: "remote connection with no fields",
+			err:  &RemoteConnectionFailedError{},
+			want: "failed to connect to remote KMS",
 		},
 		{
-			name: "cause only",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "",
-				Provider: "",
-				Cause:    stderrors.New("timeout"),
-			},
-			contains: []string{"remote KMS", "timeout"},
+			name: "invalid URI with reason",
+			err:  &InvalidSecretURIError{URI: "invalid://bad/uri", Reason: "scheme not recognized"},
+			want: `invalid secret URI "invalid://bad/uri": scheme not recognized`,
 		},
 		{
-			name: "all empty",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "",
-				Provider: "",
-				Cause:    nil,
-			},
-			contains: []string{"failed to connect to remote KMS"},
+			name: "invalid URI without reason",
+			err:  &InvalidSecretURIError{URI: "malformed-uri"},
+			want: `invalid secret URI "malformed-uri"`,
 		},
 		{
-			name: "provider and cause",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "",
-				Provider: "azure",
-				Cause:    stderrors.New("auth failed"),
-			},
-			contains: []string{"azure KMS", "auth failed"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			for _, substr := range tc.contains {
-				if !strings.Contains(result, substr) {
-					t.Errorf("Expected error message to contain %q, got %q", substr, result)
-				}
-			}
-		})
-	}
-}
-
-// TestRemoteConnectionFailedError_Unwrap tests error unwrapping
-func TestRemoteConnectionFailedError_Unwrap(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       *RemoteConnectionFailedError
-		expectNil bool
-	}{
-		{
-			name: "with cause",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "https://vault.example.com",
-				Provider: "vault",
-				Cause:    stderrors.New("connection timeout"),
-			},
-			expectNil: false,
+			name: "entropy with bytes and cause",
+			err:  &EntropyGenerationFailedError{RequestedBytes: 32, Cause: stderrors.New("entropy pool exhausted")},
+			want: "failed to generate 32 bytes of entropy: entropy pool exhausted",
 		},
 		{
-			name: "without cause",
-			err: &RemoteConnectionFailedError{
-				Endpoint: "https://vault.example.com",
-				Provider: "vault",
-				Cause:    nil,
-			},
-			expectNil: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			unwrapped := tc.err.Unwrap()
-			if tc.expectNil && unwrapped != nil {
-				t.Errorf("Expected nil, got %v", unwrapped)
-			}
-			if !tc.expectNil && unwrapped == nil {
-				t.Error("Expected non-nil, got nil")
-			}
-		})
-	}
-}
-
-// TestRemoteConnectionFailedError_ErrorsIs tests errors.Is support
-func TestRemoteConnectionFailedError_ErrorsIs(t *testing.T) {
-	sentinel := stderrors.New("sentinel connection error")
-	err := &RemoteConnectionFailedError{
-		Endpoint: "https://test.example.com",
-		Provider: "test",
-		Cause:    sentinel,
-	}
-
-	if !stderrors.Is(err, sentinel) {
-		t.Error("Expected errors.Is to find sentinel error")
-	}
-}
-
-// TestInvalidSecretURIError_Error tests all branches
-func TestInvalidSecretURIError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *InvalidSecretURIError
-		expected string
-	}{
-		{
-			name: "with reason",
-			err: &InvalidSecretURIError{
-				URI:    "invalid://bad/uri",
-				Reason: "scheme not recognized",
-			},
-			expected: `invalid secret URI "invalid://bad/uri": scheme not recognized`,
+			name: "entropy with cause only",
+			err:  &EntropyGenerationFailedError{Cause: stderrors.New("random device unavailable")},
+			want: "failed to generate entropy: random device unavailable",
 		},
 		{
-			name: "without reason",
-			err: &InvalidSecretURIError{
-				URI:    "malformed-uri",
-				Reason: "",
-			},
-			expected: `invalid secret URI "malformed-uri"`,
+			name: "entropy with negative bytes and cause",
+			err:  &EntropyGenerationFailedError{RequestedBytes: -1, Cause: stderrors.New("invalid request")},
+			want: "failed to generate entropy: invalid request",
 		},
 		{
-			name: "empty URI with reason",
-			err: &InvalidSecretURIError{
-				URI:    "",
-				Reason: "empty URI",
-			},
-			expected: `invalid secret URI "": empty URI`,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestEntropyGenerationFailedError_ErrorMethod tests all branch combinations
-func TestEntropyGenerationFailedError_ErrorMethod(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *EntropyGenerationFailedError
-		expected string
-	}{
-		{
-			name: "with bytes and cause",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 32,
-				Cause:          stderrors.New("entropy pool exhausted"),
-			},
-			expected: "failed to generate 32 bytes of entropy: entropy pool exhausted",
+			name: "entropy with bytes only",
+			err:  &EntropyGenerationFailedError{RequestedBytes: 64},
+			want: "failed to generate 64 bytes of entropy",
 		},
 		{
-			name: "with cause only",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 0,
-				Cause:          stderrors.New("random device unavailable"),
-			},
-			expected: "failed to generate entropy: random device unavailable",
+			name: "entropy with no bytes and no cause",
+			err:  &EntropyGenerationFailedError{},
+			want: "failed to generate entropy",
 		},
 		{
-			name: "with bytes only",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 64,
-				Cause:          nil,
-			},
-			expected: "failed to generate 64 bytes of entropy",
-		},
-		{
-			name: "no bytes no cause",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 0,
-				Cause:          nil,
-			},
-			expected: "failed to generate entropy",
-		},
-		{
-			name: "negative bytes with cause",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: -1,
-				Cause:          stderrors.New("invalid request"),
-			},
-			expected: "failed to generate entropy: invalid request",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestEntropyGenerationFailedError_UnwrapMethod tests error unwrapping
-func TestEntropyGenerationFailedError_UnwrapMethod(t *testing.T) {
-	tests := []struct {
-		name      string
-		err       *EntropyGenerationFailedError
-		expectNil bool
-	}{
-		{
-			name: "with cause",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 32,
-				Cause:          stderrors.New("entropy failure"),
-			},
-			expectNil: false,
-		},
-		{
-			name: "without cause",
-			err: &EntropyGenerationFailedError{
-				RequestedBytes: 32,
-				Cause:          nil,
-			},
-			expectNil: true,
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			unwrapped := tc.err.Unwrap()
-			if tc.expectNil && unwrapped != nil {
-				t.Errorf("Expected nil, got %v", unwrapped)
-			}
-			if !tc.expectNil && unwrapped == nil {
-				t.Error("Expected non-nil, got nil")
-			}
-		})
-	}
-}
-
-// TestEntropyGenerationFailedError_ErrorsIs tests errors.Is support
-func TestEntropyGenerationFailedError_ErrorsIs(t *testing.T) {
-	sentinel := stderrors.New("sentinel entropy error")
-	err := &EntropyGenerationFailedError{
-		RequestedBytes: 16,
-		Cause:          sentinel,
-	}
-
-	if !stderrors.Is(err, sentinel) {
-		t.Error("Expected errors.Is to find sentinel error")
-	}
-}
-
-// TestUnsupportedSchemeError_Error tests all branches
-func TestUnsupportedSchemeError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *UnsupportedSchemeError
-		expected string
-	}{
-		{
-			name: "with supported schemes",
+			name: "unsupported scheme with supported schemes",
 			err: &UnsupportedSchemeError{
 				Scheme:           "unknown",
 				URI:              "unknown://secret/path",
 				SupportedSchemes: []string{"kms", "vault", "env"},
 			},
-			expected: `unsupported scheme "unknown" in URI "unknown://secret/path": supported schemes are [kms vault env]`,
+			want: `unsupported scheme "unknown" in URI "unknown://secret/path": supported schemes are [kms vault env]`,
 		},
 		{
-			name: "without supported schemes",
-			err: &UnsupportedSchemeError{
-				Scheme:           "custom",
-				URI:              "custom://path",
-				SupportedSchemes: nil,
-			},
-			expected: `unsupported scheme "custom" in URI "custom://path"`,
+			name: "unsupported scheme with nil supported schemes",
+			err:  &UnsupportedSchemeError{Scheme: "custom", URI: "custom://path"},
+			want: `unsupported scheme "custom" in URI "custom://path"`,
 		},
 		{
-			name: "empty supported schemes slice",
-			err: &UnsupportedSchemeError{
-				Scheme:           "test",
-				URI:              "test://uri",
-				SupportedSchemes: []string{},
-			},
-			expected: `unsupported scheme "test" in URI "test://uri"`,
-		},
-		{
-			name: "single supported scheme",
-			err: &UnsupportedSchemeError{
-				Scheme:           "bad",
-				URI:              "bad://path",
-				SupportedSchemes: []string{"kms"},
-			},
-			expected: `unsupported scheme "bad" in URI "bad://path": supported schemes are [kms]`,
+			name: "unsupported scheme with empty supported schemes",
+			err:  &UnsupportedSchemeError{Scheme: "test", URI: "test://uri", SupportedSchemes: []string{}},
+			want: `unsupported scheme "test" in URI "test://uri"`,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expected {
-				t.Errorf("Expected %q, got %q", tc.expected, result)
+			if got := tc.err.Error(); got != tc.want {
+				t.Errorf("Error() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestErrorTypes_Unwrap checks that each error type carrying a cause exposes
+// it to errors.Is, and unwraps to nil without one.
+func TestErrorTypes_Unwrap(t *testing.T) {
+	sentinel := stderrors.New("sentinel error")
+	tests := []struct {
+		name      string
+		withCause interface{ Unwrap() error }
+		noCause   interface{ Unwrap() error }
+	}{
+		{
+			name:      "SecretResolutionError",
+			withCause: NewSecretResolutionError("kms", "wrapped sentinel", sentinel),
+			noCause:   NewSecretResolutionError("kms", "error", nil),
+		},
+		{
+			name:      "RemoteConnectionFailedError",
+			withCause: &RemoteConnectionFailedError{Endpoint: "https://vault.example.com", Provider: "vault", Cause: sentinel},
+			noCause:   &RemoteConnectionFailedError{Endpoint: "https://vault.example.com", Provider: "vault"},
+		},
+		{
+			name:      "EntropyGenerationFailedError",
+			withCause: &EntropyGenerationFailedError{RequestedBytes: 16, Cause: sentinel},
+			noCause:   &EntropyGenerationFailedError{RequestedBytes: 16},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.withCause.Unwrap(); got != sentinel {
+				t.Errorf("Unwrap() = %v, want the sentinel cause", got)
+			}
+			if !stderrors.Is(tc.withCause.(error), sentinel) {
+				t.Error("errors.Is did not find the sentinel cause")
+			}
+			if got := tc.noCause.Unwrap(); got != nil {
+				t.Errorf("Unwrap() without cause = %v, want nil", got)
 			}
 		})
 	}
