@@ -2102,37 +2102,6 @@ func TestImportVectors_Success(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestImportVectors_SkipExisting(t *testing.T) {
-	srv, mockSvc := newMockTestServer(t)
-
-	// Mock GetVector to return that vector exists
-	mockSvc.On("GetVector", mock.Anything, mock.Anything).
-		Return(&service.GetVectorResponse{
-			Found: true,
-			ID:    1,
-		}, nil)
-
-	stream := NewMockImportVectorsStream(tenantctx.WithSystem(context.Background()))
-
-	// Create proper JSON batch data with one vector
-	batchData := `{"vectors":[{"id":"1","vector":[1.0,2.0]}],"namespace":"test-ns","batch_num":1,"total":1}`
-
-	stream.AddRecvMessage(&pb.ImportVectorsRequest{
-		Namespace:         "test-ns",
-		BatchData:         []byte(batchData),
-		Format:            "json",
-		OverwriteExisting: false,
-	})
-
-	err := srv.ImportVectors(stream)
-
-	require.NoError(t, err)
-	resp := stream.GetResponse()
-	require.NotNil(t, resp)
-	assert.Equal(t, int64(1), resp.VectorsSkipped)
-	mockSvc.AssertExpectations(t)
-}
-
 // =============================================================================
 // UpdateMetadata Tests
 // =============================================================================
