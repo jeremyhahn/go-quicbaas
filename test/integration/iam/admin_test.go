@@ -18,6 +18,7 @@ package iam_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -132,7 +133,11 @@ type ListImpersonationsResponse struct {
 
 // generateUniqueUserID generates a unique user ID for testing.
 func generateUniqueUserID() string {
-	return fmt.Sprintf("user-%s", uuid.New().String()[:8])
+	// User IDs are qrdb uint64 IDs, sent as decimal JSON strings
+	// (`json:"user_id,string"`); a non-numeric ID is rejected with 400.
+	// The low bit is set so the ID is never zero.
+	id := uuid.New()
+	return fmt.Sprintf("%d", binary.BigEndian.Uint64(id[:8])|1)
 }
 
 // createTestAssignment is a helper to create a test admin assignment.

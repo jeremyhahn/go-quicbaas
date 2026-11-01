@@ -19,8 +19,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +126,48 @@ func TestCreateAdminAssignment(t *testing.T) {
 	assert.Equal(t, uint64(50123), assignment.UserID)
 	assert.Equal(t, iam.AdminRoleTenantAdmin, assignment.AdminRole)
 	assert.True(t, assignment.Active)
+}
+
+// TestCreateAdminAssignment_IntegrationSuiteBody posts the request body the
+// integration suite (test/integration/iam TestAdmin_CreateAssignment_Success)
+// sends. user_id is a qrdb uint64 user ID encoded as a decimal JSON string, so
+// a non-numeric ID is rejected as invalid JSON and a decimal one is created.
+func TestCreateAdminAssignment_IntegrationSuiteBody(t *testing.T) {
+	const bodyFormat = `{"user_id":%q,"admin_role":"tenant_admin",` +
+		`"tenant_ids":["test-tenant-1","test-tenant-2"],` +
+		`"permissions":["user:create","user:read","user:update"],` +
+		`"granted_by":"system",` +
+		`"metadata":{"department":"engineering","team":"platform"}}`
+
+	post := func(userID string) *httptest.ResponseRecorder {
+		handler, _ := newTestIAMHandler(t)
+		body := fmt.Sprintf(bodyFormat, userID)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/assignments", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handler.CreateAdminAssignment(rr, req)
+		return rr
+	}
+
+	t.Run("non-numeric user ID is rejected", func(t *testing.T) {
+		rr := post("user-1a2b3c4d")
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "invalid JSON body")
+	})
+
+	t.Run("decimal user ID is created", func(t *testing.T) {
+		rr := post("50124")
+		require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &got))
+		assert.Equal(t, "50124", got["user_id"])
+		assert.Equal(t, "tenant_admin", got["admin_role"])
+		assert.ElementsMatch(t, []any{"test-tenant-1", "test-tenant-2"}, got["tenant_ids"])
+		assert.Equal(t, "system", got["granted_by"])
+		assert.Equal(t, true, got["active"])
+		assert.Equal(t, map[string]any{"department": "engineering", "team": "platform"}, got["metadata"])
+	})
 }
 
 // TestListAdminAssignments tests the ListAdminAssignments handler.
