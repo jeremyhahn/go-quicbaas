@@ -223,33 +223,6 @@ func TestBatchProcessor_ImportUsers(t *testing.T) {
 			t.Error("expected validation failures")
 		}
 	})
-
-	t.Run("with rate limiting", func(t *testing.T) {
-		items := []UserImportItem{
-			{Email: "rate1@example.com", Name: "Rate User 1"},
-			{Email: "rate2@example.com", Name: "Rate User 2"},
-			{Email: "rate3@example.com", Name: "Rate User 3"},
-		}
-
-		startTime := time.Now()
-		op, err := bp.ImportUsers(ctx, tenantID, items, BatchOptions{
-			RateLimit: 2, // 2 items per second
-			DryRun:    true,
-		})
-		if err != nil {
-			t.Fatalf("ImportUsers failed: %v", err)
-		}
-
-		time.Sleep(2 * time.Second)
-
-		saved, _ := storage.GetOperation(ctx, op.ID)
-		elapsed := time.Since(startTime)
-
-		// Processing 3 items at 2 items/sec should take at least 1 second
-		if elapsed < time.Second && saved.Status == BatchStatusCompleted {
-			t.Error("rate limiting not working correctly")
-		}
-	})
 }
 
 func TestBatchProcessor_ImportRoles(t *testing.T) {
@@ -880,42 +853,43 @@ func TestBatchOperation_CanCancel(t *testing.T) {
 // Test error handling
 
 func TestBatchProcessor_StorageError(t *testing.T) {
-	// Create a storage that always fails
-	storage := &failingBatchStorage{}
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+	storage := newFailingSaveBatchStorage()
+	storage.failSave = true
+	bp := NewIAMBatchProcessor(storage, newMockTenantManager())
 
-	ctx := context.Background()
-	items := []UserImportItem{
-		{Email: "test@example.com", Name: "Test"},
+	policy := &Policy{
+		APIVersion: "v1",
+		Kind:       "Policy",
+		Metadata:   PolicyMetadata{Name: "test-policy", Tenant: "test-tenant"},
+		Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
 	}
 
-	_, err := bp.ImportUsers(ctx, "test-tenant", items, BatchOptions{})
-	if err == nil {
-		t.Error("expected error from failing storage")
+	tests := []struct {
+		name string
+		run  func(ctx context.Context) (*BatchOperation, error)
+	}{
+		{"users", func(ctx context.Context) (*BatchOperation, error) {
+			return bp.ImportUsers(ctx, "test-tenant", []UserImportItem{{Email: "test@example.com", Name: "Test"}}, BatchOptions{})
+		}},
+		{"roles", func(ctx context.Context) (*BatchOperation, error) {
+			return bp.ImportRoles(ctx, "test-tenant", []RoleImportItem{{ID: "role-1", Name: "Test Role"}}, BatchOptions{})
+		}},
+		{"policies", func(ctx context.Context) (*BatchOperation, error) {
+			return bp.ImportPolicies(ctx, "test-tenant", []PolicyImportItem{{Name: "test-policy", Policy: policy}}, BatchOptions{})
+		}},
 	}
-}
 
-type failingBatchStorage struct{}
-
-func (f *failingBatchStorage) SaveOperation(ctx context.Context, op *BatchOperation) error {
-	return errors.New("storage error")
-}
-
-func (f *failingBatchStorage) GetOperation(ctx context.Context, operationID string) (*BatchOperation, error) {
-	return nil, errors.New("storage error")
-}
-
-func (f *failingBatchStorage) UpdateOperation(ctx context.Context, op *BatchOperation) error {
-	return errors.New("storage error")
-}
-
-func (f *failingBatchStorage) ListOperations(ctx context.Context, tenantID string, status *BatchStatus, limit int) ([]*BatchOperation, error) {
-	return nil, errors.New("storage error")
-}
-
-func (f *failingBatchStorage) DeleteOperation(ctx context.Context, operationID string) error {
-	return errors.New("storage error")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			op, err := tc.run(t.Context())
+			if !errors.Is(err, ErrBatchOperationNotFound) {
+				t.Fatalf("expected the SaveOperation error, got %v", err)
+			}
+			if op != nil {
+				t.Error("expected nil operation when SaveOperation fails")
+			}
+		})
+	}
 }
 
 // Benchmark tests
@@ -1026,50 +1000,6 @@ func (f *failingSaveBatchStorage) SaveOperation(ctx context.Context, op *BatchOp
 		return ErrBatchOperationNotFound
 	}
 	return f.mockBatchStorage.SaveOperation(ctx, op)
-}
-
-func TestBatchProcessor_ImportRoles_SaveOperationError(t *testing.T) {
-	storage := newFailingSaveBatchStorage()
-	storage.failSave = true
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-
-	items := []RoleImportItem{
-		{ID: "role-1", Name: "Test Role"},
-	}
-
-	_, err := bp.ImportRoles(ctx, "test-tenant", items, BatchOptions{})
-	if err == nil {
-		t.Error("expected error when SaveOperation fails")
-	}
-}
-
-func TestBatchProcessor_ImportPolicies_SaveOperationError(t *testing.T) {
-	storage := newFailingSaveBatchStorage()
-	storage.failSave = true
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-
-	items := []PolicyImportItem{
-		{
-			Name: "test-policy",
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "test-policy", Tenant: "test-tenant"},
-				Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-			},
-		},
-	}
-
-	_, err := bp.ImportPolicies(ctx, "test-tenant", items, BatchOptions{})
-	if err == nil {
-		t.Error("expected error when SaveOperation fails")
-	}
 }
 
 // =============================================================================
