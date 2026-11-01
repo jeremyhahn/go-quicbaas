@@ -128,122 +128,48 @@ func (l *hookTestLogger) WithError(_ error) interfaces.Logger                   
 // HookCheckBudget Tests
 // =============================================================================
 
-func TestHookCheckBudget_OK(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetOK}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
+func TestHookCheckBudget_TrackerStatesAndActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		tracker     *hookMockCostTracker
+		action      string
+		wantStatus  BudgetStatus
+		wantAction  string
+		wantWarnLog bool
+	}{
+		{"ok", &hookMockCostTracker{status: BudgetOK}, BudgetActionWarn, BudgetOK, "", false},
+		{"budget not set is ok", &hookMockCostTracker{statusErr: ErrBudgetNotSet}, "", BudgetOK, "", false},
+		{"warning", &hookMockCostTracker{status: BudgetWarning}, BudgetActionWarn, BudgetWarning, "", true},
+		{"exceeded shutdown", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionShutdown, BudgetExceeded, BudgetActionShutdown, true},
+		{"exceeded pause", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionPause, BudgetExceeded, BudgetActionPause, true},
+		{"exceeded warn", &hookMockCostTracker{status: BudgetExceeded}, BudgetActionWarn, BudgetExceeded, BudgetActionWarn, true},
+		{"exceeded defaults to warn", &hookMockCostTracker{status: BudgetExceeded}, "", BudgetExceeded, BudgetActionWarn, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := &hookTestLogger{}
+			settings := CostControlSettings{BudgetAction: tt.action}
 
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetOK {
-		t.Errorf("expected status %q, got %q", BudgetOK, result.Status)
-	}
-	if result.Action != "" {
-		t.Errorf("expected empty action for ok status, got %q", result.Action)
-	}
-}
+			result, err := HookCheckBudget(context.Background(), tt.tracker, settings, "tenant-1", "job-1", logger)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected non-nil result")
+			}
+			if result.Status != tt.wantStatus {
+				t.Errorf("expected status %q, got %q", tt.wantStatus, result.Status)
+			}
+			if result.Action != tt.wantAction {
+				t.Errorf("expected action %q, got %q", tt.wantAction, result.Action)
+			}
 
-func TestHookCheckBudget_Warning(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetWarning}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetWarning {
-		t.Errorf("expected status %q, got %q", BudgetWarning, result.Status)
-	}
-
-	// Should have logged a warning.
-	logger.mu.Lock()
-	defer logger.mu.Unlock()
-	if len(logger.warnings) == 0 {
-		t.Error("expected at least one warning log for budget warning")
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Shutdown(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionShutdown}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionShutdown {
-		t.Errorf("expected action %q, got %q", BudgetActionShutdown, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Pause(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionPause}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionPause {
-		t.Errorf("expected action %q, got %q", BudgetActionPause, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_Warn(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	settings := CostControlSettings{BudgetAction: BudgetActionWarn}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if result.Status != BudgetExceeded {
-		t.Errorf("expected status %q, got %q", BudgetExceeded, result.Status)
-	}
-	if result.Action != BudgetActionWarn {
-		t.Errorf("expected action %q, got %q", BudgetActionWarn, result.Action)
-	}
-}
-
-func TestHookCheckBudget_Exceeded_DefaultsToWarn(t *testing.T) {
-	tracker := &hookMockCostTracker{status: BudgetExceeded}
-	logger := &hookTestLogger{}
-	// Empty BudgetAction should default to "warn".
-	settings := CostControlSettings{}
-
-	result, err := HookCheckBudget(context.Background(), tracker, settings, "tenant-1", "job-1", logger)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result.Action != BudgetActionWarn {
-		t.Errorf("expected default action %q, got %q", BudgetActionWarn, result.Action)
+			logger.mu.Lock()
+			defer logger.mu.Unlock()
+			if gotWarnLog := len(logger.warnings) > 0; gotWarnLog != tt.wantWarnLog {
+				t.Errorf("expected warning log %v, got %v", tt.wantWarnLog, gotWarnLog)
+			}
+		})
 	}
 }
 
