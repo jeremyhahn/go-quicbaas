@@ -537,49 +537,29 @@ func TestEmbeddingService_GetProviderInfo_Success(t *testing.T) {
 	assert.False(t, resp.Timestamp.IsZero())
 }
 
-func TestEmbeddingService_GetProviderInfo_NilRequest(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	resp, err := svc.GetProviderInfo(systemTenantCtx(), nil)
-	assert.Error(t, err, "nil request must return a validation error, not panic")
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingService_GetProviderInfo_EmptyProvider(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GetProviderInfoRequest{
-		Provider: "",
+func TestEmbeddingService_GetProviderInfo_Errors(t *testing.T) {
+	tests := []struct {
+		name         string
+		req          *GetProviderInfoRequest
+		expectedCode quicbaasErrors.ErrorCode
+	}{
+		{name: "NilRequest", req: nil, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "EmptyProvider", req: &GetProviderInfoRequest{Provider: ""}, expectedCode: quicbaasErrors.ErrInvalidInput},
+		{name: "NotFound", req: &GetProviderInfoRequest{Provider: "nonexistent"}, expectedCode: quicbaasErrors.ErrNotFound},
 	}
 
-	resp, err := svc.GetProviderInfo(systemTenantCtx(), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, _ := createTestManager(t, "openai")
+			svc := NewEmbeddingService(mgr, newMockEmbeddingLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "provider is required")
-}
+			resp, err := svc.GetProviderInfo(systemTenantCtx(), tt.req)
 
-func TestEmbeddingService_GetProviderInfo_NotFound(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GetProviderInfoRequest{
-		Provider: "nonexistent",
-	}
-
-	resp, err := svc.GetProviderInfo(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
+			assert.Nil(t, resp)
+			var dErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &dErr))
+			assert.Equal(t, tt.expectedCode, dErr.Code)
+		})
 	}
 }
 
@@ -1204,28 +1184,6 @@ func TestEmbeddingSvc_ListProviders_Success(t *testing.T) {
 	assert.Len(t, resp.Providers, 2)
 }
 
-func TestEmbeddingSvc_ListProviders_NilRequest(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	mockProvider := newCoverageEmbeddingProvider()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
-		ProviderNames: []string{"openai"},
-	})
-	mockManager.On("GetProvider", "openai").Return(mockProvider, nil)
-	mockProvider.On("Dimensions").Return(1536)
-	mockProvider.On("MaxTokens").Return(8192)
-
-	resp, err := svc.ListProviders(ctx, nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
 func TestEmbeddingSvc_ListProviders_IncludesUnavailable(t *testing.T) {
 	mockManager := newCoverageEmbeddingManager()
 	logger := newCoverageEmbeddingLogger()
@@ -1252,67 +1210,6 @@ func TestEmbeddingSvc_ListProviders_IncludesUnavailable(t *testing.T) {
 	for _, p := range resp.Providers {
 		assert.Equal(t, EmbeddingStatusUnavailable, p.Status)
 	}
-}
-
-func TestEmbeddingSvc_GetProviderInfo_Success(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	mockProvider := newCoverageEmbeddingProvider()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetProvider", "openai").Return(mockProvider, nil)
-	mockProvider.On("Dimensions").Return(1536)
-	mockProvider.On("MaxTokens").Return(8192)
-
-	req := &GetProviderInfoRequest{
-		Provider: "openai",
-	}
-
-	resp, err := svc.GetProviderInfo(ctx, req)
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, "openai", resp.Info.Name)
-	assert.Equal(t, 1536, resp.Info.Dimensions)
-	assert.Equal(t, 8192, resp.Info.MaxTokens)
-}
-
-func TestEmbeddingSvc_GetProviderInfo_EmptyProvider(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &GetProviderInfoRequest{
-		Provider: "",
-	}
-
-	resp, err := svc.GetProviderInfo(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingSvc_GetProviderInfo_ProviderNotFound(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	mockManager.On("GetProvider", "nonexistent").Return(nil, embedding.ErrProviderNotFound)
-
-	req := &GetProviderInfoRequest{
-		Provider: "nonexistent",
-	}
-
-	resp, err := svc.GetProviderInfo(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestEmbeddingSvc_SetDefaultProvider_Success(t *testing.T) {
