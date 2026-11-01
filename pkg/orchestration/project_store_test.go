@@ -348,26 +348,50 @@ func TestProjectStore_NilAndNotFoundErrors(t *testing.T) {
 	}
 }
 
-// TestProjectStore_Get_CorruptRecord asserts a record that is not decodable is
-// reported as a store failure rather than as a missing project, so operators
-// can tell corruption apart from absence.
-func TestProjectStore_Get_CorruptRecord(t *testing.T) {
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-	ctx := context.Background()
-
-	key, err := projectRecordKey("tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
+// TestProjectStore_CorruptRecord asserts that every read path reports a record
+// that is not decodable as a store failure rather than as a missing project,
+// so operators can tell corruption apart from absence.
+func TestProjectStore_CorruptRecord(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(ctx context.Context, s ProjectStore) error
+	}{
+		{"Get", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "id-1")
+			return err
+		}},
+		{"GetByName", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "named")
+			return err
+		}},
+		{"ListByTenant", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.ListByTenant(ctx, "tenant-1")
+			return err
+		}},
 	}
-	if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := NewMemoryTaskKV()
+			store := NewProjectStore(kv)
 
-	_, err = store.Get(ctx, "tenant-1", "id-1")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError for corrupt record, got %T: %v", err, err)
+			if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "named")); err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			key, err := projectRecordKey("tenant-1", "id-1")
+			if err != nil {
+				t.Fatalf("projectRecordKey: %v", err)
+			}
+			if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
+				t.Fatalf("seed corrupt record: %v", err)
+			}
+
+			err = tt.read(ctx, store)
+			var storeErr *ProjectStoreError
+			if !errors.As(err, &storeErr) {
+				t.Fatalf("want *ProjectStoreError for corrupt record, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
@@ -509,29 +533,6 @@ func TestProjectStore_ListByTenant_Empty(t *testing.T) {
 
 // TestProjectStore_ListByTenant_CorruptRecord asserts a record that cannot be
 // decoded fails the whole listing rather than silently shortening it.
-func TestProjectStore_ListByTenant_CorruptRecord(t *testing.T) {
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-	ctx := context.Background()
-
-	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "good")); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	key, err := projectRecordKey("tenant-1", "id-2")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
-	}
-	if err := kv.Put(ctx, key, []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
-
-	_, err = store.ListByTenant(ctx, "tenant-1")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
-	}
-}
-
 // =============================================================================
 // CRUD round-trip across backends
 // =============================================================================
@@ -1414,42 +1415,27 @@ type projectNilValueKV struct {
 
 func (k *projectNilValueKV) Get(context.Context, string) ([]byte, error) { return nil, nil }
 
-func TestProjectStore_Get_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
-	if _, err := store.Get(context.Background(), "tenant-1", "id-1"); !errors.Is(err, ErrProjectNotFound) {
-		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
+func TestProjectStore_NilValueIsMissing(t *testing.T) {
+	tests := []struct {
+		name string
+		read func(ctx context.Context, s ProjectStore) error
+	}{
+		{"Get", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.Get(ctx, "tenant-1", "id-1")
+			return err
+		}},
+		{"GetByName", func(ctx context.Context, s ProjectStore) error {
+			_, err := s.GetByName(ctx, "tenant-1", "name")
+			return err
+		}},
 	}
-}
-
-func TestProjectStore_GetByName_NilValueIsMissing(t *testing.T) {
-	store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
-	if _, err := store.GetByName(context.Background(), "tenant-1", "name"); !errors.Is(err, ErrProjectNotFound) {
-		t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
-	}
-}
-
-// TestProjectStore_GetByName_CorruptRecord asserts a decode failure behind a
-// valid name reservation is reported as corruption, not as absence.
-func TestProjectStore_GetByName_CorruptRecord(t *testing.T) {
-	ctx := context.Background()
-	kv := NewMemoryTaskKV()
-	store := NewProjectStore(kv)
-
-	if err := store.Create(ctx, newTestProject("id-1", "tenant-1", "named")); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	recordKey, err := projectRecordKey("tenant-1", "id-1")
-	if err != nil {
-		t.Fatalf("projectRecordKey: %v", err)
-	}
-	if err := kv.Put(ctx, recordKey, []byte("{not json")); err != nil {
-		t.Fatalf("corrupt record: %v", err)
-	}
-
-	_, err = store.GetByName(ctx, "tenant-1", "named")
-	var storeErr *ProjectStoreError
-	if !errors.As(err, &storeErr) {
-		t.Fatalf("want *ProjectStoreError, got %T: %v", err, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewProjectStore(&projectNilValueKV{KVStore: NewMemoryTaskKV()})
+			if err := tt.read(context.Background(), store); !errors.Is(err, ErrProjectNotFound) {
+				t.Fatalf("want ErrProjectNotFound for a nil value, got %T: %v", err, err)
+			}
+		})
 	}
 }
 
