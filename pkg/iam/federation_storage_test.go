@@ -1929,21 +1929,22 @@ func TestMemoryProviderStorage_TimestampHandling(t *testing.T) {
 			t.Fatalf("CreateProvider() failed: %v", err)
 		}
 
-		stored, _ := storage.GetProvider(ctx, provider.TenantID, provider.ID)
-		originalUpdated := stored.Updated
-
-		// Small delay to ensure timestamp difference
-		time.Sleep(10 * time.Millisecond)
-
+		// A stale Updated on the input must be replaced by the update time.
 		provider.Name = "UpdatedName"
+		provider.Updated = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		beforeUpdate := time.Now()
 		err = storage.UpdateProvider(ctx, provider)
 		if err != nil {
 			t.Fatalf("UpdateProvider() failed: %v", err)
 		}
+		afterUpdate := time.Now()
 
-		updated, _ := storage.GetProvider(ctx, provider.TenantID, provider.ID)
-		if !updated.Updated.After(originalUpdated) {
-			t.Error("Updated timestamp should be newer after update")
+		updated, err := storage.GetProvider(ctx, provider.TenantID, provider.ID)
+		if err != nil {
+			t.Fatalf("GetProvider() failed: %v", err)
+		}
+		if updated.Updated.Before(beforeUpdate) || updated.Updated.After(afterUpdate) {
+			t.Errorf("Updated timestamp = %v, want within [%v, %v]", updated.Updated, beforeUpdate, afterUpdate)
 		}
 	})
 }
