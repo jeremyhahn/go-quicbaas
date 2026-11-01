@@ -350,12 +350,6 @@ func newTestObjectStorageServer(objService service.ObjectStorageService) *Server
 	}
 }
 
-func setupObjectStorageRoute(s *Server, method, path string, handler http.HandlerFunc) *chi.Mux {
-	r := chi.NewRouter()
-	r.HandleFunc(path, handler)
-	return r
-}
-
 // =============================================================================
 // PUT Object Tests
 // =============================================================================
@@ -591,6 +585,14 @@ func TestObjectHandlers_Success(t *testing.T) {
 			"/api/v1/objects/*", "/api/v1/objects/test.txt/policy", `{"replication_policy":{"enabled":true,"min_replicas":3}}`, http.StatusOK),
 		ok("GetObjectBackendHealth", (*Server).HandleGetObjectBackendHealth, http.MethodGet,
 			"/api/v1/backends/{name}/health", "/api/v1/backends/primary/health", "", http.StatusOK),
+		ok("SetTenantQuotas", (*Server).HandleSetTenantQuotas, http.MethodPut, "/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants/tenant1/quotas",
+			`{"max_storage_bytes":1073741824,"max_objects":1000,"max_object_size":104857600}`, http.StatusOK),
+		ok("BatchPutObjects", (*Server).HandleBatchPutObjects, http.MethodPost, "/api/v1/objects/batch", "/api/v1/objects/batch",
+			`{"objects":[{"key":"test1.txt","value":"test1"},{"key":"test2.txt","value":"test2"}]}`, http.StatusOK),
+		ok("BatchGetObjects", (*Server).HandleBatchGetObjects, http.MethodPost, "/api/v1/objects/batch/get", "/api/v1/objects/batch/get",
+			`{"keys":["test1.txt","test2.txt"]}`, http.StatusOK),
+		ok("BatchDeleteObjects", (*Server).HandleBatchDeleteObjects, http.MethodPost, "/api/v1/objects/batch/delete", "/api/v1/objects/batch/delete",
+			`{"keys":["test1.txt","test2.txt"]}`, http.StatusOK),
 	}
 
 	runObjectHandlerCases(t, tests)
@@ -633,6 +635,14 @@ func TestObjectHandlers_MissingInput(t *testing.T) {
 			"/api/v1/tenants/{tenant}/usage", "/api/v1/tenants//usage", "", http.StatusBadRequest),
 		missing("GetTenantQuotasNoTenant", (*Server).HandleGetTenantQuotas, http.MethodGet,
 			"/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants//quotas", "", http.StatusBadRequest),
+		missing("SetTenantQuotasNoTenant", (*Server).HandleSetTenantQuotas, http.MethodPut,
+			"/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants//quotas", `{"max_storage_bytes":1073741824}`, http.StatusBadRequest),
+		missing("BatchPutObjectsEmpty", (*Server).HandleBatchPutObjects, http.MethodPost,
+			"/api/v1/objects/batch", "/api/v1/objects/batch", `{"objects":[]}`, http.StatusBadRequest),
+		missing("BatchGetObjectsEmpty", (*Server).HandleBatchGetObjects, http.MethodPost,
+			"/api/v1/objects/batch/get", "/api/v1/objects/batch/get", `{"keys":[]}`, http.StatusBadRequest),
+		missing("BatchDeleteObjectsEmpty", (*Server).HandleBatchDeleteObjects, http.MethodPost,
+			"/api/v1/objects/batch/delete", "/api/v1/objects/batch/delete", `{"keys":[]}`, http.StatusBadRequest),
 	}
 
 	runObjectHandlerCases(t, tests)
@@ -1052,6 +1062,10 @@ func TestObjectHandlers_InvalidBody(t *testing.T) {
 			method: http.MethodPost, route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/" + action,
 			body: "invalid-json", wantStatus: http.StatusBadRequest}
 	}
+	batch := func(name string, handler func(*Server, http.ResponseWriter, *http.Request), route string) objectHandlerCase {
+		return objectHandlerCase{name: name, mock: &mockObjectStorageService{}, handler: handler,
+			method: http.MethodPost, route: route, target: route, body: "invalid json", wantStatus: http.StatusBadRequest}
+	}
 
 	tests := []objectHandlerCase{
 		{
@@ -1070,6 +1084,14 @@ func TestObjectHandlers_InvalidBody(t *testing.T) {
 			method: http.MethodPut, route: "/api/v1/objects/*", target: "/api/v1/objects/test.txt/policy",
 			body: "invalid-json", wantStatus: http.StatusBadRequest,
 		},
+		{
+			name: "SetTenantQuotas", mock: &mockObjectStorageService{}, handler: (*Server).HandleSetTenantQuotas,
+			method: http.MethodPut, route: "/api/v1/tenants/{tenant}/quotas", target: "/api/v1/tenants/tenant1/quotas",
+			body: "invalid json", wantStatus: http.StatusBadRequest,
+		},
+		batch("BatchPutObjects", (*Server).HandleBatchPutObjects, "/api/v1/objects/batch"),
+		batch("BatchGetObjects", (*Server).HandleBatchGetObjects, "/api/v1/objects/batch/get"),
+		batch("BatchDeleteObjects", (*Server).HandleBatchDeleteObjects, "/api/v1/objects/batch/delete"),
 	}
 
 	runObjectHandlerCases(t, tests)
@@ -1212,6 +1234,14 @@ func TestObjectHandlers_ServiceUnavailable(t *testing.T) {
 			"/api/v1/tenants/{tenant}/usage", "/api/v1/tenants/tenant1/usage", ""),
 		unavailable("GetTenantQuotas", (*Server).HandleGetTenantQuotas, http.MethodGet,
 			"/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants/tenant1/quotas", ""),
+		unavailable("SetTenantQuotas", (*Server).HandleSetTenantQuotas, http.MethodPut,
+			"/api/v1/tenants/{tenant}/quotas", "/api/v1/tenants/tenant1/quotas", `{"max_storage_bytes":1073741824,"max_objects":1000}`),
+		unavailable("BatchPutObjects", (*Server).HandleBatchPutObjects, http.MethodPost,
+			"/api/v1/objects/batch", "/api/v1/objects/batch", `{"objects":[{"key":"test.txt","value":"test"}]}`),
+		unavailable("BatchGetObjects", (*Server).HandleBatchGetObjects, http.MethodPost,
+			"/api/v1/objects/batch/get", "/api/v1/objects/batch/get", `{"keys":["test.txt"]}`),
+		unavailable("BatchDeleteObjects", (*Server).HandleBatchDeleteObjects, http.MethodPost,
+			"/api/v1/objects/batch/delete", "/api/v1/objects/batch/delete", `{"keys":["test.txt"]}`),
 	}
 
 	runObjectHandlerCases(t, tests)
@@ -1363,34 +1393,6 @@ func TestHandleGetObjectPolicy_EmptyKeyAfterStrip(t *testing.T) {
 	}
 }
 
-// Final tests to achieve 90%+ coverage
-
-func TestHandleListByTenant_WithLimit(t *testing.T) {
-	mockObjService := &mockObjectStorageService{
-		listByTenantFunc: func(ctx context.Context, req *service.ListByTenantRequest) (*service.ListByTenantResponse, error) {
-			if req.Limit != 75 {
-				t.Errorf("expected limit 75, got %d", req.Limit)
-			}
-			return &service.ListByTenantResponse{
-				Objects: []*service.ObjectSummary{{Key: "obj1", Size: 100}},
-			}, nil
-		},
-	}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Get("/api/v1/objects/by-tenant/{tenant}", s.HandleListByTenant)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/by-tenant/tenant1?limit=75", nil)
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
 func TestHandleGetObjectPolicy_WithPolicy(t *testing.T) {
 	mockObjService := &mockObjectStorageService{
 		getObjectPolicyFunc: func(ctx context.Context, req *service.GetObjectPolicyRequest) (*service.GetObjectPolicyResponse, error) {
@@ -1431,61 +1433,6 @@ func TestHandleGetObjectPolicy_WithPolicy(t *testing.T) {
 // Batch Put Objects Tests
 // =============================================================================
 
-func TestHandleBatchPutObjects_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil) // nil service
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch", s.HandleBatchPutObjects)
-
-	body := `{"objects":[{"key":"test.txt","value":"test"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleBatchPutObjects_InvalidJSON(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch", s.HandleBatchPutObjects)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch", strings.NewReader("invalid json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleBatchPutObjects_EmptyArray(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch", s.HandleBatchPutObjects)
-
-	body := `{"objects":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
 func TestHandleBatchPutObjects_MissingKey(t *testing.T) {
 	mockObjService := &mockObjectStorageService{}
 	s := newTestObjectStorageServer(mockObjService)
@@ -1510,26 +1457,6 @@ func TestHandleBatchPutObjects_MissingKey(t *testing.T) {
 	}
 	if resp.Failed != 1 {
 		t.Errorf("expected 1 failed, got %d", resp.Failed)
-	}
-}
-
-func TestHandleBatchPutObjects_Success(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch", s.HandleBatchPutObjects)
-
-	body := `{"objects":[{"key":"test1.txt","value":"test1"},{"key":"test2.txt","value":"test2"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", "tenant1")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
 
@@ -1569,244 +1496,5 @@ func TestHandleBatchPutObjects_PartialFailure(t *testing.T) {
 	}
 	if resp.Success != 1 || resp.Failed != 1 {
 		t.Errorf("expected 1 success and 1 failed, got %d success and %d failed", resp.Success, resp.Failed)
-	}
-}
-
-// =============================================================================
-// Batch Get Objects Tests
-// =============================================================================
-
-func TestHandleBatchGetObjects_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/get", s.HandleBatchGetObjects)
-
-	body := `{"keys":["test.txt"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/get", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleBatchGetObjects_InvalidJSON(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/get", s.HandleBatchGetObjects)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/get", strings.NewReader("invalid json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleBatchGetObjects_EmptyKeys(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/get", s.HandleBatchGetObjects)
-
-	body := `{"keys":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/get", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleBatchGetObjects_Success(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/get", s.HandleBatchGetObjects)
-
-	body := `{"keys":["test1.txt","test2.txt"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/get", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", "tenant1")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-// =============================================================================
-// Batch Delete Objects Tests
-// =============================================================================
-
-func TestHandleBatchDeleteObjects_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/delete", s.HandleBatchDeleteObjects)
-
-	body := `{"keys":["test.txt"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/delete", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleBatchDeleteObjects_InvalidJSON(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/delete", s.HandleBatchDeleteObjects)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/delete", strings.NewReader("invalid json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleBatchDeleteObjects_EmptyKeys(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/delete", s.HandleBatchDeleteObjects)
-
-	body := `{"keys":[]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/delete", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleBatchDeleteObjects_Success(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Post("/api/v1/objects/batch/delete", s.HandleBatchDeleteObjects)
-
-	body := `{"keys":["test1.txt","test2.txt"]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/batch/delete", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", "tenant1")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
-	}
-}
-
-// =============================================================================
-// Set Tenant Quotas Tests
-// =============================================================================
-
-func TestHandleSetTenantQuotas_ServiceUnavailable(t *testing.T) {
-	s := newTestObjectStorageServer(nil)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/tenants/{tenant}/quotas", s.HandleSetTenantQuotas)
-
-	body := `{"max_storage_bytes":1073741824,"max_objects":1000}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/quotas", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, w.Code)
-	}
-}
-
-func TestHandleSetTenantQuotas_MissingTenantID(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/tenants/{tenant}/quotas", s.HandleSetTenantQuotas)
-
-	body := `{"max_storage_bytes":1073741824}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants//quotas", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleSetTenantQuotas_InvalidJSON(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("tenant_id", "tenant1")
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/tenants/{tenant}/quotas", s.HandleSetTenantQuotas)
-
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/quotas", strings.NewReader("invalid json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
-	}
-}
-
-func TestHandleSetTenantQuotas_Success(t *testing.T) {
-	mockObjService := &mockObjectStorageService{}
-	s := newTestObjectStorageServer(mockObjService)
-
-	r := chi.NewRouter()
-	r.Put("/api/v1/tenants/{tenant}/quotas", s.HandleSetTenantQuotas)
-
-	body := `{"max_storage_bytes":1073741824,"max_objects":1000,"max_object_size":104857600}`
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/tenants/tenant1/quotas", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
