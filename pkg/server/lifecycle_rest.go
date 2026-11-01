@@ -391,6 +391,12 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 	}
 	cloned := cfg.Clone()
 	cloned.NextProtos = []string{"http/1.1"}
+	// Clone is shallow: the listener appends operator and PIV CAs to its
+	// ClientCAs, so it needs a pool of its own rather than the shared one
+	// other listeners are already serving with.
+	if cfg.ClientCAs != nil {
+		cloned.ClientCAs = cfg.ClientCAs.Clone()
+	}
 	return cloned
 }
 
