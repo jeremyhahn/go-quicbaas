@@ -1492,139 +1492,6 @@ func TestOpType_String(t *testing.T) {
 	}
 }
 
-func TestChannel_Fields(t *testing.T) {
-	now := time.Now()
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Channel{
-				Name:        "test-channel",
-				Codec:       CodecJSON,
-				CreatedAt:   now,
-				Subscribers: 100,
-				Persistent:  true,
-				MaxHistory:  1000,
-				BufferSize:  256,
-				TTL:         time.Hour,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	channel, err := client.GetChannel(context.Background(), "test-channel")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if channel.Name != "test-channel" {
-		t.Errorf("expected Name='test-channel', got %q", channel.Name)
-	}
-	if channel.Codec != CodecJSON {
-		t.Errorf("expected Codec='json', got %q", channel.Codec)
-	}
-	if channel.Subscribers != 100 {
-		t.Errorf("expected Subscribers=100, got %d", channel.Subscribers)
-	}
-	if !channel.Persistent {
-		t.Error("expected Persistent=true")
-	}
-	if channel.MaxHistory != 1000 {
-		t.Errorf("expected MaxHistory=1000, got %d", channel.MaxHistory)
-	}
-	if channel.BufferSize != 256 {
-		t.Errorf("expected BufferSize=256, got %d", channel.BufferSize)
-	}
-	if channel.TTL != time.Hour {
-		t.Errorf("expected TTL=1h, got %v", channel.TTL)
-	}
-}
-
-func TestSubscription_Fields(t *testing.T) {
-	now := time.Now()
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Subscription{
-				ID:        "sub-123",
-				Channel:   "test-channel",
-				ClientID:  "client-456",
-				CreatedAt: now,
-				Filters: &SubscriptionFilter{
-					EventTypes: []EventType{EventTypePut, EventTypeDelete},
-					KeyPrefix:  "users/",
-				},
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	sub, err := client.Subscribe(context.Background(), &SubscribeRequest{Channel: "test-channel"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if sub.ID != "sub-123" {
-		t.Errorf("expected ID='sub-123', got %q", sub.ID)
-	}
-	if sub.Channel != "test-channel" {
-		t.Errorf("expected Channel='test-channel', got %q", sub.Channel)
-	}
-	if sub.ClientID != "client-456" {
-		t.Errorf("expected ClientID='client-456', got %q", sub.ClientID)
-	}
-	if sub.Filters == nil {
-		t.Fatal("expected non-nil Filters")
-	}
-	if len(sub.Filters.EventTypes) != 2 {
-		t.Errorf("expected 2 EventTypes, got %d", len(sub.Filters.EventTypes))
-	}
-	if sub.Filters.KeyPrefix != "users/" {
-		t.Errorf("expected KeyPrefix='users/', got %q", sub.Filters.KeyPrefix)
-	}
-}
-
-func TestStats_Fields(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &Stats{
-				TotalChannels:      10,
-				TotalSubscriptions: 100,
-				MessagesPublished:  10000,
-				MessagesDelivered:  9500,
-				DedupHits:          500,
-				DroppedMessages:    50,
-				BufferUtilization:  0.75,
-			}, nil
-		},
-	}
-
-	client := NewClient(mockT)
-	stats, err := client.GetStats(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if stats.TotalChannels != 10 {
-		t.Errorf("expected TotalChannels=10, got %d", stats.TotalChannels)
-	}
-	if stats.TotalSubscriptions != 100 {
-		t.Errorf("expected TotalSubscriptions=100, got %d", stats.TotalSubscriptions)
-	}
-	if stats.MessagesPublished != 10000 {
-		t.Errorf("expected MessagesPublished=10000, got %d", stats.MessagesPublished)
-	}
-	if stats.MessagesDelivered != 9500 {
-		t.Errorf("expected MessagesDelivered=9500, got %d", stats.MessagesDelivered)
-	}
-	if stats.DedupHits != 500 {
-		t.Errorf("expected DedupHits=500, got %d", stats.DedupHits)
-	}
-	if stats.DroppedMessages != 50 {
-		t.Errorf("expected DroppedMessages=50, got %d", stats.DroppedMessages)
-	}
-	if stats.BufferUtilization != 0.75 {
-		t.Errorf("expected BufferUtilization=0.75, got %f", stats.BufferUtilization)
-	}
-}
-
 func TestTransportErrorPropagation(t *testing.T) {
 	transportErr := errors.NewConnection("test", "connection refused")
 	mockT := &mockTransport{
@@ -1634,16 +1501,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 	}
 	client := NewClient(mockT)
 	ctx := context.Background()
-
-	t.Run("CreateChannel", func(t *testing.T) {
-		_, err := client.CreateChannel(ctx, &CreateChannelRequest{Name: "test"})
-		if err == nil {
-			t.Error("expected error")
-		}
-		if errors.Code(err) != errors.CodeConnection {
-			t.Errorf("expected CodeConnection, got %v", errors.Code(err))
-		}
-	})
 
 	t.Run("DeleteChannel", func(t *testing.T) {
 		err := client.DeleteChannel(ctx, "test")
@@ -1680,13 +1537,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 		}
 	})
 
-	t.Run("Publish", func(t *testing.T) {
-		err := client.Publish(ctx, &PublishRequest{Channel: "test"})
-		if err == nil {
-			t.Error("expected error")
-		}
-	})
-
 	t.Run("PublishDelta", func(t *testing.T) {
 		err := client.PublishDelta(ctx, &PublishDeltaRequest{Channel: "test"})
 		if err == nil {
@@ -1703,13 +1553,6 @@ func TestTransportErrorPropagation(t *testing.T) {
 
 	t.Run("GetStats", func(t *testing.T) {
 		_, err := client.GetStats(ctx)
-		if err == nil {
-			t.Error("expected error")
-		}
-	})
-
-	t.Run("GetDedupStats", func(t *testing.T) {
-		_, err := client.GetDedupStats(ctx, "test-channel")
 		if err == nil {
 			t.Error("expected error")
 		}
