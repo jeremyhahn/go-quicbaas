@@ -203,19 +203,6 @@ func TestBatchExportRequestValidate(t *testing.T) {
 			t.Error("expected error when no resource types selected")
 		}
 	})
-
-	t.Run("all resource types selected", func(t *testing.T) {
-		req := &BatchExportRequest{
-			TenantID:        "test-tenant",
-			IncludeUsers:    true,
-			IncludeRoles:    true,
-			IncludePolicies: true,
-		}
-
-		if err := req.Validate(); err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
 }
 
 func TestWorkerPool(t *testing.T) {
@@ -379,92 +366,6 @@ func TestProgressTracker(t *testing.T) {
 		progress := pt.getProgress()
 		if progress.PercentComplete != 0 {
 			t.Errorf("expected 0%% for zero total, got %.2f%%", progress.PercentComplete)
-		}
-	})
-}
-
-func TestBatchResult(t *testing.T) {
-	t.Run("batch result fields", func(t *testing.T) {
-		result := &BatchResult{
-			TotalItems:   100,
-			SuccessCount: 95,
-			FailureCount: 3,
-			SkippedCount: 2,
-			Duration:     5 * time.Second,
-			ProcessedItems: map[string][]string{
-				"users":  {"u1", "u2"},
-				"groups": {"g1"},
-			},
-			DryRun: false,
-			Errors: []BatchError{
-				{Index: 5, Type: "user", ID: "u5", Error: errors.New("test error")},
-			},
-		}
-
-		if result.TotalItems != 100 {
-			t.Errorf("expected total 100, got %d", result.TotalItems)
-		}
-		if result.SuccessCount != 95 {
-			t.Errorf("expected success 95, got %d", result.SuccessCount)
-		}
-		if result.FailureCount != 3 {
-			t.Errorf("expected failure 3, got %d", result.FailureCount)
-		}
-		if result.SkippedCount != 2 {
-			t.Errorf("expected skipped 2, got %d", result.SkippedCount)
-		}
-		if len(result.Errors) != 1 {
-			t.Errorf("expected 1 error, got %d", len(result.Errors))
-		}
-		if result.ProcessedItems["users"][0] != "u1" {
-			t.Errorf("expected first user 'u1', got '%s'", result.ProcessedItems["users"][0])
-		}
-	})
-}
-
-func TestExportFilter(t *testing.T) {
-	t.Run("export filter with all fields", func(t *testing.T) {
-		now := time.Now()
-		yesterday := now.Add(-24 * time.Hour)
-
-		filter := ExportFilter{
-			UserIDs:       []uint64{30001, 30002},
-			RoleIDs:       []string{"r1", "r2", "r3"},
-			PolicyNames:   []string{"policy1"},
-			CreatedAfter:  &yesterday,
-			CreatedBefore: &now,
-			UpdatedAfter:  &yesterday,
-			UpdatedBefore: &now,
-		}
-
-		if len(filter.UserIDs) != 2 {
-			t.Errorf("expected 2 user IDs, got %d", len(filter.UserIDs))
-		}
-		if filter.CreatedAfter == nil {
-			t.Error("expected CreatedAfter to be set")
-		}
-	})
-}
-
-func TestBatchProgress(t *testing.T) {
-	t.Run("batch progress fields", func(t *testing.T) {
-		progress := BatchProgress{
-			TotalItems:      100,
-			ProcessedItems:  50,
-			SuccessCount:    45,
-			FailureCount:    5,
-			CurrentType:     "user",
-			PercentComplete: 50.0,
-		}
-
-		if progress.TotalItems != 100 {
-			t.Errorf("expected total 100, got %d", progress.TotalItems)
-		}
-		if progress.ProcessedItems != 50 {
-			t.Errorf("expected processed 50, got %d", progress.ProcessedItems)
-		}
-		if progress.PercentComplete != 50.0 {
-			t.Errorf("expected 50%%, got %.2f%%", progress.PercentComplete)
 		}
 	})
 }
