@@ -885,370 +885,217 @@ func createTestIAMAdapter91(t *testing.T) *IAMServiceAdapter {
 // Tenant Operations
 // =============================================================================
 
-func TestAdapter91_CreateTenant_Success(t *testing.T) {
+func TestAdapter91_TenantMethods(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{ID: "test-tenant-1", Name: "Test Tenant"})
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "test-tenant-1", result.ID)
-}
-
-func TestAdapter91_CreateTenant_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	mockErr := errors.New("tenant create failed")
-	tenantMgr := &adapter91MockTenantManager{
-		createTenantFunc: func(ctx context.Context, opts iam.CreateTenantOptions) (*iam.Tenant, error) {
-			return nil, mockErr
+	errManager := errors.New("tenant manager failed")
+	failing := NewIAMServiceAdapter(&adapter91MockTenantManager{
+		createTenantFunc: func(context.Context, iam.CreateTenantOptions) (*iam.Tenant, error) { return nil, errManager },
+		getTenantFunc:    func(context.Context, string) (*iam.Tenant, error) { return nil, errManager },
+		updateTenantFunc: func(context.Context, string, iam.UpdateTenantOptions) (*iam.Tenant, error) {
+			return nil, errManager
 		},
+		deleteTenantFunc: func(context.Context, string) error { return errManager },
+		listTenantsFunc:  func(context.Context, iam.ListOptions) ([]*iam.Tenant, error) { return nil, errManager },
+	}, nil, nil, nil, nil, nil)
+
+	tests := []struct {
+		name    string
+		failing bool
+		run     func(t *testing.T, ctx context.Context, a *IAMServiceAdapter)
+	}{
+		{"CreateTenant success", false, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.CreateTenant(ctx, iam.CreateTenantOptions{ID: "test-tenant-1", Name: "Test Tenant"})
+			require.NoError(t, err)
+			assert.Equal(t, "test-tenant-1", result.ID)
+		}},
+		{"CreateTenant error", true, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.CreateTenant(ctx, iam.CreateTenantOptions{ID: "x", Name: "X"})
+			assert.ErrorIs(t, err, errManager)
+			assert.Nil(t, result)
+		}},
+		{"GetTenant success", false, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetTenant(ctx, "tenant-1")
+			require.NoError(t, err)
+			assert.Equal(t, "tenant-1", result.ID)
+		}},
+		{"GetTenant error", true, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetTenant(ctx, "nonexistent")
+			assert.ErrorIs(t, err, errManager)
+			assert.Nil(t, result)
+		}},
+		{"UpdateTenant success", false, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.UpdateTenant(ctx, &iam.Tenant{ID: "tenant-1", Name: "Updated Tenant"})
+			require.NoError(t, err)
+			assert.Equal(t, "Updated Tenant", result.Name)
+		}},
+		{"UpdateTenant error", true, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.UpdateTenant(ctx, &iam.Tenant{ID: "t1", Name: "X"})
+			assert.ErrorIs(t, err, errManager)
+			assert.Nil(t, result)
+		}},
+		{"DeleteTenant success", false, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.NoError(t, a.DeleteTenant(ctx, "tenant-1"))
+		}},
+		{"DeleteTenant error", true, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.ErrorIs(t, a.DeleteTenant(ctx, "tenant-1"), errManager)
+		}},
+		{"ListTenants success", false, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			tenants, total, err := a.ListTenants(ctx, 10, 0)
+			require.NoError(t, err)
+			assert.NotNil(t, tenants)
+			assert.Equal(t, len(tenants), total)
+		}},
+		{"ListTenants error", true, func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			tenants, total, err := a.ListTenants(ctx, 10, 0)
+			assert.ErrorIs(t, err, errManager)
+			assert.Nil(t, tenants)
+			assert.Equal(t, 0, total)
+		}},
 	}
-	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
 
-	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{ID: "x", Name: "X"})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Equal(t, mockErr, err)
-}
-
-func TestAdapter91_GetTenant_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetTenant(ctx, "tenant-1")
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "tenant-1", result.ID)
-}
-
-func TestAdapter91_GetTenant_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	tenantMgr := &adapter91MockTenantManager{
-		getTenantFunc: func(ctx context.Context, id string) (*iam.Tenant, error) {
-			return nil, errors.New("not found")
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			adapter := failing
+			if !tt.failing {
+				adapter = createTestIAMAdapter91(t)
+			}
+			tt.run(t, context.Background(), adapter)
+		})
 	}
-	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
-
-	result, err := adapter.GetTenant(ctx, "nonexistent")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdateTenant_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	tenant := &iam.Tenant{ID: "tenant-1", Name: "Updated Tenant"}
-	result, err := adapter.UpdateTenant(ctx, tenant)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "Updated Tenant", result.Name)
-}
-
-func TestAdapter91_UpdateTenant_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	tenantMgr := &adapter91MockTenantManager{
-		updateTenantFunc: func(ctx context.Context, id string, opts iam.UpdateTenantOptions) (*iam.Tenant, error) {
-			return nil, errors.New("update failed")
-		},
-	}
-	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
-
-	result, err := adapter.UpdateTenant(ctx, &iam.Tenant{ID: "t1", Name: "X"})
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_DeleteTenant_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.NoError(t, adapter.DeleteTenant(ctx, "tenant-1"))
-}
-
-func TestAdapter91_DeleteTenant_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	mockErr := errors.New("delete failed")
-	tenantMgr := &adapter91MockTenantManager{
-		deleteTenantFunc: func(ctx context.Context, id string) error { return mockErr },
-	}
-	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
-	assert.Equal(t, mockErr, adapter.DeleteTenant(ctx, "tenant-1"))
-}
-
-func TestAdapter91_ListTenants_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	tenants, total, err := adapter.ListTenants(ctx, 10, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, tenants)
-	assert.Equal(t, len(tenants), total)
-}
-
-func TestAdapter91_ListTenants_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	tenantMgr := &adapter91MockTenantManager{
-		listTenantsFunc: func(ctx context.Context, opts iam.ListOptions) ([]*iam.Tenant, error) {
-			return nil, errors.New("list failed")
-		},
-	}
-	adapter := NewIAMServiceAdapter(tenantMgr, nil, nil, nil, nil, nil)
-
-	tenants, total, err := adapter.ListTenants(ctx, 10, 0)
-	assert.Error(t, err)
-	assert.Nil(t, tenants)
-	assert.Equal(t, 0, total)
 }
 
 // =============================================================================
 // User Operations
 // =============================================================================
 
-func TestAdapter91_CreateUser_Success(t *testing.T) {
+func TestAdapter91_UserMethods(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
 
-	user := &iam.User{TenantID: "tenant-1", Email: "alice@example.com", Name: "Alice"}
-	result, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, "alice@example.com", result.Email)
-}
-
-func TestAdapter91_CreateUser_EmailWithoutAt(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "localuser", Name: "Local"}
-	_, _, _, err := adapter.CreateUser(ctx, user, 0)
-	// IdentityStore validates email format - should error
-	assert.Error(t, err)
-}
-
-func TestAdapter91_CreateUser_WithRoles(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	// Pre-create the role so the create-time reference resolves.
-	_, err := adapter.identityStore.CreateRole(ctx, "tenant-1", iam.CreateRoleOptions{
-		ID:   "admin",
-		Name: "Admin",
-	})
-	require.NoError(t, err)
-
-	user := &iam.User{
-		TenantID: "tenant-1",
-		Email:    "bob@example.com",
-		Name:     "Bob",
-		Roles:    []string{"admin"},
+	createUser := func(t *testing.T, ctx context.Context, a *IAMServiceAdapter, email, name string) *iam.User {
+		t.Helper()
+		created, _, _, err := a.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: email, Name: name}, 0)
+		require.NoError(t, err)
+		return created
 	}
-	result, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.Equal(t, []string{"admin"}, result.Roles)
-}
 
-func TestAdapter91_CreateUser_UnknownRoleFailsWithoutPartialUser(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
+	tests := []struct {
+		name string
+		run  func(t *testing.T, ctx context.Context, a *IAMServiceAdapter)
+	}{
+		{"CreateUser success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result := createUser(t, ctx, a, "alice@example.com", "Alice")
+			assert.Equal(t, "alice@example.com", result.Email)
+		}},
+		{"CreateUser email without at", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			_, _, _, err := a.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "localuser", Name: "Local"}, 0)
+			// IdentityStore validates email format - should error
+			assert.Error(t, err)
+		}},
+		{"CreateUser with roles", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			// Pre-create the role so the create-time reference resolves.
+			_, err := a.identityStore.CreateRole(ctx, "tenant-1", iam.CreateRoleOptions{ID: "admin", Name: "Admin"})
+			require.NoError(t, err)
 
-	user := &iam.User{
-		TenantID: "tenant-1",
-		Email:    "bob2@example.com",
-		Name:     "Bob Two",
-		Roles:    []string{"does-not-exist"},
+			user := &iam.User{TenantID: "tenant-1", Email: "bob@example.com", Name: "Bob", Roles: []string{"admin"}}
+			result, _, _, err := a.CreateUser(ctx, user, 0)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			assert.Equal(t, []string{"admin"}, result.Roles)
+		}},
+		{"CreateUser unknown role fails without partial user", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			user := &iam.User{TenantID: "tenant-1", Email: "bob2@example.com", Name: "Bob Two", Roles: []string{"does-not-exist"}}
+			result, _, _, err := a.CreateUser(ctx, user, 0)
+			// Role references are validated BEFORE the user record is created, so a
+			// bad role fails fast and atomically: no result and no partial user that
+			// would make a retry collide with already_exists.
+			require.Error(t, err)
+			assert.Nil(t, result)
+
+			_, getErr := a.GetUser(ctx, "tenant-1", "bob2@example.com")
+			assert.Error(t, getErr, "no partial user must remain after a failed create")
+		}},
+		{"GetUser by ID", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createUser(t, ctx, a, "charlie@example.com", "Charlie")
+			result, err := a.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
+			require.NoError(t, err)
+			assert.Equal(t, created.ID, result.ID)
+		}},
+		{"GetUser by email", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createUser(t, ctx, a, "diana@example.com", "Diana")
+			result, err := a.GetUser(ctx, "tenant-1", "diana@example.com")
+			require.NoError(t, err)
+			assert.Equal(t, "diana@example.com", result.Email)
+		}},
+		{"GetUser by email wrong tenant", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createUser(t, ctx, a, "eve@example.com", "Eve")
+			result, err := a.GetUser(ctx, "wrong-tenant", "eve@example.com")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"GetUser not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			result, err := a.GetUser(ctx, "tenant-1", "nonexistent-id")
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		}},
+		{"UpdateUser with roles", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			role, err := a.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "viewer", Permissions: []string{"read"}})
+			require.NoError(t, err)
+
+			created := createUser(t, ctx, a, "grace@example.com", "Grace")
+			created.Roles = []string{role.ID}
+			result, err := a.UpdateUser(ctx, created)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+
+			stored, err := a.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
+			require.NoError(t, err)
+			assert.Contains(t, stored.Roles, role.ID)
+		}},
+		{"UpdateUser unknown role", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createUser(t, ctx, a, "heidi@example.com", "Heidi")
+			created.Roles = []string{"no-such-role"}
+			result, err := a.UpdateUser(ctx, created)
+			require.Error(t, err)
+			assert.Nil(t, result)
+
+			stored, err := a.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
+			require.NoError(t, err)
+			assert.NotContains(t, stored.Roles, "no-such-role")
+		}},
+		{"DeleteUser by ID", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			created := createUser(t, ctx, a, "ivan@example.com", "Ivan")
+			assert.NoError(t, a.DeleteUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10)))
+		}},
+		{"DeleteUser by email", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createUser(t, ctx, a, "jane@example.com", "Jane")
+			assert.NoError(t, a.DeleteUser(ctx, "tenant-1", "jane@example.com"))
+		}},
+		{"DeleteUser not found", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			assert.Error(t, a.DeleteUser(ctx, "tenant-1", "nonexistent"))
+		}},
+		{"ListUsers success", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			createUser(t, ctx, a, "kate@example.com", "Kate")
+			users, total, err := a.ListUsers(ctx, "tenant-1", 10, 0, nil)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(users), 1)
+			assert.Equal(t, len(users), total)
+		}},
+		{"ListUsers with filters", func(t *testing.T, ctx context.Context, a *IAMServiceAdapter) {
+			filters := map[string]string{"email": "test@example.com", "role": "admin", "group": "devs"}
+			users, total, err := a.ListUsers(ctx, "tenant-1", 10, 0, filters)
+			require.NoError(t, err)
+			assert.NotNil(t, users)
+			assert.Equal(t, len(users), total)
+		}},
 	}
-	result, _, _, err := adapter.CreateUser(ctx, user, 0)
-	// Role references are validated BEFORE the user record is created, so a
-	// bad role fails fast and atomically: no result and no partial user that
-	// would make a retry collide with already_exists.
-	require.Error(t, err)
-	assert.Nil(t, result)
 
-	_, getErr := adapter.GetUser(ctx, "tenant-1", "bob2@example.com")
-	assert.Error(t, getErr, "no partial user must remain after a failed create")
-}
-
-func TestAdapter91_GetUser_ByID(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "charlie@example.com", Name: "Charlie"}
-	created, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	result, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
-	require.NoError(t, err)
-	assert.Equal(t, created.ID, result.ID)
-}
-
-func TestAdapter91_GetUser_ByEmail(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "diana@example.com", Name: "Diana"}
-	_, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	result, err := adapter.GetUser(ctx, "tenant-1", "diana@example.com")
-	require.NoError(t, err)
-	assert.Equal(t, "diana@example.com", result.Email)
-}
-
-func TestAdapter91_GetUser_ByEmail_WrongTenant(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "eve@example.com", Name: "Eve"}
-	_, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	result, err := adapter.GetUser(ctx, "wrong-tenant", "eve@example.com")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_GetUser_NotFound(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	result, err := adapter.GetUser(ctx, "tenant-1", "nonexistent-id")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-func TestAdapter91_UpdateUser_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "frank@example.com", Name: "Frank"}
-	created, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	created.Name = "Frank Updated"
-	result, err := adapter.UpdateUser(ctx, created)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-}
-
-func TestAdapter91_UpdateUser_WithRoles(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	role, err := adapter.CreateRole(ctx, &iam.Role{TenantID: "tenant-1", Name: "viewer", Permissions: []string{"read"}})
-	require.NoError(t, err)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "grace@example.com", Name: "Grace"}
-	created, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	created.Roles = []string{role.ID}
-	result, err := adapter.UpdateUser(ctx, created)
-	require.NoError(t, err)
-	assert.NotNil(t, result)
-
-	stored, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
-	require.NoError(t, err)
-	assert.Contains(t, stored.Roles, role.ID)
-}
-
-// TestAdapter91_UpdateUser_UnknownRole proves a role assignment that the
-// identity store rejects fails the update instead of being dropped silently.
-func TestAdapter91_UpdateUser_UnknownRole(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "heidi@example.com", Name: "Heidi"}
-	created, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	created.Roles = []string{"no-such-role"}
-	result, err := adapter.UpdateUser(ctx, created)
-	require.Error(t, err)
-	assert.Nil(t, result)
-
-	stored, err := adapter.GetUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10))
-	require.NoError(t, err)
-	assert.NotContains(t, stored.Roles, "no-such-role")
-}
-
-func TestAdapter91_DeleteUser_ByID(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "ivan@example.com", Name: "Ivan"}
-	created, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", strconv.FormatUint(created.ID, 10)))
-}
-
-func TestAdapter91_DeleteUser_ByEmail(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	user := &iam.User{TenantID: "tenant-1", Email: "jane@example.com", Name: "Jane"}
-	_, _, _, err := adapter.CreateUser(ctx, user, 0)
-	require.NoError(t, err)
-
-	assert.NoError(t, adapter.DeleteUser(ctx, "tenant-1", "jane@example.com"))
-}
-
-func TestAdapter91_DeleteUser_Error(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-	assert.Error(t, adapter.DeleteUser(ctx, "tenant-1", "nonexistent"))
-}
-
-func TestAdapter91_ListUsers_Success(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	_, _, _, err := adapter.CreateUser(ctx, &iam.User{TenantID: "tenant-1", Email: "kate@example.com", Name: "Kate"}, 0)
-	require.NoError(t, err)
-
-	users, total, err := adapter.ListUsers(ctx, "tenant-1", 10, 0, nil)
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(users), 1)
-	assert.Equal(t, len(users), total)
-}
-
-func TestAdapter91_ListUsers_WithFilters(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	adapter := createTestIAMAdapter91(t)
-
-	filters := map[string]string{"email": "test@example.com", "role": "admin", "group": "devs"}
-	users, total, err := adapter.ListUsers(ctx, "tenant-1", 10, 0, filters)
-	require.NoError(t, err)
-	assert.NotNil(t, users)
-	assert.Equal(t, len(users), total)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.run(t, context.Background(), createTestIAMAdapter91(t))
+		})
+	}
 }
 
 // =============================================================================
