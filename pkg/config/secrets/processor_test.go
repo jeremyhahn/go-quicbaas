@@ -203,42 +203,6 @@ func TestConfigProcessor_Process_Pointers(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_NilPointers(t *testing.T) {
-	type Credentials struct {
-		Password string
-	}
-
-	type Config struct {
-		Name  string
-		Creds *Credentials
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Name:  "test",
-		Creds: nil,
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
-	}
-
-	if len(result.Errors) != 0 {
-		t.Fatalf("expected 0 errors, got %d", len(result.Errors))
-	}
-}
-
 func TestConfigProcessor_Process_Slices(t *testing.T) {
 	type Backend struct {
 		Name   string
@@ -627,35 +591,6 @@ func TestConfigProcessor_Process_UnexportedFields(t *testing.T) {
 	// Private field should be unchanged.
 	if cfg.private != "mock://private-secret" {
 		t.Errorf("private field should be unchanged, got %q", cfg.private)
-	}
-}
-
-func TestConfigProcessor_Process_EmptyStrings(t *testing.T) {
-	type Config struct {
-		Empty  string
-		Secret string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Empty:  "",
-		Secret: "mock://value",
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Only non-empty secret should be resolved.
-	if result.Resolved != 1 {
-		t.Fatalf("expected 1 resolved secret, got %d", result.Resolved)
 	}
 }
 
@@ -1134,107 +1069,48 @@ func TestConfigProcessor_Process_MapWithMapValues(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_EmptySlice(t *testing.T) {
-	type Config struct {
+func TestConfigProcessor_Process_EmptyAndNilContainers(t *testing.T) {
+	type SliceConfig struct {
 		Secrets []string
 	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: []string{},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
-	}
-}
-
-func TestConfigProcessor_Process_EmptyMap(t *testing.T) {
-	type Config struct {
+	type MapConfig struct {
 		Secrets map[string]string
 	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: map[string]string{},
+	type StringConfig struct {
+		Empty  string
+		Secret string
 	}
 
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name         string
+		cfg          interface{}
+		wantResolved int
+	}{
+		{name: "empty slice", cfg: &SliceConfig{Secrets: []string{}}},
+		{name: "nil slice", cfg: &SliceConfig{Secrets: nil}},
+		{name: "empty map", cfg: &MapConfig{Secrets: map[string]string{}}},
+		{name: "nil map", cfg: &MapConfig{Secrets: nil}},
+		{name: "empty string beside a secret", cfg: &StringConfig{Empty: "", Secret: "mock://value"}, wantResolved: 1},
 	}
 
-	if result.Resolved != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry := NewResolverRegistry()
+			registry.Register(&mockResolver{})
+			processor := NewConfigProcessor(registry)
 
-func TestConfigProcessor_Process_NilSlice(t *testing.T) {
-	type Config struct {
-		Secrets []string
-	}
+			result, err := processor.Process(context.Background(), tt.cfg)
 
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: nil,
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
-	}
-}
-
-func TestConfigProcessor_Process_NilMap(t *testing.T) {
-	type Config struct {
-		Secrets map[string]string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: nil,
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 0 {
-		t.Fatalf("expected 0 resolved secrets, got %d", result.Resolved)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Resolved != tt.wantResolved {
+				t.Fatalf("expected %d resolved secrets, got %d", tt.wantResolved, result.Resolved)
+			}
+			if len(result.Errors) != 0 {
+				t.Fatalf("expected 0 errors, got %d", len(result.Errors))
+			}
+		})
 	}
 }
 
