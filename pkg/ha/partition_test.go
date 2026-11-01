@@ -192,40 +192,6 @@ func TestNewPartitionDetector(t *testing.T) {
 	}
 }
 
-// TestPartitionDetector_StartStop tests lifecycle management.
-func TestPartitionDetector_StartStop(t *testing.T) {
-	srv := newHealthServer(t, http.StatusOK)
-
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		DetectionInterval: 100 * time.Millisecond,
-		Peers: map[uint64]string{
-			2: serverHostPort(srv),
-		},
-		ClusterCA: caPoolFromServer(srv),
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	// Test Start
-	err = pd.Start()
-	require.NoError(t, err)
-
-	// Give it a moment to start
-	time.Sleep(50 * time.Millisecond)
-
-	// Test Stop
-	err = pd.Stop()
-	require.NoError(t, err)
-
-	// Test double stop (should be idempotent)
-	err = pd.Stop()
-	require.NoError(t, err)
-}
-
 // TestPartitionDetector_MonitorLoopTicker tests the automatic monitoring via ticker.
 // It verifies that the monitor loop fires without panicking and that Stop()
 // cleanly terminates the goroutine. The test deliberately uses a short ticker
@@ -285,6 +251,10 @@ func TestPartitionDetector_MonitorLoopStopChan(t *testing.T) {
 	require.NoError(t, err)
 
 	// Stop immediately via stopChan
+	err = pd.Stop()
+	require.NoError(t, err)
+
+	// A second Stop must be idempotent
 	err = pd.Stop()
 	require.NoError(t, err)
 }
@@ -606,9 +576,6 @@ func TestPartitionDetector_GetPeerStates(t *testing.T) {
 	}
 }
 
-// TestPartitionDetector_CheckPeerReachability tests peer connectivity checks
-// using real HTTP health servers. Node 2 serves 200 (reachable); node 3 uses
-// an address that refuses connections (unreachable).
 // TestPartitionDetector_CheckPeerReachability checks a mixed peer set: one
 // backed by a live TLS health server, one at an address nothing is listening on.
 //
