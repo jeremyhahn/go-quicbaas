@@ -193,92 +193,46 @@ func TestSecretManager_CacheExpiration(t *testing.T) {
 	assert.Equal(t, testValue, secret2.Value)
 }
 
-func TestSecretCache_SetGet(t *testing.T) {
-	cache := NewSecretCache(1 * time.Minute)
-
-	secret := &Secret{
-		Key:       "test-key",
-		Value:     "test-value",
-		Version:   1,
-		CreatedAt: time.Now(),
+// TestSecretCache_Get covers each Get path: a live entry, a missing key and
+// an entry past its expiry.
+func TestSecretCache_Get(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		expired bool
+		want    *Secret
+	}{
+		{name: "live entry", key: "k", want: &Secret{Key: "k", Value: "v"}},
+		{name: "missing key", key: "other"},
+		{name: "expired entry", key: "k", expired: true},
 	}
 
-	cache.Set("test-key", secret)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewSecretCache(5 * time.Minute)
+			cache.Set("k", &Secret{Key: "k", Value: "v"})
+			if tt.expired {
+				cache.entries["k"].expiresAt = time.Now().Add(-time.Second)
+			}
 
-	retrieved := cache.Get("test-key")
-	require.NotNil(t, retrieved)
-	assert.Equal(t, secret.Key, retrieved.Key)
-	assert.Equal(t, secret.Value, retrieved.Value)
-}
-
-func TestSecretCache_Expiration(t *testing.T) {
-	cache := NewSecretCache(100 * time.Millisecond)
-
-	secret := &Secret{
-		Key:       "test-key",
-		Value:     "test-value",
-		Version:   1,
-		CreatedAt: time.Now(),
+			assert.Equal(t, tt.want, cache.Get(tt.key))
+		})
 	}
-
-	cache.Set("test-key", secret)
-
-	// Should exist immediately
-	assert.NotNil(t, cache.Get("test-key"))
-
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
-
-	// Should be expired
-	assert.Nil(t, cache.Get("test-key"))
 }
 
-func TestSecretCache_Delete(t *testing.T) {
-	cache := NewSecretCache(1 * time.Minute)
-
-	secret := &Secret{
-		Key:       "test-key",
-		Value:     "test-value",
-		Version:   1,
-		CreatedAt: time.Now(),
-	}
-
-	cache.Set("test-key", secret)
-	assert.NotNil(t, cache.Get("test-key"))
-
-	cache.Delete("test-key")
-	assert.Nil(t, cache.Get("test-key"))
-}
-
+// TestSecretCache_Cleanup checks that cleanup removes expired entries and
+// keeps live ones.
 func TestSecretCache_Cleanup(t *testing.T) {
-	cache := NewSecretCache(50 * time.Millisecond)
+	cache := NewSecretCache(5 * time.Minute)
+	cache.Set("expired", &Secret{Key: "expired", Value: "old"})
+	cache.Set("live", &Secret{Key: "live", Value: "new"})
+	cache.entries["expired"].expiresAt = time.Now().Add(-time.Second)
 
-	// Add multiple secrets
-	for i := 0; i < 10; i++ {
-		secret := &Secret{
-			Key:       string(rune('a' + i)),
-			Value:     "value",
-			Version:   1,
-			CreatedAt: time.Now(),
-		}
-		cache.Set(secret.Key, secret)
-	}
-
-	// All should exist
-	for i := 0; i < 10; i++ {
-		assert.NotNil(t, cache.Get(string(rune('a'+i))))
-	}
-
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
-
-	// Trigger cleanup
 	cache.cleanup()
 
-	// All should be removed
-	for i := 0; i < 10; i++ {
-		assert.Nil(t, cache.Get(string(rune('a'+i))))
-	}
+	assert.NotContains(t, cache.entries, "expired")
+	require.Contains(t, cache.entries, "live")
+	assert.Equal(t, "new", cache.Get("live").Value)
 }
 
 func TestEnvBackend_Get(t *testing.T) {
@@ -480,51 +434,6 @@ func BenchmarkSecretCache_Get(b *testing.B) {
 	}
 }
 
-// TestSecretCache_AdditionalCases tests more cache scenarios
-func TestSecretCache_AdditionalCases(t *testing.T) {
-	t.Run("startCleanup goroutine", func(t *testing.T) {
-		cache := NewSecretCache(50 * time.Millisecond)
-
-		secret := &Secret{
-			Key:   "test",
-			Value: "value",
-		}
-
-		cache.Set("test1", secret)
-		cache.Set("test2", secret)
-
-		// Wait for expiration and cleanup
-		time.Sleep(100 * time.Millisecond)
-
-		// Items should eventually expire
-		cache.cleanup()
-
-		assert.Nil(t, cache.Get("test1"))
-		assert.Nil(t, cache.Get("test2"))
-
-		cache.Close()
-	})
-}
-
-// TestSecretCache_CleanupExpiredEntries tests cleanup of expired entries
-func TestSecretCache_CleanupExpiredEntries(t *testing.T) {
-	cache := NewSecretCache(50 * time.Millisecond)
-
-	// Add entries
-	cache.Set("key1", &Secret{Key: "key1", Value: "value1"})
-	cache.Set("key2", &Secret{Key: "key2", Value: "value2"})
-
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
-
-	// Manually call cleanup
-	cache.cleanup()
-
-	// Both should be removed
-	assert.Nil(t, cache.Get("key1"))
-	assert.Nil(t, cache.Get("key2"))
-}
-
 // ---------------------------------------------------------------------------
 // SecretManager.GetString error (secrets.go:313 -- 75%)
 // ---------------------------------------------------------------------------
@@ -602,38 +511,6 @@ func TestNewSecretManager_NilConfig(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SecretCache.startCleanup coverage (secrets.go:282 -- 75%)
-// ---------------------------------------------------------------------------
-
-func TestSecretCache_SetAndGet(t *testing.T) {
-	cache := &SecretCache{
-		entries: make(map[string]*cachedSecret),
-		ttl:     5 * time.Minute,
-	}
-
-	secret := &Secret{Key: "k", Value: "v"}
-	cache.Set("k", secret)
-
-	got := cache.Get("k")
-	require.NotNil(t, got)
-	assert.Equal(t, "v", got.Value)
-}
-
-func TestSecretCache_GetExpired(t *testing.T) {
-	cache := &SecretCache{
-		entries: make(map[string]*cachedSecret),
-		ttl:     1 * time.Nanosecond, // Expire immediately
-	}
-
-	secret := &Secret{Key: "k", Value: "v"}
-	cache.Set("k", secret)
-
-	// The entry is already expired
-	got := cache.Get("k")
-	assert.Nil(t, got)
-}
-
-// ---------------------------------------------------------------------------
 // NewSecretManager - cover more config paths
 // ---------------------------------------------------------------------------
 
@@ -649,50 +526,6 @@ func TestNewSecretManager_DefaultBackend(t *testing.T) {
 	assert.NotNil(t, mgr)
 }
 
-// TestSecretCache_Expiry tests cache expiration.
-func TestSecretCache_Expiry(t *testing.T) {
-	cache := NewSecretCache(100 * time.Millisecond)
-
-	secret := &Secret{
-		Key:   "test",
-		Value: "value",
-	}
-
-	cache.Set("test", secret)
-
-	// Should be available immediately
-	retrieved := cache.Get("test")
-	assert.NotNil(t, retrieved)
-
-	// Wait for expiration
-	time.Sleep(150 * time.Millisecond)
-
-	// Should be expired
-	retrieved = cache.Get("test")
-	assert.Nil(t, retrieved)
-}
-
-// TestSecretCache_StartCleanup_NonBlocking tests cache cleanup doesn't block.
-func TestSecretCache_StartCleanup_NonBlocking(t *testing.T) {
-	cache := NewSecretCache(50 * time.Millisecond)
-
-	secret := &Secret{
-		Key:   "test",
-		Value: "value",
-	}
-
-	cache.Set("test1", secret)
-	cache.Set("test2", secret)
-
-	// Manually run cleanup after expiration
-	time.Sleep(100 * time.Millisecond)
-	cache.cleanup()
-
-	// Both should be cleaned up
-	assert.Nil(t, cache.Get("test1"))
-	assert.Nil(t, cache.Get("test2"))
-}
-
 // TestSecretManager_NilConfig tests nil config uses defaults.
 func TestSecretManager_NilConfig(t *testing.T) {
 	log := createTestLogger(t)
@@ -701,32 +534,6 @@ func TestSecretManager_NilConfig(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, sm)
 	defer sm.Close()
-}
-
-// TestSecretCache_StartCleanup_Channel tests cleanup with channel.
-func TestSecretCache_StartCleanup_Channel(t *testing.T) {
-	cache := NewSecretCache(100 * time.Millisecond)
-
-	secret := &Secret{
-		Key:   "test",
-		Value: "value",
-	}
-
-	cache.Set("test1", secret)
-
-	// Start cleanup goroutine
-	done := make(chan bool)
-	go func() {
-		// Run cleanup for a short time
-		time.Sleep(150 * time.Millisecond)
-		done <- true
-	}()
-
-	<-done
-
-	// Secret should be cleaned up by now
-	retrieved := cache.Get("test1")
-	assert.Nil(t, retrieved)
 }
 
 // ---------------------------------------------------------------------------
@@ -867,35 +674,6 @@ func TestSecretCache_DeleteRemovesEntry(t *testing.T) {
 	assert.Equal(t, "v2", got.Value)
 }
 
-func TestSecretCache_CleanupRemovesExpired(t *testing.T) {
-	cache := NewSecretCache(1 * time.Millisecond)
-
-	cache.Set("expired", &Secret{Key: "expired", Value: "old"})
-
-	cache.mu.Lock()
-	for _, entry := range cache.entries {
-		entry.expiresAt = time.Now().Add(-1 * time.Second)
-	}
-	cache.mu.Unlock()
-
-	cache.cleanup()
-
-	got := cache.Get("expired")
-	assert.Nil(t, got)
-}
-
-func TestSecretCache_GetReturnsNilForExpired(t *testing.T) {
-	cache := NewSecretCache(1 * time.Millisecond)
-	cache.Set("key", &Secret{Key: "key", Value: "val"})
-
-	cache.mu.Lock()
-	cache.entries["key"].expiresAt = time.Now().Add(-1 * time.Second)
-	cache.mu.Unlock()
-
-	got := cache.Get("key")
-	assert.Nil(t, got)
-}
-
 // TestSecretManager_Set tests setting secrets.
 // newSecretManagerForWrite builds a SecretManager for the Set and Delete
 // tables. With backendOK the backend is a mock that accepts writes and
@@ -1013,29 +791,4 @@ func TestSecretManager_GetStringError(t *testing.T) {
 	// Try to get non-existent env var
 	_, err = sm.GetString(ctx, "NONEXISTENT_SECRET_VAR_12345")
 	assert.Error(t, err)
-}
-
-// TestSecretCache_StartCleanup tests cache cleanup.
-func TestSecretCache_StartCleanup(t *testing.T) {
-	cache := NewSecretCache(50 * time.Millisecond)
-
-	// Add some secrets
-	cache.Set("key1", &Secret{
-		Key:   "key1",
-		Value: "value1",
-	})
-	cache.Set("key2", &Secret{
-		Key:   "key2",
-		Value: "value2",
-	})
-
-	// Start cleanup in background
-	go cache.startCleanup()
-
-	// Wait for secrets to expire and cleanup to run
-	time.Sleep(200 * time.Millisecond)
-
-	// Secrets should be expired and cleaned up
-	secret := cache.Get("key1")
-	assert.Nil(t, secret)
 }
