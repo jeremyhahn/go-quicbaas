@@ -2039,26 +2039,39 @@ func TestPerformCompaction_JobNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPerformCompaction_Success(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	callCount := 0
-	storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
-		callCount++
-		if callCount == 1 {
-			return &interfaces.VectorStorageStats{SizeBytes: 1000}, nil
-		}
-		return &interfaces.VectorStorageStats{SizeBytes: 500}, nil
+func TestPerformCompaction_BytesCompacted(t *testing.T) {
+	tests := []struct {
+		name       string
+		sizeBefore uint64
+		sizeAfter  uint64
+		wantBytes  int64
+	}{
+		{name: "size shrinks", sizeBefore: 1000, sizeAfter: 500, wantBytes: 500},
+		{name: "size grows reports zero", sizeBefore: 500, sizeAfter: 1000, wantBytes: 0},
 	}
-	job := &CompactionJobState{OperationID: "o1", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.compactionJobs["o1"] = job
-	svc.jobMu.Unlock()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			callCount := 0
+			storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
+				callCount++
+				if callCount == 1 {
+					return &interfaces.VectorStorageStats{SizeBytes: tt.sizeBefore}, nil
+				}
+				return &interfaces.VectorStorageStats{SizeBytes: tt.sizeAfter}, nil
+			}
+			job := &CompactionJobState{OperationID: "o1", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
+			svc.jobMu.Lock()
+			svc.compactionJobs["o1"] = job
+			svc.jobMu.Unlock()
 
-	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o1", "test-ns")
-	require.NoError(t, err)
-	job.mu.RLock()
-	assert.Equal(t, int64(500), job.BytesCompacted)
-	job.mu.RUnlock()
+			err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o1", "test-ns")
+			require.NoError(t, err)
+			job.mu.RLock()
+			assert.Equal(t, tt.wantBytes, job.BytesCompacted)
+			job.mu.RUnlock()
+		})
+	}
 }
 
 func TestPerformCompaction_CompactError(t *testing.T) {
@@ -2071,28 +2084,6 @@ func TestPerformCompaction_CompactError(t *testing.T) {
 
 	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o2", "test-ns")
 	require.Error(t, err)
-}
-
-func TestPerformCompaction_NegativeBytes(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	callCount := 0
-	storage.getStatsFn = func(_ context.Context, _ string) (*interfaces.VectorStorageStats, error) {
-		callCount++
-		if callCount == 1 {
-			return &interfaces.VectorStorageStats{SizeBytes: 500}, nil
-		}
-		return &interfaces.VectorStorageStats{SizeBytes: 1000}, nil
-	}
-	job := &CompactionJobState{OperationID: "o3", Namespace: "test-ns", InProgress: true, StartedAt: time.Now()}
-	svc.jobMu.Lock()
-	svc.compactionJobs["o3"] = job
-	svc.jobMu.Unlock()
-
-	err := svc.performCompaction(tenantctx.WithSystem(context.Background()), "o3", "test-ns")
-	require.NoError(t, err)
-	job.mu.RLock()
-	assert.Equal(t, int64(0), job.BytesCompacted)
-	job.mu.RUnlock()
 }
 
 func TestGetCompactionProgress_ByOperationID(t *testing.T) {
