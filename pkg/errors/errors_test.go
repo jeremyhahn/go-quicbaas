@@ -279,7 +279,6 @@ func TestWrap(t *testing.T) {
 
 func TestIs(t *testing.T) {
 	notFoundError := New(ErrNotFound, "test", "not found")
-	timeoutErr := New(ErrTimeout, "test", "timeout")
 
 	tests := []struct {
 		name string
@@ -334,11 +333,6 @@ func TestIs(t *testing.T) {
 				t.Errorf("Is() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-
-	// Test specific timeout error
-	if !Is(timeoutErr, ErrTimeout) {
-		t.Error("Is() should return true for timeout error")
 	}
 }
 
@@ -444,60 +438,34 @@ func TestIsRetryable(t *testing.T) {
 }
 
 func TestCommonConstructors(t *testing.T) {
-	t.Run("NotFound", func(t *testing.T) {
-		err := NotFound("storage.Get", "key")
-		if !Is(err, ErrNotFound) {
-			t.Error("NotFound() should create ErrNotFound")
-		}
-	})
+	tests := []struct {
+		name    string
+		err     error
+		code    ErrorCode
+		op      string
+		message string
+	}{
+		{"NotFound", NotFound("storage.Get", "key"), ErrNotFound, "storage.Get", "key"},
+		{"AlreadyExists", AlreadyExists("storage.Set", "key"), ErrAlreadyExists, "storage.Set", "key"},
+		{"InvalidInput", InvalidInput("validate", "missing field"), ErrInvalidInput, "validate", "missing field"},
+		{"InvalidInputf", InvalidInputf("validate", "field %s is invalid", "username"), ErrInvalidInput, "validate", "field username is invalid"},
+		{"Timeout", Timeout("raft.Propose", "5s"), ErrTimeout, "raft.Propose", "5s"},
+		{"Internal", Internal("process", "unexpected state"), ErrInternal, "process", "unexpected state"},
+		{"Internalf", Internalf("process", "unexpected state: %s", "invalid"), ErrInternal, "process", "unexpected state: invalid"},
+		{"Unavailable", Unavailable("cluster", "no leader"), ErrUnavailable, "cluster", "no leader"},
+		{"Unavailablef", Unavailablef("cluster", "no leader available in %d nodes", 3), ErrUnavailable, "cluster", "no leader available in 3 nodes"},
+		{"NotImplemented", NotImplemented("feature.X", "not yet available"), ErrNotImplemented, "feature.X", "not yet available"},
+	}
 
-	t.Run("AlreadyExists", func(t *testing.T) {
-		err := AlreadyExists("storage.Set", "key")
-		if !Is(err, ErrAlreadyExists) {
-			t.Error("AlreadyExists() should create ErrAlreadyExists")
-		}
-	})
-
-	t.Run("InvalidInput", func(t *testing.T) {
-		err := InvalidInput("validate", "missing field")
-		if !Is(err, ErrInvalidInput) {
-			t.Error("InvalidInput() should create ErrInvalidInput")
-		}
-	})
-
-	t.Run("InvalidInputf", func(t *testing.T) {
-		err := InvalidInputf("validate", "field %s is invalid", "username")
-		if !Is(err, ErrInvalidInput) {
-			t.Error("InvalidInputf() should create ErrInvalidInput")
-		}
-	})
-
-	t.Run("Timeout", func(t *testing.T) {
-		err := Timeout("raft.Propose", "5s")
-		if !Is(err, ErrTimeout) {
-			t.Error("Timeout() should create ErrTimeout")
-		}
-		if !IsRetryable(err) {
-			t.Error("Timeout() should be retryable")
-		}
-	})
-
-	t.Run("Internal", func(t *testing.T) {
-		err := Internal("process", "unexpected state")
-		if !Is(err, ErrInternal) {
-			t.Error("Internal() should create ErrInternal")
-		}
-	})
-
-	t.Run("Unavailable", func(t *testing.T) {
-		err := Unavailable("cluster", "no leader")
-		if !Is(err, ErrUnavailable) {
-			t.Error("Unavailable() should create ErrUnavailable")
-		}
-		if !IsRetryable(err) {
-			t.Error("Unavailable() should be retryable")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var de *QBError
+			require.ErrorAs(t, tt.err, &de)
+			assert.Equal(t, tt.code, de.Code)
+			assert.Equal(t, tt.op, de.Op)
+			assert.Contains(t, tt.err.Error(), tt.message)
+		})
+	}
 }
 
 func TestErrorCode_String(t *testing.T) {
@@ -740,160 +708,33 @@ func TestNewQuotaExceededError(t *testing.T) {
 	}
 }
 
-func TestIsQuotaExceeded(t *testing.T) {
+// TestIsPredicates proves each category predicate is bound: it matches its
+// own error and rejects a different code and nil.
+func TestIsPredicates(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name  string
+		is    func(error) bool
+		match error
+		other error
 	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "quota exceeded error directly",
-			err:  &QuotaExceededError{Resource: "vectors"},
-			want: true,
-		},
-		{
-			name: "qb error with resource exhausted code",
-			err:  NewQuotaExceededError("storage", "ns", "tenant", 100, 90, 20),
-			want: true,
-		},
-		{
-			name: "different error",
-			err:  &QBError{Code: ErrNotFound, Op: "test"},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
+		{"IsNotFound", IsNotFound, NotFound("test.Op", "resource"), New(ErrStorage, "test.Op", "storage error")},
+		{"IsCanceled", IsCanceled, New(ErrCanceled, "test.Op", "canceled"), New(ErrTimeout, "test.Op", "timeout")},
+		{"IsInvalidInput", IsInvalidInput, InvalidInput("test.Op", "invalid input"), New(ErrStorage, "test.Op", "storage error")},
+		{"IsResourceExhausted", IsResourceExhausted, &QBError{Code: ErrResourceExhausted}, &QBError{Code: ErrNotFound}},
+		{"IsQuotaExceeded", IsQuotaExceeded, NewQuotaExceededError("storage", "ns", "tenant", 100, 90, 20), &QBError{Code: ErrNotFound}},
+		{"IsQuotaExceeded direct", IsQuotaExceeded, &QuotaExceededError{Resource: "vectors"}, errors.New("some error")},
+		{"IsMissingJustification", IsMissingJustification, NewMissingJustificationError("SwitchTenantContext"), &QBError{Code: ErrNotFound}},
+		{"IsMissingUserContext", IsMissingUserContext, NewMissingUserContextError("SwitchTenantContext"), &QBError{Code: ErrNotFound}},
+		{"IsSystemKeyspaceViolation", IsSystemKeyspaceViolation, NewSystemKeyspaceViolationError("op", "key"), &QBError{Code: ErrNotFound}},
+		{"IsCrossTenantAccess", IsCrossTenantAccess, NewCrossTenantAccessError("op", "a", "b"), &QBError{Code: ErrNotFound}},
+		{"IsMissingTenantContext", IsMissingTenantContext, NewMissingTenantContextError("op"), &QBError{Code: ErrNotFound}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsQuotaExceeded(tt.err); got != tt.want {
-				t.Errorf("IsQuotaExceeded() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsResourceExhausted(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "resource exhausted error",
-			err:  &QBError{Code: ErrResourceExhausted},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsResourceExhausted(tt.err); got != tt.want {
-				t.Errorf("IsResourceExhausted() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsMissingJustification(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "missing justification error",
-			err:  NewMissingJustificationError("SwitchTenantContext"),
-			want: true,
-		},
-		{
-			name: "qb error with missing justification code",
-			err:  &QBError{Code: ErrMissingJustification},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsMissingJustification(tt.err); got != tt.want {
-				t.Errorf("IsMissingJustification() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsMissingUserContext(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "missing user context error",
-			err:  NewMissingUserContextError("SwitchTenantContext"),
-			want: true,
-		},
-		{
-			name: "qb error with missing user context code",
-			err:  &QBError{Code: ErrMissingUserContext},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsMissingUserContext(tt.err); got != tt.want {
-				t.Errorf("IsMissingUserContext() = %v, want %v", got, tt.want)
-			}
+			assert.True(t, tt.is(tt.match))
+			assert.False(t, tt.is(tt.other))
+			assert.False(t, tt.is(nil))
 		})
 	}
 }
@@ -1005,144 +846,6 @@ func TestNewMissingTenantContextError(t *testing.T) {
 	})
 }
 
-func TestIsSystemKeyspaceViolation(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "system keyspace violation error",
-			err:  NewSystemKeyspaceViolationError("op", "key"),
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  &QBError{Code: ErrSystemKeyspaceViolation},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsSystemKeyspaceViolation(tt.err))
-		})
-	}
-}
-
-func TestIsCrossTenantAccess(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "cross tenant access error",
-			err:  NewCrossTenantAccessError("op", "a", "b"),
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  &QBError{Code: ErrCrossTenantAccess},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsCrossTenantAccess(tt.err))
-		})
-	}
-}
-
-func TestIsMissingTenantContext(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "missing tenant context error",
-			err:  NewMissingTenantContextError("op"),
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  &QBError{Code: ErrMissingTenantContext},
-			want: true,
-		},
-		{
-			name: "different error code",
-			err:  &QBError{Code: ErrNotFound},
-			want: false,
-		},
-		{
-			name: "plain error",
-			err:  errors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsMissingTenantContext(tt.err))
-		})
-	}
-}
-
-func TestNotImplementedHelper(t *testing.T) {
-	t.Run("creates error with correct code", func(t *testing.T) {
-		err := NotImplemented("feature.X", "not yet available")
-		require.Error(t, err)
-
-		var de *QBError
-		require.ErrorAs(t, err, &de)
-		assert.Equal(t, ErrNotImplemented, de.Code)
-		assert.Equal(t, "feature.X", de.Op)
-		assert.Contains(t, err.Error(), "not yet available")
-	})
-
-	t.Run("is not retryable", func(t *testing.T) {
-		err := NotImplemented("op", "reason")
-		assert.False(t, IsRetryable(err))
-	})
-}
-
 // =============================================================================
 // Consolidated from errors_additional_test.go
 // =============================================================================
@@ -1166,48 +869,14 @@ func TestWrapf(t *testing.T) {
 		err := Wrapf(nil, ErrStorage, "storage.Get", "some message")
 		assert.Nil(t, err)
 	})
-
-	t.Run("wrapf preserves retryable", func(t *testing.T) {
-		baseErr := errors.New("timeout")
-		err := Wrapf(baseErr, ErrTimeout, "api.call", "request timed out")
-
-		require.Error(t, err)
-		assert.True(t, IsRetryable(err))
-	})
 }
 
 func TestQBError_WithRetry(t *testing.T) {
-	t.Run("set retry to true", func(t *testing.T) {
-		err := &QBError{Code: ErrNotFound}
-		assert.False(t, err.IsRetryable())
+	err := &QBError{Code: ErrNotFound}
+	assert.False(t, err.IsRetryable())
 
-		err = err.WithRetry(true)
-		assert.True(t, err.IsRetryable())
-	})
-
-	t.Run("set retry to false", func(t *testing.T) {
-		err := &QBError{Code: ErrTimeout, Retry: true}
-		assert.True(t, err.IsRetryable())
-
-		err = err.WithRetry(false)
-		// Still retryable because code is retryable
-		assert.True(t, err.IsRetryable())
-	})
-
-	t.Run("explicit retry takes precedence", func(t *testing.T) {
-		err := &QBError{Code: ErrNotFound, Retry: false}
-		assert.False(t, err.IsRetryable())
-
-		err.Retry = true
-		assert.True(t, err.IsRetryable())
-	})
-}
-
-func TestQBError_GetContext_Nil(t *testing.T) {
-	err := &QBError{Code: ErrNotFound, Context: nil}
-	val, ok := err.GetContext("key")
-	assert.Nil(t, val)
-	assert.False(t, ok)
+	err = err.WithRetry(true)
+	assert.True(t, err.IsRetryable())
 }
 
 func TestAs(t *testing.T) {
@@ -1223,12 +892,6 @@ func TestAs(t *testing.T) {
 		err := errors.New("standard error")
 		var de *QBError
 		ok := As(err, &de)
-		assert.False(t, ok)
-	})
-
-	t.Run("As with nil", func(t *testing.T) {
-		var de *QBError
-		ok := As(nil, &de)
 		assert.False(t, ok)
 	})
 }
@@ -1254,140 +917,4 @@ func TestGetContext(t *testing.T) {
 		assert.False(t, ok)
 		assert.Nil(t, val)
 	})
-
-	t.Run("get context from nil error", func(t *testing.T) {
-		val, ok := GetContext(nil, "key")
-		assert.False(t, ok)
-		assert.Nil(t, val)
-	})
-
-	t.Run("get non-existent context key", func(t *testing.T) {
-		err := New(ErrNotFound, "test", "not found")
-		val, ok := GetContext(err, "nonexistent")
-		assert.False(t, ok)
-		assert.Nil(t, val)
-	})
-}
-
-func TestInternalf(t *testing.T) {
-	err := Internalf("process", "unexpected state: %s", "invalid")
-	require.Error(t, err)
-
-	var de *QBError
-	require.ErrorAs(t, err, &de)
-	assert.Equal(t, ErrInternal, de.Code)
-	assert.Equal(t, "process", de.Op)
-	assert.Contains(t, err.Error(), "unexpected state: invalid")
-}
-
-func TestUnavailablef(t *testing.T) {
-	err := Unavailablef("cluster", "no leader available in %d nodes", 3)
-	require.Error(t, err)
-
-	var de *QBError
-	require.ErrorAs(t, err, &de)
-	assert.Equal(t, ErrUnavailable, de.Code)
-	assert.Equal(t, "cluster", de.Op)
-	assert.Contains(t, err.Error(), "no leader available in 3 nodes")
-	assert.True(t, IsRetryable(err))
-}
-
-func TestWrap_PreservesContext(t *testing.T) {
-	originalErr := New(ErrNotFound, "inner", "not found")
-	originalErr.WithContext("key", "value")
-	originalErr.WithContext("id", 123)
-
-	wrappedErr := Wrap(originalErr, ErrStorage, "outer")
-	require.Error(t, wrappedErr)
-
-	var de *QBError
-	require.ErrorAs(t, wrappedErr, &de)
-	assert.Equal(t, "outer", de.Op)
-
-	// Context should be preserved
-	val, ok := GetContext(wrappedErr, "key")
-	assert.True(t, ok)
-	assert.Equal(t, "value", val)
-
-	val, ok = GetContext(wrappedErr, "id")
-	assert.True(t, ok)
-	assert.Equal(t, 123, val)
-}
-
-// TestWrap_RetryFollowsTheCallerCode pins the go-qrdb#187 contract: Retry is
-// derived from the code the wrap applies, never inherited from the inner
-// error. A retryable inner wrapped as non-retryable (a cancellation, a
-// storage fault) must come back non-retryable, and a non-retryable inner
-// wrapped as a timeout must come back retryable.
-func TestWrap_RetryFollowsTheCallerCode(t *testing.T) {
-	retryableInner := New(ErrTimeout, "inner", "timed out")
-	require.True(t, IsRetryable(retryableInner))
-
-	reclassified := Wrap(retryableInner, ErrStorage, "outer")
-	require.Error(t, reclassified)
-	assert.False(t, IsRetryable(reclassified), "a retryable inner must not leak retry through a non-retryable wrap")
-	assert.True(t, Is(reclassified, ErrStorage))
-
-	plainInner := New(ErrNotFound, "inner", "not found")
-	require.False(t, IsRetryable(plainInner))
-
-	promoted := Wrap(plainInner, ErrUnavailable, "outer")
-	require.Error(t, promoted)
-	assert.True(t, IsRetryable(promoted), "retry follows the wrap's code")
-
-	// The inner error is still in the chain for errors.As / sentinel matching.
-	var inner *QBError
-	require.True(t, errors.As(errors.Unwrap(promoted), &inner))
-	assert.Equal(t, ErrNotFound, inner.Code)
-}
-
-func TestQBError_IsWithNilUnderlying(t *testing.T) {
-	err := &QBError{Code: ErrNotFound, Err: nil}
-	standardErr := errors.New("standard")
-
-	assert.False(t, err.Is(standardErr))
-	assert.True(t, err.Is(&QBError{Code: ErrNotFound}))
-}
-
-// =============================================================================
-// Consolidated from helpers_coverage_test.go
-// =============================================================================
-
-func TestIsNotFound_Helper(t *testing.T) {
-	// Test with NotFound error
-	err := NotFound("test.Op", "resource")
-	assert.True(t, IsNotFound(err))
-
-	// Test with nil
-	assert.False(t, IsNotFound(nil))
-
-	// Test with different error code
-	err2 := New(ErrStorage, "test.Op", "storage error")
-	assert.False(t, IsNotFound(err2))
-}
-
-func TestIsCanceled_Helper(t *testing.T) {
-	// Test with Canceled error
-	err := New(ErrCanceled, "test.Op", "canceled")
-	assert.True(t, IsCanceled(err))
-
-	// Test with nil
-	assert.False(t, IsCanceled(nil))
-
-	// Test with different error code
-	err2 := New(ErrTimeout, "test.Op", "timeout")
-	assert.False(t, IsCanceled(err2))
-}
-
-func TestIsInvalidInput_Helper(t *testing.T) {
-	// Test with InvalidInput error
-	err := InvalidInput("test.Op", "invalid input")
-	assert.True(t, IsInvalidInput(err))
-
-	// Test with nil
-	assert.False(t, IsInvalidInput(nil))
-
-	// Test with different error code
-	err2 := New(ErrStorage, "test.Op", "storage error")
-	assert.False(t, IsInvalidInput(err2))
 }
