@@ -26,187 +26,45 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/vector"
 )
 
-func TestLoggerAdapterWithError(t *testing.T) {
-	cfg := logger.LogConfig{
+func TestLoggerAdapter(t *testing.T) {
+	baseLogger, err := logger.New(logger.LogConfig{
 		Level:  "info",
 		Format: "json",
 		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
+	})
 	require.NoError(t, err)
 
-	adapter := &loggerAdapter{Logger: baseLogger}
-	testErr := errors.New("test error")
-	result := adapter.WithError(testErr)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithError should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithError should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestLoggerAdapterWithField tests the WithField method.
-func TestLoggerAdapterWithField(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithField("key", "value")
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithField should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithField should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestLoggerAdapterWithFields tests the WithFields method.
-func TestLoggerAdapterWithFields(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	fields := map[string]interface{}{
-		"key1": "value1",
-		"key2": 123,
-		"key3": true,
-	}
-	result := adapter.WithFields(fields)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "WithFields should return interfaces.Logger")
-
-	resultAdapter, ok := result.(*loggerAdapter)
-	assert.True(t, ok, "WithFields should return *loggerAdapter")
-	assert.NotNil(t, resultAdapter.Logger)
-}
-
-// TestAsInterfaceLogger tests the conversion function.
-func TestAsInterfaceLogger(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	interfaceLogger := asInterfaceLogger(baseLogger)
-
-	assert.NotNil(t, interfaceLogger)
-	_, ok := interfaceLogger.(interfaces.Logger)
-	assert.True(t, ok, "asInterfaceLogger should return interfaces.Logger")
-
-	adapter, ok := interfaceLogger.(*loggerAdapter)
-	assert.True(t, ok, "asInterfaceLogger should return *loggerAdapter")
-	assert.Equal(t, baseLogger, adapter.Logger)
-}
-
-// TestLoggerAdapterChaining tests method chaining.
-func TestLoggerAdapterChaining(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "debug",
-		Format: "console",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := asInterfaceLogger(baseLogger)
-	result := adapter.
-		WithField("request_id", "123").
-		WithField("user_id", "456").
-		WithError(errors.New("test error"))
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok, "Chained operations should return interfaces.Logger")
-}
-
-// TestLoggerAdapterWithEmptyFields tests edge case of empty fields map.
-func TestLoggerAdapterWithEmptyFields(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithFields(map[string]interface{}{})
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok)
-}
-
-// TestLoggerAdapterWithNilError tests edge case of nil error.
-func TestLoggerAdapterWithNilError(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := &loggerAdapter{Logger: baseLogger}
-	result := adapter.WithError(nil)
-
-	assert.NotNil(t, result)
-	_, ok := result.(interfaces.Logger)
-	assert.True(t, ok)
-}
-
-// TestLoggerAdapterMultipleFieldTypes tests various data types as field values.
-func TestLoggerAdapterMultipleFieldTypes(t *testing.T) {
-	cfg := logger.LogConfig{
-		Level:  "info",
-		Format: "json",
-		Output: "stdout",
-	}
-	baseLogger, err := logger.New(cfg)
-	require.NoError(t, err)
-
-	adapter := asInterfaceLogger(baseLogger)
+	base := asInterfaceLogger(baseLogger)
+	baseAdapter, ok := base.(*loggerAdapter)
+	require.True(t, ok, "asInterfaceLogger should return *loggerAdapter")
+	assert.Equal(t, baseLogger, baseAdapter.Logger)
 
 	tests := []struct {
-		name  string
-		key   string
-		value interface{}
+		name string
+		call func(l interfaces.Logger) interfaces.Logger
 	}{
-		{"string", "str_field", "test"},
-		{"int", "int_field", 42},
-		{"float", "float_field", 3.14},
-		{"bool", "bool_field", true},
-		{"nil", "nil_field", nil},
-		{"slice", "slice_field", []string{"a", "b"}},
-		{"map", "map_field", map[string]string{"k": "v"}},
+		{"with error", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithError(errors.New("test error"))
+		}},
+		{"with nil error", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithError(nil)
+		}},
+		{"with field", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithField("key", "value")
+		}},
+		{"with fields", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithFields(map[string]interface{}{"key1": "value1", "key2": 123, "key3": true})
+		}},
+		{"with empty fields", func(l interfaces.Logger) interfaces.Logger {
+			return l.WithFields(map[string]interface{}{})
+		}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := adapter.WithField(tt.key, tt.value)
-			assert.NotNil(t, result)
-			_, ok := result.(interfaces.Logger)
-			assert.True(t, ok)
+			resultAdapter, ok := tt.call(base).(*loggerAdapter)
+			require.True(t, ok, "adapter methods should return *loggerAdapter")
+			assert.NotNil(t, resultAdapter.Logger)
 		})
 	}
 }
@@ -266,17 +124,6 @@ func TestFormatVectorUpsertResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorUpsertResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.UpsertResponse{
-		ID:        "vec-123",
-		Success:   true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpsertResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorBatchUpsertResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -327,17 +174,6 @@ func TestFormatVectorBatchUpsertResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorBatchUpsertResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.BatchUpsertResponse{
-		VectorsSucceeded: 10,
-		VectorsFailed:    0,
-		Timestamp:        time.Now(),
-	}
-	err := formatVectorBatchUpsertResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorGetResponse(t *testing.T) {
@@ -418,19 +254,6 @@ func TestFormatVectorGetResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorGetResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetResponse{
-		Vector: &vector.VectorEntity{
-			ID: "vec-123",
-		},
-		Found:     true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorDeleteResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -478,16 +301,6 @@ func TestFormatVectorDeleteResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorDeleteResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.DeleteResponse{
-		Deleted:   true,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorDeleteResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorBatchDeleteResponse(t *testing.T) {
@@ -540,16 +353,6 @@ func TestFormatVectorBatchDeleteResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorBatchDeleteResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.BatchDeleteResponse{
-		DeletedCount: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorBatchDeleteResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorListResponse(t *testing.T) {
@@ -611,17 +414,6 @@ func TestFormatVectorListResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorListResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.ListVectorsResponse{
-		Vectors:    []*vector.VectorEntity{},
-		TotalCount: 0,
-		Timestamp:  time.Now(),
-	}
-	err := formatVectorListResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorSearchSimilarResponse(t *testing.T) {
@@ -703,17 +495,6 @@ func TestFormatVectorSearchSimilarResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorSearchSimilarResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchSimilarResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchSimilarResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorSearchByIDResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -775,17 +556,6 @@ func TestFormatVectorSearchByIDResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorSearchByIDResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.SearchByIDResponse{
-		Results:      []*vector.SearchResult{},
-		SearchTimeMs: 10,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByIDResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorIndexRebuildResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -840,17 +610,6 @@ func TestFormatVectorIndexRebuildResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorIndexRebuildResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.RebuildIndexResponse{
-		OperationID: "op-123",
-		Status:      "started",
-		Timestamp:   time.Now(),
-	}
-	err := formatVectorIndexRebuildResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorIndexProgressResponse(t *testing.T) {
@@ -920,18 +679,6 @@ func TestFormatVectorIndexProgressResponse(t *testing.T) {
 	}
 }
 
-func TestFormatVectorIndexProgressResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetIndexProgressResponse{
-		OperationID: "op-123",
-		Namespace:   "test-ns",
-		Status:      "in_progress",
-		Timestamp:   time.Now(),
-	}
-	err := formatVectorIndexProgressResponse(resp)
-	assert.Error(t, err)
-}
-
 func TestFormatVectorIndexStatsResponse(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -974,16 +721,6 @@ func TestFormatVectorIndexStatsResponse(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestFormatVectorIndexStatsResponseInvalidFormat(t *testing.T) {
-	outputFormat = "invalid-format"
-	resp := &vector.GetStatsResponse{
-		Namespace:   "test-ns",
-		VectorCount: 10000,
-	}
-	err := formatVectorIndexStatsResponse(resp)
-	assert.Error(t, err)
 }
 
 func TestFormatVectorUpdateMetadataResponse(t *testing.T) {
@@ -1559,125 +1296,94 @@ func testWithInvalidOutputFormat(t *testing.T, fn func() error) {
 	assert.Contains(t, err.Error(), "unknown output format")
 }
 
-func TestFormatVectorNamespaceCreateResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{
-			Success: true, Namespace: "ns", Timestamp: time.Now(),
-		})
-	})
-}
+func TestFormatVectorResponses_InvalidFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		format func() error
+	}{
+		{"namespace create", func() error {
+			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{
+				Success: true, Namespace: "ns", Timestamp: time.Now(),
+			})
+		}},
+		{"namespace delete", func() error {
+			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{
+				Deleted: true, Timestamp: time.Now(),
+			})
+		}},
+		{"namespace list", func() error {
+			return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
+				Namespaces: []*vector.NamespaceInfo{}, Timestamp: time.Now(),
+			})
+		}},
+		{"namespace info", func() error {
+			return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
+				Info: &vector.NamespaceInfo{}, Timestamp: time.Now(),
+			})
+		}},
+		{"upsert", func() error {
+			return formatVectorUpsertResponse(&vector.UpsertResponse{
+				ID: "vec-1", Success: true, Timestamp: time.Now(),
+			})
+		}},
+		{"batch upsert", func() error {
+			return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{
+				VectorsSucceeded: 5, Timestamp: time.Now(),
+			})
+		}},
+		{"get", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{
+				Vector: &vector.VectorEntity{ID: "v1", Vector: []float32{0.1}},
+				Found:  true, Timestamp: time.Now(),
+			})
+		}},
+		{"delete", func() error {
+			return formatVectorDeleteResponse(&vector.DeleteResponse{
+				Deleted: true, Timestamp: time.Now(),
+			})
+		}},
+		{"batch delete", func() error {
+			return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
+				DeletedCount: 3, Timestamp: time.Now(),
+			})
+		}},
+		{"list", func() error {
+			return formatVectorListResponse(&vector.ListVectorsResponse{
+				Vectors: []*vector.VectorEntity{}, Timestamp: time.Now(),
+			})
+		}},
+		{"search similar", func() error {
+			return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
+				Results: []*vector.SearchResult{}, Timestamp: time.Now(),
+			})
+		}},
+		{"search by id", func() error {
+			return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
+				Results: []*vector.SearchResult{}, Timestamp: time.Now(),
+			})
+		}},
+		{"index rebuild", func() error {
+			return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
+				OperationID: "op-1", Status: "running",
+			})
+		}},
+		{"index progress", func() error {
+			return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
+				Namespace: "ns", PercentComplete: 50.0,
+			})
+		}},
+		{"index stats", func() error {
+			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
+				Namespace: "ns", VectorCount: 100,
+			})
+		}},
+	}
 
-func TestFormatVectorNamespaceDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{
-			Deleted: true, Timestamp: time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testWithInvalidOutputFormat(t, tt.format)
 		})
-	})
-}
-
-func TestFormatVectorNamespaceListResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
-			Namespaces: []*vector.NamespaceInfo{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorNamespaceInfoResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
-			Info: &vector.NamespaceInfo{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorUpsertResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorUpsertResponse(&vector.UpsertResponse{
-			ID: "vec-1", Success: true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorBatchUpsertResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{
-			VectorsSucceeded: 5, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorGetResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorGetResponse(&vector.GetResponse{
-			Vector: &vector.VectorEntity{ID: "v1", Vector: []float32{0.1}},
-			Found:  true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorDeleteResponse(&vector.DeleteResponse{
-			Deleted: true, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorBatchDeleteResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
-			DeletedCount: 3, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorListResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorListResponse(&vector.ListVectorsResponse{
-			Vectors: []*vector.VectorEntity{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorSearchSimilarResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
-			Results: []*vector.SearchResult{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorSearchByIDResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
-			Results: []*vector.SearchResult{}, Timestamp: time.Now(),
-		})
-	})
-}
-
-func TestFormatVectorIndexRebuildResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
-			OperationID: "op-1", Status: "running",
-		})
-	})
-}
-
-func TestFormatVectorIndexProgressResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
-			Namespace: "ns", PercentComplete: 50.0,
-		})
-	})
-}
-
-func TestFormatVectorIndexStatsResponse_InvalidFormat(t *testing.T) {
-	testWithInvalidOutputFormat(t, func() error {
-		return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
-			Namespace: "ns", VectorCount: 100,
-		})
-	})
+	}
 }
 
 // =============================================================================
