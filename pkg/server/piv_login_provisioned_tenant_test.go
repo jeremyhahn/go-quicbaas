@@ -96,6 +96,15 @@ func TestPIVLogin_TenantBearerCreatesRoleThroughComposedNode(t *testing.T) {
 	// routes rather than answering 503 "still composing".
 	require.NoError(t, srv.startService(), "compose the quicbaas service")
 
+	// The node-level authenticator is what projects a qrdb identity for a
+	// bearer with no client certificate; without one the IAM handler sees
+	// an anonymous request and urlTenant refuses it 403.
+	identity, err := newPlatformBearerAuthenticator(srv).(*platformBearerAuthenticator).
+		authenticateAuthorization(context.Background(), "Bearer "+tokens.AccessToken)
+	if assert.NoError(t, err, "the node authenticator must accept the PIV login bearer") {
+		assert.Equal(t, "acme", identity.TenantID)
+	}
+
 	status, body = postBearerOnlyToNodeREST(t, srv, root, "/api/v1/tenants/acme/roles",
 		tokens.AccessToken, `{"name":"itest-role"}`)
 	t.Logf("POST /api/v1/tenants/acme/roles: %d %s", status, body)
