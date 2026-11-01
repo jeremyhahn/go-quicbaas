@@ -578,6 +578,21 @@ func TestHandleDeleteSeries(t *testing.T) {
 			},
 			setupMock:      func() {},
 			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "metric is required")
+			},
+		},
+		{
+			name:        "service_error",
+			requestBody: DeleteSeriesRequest{Metric: "cpu.usage"},
+			setupMock: func() {
+				mockService.On("DeleteSeries", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "DeleteSeries",
+					Err:  stderrors.New("internal error"),
+				}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -607,31 +622,92 @@ func TestHandleDeleteSeries(t *testing.T) {
 func TestHandleGetRetentionPolicy(t *testing.T) {
 	server, mockService := setupTimeSeriesTestServer(t)
 
-	thirtyDays := 30 * 24 * time.Hour
-	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).
-		Return(&service.TSGetRetentionPolicyResponse{
-			Metric: "cpu.usage",
-			Policy: &service.TSRetentionPolicy{
-				Duration: thirtyDays,
+	tests := []struct {
+		name           string
+		metric         string
+		setupMock      func()
+		expectedStatus int
+		checkResponse  func(t *testing.T, resp *httptest.ResponseRecorder)
+	}{
+		{
+			name:   "valid_policy",
+			metric: "cpu.usage",
+			setupMock: func() {
+				mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).
+					Return(&service.TSGetRetentionPolicyResponse{
+						Policy: &service.TSRetentionPolicy{
+							Duration:    30 * 24 * time.Hour,
+							Resolution:  time.Minute,
+							Aggregation: "avg",
+						},
+					}, nil).Once()
 			},
-		}, nil).Once()
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				var response GetRetentionPolicyResponse
+				err := json.Unmarshal(resp.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Equal(t, "cpu.usage", response.Metric)
+				assert.NotNil(t, response.Policy)
+			},
+		},
+		{
+			name:   "nil_policy",
+			metric: "cpu.usage",
+			setupMock: func() {
+				mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).
+					Return(&service.TSGetRetentionPolicyResponse{Policy: nil}, nil).Once()
+			},
+			expectedStatus: http.StatusOK,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				var response GetRetentionPolicyResponse
+				err := json.Unmarshal(resp.Body.Bytes(), &response)
+				require.NoError(t, err)
+				assert.Nil(t, response.Policy)
+			},
+		},
+		{
+			name:           "missing_metric",
+			metric:         "",
+			setupMock:      func() {},
+			expectedStatus: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, resp *httptest.ResponseRecorder) {
+				assert.Contains(t, resp.Body.String(), "metric is required")
+			},
+		},
+		{
+			name:   "service_not_found",
+			metric: "cpu.usage",
+			setupMock: func() {
+				mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrNotFound,
+					Op:   "GetRetentionPolicy",
+					Err:  stderrors.New("metric not found"),
+				}).Once()
+			},
+			expectedStatus: http.StatusNotFound,
+		},
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/cpu.usage", nil)
-	resp := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.setupMock()
 
-	// Setup chi context with URL params
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/"+tt.metric, nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("metric", tt.metric)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			resp := httptest.NewRecorder()
 
-	server.HandleGetRetentionPolicy(resp, req)
+			server.HandleGetRetentionPolicy(resp, req)
 
-	assert.Equal(t, http.StatusOK, resp.Code)
+			assert.Equal(t, tt.expectedStatus, resp.Code)
 
-	var response map[string]interface{}
-	err := json.Unmarshal(resp.Body.Bytes(), &response)
-	require.NoError(t, err)
-	assert.Equal(t, "cpu.usage", response["metric"])
+			if tt.checkResponse != nil {
+				tt.checkResponse(t, resp)
+			}
+		})
+	}
 }
 
 // TestHandleSetRetentionPolicy tests setting retention policy
@@ -690,40 +766,6 @@ func TestHandleListMetrics(t *testing.T) {
 	assert.Len(t, metrics, 3)
 }
 
-func TestCov91_HandleDeleteSeries_ServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.DeleteSeriesFunc = func(ctx context.Context, req *service.TSDeleteRequest) (*service.TSDeleteResponse, error) {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("delete error")}
-	}
-
-	body := `{"metric":"cpu.usage"}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/timeseries/series/cpu.usage", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCov91_HandleGetRetentionPolicy_ServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.GetRetentionPolicyFunc = func(ctx context.Context, req *service.TSGetRetentionPolicyRequest) (*service.TSGetRetentionPolicyResponse, error) {
-		return nil, &errors.QBError{Code: errors.ErrInternal, Err: stderrors.New("retention error")}
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/series/cpu.usage/retention", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestCov91_HandleSetRetentionPolicy_ServiceError(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
@@ -756,46 +798,6 @@ func TestCov91_HandleListMetrics_ServiceError(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestCov91_HandleDeleteSeries_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.DeleteSeriesFunc = func(ctx context.Context, req *service.TSDeleteRequest) (*service.TSDeleteResponse, error) {
-		return &service.TSDeleteResponse{Success: true}, nil
-	}
-
-	body := `{"metric":"cpu.usage"}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/timeseries/series/cpu.usage", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleGetRetentionPolicy_Success(t *testing.T) {
-	server, mockService, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	mockService.GetRetentionPolicyFunc = func(ctx context.Context, req *service.TSGetRetentionPolicyRequest) (*service.TSGetRetentionPolicyResponse, error) {
-		return &service.TSGetRetentionPolicyResponse{
-			Policy: &service.TSRetentionPolicy{
-				Duration:    24 * time.Hour,
-				Resolution:  time.Minute,
-				Aggregation: "avg",
-			},
-		}, nil
-	}
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/series/cpu.usage/retention", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCov91_HandleSetRetentionPolicy_Success(t *testing.T) {
@@ -832,32 +834,6 @@ func TestCov91_HandleListMetrics_Success(t *testing.T) {
 	server.HandleListMetrics(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestCov91_HandleDeleteSeries_MissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	body := `{}`
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/timeseries/series/cpu.usage", strings.NewReader(body))
-	w := httptest.NewRecorder()
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCov91_HandleGetRetentionPolicy_MissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServerWithFuncMock(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "")
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/series//retention", nil)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	w := httptest.NewRecorder()
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCov91_HandleSetRetentionPolicy_MissingMetric(t *testing.T) {
@@ -962,176 +938,6 @@ func (m *MockTimeSeriesService) ListMetrics(ctx context.Context, req *service.TS
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*service.TSListMetricsResponse), args.Error(1)
-}
-
-func TestHandleDeleteSeriesSuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("DeleteSeries", mock.Anything, mock.Anything).Return(&service.TSDeleteResponse{
-		Success: true,
-	}, nil).Once()
-
-	deleteReq := DeleteSeriesRequest{
-		Metric: "cpu.usage",
-	}
-
-	body, err := json.Marshal(deleteReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/delete", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp DeleteSeriesResponse
-	err = json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-}
-
-func TestHandleDeleteSeriesMissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	deleteReq := DeleteSeriesRequest{
-		Metric: "",
-	}
-
-	body, err := json.Marshal(deleteReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/delete", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "metric is required")
-}
-
-func TestHandleDeleteSeriesServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("DeleteSeries", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-		Code: errors.ErrInternal,
-		Op:   "DeleteSeries",
-		Err:  stderrors.New("internal error"),
-	}).Once()
-
-	deleteReq := DeleteSeriesRequest{
-		Metric: "cpu.usage",
-	}
-
-	body, err := json.Marshal(deleteReq)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/timeseries/delete", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleDeleteSeries(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestHandleGetRetentionPolicySuccess(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(&service.TSGetRetentionPolicyResponse{
-		Policy: &service.TSRetentionPolicy{
-			Duration:    30 * 24 * time.Hour,
-			Resolution:  time.Minute,
-			Aggregation: "avg",
-		},
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/cpu.usage", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp GetRetentionPolicyResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Equal(t, "cpu.usage", resp.Metric)
-	assert.NotNil(t, resp.Policy)
-}
-
-func TestHandleGetRetentionPolicyMissingMetric(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "metric is required")
-}
-
-func TestHandleGetRetentionPolicyServiceError(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-		Code: errors.ErrNotFound,
-		Op:   "GetRetentionPolicy",
-		Err:  stderrors.New("metric not found"),
-	}).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/cpu.usage", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestHandleGetRetentionPolicyNilPolicy(t *testing.T) {
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	mockService.On("GetRetentionPolicy", mock.Anything, mock.Anything).Return(&service.TSGetRetentionPolicyResponse{
-		Policy: nil, // No policy set
-	}, nil).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/timeseries/retention/cpu.usage", nil)
-	w := httptest.NewRecorder()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("metric", "cpu.usage")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	server.HandleGetRetentionPolicy(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp GetRetentionPolicyResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Nil(t, resp.Policy)
 }
 
 func TestHandleSetRetentionPolicySuccess(t *testing.T) {
