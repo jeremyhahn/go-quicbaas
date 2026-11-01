@@ -251,10 +251,45 @@ func TestGetProviderIDFromArgs(t *testing.T) {
 // Federation Execution Handler Tests - Success Paths
 // =============================================================================
 
-// unavailableFederationRegistry returns a registry whose service does not
-// support federation, so every federation tool fails before reaching a manager.
-func unavailableFederationRegistry(t *testing.T) *ToolRegistry {
-	return &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
+// federationToolCase is one row of a federation tool table. With unavailable
+// set, the registry's service does not support federation and mgr is unused.
+type federationToolCase struct {
+	name        string
+	mgr         *mockFederationManager
+	unavailable bool
+	args        map[string]interface{}
+	wantErr     bool
+	check       func(t *testing.T, result interface{})
+}
+
+// federationTool is the method expression of one federation tool executor.
+type federationTool func(*ToolRegistry, context.Context, map[string]interface{}) (interface{}, error)
+
+// runFederationToolCases runs each case against tool as a subtest.
+func runFederationToolCases(t *testing.T, tool federationTool, cases []federationToolCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
+			if !tc.unavailable {
+				reg = newFederationRegistry(t, tc.mgr)
+			}
+			result, err := tool(reg, context.Background(), tc.args)
+			if tc.wantErr {
+				require.Error(t, err)
+				if tc.unavailable {
+					var fedErr *FederationServiceUnavailableError
+					assert.ErrorAs(t, err, &fedErr)
+				}
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if tc.check != nil {
+				tc.check(t, result)
+			}
+		})
+	}
 }
 
 func TestExecuteIAMFederationCreateProvider(t *testing.T) {
@@ -268,92 +303,52 @@ func TestExecuteIAMFederationCreateProvider(t *testing.T) {
 		"issuer_url":    "https://accounts.google.com",
 		"scopes":        []interface{}{"openid", "email"},
 	}
-	tests := []struct {
-		name    string
-		reg     func(t *testing.T) *ToolRegistry
-		wantErr bool
-	}{
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationCreateProvider, []federationToolCase{
 		{
 			name: "success",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{})
+			mgr:  &mockFederationManager{},
+			args: args,
+			check: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "google", resultMap["id"])
 			},
 		},
 		{
-			name: "service error",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{
-					registerProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
-						return errors.New("registration failed")
-					},
-				})
+			name: "register error",
+			mgr: &mockFederationManager{
+				registerProviderFn: func(_ context.Context, _ *iam.ExternalProvider) error {
+					return errors.New("registration failed")
+				},
 			},
+			args:    args,
 			wantErr: true,
 		},
-		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.reg(t).executeIAMFederationCreateProvider(context.Background(), args)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			resultMap, ok := result.(map[string]interface{})
-			require.True(t, ok)
-			assert.Equal(t, "google", resultMap["id"])
-		})
-	}
+		{name: "service unavailable", unavailable: true, args: args, wantErr: true},
+	})
 }
 
 func TestExecuteIAMFederationGetProvider(t *testing.T) {
 	args := map[string]interface{}{"tenant_id": "t1", "provider_id": "google"}
-	tests := []struct {
-		name    string
-		reg     func(t *testing.T) *ToolRegistry
-		wantErr bool
-	}{
-		{
-			name: "success",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{})
-			},
-		},
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationGetProvider, []federationToolCase{
+		{name: "success", mgr: &mockFederationManager{}, args: args},
 		{
 			name: "not found",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{
-					getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
-						return nil, errors.New("not found")
-					},
-				})
+			mgr: &mockFederationManager{
+				getProviderFn: func(_ context.Context, _, _ string) (*iam.ExternalProvider, error) {
+					return nil, errors.New("not found")
+				},
 			},
+			args:    args,
 			wantErr: true,
 		},
-		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.reg(t).executeIAMFederationGetProvider(context.Background(), args)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
+		{name: "service unavailable", unavailable: true, args: args, wantErr: true},
+	})
 }
 
 func TestExecuteIAMFederationUpdateProvider(t *testing.T) {
 	minimalArgs := map[string]interface{}{"id": "google", "tenant_id": "t1"}
-	tests := []struct {
-		name    string
-		mgr     *mockFederationManager
-		args    map[string]interface{}
-		wantErr bool
-	}{
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationUpdateProvider, []federationToolCase{
 		{
 			name: "success with every field",
 			mgr:  &mockFederationManager{},
@@ -390,75 +385,66 @@ func TestExecuteIAMFederationUpdateProvider(t *testing.T) {
 			args:    minimalArgs,
 			wantErr: true,
 		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reg := newFederationRegistry(t, tt.mgr)
-			result, err := reg.executeIAMFederationUpdateProvider(context.Background(), tt.args)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, result)
-		})
-	}
+	})
 }
 
 func TestExecuteIAMFederationDeleteProvider(t *testing.T) {
 	args := map[string]interface{}{"tenant_id": "t1", "provider_id": "google"}
-	tests := []struct {
-		name    string
-		reg     func(t *testing.T) *ToolRegistry
-		wantErr bool
-	}{
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationDeleteProvider, []federationToolCase{
 		{
 			name: "success",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{})
+			mgr:  &mockFederationManager{},
+			args: args,
+			check: func(t *testing.T, result interface{}) {
+				resultMap, ok := result.(map[string]interface{})
+				require.True(t, ok)
+				assert.Equal(t, "deleted", resultMap["status"])
 			},
 		},
 		{
 			name: "delete error",
-			reg: func(t *testing.T) *ToolRegistry {
-				return newFederationRegistry(t, &mockFederationManager{
-					deleteProviderFn: func(_ context.Context, _, _ string) error {
-						return errors.New("delete failed")
-					},
-				})
+			mgr: &mockFederationManager{
+				deleteProviderFn: func(_ context.Context, _, _ string) error {
+					return errors.New("delete failed")
+				},
 			},
+			args:    args,
 			wantErr: true,
 		},
-		{name: "service unavailable", reg: unavailableFederationRegistry, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := tt.reg(t).executeIAMFederationDeleteProvider(context.Background(), args)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			resultMap, ok := result.(map[string]interface{})
-			require.True(t, ok)
-			assert.Equal(t, "deleted", resultMap["status"])
-		})
-	}
+		{name: "service unavailable", unavailable: true, args: args, wantErr: true},
+	})
 }
 
-func TestExecuteIAMFederationListProviders_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationListProviders(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
+func TestExecuteIAMFederationListProviders(t *testing.T) {
+	assertProviders := func(t *testing.T, result interface{}) {
+		resultMap, ok := result.(map[string]interface{})
+		require.True(t, ok)
+		assert.NotNil(t, resultMap["providers"])
+	}
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationListProviders, []federationToolCase{
+		{
+			name:  "success",
+			mgr:   &mockFederationManager{},
+			args:  map[string]interface{}{"tenant_id": "t1"},
+			check: assertProviders,
+		},
+		{
+			name:  "pagination",
+			mgr:   &mockFederationManager{},
+			args:  map[string]interface{}{"tenant_id": "t1", "limit": float64(50), "offset": float64(10)},
+			check: assertProviders,
+		},
+		{
+			name: "list error",
+			mgr: &mockFederationManager{
+				listProvidersFn: func(_ context.Context, _ string, _ iam.ListOptions) ([]*iam.ExternalProvider, error) {
+					return nil, errors.New("list failed")
+				},
+			},
+			args:    map[string]interface{}{"tenant_id": "t1"},
+			wantErr: true,
+		},
 	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	resultMap, ok := result.(map[string]interface{})
-	require.True(t, ok)
-	assert.NotNil(t, resultMap["providers"])
 }
 
 // assertNoProviderSecret fails when a federation tool result, encoded as the
@@ -541,84 +527,48 @@ func TestExecuteIAMFederationProviderTools_RedactClientSecret(t *testing.T) {
 	assert.Equal(t, secret, storedProvider.ClientSecret, "the stored provider must keep the secret")
 }
 
-func TestExecuteIAMFederationListProviders_WithPagination(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationListProviders(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-		"limit":     float64(50),
-		"offset":    float64(10),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMFederationListProviders_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		listProvidersFn: func(_ context.Context, _ string, _ iam.ListOptions) ([]*iam.ExternalProvider, error) {
-			return nil, errors.New("list failed")
+func TestExecuteIAMFederationBeginLogin(t *testing.T) {
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationBeginLogin, []federationToolCase{
+		{
+			name: "success",
+			mgr:  &mockFederationManager{},
+			args: map[string]interface{}{
+				"tenant_id":     "t1",
+				"provider_name": "google",
+				"redirect_uri":  "https://app.example.com/callback",
+			},
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationListProviders(context.Background(), map[string]interface{}{
-		"tenant_id": "t1",
-	})
-	require.Error(t, err)
-}
-
-func TestExecuteIAMFederationBeginLogin_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationBeginLogin(context.Background(), map[string]interface{}{
-		"tenant_id":     "t1",
-		"provider_name": "google",
-		"redirect_uri":  "https://app.example.com/callback",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMFederationBeginLogin_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		beginLoginFn: func(_ context.Context, _, _, _ string) (*iam.LoginRedirect, error) {
-			return nil, errors.New("provider not found")
+		{
+			name: "provider not found",
+			mgr: &mockFederationManager{
+				beginLoginFn: func(_ context.Context, _, _, _ string) (*iam.LoginRedirect, error) {
+					return nil, errors.New("provider not found")
+				},
+			},
+			args:    map[string]interface{}{"tenant_id": "t1", "provider_name": "unknown", "redirect_uri": "https://example.com"},
+			wantErr: true,
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationBeginLogin(context.Background(), map[string]interface{}{
-		"tenant_id": "t1", "provider_name": "unknown", "redirect_uri": "https://example.com",
 	})
-	require.Error(t, err)
 }
 
-func TestExecuteIAMFederationHandleCallback_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	result, err := reg.executeIAMFederationHandleCallback(context.Background(), map[string]interface{}{
-		"state_token": "state-123",
-		"auth_code":   "code-abc",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
-func TestExecuteIAMFederationHandleCallback_Error(t *testing.T) {
-	fedMgr := &mockFederationManager{
-		handleCallbackFn: func(_ context.Context, _, _ string) (*iam.FederationResult, error) {
-			return nil, errors.New("invalid state token")
+func TestExecuteIAMFederationHandleCallback(t *testing.T) {
+	runFederationToolCases(t, (*ToolRegistry).executeIAMFederationHandleCallback, []federationToolCase{
+		{
+			name: "success",
+			mgr:  &mockFederationManager{},
+			args: map[string]interface{}{"state_token": "state-123", "auth_code": "code-abc"},
 		},
-	}
-	reg := newFederationRegistry(t, fedMgr)
-
-	_, err := reg.executeIAMFederationHandleCallback(context.Background(), map[string]interface{}{
-		"state_token": "invalid", "auth_code": "code",
+		{
+			name: "invalid state token",
+			mgr: &mockFederationManager{
+				handleCallbackFn: func(_ context.Context, _, _ string) (*iam.FederationResult, error) {
+					return nil, errors.New("invalid state token")
+				},
+			},
+			args:    map[string]interface{}{"state_token": "invalid", "auth_code": "code"},
+			wantErr: true,
+		},
 	})
-	require.Error(t, err)
 }
 
 func TestExecuteIAMFederationLinkAccount_Success(t *testing.T) {
