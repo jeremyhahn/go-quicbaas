@@ -102,13 +102,6 @@ func TestRespondXKMSJSON(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Empty(t, w.Body.String())
 	})
-
-	t.Run("writes 201 Created status", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		respondXKMSJSON(w, http.StatusCreated, map[string]string{"key_id": "test"})
-
-		assert.Equal(t, http.StatusCreated, w.Code)
-	})
 }
 
 // =============================================================================
@@ -159,12 +152,21 @@ func TestReadXKMSBody(t *testing.T) {
 // =============================================================================
 
 func TestEnsureXKMSInitialized(t *testing.T) {
-	// By default, xkms is not initialized in unit tests
-	err := ensureXKMSInitialized()
-	require.Error(t, err)
+	t.Run("returns typed error when not initialized", func(t *testing.T) {
+		// By default, xkms is not initialized in unit tests
+		err := ensureXKMSInitialized()
+		require.Error(t, err)
 
-	var notInitErr *XKMSServiceNotInitializedError
-	require.ErrorAs(t, err, &notInitErr)
+		var notInitErr *XKMSServiceNotInitializedError
+		require.ErrorAs(t, err, &notInitErr)
+	})
+
+	t.Run("returns nil when initialized", func(t *testing.T) {
+		cleanup := initXKMSForTest(t)
+		defer cleanup()
+
+		assert.NoError(t, ensureXKMSInitialized())
+	})
 }
 
 // =============================================================================
@@ -279,6 +281,27 @@ func TestBuildKeyAttributes(t *testing.T) {
 
 		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
 		assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
+	})
+
+	t.Run("aes256-gcm key type", func(t *testing.T) {
+		req := &transportTypes.GenerateKeyRequest{
+			KeyID:   "aes256gcm-test",
+			KeyType: "aes256-gcm",
+		}
+		attrs := buildKeyAttributes(req)
+
+		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
+		assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
+	})
+
+	t.Run("chacha20-poly1305 key type", func(t *testing.T) {
+		req := &transportTypes.GenerateKeyRequest{
+			KeyID:   "chacha-test",
+			KeyType: "chacha20-poly1305",
+		}
+		attrs := buildKeyAttributes(req)
+
+		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
 	})
 
 	t.Run("unrecognized key type defaults to ECDSA P-256", func(t *testing.T) {
@@ -461,6 +484,18 @@ func TestVerifySignature(t *testing.T) {
 		assert.True(t, valid)
 	})
 
+	t.Run("verifies RSA signature with SHA-384", func(t *testing.T) {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		digest := hashData([]byte("test"), crypto.SHA384)
+		sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA384, digest)
+		require.NoError(t, err)
+
+		valid := verifySignature(key, digest, sig, crypto.SHA384)
+		assert.True(t, valid)
+	})
+
 	t.Run("rejects invalid RSA signature", func(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 2048)
 		require.NoError(t, err)
@@ -544,6 +579,15 @@ func TestEncryptWithKey(t *testing.T) {
 		require.ErrorAs(t, encErr, &opErr)
 		assert.Equal(t, "Encrypt", opErr.Op)
 		assert.Contains(t, opErr.Detail, "not supported")
+	})
+
+	t.Run("returns error for Ed25519 key", func(t *testing.T) {
+		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+
+		_, encErr := encryptWithKey(privKey, []byte("data"))
+		require.Error(t, encErr)
+		assert.Contains(t, encErr.Error(), "encryption not supported")
 	})
 
 	t.Run("returns error for unsupported key type", func(t *testing.T) {
@@ -670,58 +714,14 @@ func TestXKMSRoutesRegistered(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	// Verify all XKMS routes are registered by sending requests to each endpoint.
-	// All should return a valid HTTP response (not 404/405), even if 412 (not initialized).
+	// Verify the XKMS routes that TestHandleXKMS_NotInitialized does not reach
+	// are registered: none may return 404 (not found) or 405 (method not allowed).
 	routes := []struct {
 		method string
 		path   string
 	}{
 		// Health
 		{http.MethodGet, "/api/v1/xkms/health"},
-
-		// Backends
-		{http.MethodGet, "/api/v1/xkms/backends"},
-		{http.MethodGet, "/api/v1/xkms/backends/test-backend"},
-
-		// Key management
-		{http.MethodPost, "/api/v1/xkms/keys"},
-		{http.MethodGet, "/api/v1/xkms/keys"},
-		{http.MethodGet, "/api/v1/xkms/keys/test-key"},
-		{http.MethodDelete, "/api/v1/xkms/keys/test-key"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/rotate"},
-
-		// Crypto
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/sign"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/verify"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/encrypt"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/decrypt"},
-
-		// Key versions
-		{http.MethodGet, "/api/v1/xkms/keys/test-key/versions"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/versions/1/enable"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/versions/1/disable"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/versions/enable-all"},
-		{http.MethodPost, "/api/v1/xkms/keys/test-key/versions/disable-all"},
-
-		// Certificates
-		{http.MethodPost, "/api/v1/xkms/certs"},
-		{http.MethodGet, "/api/v1/xkms/certs"},
-		{http.MethodGet, "/api/v1/xkms/certs/test-cert"},
-		{http.MethodDelete, "/api/v1/xkms/certs/test-cert"},
-		{http.MethodHead, "/api/v1/xkms/certs/test-cert"},
-
-		// Seal
-		{http.MethodPost, "/api/v1/xkms/seal"},
-		{http.MethodPost, "/api/v1/xkms/unseal"},
-		{http.MethodGet, "/api/v1/xkms/seal/capability"},
-
-		// PIV
-		{http.MethodGet, "/api/v1/xkms/piv/slots"},
-		{http.MethodGet, "/api/v1/xkms/piv/slots/9a/cert"},
-		{http.MethodPut, "/api/v1/xkms/piv/slots/9a/cert"},
-		{http.MethodDelete, "/api/v1/xkms/piv/slots/9a/cert"},
-		{http.MethodPost, "/api/v1/xkms/piv/slots/9a/key"},
-		{http.MethodPost, "/api/v1/xkms/piv/slots/9a/csr"},
 
 		// CA
 		{http.MethodGet, "/api/v1/xkms/ca/bundle"},
@@ -731,16 +731,6 @@ func TestXKMSRoutesRegistered(t *testing.T) {
 		{http.MethodPost, "/api/v1/xkms/ca/revoke"},
 		{http.MethodPost, "/api/v1/xkms/ca/crl"},
 		{http.MethodGet, "/api/v1/xkms/ca/revoked/1234567890"},
-
-		// PIN
-		{http.MethodPost, "/api/v1/xkms/pin/so/set"},
-		{http.MethodPost, "/api/v1/xkms/pin/user/set"},
-		{http.MethodPost, "/api/v1/xkms/pin/so/change"},
-		{http.MethodPost, "/api/v1/xkms/pin/user/change"},
-		{http.MethodPost, "/api/v1/xkms/pin/so/verify"},
-		{http.MethodPost, "/api/v1/xkms/pin/user/verify"},
-		{http.MethodGet, "/api/v1/xkms/pin/lockout"},
-		{http.MethodPost, "/api/v1/xkms/pin/lockout/reset"},
 	}
 
 	for _, route := range routes {
@@ -2603,18 +2593,6 @@ func TestXKMS91_ResetLockout(t *testing.T) {
 }
 
 // =============================================================================
-// ensureXKMSInitialized - when initialized returns nil
-// =============================================================================
-
-func TestXKMS91_EnsureXKMSInitialized_WhenInitialized(t *testing.T) {
-	cleanup := initXKMSForTest(t)
-	defer cleanup()
-
-	err := ensureXKMSInitialized()
-	assert.NoError(t, err)
-}
-
-// =============================================================================
 // xkmsContextWithTimeout tests
 // =============================================================================
 
@@ -2625,331 +2603,6 @@ func TestXKMS91_XKMSContextWithTimeout(t *testing.T) {
 		deadline, ok := ctx.Deadline()
 		assert.True(t, ok)
 		assert.WithinDuration(t, time.Now().Add(30*time.Second), deadline, 2*time.Second)
-	})
-}
-
-// =============================================================================
-// buildKeyAttributes - additional coverage for aes256-gcm and chacha20 types
-// =============================================================================
-
-func TestXKMS91_BuildKeyAttributes_AdditionalTypes(t *testing.T) {
-	t.Run("aes256-gcm key type", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "aes256gcm-test",
-			KeyType: "aes256-gcm",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
-		assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-	})
-
-	t.Run("chacha20-poly1305 key type", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "chacha-test",
-			KeyType: "chacha20-poly1305",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
-	})
-}
-
-// =============================================================================
-// marshalPublicKeyPEM - additional coverage for different key types
-// =============================================================================
-
-func TestXKMS91_MarshalPublicKeyPEM_RSA(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	pemStr := marshalPublicKeyPEM(key)
-	assert.Contains(t, pemStr, "BEGIN PUBLIC KEY")
-}
-
-// =============================================================================
-// verifySignature - RSA with correct hash
-// =============================================================================
-
-func TestXKMS91_VerifySignature_RSA_WithHash(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	data := []byte("test")
-	digest := hashData(data, crypto.SHA384)
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA384, digest)
-	require.NoError(t, err)
-
-	valid := verifySignature(key, digest, sig, crypto.SHA384)
-	assert.True(t, valid)
-}
-
-// =============================================================================
-// resolveHashFunction - all branches
-// =============================================================================
-
-func TestXKMS91_ResolveHashFunction(t *testing.T) {
-	t.Run("SHA-256 returns SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, resolveHashFunction("SHA-256"))
-	})
-
-	t.Run("SHA-384 returns SHA384", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA384, resolveHashFunction("SHA-384"))
-	})
-
-	t.Run("SHA-512 returns SHA512", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA512, resolveHashFunction("SHA-512"))
-	})
-
-	t.Run("SHA256 without dash returns SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, resolveHashFunction("SHA256"))
-	})
-
-	t.Run("SHA384 without dash returns SHA384", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA384, resolveHashFunction("SHA384"))
-	})
-
-	t.Run("SHA512 without dash returns SHA512", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA512, resolveHashFunction("SHA512"))
-	})
-
-	t.Run("unknown hash defaults to SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, resolveHashFunction("unknown"))
-	})
-
-	t.Run("empty string defaults to SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, resolveHashFunction(""))
-	})
-}
-
-// =============================================================================
-// hashData - zero hash returns raw data
-// =============================================================================
-
-func TestXKMS91_HashData_ZeroHash(t *testing.T) {
-	data := []byte("raw data")
-	result := hashData(data, 0)
-	assert.Equal(t, data, result)
-}
-
-// =============================================================================
-// encryptWithKey - all branches
-// =============================================================================
-
-func TestXKMS91_EncryptWithKey(t *testing.T) {
-	t.Run("RSA key encrypts successfully", func(t *testing.T) {
-		key, err := rsa.GenerateKey(rand.Reader, 2048)
-		require.NoError(t, err)
-		ciphertext, err := encryptWithKey(key, []byte("test plaintext"))
-		assert.NoError(t, err)
-		assert.NotEmpty(t, ciphertext)
-	})
-
-	t.Run("ECDSA key returns unsupported error", func(t *testing.T) {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		require.NoError(t, err)
-		_, err = encryptWithKey(key, []byte("test"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption not supported")
-	})
-
-	t.Run("Ed25519 key returns unsupported error", func(t *testing.T) {
-		_, privKey, err := ed25519.GenerateKey(rand.Reader)
-		require.NoError(t, err)
-		_, err = encryptWithKey(privKey, []byte("test"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "encryption not supported")
-	})
-}
-
-// =============================================================================
-// marshalPublicKeyPEM - ECDSA and Ed25519 branches
-// =============================================================================
-
-func TestXKMS91_MarshalPublicKeyPEM_ECDSA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	pemStr := marshalPublicKeyPEM(key)
-	assert.Contains(t, pemStr, "BEGIN PUBLIC KEY")
-}
-
-func TestXKMS91_MarshalPublicKeyPEM_Ed25519(t *testing.T) {
-	_, privKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	pemStr := marshalPublicKeyPEM(privKey)
-	assert.Contains(t, pemStr, "BEGIN PUBLIC KEY")
-}
-
-func TestXKMS91_MarshalPublicKeyPEM_UnsupportedType(t *testing.T) {
-	pemStr := marshalPublicKeyPEM("not-a-key")
-	assert.Empty(t, pemStr)
-}
-
-// =============================================================================
-// verifySignature - ECDSA and Ed25519 branches
-// =============================================================================
-
-func TestXKMS91_VerifySignature_ECDSA(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	data := []byte("ecdsa test")
-	digest := hashData(data, crypto.SHA256)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, digest)
-	require.NoError(t, err)
-
-	valid := verifySignature(key, digest, sig, crypto.SHA256)
-	assert.True(t, valid)
-}
-
-func TestXKMS91_VerifySignature_Ed25519(t *testing.T) {
-	_, privKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	data := []byte("ed25519 test")
-	digest := hashData(data, crypto.SHA256)
-	sig := ed25519.Sign(privKey, digest)
-
-	valid := verifySignature(privKey, digest, sig, crypto.SHA256)
-	assert.True(t, valid)
-}
-
-func TestXKMS91_VerifySignature_UnsupportedKeyType(t *testing.T) {
-	valid := verifySignature("not-a-key", []byte("digest"), []byte("sig"), crypto.SHA256)
-	assert.False(t, valid)
-}
-
-// =============================================================================
-// buildKeyAttributes - additional branch coverage
-// =============================================================================
-
-func TestXKMS91_BuildKeyAttributes_AllBranches(t *testing.T) {
-	t.Run("RSA with default key size", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "rsa-default-size",
-			KeyType: "rsa",
-			Backend: "software",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, x509.RSA, attrs.KeyAlgorithm)
-		assert.NotNil(t, attrs.RSAAttributes)
-		assert.Equal(t, 2048, attrs.RSAAttributes.KeySize)
-	})
-
-	t.Run("RSA with custom key size", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "rsa-custom-size",
-			KeyType: "rsa",
-			KeySize: 4096,
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, 4096, attrs.RSAAttributes.KeySize)
-	})
-
-	t.Run("ECDSA P-384 curve", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "ecdsa-p384",
-			KeyType: "ecdsa",
-			Curve:   "P-384",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
-		assert.Equal(t, elliptic.P384(), attrs.ECCAttributes.Curve)
-	})
-
-	t.Run("ECDSA P-521 curve", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "ecdsa-p521",
-			KeyType: "ecdsa",
-			Curve:   "P-521",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, elliptic.P521(), attrs.ECCAttributes.Curve)
-	})
-
-	t.Run("ECDSA default curve is P-256", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "ecdsa-default",
-			KeyType: "ecdsa",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, elliptic.P256(), attrs.ECCAttributes.Curve)
-	})
-
-	t.Run("Ed25519 key type", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "ed25519-test",
-			KeyType: "ed25519",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, x509.Ed25519, attrs.KeyAlgorithm)
-		assert.Equal(t, xkmssdk.KeyTypeSigning, attrs.KeyType)
-	})
-
-	t.Run("symmetric with explicit algorithm", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:     "sym-explicit",
-			KeyType:   "symmetric",
-			Algorithm: "chacha20-poly1305",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
-		assert.Equal(t, xkmssdk.SymmetricAlgorithm("chacha20-poly1305"), attrs.SymmetricAlgorithm)
-	})
-
-	t.Run("symmetric with default algorithm", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "sym-default",
-			KeyType: "symmetric",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, xkmssdk.SymmetricAES256GCM, attrs.SymmetricAlgorithm)
-	})
-
-	t.Run("aes key type", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "aes-test",
-			KeyType: "aes",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, xkmssdk.KeyTypeEncryption, attrs.KeyType)
-	})
-
-	t.Run("unknown key type defaults to ECDSA P-256", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "unknown-type",
-			KeyType: "unknown-type-xyz",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, x509.ECDSA, attrs.KeyAlgorithm)
-		assert.Equal(t, elliptic.P256(), attrs.ECCAttributes.Curve)
-	})
-
-	t.Run("with hash attribute", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:   "hash-test",
-			KeyType: "ecdsa",
-			Hash:    "SHA-512",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, crypto.SHA512, attrs.Hash)
-	})
-
-	t.Run("with exportable flag", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:      "export-test",
-			KeyType:    "ecdsa",
-			Exportable: true,
-		}
-		attrs := buildKeyAttributes(req)
-		assert.True(t, attrs.Exportable)
-	})
-
-	t.Run("with tenant ID", func(t *testing.T) {
-		req := &transportTypes.GenerateKeyRequest{
-			KeyID:    "tenant-test",
-			KeyType:  "ecdsa",
-			TenantID: "tenant-123",
-		}
-		attrs := buildKeyAttributes(req)
-		assert.Equal(t, "tenant-123", attrs.TenantID)
 	})
 }
 
