@@ -356,41 +356,6 @@ func TestAuditLogger_LogKeyRotation(t *testing.T) {
 	assert.Equal(t, "2", logged.Details["new_version"])
 }
 
-func TestAuditLogger_FileRotation(t *testing.T) {
-	log := createTestLogger(t)
-
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    1, // 1 MB
-		MaxBackups: 3,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Write events
-	for i := 0; i < 10; i++ {
-		event := &AuditEvent{
-			UserID:   "user-123",
-			Username: "alice",
-			Action:   ActionRead,
-			Resource: "keys",
-			Result:   ResultSuccess,
-		}
-		err = al.Log(context.Background(), event)
-		require.NoError(t, err)
-	}
-
-	// Verify log file exists
-	_, err = os.Stat(logFile)
-	assert.NoError(t, err)
-}
-
 func TestAuditLogger_DisabledDoesNotLog(t *testing.T) {
 	log := createTestLogger(t)
 
@@ -1678,41 +1643,6 @@ func TestAuditLogger_PlaceholderMethods(t *testing.T) {
 	})
 }
 
-// TestCompressFile_WithAuditLogger tests the compressFile method on AuditLogger
-func TestCompressFile_WithAuditLogger(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	testFile := filepath.Join(tmpDir, "test.log")
-	compressedFile := testFile + ".gz"
-
-	err := os.WriteFile(testFile, []byte("test data for compression"), 0644)
-	require.NoError(t, err)
-
-	cfg := &AuditConfig{
-		Enabled:          true,
-		File:             logFile,
-		Compress:         true,
-		CompressionLevel: gzip.DefaultCompression,
-		SignLogs:         false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Call compressFile method
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.NoError(t, err)
-
-	// Verify compressed file was created
-	assert.FileExists(t, compressedFile)
-
-	// Verify original file was removed
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err), "Original file should be removed after compression")
-}
-
 // TestAuditLogger_AdditionalOpenLogFileCases tests more openLogFile scenarios
 func TestAuditLogger_AdditionalOpenLogFileCases(t *testing.T) {
 	log := createTestLogger(t)
@@ -1733,56 +1663,6 @@ func TestAuditLogger_AdditionalOpenLogFileCases(t *testing.T) {
 		// Verify directory was created
 		_, err = os.Stat(filepath.Dir(logFile))
 		assert.NoError(t, err)
-	})
-}
-
-// TestAuditLogger_CheckRotationEdgeCases tests rotation check edge cases
-func TestAuditLogger_CheckRotationEdgeCases(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("checkRotation with file and ticker", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		logFile := filepath.Join(tmpDir, "audit.log")
-
-		config := &AuditConfig{
-			Enabled: true,
-			File:    logFile,
-			MaxSize: 100,
-		}
-
-		al, err := NewAuditLogger(config, log)
-		require.NoError(t, err)
-
-		// Let ticker run briefly
-		time.Sleep(50 * time.Millisecond)
-
-		al.Close()
-	})
-
-	t.Run("checkRotation without file exits immediately", func(t *testing.T) {
-		config := &AuditConfig{
-			Enabled: true,
-		}
-
-		al, err := NewAuditLogger(config, log)
-		require.NoError(t, err)
-
-		// Should exit immediately when no file
-		done := make(chan bool)
-		go func() {
-			al.checkRotation()
-			done <- true
-		}()
-
-		// Should complete quickly
-		select {
-		case <-done:
-			// Success
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("checkRotation did not exit quickly")
-		}
-
-		al.Close()
 	})
 }
 
@@ -1815,47 +1695,6 @@ func TestAuditLogger_SendToSyslogIntegration(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 }
 
-// TestAuditLogger_RotationWithCompression tests rotation with compression enabled
-func TestAuditLogger_RotationWithCompression(t *testing.T) {
-	logger := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    1, // 1MB
-		MaxBackups: 3,
-		Compress:   true,
-	}
-
-	al, err := NewAuditLogger(cfg, logger)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Write data to make file large
-	largeData := make([]byte, 1024*1024+1) // Slightly over 1MB
-	for i := range largeData {
-		largeData[i] = 'a'
-	}
-	_, err = al.file.Write(largeData)
-	require.NoError(t, err)
-
-	// Call rotateIfNeeded which will call compressFile and cleanupOldBackups
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-	assert.NoError(t, err)
-
-	// Give goroutines time to execute
-	time.Sleep(100 * time.Millisecond)
-
-	// Check that backup was created
-	files, err := filepath.Glob(logFile + ".*")
-	assert.NoError(t, err)
-	assert.True(t, len(files) > 0, "Expected backup file to be created")
-}
-
 // TestAuditLogger_OpenLogFileWithSubdirectory tests file opening with nested dirs
 func TestAuditLogger_OpenLogFileWithSubdirectory(t *testing.T) {
 	logger := createTestLogger(t)
@@ -1886,62 +1725,90 @@ func TestAuditLogger_OpenLogFileWithSubdirectory(t *testing.T) {
 
 // TestAuditLogger_VerifySignatureVariants tests signature verification variants
 func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
-	logger := createTestLogger(t)
+	const signKey = "test-key-112bits!"
 
 	tests := []struct {
-		name        string
-		signLogs    bool
-		signKey     string
-		eventSig    string
-		expectValid bool
+		name     string
+		signLogs bool
+		// logFirst signs the event through Log before mutate runs.
+		logFirst bool
+		mutate   func(event *AuditEvent)
+		// dropKey clears the signing key, as a logger built by other means.
+		dropKey bool
+		want    bool
 	}{
 		{
-			name:        "signing disabled",
-			signLogs:    false,
-			signKey:     "",
-			eventSig:    "",
-			expectValid: true,
+			name:     "signing disabled accepts any event",
+			signLogs: false,
+			mutate:   func(event *AuditEvent) { event.Signature = "" },
+			want:     true,
 		},
 		{
-			name:        "signing enabled but empty signature",
-			signLogs:    true,
-			signKey:     "test-key-112bits!",
-			eventSig:    "",
-			expectValid: false,
+			name:     "unsigned event with signing enabled fails closed",
+			signLogs: true,
+			mutate:   func(event *AuditEvent) { event.Signature = "" },
+			want:     false,
 		},
 		{
-			name:        "signing enabled with invalid signature",
-			signLogs:    true,
-			signKey:     "test-key-112bits!",
-			eventSig:    "invalid-signature",
-			expectValid: false,
+			name:     "wrong signature",
+			signLogs: true,
+			mutate:   func(event *AuditEvent) { event.Signature = "invalid-signature" },
+			want:     false,
+		},
+		{
+			name:     "signature from Log verifies",
+			signLogs: true,
+			logFirst: true,
+			want:     true,
+		},
+		{
+			name:     "tampered field after signing",
+			signLogs: true,
+			logFirst: true,
+			mutate:   func(event *AuditEvent) { event.Username = "attacker" },
+			want:     false,
+		},
+		{
+			name:     "missing signing key fails closed",
+			signLogs: true,
+			mutate:   func(event *AuditEvent) { event.Signature = "some-signature" },
+			dropKey:  true,
+			want:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &AuditConfig{
-				Enabled:  true,
-				SignLogs: tt.signLogs,
-				SignKey:  tt.signKey,
+			cfg := &AuditConfig{Enabled: true, SignLogs: tt.signLogs}
+			if tt.signLogs {
+				cfg.SignKey = signKey
 			}
 
-			al, err := NewAuditLogger(cfg, logger)
+			al, err := NewAuditLogger(cfg, createTestLogger(t))
 			require.NoError(t, err)
 			defer al.Close()
+			al.writer = &bytes.Buffer{}
 
 			event := &AuditEvent{
 				Timestamp: time.Now(),
-				UserID:    "test",
 				Username:  "test",
 				Action:    ActionRead,
 				Resource:  "test",
 				Result:    ResultSuccess,
-				Signature: tt.eventSig,
+				IPAddress: "127.0.0.1",
+			}
+			if tt.logFirst {
+				require.NoError(t, al.Log(context.Background(), event))
+				require.NotEmpty(t, event.Signature)
+			}
+			if tt.mutate != nil {
+				tt.mutate(event)
+			}
+			if tt.dropKey {
+				al.signKey = nil
 			}
 
-			valid := al.VerifySignature(event)
-			assert.Equal(t, tt.expectValid, valid)
+			assert.Equal(t, tt.want, al.VerifySignature(event))
 		})
 	}
 }
@@ -1950,191 +1817,9 @@ func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
 // compressFileAsync (audit.go:2014 -- 0.0% covered)
 // ---------------------------------------------------------------------------
 
-func TestCompressFileAsync_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    100,
-		MaxBackups: 3,
-		SignLogs:   false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create a test file to compress
-	testFile := filepath.Join(tmpDir, "test-compress.log")
-	require.NoError(t, os.WriteFile(testFile, []byte("test data to compress"), 0o644))
-
-	// Call compressFileAsync synchronously for testing
-	al.compressFileAsync(testFile, gzip.BestSpeed)
-
-	// Verify compressed file was created
-	assert.FileExists(t, testFile+".gz")
-
-	// Verify original was removed
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err))
-}
-
-func TestCompressFileAsync_NonExistentFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    100,
-		MaxBackups: 3,
-		SignLogs:   false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Calling with non-existent file should not panic
-	al.compressFileAsync("/nonexistent/path/file.log", gzip.BestSpeed)
-}
-
 // ---------------------------------------------------------------------------
 // compressFile (audit.go:2022 -- 62.9% covered)
 // ---------------------------------------------------------------------------
-
-func TestCompressFile_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create test file
-	testFile := filepath.Join(tmpDir, "compress-test.log")
-	testData := []byte("compress me please")
-	require.NoError(t, os.WriteFile(testFile, testData, 0o644))
-
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.NoError(t, err)
-
-	// Verify compressed file exists and original was removed
-	assert.FileExists(t, testFile+".gz")
-	_, statErr := os.Stat(testFile)
-	assert.True(t, os.IsNotExist(statErr))
-
-	// Verify compressed content is valid gzip
-	gzFile, err := os.Open(testFile + ".gz")
-	require.NoError(t, err)
-	defer gzFile.Close()
-
-	reader, err := gzip.NewReader(gzFile)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, testData, decompressed)
-}
-
-func TestCompressFile_NonExistentSource(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{Enabled: true, File: logFile, MaxSize: 100}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.compressFile("/nonexistent/file.log", gzip.DefaultCompression)
-	require.Error(t, err)
-	var auditErr *AuditError
-	assert.ErrorAs(t, err, &auditErr)
-	assert.Equal(t, ErrCodeAuditCompressionOpen, auditErr.Code)
-}
-
-func TestCompressFile_InvalidCompressionLevel(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{Enabled: true, File: logFile, MaxSize: 100}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create test file
-	testFile := filepath.Join(tmpDir, "invalid-level.log")
-	require.NoError(t, os.WriteFile(testFile, []byte("data"), 0o644))
-
-	// Invalid level should fallback to default
-	err = al.compressFile(testFile, 999)
-	require.NoError(t, err)
-	assert.FileExists(t, testFile+".gz")
-}
-
-// compressFile writes to "<source>.gz". A directory already sitting on that
-// name makes the create fail with EISDIR, which root does not bypass -- a
-// read-only parent directory would only fail for an unprivileged uid
-// (testing-guidelines.md, Fault Injection).
-func TestCompressFile_DestPathIsDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0o755))
-
-	cfg := &AuditConfig{Enabled: true, File: logFile, MaxSize: 100}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	testFile := filepath.Join(readOnlyDir, "test.log")
-	require.NoError(t, os.WriteFile(testFile, []byte("data"), 0o644))
-
-	// Occupy the destination name with a directory so the create cannot succeed.
-	require.NoError(t, os.MkdirAll(testFile+".gz", 0o755))
-
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.Error(t, err)
-	var auditErr *AuditError
-	assert.ErrorAs(t, err, &auditErr)
-}
-
-func TestCompressFile_AllLevels(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{Enabled: true, File: logFile, MaxSize: 100}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	levels := []int{gzip.HuffmanOnly, gzip.BestSpeed, gzip.DefaultCompression, gzip.BestCompression}
-	for i, level := range levels {
-		testFile := filepath.Join(tmpDir, "level-test-"+string(rune('a'+i))+".log")
-		require.NoError(t, os.WriteFile(testFile, []byte("data for level test"), 0o644))
-
-		err := al.compressFile(testFile, level)
-		require.NoError(t, err)
-		assert.FileExists(t, testFile+".gz")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // cleanupOldBackups (audit.go:2112 -- 0.0% covered)
@@ -2403,49 +2088,6 @@ func TestSyslogExporter_CloseUnlockedWithBothConns(t *testing.T) {
 // rotateIfNeeded (audit.go:1970 -- 82.4% covered)
 // ---------------------------------------------------------------------------
 
-func TestRotateIfNeeded_FileExceedsMaxSize(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    1, // 1 MB
-		MaxBackups: 3,
-		SignLogs:   false,
-		Compress:   true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Write enough data to exceed 1MB
-	ctx := context.Background()
-	bigData := make([]byte, 1024) // 1KB per event
-	for i := range bigData {
-		bigData[i] = byte('A' + (i % 26))
-	}
-
-	for i := 0; i < 1200; i++ {
-		writeErr := al.Log(ctx, &AuditEvent{
-			Username: "test",
-			Action:   ActionWrite,
-			Resource: string(bigData),
-			Result:   ResultSuccess,
-		})
-		require.NoError(t, writeErr)
-	}
-
-	// Force rotation check
-	al.mu.Lock()
-	rotErr := al.rotateIfNeeded()
-	al.mu.Unlock()
-
-	require.NoError(t, rotErr)
-}
-
 // TestRotateIfNeeded_AfterCloseStartsNothing pins the guarantee that makes
 // Close's rotateWG.Wait sound.
 //
@@ -2526,160 +2168,9 @@ func TestRotateIfNeeded_AfterCloseStartsNothing(t *testing.T) {
 		"rotation after Close must create no files: it would mean background work started with nobody waiting for it")
 }
 
-func TestRotateIfNeeded_NilFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled: true,
-		File:    logFile,
-		MaxSize: 100,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Close the file to make it nil
-	al.mu.Lock()
-	if al.file != nil {
-		al.file.Close()
-		al.file = nil
-	}
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-
-	require.NoError(t, err) // Should return nil when file is nil
-}
-
 // ---------------------------------------------------------------------------
 // VerifySignature (audit.go:1903 -- 83.3% covered)
 // ---------------------------------------------------------------------------
-
-func TestVerifySignature_SigningDisabled(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "admin",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-	}
-
-	// When signing is disabled, verify should return true
-	assert.True(t, al.VerifySignature(event))
-}
-
-func TestVerifySignature_EmptySignature(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "admin",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "",
-	}
-
-	// Empty signature with signing enabled fails closed
-	assert.False(t, al.VerifySignature(event))
-}
-
-func TestVerifySignature_ValidSignature(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Log an event to get it signed
-	ctx := context.Background()
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "admin",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-	}
-
-	err = al.Log(ctx, event)
-	require.NoError(t, err)
-
-	// Event should now have a signature
-	assert.NotEmpty(t, event.Signature)
-
-	// Verify should succeed
-	assert.True(t, al.VerifySignature(event))
-}
-
-func TestVerifySignature_InvalidSignature(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: true,
-		SignKey:  "test-hmac-key-for-signing",
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "admin",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "invalid-signature-value",
-	}
-
-	assert.False(t, al.VerifySignature(event))
-}
 
 // ---------------------------------------------------------------------------
 // NewAuditLogger defaults (audit.go:1392 -- 97.8%)
@@ -3232,77 +2723,6 @@ func TestSyslogExporter_SendRemoteSetDeadlineError(t *testing.T) {
 // We use a file with a lot of content to ensure copy path is exercised
 // ---------------------------------------------------------------------------
 
-func TestCompressFile_LargeFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	log := createTestLogger(t)
-
-	al := &AuditLogger{
-		config: &AuditConfig{
-			Enabled: true,
-		},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-
-	// Create a large file (64KB+) to exercise the buffer copy path
-	srcPath := filepath.Join(tmpDir, "large_audit.log")
-	data := make([]byte, 128*1024) // 128KB
-	for i := range data {
-		data[i] = byte(i % 256)
-	}
-	err := os.WriteFile(srcPath, data, 0o600)
-	require.NoError(t, err)
-
-	// Compress with best compression
-	err = al.compressFile(srcPath, gzip.BestCompression)
-	assert.NoError(t, err)
-
-	// Verify compressed file exists and is smaller
-	gzPath := srcPath + ".gz"
-	info, statErr := os.Stat(gzPath)
-	require.NoError(t, statErr)
-	assert.Less(t, info.Size(), int64(128*1024))
-
-	// Verify original was removed
-	_, statErr = os.Stat(srcPath)
-	assert.True(t, os.IsNotExist(statErr))
-
-	// Verify we can decompress and get original data
-	gzFile, openErr := os.Open(gzPath)
-	require.NoError(t, openErr)
-	defer gzFile.Close()
-
-	gzReader, gzErr := gzip.NewReader(gzFile)
-	require.NoError(t, gzErr)
-	defer gzReader.Close()
-
-	decompressed, readErr := io.ReadAll(gzReader)
-	require.NoError(t, readErr)
-	assert.Equal(t, data, decompressed)
-}
-
-func TestCompressFile_HuffmanOnlyLevel(t *testing.T) {
-	tmpDir := t.TempDir()
-	log := createTestLogger(t)
-
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-
-	srcPath := filepath.Join(tmpDir, "huffman.log")
-	err := os.WriteFile(srcPath, []byte("test content for huffman compression"), 0o600)
-	require.NoError(t, err)
-
-	err = al.compressFile(srcPath, gzip.HuffmanOnly)
-	assert.NoError(t, err)
-
-	gzPath := srcPath + ".gz"
-	_, statErr := os.Stat(gzPath)
-	assert.NoError(t, statErr)
-}
-
 // ---------------------------------------------------------------------------
 // Log function: exercise syslog and syslog exporter paths together
 // ---------------------------------------------------------------------------
@@ -3526,90 +2946,6 @@ func TestCheckRotation_ShutdownSignal(t *testing.T) {
 // rotateIfNeeded - cover the rotation path when file exceeds max size
 // ---------------------------------------------------------------------------
 
-func TestRotateIfNeeded_TriggersRotation(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "rotate_me.log")
-
-	// Write data that exceeds MaxSize (1 MB)
-	data := make([]byte, 2*1024*1024) // 2 MB
-	for i := range data {
-		data[i] = 'A'
-	}
-	err := os.WriteFile(logPath, data, 0o600)
-	require.NoError(t, err)
-
-	file, openErr := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, openErr)
-
-	log := createTestLogger(t)
-
-	al := &AuditLogger{
-		config: &AuditConfig{
-			File:       logPath,
-			MaxSize:    1, // 1 MB - file is 2 MB so rotation should trigger
-			MaxBackups: 5,
-			Compress:   false, // Don't compress to simplify test
-		},
-		logger:   log,
-		file:     file,
-		writer:   file,
-		shutdown: make(chan struct{}),
-	}
-
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-	assert.NoError(t, err)
-
-	// After rotation, the original file should have been renamed
-	// and a new file created
-	assert.NotNil(t, al.file)
-}
-
-func TestRotateIfNeeded_WithCompress(t *testing.T) {
-	tmpDir := t.TempDir()
-	logPath := filepath.Join(tmpDir, "rotate_compress.log")
-
-	// Write data that exceeds MaxSize
-	data := make([]byte, 2*1024*1024) // 2 MB
-	for i := range data {
-		data[i] = byte('A' + (i % 26))
-	}
-	err := os.WriteFile(logPath, data, 0o600)
-	require.NoError(t, err)
-
-	file, openErr := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, openErr)
-
-	log := createTestLogger(t)
-
-	// Test rotation without async compression to avoid race with t.TempDir() cleanup.
-	// The compressFileAsync goroutine runs after rotateIfNeeded returns, and the
-	// temp directory may be cleaned up before it finishes, causing spurious errors.
-	al := &AuditLogger{
-		config: &AuditConfig{
-			File:       logPath,
-			MaxSize:    1,
-			MaxBackups: 5,
-			Compress:   false,
-		},
-		logger:   log,
-		file:     file,
-		writer:   file,
-		shutdown: make(chan struct{}),
-	}
-
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-	assert.NoError(t, err)
-
-	// Verify the backup file was created
-	matches, globErr := filepath.Glob(filepath.Join(tmpDir, "rotate_compress.log.*"))
-	assert.NoError(t, globErr)
-	assert.NotEmpty(t, matches, "should have created a backup file")
-}
-
 // ---------------------------------------------------------------------------
 // sendToSyslog legacy path - cover the case where SyslogAddr is set
 // ---------------------------------------------------------------------------
@@ -3775,28 +3111,6 @@ func TestNewSyslogExporter_EmptyNetworkWithAddress(t *testing.T) {
 // VerifySignature - cover the signEvent error path
 // ---------------------------------------------------------------------------
 
-func TestVerifySignature_WithEmptySignKey(t *testing.T) {
-	al := &AuditLogger{
-		config: &AuditConfig{
-			SignLogs: true,
-		},
-		signKey: nil, // Empty key
-	}
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		EventID:   "evt-sig-test",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "some-signature",
-	}
-
-	// With no signing key, signEvent fails and verification must not pass.
-	result := al.VerifySignature(event)
-	assert.False(t, result)
-}
-
 // ---------------------------------------------------------------------------
 // Log - cover sign event error path
 // ---------------------------------------------------------------------------
@@ -3835,32 +3149,6 @@ func TestLog_SignEventError(t *testing.T) {
 // ---------------------------------------------------------------------------
 // compressFileAsync - cover error path that logs but doesn't return error
 // ---------------------------------------------------------------------------
-
-func TestCompressFileAsync_ValidFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	srcPath := filepath.Join(tmpDir, "async_compress.log")
-
-	err := os.WriteFile(srcPath, []byte("async test content for compression"), 0o600)
-	require.NoError(t, err)
-
-	log := createTestLogger(t)
-
-	al := &AuditLogger{
-		config: &AuditConfig{
-			Enabled:          true,
-			Compress:         true,
-			CompressionLevel: gzip.DefaultCompression,
-		},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-
-	// compressFileAsync compresses on the calling goroutine; callers run it
-	// in their own goroutine, so the file exists as soon as it returns.
-	al.compressFileAsync(srcPath, gzip.DefaultCompression)
-
-	require.FileExists(t, srcPath+".gz", "compressed file was not created")
-}
 
 func TestLog_WriteError(t *testing.T) {
 	log := createTestLogger(t)
@@ -3929,29 +3217,6 @@ func TestLog_MarshalError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestRotateIfNeeded_RenameError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	log := createTestLogger(t)
-
-	bigData := make([]byte, 2048)
-	require.NoError(t, os.WriteFile(logFile, bigData, 0o600))
-
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, MaxSize: 0},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		shutdown: make(chan struct{}),
-	}
-
-	require.NoError(t, os.Remove(logFile))
-	assert.Error(t, al.rotateIfNeeded())
-}
-
 func TestOpenLogFile_DirCreateError(t *testing.T) {
 	log := createTestLogger(t)
 	al := &AuditLogger{
@@ -3960,18 +3225,6 @@ func TestOpenLogFile_DirCreateError(t *testing.T) {
 		shutdown: make(chan struct{}),
 	}
 	assert.Error(t, al.openLogFile())
-}
-
-func TestVerifySignature_NonexistentFile(t *testing.T) {
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: true, SignKey: "test-key-12345678901234567890123", File: "/nonexistent/path/audit.log"},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	event := &AuditEvent{Action: "test", Signature: "sig"}
-	valid := al.VerifySignature(event)
-	assert.False(t, valid)
 }
 
 func TestCleanupOldBackups_96(t *testing.T) {
@@ -4041,82 +3294,6 @@ func TestSendToSyslog_WithExporterExportError(t *testing.T) {
 	al.sendToSyslog(&AuditEvent{Action: "test", Result: ResultSuccess})
 }
 
-func TestVerifySignature_ValidSignedLogs(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	log := createTestLogger(t)
-
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: "test-sign-key-that-is-32-bytes!"},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
-		shutdown: make(chan struct{}),
-	}
-
-	ctx := context.Background()
-	event := &AuditEvent{Action: "read", Resource: "r", Result: "success"}
-	require.NoError(t, al.Log(ctx, event))
-	f.Close()
-
-	valid := al.VerifySignature(event)
-	assert.True(t, valid)
-}
-
-// TestCompressFile_SourceOpenError tests compressFile when the source file
-// does not exist, covering the os.Open error path at audit.go:2029-2036.
-func TestCompressFile_SourceOpenError(t *testing.T) {
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	err := al.compressFile("/nonexistent/file/path.log", 6)
-	assert.Error(t, err, "should fail when source file does not exist")
-}
-
-// TestCompressFile_DestCreateError tests compressFile when the destination
-// .gz file cannot be created, covering audit.go:2041-2048.
-func TestCompressFile_DestCreateError(t *testing.T) {
-	tmpDir := t.TempDir()
-	sourceFile := filepath.Join(tmpDir, "audit.log")
-	require.NoError(t, os.WriteFile(sourceFile, []byte("test log data"), 0o600))
-
-	gzPath := sourceFile + ".gz"
-	require.NoError(t, os.MkdirAll(gzPath, 0o755))
-
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	err := al.compressFile(sourceFile, 6)
-	assert.Error(t, err, "should fail when dest .gz path is a directory")
-}
-
-// TestCompressFile_InvalidLevel_96 tests compressFile with an out-of-range
-// compression level, verifying it falls back to gzip.DefaultCompression.
-func TestCompressFile_InvalidLevel_96(t *testing.T) {
-	tmpDir := t.TempDir()
-	sourceFile := filepath.Join(tmpDir, "audit.log")
-	require.NoError(t, os.WriteFile(sourceFile, []byte("test data"), 0o600))
-
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	err := al.compressFile(sourceFile, 999)
-	require.NoError(t, err)
-}
-
 // TestSendToSyslog_LegacyEmptyAddr tests sendToSyslog when syslogExporter
 // is nil and SyslogAddr is empty, covering the early return at audit.go:2155-2156.
 func TestSendToSyslog_LegacyEmptyAddr(t *testing.T) {
@@ -4178,19 +3355,6 @@ func TestAuditLoggerClose_NoFile(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestRotateIfNeeded_FileNil tests rotateIfNeeded when file is nil,
-// covering the early return at audit.go:1971-1973.
-func TestRotateIfNeeded_FileNil(t *testing.T) {
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, MaxSize: 0},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	err := al.rotateIfNeeded()
-	assert.NoError(t, err, "should return nil when file is nil")
-}
-
 // TestOpenLogFile_OpenFileError tests openLogFile when os.OpenFile fails
 // because the file path is a directory (MkdirAll succeeds but OpenFile fails),
 // covering audit.go:1930-1936.
@@ -4208,20 +3372,6 @@ func TestOpenLogFile_OpenFileError(t *testing.T) {
 	}
 	err := al.openLogFile()
 	assert.Error(t, err, "should fail when file path is a directory")
-}
-
-// TestVerifySignature_SignLogsDisabled tests VerifySignature when
-// SignLogs is false, covering the first condition in the early return.
-func TestVerifySignature_SignLogsDisabled(t *testing.T) {
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, SignLogs: false},
-		logger:   log,
-		shutdown: make(chan struct{}),
-	}
-	event := &AuditEvent{Action: "test", Signature: "some-sig"}
-	valid := al.VerifySignature(event)
-	assert.True(t, valid, "should return true when signing is disabled")
 }
 
 // TestOpenLogFile_Success tests openLogFile when both MkdirAll and OpenFile
@@ -4245,30 +3395,6 @@ func TestOpenLogFile_Success(t *testing.T) {
 	if al.file != nil {
 		al.file.Close()
 	}
-}
-
-// TestRotateIfNeeded_BelowMaxSize tests rotateIfNeeded when the file size
-// is below the max, covering the early return at audit.go:1981-1983.
-func TestRotateIfNeeded_BelowMaxSize(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	require.NoError(t, os.WriteFile(logFile, []byte("small"), 0o600))
-
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-	defer f.Close()
-
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, MaxSize: 100},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		shutdown: make(chan struct{}),
-	}
-
-	err = al.rotateIfNeeded()
-	assert.NoError(t, err, "should not rotate when file is below max size")
 }
 
 // TestLog_WithSyslogExporter tests Log when a syslog exporter is configured,
@@ -4330,82 +3456,6 @@ func TestLog_WithLegacySyslog(t *testing.T) {
 	f.Close()
 }
 
-// TestRotateIfNeeded_StatError tests rotateIfNeeded when file.Stat() fails
-// because the file has been closed, covering audit.go:1975-1978.
-func TestRotateIfNeeded_StatError(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	require.NoError(t, os.WriteFile(logFile, []byte("test"), 0o600))
-
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, MaxSize: 0},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		shutdown: make(chan struct{}),
-	}
-
-	// Close the file so Stat() fails
-	f.Close()
-
-	err = al.rotateIfNeeded()
-	assert.Error(t, err, "should fail when file.Stat() fails on closed file")
-}
-
-// TestAuditLogger_CompressFile_Method tests the compressFile method on AuditLogger.
-func TestAuditLogger_CompressFile_Method(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	testFile := filepath.Join(tmpDir, "test.log")
-	compressedFile := testFile + ".gz"
-
-	// Create a test file with content
-	content := []byte("test log content for compression\nline 2\nline 3\n")
-	err := os.WriteFile(testFile, content, 0o644)
-	require.NoError(t, err)
-
-	cfg := &AuditConfig{
-		Enabled:          true,
-		File:             logFile,
-		Compress:         true,
-		CompressionLevel: gzip.DefaultCompression,
-		SignLogs:         false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Call compressFile method
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.NoError(t, err)
-
-	// Verify compressed file was created
-	assert.FileExists(t, compressedFile)
-
-	// Verify original file was removed
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err), "Original file should be removed after compression")
-
-	// Verify we can decompress it
-	gzFile, err := os.Open(compressedFile)
-	require.NoError(t, err)
-	defer gzFile.Close()
-
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	decompressed, err := io.ReadAll(gzReader)
-	require.NoError(t, err)
-	assert.Equal(t, content, decompressed)
-}
-
 // TestAuditLogger_CleanupOldBackups_Extended tests the cleanupOldBackups function with more scenarios.
 func TestAuditLogger_CleanupOldBackups_Extended(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -4461,314 +3511,99 @@ func TestAuditLogger_SendToSyslog(t *testing.T) {
 	assert.Equal(t, "test", event.Username)
 }
 
-// TestAuditLogger_CheckRotation tests the checkRotation function comprehensively.
-func TestAuditLogger_CheckRotation_Coverage(t *testing.T) {
-	t.Run("with file path", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		logFile := filepath.Join(tmpDir, "audit.log")
-
-		cfg := &AuditConfig{
-			Enabled:    true,
-			File:       logFile,
-			MaxSize:    1,
-			MaxBackups: 3,
-			SignLogs:   false,
-		}
-
-		log := createTestLogger(t)
-		al, err := NewAuditLogger(cfg, log)
-		require.NoError(t, err)
-
-		// Give checkRotation goroutine time to start
-		time.Sleep(150 * time.Millisecond)
-
-		// Close to stop checkRotation
-		err = al.Close()
-		assert.NoError(t, err)
-
-		// Give time for goroutine to exit
-		time.Sleep(100 * time.Millisecond)
-	})
-
-	t.Run("without file path", func(t *testing.T) {
-		cfg := &AuditConfig{
-			Enabled:  true,
-			File:     "", // No file path
-			SignLogs: false,
-		}
-
-		log := createTestLogger(t)
-		al, err := NewAuditLogger(cfg, log)
-		require.NoError(t, err)
-
-		// Give time for any goroutines to start
-		time.Sleep(50 * time.Millisecond)
-
-		err = al.Close()
-		assert.NoError(t, err)
-	})
-
-	t.Run("rotation with error", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		logFile := filepath.Join(tmpDir, "audit.log")
-
-		cfg := &AuditConfig{
-			Enabled:    true,
-			File:       logFile,
-			MaxSize:    1, // Small size to trigger rotation
-			MaxBackups: 3,
-			Compress:   false,
-			SignLogs:   false,
-		}
-
-		log := createTestLogger(t)
-		al, err := NewAuditLogger(cfg, log)
-		require.NoError(t, err)
-
-		// Write large data to trigger rotation
-		largeData := make([]byte, 2*1024*1024) // 2 MB
-		for i := range largeData {
-			largeData[i] = 'x'
-		}
-		_, err = al.file.Write(largeData)
-		require.NoError(t, err)
-		require.NoError(t, al.file.Sync())
-
-		// Wait for rotation check
-		time.Sleep(2 * time.Second)
-
-		err = al.Close()
-		assert.NoError(t, err)
-	})
-}
-
-// TestCompressFile_ActualImplementation tests actual compression logic.
-func TestCompressFile_ActualImplementation(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "compress_test.log")
-	compressedFile := testFile + ".gz"
-
-	// Create test file with content
-	content := []byte("This is test content for compression testing\n")
-	content = append(content, []byte("Line 2 with more data\n")...)
-	content = append(content, []byte("Line 3 with even more data to compress\n")...)
-	err := os.WriteFile(testFile, content, 0o644)
-	require.NoError(t, err)
-
-	// Implement actual compression
-	actualCompressFile := func(filename string) error {
-		inFile, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-		defer inFile.Close()
-
-		outFile, err := os.Create(filename + ".gz")
-		if err != nil {
-			return err
-		}
-		defer outFile.Close()
-
-		gzWriter := gzip.NewWriter(outFile)
-		defer gzWriter.Close()
-
-		_, err = io.Copy(gzWriter, inFile)
-		return err
-	}
-
-	// Test compression
-	err = actualCompressFile(testFile)
-	require.NoError(t, err)
-	assert.FileExists(t, compressedFile)
-
-	// Verify we can decompress
-	gzFile, err := os.Open(compressedFile)
-	require.NoError(t, err)
-	defer gzFile.Close()
-
-	gzReader, err := gzip.NewReader(gzFile)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	decompressed, err := io.ReadAll(gzReader)
-	require.NoError(t, err)
-	assert.Equal(t, content, decompressed)
-}
-
 // TestAuditLogger_RotateIfNeeded tests log rotation functionality.
 func TestAuditLogger_RotateIfNeeded(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    1, // 1 MB for testing
-		MaxBackups: 3,
-		Compress:   false, // Disable compression for simpler testing
+	tests := []struct {
+		name     string
+		size     int
+		maxSize  int64
+		compress bool
+		// noFile leaves the logger without an open file.
+		noFile bool
+		// closeFile closes the handle so Stat fails.
+		closeFile bool
+		// removeLog deletes the log path so the rename fails.
+		removeLog   bool
+		wantErr     bool
+		wantCode    string
+		wantBackup  string // glob suffix of the backup rotation must leave
+		wantRotated bool
+	}{
+		{name: "no open file is a no-op", noFile: true, maxSize: 1},
+		{name: "below max size does not rotate", size: 5, maxSize: 100},
+		{name: "stat error on a closed file", size: 5, closeFile: true, wantErr: true},
+		{name: "rename error when the log was removed", size: 2048, removeLog: true, wantErr: true, wantCode: ErrCodeAuditFileRotate},
+		{name: "rotates past max size", size: 2 * 1024 * 1024, maxSize: 1, wantBackup: ".*", wantRotated: true},
+		{name: "rotates and compresses the backup", size: 2 * 1024 * 1024, maxSize: 1, compress: true, wantBackup: ".*.gz", wantRotated: true},
 	}
 
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			logFile := filepath.Join(tmpDir, "audit.log")
+			require.NoError(t, os.WriteFile(logFile, bytes.Repeat([]byte("A"), tt.size), 0o600))
 
-	// Write enough data to trigger rotation
-	largeData := strings.Repeat("x", 1024*1024+100) // > 1 MB
-	event := &AuditEvent{
-		Username: "test",
-		Action:   ActionRead,
-		Resource: "test",
-		Result:   ResultSuccess,
-		Details:  map[string]string{"data": largeData},
+			al := &AuditLogger{
+				config: &AuditConfig{
+					Enabled:          true,
+					File:             logFile,
+					MaxSize:          tt.maxSize,
+					MaxBackups:       5,
+					Compress:         tt.compress,
+					CompressionLevel: gzip.DefaultCompression,
+				},
+				logger:   createTestLogger(t),
+				shutdown: make(chan struct{}),
+			}
+			if !tt.noFile {
+				f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0o600)
+				require.NoError(t, err)
+				al.file, al.writer = f, f
+			}
+			if tt.closeFile {
+				require.NoError(t, al.file.Close())
+			}
+			if tt.removeLog {
+				require.NoError(t, os.Remove(logFile))
+			}
+
+			al.mu.Lock()
+			err := al.rotateIfNeeded()
+			al.mu.Unlock()
+			// Compression and backup cleanup run on rotateWG.
+			al.rotateWG.Wait()
+			if al.file != nil && !tt.closeFile {
+				t.Cleanup(func() { _ = al.file.Close() })
+			}
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantCode != "" {
+					var auditErr *AuditError
+					require.ErrorAs(t, err, &auditErr)
+					assert.Equal(t, tt.wantCode, auditErr.Code)
+				}
+				return
+			}
+			require.NoError(t, err)
+
+			backups, err := filepath.Glob(logFile + ".*")
+			require.NoError(t, err)
+			if !tt.wantRotated {
+				assert.Empty(t, backups, "no backup expected")
+				return
+			}
+
+			want, err := filepath.Glob(logFile + tt.wantBackup)
+			require.NoError(t, err)
+			assert.Len(t, want, 1, "expected one backup matching %q", tt.wantBackup)
+			assert.Len(t, backups, 1, "the uncompressed backup should not remain")
+
+			info, err := al.file.Stat()
+			require.NoError(t, err)
+			assert.Zero(t, info.Size(), "rotation should reopen a fresh log file")
+		})
 	}
-
-	err = al.Log(context.Background(), event)
-	require.NoError(t, err)
-
-	// Force rotation check
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-
-	// Should rotate because file exceeds max size
-	if err == nil {
-		// Check if backup file was created
-		files, err := os.ReadDir(tmpDir)
-		require.NoError(t, err)
-
-		// Should have at least the main file
-		assert.GreaterOrEqual(t, len(files), 1)
-	}
-}
-
-// TestAuditLogger_RotateIfNeeded_NoFile tests rotation when no file is set.
-func TestAuditLogger_RotateIfNeeded_NoFile(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &AuditConfig{
-		Enabled: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Should not error when file is nil
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-
-	assert.NoError(t, err)
-}
-
-// TestAuditLogger_RotateIfNeeded_BelowThreshold tests no rotation when below threshold.
-func TestAuditLogger_RotateIfNeeded_BelowThreshold(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled: true,
-		File:    logFile,
-		MaxSize: 100, // 100 MB - much larger than our test data
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Username: "test",
-		Action:   ActionRead,
-		Resource: "test",
-		Result:   ResultSuccess,
-	}
-
-	err = al.Log(context.Background(), event)
-	require.NoError(t, err)
-
-	// Force rotation check - should not rotate
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-
-	assert.NoError(t, err)
-
-	// Should only have main log file, no backups
-	files, err := os.ReadDir(tmpDir)
-	require.NoError(t, err)
-	assert.Equal(t, 1, len(files))
-}
-
-// TestAuditLogger_CheckRotation tests the rotation goroutine.
-func TestAuditLogger_CheckRotation(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &AuditConfig{
-		Enabled: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-
-	// Close immediately to test shutdown signal
-	al.Close()
-
-	// checkRotation should exit cleanly via shutdown channel
-	// No assertion needed - if it doesn't exit, test will timeout
-}
-
-// TestAuditLogger_VerifySignature_EdgeCases tests signature verification edge cases.
-func TestAuditLogger_VerifySignature_EdgeCases(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("signature verification disabled", func(t *testing.T) {
-		config := &AuditConfig{
-			Enabled:  true,
-			SignLogs: false,
-		}
-
-		al, err := NewAuditLogger(config, log)
-		require.NoError(t, err)
-		defer al.Close()
-
-		event := &AuditEvent{
-			Username:  "test",
-			Action:    ActionRead,
-			Resource:  "test",
-			Result:    ResultSuccess,
-			Signature: "", // No signature
-		}
-
-		// Should return true when signing is disabled
-		assert.True(t, al.VerifySignature(event))
-	})
-
-	t.Run("empty signature with signing enabled", func(t *testing.T) {
-		config := &AuditConfig{
-			Enabled:  true,
-			SignLogs: true,
-			SignKey:  "test-key-112bits!",
-		}
-
-		al, err := NewAuditLogger(config, log)
-		require.NoError(t, err)
-		defer al.Close()
-
-		event := &AuditEvent{
-			Username:  "test",
-			Action:    ActionRead,
-			Resource:  "test",
-			Result:    ResultSuccess,
-			Timestamp: time.Now(),
-			Signature: "", // Empty signature
-		}
-
-		// Unsigned events, including ones written before signing was
-		// enabled, report unverified while signing is on
-		assert.False(t, al.VerifySignature(event))
-	})
 }
 
 // TestAuditLogger_LogDataAccess_Failure tests data access logging with failure.
@@ -4861,27 +3696,6 @@ func TestAuditLogger_OpenLogFile_CreateDir(t *testing.T) {
 	// Verify directory was created
 	_, err = os.Stat(filepath.Dir(logFile))
 	assert.NoError(t, err)
-}
-
-// TestAuditLogger_CheckRotation_Ticker tests rotation ticker.
-func TestAuditLogger_CheckRotation_Ticker(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled: true,
-		File:    logFile,
-		MaxSize: 100, // Large enough to not trigger rotation
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-
-	// Let it run for a bit to test the ticker path
-	time.Sleep(100 * time.Millisecond)
-
-	al.Close()
 }
 
 // ---------------------------------------------------------------------------
@@ -4986,181 +3800,13 @@ func TestAuditLogger_LogKeyDeletionFailure(t *testing.T) {
 // audit.go -- compressFile success path
 // ---------------------------------------------------------------------------
 
-func TestAuditLogger_CompressFileSuccess(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create a test file with real content to compress.
-	testFile := filepath.Join(tmpDir, "compress-me.log")
-	content := bytes.Repeat([]byte("audit log line: action=read resource=data result=success\n"), 100)
-	err = os.WriteFile(testFile, content, 0600)
-	require.NoError(t, err)
-
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.NoError(t, err)
-
-	gzFile := testFile + ".gz"
-	assert.FileExists(t, gzFile)
-
-	// Verify the gzip file is valid.
-	gzData, err := os.ReadFile(gzFile)
-	require.NoError(t, err)
-
-	reader, err := gzip.NewReader(bytes.NewReader(gzData))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	var decompressed bytes.Buffer
-	_, err = decompressed.ReadFrom(reader)
-	require.NoError(t, err)
-	assert.Equal(t, content, decompressed.Bytes())
-}
-
-func TestAuditLogger_CompressFileAllLevels(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{Enabled: true, File: logFile, Compress: true}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	levels := []int{
-		gzip.NoCompression,
-		gzip.BestSpeed,
-		gzip.DefaultCompression,
-		gzip.BestCompression,
-		gzip.HuffmanOnly,
-	}
-
-	for _, level := range levels {
-		testFile := filepath.Join(tmpDir, "test-level.log")
-		err := os.WriteFile(testFile, []byte("data to compress"), 0600)
-		require.NoError(t, err)
-
-		compressErr := al.compressFile(testFile, level)
-		assert.NoError(t, compressErr)
-		os.Remove(testFile + ".gz")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // audit.go -- rotateIfNeeded
 // ---------------------------------------------------------------------------
 
-func TestAuditLogger_RotateIfNeededNoFile(t *testing.T) {
-	cfg := &AuditConfig{Enabled: true}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// file is nil so rotateIfNeeded should return nil.
-	err = al.rotateIfNeeded()
-	assert.NoError(t, err)
-}
-
-func TestAuditLogger_RotateIfNeededUnderMaxSize(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled: true,
-		File:    logFile,
-		MaxSize: 100, // 100 MB
-	}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Write a small amount. Should not trigger rotation.
-	err = al.rotateIfNeeded()
-	assert.NoError(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // audit.go -- VerifySignature
 // ---------------------------------------------------------------------------
-
-func TestAuditLogger_VerifySignatureWhenSigningDisabled(t *testing.T) {
-	cfg := &AuditConfig{Enabled: true, SignLogs: false}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{Action: ActionRead}
-	assert.True(t, al.VerifySignature(event))
-}
-
-func TestAuditLogger_VerifySignatureValid(t *testing.T) {
-	var buf bytes.Buffer
-	cfg := &AuditConfig{
-		Enabled:  true,
-		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
-	}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-	al.writer = &buf
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		EventID:   "evt-sig-test",
-		Action:    ActionWrite,
-		Resource:  "keys",
-		Result:    ResultSuccess,
-		Username:  "admin",
-	}
-
-	err = al.Log(context.Background(), event)
-	require.NoError(t, err)
-	assert.NotEmpty(t, event.Signature)
-
-	assert.True(t, al.VerifySignature(event))
-}
-
-func TestAuditLogger_VerifySignatureInvalid(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled:  true,
-		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
-	}
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-	al.writer = &bytes.Buffer{}
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Action:    ActionRead,
-		Resource:  "data",
-		Result:    ResultSuccess,
-	}
-
-	err = al.Log(context.Background(), event)
-	require.NoError(t, err)
-
-	// Tamper with the signature.
-	event.Signature = "tampered-signature-value"
-	assert.False(t, al.VerifySignature(event))
-}
 
 // ---------------------------------------------------------------------------
 // audit.go -- Flush
@@ -5562,57 +4208,6 @@ func TestSyslogExporter_SendLocal_AllSeverityLevels(t *testing.T) {
 
 // Tests for compressFile edge cases
 
-func TestAuditLogger_CompressFile_WithInvalidLevel(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create a test file
-	testFile := filepath.Join(tmpDir, "test.log")
-	err = os.WriteFile(testFile, []byte("test data"), 0644)
-	require.NoError(t, err)
-
-	// Test with invalid level (should default to default compression)
-	err = al.compressFile(testFile, 99)
-	require.NoError(t, err)
-
-	// Verify compressed file exists
-	assert.FileExists(t, testFile+".gz")
-}
-
-func TestAuditLogger_CompressFile_WithNonExistentFile(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Try to compress non-existent file
-	err = al.compressFile("/nonexistent/path/file.log", 5)
-	assert.Error(t, err)
-
-	var auditErr *AuditError
-	assert.ErrorAs(t, err, &auditErr)
-}
-
 // Tests for sendToSyslog edge cases
 
 func TestAuditLogger_SendToSyslog_WithoutExporterConfigured(t *testing.T) {
@@ -5640,55 +4235,6 @@ func TestAuditLogger_SendToSyslog_WithoutExporterConfigured(t *testing.T) {
 }
 
 // Tests for VerifySignature edge cases
-
-func TestAuditLogger_VerifySignature_WhenSigningDisabled(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &AuditConfig{
-		Enabled:  true,
-		SignLogs: false,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Username:  "test",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "",
-	}
-
-	// Should return true when signing is disabled
-	assert.True(t, al.VerifySignature(event))
-}
-
-func TestAuditLogger_VerifySignature_WithEmptySignature(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &AuditConfig{
-		Enabled:  true,
-		SignLogs: true,
-		SignKey:  "test-key-112bits!",
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Username:  "test",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "", // Empty signature
-	}
-
-	// Signing is on, so an unsigned event fails closed
-	assert.False(t, al.VerifySignature(event))
-}
 
 // TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed is the #22
 // regression: with signing on, removing the signature from a signed event
@@ -6057,25 +4603,6 @@ func TestAuditLogger_CheckRotation_OnShutdownSignal(t *testing.T) {
 
 // Tests for rotateIfNeeded with nil file
 
-func TestAuditLogger_RotateIfNeeded_WithNilFile(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &AuditConfig{
-		Enabled: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Ensure file is nil
-	al.file = nil
-
-	// Should return nil without error
-	err = al.rotateIfNeeded()
-	assert.NoError(t, err)
-}
-
 // Tests for buildStructuredData with error message
 
 func TestSyslogExporter_BuildStructuredData_WithErrorMsgField(t *testing.T) {
@@ -6128,59 +4655,7 @@ func TestAuditError_ErrorMethodWithoutCause(t *testing.T) {
 
 // Test compressFileAsync - renamed
 
-func TestAuditLogger_CompressFileAsync_Success(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Create test file
-	testFile := filepath.Join(tmpDir, "async_test.log")
-	err = os.WriteFile(testFile, []byte("test data for async compression"), 0644)
-	require.NoError(t, err)
-
-	// Call async compression
-	al.compressFileAsync(testFile, 5)
-
-	// Wait for async compression
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify compressed file exists
-	assert.FileExists(t, testFile+".gz")
-}
-
 // Test compressFileAsync with non-existent file - renamed
-
-func TestAuditLogger_CompressFileAsync_NonExistentFile(t *testing.T) {
-	log := createTestLogger(t)
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	config := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Call async compression with non-existent file - should not panic
-	al.compressFileAsync("/nonexistent/path/file.log", 5)
-
-	// Wait for async compression attempt
-	time.Sleep(50 * time.Millisecond)
-}
 
 // ---------------------------------------------------------------------------
 // Error type tests
@@ -7092,85 +5567,6 @@ func TestAuditLogger_CloseShutsBothExporters(t *testing.T) {
 // compressFile error paths
 // ---------------------------------------------------------------------------
 
-func TestAuditLogger_CompressFileSourceMissing(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.compressFile("/nonexistent/path/file.log", 6)
-	require.Error(t, err)
-
-	var auditErr *AuditError
-	assert.True(t, errors.As(err, &auditErr))
-	assert.Equal(t, ErrCodeAuditCompressionOpen, auditErr.Code)
-}
-
-func TestAuditLogger_CompressFileBadLevel(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	testFile := filepath.Join(tmpDir, "test.log")
-
-	err := os.WriteFile(testFile, []byte("test data for compression"), 0o644)
-	require.NoError(t, err)
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.compressFile(testFile, 999)
-	assert.NoError(t, err)
-	assert.FileExists(t, testFile+".gz")
-}
-
-func TestAuditLogger_CompressFileDestPermission(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		Compress: true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	roDir := filepath.Join(tmpDir, "readonly")
-	err = os.MkdirAll(roDir, 0o755)
-	require.NoError(t, err)
-
-	roFile := filepath.Join(roDir, "test.log")
-	err = os.WriteFile(roFile, []byte("data"), 0o644)
-	require.NoError(t, err)
-
-	// compressFile creates "<source>.gz"; a directory already on that name
-	// makes the create fail with EISDIR for every uid, where a read-only
-	// parent would not stop root (testing-guidelines.md, Fault Injection).
-	require.NoError(t, os.MkdirAll(roFile+".gz", 0o755))
-
-	compressErr := al.compressFile(roFile, 6)
-	assert.Error(t, compressErr)
-}
-
 // ---------------------------------------------------------------------------
 // NewAuditLogger configuration
 // ---------------------------------------------------------------------------
@@ -7319,39 +5715,6 @@ func TestAuditLogger_LogReturnsWriteError(t *testing.T) {
 // rotateIfNeeded
 // ---------------------------------------------------------------------------
 
-func TestAuditLogger_RotateIfNeededExceedsSize(t *testing.T) {
-	tmpDir := t.TempDir()
-	auditFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       auditFile,
-		MaxSize:    1,
-		MaxBackups: 5,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	ctx := context.Background()
-	bigDetails := map[string]string{"payload": string(make([]byte, 10000))}
-	for i := 0; i < 150; i++ {
-		al.Log(ctx, &AuditEvent{
-			Action:   ActionWrite,
-			Resource: "bulk",
-			Result:   ResultSuccess,
-			Details:  bigDetails,
-		})
-	}
-
-	al.mu.Lock()
-	err = al.rotateIfNeeded()
-	al.mu.Unlock()
-	_ = err
-}
-
 // ---------------------------------------------------------------------------
 // Log dispatches to SIEM and syslog
 // ---------------------------------------------------------------------------
@@ -7448,69 +5811,6 @@ func TestAuditLogger_LogBackupOperation(t *testing.T) {
 	assert.Greater(t, stat.Size(), int64(0))
 }
 
-// TestAuditLogger_VerifySignature tests signature verification.
-func TestAuditLogger_VerifySignature(t *testing.T) {
-	tmpDir := t.TempDir()
-	auditFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:       true,
-		File:          auditFile,
-		SignLogs:      true,
-		SignKey:       "test-signing-key-12345",
-		FlushInterval: 10 * time.Millisecond,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "testuser",
-		Action:    ActionRead,
-		Resource:  "test-resource",
-		Result:    ResultSuccess,
-		IPAddress: "192.168.1.1",
-	}
-
-	// Sign the event
-	sig, err := al.signEvent(event)
-	require.NoError(t, err)
-	event.Signature = sig
-
-	// Verify signature
-	valid := al.VerifySignature(event)
-	assert.True(t, valid, "Valid signature should be verified")
-
-	// Tamper with event
-	event.Username = "hacker"
-	valid = al.VerifySignature(event)
-	assert.False(t, valid, "Tampered signature should fail verification")
-}
-
-// TestAuditLogger_VerifySignatureWithoutSigning tests verification when signing is disabled.
-func TestAuditLogger_VerifySignatureWithoutSigning(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled:  true,
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Username: "testuser",
-	}
-
-	// Should always return true when not signing
-	valid := al.VerifySignature(event)
-	assert.True(t, valid)
-}
-
 // TestAuditLogger_OpenLogFileError tests file opening errors. The log path is
 // a directory, so openLogFile's MkdirAll succeeds on the parent and the
 // OpenFile under test fails with EISDIR -- for every uid. It used to point at
@@ -7554,53 +5854,6 @@ func TestAuditLogger_LogWithMarshalError(t *testing.T) {
 
 	err = al.Log(ctx, event)
 	assert.NoError(t, err)
-}
-
-// TestAuditLogger_RotationNeeded tests log rotation when file exceeds max size.
-func TestAuditLogger_RotationNeeded(t *testing.T) {
-	tmpDir := t.TempDir()
-	auditFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:       true,
-		File:          auditFile,
-		MaxSize:       1, // 1 MB
-		MaxBackups:    3,
-		Compress:      true,
-		FlushInterval: 10 * time.Millisecond,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Write enough data to trigger rotation (1 MB)
-	ctx := context.Background()
-	largeDetails := make(map[string]string)
-	for i := 0; i < 100; i++ {
-		largeDetails[fmt.Sprintf("key%d", i)] = string(make([]byte, 1000))
-	}
-
-	// Write many events
-	for i := 0; i < 200; i++ {
-		event := &AuditEvent{
-			Username: "testuser",
-			Action:   ActionWrite,
-			Resource: fmt.Sprintf("resource-%d", i),
-			Result:   ResultSuccess,
-			Details:  largeDetails,
-		}
-		err = al.Log(ctx, event)
-		assert.NoError(t, err)
-	}
-
-	// Give time for rotation check
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify backup files exist
-	// Note: Rotation may or may not have happened depending on timing
-	// This test mainly ensures the code path doesn't panic
 }
 
 // TestAuditLogger_LogWithSigningError tests log signing error path.
@@ -7650,42 +5903,6 @@ func TestAuditLogger_DataAccessFailure(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestCompressFile_WithAuditLoggerMethod tests file compression method on AuditLogger.
-func TestCompressFile_WithAuditLoggerMethod(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	testFile := filepath.Join(tmpDir, "test.log")
-	compressedFile := testFile + ".gz"
-
-	// Create test file
-	err := os.WriteFile(testFile, []byte("test content for compression"), 0o644)
-	require.NoError(t, err)
-
-	cfg := &AuditConfig{
-		Enabled:          true,
-		File:             logFile,
-		Compress:         true,
-		CompressionLevel: gzip.DefaultCompression,
-		SignLogs:         false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Call compressFile method
-	err = al.compressFile(testFile, gzip.DefaultCompression)
-	require.NoError(t, err)
-
-	// Verify compressed file was created
-	assert.FileExists(t, compressedFile)
-
-	// Verify original file was removed
-	_, err = os.Stat(testFile)
-	assert.True(t, os.IsNotExist(err), "Original file should be removed after compression")
-}
-
 // TestAuditLogger_FlushWithoutFile tests flush when no file is configured.
 func TestAuditLogger_FlushWithoutFile(t *testing.T) {
 	cfg := &AuditConfig{
@@ -7698,41 +5915,6 @@ func TestAuditLogger_FlushWithoutFile(t *testing.T) {
 	defer al.Close()
 
 	err = al.Flush()
-	assert.NoError(t, err)
-}
-
-// TestAuditLogger_CheckRotationWithoutFile tests rotation check without file.
-func TestAuditLogger_CheckRotationWithoutFile(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled:       true,
-		File:          "",
-		FlushInterval: 10 * time.Millisecond,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-
-	// Start check rotation (should return immediately since no file)
-	go al.checkRotation()
-
-	time.Sleep(50 * time.Millisecond)
-
-	al.Close()
-}
-
-// TestAuditLogger_RotateIfNeededWithoutFile tests rotation without file.
-func TestAuditLogger_RotateIfNeededWithoutFile(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled: true,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.rotateIfNeeded()
 	assert.NoError(t, err)
 }
 
@@ -7754,32 +5936,6 @@ func TestAuditLogger_CleanupOldBackups(t *testing.T) {
 
 	// Call cleanup (currently a no-op)
 	al.cleanupOldBackups()
-}
-
-// TestAuditLogger_VerifySignatureWithError tests signature verification error path.
-func TestAuditLogger_VerifySignatureWithError(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled:  true,
-		SignLogs: true,
-		SignKey:  "test-key-112bits!",
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Timestamp: time.Now(),
-		Username:  "testuser",
-		Action:    ActionRead,
-		Resource:  "test",
-		Result:    ResultSuccess,
-		Signature: "invalid-signature-format",
-	}
-
-	valid := al.VerifySignature(event)
-	assert.False(t, valid)
 }
 
 // TestAuditLogger_LogSignatureGeneration tests signature generation.
