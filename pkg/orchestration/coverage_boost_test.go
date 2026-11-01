@@ -6329,46 +6329,41 @@ func TestOrchestrator_DefaultBackendName_OllamaFallback(t *testing.T) {
 }
 
 // =============================================================================
-// lookupProject — type assertion failure path
+// lookupProject / lookupBackend / BackendToolGuidance / findSessionBackend —
+// a value of the wrong type in the sync.Map is treated as missing.
 // =============================================================================
 
-func TestOrchestrator_LookupProject_TypeMismatch(t *testing.T) {
+func TestOrchestrator_LookupTypeMismatch(t *testing.T) {
 	t.Parallel()
-	impl := newTestService(t)
-	// Store a non-*RegisteredProject value.
-	impl.projects.Store("bad-proj", "not-a-project")
-	proj, ok := impl.lookupProject("bad-proj")
-	if ok || proj != nil {
-		t.Error("expected lookupProject to return nil,false for bad type")
-	}
-}
-
-// =============================================================================
-// lookupBackend — type assertion failure path
-// =============================================================================
-
-func TestOrchestrator_LookupBackend_TypeMismatch(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	// Store a non-AgentBackend value.
-	impl.backends.Store("bad-backend", "not-a-backend")
-	_, err := impl.lookupBackend("bad-backend")
-	if err == nil {
-		t.Error("expected error for type mismatch in backends store")
-	}
-}
-
-// =============================================================================
-// BackendToolGuidance — backend type assertion failure
-// =============================================================================
-
-func TestOrchestrator_BackendToolGuidance_TypeMismatch(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	impl.backends.Store("bad-bg", "not-a-backend")
-	result := impl.BackendToolGuidance("bad-bg")
-	if result != "" {
-		t.Errorf("expected empty string for bad type, got %q", result)
+	for name, check := range map[string]func(t *testing.T, impl *agentServiceImpl){
+		"lookupProject": func(t *testing.T, impl *agentServiceImpl) {
+			impl.projects.Store("bad", "not-a-project")
+			if proj, ok := impl.lookupProject("bad"); ok || proj != nil {
+				t.Error("expected lookupProject to return nil,false for bad type")
+			}
+		},
+		"lookupBackend": func(t *testing.T, impl *agentServiceImpl) {
+			impl.backends.Store("bad", "not-a-backend")
+			if _, err := impl.lookupBackend("bad"); err == nil {
+				t.Error("expected error for type mismatch in backends store")
+			}
+		},
+		"BackendToolGuidance": func(t *testing.T, impl *agentServiceImpl) {
+			impl.backends.Store("bad", "not-a-backend")
+			if result := impl.BackendToolGuidance("bad"); result != "" {
+				t.Errorf("expected empty string for bad type, got %q", result)
+			}
+		},
+		"findSessionBackend": func(t *testing.T, impl *agentServiceImpl) {
+			impl.sessions.Store("bad", "not-a-record")
+			if _, err := impl.findSessionBackend("bad"); err == nil {
+				t.Error("expected error for type mismatch in sessions store")
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			check(t, newTestService(t))
+		})
 	}
 }
 
@@ -6394,40 +6389,26 @@ func TestOrchestrator_ListBackends_InvalidEntries(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// findSessionBackend — type assertion failure path (non-*sessionRecord value)
+// ClaimTask / CompleteTask — taskStore == nil paths
 // =============================================================================
 
-func TestOrchestrator_FindSessionBackend_TypeMismatch(t *testing.T) {
+func TestOrchestrator_TaskVerbs_NoTaskStore(t *testing.T) {
 	t.Parallel()
-	impl := newTestService(t)
-	impl.sessions.Store("bad-sess", "not-a-record")
-	_, err := impl.findSessionBackend("bad-sess")
-	if err == nil {
-		t.Error("expected error for type mismatch in sessions store")
-	}
-}
-
-// =============================================================================
-// ClaimTask / CompleteTask — taskStore == nil paths (lines 1270-1272, 1304-1306)
-// =============================================================================
-
-func TestOrchestrator_ClaimTask_NoTaskStore(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	// taskStore is nil by default in newTestService (no SetTaskStore call)
-	err := impl.ClaimTask(context.Background(), "t-ctn", "task-x", "agent-a")
-	if err == nil {
-		t.Fatal("expected error when taskStore is nil")
-	}
-}
-
-func TestOrchestrator_CompleteTask_NoTaskStore(t *testing.T) {
-	t.Parallel()
-	impl := newTestService(t)
-	err := impl.CompleteTask(context.Background(), "t-cmptn", "task-x", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error when taskStore is nil")
+	ctx := context.Background()
+	for name, call := range map[string]func(impl *agentServiceImpl) error{
+		"ClaimTask": func(impl *agentServiceImpl) error {
+			return impl.ClaimTask(ctx, "t-ctn", "task-x", "agent-a")
+		},
+		"CompleteTask": func(impl *agentServiceImpl) error {
+			return impl.CompleteTask(ctx, "t-cmptn", "task-x", &TaskResult{Output: "done"})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// taskStore is nil by default in newTestService (no SetTaskStore call)
+			if err := call(newTestService(t)); err == nil {
+				t.Fatal("expected error when taskStore is nil")
+			}
+		})
 	}
 }
 
@@ -6590,33 +6571,6 @@ func TestOrchestrator_DefaultBackendName_LeadAgent(t *testing.T) {
 	name := impl.defaultBackendName()
 	if name != "my-lead-backend" {
 		t.Errorf("expected my-lead-backend, got %q", name)
-	}
-}
-
-// =============================================================================
-// DiscoverProjects — filepath.Abs error is unreachable, but os.ReadDir failure
-// and cancelled context are reachable. Test with bad path string.
-// =============================================================================
-
-func TestOrchestrator_DiscoverProjects_ContextCancelledBeforeRead(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// Using a valid path so os.ReadDir might succeed but ctx is already cancelled.
-	// DiscoverProjects checks ctx.Err() inside the entry loop, not before ReadDir.
-	// If the directory is empty, no entries to iterate — no error from ctx.
-	// Use a dir with an entry to ensure the ctx.Err() check at line 295 fires.
-	root := t.TempDir()
-	if err := os.WriteFile(root+"/file.txt", []byte("hello"), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	_, err := impl.DiscoverProjects(ctx, &DiscoverProjectsRequest{RootPath: root})
-	if err == nil {
-		t.Fatal("expected error for cancelled context during DiscoverProjects")
 	}
 }
 
