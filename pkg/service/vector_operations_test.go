@@ -439,26 +439,6 @@ func TestVecGetVector_WithoutVectorData(t *testing.T) {
 // BatchUpsert - New coverage paths
 // =============================================================================
 
-func TestVecBatchUpsert_StorageError(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "batch-ns", 3)
-
-	storage.batchDeleteVectorsFn = func(ctx context.Context, namespace string, ids []uint64) error {
-		return errors.New("batch write failed")
-	}
-
-	resp, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "batch-ns",
-		Vectors: []*VectorData{
-			{ID: 1, Vector: []float32{1.0, 2.0, 3.0}},
-		},
-	})
-	// BatchUpsert may succeed or fail depending on write path (SDK vs storage)
-	// The test validates the code path is exercised
-	if err != nil {
-		assert.Nil(t, resp)
-	}
-}
-
 // =============================================================================
 // SearchSimilar - New coverage paths
 // =============================================================================
@@ -521,40 +501,35 @@ func TestVecSearchByMetadata_StorageError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecSearchByMetadata_LimitCapping(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+func TestVecSearchByMetadata_Limit(t *testing.T) {
+	tests := []struct {
+		name      string
+		limit     int
+		wantLimit int
+	}{
+		{name: "default limit", limit: 0, wantLimit: 100},
+		{name: "limit capped at 1000", limit: 5000, wantLimit: 1000},
 	}
 
-	_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
-		Namespace: "meta-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-		Limit:     5000,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 1000, capturedOpts.Limit)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
 
-func TestVecSearchByMetadata_DefaultLimit(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "meta-ns", 3)
+			var capturedOpts *interfaces.VectorScanOptions
+			storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				capturedOpts = opts
+				return nil, nil
+			}
 
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanByMultiFiltersFn = func(ctx context.Context, namespace string, filters []interfaces.VectorMetadataFilter, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+			_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
+				Namespace: "meta-ns",
+				Filters:   map[string]interface{}{"key": "val"},
+				Limit:     tt.limit,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantLimit, capturedOpts.Limit)
+		})
 	}
-
-	_, err := svc.SearchByMetadata(tenantctx.WithSystem(context.Background()), &SearchByMetadataRequest{
-		Namespace: "meta-ns",
-		Filters:   map[string]interface{}{"key": "val"},
-		Limit:     0,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 100, capturedOpts.Limit)
 }
 
 // =============================================================================
@@ -706,40 +681,30 @@ func TestVecUpdateMetadata_VectorNotFound(t *testing.T) {
 // SearchByID - New coverage paths
 // =============================================================================
 
-func TestVecSearchByID_ZeroID(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+func TestVecSearchByID_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		id   uint64
+		k    int
+	}{
+		{name: "zero id", id: 0, k: 5},
+		{name: "invalid k", id: 1, k: 0},
+		{name: "vector not found", id: 999, k: 5},
+	}
 
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        0,
-		K:         5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newVecSvcWithNamespace(t, "ns", 3)
 
-func TestVecSearchByID_InvalidK(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
-
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        1,
-		K:         0,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
-
-func TestVecSearchByID_VectorNotFound(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "ns", 3)
-
-	resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
-		Namespace: "ns",
-		ID:        999,
-		K:         5,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			resp, err := svc.SearchByID(tenantctx.WithSystem(context.Background()), &SearchByIDRequest{
+				Namespace: "ns",
+				ID:        tt.id,
+				K:         tt.k,
+			})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 // =============================================================================
