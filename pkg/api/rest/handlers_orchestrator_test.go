@@ -499,214 +499,116 @@ func TestOrchestratorSpawn_Success(t *testing.T) {
 	assert.Equal(t, "claude", resp.Backend)
 }
 
-// TestOrchestratorSpawn_DefaultsPersistentTrue proves the /orchestrator/sessions
-// endpoint defaults Persistent=true when the caller omits the field. The Sessions
-// UI creates multi-turn conversational sessions, which require persistent mode so
-// CLI-mode backends register a durable session that the immediate prompt can
-// resolve. Without this default the spawn is one-shot and the prompt fails with
-// "session not found".
-func TestOrchestratorSpawn_DefaultsPersistentTrue(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+// TestOrchestratorSpawn_Persistent proves the sessions endpoint defaults
+// Persistent=true when the body omits it, and honours an explicit value
+// either way, so callers that want one-shot behaviour can still get it.
+func TestOrchestratorSpawn_Persistent(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "omitted defaults to true", body: `{"backend":"claude"}`, want: true},
+		{name: "explicit false is honoured", body: `{"backend":"claude","persistent":false}`, want: false},
+		{name: "explicit true is honoured", body: `{"backend":"claude","persistent":true}`, want: true},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	// Raw body deliberately omits "persistent" entirely.
-	body := []byte(`{"backend":"claude"}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+			var captured *orchestration.SpawnSessionRequest
+			agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+				captured = req
+				return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+			}
 
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.True(t, captured.Persistent, "sessions endpoint must default Persistent=true when omitted")
-}
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorSpawn(rec, req)
 
-// TestOrchestratorSpawn_HonorsExplicitPersistentFalse proves an explicit
-// "persistent": false opt-out is honored and not overridden by the server
-// default — callers that want one-shot behavior on this endpoint can still get it.
-func TestOrchestratorSpawn_HonorsExplicitPersistentFalse(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+			assert.Equal(t, http.StatusCreated, rec.Code)
+			require.NotNil(t, captured)
+			assert.Equal(t, tc.want, captured.Persistent)
+		})
 	}
-
-	body := []byte(`{"backend":"claude","persistent":false}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.False(t, captured.Persistent, "explicit persistent:false must be honored")
 }
 
-// TestOrchestratorSpawn_HonorsExplicitPersistentTrue proves an explicit
-// "persistent": true round-trips unchanged.
-func TestOrchestratorSpawn_HonorsExplicitPersistentTrue(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	var captured *orchestration.SpawnSessionRequest
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		captured = req
-		return &orchestration.SpawnSessionResponse{SessionID: "s1", Backend: req.Backend}, nil
+// TestOrchestratorSpawn_Errors maps each spawn failure to its HTTP status.
+// The UnsupportedOperation and BackendNotFound rows are Bug #3 regressions:
+// both once fell through to an opaque 500 "internal server error", and the
+// body must now carry the actionable message instead.
+func TestOrchestratorSpawn_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		noAgent     bool
+		spawnErr    error
+		body        string
+		wantStatus  int
+		wantContain []string
+	}{
+		{name: "invalid payload", body: "invalid-json", wantStatus: http.StatusBadRequest},
+		{name: "missing backend", body: `{}`, wantStatus: http.StatusBadRequest},
+		{name: "service unavailable", noAgent: true, body: `{"backend":"claude"}`, wantStatus: http.StatusServiceUnavailable},
+		{
+			name: "service error",
+			spawnErr: &orchestration.AgentServiceError{
+				Sentinel: orchestration.ErrBackendRequired,
+				Message:  "backend not found",
+			},
+			body:       `{"backend":"invalid"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:        "unsupported operation",
+			spawnErr:    &orchestration.UnsupportedOperationError{Backend: "ollama", Operation: "spawn"},
+			body:        `{"backend":"ollama"}`,
+			wantStatus:  http.StatusBadRequest,
+			wantContain: []string{"does not support spawn"},
+		},
+		{
+			name:        "backend not found",
+			spawnErr:    &orchestration.BackendNotFoundError{Backend: "ollama"},
+			body:        `{"backend":"ollama"}`,
+			wantStatus:  http.StatusNotFound,
+			wantContain: []string{"backend not found", "ollama"},
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var server *Server
+			if tc.noAgent {
+				// The default mock returns nil for Agent().
+				s, _, cleanup := setupMockServer(t)
+				defer cleanup()
+				server = s
+			} else {
+				s, agentSvc, cleanup := setupOrchestratorMockServer(t)
+				defer cleanup()
+				if tc.spawnErr != nil {
+					agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
+						return nil, tc.spawnErr
+					}
+				}
+				server = s
+			}
 
-	body := []byte(`{"backend":"claude","persistent":true}`)
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorSpawn(rec, req)
 
-	assert.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, captured)
-	assert.True(t, captured.Persistent)
-}
-
-func TestOrchestratorSpawn_InvalidPayload(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader([]byte("invalid-json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorSpawn_MissingBackend(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorSpawn_ServiceUnavailable(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Default mock returns nil for Agent()
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "claude"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestOrchestratorSpawn_ServiceError(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.AgentServiceError{
-			Sentinel: orchestration.ErrBackendRequired,
-			Message:  "backend not found",
-		}
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			respBody := rec.Body.String()
+			for _, want := range tc.wantContain {
+				assert.Contains(t, respBody, want)
+			}
+			if tc.spawnErr != nil {
+				assert.NotContains(t, respBody, "internal server error")
+			}
+		})
 	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "invalid"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-// TestOrchestratorSpawn_UnsupportedOperation — Bug #3 regression (part B).
-// A backend that is registered but doesn't support spawn (e.g. ollama in
-// stateless-only mode) must return 400 with the actionable message, not a
-// 500 "internal server error".
-func TestOrchestratorSpawn_UnsupportedOperation(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.UnsupportedOperationError{Backend: "ollama", Operation: "spawn"}
-	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions?tenant_id=default", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code,
-		"UnsupportedOperationError must map to 400, not 500")
-	respBody := rec.Body.String()
-	assert.Contains(t, respBody, "does not support spawn",
-		"response must identify which operation is unsupported")
-	assert.NotContains(t, respBody, "internal server error")
-}
-
-// TestOrchestratorSpawn_BackendNotFound — Bug #3 regression.
-//
-// Before the fix, a spawn against an unregistered backend mapped through
-// the default branch of handleOrchestratorError and returned HTTP 500 with
-// the opaque body "internal server error". Users saw that in the UI dialog
-// with zero clue that the fix was to register a backend.
-//
-// After the fix, BackendNotFoundError classifies as not-found (404) and the
-// response body carries the actionable original message.
-func TestOrchestratorSpawn_BackendNotFound(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.spawnSessionFunc = func(ctx context.Context, req *orchestration.SpawnSessionRequest) (*orchestration.SpawnSessionResponse, error) {
-		return nil, &orchestration.BackendNotFoundError{Backend: "ollama"}
-	}
-
-	body, err := json.Marshal(orchestration.SpawnSessionRequest{Backend: "ollama"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/sessions", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorSpawn(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code, "BackendNotFoundError must map to 404, not 500")
-
-	respBody := rec.Body.String()
-	assert.Contains(t, respBody, "backend not found",
-		"response body must surface the actionable error, not an opaque 'internal server error'")
-	assert.Contains(t, respBody, "ollama",
-		"response body must identify which backend was missing")
-	assert.NotContains(t, respBody, "internal server error",
-		"Bug #3 regression: the opaque 500 message must not leak back")
 }
 
 // =============================================================================
@@ -748,71 +650,53 @@ func TestOrchestratorCreateTask_Success(t *testing.T) {
 	assert.Equal(t, "implement feature X", resp.Subject)
 }
 
-func TestOrchestratorCreateTask_InvalidPayload(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte("not-json")))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorCreateTask_MissingSubject(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.CreateTaskRequest{Description: "no subject"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestOrchestratorCreateTask_ServiceUnavailable(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, err := json.Marshal(orchestration.CreateTaskRequest{Subject: "test"})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestOrchestratorCreateTask_ServiceError(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.createTaskFunc = func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
-		return nil, &orchestration.TaskAlreadyExistsError{TaskID: "task-dup"}
+// TestOrchestratorCreateTask_Errors maps each create-task failure to its
+// HTTP status.
+func TestOrchestratorCreateTask_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		noAgent    bool
+		createErr  error
+		body       string
+		wantStatus int
+	}{
+		{name: "invalid payload", body: "not-json", wantStatus: http.StatusBadRequest},
+		{name: "missing subject", body: `{"description":"no subject"}`, wantStatus: http.StatusBadRequest},
+		{name: "service unavailable", noAgent: true, body: `{"subject":"test"}`, wantStatus: http.StatusServiceUnavailable},
+		{
+			name:       "task already exists",
+			createErr:  &orchestration.TaskAlreadyExistsError{TaskID: "task-dup"},
+			body:       `{"subject":"duplicate"}`,
+			wantStatus: http.StatusConflict,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var server *Server
+			if tc.noAgent {
+				// The default mock returns nil for Agent().
+				s, _, cleanup := setupMockServer(t)
+				defer cleanup()
+				server = s
+			} else {
+				s, agentSvc, cleanup := setupOrchestratorMockServer(t)
+				defer cleanup()
+				if tc.createErr != nil {
+					agentSvc.createTaskFunc = func(ctx context.Context, req *orchestration.CreateTaskRequest) (*orchestration.Task, error) {
+						return nil, tc.createErr
+					}
+				}
+				server = s
+			}
 
-	body, err := json.Marshal(orchestration.CreateTaskRequest{
-		Subject: "duplicate",
-	})
-	require.NoError(t, err)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorCreateTask(rec, req)
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/tasks", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateTask(rec, req)
-
-	assert.Equal(t, http.StatusConflict, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 // =============================================================================
