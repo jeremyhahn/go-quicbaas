@@ -2133,131 +2133,97 @@ func TestBuildValidationSummary(t *testing.T) {
 // Tests: Response Parsing
 // =============================================================================
 
-func TestParseReviewResponse_ValidApproved(t *testing.T) {
+func TestParseReviewResponse(t *testing.T) {
 	t.Parallel()
 
-	review, err := parseReviewResponse(`{"approved": true, "feedback": "good"}`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name         string
+		input        string
+		wantErr      bool
+		wantApproved bool
+		wantFeedback string
+		wantNewItems int
+	}{
+		{name: "approved", input: `{"approved": true, "feedback": "good"}`, wantApproved: true, wantFeedback: "good"},
+		{name: "rejected with new work items", input: `{"approved": false, "feedback": "bad", "new_work_items": [{"id":"r1","title":"Fix"}]}`, wantFeedback: "bad", wantNewItems: 1},
+		{name: "json embedded in text", input: `Here is my review: {"approved": true, "feedback": "looks good"} Thanks!`, wantApproved: true, wantFeedback: "looks good"},
+		{name: "no json", input: "no json here", wantErr: true},
+		{name: "invalid json", input: `{invalid json}`, wantErr: true},
 	}
-	if !review.Approved {
-		t.Fatal("expected approved=true")
-	}
-	if review.Feedback != "good" {
-		t.Fatalf("expected feedback='good', got %q", review.Feedback)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			review, err := parseReviewResponse(tt.input)
+			if tt.wantErr {
+				if !errors.Is(err, ErrReviewParseFailed) {
+					t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if review.Approved != tt.wantApproved {
+				t.Fatalf("expected approved=%v, got %v", tt.wantApproved, review.Approved)
+			}
+			if review.Feedback != tt.wantFeedback {
+				t.Fatalf("expected feedback=%q, got %q", tt.wantFeedback, review.Feedback)
+			}
+			if len(review.NewWorkItems) != tt.wantNewItems {
+				t.Fatalf("expected %d new work items, got %d", tt.wantNewItems, len(review.NewWorkItems))
+			}
+		})
 	}
 }
 
-func TestParseReviewResponse_ValidRejected(t *testing.T) {
+func TestExtractJSONFromText_NoBalancedObject(t *testing.T) {
 	t.Parallel()
 
-	review, err := parseReviewResponse(`{"approved": false, "feedback": "bad", "new_work_items": [{"id":"r1","title":"Fix"}]}`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if review.Approved {
-		t.Fatal("expected approved=false")
-	}
-	if len(review.NewWorkItems) != 1 {
-		t.Fatalf("expected 1 new work item, got %d", len(review.NewWorkItems))
+	for _, input := range []string{"", "{incomplete"} {
+		if result := extractJSONFromText(input); result != "" {
+			t.Fatalf("extractJSONFromText(%q): expected empty string, got %q", input, result)
+		}
 	}
 }
 
-func TestParseReviewResponse_NoJSON(t *testing.T) {
+func TestExtractPromptSessionText(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseReviewResponse("no json here")
-	if err == nil {
-		t.Fatal("expected error for no JSON")
-	}
-	if !errors.Is(err, ErrReviewParseFailed) {
-		t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
-	}
-}
-
-func TestParseReviewResponse_InvalidJSON(t *testing.T) {
-	t.Parallel()
-
-	_, err := parseReviewResponse(`{invalid json}`)
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-	if !errors.Is(err, ErrReviewParseFailed) {
-		t.Fatalf("expected ErrReviewParseFailed, got: %v", err)
-	}
-}
-
-func TestParseReviewResponse_JSONEmbeddedInText(t *testing.T) {
-	t.Parallel()
-
-	review, err := parseReviewResponse(`Here is my review: {"approved": true, "feedback": "looks good"} Thanks!`)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !review.Approved {
-		t.Fatal("expected approved=true")
-	}
-}
-
-func TestExtractJSONFromText_EmptyString(t *testing.T) {
-	t.Parallel()
-
-	result := extractJSONFromText("")
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractJSONFromText_UnbalancedBraces(t *testing.T) {
-	t.Parallel()
-
-	result := extractJSONFromText("{incomplete")
-	if result != "" {
-		t.Fatalf("expected empty string for unbalanced braces, got %q", result)
-	}
-}
-
-func TestExtractPromptSessionText_NilResponse(t *testing.T) {
-	t.Parallel()
-
-	result := extractPromptSessionText(nil)
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractPromptSessionText_MultipleBlocks(t *testing.T) {
-	t.Parallel()
-
-	resp := &PromptSessionResponse{
-		Content: []ContentBlock{
-			{Type: "text", Text: "hello "},
-			{Type: "tool_call", Text: ""},
-			{Type: "text", Text: "world"},
+	tests := []struct {
+		name string
+		resp *PromptSessionResponse
+		want string
+	}{
+		{name: "nil response", resp: nil, want: ""},
+		{
+			name: "text blocks joined, other blocks skipped",
+			resp: &PromptSessionResponse{
+				Content: []ContentBlock{
+					{Type: "text", Text: "hello "},
+					{Type: "tool_call", Text: ""},
+					{Type: "text", Text: "world"},
+				},
+			},
+			want: "hello world",
 		},
 	}
 
-	result := extractPromptSessionText(resp)
-	if result != "hello world" {
-		t.Fatalf("expected 'hello world', got %q", result)
+	for _, tt := range tests {
+		if result := extractPromptSessionText(tt.resp); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
-func TestExtractDecomposeText_NilResponse(t *testing.T) {
+func TestExtractDecomposeText_NoWorkItems(t *testing.T) {
 	t.Parallel()
 
-	result := extractDecomposeText(nil)
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
-	}
-}
-
-func TestExtractDecomposeText_EmptyWorkItems(t *testing.T) {
-	t.Parallel()
-
-	result := extractDecomposeText(&DecomposeTaskResponse{WorkItems: []*WorkItem{}})
-	if result != "" {
-		t.Fatalf("expected empty string, got %q", result)
+	for _, resp := range []*DecomposeTaskResponse{nil, {WorkItems: []*WorkItem{}}} {
+		if result := extractDecomposeText(resp); result != "" {
+			t.Fatalf("expected empty string, got %q", result)
+		}
 	}
 }
 
@@ -2265,7 +2231,7 @@ func TestExtractDecomposeText_EmptyWorkItems(t *testing.T) {
 // Tests: ID Generation
 // =============================================================================
 
-func TestGenerateJobID_Uniqueness(t *testing.T) {
+func TestGenerateIDs_FormatAndUniqueness(t *testing.T) {
 	t.Parallel()
 
 	ids := make(map[string]struct{}, 100)
@@ -2274,55 +2240,33 @@ func TestGenerateJobID_Uniqueness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		// 16 bytes -> 32 hex chars.
+		if len(id) != 32 {
+			t.Fatalf("expected 32-char job ID, got %d chars: %s", len(id), id)
+		}
 		if _, exists := ids[id]; exists {
 			t.Fatalf("duplicate job ID generated: %s", id)
 		}
 		ids[id] = struct{}{}
 	}
-}
 
-func TestGenerateJobID_Length(t *testing.T) {
-	t.Parallel()
-
-	id, err := generateJobID()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// 16 bytes -> 32 hex chars.
-	if len(id) != 32 {
-		t.Fatalf("expected 32-char job ID, got %d chars: %s", len(id), id)
-	}
-}
-
-func TestGenerateCorrelationID_Format(t *testing.T) {
-	t.Parallel()
-
-	id, err := generateCorrelationID()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.HasPrefix(id, "corr-") {
-		t.Fatalf("expected correlation ID to start with 'corr-', got %q", id)
-	}
-	// "corr-" + 32 hex chars = 37 chars.
-	if len(id) != 37 {
-		t.Fatalf("expected 37-char correlation ID, got %d chars: %s", len(id), id)
-	}
-}
-
-func TestGenerateCorrelationID_Uniqueness(t *testing.T) {
-	t.Parallel()
-
-	ids := make(map[string]struct{}, 100)
+	corrIDs := make(map[string]struct{}, 100)
 	for i := 0; i < 100; i++ {
 		id, err := generateCorrelationID()
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if _, exists := ids[id]; exists {
+		if !strings.HasPrefix(id, "corr-") {
+			t.Fatalf("expected correlation ID to start with 'corr-', got %q", id)
+		}
+		// "corr-" + 32 hex chars = 37 chars.
+		if len(id) != 37 {
+			t.Fatalf("expected 37-char correlation ID, got %d chars: %s", len(id), id)
+		}
+		if _, exists := corrIDs[id]; exists {
 			t.Fatalf("duplicate correlation ID: %s", id)
 		}
-		ids[id] = struct{}{}
+		corrIDs[id] = struct{}{}
 	}
 }
 
@@ -2330,108 +2274,73 @@ func TestGenerateCorrelationID_Uniqueness(t *testing.T) {
 // Tests: Helper Methods
 // =============================================================================
 
-func TestResolveBackendForItem_ExplicitBackend(t *testing.T) {
+func TestResolveBackendForItem(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
+	workflow := &WorkflowDefinition{
+		Name:   "test",
+		Agents: []AgentRoleSpec{{Role: "developer", Backend: "claude"}},
+	}
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		item     *WorkItem
+		want     string
+	}{
+		{name: "explicit backend", item: &WorkItem{Backend: "custom-backend"}, want: "custom-backend"},
+		{name: "workflow role", workflow: workflow, item: &WorkItem{RequiredRole: "developer"}, want: "claude"},
+		// "ollama" is newTestConfig's LeadBackend.
+		{name: "falls back to lead backend", item: &WorkItem{Title: "no backend specified"}, want: "ollama"},
+	}
 
-	item := &WorkItem{Backend: "custom-backend"}
-	result := cl.resolveBackendForItem(item)
-	if result != "custom-backend" {
-		t.Fatalf("expected 'custom-backend', got %q", result)
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.job.Config = newTestConfig()
+		cl.workflow = tt.workflow
+
+		if result := cl.resolveBackendForItem(tt.item); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
-func TestResolveBackendForItem_WorkflowRole(t *testing.T) {
+func TestResolveModelForRole(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
 	cl.job.Config = newTestConfig()
 	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude"},
-		},
+		Agents: []AgentRoleSpec{{Role: "worker", Model: "gpt-4"}},
 	}
 
-	item := &WorkItem{RequiredRole: "developer"}
-	result := cl.resolveBackendForItem(item)
-	if result != "claude" {
-		t.Fatalf("expected 'claude', got %q", result)
-	}
-}
-
-func TestResolveBackendForItem_FallsBackToLeadBackend(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-
-	item := &WorkItem{Title: "no backend specified"}
-	result := cl.resolveBackendForItem(item)
-	if result != "ollama" { // From newTestConfig.LeadBackend
-		t.Fatalf("expected fallback to lead backend 'ollama', got %q", result)
-	}
-}
-
-func TestResolveModelForRole_Found(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Model: "gpt-4"},
-		},
-	}
-
-	model := cl.resolveModelForRole("worker")
-	if model != "gpt-4" {
+	if model := cl.resolveModelForRole("worker"); model != "gpt-4" {
 		t.Fatalf("expected 'gpt-4', got %q", model)
 	}
-}
-
-func TestResolveModelForRole_FallsBack(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-
-	model := cl.resolveModelForRole("unknown")
-	if model != "test-model" { // From newTestConfig.LeadModel
+	// "test-model" is newTestConfig's LeadModel.
+	if model := cl.resolveModelForRole("unknown"); model != "test-model" {
 		t.Fatalf("expected fallback to 'test-model', got %q", model)
 	}
 }
 
-func TestBackendSupportsSessions_True(t *testing.T) {
+func TestBackendSupportsSessions(t *testing.T) {
 	t.Parallel()
 
 	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	backends := newTestBackendsWithPersistent()
-
-	if !cl.backendSupportsSessions("claude", backends) {
-		t.Fatal("expected claude backend to support sessions")
+	tests := []struct {
+		name     string
+		backend  string
+		backends []*AgentBackendInfo
+		want     bool
+	}{
+		{name: "persistent backend", backend: "claude", backends: newTestBackendsWithPersistent(), want: true},
+		{name: "non-persistent backend", backend: "ollama", backends: newTestBackends(), want: false},
+		{name: "unknown backend", backend: "nonexistent", backends: nil, want: false},
 	}
-}
 
-func TestBackendSupportsSessions_False(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	backends := newTestBackends()
-
-	if cl.backendSupportsSessions("ollama", backends) {
-		t.Fatal("expected ollama backend to NOT support sessions")
-	}
-}
-
-func TestBackendSupportsSessions_NotFound(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	if cl.backendSupportsSessions("nonexistent", nil) {
-		t.Fatal("expected false for nonexistent backend")
+	for _, tt := range tests {
+		if got := cl.backendSupportsSessions(tt.backend, tt.backends); got != tt.want {
+			t.Fatalf("%s: expected %v, got %v", tt.name, tt.want, got)
+		}
 	}
 }
 
@@ -2481,89 +2390,57 @@ func TestFilterJobTasks_EmptyTaskIDs(t *testing.T) {
 // Tests: Typed Errors
 // =============================================================================
 
-func TestSchedulingError_Error(t *testing.T) {
+func TestTypedErrors_MessageAndUnwrap(t *testing.T) {
 	t.Parallel()
 
-	cause := errors.New("cyclic dependency")
-	err := &SchedulingError{Message: "failed to build plan", Cause: cause}
+	tests := []struct {
+		name     string
+		err      error
+		sentinel error
+		contains []string
+	}{
+		{
+			name:     "scheduling error with cause",
+			err:      &SchedulingError{Message: "failed to build plan", Cause: errors.New("cyclic dependency")},
+			sentinel: ErrSchedulingFailed,
+			contains: []string{"failed to build plan", "cyclic dependency"},
+		},
+		{
+			name:     "scheduling error without cause",
+			err:      &SchedulingError{Message: "some issue"},
+			sentinel: ErrSchedulingFailed,
+			contains: []string{"some issue"},
+		},
+		{
+			name:     "escalation error",
+			err:      &EscalationError{JobID: "job-123", Iterations: 5, Reason: "max iterations exceeded"},
+			sentinel: ErrEscalation,
+			contains: []string{"job-123", "5"},
+		},
+		{
+			name:     "worker session error with cause",
+			err:      &WorkerSessionError{Role: "worker", Backend: "claude", Cause: errors.New("connection refused")},
+			sentinel: ErrWorkerSessionFailed,
+			contains: []string{"worker", "claude", "connection refused"},
+		},
+		{
+			name:     "worker session error without cause",
+			err:      &WorkerSessionError{Role: "worker", Backend: "ollama"},
+			sentinel: ErrWorkerSessionFailed,
+			contains: []string{"worker"},
+		},
+	}
 
-	msg := err.Error()
-	if !strings.Contains(msg, "failed to build plan") {
-		t.Fatalf("expected message in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "cyclic dependency") {
-		t.Fatalf("expected cause in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrSchedulingFailed) {
-		t.Fatal("expected Unwrap to return ErrSchedulingFailed")
-	}
-}
-
-func TestSchedulingError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &SchedulingError{Message: "some issue"}
-	msg := err.Error()
-	if !strings.Contains(msg, "some issue") {
-		t.Fatalf("expected message in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrSchedulingFailed) {
-		t.Fatal("expected Unwrap to return ErrSchedulingFailed")
-	}
-}
-
-func TestEscalationError_Error(t *testing.T) {
-	t.Parallel()
-
-	err := &EscalationError{
-		JobID:      "job-123",
-		Iterations: 5,
-		Reason:     "max iterations exceeded",
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "job-123") {
-		t.Fatalf("expected job ID in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "5") {
-		t.Fatalf("expected iterations in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrEscalation) {
-		t.Fatal("expected Unwrap to return ErrEscalation")
-	}
-}
-
-func TestWorkerSessionError_Error(t *testing.T) {
-	t.Parallel()
-
-	cause := errors.New("connection refused")
-	err := &WorkerSessionError{Role: "worker", Backend: "claude", Cause: cause}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "worker") {
-		t.Fatalf("expected role in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "claude") {
-		t.Fatalf("expected backend in error, got: %s", msg)
-	}
-	if !strings.Contains(msg, "connection refused") {
-		t.Fatalf("expected cause in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrWorkerSessionFailed) {
-		t.Fatal("expected Unwrap to return ErrWorkerSessionFailed")
-	}
-}
-
-func TestWorkerSessionError_NilCause(t *testing.T) {
-	t.Parallel()
-
-	err := &WorkerSessionError{Role: "worker", Backend: "ollama"}
-	msg := err.Error()
-	if !strings.Contains(msg, "worker") {
-		t.Fatalf("expected role in error, got: %s", msg)
-	}
-	if !errors.Is(err, ErrWorkerSessionFailed) {
-		t.Fatal("expected Unwrap to return ErrWorkerSessionFailed")
+	for _, tt := range tests {
+		msg := tt.err.Error()
+		for _, want := range tt.contains {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("%s: expected %q in error, got: %s", tt.name, want, msg)
+			}
+		}
+		if !errors.Is(tt.err, tt.sentinel) {
+			t.Fatalf("%s: expected errors.Is(%v)", tt.name, tt.sentinel)
+		}
 	}
 }
 
