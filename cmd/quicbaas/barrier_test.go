@@ -245,14 +245,11 @@ func TestNewBarrierCommand_Shape(t *testing.T) {
 	for verb, present := range expected {
 		assert.True(t, present, "expected 'barrier %s' subcommand", verb)
 	}
-}
 
-// TestNewBarrierRecoveryCommand_Shape verifies the recovery subgroup.
-func TestNewBarrierRecoveryCommand_Shape(t *testing.T) {
-	cmd := newBarrierRecoveryCommand()
-	require.NotNil(t, cmd)
-	expected := map[string]bool{"generate": false, "recover": false}
-	for _, sub := range cmd.Commands() {
+	recovery, _, err := cmd.Find([]string{"recovery"})
+	require.NoError(t, err)
+	expected = map[string]bool{"generate": false, "recover": false}
+	for _, sub := range recovery.Commands() {
 		if _, ok := expected[sub.Name()]; ok {
 			expected[sub.Name()] = true
 		}
@@ -377,49 +374,52 @@ func TestBarrierInit_NoneRejectsPINs(t *testing.T) {
 	assert.Equal(t, "init", typed.Op)
 }
 
-// TestBarrierInit_Success forwards every field to the SDK.
+// TestBarrierInit_Success forwards every field to the SDK; the none strategy
+// succeeds without a secret or PINs.
 func TestBarrierInit_Success(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
+	tests := []struct {
+		name string
+		args []string
+		want qrdbtransport.BarrierInitializeRequest
+	}{
+		{
+			name: "passphrase with PINs",
+			args: []string{
+				"--barrier-strategy", "passphrase",
+				"--passphrase", "topsecret",
+				"--so-pin", "SO123",
+				"--user-pin", "USR123",
+			},
+			want: qrdbtransport.BarrierInitializeRequest{
+				BarrierStrategy: "passphrase", Secret: []byte("topsecret"), SOPin: "SO123", UserPin: "USR123",
+			},
+		},
+		{
+			name: "none",
+			args: []string{"--barrier-strategy", "none"},
+			want: qrdbtransport.BarrierInitializeRequest{BarrierStrategy: "none"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			fc := &fakeBarrierClient{}
+			defer withFakeBarrier(fc)()
 
-	cmd := newBarrierInitCommand()
-	cmd.SetArgs([]string{
-		"--barrier-strategy", "passphrase",
-		"--passphrase", "topsecret",
-		"--so-pin", "SO123",
-		"--user-pin", "USR123",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+			cmd := newBarrierInitCommand()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
 
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastInitReq)
-	assert.Equal(t, "topsecret", string(fc.lastInitReq.Secret))
-	assert.Equal(t, "passphrase", fc.lastInitReq.BarrierStrategy)
-	assert.Equal(t, "SO123", fc.lastInitReq.SOPin)
-	assert.Equal(t, "USR123", fc.lastInitReq.UserPin)
-}
-
-// TestBarrierInit_NoneStrategy succeeds without --secret or PINs.
-func TestBarrierInit_NoneStrategy(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	cmd := newBarrierInitCommand()
-	cmd.SetArgs([]string{"--barrier-strategy", "none"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastInitReq)
-	assert.Equal(t, "none", fc.lastInitReq.BarrierStrategy)
-	assert.Empty(t, fc.lastInitReq.Secret)
-	assert.Empty(t, fc.lastInitReq.SOPin)
-	assert.Empty(t, fc.lastInitReq.UserPin)
+			require.NoError(t, cmd.Execute())
+			require.NotNil(t, fc.lastInitReq)
+			assert.Equal(t, tc.want.BarrierStrategy, fc.lastInitReq.BarrierStrategy)
+			assert.Equal(t, string(tc.want.Secret), string(fc.lastInitReq.Secret))
+			assert.Equal(t, tc.want.SOPin, fc.lastInitReq.SOPin)
+			assert.Equal(t, tc.want.UserPin, fc.lastInitReq.UserPin)
+		})
+	}
 }
 
 // =============================================================================
@@ -664,39 +664,38 @@ func runShareInputCases(t *testing.T, newCmd func() *cobra.Command, gotShares fu
 // =============================================================================
 
 // TestBarrierSeal_AssumeYes skips the prompt with --assume-yes.
+//
+// The --so-pin row keeps the canonical flag accepted for surface parity with
+// the other barrier verbs. The help steers operators to --so-pin-stdin instead
+// (#491); the flag is the last-precedence source and is forwarded like the
+// others (#946). If that row is ever deleted, the flag is being dropped by
+// accident.
 func TestBarrierSeal_AssumeYes(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
+	tests := []struct {
+		name      string
+		args      []string
+		wantSOPin string
+	}{
+		{name: "assume-yes", args: []string{"--assume-yes"}},
+		{name: "with so-pin", args: []string{"--so-pin", "SO123", "--assume-yes"}, wantSOPin: "SO123"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			fc := &fakeBarrierClient{}
+			defer withFakeBarrier(fc)()
 
-	cmd := newBarrierSealCommand()
-	cmd.SetArgs([]string{"--assume-yes"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+			cmd := newBarrierSealCommand()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
 
-	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "Barrier sealed successfully")
-}
-
-// TestBarrierSeal_AcceptsSOPin verifies the canonical --so-pin flag stays
-// accepted for surface parity with the other barrier verbs. The help steers
-// operators to --so-pin-stdin instead (#491); the flag is the last-precedence
-// source and is forwarded like the others (#946). If this test is ever
-// deleted, the flag is being dropped by accident.
-func TestBarrierSeal_AcceptsSOPin(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	cmd := newBarrierSealCommand()
-	cmd.SetArgs([]string{"--so-pin", "SO123", "--assume-yes"})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "SO123", barrierSOPin)
+			require.NoError(t, cmd.Execute())
+			assert.Contains(t, out.String(), "Barrier sealed successfully")
+			assert.Equal(t, tc.wantSOPin, barrierSOPin)
+		})
+	}
 }
 
 // =============================================================================
@@ -751,46 +750,39 @@ func TestBarrierRekey_FlagValidation(t *testing.T) {
 	}
 }
 
-// TestBarrierRekey_SuccessWithShamir forwards Shamir params and renders.
-func TestBarrierRekey_SuccessWithShamir(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
+// TestBarrierRekey_Success forwards the Shamir params when given, omits them
+// cleanly when not, and renders the result.
+func TestBarrierRekey_Success(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantSOPin string
+		threshold int
+		total     int
+	}{
+		{name: "with shamir", args: []string{"--so-pin", "SO", "--threshold", "3", "--total", "5"}, wantSOPin: "SO", threshold: 3, total: 5},
+		{name: "without shamir", args: []string{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			defer resetBarrierFlags()
+			fc := &fakeBarrierClient{}
+			defer withFakeBarrier(fc)()
 
-	cmd := newBarrierRekeyCommand()
-	cmd.SetArgs([]string{
-		"--so-pin", "SO",
-		"--threshold", "3",
-		"--total", "5",
-	})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
+			cmd := newBarrierRekeyCommand()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
 
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastRekeyReq)
-	assert.Equal(t, "SO", fc.lastRekeyReq.SOPin)
-	assert.Equal(t, 3, fc.lastRekeyReq.Threshold)
-	assert.Equal(t, 5, fc.lastRekeyReq.Total)
-	assert.Contains(t, out.String(), "BARRIER REKEY COMPLETE")
-}
-
-// TestBarrierRekey_SuccessWithoutShamir omits threshold/total cleanly.
-func TestBarrierRekey_SuccessWithoutShamir(t *testing.T) {
-	defer resetBarrierFlags()
-	fc := &fakeBarrierClient{}
-	defer withFakeBarrier(fc)()
-
-	cmd := newBarrierRekeyCommand()
-	cmd.SetArgs([]string{})
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-
-	require.NoError(t, cmd.Execute())
-	require.NotNil(t, fc.lastRekeyReq)
-	assert.Equal(t, 0, fc.lastRekeyReq.Threshold)
-	assert.Equal(t, 0, fc.lastRekeyReq.Total)
+			require.NoError(t, cmd.Execute())
+			require.NotNil(t, fc.lastRekeyReq)
+			assert.Equal(t, tc.wantSOPin, fc.lastRekeyReq.SOPin)
+			assert.Equal(t, tc.threshold, fc.lastRekeyReq.Threshold)
+			assert.Equal(t, tc.total, fc.lastRekeyReq.Total)
+			assert.Contains(t, out.String(), "BARRIER REKEY COMPLETE")
+		})
+	}
 }
 
 // =============================================================================
