@@ -98,34 +98,53 @@ func batchIDsJSON(t *testing.T, n int) string {
 	return string(idsJSON)
 }
 
-// assertToolResult checks that resp is a successful tool result whose JSON
-// body carries every field in want.
-func assertToolResult(t *testing.T, resp *ToolResponse, want map[string]interface{}) {
-	t.Helper()
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
+// toolCase is one table row for a vector tool handler: either the error
+// the handler must return, or the result fields it must carry.
+type toolCase struct {
+	name    string
+	params  map[string]interface{}
+	want    map[string]interface{} // result fields and their exact values
+	present []string               // result fields that must be non-nil
+	wantErr string                 // substring of the expected error
+}
 
-	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &result))
-	for key, value := range want {
-		assert.Equal(t, value, result[key], key)
+// runToolCases runs each case against handler as a subtest.
+func runToolCases(t *testing.T, handler func(context.Context, map[string]interface{}) (*ToolResponse, error), cases []toolCase) {
+	t.Helper()
+	ctx := context.Background()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := handler(ctx, tc.params)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			assert.False(t, resp.IsError)
+
+			var result map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &result))
+			for key, value := range tc.want {
+				assert.Equal(t, value, result[key], key)
+			}
+			for _, key := range tc.present {
+				assert.NotNil(t, result[key], key)
+			}
+		})
 	}
 }
 
 // TestHandleGetVector tests get vector with default and explicit options
 func TestHandleGetVector(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	tests := []struct {
-		name   string
-		params map[string]interface{}
-		want   map[string]interface{}
-	}{
+	runToolCases(t, server.handleGetVector, []toolCase{
 		{
-			name:   "Defaults",
-			params: map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"},
-			want:   map[string]interface{}{"id": "test-vector-1", "namespace": "test-namespace", "found": true},
+			name:    "Defaults",
+			params:  map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"},
+			want:    map[string]interface{}{"id": "test-vector-1", "namespace": "test-namespace", "found": true},
+			present: []string{"vector"},
 		},
 		{
 			name: "MetadataAndVectorOff",
@@ -150,35 +169,13 @@ func TestHandleGetVector(t *testing.T) {
 			},
 			want: map[string]interface{}{"id": "vec-123", "namespace": "test-ns", "found": true},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := server.handleGetVector(ctx, tt.params)
-			require.NoError(t, err)
-			assertToolResult(t, resp, tt.want)
-		})
-	}
-
-	t.Run("DefaultsReturnVector", func(t *testing.T) {
-		resp, err := server.handleGetVector(ctx, map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"})
-		require.NoError(t, err)
-		var result map[string]interface{}
-		require.NoError(t, json.Unmarshal([]byte(resp.Content[0].Text), &result))
-		assert.NotNil(t, result["vector"])
 	})
 }
 
 // TestHandleDeleteVector tests delete vector with default and explicit options
 func TestHandleDeleteVector(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	tests := []struct {
-		name   string
-		params map[string]interface{}
-		want   map[string]interface{}
-	}{
+	runToolCases(t, server.handleDeleteVector, []toolCase{
 		{
 			name:   "Defaults",
 			params: map[string]interface{}{"namespace": "test-namespace", "id": "test-vector-1"},
@@ -194,28 +191,13 @@ func TestHandleDeleteVector(t *testing.T) {
 			},
 			want: map[string]interface{}{"id": "vec-123", "consistency": "ALL", "timeout_ms": float64(10000)},
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := server.handleDeleteVector(ctx, tt.params)
-			require.NoError(t, err)
-			assertToolResult(t, resp, tt.want)
-		})
-	}
+	})
 }
 
 // TestHandleBatchDeleteVectors tests batch delete results and validation
 func TestHandleBatchDeleteVectors(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	tests := []struct {
-		name    string
-		params  map[string]interface{}
-		want    map[string]interface{}
-		wantErr string
-	}{
+	runToolCases(t, server.handleBatchDeleteVectors, []toolCase{
 		{
 			name:   "ThreeIDs",
 			params: map[string]interface{}{"namespace": "test-namespace", "ids": `["vec1","vec2","vec3"]`},
@@ -251,20 +233,7 @@ func TestHandleBatchDeleteVectors(t *testing.T) {
 			params:  map[string]interface{}{"namespace": "test-ns", "ids": "not-valid-json["},
 			wantErr: "invalid ids format",
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp, err := server.handleBatchDeleteVectors(ctx, tt.params)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assertToolResult(t, resp, tt.want)
-		})
-	}
+	})
 }
 
 // TestHandleSearchByID tests search by ID operation
@@ -353,188 +322,175 @@ func TestHandleUpdateNamespace(t *testing.T) {
 	assert.Equal(t, float64(5), result["replication_factor"])
 }
 
-// TestHandleDeleteNamespace tests namespace deletion
+// TestHandleDeleteNamespace tests namespace deletion with and without force
 func TestHandleDeleteNamespace(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"force":     "true",
-	}
-
-	resp, err := server.handleDeleteNamespace(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, true, result["deleted"])
-	assert.Equal(t, float64(1000), result["vectors_deleted"])
+	runToolCases(t, server.handleDeleteNamespace, []toolCase{
+		{
+			name:   "Force",
+			params: map[string]interface{}{"namespace": "test-namespace", "force": "true"},
+			want:   map[string]interface{}{"namespace": "test-namespace", "deleted": true, "vectors_deleted": float64(1000)},
+		},
+		{
+			name:   "WithoutForce",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+	})
 }
 
-// TestHandleGetNamespaceInfo tests namespace info retrieval
+// TestHandleGetNamespaceInfo tests namespace info with and without stats
 func TestHandleGetNamespaceInfo(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":     "test-namespace",
-		"include_stats": "true",
-	}
-
-	resp, err := server.handleGetNamespaceInfo(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, float64(384), result["dimensions"])
-	assert.NotNil(t, result["vector_count"])
+	runToolCases(t, server.handleGetNamespaceInfo, []toolCase{
+		{
+			name:    "WithStats",
+			params:  map[string]interface{}{"namespace": "test-namespace", "include_stats": "true"},
+			want:    map[string]interface{}{"namespace": "test-namespace", "dimensions": float64(384)},
+			present: []string{"vector_count"},
+		},
+		{
+			name:   "WithoutStats",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+	})
 }
 
-// TestHandleGetVectorStats tests vector statistics retrieval
+// TestHandleGetVectorStats tests vector statistics with and without details
 func TestHandleGetVectorStats(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":       "test-namespace",
-		"include_details": "true",
-	}
-
-	resp, err := server.handleGetVectorStats(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.NotNil(t, result["total_vectors"])
-	assert.NotNil(t, result["total_namespaces"])
+	runToolCases(t, server.handleGetVectorStats, []toolCase{
+		{
+			name:    "WithDetails",
+			params:  map[string]interface{}{"namespace": "test-namespace", "include_details": "true"},
+			present: []string{"total_vectors", "total_namespaces"},
+		},
+		{
+			name:    "WithoutDetails",
+			params:  map[string]interface{}{"namespace": "test-ns"},
+			present: []string{"total_vectors"},
+		},
+	})
 }
 
-// TestHandleRebuildIndex tests index rebuild operation
+// TestHandleRebuildIndex tests index rebuild with and without options
 func TestHandleRebuildIndex(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":    "test-namespace",
-		"async":        "true",
-		"index_params": `{"m":"16","ef_construction":"200"}`,
-	}
-
-	resp, err := server.handleRebuildIndex(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.NotNil(t, result["operation_id"])
+	runToolCases(t, server.handleRebuildIndex, []toolCase{
+		{
+			name: "AsyncWithIndexParams",
+			params: map[string]interface{}{
+				"namespace":    "test-namespace",
+				"async":        "true",
+				"index_params": `{"m":"16","ef_construction":"200"}`,
+			},
+			want:    map[string]interface{}{"namespace": "test-namespace"},
+			present: []string{"operation_id"},
+		},
+		{
+			name:   "WithoutOptionalParams",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+	})
 }
 
-// TestHandleGetIndexProgress tests index rebuild progress
+// TestHandleGetIndexProgress tests index rebuild progress and validation
 func TestHandleGetIndexProgress(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":    "test-namespace",
-		"operation_id": "rebuild-op-123",
-	}
-
-	resp, err := server.handleGetIndexProgress(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "rebuild-op-123", result["operation_id"])
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.NotNil(t, result["percent_complete"])
+	runToolCases(t, server.handleGetIndexProgress, []toolCase{
+		{
+			name:    "WithOperationID",
+			params:  map[string]interface{}{"namespace": "test-namespace", "operation_id": "rebuild-op-123"},
+			want:    map[string]interface{}{"operation_id": "rebuild-op-123", "namespace": "test-namespace"},
+			present: []string{"percent_complete"},
+		},
+		{
+			name:   "WithoutOperationID",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+		{
+			name:    "MissingNamespace",
+			params:  map[string]interface{}{"operation_id": "rebuild-123"},
+			wantErr: "namespace is required",
+		},
+		{
+			name:    "EmptyNamespace",
+			params:  map[string]interface{}{"namespace": ""},
+			wantErr: "namespace is required",
+		},
+	})
 }
 
-// TestHandleCompactNamespace tests namespace compaction
+// TestHandleCompactNamespace tests async and synchronous compaction
 func TestHandleCompactNamespace(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace": "test-namespace",
-		"async":     "true",
-	}
-
-	resp, err := server.handleCompactNamespace(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.NotNil(t, result["operation_id"])
+	runToolCases(t, server.handleCompactNamespace, []toolCase{
+		{
+			name:    "Async",
+			params:  map[string]interface{}{"namespace": "test-namespace", "async": "true"},
+			want:    map[string]interface{}{"namespace": "test-namespace"},
+			present: []string{"operation_id"},
+		},
+		{
+			name:   "Synchronous",
+			params: map[string]interface{}{"namespace": "test-ns", "async": "false"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+	})
 }
 
-// TestHandleGetCompactionProgress tests compaction progress
+// TestHandleGetCompactionProgress tests compaction progress and validation
 func TestHandleGetCompactionProgress(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":    "test-namespace",
-		"operation_id": "compact-op-456",
-	}
-
-	resp, err := server.handleGetCompactionProgress(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "compact-op-456", result["operation_id"])
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.NotNil(t, result["percent_complete"])
+	runToolCases(t, server.handleGetCompactionProgress, []toolCase{
+		{
+			name:    "WithOperationID",
+			params:  map[string]interface{}{"namespace": "test-namespace", "operation_id": "compact-op-456"},
+			want:    map[string]interface{}{"operation_id": "compact-op-456", "namespace": "test-namespace"},
+			present: []string{"percent_complete"},
+		},
+		{
+			name:   "WithoutOperationID",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns"},
+		},
+		{
+			name:    "MissingNamespace",
+			params:  map[string]interface{}{"operation_id": "compact-123"},
+			wantErr: "namespace is required",
+		},
+		{
+			name:    "EmptyNamespace",
+			params:  map[string]interface{}{"namespace": ""},
+			wantErr: "namespace is required",
+		},
+	})
 }
 
-// TestHandleExportVectors tests vector export operation
+// TestHandleExportVectors tests vector export with explicit and default options
 func TestHandleExportVectors(t *testing.T) {
 	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	params := map[string]interface{}{
-		"namespace":   "test-namespace",
-		"format":      "binary",
-		"compression": "gzip",
-		"batch_size":  float64(500),
-	}
-
-	resp, err := server.handleExportVectors(ctx, params)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.False(t, resp.IsError)
-
-	var result map[string]interface{}
-	err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-	require.NoError(t, err)
-	assert.Equal(t, "test-namespace", result["namespace"])
-	assert.Equal(t, "binary", result["format"])
-	assert.NotNil(t, result["vectors_exported"])
+	runToolCases(t, server.handleExportVectors, []toolCase{
+		{
+			name: "BinaryGzip",
+			params: map[string]interface{}{
+				"namespace":   "test-namespace",
+				"format":      "binary",
+				"compression": "gzip",
+				"batch_size":  float64(500),
+			},
+			want:    map[string]interface{}{"namespace": "test-namespace", "format": "binary"},
+			present: []string{"vectors_exported"},
+		},
+		{
+			name:   "WithDefaultParams",
+			params: map[string]interface{}{"namespace": "test-ns"},
+			want:   map[string]interface{}{"namespace": "test-ns", "format": "binary"},
+		},
+	})
 }
 
 // TestHandleImportVectors tests vector import operation
@@ -999,82 +955,6 @@ func TestHandleUpdateNamespaceEdgeCases(t *testing.T) {
 	})
 }
 
-// TestHandleGetIndexProgressEdgeCases tests index progress edge cases
-func TestHandleGetIndexProgressEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("MissingNamespace", func(t *testing.T) {
-		params := map[string]interface{}{
-			"operation_id": "rebuild-123",
-		}
-		_, err := server.handleGetIndexProgress(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("EmptyNamespace", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "",
-		}
-		_, err := server.handleGetIndexProgress(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("WithoutOperationID", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleGetIndexProgress(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleGetCompactionProgressEdgeCases tests compaction progress edge cases
-func TestHandleGetCompactionProgressEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("MissingNamespace", func(t *testing.T) {
-		params := map[string]interface{}{
-			"operation_id": "compact-123",
-		}
-		_, err := server.handleGetCompactionProgress(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("EmptyNamespace", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "",
-		}
-		_, err := server.handleGetCompactionProgress(ctx, params)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "namespace is required")
-	})
-
-	t.Run("WithoutOperationID", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleGetCompactionProgress(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
 // TestHandleSearchSimilarEdgeCases tests search similar edge cases
 func TestHandleSearchSimilarEdgeCases(t *testing.T) {
 	server := newTestVectorServer(t)
@@ -1168,66 +1048,6 @@ func TestHandleSearchByIDEdgeCases(t *testing.T) {
 	})
 }
 
-// TestHandleDeleteNamespaceEdgeCases tests delete namespace edge cases
-func TestHandleDeleteNamespaceEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithoutForce", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleDeleteNamespace(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleGetNamespaceInfoEdgeCases tests namespace info edge cases
-func TestHandleGetNamespaceInfoEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithoutStats", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleGetNamespaceInfo(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleGetVectorStatsEdgeCases tests vector stats edge cases
-func TestHandleGetVectorStatsEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithoutDetails", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleGetVectorStats(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.NotNil(t, result["total_vectors"])
-	})
-}
-
 // TestHandleVectorHealthEdgeCases tests vector health edge cases
 func TestHandleVectorHealthEdgeCases(t *testing.T) {
 	server := newTestVectorServer(t)
@@ -1246,68 +1066,6 @@ func TestHandleVectorHealthEdgeCases(t *testing.T) {
 		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
 		require.NoError(t, err)
 		assert.NotNil(t, result["status"])
-	})
-}
-
-// TestHandleRebuildIndexEdgeCases tests rebuild index edge cases
-func TestHandleRebuildIndexEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithoutOptionalParams", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleRebuildIndex(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleCompactNamespaceEdgeCases tests compact namespace edge cases
-func TestHandleCompactNamespaceEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("Synchronous", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-			"async":     "false",
-		}
-		resp, err := server.handleCompactNamespace(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-	})
-}
-
-// TestHandleExportVectorsEdgeCases tests export vectors edge cases
-func TestHandleExportVectorsEdgeCases(t *testing.T) {
-	server := newTestVectorServer(t)
-	ctx := context.Background()
-
-	t.Run("WithDefaultParams", func(t *testing.T) {
-		params := map[string]interface{}{
-			"namespace": "test-ns",
-		}
-		resp, err := server.handleExportVectors(ctx, params)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-
-		var result map[string]interface{}
-		err = json.Unmarshal([]byte(resp.Content[0].Text), &result)
-		require.NoError(t, err)
-		assert.Equal(t, "test-ns", result["namespace"])
-		assert.Equal(t, "binary", result["format"])
 	})
 }
 
