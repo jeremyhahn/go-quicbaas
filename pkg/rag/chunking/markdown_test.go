@@ -495,28 +495,39 @@ func TestMarkdownChunker_Name(t *testing.T) {
 }
 
 func TestMarkdownChunker_ConfigValidation(t *testing.T) {
-	// Test config with invalid values gets normalized
-	config := MarkdownChunkerConfig{
-		TargetTokens:   -1, // Invalid
-		MaxTokens:      -1, // Invalid
-		MinChunkSize:   -1, // Invalid
-		MaxHeaderDepth: -1, // Invalid
+	valid := DefaultMarkdownChunkerConfig()
+
+	tests := []struct {
+		name   string
+		config MarkdownChunkerConfig
+		want   MarkdownChunkerConfig
+	}{
+		{
+			name:   "valid config unchanged",
+			config: valid,
+			want:   valid,
+		},
+		{
+			name:   "negative values get defaults",
+			config: MarkdownChunkerConfig{TargetTokens: -1, MaxTokens: -1, MinChunkSize: -1, MaxHeaderDepth: -1},
+			want:   MarkdownChunkerConfig{TargetTokens: 512, MaxTokens: 2000, MinChunkSize: 50, MaxHeaderDepth: 3},
+		},
+		{
+			name:   "max tokens below target doubles target",
+			config: MarkdownChunkerConfig{TargetTokens: 1000, MaxTokens: 500, MinChunkSize: 50, MaxHeaderDepth: 3},
+			want:   MarkdownChunkerConfig{TargetTokens: 1000, MaxTokens: 2000, MinChunkSize: 50, MaxHeaderDepth: 3},
+		},
+		{
+			name:   "header depth above six reset",
+			config: MarkdownChunkerConfig{TargetTokens: 512, MaxTokens: 2000, MinChunkSize: 50, MaxHeaderDepth: 10},
+			want:   MarkdownChunkerConfig{TargetTokens: 512, MaxTokens: 2000, MinChunkSize: 50, MaxHeaderDepth: 3},
+		},
 	}
 
-	chunker := NewMarkdownChunker(config)
-
-	// Verify defaults were applied
-	if chunker.config.TargetTokens <= 0 {
-		t.Error("TargetTokens should be set to default")
-	}
-	if chunker.config.MaxTokens <= 0 {
-		t.Error("MaxTokens should be set to default")
-	}
-	if chunker.config.MinChunkSize <= 0 {
-		t.Error("MinChunkSize should be set to default")
-	}
-	if chunker.config.MaxHeaderDepth <= 0 || chunker.config.MaxHeaderDepth > 6 {
-		t.Error("MaxHeaderDepth should be set to valid default")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, NewMarkdownChunker(tt.config).config)
+		})
 	}
 }
 
@@ -1125,57 +1136,6 @@ func TestGoCodeChunker_WriteImports_Cases(t *testing.T) {
 }
 
 // Markdown Chunker edge cases
-
-func TestMarkdownChunker_ConfigValidation_MaxTokensLessThanTarget(t *testing.T) {
-	// Test MaxTokens < TargetTokens auto-correction
-	config := MarkdownChunkerConfig{
-		TargetTokens:     1000,
-		MaxTokens:        500, // Less than target
-		MinChunkSize:     50,
-		MaxHeaderDepth:   3,
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	}
-
-	chunker := NewMarkdownChunker(config)
-
-	// Should auto-correct MaxTokens to be TargetTokens * 2
-	assert.Equal(t, 2000, chunker.config.MaxTokens)
-}
-
-func TestMarkdownChunker_ConfigValidation_MaxHeaderDepthZero(t *testing.T) {
-	// Test MaxHeaderDepth = 0 auto-correction
-	config := MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     50,
-		MaxHeaderDepth:   0, // Invalid
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	}
-
-	chunker := NewMarkdownChunker(config)
-
-	// Should default to 3
-	assert.Equal(t, 3, chunker.config.MaxHeaderDepth)
-}
-
-func TestMarkdownChunker_ConfigValidation_MaxHeaderDepthTooHigh(t *testing.T) {
-	// Test MaxHeaderDepth > 6 auto-correction
-	config := MarkdownChunkerConfig{
-		TargetTokens:     512,
-		MaxTokens:        2000,
-		MinChunkSize:     50,
-		MaxHeaderDepth:   10, // Too high
-		KeepCodeBlocks:   true,
-		IncludeHierarchy: true,
-	}
-
-	chunker := NewMarkdownChunker(config)
-
-	// Should cap at 3 (default)
-	assert.Equal(t, 3, chunker.config.MaxHeaderDepth)
-}
 
 func TestMarkdownChunker_ChunkReturnError(t *testing.T) {
 	// Test markdown with only whitespace that produces no valid chunks
