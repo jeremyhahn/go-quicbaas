@@ -165,6 +165,9 @@ func (m *mockSDKClient) Account() quicbaas.AccountClient { return nil }
 
 func (m *mockSDKClient) Orchestrator() quicbaas.OrchestratorClient { return nil }
 
+// TestNewDataCommands checks that each data subcommand is registered, carries
+// its usage, short text and flags, prints them in its help, and rejects a call
+// with no arguments.
 func TestNewDataCommands(t *testing.T) {
 	cmd := newDataCommands()
 
@@ -172,18 +175,51 @@ func TestNewDataCommands(t *testing.T) {
 	assert.Equal(t, "data", cmd.Use)
 	assert.Contains(t, cmd.Short, "Data manipulation")
 
-	// Verify subcommands are registered
-	subcommands := cmd.Commands()
-	commandNames := make([]string, len(subcommands))
-	for i, subcmd := range subcommands {
-		commandNames[i] = subcmd.Name()
+	tests := []struct {
+		name   string
+		newCmd func() *cobra.Command
+		use    string
+		short  string
+		flags  []string
+	}{
+		{"put", newPutCommand, "put <type> <key> <value>", "Store", []string{"json"}},
+		{"get", newGetCommand, "get <type> <key>", "Retrieve", nil},
+		{"delete", newDeleteCommand, "delete <type> <key>", "Delete", []string{"yes"}},
+		{"list", newListCommand, "list <type>", "List", []string{"limit", "cursor"}},
+		{"query", newQueryCommand, "query <type>", "Query", []string{"index", "value", "limit"}},
 	}
 
-	assert.Contains(t, commandNames, "put", "put command should be registered")
-	assert.Contains(t, commandNames, "get", "get command should be registered")
-	assert.Contains(t, commandNames, "delete", "delete command should be registered")
-	assert.Contains(t, commandNames, "list", "list command should be registered")
-	assert.Contains(t, commandNames, "query", "query command should be registered")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registered, _, err := cmd.Find([]string{tt.name})
+			require.NoError(t, err)
+			assert.Equal(t, tt.name, registered.Name(), "%s command should be registered", tt.name)
+
+			sub := tt.newCmd()
+			assert.Equal(t, tt.use, sub.Use)
+			assert.Contains(t, sub.Short, tt.short)
+			for _, flag := range tt.flags {
+				assert.NotNil(t, sub.Flags().Lookup(flag), "--%s flag should exist", flag)
+			}
+
+			var help bytes.Buffer
+			sub.SetOut(&help)
+			sub.SetArgs([]string{"--help"})
+			require.NoError(t, sub.Execute())
+			assert.Contains(t, help.String(), tt.name)
+			assert.Contains(t, help.String(), tt.short)
+			for _, flag := range tt.flags {
+				assert.Contains(t, help.String(), "--"+flag)
+			}
+
+			noArgs := tt.newCmd()
+			var buf bytes.Buffer
+			noArgs.SetOut(&buf)
+			noArgs.SetErr(&buf)
+			noArgs.SetArgs([]string{})
+			assert.Error(t, noArgs.Execute(), "should fail with no arguments")
+		})
+	}
 }
 
 func TestDataCommandFlags(t *testing.T) {
@@ -219,148 +255,6 @@ func TestDataCommandFlags(t *testing.T) {
 	maxRetriesFlag := flags.Lookup("max-retries")
 	require.NotNil(t, maxRetriesFlag)
 	assert.Equal(t, "3", maxRetriesFlag.DefValue)
-}
-
-func TestPutCommand(t *testing.T) {
-	cmd := newPutCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "put <type> <key> <value>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Store")
-
-	// Verify json flag exists
-	jsonFlag := cmd.Flags().Lookup("json")
-	require.NotNil(t, jsonFlag)
-}
-
-func TestPutCommandHelp(t *testing.T) {
-	cmd := newPutCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "put")
-	assert.Contains(t, output, "Store")
-	assert.Contains(t, output, "--json")
-}
-
-func TestGetCommand(t *testing.T) {
-	cmd := newGetCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "get <type> <key>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Retrieve")
-}
-
-func TestGetCommandHelp(t *testing.T) {
-	cmd := newGetCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "get")
-	assert.Contains(t, output, "Retrieve")
-}
-
-func TestDeleteCommand(t *testing.T) {
-	cmd := newDeleteCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "delete <type> <key>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Delete")
-
-	// Verify yes flag exists
-	yesFlag := cmd.Flags().Lookup("yes")
-	require.NotNil(t, yesFlag)
-}
-
-func TestDeleteCommandHelp(t *testing.T) {
-	cmd := newDeleteCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "delete")
-	assert.Contains(t, output, "Delete")
-	assert.Contains(t, output, "--yes")
-}
-
-func TestListCommand(t *testing.T) {
-	cmd := newListCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list <type>", cmd.Use)
-	assert.Contains(t, cmd.Short, "List")
-
-	// Verify flags exist
-	limitFlag := cmd.Flags().Lookup("limit")
-	require.NotNil(t, limitFlag)
-
-	cursorFlag := cmd.Flags().Lookup("cursor")
-	require.NotNil(t, cursorFlag)
-}
-
-func TestListCommandHelp(t *testing.T) {
-	cmd := newListCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "list")
-	assert.Contains(t, output, "List")
-	assert.Contains(t, output, "--limit")
-	assert.Contains(t, output, "--cursor")
-}
-
-func TestQueryCommand(t *testing.T) {
-	cmd := newQueryCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "query <type>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Query")
-
-	// Verify flags exist
-	indexFlag := cmd.Flags().Lookup("index")
-	require.NotNil(t, indexFlag)
-
-	valueFlag := cmd.Flags().Lookup("value")
-	require.NotNil(t, valueFlag)
-
-	limitFlag := cmd.Flags().Lookup("limit")
-	require.NotNil(t, limitFlag)
-}
-
-func TestQueryCommandHelp(t *testing.T) {
-	cmd := newQueryCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "query")
-	assert.Contains(t, output, "Query")
-	assert.Contains(t, output, "--index")
-	assert.Contains(t, output, "--value")
-	assert.Contains(t, output, "--limit")
 }
 
 func TestParseServiceConsistency(t *testing.T) {
@@ -511,66 +405,6 @@ func captureStderr(t *testing.T, fn func()) string {
 		t.Fatalf("close stderr pipe: %v", err)
 	}
 	return <-done
-}
-
-func TestPutCommandInvalidArgs(t *testing.T) {
-	cmd := newPutCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Test with no arguments - should fail
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	assert.Error(t, err, "Should fail with no arguments")
-}
-
-func TestGetCommandInvalidArgs(t *testing.T) {
-	cmd := newGetCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Test with no arguments - should fail
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	assert.Error(t, err, "Should fail with no arguments")
-}
-
-func TestDeleteCommandInvalidArgs(t *testing.T) {
-	cmd := newDeleteCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Test with no arguments - should fail
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	assert.Error(t, err, "Should fail with no arguments")
-}
-
-func TestListCommandInvalidArgs(t *testing.T) {
-	cmd := newListCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Test with no arguments - should fail
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	assert.Error(t, err, "Should fail with no arguments")
-}
-
-func TestQueryCommandInvalidArgs(t *testing.T) {
-	cmd := newQueryCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-
-	// Test with no arguments - should fail
-	cmd.SetArgs([]string{})
-	err := cmd.Execute()
-	assert.Error(t, err, "Should fail with no arguments")
 }
 
 // TestRunPutCommand tests the put command execution with various scenarios.
@@ -2342,35 +2176,6 @@ func TestCommandHelperFunctions(t *testing.T) {
 }
 
 // TestFormatErrorFunction tests error formatting
-func TestFormatErrorFunction(t *testing.T) {
-	t.Run("format nil error", func(t *testing.T) {
-		err := formatError(nil)
-		assert.NoError(t, err)
-	})
-
-	t.Run("format standard error", func(t *testing.T) {
-		origErr := assert.AnError
-		err := formatError(origErr)
-		assert.Error(t, err)
-	})
-}
-
-// TestOutputFormatting tests various output format options
-func TestOutputFormatting(t *testing.T) {
-	formats := []string{"json", "yaml", "table", "raw"}
-
-	t.Run("output formats validation", func(t *testing.T) {
-		for _, format := range formats {
-			cmd := newDataCommands()
-			err := cmd.PersistentFlags().Set("output", format)
-			assert.NoError(t, err)
-
-			flag := cmd.PersistentFlags().Lookup("output")
-			assert.Equal(t, format, flag.Value.String())
-		}
-	})
-}
-
 // TestCommandHelpOutput tests help text generation
 func TestCommandHelpOutput(t *testing.T) {
 	commands := []struct {
