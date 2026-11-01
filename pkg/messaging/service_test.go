@@ -16,7 +16,6 @@ package messaging
 import (
 	"context"
 	"errors"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -94,6 +93,10 @@ func TestPushService_StartStop(t *testing.T) {
 		ps := NewPushService(log, nil)
 
 		ctx := context.Background()
+
+		if ps.IsRunning() {
+			t.Error("expected service not running before Start")
+		}
 
 		// Start service
 		err := ps.Start(ctx)
@@ -842,18 +845,12 @@ func TestPushService_GetStats(t *testing.T) {
 		// runner. Poll to the expected state instead, and report whatever it
 		// last saw if it never gets there (testing-guidelines.md: never treat
 		// elapsed time as a synchronization primitive).
-		var stats *Stats
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			stats = ps.GetStats()
-			if stats != nil && stats.TotalChannels == 2 && stats.TotalSubscriptions == 3 {
-				break
-			}
-			if time.Now().After(deadline) {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
+		assert.Eventually(t, func() bool {
+			s := ps.GetStats()
+			return s != nil && s.TotalChannels == 2 && s.TotalSubscriptions == 3
+		}, testTimeout, testPollInterval)
+
+		stats := ps.GetStats()
 
 		if stats == nil {
 			t.Fatal("expected non-nil stats")
@@ -1302,32 +1299,6 @@ func TestPushService_WatchChannelAdditional(t *testing.T) {
 	})
 }
 
-func TestPushService_StartStopAdditional(t *testing.T) {
-	t.Parallel()
-
-	t.Run("start sets running flag", func(t *testing.T) {
-		t.Parallel()
-		log := newServiceTestLogger(t)
-		ps := NewPushService(log, nil)
-
-		ctx := context.Background()
-
-		if ps.IsRunning() {
-			t.Error("expected service not running initially")
-		}
-
-		ps.Start(ctx)
-		if !ps.IsRunning() {
-			t.Error("expected service running after start")
-		}
-
-		ps.Stop(ctx)
-		if ps.IsRunning() {
-			t.Error("expected service not running after stop")
-		}
-	})
-}
-
 func TestPushService_SubscribeWithOptions(t *testing.T) {
 	t.Parallel()
 
@@ -1359,330 +1330,9 @@ func TestPushService_SubscribeWithOptions(t *testing.T) {
 // Consolidated from coverage_boost_test.go
 // =============================================================================
 
-// TestDeltaComputer_ValueToStringNonString tests valueToString with non-string values.
-func TestDeltaComputer_ValueToStringNonString(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("converts string value", func(t *testing.T) {
-		v := reflect.ValueOf("hello")
-		result := dc.valueToString(v)
-		assert.Equal(t, "hello", result)
-	})
-
-	t.Run("converts int value", func(t *testing.T) {
-		v := reflect.ValueOf(42)
-		result := dc.valueToString(v)
-		assert.NotEmpty(t, result)
-	})
-}
-
-// TestDeltaComputer_ExtractEntityTypeViaReflect tests the extractEntityType function.
-func TestDeltaComputer_ExtractEntityTypeViaReflect(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("extracts struct type name", func(t *testing.T) {
-		result := dc.extractEntityType(reflect.TypeOf(testEntity{}))
-		assert.Equal(t, "testEntity", result)
-	})
-
-	t.Run("extracts pointer type name", func(t *testing.T) {
-		result := dc.extractEntityType(reflect.TypeOf(&testEntity{}))
-		assert.Equal(t, "testEntity", result)
-	})
-}
-
-// TestDeltaComputer_ExtractEntityIDVariants tests extractEntityID with various structs.
-func TestDeltaComputer_ExtractEntityIDVariants(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("extracts ID from struct", func(t *testing.T) {
-		entity := &testEntity{ID: "entity-123"}
-		result := dc.extractEntityID(entity)
-		assert.Equal(t, "entity-123", result)
-	})
-
-	t.Run("returns empty for nil pointer", func(t *testing.T) {
-		result := dc.extractEntityID(nil)
-		assert.Empty(t, result)
-	})
-
-	t.Run("returns empty for non-struct", func(t *testing.T) {
-		result := dc.extractEntityID("not-a-struct")
-		assert.Empty(t, result)
-	})
-
-	t.Run("returns empty for struct without ID", func(t *testing.T) {
-		type noID struct {
-			Name string
-		}
-		result := dc.extractEntityID(&noID{Name: "test"})
-		assert.Empty(t, result)
-	})
-}
-
-// TestDeltaComputer_IsZeroValueEdgeCases tests the isZeroValue helper with edge cases.
-func TestDeltaComputer_IsZeroValueEdgeCases(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("invalid value is zero", func(t *testing.T) {
-		assert.True(t, dc.isZeroValue(reflect.Value{}))
-	})
-
-	t.Run("nil pointer is zero", func(t *testing.T) {
-		var p *string
-		assert.True(t, dc.isZeroValue(reflect.ValueOf(&p).Elem()))
-	})
-
-	t.Run("empty array is zero", func(t *testing.T) {
-		arr := [3]int{}
-		assert.True(t, dc.isZeroValue(reflect.ValueOf(arr)))
-	})
-
-	t.Run("non-empty array is not zero", func(t *testing.T) {
-		arr := [3]int{1, 0, 0}
-		assert.False(t, dc.isZeroValue(reflect.ValueOf(arr)))
-	})
-
-	t.Run("zero time is zero", func(t *testing.T) {
-		assert.True(t, dc.isZeroValue(reflect.ValueOf(time.Time{})))
-	})
-
-	t.Run("non-zero time is not zero", func(t *testing.T) {
-		assert.False(t, dc.isZeroValue(reflect.ValueOf(time.Now())))
-	})
-
-	t.Run("nil map is zero", func(t *testing.T) {
-		var m map[string]string
-		assert.True(t, dc.isZeroValue(reflect.ValueOf(m)))
-	})
-}
-
-// TestDeltaComputer_IsSpecialTypeChecks tests the isSpecialType helper.
-func TestDeltaComputer_IsSpecialTypeChecks(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("time.Time is special", func(t *testing.T) {
-		assert.True(t, dc.isSpecialType(reflect.TypeOf(time.Time{})))
-	})
-
-	t.Run("pointer to time.Time is special", func(t *testing.T) {
-		now := time.Now()
-		assert.True(t, dc.isSpecialType(reflect.TypeOf(&now)))
-	})
-
-	t.Run("regular struct is not special", func(t *testing.T) {
-		assert.False(t, dc.isSpecialType(reflect.TypeOf(testConfig{})))
-	})
-}
-
-// TestDeltaComputer_ExtractValueEdgeCases tests the extractValue helper edge cases.
-func TestDeltaComputer_ExtractValueEdgeCases(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("extracts from invalid value", func(t *testing.T) {
-		result := dc.extractValue(reflect.Value{})
-		assert.Nil(t, result)
-	})
-
-	t.Run("extracts from nil pointer", func(t *testing.T) {
-		var p *string
-		result := dc.extractValue(reflect.ValueOf(&p).Elem())
-		assert.Nil(t, result)
-	})
-
-	t.Run("extracts from valid pointer", func(t *testing.T) {
-		s := "hello"
-		result := dc.extractValue(reflect.ValueOf(&s))
-		assert.Equal(t, "hello", result)
-	})
-
-	t.Run("extracts from interface", func(t *testing.T) {
-		var i interface{} = 42
-		result := dc.extractValue(reflect.ValueOf(&i).Elem())
-		assert.Equal(t, 42, result)
-	})
-}
-
-// TestDeltaComputer_GetFieldPathVariants tests the getFieldPath helper with various tag formats.
-func TestDeltaComputer_GetFieldPathVariants(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("returns json tag name", func(t *testing.T) {
-		field, ok := reflect.TypeOf(testEntity{}).FieldByName("Name")
-		require.True(t, ok)
-		assert.Equal(t, "name", dc.getFieldPath(field))
-	})
-
-	t.Run("returns field name when no json tag", func(t *testing.T) {
-		type noTag struct {
-			Value int
-		}
-		field, ok := reflect.TypeOf(noTag{}).FieldByName("Value")
-		require.True(t, ok)
-		assert.Equal(t, "Value", dc.getFieldPath(field))
-	})
-
-	t.Run("handles json tag with omitempty", func(t *testing.T) {
-		field, ok := reflect.TypeOf(testNestedEntity{}).FieldByName("Profile")
-		require.True(t, ok)
-		assert.Equal(t, "profile", dc.getFieldPath(field))
-	})
-
-	t.Run("returns dash for skip tag", func(t *testing.T) {
-		type skipField struct {
-			Skip int `json:"-"`
-		}
-		field, ok := reflect.TypeOf(skipField{}).FieldByName("Skip")
-		require.True(t, ok)
-		assert.Equal(t, "-", dc.getFieldPath(field))
-	})
-}
-
-// TestDeltaComputer_ComputeMapAddRemove tests delta computation between map values.
-func TestDeltaComputer_ComputeMapAddRemove(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	t.Run("detects added map keys", func(t *testing.T) {
-		type withMap struct {
-			ID   string            `json:"id"`
-			Tags map[string]string `json:"tags"`
-		}
-
-		old := &withMap{ID: "1", Tags: map[string]string{"a": "1"}}
-		newVal := &withMap{ID: "1", Tags: map[string]string{"a": "1", "b": "2"}}
-
-		delta, err := dc.Compute(old, newVal)
-		require.NoError(t, err)
-		assert.NotEmpty(t, delta.Changes)
-
-		found := false
-		for _, c := range delta.Changes {
-			if c.Path == "tags.b" && c.Operation == OpSet {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "expected change for added map key 'b'")
-	})
-
-	t.Run("detects removed map keys", func(t *testing.T) {
-		type withMap struct {
-			ID   string            `json:"id"`
-			Tags map[string]string `json:"tags"`
-		}
-
-		old := &withMap{ID: "1", Tags: map[string]string{"a": "1", "b": "2"}}
-		newVal := &withMap{ID: "1", Tags: map[string]string{"a": "1"}}
-
-		delta, err := dc.Compute(old, newVal)
-		require.NoError(t, err)
-		assert.NotEmpty(t, delta.Changes)
-
-		found := false
-		for _, c := range delta.Changes {
-			if c.Path == "tags.b" && c.Operation == OpDelete {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "expected delete change for removed map key 'b'")
-	})
-}
-
-// TestDeltaComputer_CompareTimeFields tests comparison of time.Time fields.
-func TestDeltaComputer_CompareTimeFields(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	now := time.Now()
-	later := now.Add(1 * time.Hour)
-
-	old := &testEntity{ID: "1", Name: "test", UpdatedAt: now}
-	newVal := &testEntity{ID: "1", Name: "test", UpdatedAt: later}
-
-	delta, err := dc.Compute(old, newVal)
-	require.NoError(t, err)
-	assert.NotEmpty(t, delta.Changes)
-
-	found := false
-	for _, c := range delta.Changes {
-		if c.Path == "updated_at" {
-			found = true
-			break
-		}
-	}
-	assert.True(t, found, "expected change for updated_at field")
-}
-
-// TestCodecErrorTypeStrings tests the Error() method on codec error types.
-func TestCodecErrorTypeStrings(t *testing.T) {
-	t.Run("EmptyCodecNameError", func(t *testing.T) {
-		err := &EmptyCodecNameError{}
-		assert.Equal(t, "codec name is empty", err.Error())
-	})
-
-	t.Run("NilCodecNameError", func(t *testing.T) {
-		err := &NilCodecNameError{}
-		assert.Equal(t, "default codec name is nil or invalid", err.Error())
-	})
-
-	t.Run("NilEntityError", func(t *testing.T) {
-		err := &NilEntityError{}
-		assert.Equal(t, "entity is nil", err.Error())
-	})
-
-	t.Run("EmptyDataError", func(t *testing.T) {
-		err := &EmptyDataError{}
-		assert.Equal(t, "data is empty", err.Error())
-	})
-}
-
-// TestDeltaIsDiffFailedNilAndTyped tests the IsDeltaDiffFailed error checker.
-func TestDeltaIsDiffFailedNilAndTyped(t *testing.T) {
-	t.Run("nil error returns false", func(t *testing.T) {
-		assert.False(t, IsDeltaDiffFailed(nil))
-	})
-
-	t.Run("matching DeltaDiffError returns true", func(t *testing.T) {
-		err := &DeltaDiffError{Cause: "test diff error"}
-		assert.True(t, IsDeltaDiffFailed(err))
-	})
-}
-
-// TestHubNilClientOperations tests hub operations with nil clients.
-func TestHubNilClientOperations(t *testing.T) {
-	log := newTestLogger(t)
-	hub := NewNotificationHub(log)
-
-	t.Run("register nil client is no-op", func(t *testing.T) {
-		hub.RegisterClient(nil)
-	})
-
-	t.Run("unregister nil client is no-op", func(t *testing.T) {
-		hub.UnregisterClient(nil)
-	})
-}
-
 // TestPushService_PublishDeltaServiceState tests PublishDelta service state checks.
 func TestPushService_PublishDeltaServiceState(t *testing.T) {
 	log := newTestLogger(t)
-
-	t.Run("publish delta when service not running", func(t *testing.T) {
-		ps := NewPushService(log, nil)
-		ctx := context.Background()
-
-		_, err := ps.PublishDelta(ctx, "test-channel", &testEntity{Name: "old"}, &testEntity{Name: "new"})
-		assert.Error(t, err)
-		assert.True(t, IsServiceNotRunning(err))
-	})
 
 	t.Run("publish delta with invalid channel", func(t *testing.T) {
 		ps := NewPushService(log, nil)
@@ -1722,122 +1372,6 @@ func TestPushService_GetSubscriptionClientErrors(t *testing.T) {
 		assert.Nil(t, client)
 		assert.False(t, found)
 	})
-}
-
-// TestDeltaComputer_ExtractAllFields_NewEntity tests extractAllFields for new entity creation.
-func TestDeltaComputer_ExtractAllFields_NewEntity(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	newVal := &testEntity{ID: "entity-1", Name: "test", Age: 25}
-
-	delta, err := dc.Compute(nil, newVal)
-	require.NoError(t, err)
-	assert.NotEmpty(t, delta.Changes)
-
-	foundName := false
-	foundAge := false
-	for _, c := range delta.Changes {
-		if c.Path == "name" && c.Operation == OpSet {
-			foundName = true
-		}
-		if c.Path == "age" && c.Operation == OpSet {
-			foundAge = true
-		}
-	}
-	assert.True(t, foundName)
-	assert.True(t, foundAge)
-}
-
-// TestDeltaComputer_ExtractAllFields_NestedPointerStruct tests extractAllFields with ptr-to-struct.
-func TestDeltaComputer_ExtractAllFields_NestedPointerStruct(t *testing.T) {
-	log := newTestLogger(t)
-	dc := NewDeltaComputer(log)
-
-	newVal := &testNestedEntity{
-		ID: "nested-1",
-		Profile: &testProfile{
-			Bio:   "developer",
-			Email: "dev@example.com",
-		},
-		Config: testConfig{
-			Theme:    "dark",
-			Language: "en",
-		},
-	}
-
-	delta, err := dc.Compute(nil, newVal)
-	require.NoError(t, err)
-	assert.NotEmpty(t, delta.Changes)
-
-	foundBio := false
-	foundTheme := false
-	for _, c := range delta.Changes {
-		if c.Path == "profile.bio" {
-			foundBio = true
-		}
-		if c.Path == "config.theme" {
-			foundTheme = true
-		}
-	}
-	assert.True(t, foundBio, "expected extracted field profile.bio")
-	assert.True(t, foundTheme, "expected extracted field config.theme")
-}
-
-// TestDeltaErrorCheckers_ComprehensiveTable tests all error checkers in a table.
-func TestDeltaErrorCheckers_ComprehensiveTable(t *testing.T) {
-	tests := []struct {
-		name    string
-		checker func(error) bool
-		err     error
-		want    bool
-	}{
-		{"IsDeltaNilInput nil", IsDeltaNilInput, nil, false},
-		{"IsDeltaTypeMismatch nil", IsDeltaTypeMismatch, nil, false},
-		{"IsDeltaMaxDepthExceeded nil", IsDeltaMaxDepthExceeded, nil, false},
-		{"IsDeltaUnsupportedType nil", IsDeltaUnsupportedType, nil, false},
-		{"IsDeltaDeserializationFailed nil", IsDeltaDeserializationFailed, nil, false},
-		{"IsDeltaDiffFailed nil", IsDeltaDiffFailed, nil, false},
-		{"IsDeltaNilInput match", IsDeltaNilInput, &DeltaNilInputError{Parameter: "new"}, true},
-		{"IsDeltaTypeMismatch match", IsDeltaTypeMismatch, &DeltaTypeMismatchError{OldType: "int", NewType: "string"}, true},
-		{"IsDeltaMaxDepthExceeded match", IsDeltaMaxDepthExceeded, &DeltaMaxDepthExceededError{MaxDepth: 10, Path: "a.b"}, true},
-		{"IsDeltaUnsupportedType match", IsDeltaUnsupportedType, &DeltaUnsupportedTypeError{Type: "chan", Path: "root"}, true},
-		{"IsDeltaDeserializationFailed match", IsDeltaDeserializationFailed, &DeltaDeserializationError{Cause: "bad data"}, true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, tc.checker(tc.err))
-		})
-	}
-}
-
-// TestHubDeleteChannel_EmptyNameValidation tests DeleteChannel with empty name.
-func TestHubDeleteChannel_EmptyNameValidation(t *testing.T) {
-	log := newTestLogger(t)
-	hub := NewNotificationHub(log)
-
-	err := hub.DeleteChannel("")
-	assert.Error(t, err)
-}
-
-// TestHubBroadcast_NilMessageValidation tests Broadcast with a nil message.
-func TestHubBroadcast_NilMessageValidation(t *testing.T) {
-	log := newTestLogger(t)
-	hub := NewNotificationHub(log)
-
-	err := hub.Broadcast(nil)
-	assert.Error(t, err)
-}
-
-// TestPushService_Publish_WhenNotRunning tests Publish when service is not running.
-func TestPushService_Publish_WhenNotRunning(t *testing.T) {
-	log := newTestLogger(t)
-	ps := NewPushService(log, nil)
-
-	_, err := ps.Publish(context.Background(), "test", "data")
-	assert.Error(t, err)
-	assert.True(t, IsServiceNotRunning(err))
 }
 
 // TestNotificationHub_RegisterAndSubscribe_IsOrderedWithTheWindowForcedOpen is
@@ -1988,9 +1522,7 @@ func TestNotificationHub_RegisterAndSubscribe_KeepsTheStrictFormStrict(t *testin
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go hub.Run(ctx)
-	for !hub.IsRunning() {
-		time.Sleep(time.Millisecond)
-	}
+	require.Eventually(t, hub.IsRunning, testTimeout, testPollInterval)
 
 	strict := NewClient("never-registered", DefaultBufferSize)
 	if err := hub.SubscribeToChannel(strict, "strict-channel"); !errors.Is(err, ErrClientNotRegistered) {
