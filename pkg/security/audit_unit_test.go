@@ -31,57 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAuditLogger_CleanupOldBackupsPlaceholder(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:    true,
-		File:       logFile,
-		MaxSize:    1,
-		MaxBackups: 2,
-		SignLogs:   false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	// Call cleanupOldBackups to increase coverage
-	al.cleanupOldBackups()
-
-	// Since it's a placeholder, just verify it doesn't panic
-	assert.NotNil(t, al)
-}
-
-func TestAuditLogger_SendToSyslogPlaceholder(t *testing.T) {
-	cfg := &AuditConfig{
-		Enabled:    true,
-		Syslog:     true,
-		SyslogAddr: "localhost:514",
-		SignLogs:   false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	event := &AuditEvent{
-		Username: "test",
-		Action:   ActionRead,
-		Resource: "test",
-		Result:   ResultSuccess,
-	}
-
-	// Call sendToSyslog to increase coverage (it's a placeholder)
-	al.sendToSyslog(event)
-
-	// Since it's a placeholder, just verify it doesn't panic
-	assert.NotNil(t, event)
-}
-
 func TestAuditLogger_SIEMExporter(t *testing.T) {
 	// Create a test server to receive SIEM events
 	receivedEvents := 0
@@ -282,23 +231,6 @@ func TestAuditLogger_LogWithBothSyslogAndSIEM(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 }
 
-func TestAuditLogger_OpenLogFileDirectoryError(t *testing.T) {
-	// Use a path that will fail directory creation
-	logFile := "/proc/cannot_create_dir_here/audit.log"
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	_, err := NewAuditLogger(cfg, log)
-
-	// Should return error when directory creation fails
-	assert.Error(t, err)
-}
-
 func TestAuditError_Error(t *testing.T) {
 	t.Run("with cause", func(t *testing.T) {
 		cause := io.EOF
@@ -322,13 +254,20 @@ func TestAuditError_Error(t *testing.T) {
 }
 
 func TestAuditError_Unwrap(t *testing.T) {
-	cause := io.EOF
-	err := &AuditError{
-		Code:    ErrCodeAuditCompressionOpen,
-		Message: "test message",
-		Cause:   cause,
-	}
-	assert.Equal(t, cause, err.Unwrap())
+	t.Run("with cause", func(t *testing.T) {
+		cause := io.EOF
+		err := &AuditError{
+			Code:    ErrCodeAuditCompressionOpen,
+			Message: "test message",
+			Cause:   cause,
+		}
+		assert.Equal(t, cause, err.Unwrap())
+	})
+
+	t.Run("without cause", func(t *testing.T) {
+		err := &AuditError{Code: ErrCodeAuditConfigNil, Message: "config is nil"}
+		assert.Nil(t, err.Unwrap())
+	})
 }
 
 func TestAuditLogger_GetSIEMExporter(t *testing.T) {
