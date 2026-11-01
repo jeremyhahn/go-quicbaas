@@ -285,158 +285,46 @@ func TestParseSessionUpdate_FlatUpdate(t *testing.T) {
 	assert.Equal(t, "agent_message_chunk", update["sessionUpdate"])
 }
 
-func TestEventDisplay_Render_JobStarted(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
+// TestEventDisplay_Render covers the one-line rendering of each event type.
+// A row with no want expects the event to be skipped (no output at all).
+func TestEventDisplay_Render(t *testing.T) {
+	tests := []struct {
+		name    string
+		evtType string
+		message string
+		want    []string
+	}{
+		{"job started", "orchestration:job_started", "job_id=job-1 correlation_id=corr-1", []string{"Job started", "system"}},
+		{"job started empty message", "orchestration:job_started", "", []string{"Job started"}},
+		{"decomposed", "orchestration:decomposed", "work_items=5 iteration=1", []string{"Decomposed into 5 tasks (iteration 1)"}},
+		{"decomposed missing fields", "orchestration:decomposed", "", []string{"Decomposed into"}},
+		{"scheduled", "orchestration:scheduled", "waves=2 items=5", []string{"Scheduled 5 items in 2 waves"}},
+		{"task assigned skipped", "orchestration:task_assigned", "wave=1 tasks=3", nil},
+		{"task completed skipped", "orchestration:task_completed", "wave=1 tasks=3", nil},
+		{"validation result skipped", "orchestration:validation_result", "criteria=3", nil},
+		{"review approved", "orchestration:review_decision", "approved=true feedback=Looks good", []string{"Review: APPROVED"}},
+		{"review rejected", "orchestration:review_decision", "approved=false feedback=Needs more tests", []string{"Review: REJECTED -- Needs more tests"}},
+		{"redelegate", "orchestration:redelegate", "iteration=2", []string{"Re-delegating (iteration 2)"}},
+		{"redelegate empty message", "orchestration:redelegate", "", []string{"Re-delegating"}},
+	}
 
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:job_started",
-		Message: "job_id=job-1 correlation_id=corr-1",
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			d := newEventDisplay(&buf)
 
-	output := buf.String()
-	assert.Contains(t, output, "Job started")
-	assert.Contains(t, output, "system")
-}
+			d.render(&orchestratorSDK.JobEvent{Type: tt.evtType, Message: tt.message})
 
-func TestEventDisplay_Render_JobStarted_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:job_started",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Job started")
-}
-
-func TestEventDisplay_Render_Decomposed(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:decomposed",
-		Message: "work_items=5 iteration=1",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposed into 5 tasks (iteration 1)")
-}
-
-func TestEventDisplay_Render_Decomposed_MissingFields(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:decomposed",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Decomposed into")
-}
-
-func TestEventDisplay_Render_Scheduled(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:scheduled",
-		Message: "waves=2 items=5",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Scheduled 5 items in 2 waves")
-}
-
-func TestEventDisplay_Render_TaskAssigned_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:task_assigned",
-		Message: "wave=1 tasks=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "task_assigned should be skipped")
-}
-
-func TestEventDisplay_Render_TaskCompleted_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:task_completed",
-		Message: "wave=1 tasks=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "task_completed should be skipped")
-}
-
-func TestEventDisplay_Render_ValidationResult_Skipped(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:validation_result",
-		Message: "criteria=3",
-	})
-
-	assert.Equal(t, "", buf.String(), "validation_result should be skipped")
-}
-
-func TestEventDisplay_Render_ReviewApproved(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:review_decision",
-		Message: "approved=true feedback=Looks good",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Review: APPROVED")
-}
-
-func TestEventDisplay_Render_ReviewRejected(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:review_decision",
-		Message: "approved=false feedback=Needs more tests",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Review: REJECTED -- Needs more tests")
-}
-
-func TestEventDisplay_Render_Redelegate(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:redelegate",
-		Message: "iteration=2",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Re-delegating (iteration 2)")
-}
-
-func TestEventDisplay_Render_Redelegate_EmptyMessage(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "orchestration:redelegate",
-		Message: "",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "Re-delegating")
+			output := buf.String()
+			if tt.want == nil {
+				assert.Empty(t, output, "%s should be skipped", tt.evtType)
+				return
+			}
+			for _, w := range tt.want {
+				assert.Contains(t, output, w)
+			}
+		})
+	}
 }
 
 func TestEventDisplay_Render_PromptStart(t *testing.T) {
