@@ -477,6 +477,13 @@ func TestMatchesVectorNamespace(t *testing.T) {
 		{"prefix wildcard no match", "vector:namespace:prod-*", "dev-embeddings", false},
 		{"prefix wildcard partial name", "vector:namespace:embed*", "embeddings", true},
 		{"prefix wildcard no match short", "vector:namespace:prod-*", "pro", false},
+		{"prefix with underscore", "vector:namespace:test_*", "test_namespace", true},
+
+		// Edge inputs
+		{"namespace wildcard grants empty ns", "vector:namespace:*", "", true},
+		{"single char namespace", "vector:namespace:a", "a", true},
+		{"single char namespace no match", "vector:namespace:a", "b", false},
+		{"namespace with special chars", "vector:namespace:ns-with_special.chars", "ns-with_special.chars", true},
 
 		// Non-namespace resources
 		{"non-namespace resource", "keys", "embeddings", false},
@@ -603,6 +610,13 @@ func TestMatchesObjectBucket(t *testing.T) {
 		{"prefix wildcard partial name", "object:bucket:data*", "data-bucket", true},
 		{"prefix wildcard no match short", "object:bucket:prod-*", "pro", false},
 		{"prefix wildcard exact prefix", "object:bucket:prod-*", "prod-", true},
+		{"prefix with underscore", "object:bucket:test_*", "test_bucket", true},
+
+		// Edge inputs
+		{"bucket wildcard grants empty bucket", "object:bucket:*", "", true},
+		{"single char bucket", "object:bucket:a", "a", true},
+		{"single char bucket no match", "object:bucket:a", "b", false},
+		{"bucket with special chars", "object:bucket:bucket-with_special.chars", "bucket-with_special.chars", true},
 
 		// Non-bucket resources
 		{"keys resource", "keys", "my-bucket", false},
@@ -776,6 +790,15 @@ func TestMatchesParameterPath(t *testing.T) {
 		{"single-level wildcard exact prefix", "parameter:path:/app/*", "/app/", true},
 		// Test case where requested path is shorter than the wildcard prefix
 		{"single-level wildcard path shorter than prefix", "parameter:path:/app/config/*", "/app/", false},
+		{"single-level wildcard with very long prefix", "parameter:path:/very/long/prefix/*", "/short", false},
+		{"multi-level wildcard empty remaining", "parameter:path:/app/**", "/app/", true},
+		{"multi-level wildcard deep nested", "parameter:path:/**", "/a/b/c/d/e/f/g", true},
+
+		// Edge inputs
+		{"path wildcard grants empty path", "parameter:path:*", "", true},
+		{"single char path", "parameter:path:/a", "/a", true},
+		{"single char path no match", "parameter:path:/a", "/b", false},
+		{"path with special chars", "parameter:path:/app/config-v1.2", "/app/config-v1.2", true},
 
 		// Non-parameter resources
 		{"keys resource", "keys", "/app/config", false},
@@ -861,80 +884,6 @@ func TestAdditionalResourceConstants(t *testing.T) {
 	assert.Equal(t, "parameters", ResourceParameters)
 }
 
-// TestMatchesVectorNamespaceEdgeCases tests edge cases for MatchesVectorNamespace.
-func TestMatchesVectorNamespaceEdgeCases(t *testing.T) {
-	tests := []struct {
-		name         string
-		permResource string
-		requestedNS  string
-		expected     bool
-	}{
-		{"empty wildcard pattern", "vector:namespace:*", "", true},
-		{"prefix wildcard with empty suffix", "vector:namespace:*", "anything", true},
-		{"single char namespace", "vector:namespace:a", "a", true},
-		{"single char namespace no match", "vector:namespace:a", "b", false},
-		{"namespace with special chars", "vector:namespace:ns-with_special.chars", "ns-with_special.chars", true},
-		{"prefix with underscore", "vector:namespace:test_*", "test_namespace", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesVectorNamespace(tt.permResource, tt.requestedNS)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestMatchesObjectBucketEdgeCases tests edge cases for MatchesObjectBucket.
-func TestMatchesObjectBucketEdgeCases(t *testing.T) {
-	tests := []struct {
-		name            string
-		permResource    string
-		requestedBucket string
-		expected        bool
-	}{
-		{"empty wildcard pattern", "object:bucket:*", "", true},
-		{"prefix wildcard with empty suffix", "object:bucket:*", "anything", true},
-		{"single char bucket", "object:bucket:a", "a", true},
-		{"single char bucket no match", "object:bucket:a", "b", false},
-		{"bucket with special chars", "object:bucket:bucket-with_special.chars", "bucket-with_special.chars", true},
-		{"prefix with underscore", "object:bucket:test_*", "test_bucket", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesObjectBucket(tt.permResource, tt.requestedBucket)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-// TestMatchesParameterPathEdgeCases tests edge cases for MatchesParameterPath.
-func TestMatchesParameterPathEdgeCases(t *testing.T) {
-	tests := []struct {
-		name          string
-		permResource  string
-		requestedPath string
-		expected      bool
-	}{
-		{"empty path with wildcard", "parameter:path:*", "", true},
-		{"single char path", "parameter:path:/a", "/a", true},
-		{"single char path no match", "parameter:path:/a", "/b", false},
-		{"path with special chars", "parameter:path:/app/config-v1.2", "/app/config-v1.2", true},
-		{"multi-level wildcard empty remaining", "parameter:path:/app/**", "/app/", true},
-		{"single-level wildcard empty remaining", "parameter:path:/app/*", "/app/", true},
-		{"deep nested path with multi-level", "parameter:path:/**", "/a/b/c/d/e/f/g", true},
-		// Additional edge case for path shorter than prefix in single-level wildcard
-		{"single-level wildcard with very long prefix", "parameter:path:/very/long/prefix/*", "/short", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesParameterPath(tt.permResource, tt.requestedPath)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
 
 // TestBatchAuthorizeWithCustomFunction tests BatchAuthorize with a custom function.
 func TestBatchAuthorizeWithCustomFunction(t *testing.T) {
