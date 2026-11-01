@@ -35,22 +35,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 )
 
-func TestEmbeddedServer_ShutdownNotStarted(t *testing.T) {
-	es := &embeddedServer{}
-	err := es.shutdown()
-	assert.NoError(t, err)
-}
-
-func TestEmbeddedServer_ShutdownStartedNoServer(t *testing.T) {
-	es := &embeddedServer{}
-	es.started.Store(true)
-	es.tempDir = t.TempDir()
-
-	err := es.shutdown()
-	assert.NoError(t, err)
-	assert.False(t, es.started.Load(), "started should be false after shutdown")
-}
-
 // TestGRPCBackupClientWrapper_NilAdapter checks that every wrapper method
 // delegates to its adapter: with no adapter there is nothing to call.
 func TestGRPCBackupClientWrapper_NilAdapter(t *testing.T) {
@@ -146,31 +130,37 @@ func TestDisplayRebalanceReport_Table(t *testing.T) {
 	}
 	tests := []struct {
 		name   string
+		format string
 		report *RebalanceReport
 	}{
-		{"no moves", &RebalanceReport{Duration: time.Minute, ImbalanceBefore: 0.01, ImbalanceAfter: 0.01}},
-		{"with failed moves", &RebalanceReport{
+		{"no moves", "table", &RebalanceReport{Duration: time.Minute, ImbalanceBefore: 0.01, ImbalanceAfter: 0.01}},
+		{"with failed moves", "table", &RebalanceReport{
 			Duration: 3 * time.Minute, MovesCompleted: 8, MovesFailed: 2,
 			KeysRebalanced: 4000, BytesRebalanced: 1024 * 1024,
 			ImbalanceBefore: 0.20, ImbalanceAfter: 0.10,
 			Errors: []string{errors.New(errors.ErrInternal, "test", "shard move failed").Error()},
 		}},
-		{"many errors", &RebalanceReport{
+		{"many errors", "table", &RebalanceReport{
 			Duration: 2 * time.Minute, MovesCompleted: 5, MovesFailed: 8,
 			ImbalanceBefore: 0.30, ImbalanceAfter: 0.25, Errors: manyErrors,
 		}},
-		{"successful moves", &RebalanceReport{
+		{"successful moves", "table", &RebalanceReport{
 			Duration: time.Minute, MovesCompleted: 5,
 			KeysRebalanced: 2500, BytesRebalanced: 1024 * 500,
 			ImbalanceBefore: 0.15, ImbalanceAfter: 0.02,
 		}},
-		{"zero improvement", &RebalanceReport{Duration: time.Minute, MovesCompleted: 3, ImbalanceBefore: 0.05, ImbalanceAfter: 0.05}},
+		{"zero improvement", "table", &RebalanceReport{Duration: time.Minute, MovesCompleted: 3, ImbalanceBefore: 0.05, ImbalanceAfter: 0.05}},
+		{"json", "json", &RebalanceReport{
+			Duration: time.Minute, MovesCompleted: 3,
+			KeysRebalanced: 1500, BytesRebalanced: 1024 * 1024,
+			ImbalanceBefore: 0.15, ImbalanceAfter: 0.02,
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.report.EndTime = time.Now()
 			tt.report.StartTime = tt.report.EndTime.Add(-tt.report.Duration)
-			assert.NoError(t, displayRebalanceReport(tt.report, "table"))
+			assert.NoError(t, displayRebalanceReport(tt.report, tt.format))
 		})
 	}
 }
@@ -433,20 +423,6 @@ func TestFollowRebalanceProgressSDK_ErrorThenComplete(t *testing.T) {
 // =============================================================================
 // Helper
 // =============================================================================
-
-func createTestLoggerForCoverageNinetyOne(t *testing.T) *logger.Logger {
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	if err != nil {
-		t.Fatalf("Failed to create test logger: %v", err)
-	}
-	return testLog
-}
 
 // objectFormatCase is one row of a formatter table: the output format, the
 // response to render, and whether rendering must fail.
@@ -1170,167 +1146,96 @@ func TestEmbedded91_GetEmbeddedService_WithExistingServer(t *testing.T) {
 	assert.Nil(t, svc)
 }
 
-func TestEmbedded91_Shutdown_WithTempDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "embedded-test")
-	err := os.MkdirAll(subDir, 0700)
-	require.NoError(t, err)
+func TestEmbeddedServer_Shutdown(t *testing.T) {
+	t.Run("not started", func(t *testing.T) {
+		es := &embeddedServer{}
+		assert.NoError(t, es.shutdown())
+	})
 
-	es := &embeddedServer{
-		tempDir: subDir,
-	}
-	es.started.Store(true)
+	t.Run("started removes temp dir", func(t *testing.T) {
+		subDir := filepath.Join(t.TempDir(), "embedded-test")
+		require.NoError(t, os.MkdirAll(subDir, 0o700))
 
-	err = es.shutdown()
-	assert.NoError(t, err)
-	assert.False(t, es.started.Load())
+		es := &embeddedServer{tempDir: subDir}
+		es.started.Store(true)
 
-	// Verify temp dir was cleaned up
-	_, statErr := os.Stat(subDir)
-	assert.True(t, os.IsNotExist(statErr))
+		assert.NoError(t, es.shutdown())
+		assert.False(t, es.started.Load(), "started should be false after shutdown")
+		_, statErr := os.Stat(subDir)
+		assert.True(t, os.IsNotExist(statErr), "temp dir should be removed")
+	})
 }
 
-func TestEmbedded91_ShutdownEmbeddedServer_NilHolder(t *testing.T) {
-	defer func() {
-		embeddedServerHolder.Store(nil)
-	}()
+func TestShutdownEmbeddedServer_WithServerClearsHolder(t *testing.T) {
+	t.Cleanup(func() { embeddedServerHolder.Store(nil) })
 
-	// Ensure holder is nil
-	embeddedServerHolder.Store(nil)
-
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
-}
-
-func TestEmbedded91_ShutdownEmbeddedServer_WithServer(t *testing.T) {
-	defer func() {
-		embeddedServerHolder.Store(nil)
-	}()
-
-	tmpDir := t.TempDir()
-	es := &embeddedServer{
-		tempDir: tmpDir,
-	}
+	es := &embeddedServer{tempDir: t.TempDir()}
 	es.started.Store(true)
 	embeddedServerHolder.Store(es)
 
-	err := shutdownEmbeddedServer()
-	assert.NoError(t, err)
+	assert.NoError(t, shutdownEmbeddedServer())
 	assert.Nil(t, embeddedServerHolder.Load())
 }
 
 // =============================================================================
-// Rebalance commands - RunE closure coverage through SDK client error
+// Rebalance commands - RunE returns the SDK client error
 // =============================================================================
 
-func TestRebalance91_StartCommand_SDKClientError(t *testing.T) {
+func TestRebalanceCommands_SDKClientError(t *testing.T) {
 	origAddress := address
 	origTransport := transport
 	origTimeout := globalTimeout
-	defer func() {
+	t.Cleanup(func() {
 		address = origAddress
 		transport = origTransport
 		globalTimeout = origTimeout
 		resetSDKClient()
-	}()
+	})
 
-	// Set address to empty to trigger ErrEmptyAddress in createSDKClient
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalanceStartCommand()
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRebalance91_StatusCommand_SDKClientError(t *testing.T) {
-	origAddress := address
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		address = origAddress
-		transport = origTransport
-		globalTimeout = origTimeout
-		resetSDKClient()
-	}()
-
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalanceStatusCommand()
-	// Set the required flag
-	cmd.Flags().Set("operation", "op-123")
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRebalance91_PlanCommand_SDKClientError(t *testing.T) {
-	origAddress := address
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		address = origAddress
-		transport = origTransport
-		globalTimeout = origTimeout
-		resetSDKClient()
-	}()
-
-	address = ""
-	transport = "grpc"
-	globalTimeout = 1 * time.Second
-
-	cmd := newRebalancePlanCommand()
-	err := cmd.RunE(cmd, []string{})
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Rebalance display helpers - additional output format paths
-// =============================================================================
-
-func TestRebalance91_DisplayRebalanceReport_JSON(t *testing.T) {
-	report := &RebalanceReport{
-		StartTime:       time.Now().Add(-1 * time.Minute),
-		EndTime:         time.Now(),
-		Duration:        1 * time.Minute,
-		MovesCompleted:  3,
-		MovesFailed:     0,
-		KeysRebalanced:  1500,
-		BytesRebalanced: 1024 * 1024,
-		ImbalanceBefore: 0.15,
-		ImbalanceAfter:  0.02,
+	tests := []struct {
+		name   string
+		newCmd func() *cobra.Command
+		flags  map[string]string
+	}{
+		{name: "start", newCmd: newRebalanceStartCommand},
+		{name: "status", newCmd: newRebalanceStatusCommand, flags: map[string]string{"operation": "op-123"}},
+		{name: "plan", newCmd: newRebalancePlanCommand},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// An empty address makes createSDKClient fail with ErrEmptyAddress.
+			address = ""
+			transport = "grpc"
+			globalTimeout = time.Second
+			resetSDKClient()
 
-	err := displayRebalanceReport(report, "json")
-	assert.NoError(t, err)
+			cmd := tt.newCmd()
+			for name, value := range tt.flags {
+				require.NoError(t, cmd.Flags().Set(name, value))
+			}
+			assert.Error(t, cmd.RunE(cmd, []string{}))
+		})
+	}
 }
 
-func TestRebalance91_DisplayProgressSDK_JSON(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-123",
-		Status:          "in_progress",
-		PercentComplete: 55.5,
-		ShardsMoved:     3,
-		TotalShards:     6,
-		ElapsedTime:     int64(30 * time.Second),
+func TestDisplayRebalanceProgressSDK_Formats(t *testing.T) {
+	tests := []struct {
+		name   string
+		format string
+		resp   *cluster.GetRebalanceProgressResponse
+	}{
+		{"json in progress", "json", &cluster.GetRebalanceProgressResponse{
+			OperationID: "op-123", Status: "in_progress", PercentComplete: 55.5,
+			ShardsMoved: 3, TotalShards: 6, ElapsedTime: int64(30 * time.Second),
+		}},
+		{"table completed", "table", &cluster.GetRebalanceProgressResponse{
+			OperationID: "op-456", Status: "completed", PercentComplete: 100.0,
+			ShardsMoved: 5, TotalShards: 5, ElapsedTime: int64(2 * time.Minute),
+		}},
 	}
-
-	err := displayRebalanceProgressSDK(resp, "json")
-	assert.NoError(t, err)
-}
-
-func TestRebalance91_DisplayProgressSDK_Table(t *testing.T) {
-	resp := &cluster.GetRebalanceProgressResponse{
-		OperationID:     "op-456",
-		Status:          "completed",
-		PercentComplete: 100.0,
-		ShardsMoved:     5,
-		TotalShards:     5,
-		ElapsedTime:     int64(2 * time.Minute),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.NoError(t, displayRebalanceProgressSDK(tt.resp, tt.format))
+		})
 	}
-
-	err := displayRebalanceProgressSDK(resp, "table")
-	assert.NoError(t, err)
 }
