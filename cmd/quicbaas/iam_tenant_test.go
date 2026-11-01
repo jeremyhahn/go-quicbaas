@@ -600,144 +600,109 @@ func TestIAMTenantProvisionCommand_ServerError(t *testing.T) {
 // IAM Tenant Command Structure Tests
 // =============================================================================
 
-func TestNewIAMTenantCommand_FullStructure(t *testing.T) {
-	cmd := newIAMTenantCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "tenant", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"create", "provision", "get", "update", "delete", "list"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
+// TestNewIAMTenantUserCommands_Structure checks each command's use line,
+// subcommands and flags, and that the flags quicbaas does not offer are
+// absent.
+func TestNewIAMTenantUserCommands_Structure(t *testing.T) {
+	tests := []struct {
+		name         string
+		newCommand   func() *cobra.Command
+		wantUse      string
+		wantSubcmds  []string
+		wantFlags    []string
+		absentFlags  map[string]string
+		wantLongHelp bool
+	}{
+		{
+			name:         "tenant",
+			newCommand:   newIAMTenantCommand,
+			wantUse:      "tenant",
+			wantSubcmds:  []string{"create", "provision", "get", "update", "delete", "list"},
+			wantLongHelp: true,
+		},
+		{
+			name:       "tenant create",
+			newCommand: newIAMTenantCreateCommand,
+			wantUse:    "create",
+			wantFlags:  []string{"name", "max-users", "mfa-required"},
+		},
+		{
+			name:       "tenant update",
+			newCommand: newIAMTenantUpdateCommand,
+			wantUse:    "update",
+			wantFlags:  []string{"name", "max-users", "mfa-required"},
+		},
+		{
+			name:         "user",
+			newCommand:   newIAMUserCommand,
+			wantUse:      "user",
+			wantSubcmds:  []string{"create", "get", "update", "delete", "list", "role"},
+			wantLongHelp: true,
+		},
+		{
+			name:       "user create",
+			newCommand: newIAMUserCreateCommand,
+			wantUse:    "create",
+			wantFlags:  []string{"name", "roles", "role"},
+			absentFlags: map[string]string{
+				"groups":   "an account carries no group membership (go-quicbaas#1027)",
+				"password": "QuicBaaS uses invite-based FIDO2/PIV activation",
+			},
+		},
+		{
+			name:       "user update",
+			newCommand: newIAMUserUpdateCommand,
+			wantUse:    "update",
+			wantFlags:  []string{"name", "roles"},
+		},
+		{
+			name:        "user list",
+			newCommand:  newIAMUserListCommand,
+			wantUse:     "list",
+			wantFlags:   []string{"role"},
+			absentFlags: map[string]string{"group": "quicbaas keeps no groups, so there is no group filter"},
+		},
+		{
+			name:        "user role",
+			newCommand:  newIAMUserRoleCommand,
+			wantUse:     "role",
+			wantSubcmds: []string{"assign", "revoke"},
+		},
+		{
+			name:       "user role assign",
+			newCommand: newIAMUserRoleAssignCommand,
+			wantUse:    "assign",
+			wantFlags:  []string{"role", "user"},
+		},
+		{
+			name:       "user role revoke",
+			newCommand: newIAMUserRoleRevokeCommand,
+			wantUse:    "revoke",
+			wantFlags:  []string{"role", "user"},
+		},
 	}
-}
-
-func TestNewIAMTenantCreateCommand_Flags(t *testing.T) {
-	cmd := newIAMTenantCreateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("max-users"))
-	assert.NotNil(t, cmd.Flags().Lookup("mfa-required"))
-}
-
-func TestNewIAMTenantUpdateCommand_Flags(t *testing.T) {
-	cmd := newIAMTenantUpdateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "update")
-
-	// Check flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("max-users"))
-	assert.NotNil(t, cmd.Flags().Lookup("mfa-required"))
-}
-
-// =============================================================================
-// IAM User Command Structure Tests
-// =============================================================================
-
-func TestNewIAMUserCommand_FullStructure(t *testing.T) {
-	cmd := newIAMUserCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "user", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-	assert.NotEmpty(t, cmd.Long)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"create", "get", "update", "delete", "list", "role"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := tc.newCommand()
+			require.NotNil(t, cmd)
+			assert.Equal(t, tc.wantUse, cmd.Name())
+			assert.NotEmpty(t, cmd.Short)
+			if tc.wantLongHelp {
+				assert.NotEmpty(t, cmd.Long)
 			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
-	}
-}
 
-func TestNewIAMUserCreateCommand_Flags(t *testing.T) {
-	cmd := newIAMUserCreateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-
-	// Check flags exist. QuicBaaS is passwordless — no --password flag.
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("roles"))
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.Nil(t, cmd.Flags().Lookup("groups"), "--groups must not exist; an account carries no group membership (go-quicbaas#1027)")
-	assert.Nil(t, cmd.Flags().Lookup("password"), "--password flag must not exist; QuicBaaS uses invite-based FIDO2/PIV activation")
-}
-
-func TestNewIAMUserUpdateCommand_Flags(t *testing.T) {
-	cmd := newIAMUserUpdateCommand()
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "update")
-
-	// Check flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("name"))
-	assert.NotNil(t, cmd.Flags().Lookup("roles"))
-}
-
-func TestNewIAMUserListCommand_Flags(t *testing.T) {
-	cmd := newIAMUserListCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list", cmd.Use)
-
-	// Check filter flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	// quicbaas keeps no groups, so there is no group filter.
-	assert.Nil(t, cmd.Flags().Lookup("group"))
-}
-
-func TestNewIAMUserRoleCommand_Structure(t *testing.T) {
-	cmd := newIAMUserRoleCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "role", cmd.Use)
-	assert.NotEmpty(t, cmd.Short)
-
-	// Verify subcommands exist
-	expectedSubcmds := []string{"assign", "revoke"}
-	for _, expected := range expectedSubcmds {
-		found := false
-		for _, sub := range cmd.Commands() {
-			if sub.Name() == expected {
-				found = true
-				break
+			subcmds := make([]string, 0, len(cmd.Commands()))
+			for _, sub := range cmd.Commands() {
+				subcmds = append(subcmds, sub.Name())
 			}
-		}
-		assert.True(t, found, "Expected subcommand %s not found", expected)
+			assert.Subset(t, subcmds, tc.wantSubcmds)
+
+			for _, flag := range tc.wantFlags {
+				assert.NotNil(t, cmd.Flags().Lookup(flag), "flag --%s", flag)
+			}
+			for flag, reason := range tc.absentFlags {
+				assert.Nil(t, cmd.Flags().Lookup(flag), "--%s must not exist: %s", flag, reason)
+			}
+		})
 	}
-}
-
-func TestNewIAMUserRoleAssignCommand_Flags(t *testing.T) {
-	cmd := newIAMUserRoleAssignCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "assign", cmd.Use)
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("user"))
-}
-
-func TestNewIAMUserRoleRevokeCommand_Flags(t *testing.T) {
-	cmd := newIAMUserRoleRevokeCommand()
-	require.NotNil(t, cmd)
-	assert.Equal(t, "revoke", cmd.Use)
-
-	// Check required flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("role"))
-	assert.NotNil(t, cmd.Flags().Lookup("user"))
 }
