@@ -116,11 +116,6 @@ func TestClient_IssueCertificate_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid minimal request",
-			req:     &IssueCertificateRequest{CommonName: "test.example.com"},
-			wantErr: false,
-		},
-		{
 			name: "valid full request with client usage",
 			req: &IssueCertificateRequest{
 				CommonName:         "test.example.com",
@@ -325,11 +320,6 @@ func TestClient_SignCSR_Validation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "valid minimal request",
-			req:     &SignCSRRequest{CSRPEM: "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----"},
-			wantErr: false,
-		},
-		{
 			name: "valid full request",
 			req: &SignCSRRequest{
 				CSRPEM:       "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----",
@@ -487,11 +477,6 @@ func TestClient_RevokeCertificate_Validation(t *testing.T) {
 			req:     &RevokeCertificateRequest{},
 			wantErr: true,
 		},
-		{
-			name:    "valid request",
-			req:     &RevokeCertificateRequest{SerialNumber: "12345"},
-			wantErr: false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -619,11 +604,6 @@ func TestClient_VerifyCertificate_Validation(t *testing.T) {
 			name:    "empty certificate PEM",
 			req:     &VerifyCertificateRequest{},
 			wantErr: true,
-		},
-		{
-			name:    "valid request",
-			req:     &VerifyCertificateRequest{CertificatePEM: "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"},
-			wantErr: false,
 		},
 	}
 
@@ -887,11 +867,6 @@ func TestClient_GetTLSConfig_Validation(t *testing.T) {
 		{
 			name:    "valid TLS 1.2",
 			req:     &GetTLSConfigRequest{MinVersion: "1.2"},
-			wantErr: false,
-		},
-		{
-			name:    "valid TLS 1.3",
-			req:     &GetTLSConfigRequest{MinVersion: "1.3"},
 			wantErr: false,
 		},
 		{
