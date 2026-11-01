@@ -25,46 +25,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNewSecretManager checks the config defaults and that a cache is built
+// only when caching is enabled.
 func TestNewSecretManager(t *testing.T) {
 	log := createTestLogger(t)
 
 	tests := []struct {
-		name    string
-		config  *SecretConfig
-		wantErr bool
+		name      string
+		config    *SecretConfig
+		wantTTL   time.Duration
+		wantCache bool
 	}{
+		{name: "nil config uses defaults", wantTTL: 5 * time.Minute},
 		{
-			name:    "nil config uses defaults",
-			config:  nil,
-			wantErr: false,
-		},
-		{
-			name:    "empty config",
-			config:  &SecretConfig{},
-			wantErr: false,
-		},
-		{
-			name: "with caching",
-			config: &SecretConfig{
-				CacheEnabled: true,
-				CacheTTL:     1 * time.Minute,
-			},
-			wantErr: false,
+			name:      "with caching",
+			config:    &SecretConfig{CacheEnabled: true, CacheTTL: time.Minute},
+			wantTTL:   time.Minute,
+			wantCache: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm, err := NewSecretManager(tt.config, log)
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, sm)
+			require.NoError(t, err)
+			defer sm.Close()
+
+			assert.IsType(t, &EnvBackend{}, sm.backend)
+			assert.Equal(t, tt.wantTTL, sm.config.CacheTTL)
+			if tt.wantCache {
+				require.NotNil(t, sm.cache)
+				assert.Equal(t, tt.wantTTL, sm.cache.ttl)
 			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, sm)
-				if sm != nil {
-					sm.Close()
-				}
+				assert.Nil(t, sm.cache)
 			}
 		})
 	}
@@ -224,33 +217,39 @@ func TestSecretCache_Cleanup(t *testing.T) {
 	assert.Equal(t, "new", cache.Get("live").Value)
 }
 
+// TestEnvBackend_Get checks that Get reads a set environment variable as a
+// version 1 secret and fails for an unset one.
 func TestEnvBackend_Get(t *testing.T) {
-	log := createTestLogger(t)
+	const key = "TEST_ENV_BACKEND_GET"
+	t.Setenv(key, "backend-value")
 
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-	defer backend.Close()
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{name: "set variable", key: key},
+		{name: "unset variable", key: "NON_EXISTENT_VAR", wantErr: true},
+	}
 
-	testKey := "TEST_ENV_BACKEND"
-	testValue := "backend-value"
-	os.Setenv(testKey, testValue)
-	defer os.Unsetenv(testKey)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, err := NewEnvBackend(createTestLogger(t))
+			require.NoError(t, err)
 
-	secret, err := backend.Get(context.Background(), testKey)
-	require.NoError(t, err)
-	assert.Equal(t, testKey, secret.Key)
-	assert.Equal(t, testValue, secret.Value)
-}
+			secret, err := backend.Get(context.Background(), tt.key)
 
-func TestEnvBackend_GetNotFound(t *testing.T) {
-	log := createTestLogger(t)
-
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-	defer backend.Close()
-
-	_, err = backend.Get(context.Background(), "NON_EXISTENT_VAR")
-	assert.Error(t, err)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, secret)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, key, secret.Key)
+			assert.Equal(t, "backend-value", secret.Value)
+			assert.Equal(t, 1, secret.Version)
+		})
+	}
 }
 
 func TestEnvBackend_SetNotSupported(t *testing.T) {
@@ -327,38 +326,6 @@ func TestSecretManager_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < numGoroutines; i++ {
 		<-done
 	}
-}
-
-func TestSecret_Metadata(t *testing.T) {
-	secret := &Secret{
-		Key:   "test-key",
-		Value: "test-value",
-		Metadata: map[string]string{
-			"type":        "database-password",
-			"environment": "production",
-		},
-		Version:   1,
-		CreatedAt: time.Now(),
-	}
-
-	assert.Equal(t, "test-key", secret.Key)
-	assert.Equal(t, "test-value", secret.Value)
-	assert.Equal(t, "database-password", secret.Metadata["type"])
-	assert.Equal(t, "production", secret.Metadata["environment"])
-}
-
-func TestSecret_WithExpiration(t *testing.T) {
-	expiresAt := time.Now().Add(1 * time.Hour)
-	secret := &Secret{
-		Key:       "expiring-key",
-		Value:     "expiring-value",
-		Version:   1,
-		CreatedAt: time.Now(),
-		ExpiresAt: &expiresAt,
-	}
-
-	assert.NotNil(t, secret.ExpiresAt)
-	assert.True(t, time.Now().Before(*secret.ExpiresAt))
 }
 
 func BenchmarkSecretManager_Get(b *testing.B) {
@@ -439,46 +406,6 @@ func newMockSecretBackend() *mockSecretBackend {
 }
 
 // ---------------------------------------------------------------------------
-// NewSecretManager defaults (secrets.go:85 -- 84.6%)
-// ---------------------------------------------------------------------------
-
-func TestNewSecretManager_WithCache(t *testing.T) {
-	log := createTestLogger(t)
-
-	sm, err := NewSecretManager(&SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     10 * time.Minute,
-	}, log)
-	require.NoError(t, err)
-	defer sm.Close()
-	assert.NotNil(t, sm.cache)
-}
-
-func TestNewSecretManager_NilConfig(t *testing.T) {
-	log := createTestLogger(t)
-
-	sm, err := NewSecretManager(nil, log)
-	require.NoError(t, err)
-	defer sm.Close()
-}
-
-// ---------------------------------------------------------------------------
-// NewSecretManager - cover more config paths
-// ---------------------------------------------------------------------------
-
-func TestNewSecretManager_DefaultBackend(t *testing.T) {
-	cfg := &SecretConfig{
-		CacheTTL: 0, // no cache
-	}
-
-	log := createTestLogger(t)
-
-	mgr, err := NewSecretManager(cfg, log)
-	assert.NoError(t, err)
-	assert.NotNil(t, mgr)
-}
-
-// ---------------------------------------------------------------------------
 // secrets.go -- SecretCache close
 // ---------------------------------------------------------------------------
 
@@ -495,31 +422,6 @@ func TestSecretCache_CloseEmptiesEntries(t *testing.T) {
 	assert.Nil(t, cache.Get("a"))
 	assert.Nil(t, cache.Get("b"))
 }
-
-// ---------------------------------------------------------------------------
-// EnvBackend tests
-// ---------------------------------------------------------------------------
-
-func TestEnvBackend_GetReturnsSecret(t *testing.T) {
-	log := createTestLogger(t)
-	backend, err := NewEnvBackend(log)
-	require.NoError(t, err)
-
-	t.Setenv("TEST_ENV_BACKEND_GET", "secret-value")
-
-	ctx := context.Background()
-	secret, err := backend.Get(ctx, "TEST_ENV_BACKEND_GET")
-	require.NoError(t, err)
-	assert.Equal(t, "secret-value", secret.Value)
-	assert.Equal(t, "TEST_ENV_BACKEND_GET", secret.Key)
-	assert.Equal(t, 1, secret.Version)
-}
-
-// Tests for SecretManager with cache
-
-// ---------------------------------------------------------------------------
-// SecretManager
-// ---------------------------------------------------------------------------
 
 func TestSecretCache_DeleteRemovesEntry(t *testing.T) {
 	cache := NewSecretCache(5 * time.Minute)
