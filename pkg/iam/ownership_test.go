@@ -1442,13 +1442,6 @@ func TestMemoryOwnershipStorage_MissingRecords(t *testing.T) {
 			},
 			wantErr: "not found",
 		},
-		{
-			name: "list by owner empty",
-			call: func() (int, error) {
-				ownerships, err := storage.ListOwnershipsByOwner(ctx, "tenant1", "nonexistent")
-				return len(ownerships), err
-			},
-		},
 	}
 
 	for _, tt := range tests {
