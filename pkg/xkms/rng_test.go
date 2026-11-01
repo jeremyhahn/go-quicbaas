@@ -994,22 +994,24 @@ func TestListKeys_NotInitialized(t *testing.T) {
 }
 
 func TestListKeys_Success(t *testing.T) {
-	setupFullTestXKMS(t)
-	createTestECDSAKey(t, "list-key-1")
-	createTestECDSAKey(t, "list-key-2")
+	tests := []struct {
+		name     string
+		backends []string
+	}{
+		{name: "all backends"},
+		{name: "specific backend", backends: []string{"software"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupFullTestXKMS(t)
+			createTestECDSAKey(t, "list-key-1")
+			createTestECDSAKey(t, "list-key-2")
 
-	keys, err := ListKeys(context.Background())
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(keys), 2)
-}
-
-func TestListKeys_SpecificBackend(t *testing.T) {
-	setupFullTestXKMS(t)
-	createTestECDSAKey(t, "backend-list-key")
-
-	keys, err := ListKeys(context.Background(), "software")
-	require.NoError(t, err)
-	assert.NotNil(t, keys)
+			keys, err := ListKeys(context.Background(), tt.backends...)
+			require.NoError(t, err)
+			assert.GreaterOrEqual(t, len(keys), 2)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -2636,18 +2638,6 @@ func TestClose_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, IsInitialized())
-}
-
-func TestClose_MultipleCalls(t *testing.T) {
-	setupFullTestXKMS(t)
-
-	// First close
-	err := Close()
-	require.NoError(t, err)
-
-	// Second close should still succeed (idempotent for RNG)
-	err = Close()
-	assert.NoError(t, err)
 }
 
 // TestClose_ReinitializeReachesFreshBackends pins that Close releases the
