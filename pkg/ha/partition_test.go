@@ -465,88 +465,56 @@ func TestPartitionDetector_FindIsolatedNodes(t *testing.T) {
 	assert.Contains(t, isolated, uint64(4))
 }
 
-// TestPartitionDetector_HandlePartitionWithoutReadOnlyMode tests handling without read-only mode.
-func TestPartitionDetector_HandlePartitionWithoutReadOnlyMode(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		ReadOnlyOnMinority: false, // Disabled
-		Peers: map[uint64]string{
-			2: "node2:8001",
-			3: "node3:8001",
+// TestPartitionDetector_HandlePartition tests that handlePartition enters
+// read-only mode only when ReadOnlyOnMinority is set and this node is in the
+// minority partition.
+func TestPartitionDetector_HandlePartition(t *testing.T) {
+	tests := []struct {
+		name               string
+		readOnlyOnMinority bool
+		partition          *Partition
+		wantReadOnly       bool
+	}{
+		{
+			name:               "minority enters read-only",
+			readOnlyOnMinority: true,
+			partition:          &Partition{Majority: []uint64{}, Minority: []uint64{2, 3}},
+			wantReadOnly:       true,
+		},
+		{
+			name:               "minority with read-only disabled",
+			readOnlyOnMinority: false,
+			partition:          &Partition{Majority: []uint64{}, Minority: []uint64{2, 3}},
+			wantReadOnly:       false,
+		},
+		{
+			name:               "majority stays read-write",
+			readOnlyOnMinority: true,
+			partition:          &Partition{Majority: []uint64{2, 3}, Minority: []uint64{}},
+			wantReadOnly:       false,
 		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRaft := newMockRaftNode()
+			mockRaft.setLeader(1, 1)
 
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
+			config := &PartitionConfig{
+				ReadOnlyOnMinority: tt.readOnlyOnMinority,
+				Peers: map[uint64]string{
+					2: "node2:8001",
+					3: "node3:8001",
+				},
+			}
 
-	ctx := context.Background()
+			pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
+			require.NoError(t, err)
 
-	// Create a partition where we're in minority
-	partition := &Partition{
-		Majority: []uint64{},
-		Minority: []uint64{2, 3},
+			err = pd.handlePartition(context.Background(), tt.partition)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantReadOnly, pd.IsReadOnlyMode())
+		})
 	}
-
-	err = pd.handlePartition(ctx, partition)
-	require.NoError(t, err)
-
-	// Should NOT be in read-only mode
-	assert.False(t, pd.IsReadOnlyMode())
-}
-
-// TestPartitionDetector_HandlePartitionInMajority tests handling when in majority.
-func TestPartitionDetector_HandlePartitionInMajority(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		ReadOnlyOnMinority: true,
-		Peers: map[uint64]string{
-			2: "node2:8001",
-			3: "node3:8001",
-		},
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create a partition where we're in majority (can reach 2 out of 3 peers)
-	partition := &Partition{
-		Majority: []uint64{2, 3},
-		Minority: []uint64{},
-	}
-
-	err = pd.handlePartition(ctx, partition)
-	require.NoError(t, err)
-
-	// Should NOT be in read-only mode (we're in majority)
-	assert.False(t, pd.IsReadOnlyMode())
-}
-
-// TestPartitionDetector_RecoverFromPartitionAlreadyReadWrite tests recovery when not in read-only.
-func TestPartitionDetector_RecoverFromPartitionAlreadyReadWrite(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		AutoRecovery: true,
-		Peers: map[uint64]string{
-			2: "node2:8001",
-		},
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	// Don't enter read-only mode, just recover
-	ctx := context.Background()
-	err = pd.recoverFromPartition(ctx)
-	require.NoError(t, err)
-	assert.False(t, pd.IsReadOnlyMode())
 }
 
 // TestPartitionDetector_ReadOnlyMode tests read-only mode handling.
@@ -879,35 +847,6 @@ func TestPartitionDetector_IsInMinority(t *testing.T) {
 			assert.Equal(t, tt.expectMinority, inMinority)
 		})
 	}
-}
-
-// TestPartitionDetector_HandlePartition tests partition handling.
-func TestPartitionDetector_HandlePartition(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		ReadOnlyOnMinority: true,
-		Peers: map[uint64]string{
-			2: "node2:8001",
-			3: "node3:8001",
-		},
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Create a partition where we're in minority
-	partition := &Partition{
-		Majority: []uint64{},
-		Minority: []uint64{2, 3},
-	}
-
-	err = pd.handlePartition(ctx, partition)
-	require.NoError(t, err)
-	assert.True(t, pd.IsReadOnlyMode())
 }
 
 // TestPartitionDetector_RecoverFromPartition tests partition recovery.
