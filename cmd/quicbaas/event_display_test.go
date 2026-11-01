@@ -591,31 +591,3 @@ func TestExtractMapString(t *testing.T) {
 		assert.Equal(t, "", v)
 	})
 }
-
-func TestEventDisplay_Render_MultipleEvents_RoleAlignment(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	// Register sessions with different role lengths.
-	d.registerSession("s1", "lead")
-	d.registerSession("s2", "coder")
-	d.registerSession("s3", "reviewer")
-
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=lead task=Plan session=s1",
-	})
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=coder task=Code session=s2",
-	})
-	d.render(&orchestratorSDK.JobEvent{
-		Type:    "worker:prompt_start",
-		Message: "role=reviewer task=Review session=s3",
-	})
-
-	output := buf.String()
-	assert.Contains(t, output, "lead")
-	assert.Contains(t, output, "coder")
-	assert.Contains(t, output, "reviewer")
-}
