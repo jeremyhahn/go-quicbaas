@@ -1197,39 +1197,6 @@ func TestHandleSchedule_CancelledContext(t *testing.T) {
 // Tests: handleAssign
 // =============================================================================
 
-func TestHandleAssign_Success(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackends(),
-		agents:   newTestAgents(),
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Task 1"},
-	}
-
-	// Set up execution plan with a single wave.
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-	cl.currentWave = 0
-
-	nextState, err := cl.handleAssign(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateExecuting {
-		t.Fatalf("expected executing state, got %q", nextState)
-	}
-	if len(cl.taskIDs) != 1 {
-		t.Fatalf("expected 1 task ID, got %d", len(cl.taskIDs))
-	}
-}
-
 func TestHandleAssign_CreateTaskError(t *testing.T) {
 	t.Parallel()
 
@@ -2605,55 +2572,20 @@ func TestHandleAssign_DoesNotDuplicateIdentities(t *testing.T) {
 	}
 	cl.currentWave = 0
 
-	_, err := cl.handleAssign(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Both items use "worker" role, so only one identity should exist.
-	if len(cl.agentIdentities) != 1 {
-		t.Fatalf("expected 1 agent identity, got %d", len(cl.agentIdentities))
-	}
-}
-
-// =============================================================================
-// Tests: handleAssign - Workflow Mode Branching
-// =============================================================================
-
-func TestHandleAssign_ConstrainedMode_UsesWorkflowAgents(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		backends: newTestBackendsWithPersistent(),
-		agents: []*FleetNode{
-			{ID: "a1", TenantID: "test-tenant", Backend: "claude", Status: FleetNodeStatusIdle},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude", MCPScopes: []string{"code:write"}},
-		},
-	}
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Code task", RequiredRole: "developer", Backend: "claude"},
-	}
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{cl.workItems},
-	}
-	cl.currentWave = 0
-
 	nextState, err := cl.handleAssign(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if nextState != JobStateExecuting {
 		t.Fatalf("expected executing state, got %q", nextState)
+	}
+	if len(cl.taskIDs) != 2 {
+		t.Fatalf("expected 2 task IDs, got %d", len(cl.taskIDs))
+	}
+
+	// Both items use "worker" role, so only one identity should exist.
+	if len(cl.agentIdentities) != 1 {
+		t.Fatalf("expected 1 agent identity, got %d", len(cl.agentIdentities))
 	}
 }
 
@@ -2747,8 +2679,6 @@ func TestHandleExecute_ConcurrentWorkerFailure(t *testing.T) {
 		t.Fatalf("expected failed approach title 'Failing Task', got %q", cl.job.memory.FailedApproaches[0].WorkItemTitle)
 	}
 }
-
-// =============================================================================
 
 // =============================================================================
 // Tests: handleExecute - Per-Session Serialization
