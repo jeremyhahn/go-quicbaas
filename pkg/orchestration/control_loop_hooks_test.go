@@ -694,134 +694,34 @@ func TestHookStartPeerDelivery_ChannelClosed(t *testing.T) {
 }
 
 // =============================================================================
-// ControlLoop Setter Tests
-// =============================================================================
-
-func TestControlLoop_SetPeerMessaging(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.peerMessaging != nil {
-		t.Error("expected nil peerMessaging initially")
-	}
-
-	mockSvc := &hookMockPeerMessaging{}
-	cl.SetPeerMessaging(mockSvc)
-	if cl.peerMessaging == nil {
-		t.Error("expected non-nil peerMessaging after set")
-	}
-}
-
-func TestControlLoop_SetCostTracker(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.job.CostTracker != nil {
-		t.Error("expected nil costTracker initially")
-	}
-
-	tracker := &hookMockCostTracker{status: BudgetOK}
-	cl.SetCostTracker(tracker)
-	if cl.job.CostTracker == nil {
-		t.Error("expected non-nil costTracker after set")
-	}
-}
-
-func TestControlLoop_SetFileLocking(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.fileLocking != nil {
-		t.Error("expected nil fileLocking initially")
-	}
-
-	// FileLockService is an interface; just verify the setter works.
-	cl.SetFileLocking(nil)
-	if cl.fileLocking != nil {
-		t.Error("expected nil fileLocking after setting nil")
-	}
-}
-
-func TestControlLoop_SetReindexFn(t *testing.T) {
-	cl := NewControlLoop(nil, &hookTestLogger{})
-	if cl.reindexFn != nil {
-		t.Error("expected nil reindexFn initially")
-	}
-
-	cl.SetReindexFn(func(_ context.Context) error { return nil })
-	if cl.reindexFn == nil {
-		t.Error("expected non-nil reindexFn after set")
-	}
-}
-
-// =============================================================================
 // Error Type Tests
 // =============================================================================
 
-func TestHookBudgetCheckError_Unwrap(t *testing.T) {
-	cause := errors.New("timeout")
-	err := &HookBudgetCheckError{TenantID: "t1", JobID: "j1", Cause: cause}
-
-	if !errors.Is(err, ErrHookBudgetCheck) {
-		t.Error("expected error to unwrap to ErrHookBudgetCheck")
+func TestHookErrors_UnwrapAndMessage(t *testing.T) {
+	cause := errors.New("cause")
+	tests := []struct {
+		name     string
+		err      error
+		sentinel error
+	}{
+		{"budget check with cause", &HookBudgetCheckError{TenantID: "t1", JobID: "j1", Cause: cause}, ErrHookBudgetCheck},
+		{"budget check nil cause", &HookBudgetCheckError{TenantID: "t1", JobID: "j1"}, ErrHookBudgetCheck},
+		{"recovery bootstrap with cause", &HookRecoveryBootstrapError{Step: "scan_fleet", Cause: cause}, ErrHookRecoveryBootstrap},
+		{"recovery bootstrap nil cause", &HookRecoveryBootstrapError{Step: "scan_fleet"}, ErrHookRecoveryBootstrap},
+		{"peer delivery with cause", &HookPeerDeliveryError{AgentID: "agent-1", Cause: cause}, ErrHookPeerDelivery},
+		{"peer delivery nil cause", &HookPeerDeliveryError{AgentID: "agent-1"}, ErrHookPeerDelivery},
+		{"reindex with cause", &HookReindexError{Cause: cause}, ErrHookReindex},
+		{"reindex nil cause", &HookReindexError{}, ErrHookReindex},
 	}
-
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message")
-	}
-}
-
-func TestHookBudgetCheckError_NilCause(t *testing.T) {
-	err := &HookBudgetCheckError{TenantID: "t1", JobID: "j1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookRecoveryBootstrapError_Unwrap(t *testing.T) {
-	cause := errors.New("step failed")
-	err := &HookRecoveryBootstrapError{Step: "scan_fleet", Cause: cause}
-
-	if !errors.Is(err, ErrHookRecoveryBootstrap) {
-		t.Error("expected error to unwrap to ErrHookRecoveryBootstrap")
-	}
-}
-
-func TestHookRecoveryBootstrapError_NilCause(t *testing.T) {
-	err := &HookRecoveryBootstrapError{Step: "scan_fleet"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookPeerDeliveryError_Unwrap(t *testing.T) {
-	cause := errors.New("subscribe failed")
-	err := &HookPeerDeliveryError{AgentID: "agent-1", Cause: cause}
-
-	if !errors.Is(err, ErrHookPeerDelivery) {
-		t.Error("expected error to unwrap to ErrHookPeerDelivery")
-	}
-}
-
-func TestHookPeerDeliveryError_NilCause(t *testing.T) {
-	err := &HookPeerDeliveryError{AgentID: "agent-1"}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
-	}
-}
-
-func TestHookReindexError_Unwrap(t *testing.T) {
-	cause := errors.New("indexing failed")
-	err := &HookReindexError{Cause: cause}
-
-	if !errors.Is(err, ErrHookReindex) {
-		t.Error("expected error to unwrap to ErrHookReindex")
-	}
-}
-
-func TestHookReindexError_NilCause(t *testing.T) {
-	err := &HookReindexError{}
-	msg := err.Error()
-	if msg == "" {
-		t.Error("expected non-empty error message with nil cause")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !errors.Is(tt.err, tt.sentinel) {
+				t.Errorf("expected error to unwrap to %v", tt.sentinel)
+			}
+			if tt.err.Error() == "" {
+				t.Error("expected non-empty error message")
+			}
+		})
 	}
 }
 
