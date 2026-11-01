@@ -126,6 +126,12 @@ func xkmsBackend(named string) string {
 	return string(kctypes.StoreSoftware)
 }
 
+// xkmsMaxListKeysPageSize is the largest page the xkms.v1 KeystoreService
+// ListKeys returns: go-xkms's gRPC handler (pkg/api/grpc grpcPageRequest)
+// passes the limit as the page size, and transport.PageRequest.Normalize caps
+// it at transport.MaxPageSize.
+const xkmsMaxListKeysPageSize int32 = 1000
+
 // KMSGenerateKey creates a new cryptographic key with the specified parameters
 // through the go-xkms xkms.v1 KeystoreService.
 func (c *Client) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
@@ -272,7 +278,11 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 		return nil, err
 	}
 
-	// xkms.v1 pages by offset; the cursor is the offset of the next page.
+	// The server pages by page size, so the limit sent is the page size it
+	// applies: a larger one would page by the limit but return only the cap.
+	limit = min(limit, xkmsMaxListKeysPageSize)
+
+	// xkms.v1 takes an offset; the cursor is the offset of the next page.
 	var offset int32
 	if req.Cursor != "" {
 		parsed, parseErr := strconv.ParseInt(req.Cursor, 10, 32)
@@ -280,6 +290,12 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 			return nil, api.NewInvalidInputError("list keys cursor must be a non-negative offset: " + req.Cursor)
 		}
 		offset = int32(parsed)
+	}
+	// The server turns the offset into page offset/limit and lists from that
+	// page's start, so an offset off a page boundary, or any offset with no
+	// limit (an unpaginated listing), would silently return other keys.
+	if offset != 0 && (limit <= 0 || offset%limit != 0) {
+		return nil, api.NewInvalidInputError("list keys cursor " + req.Cursor + " is not a multiple of the page size " + strconv.Itoa(int(limit)))
 	}
 
 	if err := c.ensureConnected(ctx); err != nil {
