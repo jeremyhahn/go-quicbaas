@@ -21,127 +21,6 @@ import (
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
-// TestErrCompilationFailed_Error tests the Error method for ErrCompilationFailed.
-func TestErrCompilationFailed_Error(t *testing.T) {
-	tests := []struct {
-		name           string
-		err            *CompilationFailedError
-		expectedOutput string
-	}{
-		{
-			name: "basic compilation error",
-			err: &CompilationFailedError{
-				Policy: "test-policy",
-				Reason: "syntax error at line 5",
-			},
-			expectedOutput: "compilation failed for policy 'test-policy': syntax error at line 5",
-		},
-		{
-			name: "empty policy name",
-			err: &CompilationFailedError{
-				Policy: "",
-				Reason: "unknown error",
-			},
-			expectedOutput: "compilation failed for policy '': unknown error",
-		},
-		{
-			name: "complex reason",
-			err: &CompilationFailedError{
-				Policy: "admin-policy",
-				Reason: "invalid action: 'delete:*' is not a valid action pattern for resource 'urn:quicbaas:kv:*'",
-			},
-			expectedOutput: "compilation failed for policy 'admin-policy': invalid action: 'delete:*' is not a valid action pattern for resource 'urn:quicbaas:kv:*'",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expectedOutput {
-				t.Errorf("expected %q, got %q", tc.expectedOutput, result)
-			}
-		})
-	}
-}
-
-// TestErrInvalidPolicy_Error tests the Error method for InvalidPolicyError.
-func TestErrInvalidPolicy_Error(t *testing.T) {
-	tests := []struct {
-		name           string
-		err            *InvalidPolicyError
-		expectedOutput string
-	}{
-		{
-			name: "missing actions without name",
-			err: &InvalidPolicyError{
-				Reason: "actions field is required",
-			},
-			expectedOutput: "invalid policy: actions field is required",
-		},
-		{
-			name: "empty reason without name",
-			err: &InvalidPolicyError{
-				Reason: "",
-			},
-			expectedOutput: "invalid policy: ",
-		},
-		{
-			name: "with policy name",
-			err: &InvalidPolicyError{
-				Name:   "admin-policy",
-				Reason: "missing actions",
-			},
-			expectedOutput: "invalid policy 'admin-policy': missing actions",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.err.Error()
-			if result != tc.expectedOutput {
-				t.Errorf("expected %q, got %q", tc.expectedOutput, result)
-			}
-		})
-	}
-}
-
-// TestErrPolicyExists_Error tests the Error method for PolicyExistsError.
-func TestErrPolicyExists_Error(t *testing.T) {
-	err := &PolicyExistsError{Name: "admin-access"}
-	expected := "policy 'admin-access' already exists in tenant ''"
-	if result := err.Error(); result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
-	}
-}
-
-// TestPolicyNotFoundTypeError_Error tests the Error method for PolicyNotFoundTypeError.
-func TestPolicyNotFoundTypeError_Error(t *testing.T) {
-	t.Run("with tenant and name", func(t *testing.T) {
-		err := &PolicyNotFoundTypeError{TenantID: "tenant-1", Name: "viewer-policy"}
-		expected := "policy 'viewer-policy' not found in tenant 'tenant-1'"
-		if result := err.Error(); result != expected {
-			t.Errorf("expected %q, got %q", expected, result)
-		}
-	})
-
-	t.Run("with empty tenant", func(t *testing.T) {
-		err := &PolicyNotFoundTypeError{Name: "missing-policy"}
-		expected := "policy 'missing-policy' not found in tenant ''"
-		if result := err.Error(); result != expected {
-			t.Errorf("expected %q, got %q", expected, result)
-		}
-	})
-}
-
-// TestErrPolicyNotFoundType_Error tests the Error method for IAMPolicyNotFoundError.
-func TestErrPolicyNotFoundType_Error(t *testing.T) {
-	err := &IAMPolicyNotFoundError{PolicyName: "viewer-policy"}
-	expected := "policy not found: viewer-policy"
-	if result := err.Error(); result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
-	}
-}
-
 // TestNewPolicyNotFoundError tests the constructor for policy not found.
 func TestNewPolicyNotFoundError(t *testing.T) {
 	err := NewPolicyNotFoundError("tenant-1", "missing-policy")
@@ -160,29 +39,6 @@ func TestNewPolicyNotFoundError(t *testing.T) {
 	}
 }
 
-// TestPolicyCompilationError_ErrorAndUnwrap tests Error and Unwrap for PolicyCompilationError.
-func TestPolicyCompilationError_ErrorAndUnwrap(t *testing.T) {
-	t.Run("error includes policy name and cause", func(t *testing.T) {
-		cause := errors.New("syntax error")
-		err := &PolicyCompilationError{PolicyName: "broken-policy", Cause: cause}
-		expected := "failed to compile policy broken-policy: syntax error"
-		if result := err.Error(); result != expected {
-			t.Errorf("expected %q, got %q", expected, result)
-		}
-	})
-
-	t.Run("unwrap returns cause", func(t *testing.T) {
-		cause := errors.New("inner cause")
-		err := &PolicyCompilationError{PolicyName: "test", Cause: cause}
-		if err.Unwrap() != cause {
-			t.Errorf("expected cause, got %v", err.Unwrap())
-		}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is should match unwrapped cause")
-		}
-	})
-}
-
 // TestNewPolicyCompilationError tests the constructor for policy compilation.
 func TestNewPolicyCompilationError(t *testing.T) {
 	cause := errors.New("syntax error")
@@ -199,29 +55,6 @@ func TestNewPolicyCompilationError(t *testing.T) {
 	}
 }
 
-// TestPolicyEvaluationError_ErrorAndUnwrap tests Error and Unwrap for PolicyEvaluationError.
-func TestPolicyEvaluationError_ErrorAndUnwrap(t *testing.T) {
-	t.Run("error includes policy name and cause", func(t *testing.T) {
-		cause := errors.New("runtime error")
-		err := &PolicyEvaluationError{PolicyName: "eval-policy", Cause: cause}
-		expected := "failed to evaluate policy eval-policy: runtime error"
-		if result := err.Error(); result != expected {
-			t.Errorf("expected %q, got %q", expected, result)
-		}
-	})
-
-	t.Run("unwrap returns cause", func(t *testing.T) {
-		cause := errors.New("eval failure")
-		err := &PolicyEvaluationError{PolicyName: "test", Cause: cause}
-		if err.Unwrap() != cause {
-			t.Errorf("expected cause, got %v", err.Unwrap())
-		}
-		if !errors.Is(err, cause) {
-			t.Error("errors.Is should match unwrapped cause")
-		}
-	})
-}
-
 // TestNewPolicyEvaluationError tests the constructor for policy evaluation.
 func TestNewPolicyEvaluationError(t *testing.T) {
 	cause := errors.New("runtime error")
@@ -232,40 +65,6 @@ func TestNewPolicyEvaluationError(t *testing.T) {
 	if !strings.Contains(err.Error(), "eval-policy") {
 		t.Errorf("expected error to contain policy name, got %q", err.Error())
 	}
-}
-
-// TestErrConditionParsing_Error tests the Error method for ConditionParsingError.
-func TestErrConditionParsing_Error(t *testing.T) {
-	err := &ConditionParsingError{Expression: "time > now()", Reason: "invalid function"}
-	expected := "condition parsing failed for 'time > now()': invalid function"
-	if result := err.Error(); result != expected {
-		t.Errorf("expected %q, got %q", expected, result)
-	}
-}
-
-// TestErrorTypeFields tests basic error type fields.
-func TestErrorTypeFields(t *testing.T) {
-	t.Run("IAMMessageError", func(t *testing.T) {
-		err := &IAMMessageError{Message: "test message"}
-		if err.Error() != "test message" {
-			t.Errorf("unexpected error: %v", err.Error())
-		}
-	})
-
-	t.Run("IAMContextError with cause", func(t *testing.T) {
-		cause := errors.New("inner error")
-		err := &IAMContextError{Message: "outer", Cause: cause}
-		if !strings.Contains(err.Error(), "inner error") {
-			t.Errorf("expected cause in error, got %q", err.Error())
-		}
-	})
-
-	t.Run("IAMContextError without cause", func(t *testing.T) {
-		err := &IAMContextError{Message: "standalone"}
-		if err.Error() != "standalone" {
-			t.Errorf("unexpected error: %v", err.Error())
-		}
-	})
 }
 
 // TestNewInvalidCheckRequestError tests the constructor for invalid check request.
@@ -279,31 +78,6 @@ func TestNewInvalidCheckRequestError(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// IAMContextError.Unwrap
-// =============================================================================
-
-func TestIAMContextError_Unwrap(t *testing.T) {
-	t.Run("returns cause when set", func(t *testing.T) {
-		cause := errors.New("root cause")
-		err := &IAMContextError{Message: "context", Cause: cause}
-		if err.Unwrap() != cause {
-			t.Errorf("expected cause, got %v", err.Unwrap())
-		}
-	})
-
-	t.Run("returns nil when no cause", func(t *testing.T) {
-		err := &IAMContextError{Message: "no cause"}
-		if err.Unwrap() != nil {
-			t.Errorf("expected nil, got %v", err.Unwrap())
-		}
-	})
-}
-
-// =============================================================================
-// Tenant and Quota Error Types
-// =============================================================================
-
 // TestErrorMessages checks that each error type's message carries its
 // identifying fields and, for types that wrap a cause, that errors.Is finds
 // the cause through Unwrap.
@@ -316,6 +90,19 @@ func TestErrorMessages(t *testing.T) {
 		want  []string
 		cause error
 	}{
+		{"CompilationFailedError", &CompilationFailedError{Policy: "test-policy", Reason: "syntax error at line 5"}, []string{"compilation failed for policy 'test-policy': syntax error at line 5"}, nil},
+		{"InvalidPolicyError without name", &InvalidPolicyError{Reason: "actions field is required"}, []string{"invalid policy: actions field is required"}, nil},
+		{"InvalidPolicyError with name", &InvalidPolicyError{Name: "admin-policy", Reason: "missing actions"}, []string{"invalid policy 'admin-policy': missing actions"}, nil},
+		{"PolicyExistsError", &PolicyExistsError{Name: "admin-access"}, []string{"policy 'admin-access' already exists in tenant ''"}, nil},
+		{"PolicyNotFoundTypeError with tenant", &PolicyNotFoundTypeError{TenantID: "tenant-1", Name: "viewer-policy"}, []string{"policy 'viewer-policy' not found in tenant 'tenant-1'"}, nil},
+		{"PolicyNotFoundTypeError without tenant", &PolicyNotFoundTypeError{Name: "missing-policy"}, []string{"policy 'missing-policy' not found in tenant ''"}, nil},
+		{"IAMPolicyNotFoundError", &IAMPolicyNotFoundError{PolicyName: "viewer-policy"}, []string{"policy not found: viewer-policy"}, nil},
+		{"PolicyCompilationError", &PolicyCompilationError{PolicyName: "broken-policy", Cause: cause}, []string{"failed to compile policy broken-policy: underlying cause"}, cause},
+		{"PolicyEvaluationError", &PolicyEvaluationError{PolicyName: "eval-policy", Cause: cause}, []string{"failed to evaluate policy eval-policy: underlying cause"}, cause},
+		{"ConditionParsingError", &ConditionParsingError{Expression: "time > now()", Reason: "invalid function"}, []string{"condition parsing failed for 'time > now()': invalid function"}, nil},
+		{"IAMMessageError", &IAMMessageError{Message: "test message"}, []string{"test message"}, nil},
+		{"IAMContextError with cause", &IAMContextError{Message: "outer", Cause: cause}, []string{"outer", "underlying cause"}, cause},
+		{"IAMContextError without cause", &IAMContextError{Message: "standalone"}, []string{"standalone"}, nil},
 		{"TenantNotFoundError", &TenantNotFoundError{TenantID: "tenant-abc"}, []string{"tenant not found: tenant-abc"}, nil},
 		{"InvalidTenantIDError", &InvalidTenantIDError{TenantID: "bad!", Reason: "contains special chars"}, []string{"invalid tenant ID bad!: contains special chars"}, nil},
 		{"QuotaExceededError", &QuotaExceededError{Resource: "users", Limit: 100, Current: 101}, []string{"users", "100"}, nil},
