@@ -480,39 +480,6 @@ func BenchmarkSecretCache_Get(b *testing.B) {
 	}
 }
 
-// TestSecretManager_AdditionalEdgeCases tests more secret manager edge cases
-func TestSecretManager_AdditionalEdgeCases(t *testing.T) {
-	log := createTestLogger(t)
-
-	t.Run("Set with env backend not supported", func(t *testing.T) {
-		config := &SecretConfig{
-			CacheEnabled: false,
-		}
-
-		sm, err := NewSecretManager(config, log)
-		require.NoError(t, err)
-		defer sm.Close()
-
-		err = sm.Set(context.Background(), "test/key", "value", nil)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not supported")
-	})
-
-	t.Run("Delete with env backend not supported", func(t *testing.T) {
-		config := &SecretConfig{
-			CacheEnabled: false,
-		}
-
-		sm, err := NewSecretManager(config, log)
-		require.NoError(t, err)
-		defer sm.Close()
-
-		err = sm.Delete(context.Background(), "test/key")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not supported")
-	})
-}
-
 // TestSecretCache_AdditionalCases tests more cache scenarios
 func TestSecretCache_AdditionalCases(t *testing.T) {
 	t.Run("startCleanup goroutine", func(t *testing.T) {
@@ -539,52 +506,6 @@ func TestSecretCache_AdditionalCases(t *testing.T) {
 	})
 }
 
-// TestSecretManager_SetWithCache tests Set with caching enabled
-func TestSecretManager_SetWithCache(t *testing.T) {
-	logger := createTestLogger(t)
-
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     5 * time.Minute,
-	}
-
-	sm, err := NewSecretManager(cfg, logger)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	// Add to cache first
-	sm.cache.Set("TEST_KEY", &Secret{Key: "TEST_KEY", Value: "old-value"})
-
-	// EnvBackend doesn't support Set, but we test the cache invalidation path
-	ctx := context.Background()
-	err = sm.Set(ctx, "TEST_KEY", "new-value", nil)
-	assert.Error(t, err) // EnvBackend doesn't support Set
-	assert.Contains(t, err.Error(), "not supported")
-}
-
-// TestSecretManager_DeleteWithCache tests Delete with caching enabled
-func TestSecretManager_DeleteWithCache(t *testing.T) {
-	logger := createTestLogger(t)
-
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     5 * time.Minute,
-	}
-
-	sm, err := NewSecretManager(cfg, logger)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	// Add to cache first
-	sm.cache.Set("DELETE_KEY", &Secret{Key: "DELETE_KEY", Value: "test"})
-
-	// EnvBackend doesn't support Delete, but we test the cache invalidation path
-	ctx := context.Background()
-	err = sm.Delete(ctx, "DELETE_KEY")
-	assert.Error(t, err) // EnvBackend doesn't support Delete
-	assert.Contains(t, err.Error(), "not supported")
-}
-
 // TestSecretCache_CleanupExpiredEntries tests cleanup of expired entries
 func TestSecretCache_CleanupExpiredEntries(t *testing.T) {
 	cache := NewSecretCache(50 * time.Millisecond)
@@ -602,70 +523,6 @@ func TestSecretCache_CleanupExpiredEntries(t *testing.T) {
 	// Both should be removed
 	assert.Nil(t, cache.Get("key1"))
 	assert.Nil(t, cache.Get("key2"))
-}
-
-// ---------------------------------------------------------------------------
-// SecretManager.Set and Delete with cache (secrets.go:142,165 -- 42.9%,33.3%)
-// ---------------------------------------------------------------------------
-
-func TestSecretManager_SetAndDelete(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     5 * time.Minute,
-	}
-
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	// Set a secret (EnvBackend doesn't support Set, should return error)
-	err = sm.Set(ctx, "test-path", "test-value", map[string]string{"env": "test"})
-	require.Error(t, err) // EnvBackend returns unsupported error
-
-	// Delete (EnvBackend doesn't support Delete)
-	err = sm.Delete(ctx, "test-path")
-	require.Error(t, err)
-}
-
-func TestSecretManager_SetWithNilCache(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SecretConfig{
-		CacheEnabled: false,
-	}
-
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	// Ensure cache is nil for code path coverage
-	sm.cache = nil
-
-	ctx := context.Background()
-	err = sm.Set(ctx, "test-path", "test-value", nil)
-	require.Error(t, err) // EnvBackend returns unsupported error
-}
-
-func TestSecretManager_DeleteWithNilCache(t *testing.T) {
-	log := createTestLogger(t)
-
-	cfg := &SecretConfig{
-		CacheEnabled: false,
-	}
-
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	sm.cache = nil
-
-	ctx := context.Background()
-	err = sm.Delete(ctx, "test-path")
-	require.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -696,89 +553,6 @@ func newMockSecretBackend() *mockSecretBackend {
 	return &mockSecretBackend{
 		secrets: make(map[string]*Secret),
 	}
-}
-
-func TestSecretManager_SetWithMockBackend_Success(t *testing.T) {
-	log := createTestLogger(t)
-
-	sm := &SecretManager{
-		backend: newMockSecretBackend(),
-		cache: &SecretCache{
-			entries: make(map[string]*cachedSecret),
-			ttl:     5 * time.Minute,
-		},
-		config: &SecretConfig{CacheEnabled: true, CacheTTL: 5 * time.Minute},
-		logger: log,
-	}
-	defer sm.Close()
-
-	ctx := context.Background()
-	err := sm.Set(ctx, "test/path", "secret-value", map[string]string{"env": "test"})
-	require.NoError(t, err)
-
-	// Verify the secret was stored
-	secret, err := sm.Get(ctx, "test/path")
-	require.NoError(t, err)
-	assert.Equal(t, "secret-value", secret.Value)
-}
-
-func TestSecretManager_SetWithoutCache_Success(t *testing.T) {
-	log := createTestLogger(t)
-
-	sm := &SecretManager{
-		backend: newMockSecretBackend(),
-		config:  &SecretConfig{},
-		logger:  log,
-	}
-	defer sm.Close()
-
-	ctx := context.Background()
-	err := sm.Set(ctx, "no-cache/path", "value", nil)
-	require.NoError(t, err)
-}
-
-func TestSecretManager_DeleteWithMockBackend_Success(t *testing.T) {
-	log := createTestLogger(t)
-
-	mockBE := newMockSecretBackend()
-	mockBE.secrets["delete/me"] = &Secret{Key: "delete/me", Value: "gone"}
-
-	sm := &SecretManager{
-		backend: mockBE,
-		cache: &SecretCache{
-			entries: make(map[string]*cachedSecret),
-			ttl:     5 * time.Minute,
-		},
-		config: &SecretConfig{CacheEnabled: true, CacheTTL: 5 * time.Minute},
-		logger: log,
-	}
-	defer sm.Close()
-
-	ctx := context.Background()
-	err := sm.Delete(ctx, "delete/me")
-	require.NoError(t, err)
-
-	// Verify it's gone
-	_, err = sm.backend.Get(ctx, "delete/me")
-	require.Error(t, err)
-}
-
-func TestSecretManager_DeleteWithoutCache_Success(t *testing.T) {
-	log := createTestLogger(t)
-
-	mockBE := newMockSecretBackend()
-	mockBE.secrets["remove/me"] = &Secret{Key: "remove/me", Value: "val"}
-
-	sm := &SecretManager{
-		backend: mockBE,
-		config:  &SecretConfig{},
-		logger:  log,
-	}
-	defer sm.Close()
-
-	ctx := context.Background()
-	err := sm.Delete(ctx, "remove/me")
-	require.NoError(t, err)
 }
 
 // ---------------------------------------------------------------------------
@@ -857,36 +631,6 @@ func TestSecretCache_GetExpired(t *testing.T) {
 	// The entry is already expired
 	got := cache.Get("k")
 	assert.Nil(t, got)
-}
-
-// ---------------------------------------------------------------------------
-// SecretManager - cover the startCleanup goroutine path
-// ---------------------------------------------------------------------------
-
-func TestSecretManager_CacheCleanupOnDelete(t *testing.T) {
-	backend := newMockSecretBackend()
-	backend.secrets["key-to-delete"] = &Secret{Key: "key-to-delete", Value: "value"}
-
-	log := createTestLogger(t)
-	mgr := &SecretManager{
-		backend: backend,
-		logger:  log,
-		cache: &SecretCache{
-			entries: make(map[string]*cachedSecret),
-			ttl:     5 * time.Minute,
-		},
-	}
-
-	// Set a value in cache
-	mgr.cache.Set("key-to-delete", &Secret{Key: "key-to-delete", Value: "value"})
-
-	// Delete should also remove from cache
-	err := mgr.Delete(context.Background(), "key-to-delete")
-	assert.NoError(t, err)
-
-	// Verify cache entry is gone
-	result := mgr.cache.Get("key-to-delete")
-	assert.Nil(t, result)
 }
 
 // ---------------------------------------------------------------------------
@@ -989,74 +733,6 @@ func TestSecretCache_StartCleanup_Channel(t *testing.T) {
 // secrets.go -- SecretManager Set, Delete, GetString
 // ---------------------------------------------------------------------------
 
-func TestSecretManager_SetErrorFromBackend(t *testing.T) {
-	cfg := &SecretConfig{}
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	// EnvBackend does not support Set, so it should return an error.
-	err = sm.Set(ctx, "TEST_KEY_SET", "value", nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "set secret TEST_KEY_SET failed")
-}
-
-func TestSecretManager_SetWithCacheEnabled(t *testing.T) {
-	cfg := &SecretConfig{CacheEnabled: true, CacheTTL: 5 * time.Minute}
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	// Pre-populate cache.
-	t.Setenv("TEST_SET_CACHE_KEY", "original")
-	_, err = sm.Get(ctx, "TEST_SET_CACHE_KEY")
-	require.NoError(t, err)
-
-	// Set should invalidate cache even though backend returns error.
-	err = sm.Set(ctx, "TEST_SET_CACHE_KEY", "new-value", map[string]string{"env": "test"})
-	require.Error(t, err) // EnvBackend rejects Set.
-}
-
-func TestSecretManager_DeleteErrorFromBackend(t *testing.T) {
-	cfg := &SecretConfig{}
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	// EnvBackend does not support Delete.
-	err = sm.Delete(ctx, "TEST_KEY_DEL")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "delete secret TEST_KEY_DEL failed")
-}
-
-func TestSecretManager_DeleteWithCacheEnabled(t *testing.T) {
-	cfg := &SecretConfig{CacheEnabled: true, CacheTTL: 5 * time.Minute}
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	// Pre-populate cache.
-	t.Setenv("TEST_DEL_CACHE_KEY", "value")
-	_, err = sm.Get(ctx, "TEST_DEL_CACHE_KEY")
-	require.NoError(t, err)
-
-	// Delete should attempt to remove from cache even though backend returns error.
-	err = sm.Delete(ctx, "TEST_DEL_CACHE_KEY")
-	require.Error(t, err) // EnvBackend rejects Delete.
-}
-
 func TestSecretManager_GetStringMissing(t *testing.T) {
 	cfg := &SecretConfig{}
 	log := createTestLogger(t)
@@ -1121,40 +797,6 @@ func TestEnvBackend_GetReturnsSecret(t *testing.T) {
 
 // Tests for SecretManager with cache
 
-func TestSecretManager_Set_WithCacheEnabled(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     time.Second,
-	}
-
-	sm, err := NewSecretManager(config, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	// Set should fail with env backend
-	err = sm.Set(context.Background(), "TEST_KEY", "value", nil)
-	assert.Error(t, err)
-}
-
-func TestSecretManager_Delete_WithCacheEnabled(t *testing.T) {
-	log := createTestLogger(t)
-
-	config := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     time.Second,
-	}
-
-	sm, err := NewSecretManager(config, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	// Delete should fail with env backend
-	err = sm.Delete(context.Background(), "TEST_KEY")
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // SecretManager
 // ---------------------------------------------------------------------------
@@ -1181,40 +823,6 @@ func TestSecretManager_GetPopulatesCache(t *testing.T) {
 	secret2, err := sm.Get(ctx, "TEST_SECRET_CACHE_HIT_CT")
 	require.NoError(t, err)
 	assert.Equal(t, "cached-value", secret2.Value)
-}
-
-func TestSecretManager_SetInvalidatesCache(t *testing.T) {
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     5 * time.Minute,
-	}
-
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	err = sm.Set(ctx, "TEST_SET_KEY_CT", "value", map[string]string{"env": "test"})
-	assert.Error(t, err)
-}
-
-func TestSecretManager_DeleteInvalidatesCache(t *testing.T) {
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     5 * time.Minute,
-	}
-
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
-
-	ctx := context.Background()
-
-	err = sm.Delete(ctx, "TEST_DEL_KEY_CT")
-	assert.Error(t, err)
 }
 
 func TestSecretManager_GetWithDefaultReturnsDefault(t *testing.T) {
@@ -1289,44 +897,106 @@ func TestSecretCache_GetReturnsNilForExpired(t *testing.T) {
 }
 
 // TestSecretManager_Set tests setting secrets.
-func TestSecretManager_Set(t *testing.T) {
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     1 * time.Minute,
-	}
-
+// newSecretManagerForWrite builds a SecretManager for the Set and Delete
+// tables. With backendOK the backend is a mock that accepts writes and
+// already holds path; otherwise it is the EnvBackend, which rejects writes.
+// With cached the cache holds an entry for path. The returned mock is nil
+// for the EnvBackend.
+func newSecretManagerForWrite(t *testing.T, cached, backendOK bool, path string) (*mockSecretBackend, *SecretManager) {
+	t.Helper()
 	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
 
-	ctx := context.Background()
-	metadata := map[string]string{"tier": "production"}
-
-	// EnvBackend doesn't support Set, so expect error
-	err = sm.Set(ctx, "test-key", "test-value", metadata)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
+	sm := &SecretManager{config: &SecretConfig{CacheEnabled: cached}, logger: log}
+	var mock *mockSecretBackend
+	if backendOK {
+		mock = newMockSecretBackend()
+		mock.secrets[path] = &Secret{Key: path, Value: "old-value"}
+		sm.backend = mock
+	} else {
+		backend, err := NewEnvBackend(log)
+		require.NoError(t, err)
+		sm.backend = backend
+	}
+	if cached {
+		sm.cache = &SecretCache{entries: make(map[string]*cachedSecret), ttl: 5 * time.Minute}
+		sm.cache.Set(path, &Secret{Key: path, Value: "old-value"})
+	}
+	t.Cleanup(func() { require.NoError(t, sm.Close()) })
+	return mock, sm
 }
 
-// TestSecretManager_Delete tests deleting secrets.
-func TestSecretManager_Delete(t *testing.T) {
-	cfg := &SecretConfig{
-		CacheEnabled: true,
-		CacheTTL:     1 * time.Minute,
+// secretWriteCases are the cache mode and backend result rows shared by the
+// Set and Delete tables.
+var secretWriteCases = []struct {
+	name      string
+	cached    bool
+	backendOK bool
+}{
+	{name: "nil cache, backend success", backendOK: true},
+	{name: "cache enabled, backend success", cached: true, backendOK: true},
+	{name: "nil cache, backend error"},
+	{name: "cache enabled, backend error", cached: true},
+}
+
+// TestSecretManager_Set checks that a successful Set stores the secret and
+// drops the cached copy, and that a failed Set returns the wrapped backend
+// error and leaves the cache untouched.
+func TestSecretManager_Set(t *testing.T) {
+	const path = "set/path"
+	metadata := map[string]string{"tier": "production"}
+
+	for _, tt := range secretWriteCases {
+		t.Run(tt.name, func(t *testing.T) {
+			mock, sm := newSecretManagerForWrite(t, tt.cached, tt.backendOK, path)
+
+			err := sm.Set(context.Background(), path, "new-value", metadata)
+
+			if tt.backendOK {
+				require.NoError(t, err)
+				stored := mock.secrets[path]
+				require.NotNil(t, stored)
+				assert.Equal(t, "new-value", stored.Value)
+				assert.Equal(t, metadata, stored.Metadata)
+				assert.Equal(t, 1, stored.Version)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "set secret "+path+" failed")
+				assert.Contains(t, err.Error(), "not supported")
+			}
+			if tt.cached {
+				assert.Equal(t, !tt.backendOK, sm.cache.Get(path) != nil,
+					"the cache entry survives only a failed Set")
+			}
+		})
 	}
+}
 
-	log := createTestLogger(t)
-	sm, err := NewSecretManager(cfg, log)
-	require.NoError(t, err)
-	defer sm.Close()
+// TestSecretManager_Delete checks that a successful Delete removes the
+// secret from the backend and the cache, and that a failed Delete returns
+// the wrapped backend error and leaves the cache untouched.
+func TestSecretManager_Delete(t *testing.T) {
+	const path = "delete/path"
 
-	ctx := context.Background()
+	for _, tt := range secretWriteCases {
+		t.Run(tt.name, func(t *testing.T) {
+			mock, sm := newSecretManagerForWrite(t, tt.cached, tt.backendOK, path)
 
-	// EnvBackend doesn't support Delete, so expect error
-	err = sm.Delete(ctx, "test-key")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
+			err := sm.Delete(context.Background(), path)
+
+			if tt.backendOK {
+				require.NoError(t, err)
+				assert.NotContains(t, mock.secrets, path)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "delete secret "+path+" failed")
+				assert.Contains(t, err.Error(), "not supported")
+			}
+			if tt.cached {
+				assert.Equal(t, !tt.backendOK, sm.cache.Get(path) != nil,
+					"the cache entry survives only a failed Delete")
+			}
+		})
+	}
 }
 
 // TestSecretManager_GetStringError tests GetString with error.
