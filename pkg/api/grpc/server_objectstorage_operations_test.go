@@ -332,51 +332,38 @@ func TestObjectStorageServer_ListByTag(t *testing.T) {
 // ListByTenant Tests
 // ========================================
 
-func TestObjectStorageServer_ListByTenant_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
+func TestObjectStorageServer_ListByTenant(t *testing.T) {
+	tests := []struct {
+		name     string
+		svc      service.ObjectStorageService
+		req      *pb.ListByTenantRequest
+		wantCode codes.Code
+	}{
+		{
+			name:     "success",
+			svc:      &testMockObjectStorageService{},
+			req:      &pb.ListByTenantRequest{TenantId: "tenant-1", Limit: 100, IncludeMetadata: true},
+			wantCode: codes.OK,
+		},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty tenant id", svc: &testMockObjectStorageService{}, req: &pb.ListByTenantRequest{}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.ListByTenantRequest{TenantId: "tenant-1"}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.ListByTenant(context.Background(), &pb.ListByTenantRequest{
-		TenantId:        "tenant-1",
-		Limit:           100,
-		IncludeMetadata: true,
-	})
+			resp, err := srv.ListByTenant(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Len(t, resp.Keys, 2)
-}
-
-func TestObjectStorageServer_ListByTenant_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ListByTenant(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ListByTenant_EmptyTenantID(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ListByTenant(context.Background(), &pb.ListByTenantRequest{TenantId: ""})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ListByTenant_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.ListByTenant(context.Background(), &pb.ListByTenantRequest{TenantId: "tenant-1"})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Len(t, resp.Keys, 2)
+		})
+	}
 }
 
 // ========================================
@@ -422,24 +409,8 @@ func TestObjectStorageServer_CopyObject(t *testing.T) {
 // ReplicateObject Tests
 // ========================================
 
-func TestObjectStorageServer_ReplicateObject_Success(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
-		Key:          "test/obj.txt",
-		TargetStores: []string{"s3", "gcs"},
-		Sync:         true,
-	})
-
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.True(t, resp.Success)
-	assert.Equal(t, "test/obj.txt", resp.Key)
-}
-
-func TestObjectStorageServer_ReplicateObject_PartialFailure(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{
+func TestObjectStorageServer_ReplicateObject(t *testing.T) {
+	partialSvc := &testMockObjectStorageService{
 		replicateObjectFunc: func(_ context.Context, req *service.ReplicateObjectRequest) (*service.ReplicateObjectResponse, error) {
 			return &service.ReplicateObjectResponse{
 				Key:    req.Key,
@@ -451,69 +422,52 @@ func TestObjectStorageServer_ReplicateObject_PartialFailure(t *testing.T) {
 			}, nil
 		},
 	}
-	srv := &objectStorageServer{service: mockSvc}
+	tests := []struct {
+		name        string
+		svc         service.ObjectStorageService
+		req         *pb.ReplicateObjectRequest
+		wantCode    codes.Code
+		wantSuccess bool
+		wantFailed  []string
+	}{
+		{
+			name:        "success",
+			svc:         &testMockObjectStorageService{},
+			req:         &pb.ReplicateObjectRequest{Key: "test/obj.txt", TargetStores: []string{"s3", "gcs"}, Sync: true},
+			wantCode:    codes.OK,
+			wantSuccess: true,
+		},
+		{
+			name:       "partial failure",
+			svc:        partialSvc,
+			req:        &pb.ReplicateObjectRequest{Key: "test/obj.txt", TargetStores: []string{"s3", "gcs"}},
+			wantCode:   codes.OK,
+			wantFailed: []string{"gcs"},
+		},
+		{name: "nil request", svc: &testMockObjectStorageService{}, req: nil, wantCode: codes.InvalidArgument},
+		{name: "empty key", svc: &testMockObjectStorageService{}, req: &pb.ReplicateObjectRequest{TargetStores: []string{"s3"}}, wantCode: codes.InvalidArgument},
+		{name: "no targets", svc: &testMockObjectStorageService{}, req: &pb.ReplicateObjectRequest{Key: "test/obj.txt", TargetStores: []string{}}, wantCode: codes.InvalidArgument},
+		{name: "nil service", svc: nil, req: &pb.ReplicateObjectRequest{Key: "test/obj.txt", TargetStores: []string{"s3"}}, wantCode: codes.Unavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := &objectStorageServer{service: tt.svc}
 
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
-		Key:          "test/obj.txt",
-		TargetStores: []string{"s3", "gcs"},
-	})
+			resp, err := srv.ReplicateObject(context.Background(), tt.req)
 
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.False(t, resp.Success)
-	assert.Contains(t, resp.FailedStores, "gcs")
-}
-
-func TestObjectStorageServer_ReplicateObject_NilRequest(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ReplicateObject(context.Background(), nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ReplicateObject_EmptyKey(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
-		Key:          "",
-		TargetStores: []string{"s3"},
-	})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ReplicateObject_NoTargets(t *testing.T) {
-	mockSvc := &testMockObjectStorageService{}
-	srv := &objectStorageServer{service: mockSvc}
-
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
-		Key:          "test/obj.txt",
-		TargetStores: []string{},
-	})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestObjectStorageServer_ReplicateObject_NilService(t *testing.T) {
-	srv := &objectStorageServer{service: nil}
-
-	resp, err := srv.ReplicateObject(context.Background(), &pb.ReplicateObjectRequest{
-		Key:          "test/obj.txt",
-		TargetStores: []string{"s3"},
-	})
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
+			if tt.wantCode != codes.OK {
+				assert.Nil(t, resp)
+				assert.Equal(t, tt.wantCode, status.Code(err))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "test/obj.txt", resp.Key)
+			assert.Equal(t, tt.wantSuccess, resp.Success)
+			for _, store := range tt.wantFailed {
+				assert.Contains(t, resp.FailedStores, store)
+			}
+		})
+	}
 }
 
 // ========================================
