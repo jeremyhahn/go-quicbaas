@@ -15,6 +15,7 @@ package orchestration
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -372,91 +373,50 @@ func TestDAG_ComplexGraph(t *testing.T) {
 // EnforceParallelism Tests
 // =============================================================================
 
-func TestEnforceParallelism_SplitWave(t *testing.T) {
-	// 5 items in one wave, max parallelism 2 -> split into [2, 2, 1].
-	wave := []*WorkItem{
-		workItem("A"),
-		workItem("B"),
-		workItem("C"),
-		workItem("D"),
-		workItem("E"),
+func TestEnforceParallelism(t *testing.T) {
+	tests := []struct {
+		name           string
+		waveSizes      []int // nil means a nil waves slice
+		maxParallelism int
+		wantSizes      []int // nil means a nil result
+	}{
+		{name: "split one wave", waveSizes: []int{5}, maxParallelism: 2, wantSizes: []int{2, 2, 1}},
+		{name: "split only oversized waves", waveSizes: []int{3, 2}, maxParallelism: 2, wantSizes: []int{2, 1, 2}},
+		{name: "exact fit is not split", waveSizes: []int{3}, maxParallelism: 3, wantSizes: []int{3}},
+		{name: "zero parallelism leaves waves unchanged", waveSizes: []int{3}, maxParallelism: 0, wantSizes: []int{3}},
+		{name: "negative parallelism leaves waves unchanged", waveSizes: []int{2}, maxParallelism: -1, wantSizes: []int{2}},
+		{name: "nil waves", waveSizes: nil, maxParallelism: 2, wantSizes: nil},
 	}
-	result := EnforceParallelism([][]*WorkItem{wave}, 2)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 sub-waves, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected first sub-wave to have 2 items, got %d", len(result[0]))
-	}
-	if len(result[1]) != 2 {
-		t.Fatalf("expected second sub-wave to have 2 items, got %d", len(result[1]))
-	}
-	if len(result[2]) != 1 {
-		t.Fatalf("expected third sub-wave to have 1 item, got %d", len(result[2]))
-	}
-}
 
-func TestEnforceParallelism_NoSplitNeeded(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 5)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 wave, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected 2 items, got %d", len(result[0]))
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var waves [][]*WorkItem
+			next := 0
+			for _, size := range tt.waveSizes {
+				wave := make([]*WorkItem, size)
+				for i := range wave {
+					wave[i] = workItem(fmt.Sprintf("item-%d", next))
+					next++
+				}
+				waves = append(waves, wave)
+			}
 
-func TestEnforceParallelism_ZeroParallelism(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B"), workItem("C")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 0)
-	if len(result) != 1 {
-		t.Fatalf("expected unchanged waves, got %d", len(result))
-	}
-}
-
-func TestEnforceParallelism_NegativeParallelism(t *testing.T) {
-	wave := []*WorkItem{workItem("A"), workItem("B")}
-	result := EnforceParallelism([][]*WorkItem{wave}, -1)
-	if len(result) != 1 {
-		t.Fatalf("expected unchanged waves, got %d", len(result))
-	}
-}
-
-func TestEnforceParallelism_EmptyWaves(t *testing.T) {
-	result := EnforceParallelism(nil, 2)
-	if result != nil {
-		t.Fatalf("expected nil for nil input, got %d waves", len(result))
-	}
-}
-
-func TestEnforceParallelism_MultipleWaves(t *testing.T) {
-	// Two waves: [3 items, 2 items] with max 2 -> [2, 1, 2].
-	waves := [][]*WorkItem{
-		{workItem("A"), workItem("B"), workItem("C")},
-		{workItem("D"), workItem("E")},
-	}
-	result := EnforceParallelism(waves, 2)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 waves, got %d", len(result))
-	}
-	if len(result[0]) != 2 {
-		t.Fatalf("expected wave 0 to have 2 items, got %d", len(result[0]))
-	}
-	if len(result[1]) != 1 {
-		t.Fatalf("expected wave 1 to have 1 item, got %d", len(result[1]))
-	}
-	if len(result[2]) != 2 {
-		t.Fatalf("expected wave 2 to have 2 items, got %d", len(result[2]))
-	}
-}
-
-func TestEnforceParallelism_ExactFit(t *testing.T) {
-	// Wave has exactly maxParallelism items -> no split.
-	wave := []*WorkItem{workItem("A"), workItem("B"), workItem("C")}
-	result := EnforceParallelism([][]*WorkItem{wave}, 3)
-	if len(result) != 1 {
-		t.Fatalf("expected 1 wave (exact fit), got %d", len(result))
+			result := EnforceParallelism(waves, tt.maxParallelism)
+			if tt.wantSizes == nil {
+				if result != nil {
+					t.Fatalf("expected nil result, got %d waves", len(result))
+				}
+				return
+			}
+			if len(result) != len(tt.wantSizes) {
+				t.Fatalf("expected %d waves, got %d", len(tt.wantSizes), len(result))
+			}
+			for i, want := range tt.wantSizes {
+				if len(result[i]) != want {
+					t.Fatalf("expected wave %d to have %d items, got %d", i, want, len(result[i]))
+				}
+			}
+		})
 	}
 }
 
@@ -585,26 +545,34 @@ func TestScheduleDAG_Errors(t *testing.T) {
 // Error Message Tests
 // =============================================================================
 
-func TestCyclicDependencyError_Message(t *testing.T) {
-	err := &CyclicDependencyError{Cycle: []string{"A", "B", "C", "A"}}
-	expected := "dag: cyclic dependency detected: A -> B -> C -> A"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
+func TestDAGError_Message(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "cyclic dependency",
+			err:  &CyclicDependencyError{Cycle: []string{"A", "B", "C", "A"}},
+			want: "dag: cyclic dependency detected: A -> B -> C -> A",
+		},
+		{
+			name: "missing dependency",
+			err:  &MissingDependencyError{ItemID: "X", DependencyID: "Y"},
+			want: "dag: missing dependency: item X depends on Y",
+		},
+		{
+			name: "duplicate work item",
+			err:  &DuplicateWorkItemError{ItemID: "A"},
+			want: "dag: duplicate work item ID: A",
+		},
 	}
-}
 
-func TestMissingDependencyError_Message(t *testing.T) {
-	err := &MissingDependencyError{ItemID: "X", DependencyID: "Y"}
-	expected := "dag: missing dependency: item X depends on Y"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
-	}
-}
-
-func TestDuplicateWorkItemError_Message(t *testing.T) {
-	err := &DuplicateWorkItemError{ItemID: "A"}
-	expected := "dag: duplicate work item ID: A"
-	if err.Error() != expected {
-		t.Fatalf("expected %q, got %q", expected, err.Error())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
