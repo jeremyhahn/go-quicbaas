@@ -1222,80 +1222,6 @@ func TestRunBackupRestoreCommand(t *testing.T) {
 	}
 }
 
-// TestRunBackupDeleteCommand tests the backup delete command execution.
-func TestRunBackupDeleteCommand(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	tests := []struct {
-		name         string
-		args         []string
-		force        bool
-		storagePath  string
-		outputFormat string
-		expectError  bool
-	}{
-		{
-			name:         "delete with force",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "table",
-			expectError:  false,
-		},
-		{
-			name:         "delete with json output",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "json",
-			expectError:  false,
-		},
-		{
-			name:         "delete with yaml output",
-			args:         []string{"backup-prod-1"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "yaml",
-			expectError:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = tt.force
-			backupStoragePath = tt.storagePath
-			backupOutputFormat = tt.outputFormat
-
-			err := cmd.RunE(cmd, tt.args)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestRunBackupVerifyCommand tests the backup verify command execution.
 func TestRunBackupVerifyCommand(t *testing.T) {
 	// Save and restore factory
@@ -1458,14 +1384,6 @@ func TestRunBackupDeleteCommandWithoutConfirmation(t *testing.T) {
 			outputFormat: "table",
 			expectError:  false,
 		},
-		{
-			name:         "delete with yaml output",
-			args:         []string{"backup-test-8"},
-			force:        true,
-			storagePath:  "/tmp/quicbaas-test-backups",
-			outputFormat: "yaml",
-			expectError:  false,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1542,66 +1460,6 @@ func TestRunBackupDeleteCommandOutputFormats(t *testing.T) {
 	}
 }
 
-// TestRunBackupDeleteCommandEdgeCases tests edge cases.
-func TestRunBackupDeleteCommandEdgeCases(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	tests := []struct {
-		name        string
-		args        []string
-		storagePath string
-		expectError bool
-	}{
-		{
-			name:        "empty storage path",
-			args:        []string{"backup-test"},
-			storagePath: "",
-			expectError: false, // Should use default path
-		},
-		{
-			name:        "custom storage path",
-			args:        []string{"backup-test"},
-			storagePath: "/custom/path/backups",
-			expectError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = true
-			backupStoragePath = tt.storagePath
-			backupOutputFormat = "table"
-
-			err := cmd.RunE(cmd, tt.args)
-
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestBackupDeleteCommandConfirmationReadError tests confirmation prompt read error handling.
 func TestBackupDeleteCommandConfirmationReadError(t *testing.T) {
 	// Save and restore factory
@@ -1646,43 +1504,6 @@ func TestBackupDeleteCommandConfirmationReadError(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestRunBackupDeleteCommandMultipleBackups tests deleting multiple backups sequentially.
-func TestRunBackupDeleteCommandMultipleBackups(t *testing.T) {
-	// Save and restore factory
-	originalFactory := backupClientFactory
-	defer func() { backupClientFactory = originalFactory }()
-
-	// Set up mock
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{
-					BackupID: req.BackupID,
-
-					Message:   "Backup deleted successfully",
-					Deleted:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	backupIDs := []string{"backup-1", "backup-2", "backup-3"}
-
-	for _, backupID := range backupIDs {
-		t.Run("delete_"+backupID, func(t *testing.T) {
-			cmd := newBackupDeleteCommand()
-
-			backupDeleteForce = true
-			backupStoragePath = "/tmp/quicbaas-test-backups"
-			backupOutputFormat = "json"
-
-			err := cmd.RunE(cmd, []string{backupID})
-			assert.NoError(t, err)
-		})
-	}
-}
-
 // TestRunBackupDeleteCommandStdoutCapture tests that output is written correctly.
 func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	// Save and restore factory
@@ -1712,7 +1533,7 @@ func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	os.Stdout = w
 
 	backupDeleteForce = true
-	backupStoragePath = "/tmp/quicbaas-test-backups"
+	backupStoragePath = "" // empty selects the default storage path
 	backupOutputFormat = "table"
 
 	err := cmd.RunE(cmd, []string{"backup-capture-test"})
@@ -1728,6 +1549,7 @@ func TestRunBackupDeleteCommandStdoutCapture(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "Deleting backup")
 	assert.Contains(t, output, "backup-capture-test")
+	assert.Contains(t, output, "/var/lib/quicbaas/backups")
 }
 
 type mockBackupClientForStatus struct {
@@ -2189,10 +2011,6 @@ func TestDataKeyAlgorithmToKeyAttributes(t *testing.T) {
 }
 
 // =============================================================================
-// Embedded Server Error Types Tests
-// =============================================================================
-
-// =============================================================================
 // ShutdownEmbeddedServer Tests
 // =============================================================================
 
@@ -2228,52 +2046,32 @@ func TestCreateAuthClientFactoryError(t *testing.T) {
 	})
 }
 
-func TestFactoryTransportSwitch(t *testing.T) {
-	// Save original transport and restore after test
+// A transport other than grpc or mcp routes createKMSClient through the SDK.
+func TestCreateKMSClientSDKTransport(t *testing.T) {
 	origTransport := transport
-	defer func() { transport = origTransport }()
+	origFactory := sdkClientFactory
+	defer func() {
+		transport = origTransport
+		sdkClientFactory = origFactory
+	}()
+	transport = "rest"
 
-	t.Run("createKMSClient with default transport", func(t *testing.T) {
-		transport = ""
-		// This will fail due to no server, but tests the code path
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
+	t.Run("SDK factory error is returned", func(t *testing.T) {
+		sdkClientFactory = func() (quicbaas.Client, error) {
+			return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
+		}
+		_, err := createKMSClient()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "connection refused")
 	})
 
-	t.Run("createKMSClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createKMSClient with unknown transport defaults to grpc", func(t *testing.T) {
-		transport = "unknown"
-		_, _ = createKMSClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createBackendClient with default transport", func(t *testing.T) {
-		transport = ""
-		_, _ = createBackendClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createBackendClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createBackendClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createSafetyClient with default transport", func(t *testing.T) {
-		transport = ""
-		_, _ = createSafetyClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-
-	t.Run("createSafetyClient with grpc transport", func(t *testing.T) {
-		transport = "grpc"
-		_, _ = createSafetyClient()
-		// Client creation may succeed if server is running - tests the code path
+	t.Run("SDK client is wrapped", func(t *testing.T) {
+		sdkClientFactory = func() (quicbaas.Client, error) {
+			return nil, nil
+		}
+		client, err := createKMSClient()
+		require.NoError(t, err)
+		assert.IsType(t, &sdkKMSClient{}, client)
 	})
 }
 
@@ -2284,23 +2082,6 @@ func TestCreateBackupClientFactory(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, client)
 		// Client is now a real gRPC adapter that implements BackupClient interface
-	})
-}
-
-func TestCreateGRPCCryptoClient(t *testing.T) {
-	t.Run("createCryptoClient with grpc transport", func(t *testing.T) {
-		// This will fail due to no server, but tests the code path
-		transport = "grpc"
-		_, _ = createCryptoClient()
-		// Client creation may succeed if server is running - tests the code path
-	})
-}
-
-func TestCreateGRPCSecretsClient(t *testing.T) {
-	t.Run("createGRPCSecretsClient returns client", func(t *testing.T) {
-		// This will fail due to no server, but tests the code path
-		_, _ = createGRPCSecretsClient()
-		// Client creation may succeed if server is running - tests the code path
 	})
 }
 
