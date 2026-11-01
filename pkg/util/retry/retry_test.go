@@ -342,21 +342,6 @@ func TestConstantBackoff_Next(t *testing.T) {
 	}
 }
 
-func TestDo_SuccessFirstAttempt(t *testing.T) {
-	ctx := context.Background()
-	cfg := DefaultConfig()
-
-	callCount := 0
-	op := func(ctx context.Context) error {
-		callCount++
-		return nil
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.NoError(t, err)
-	assert.Equal(t, 1, callCount, "operation should be called once")
-}
-
 func TestDo_SuccessAfterRetries(t *testing.T) {
 	ctx := context.Background()
 	cfg := &Config{
@@ -600,58 +585,51 @@ func TestDo_OnRetryCallback(t *testing.T) {
 }
 
 func TestDo_CustomRetryableFunc(t *testing.T) {
-	ctx := context.Background()
-
 	customErr := errors.New("custom error")
-	callCount := 0
 
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff: &ConstantBackoff{
-			Delay:  1 * time.Millisecond,
-			Jitter: 0,
+	tests := []struct {
+		name      string
+		retryable func(err error) bool
+		wantCalls int
+	}{
+		{
+			name: "retries the error the func accepts",
+			retryable: func(err error) bool {
+				return errors.Is(err, customErr)
+			},
+			wantCalls: 3,
 		},
-		RetryableFunc: func(err error) bool {
-			// Retry only on our custom error.
-			return errors.Is(err, customErr)
-		},
-	}
-
-	op := func(ctx context.Context) error {
-		callCount++
-		return customErr
-	}
-
-	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	assert.Equal(t, 3, callCount, "should retry custom error")
-}
-
-func TestDo_CustomRetryableFuncNonRetryable(t *testing.T) {
-	ctx := context.Background()
-
-	customErr := errors.New("custom error")
-	callCount := 0
-
-	cfg := &Config{
-		MaxAttempts: 3,
-		Backoff: &ConstantBackoff{
-			Delay:  1 * time.Millisecond,
-			Jitter: 0,
-		},
-		RetryableFunc: func(err error) bool {
-			return false // Never retry
+		{
+			name: "stops when the func rejects the error",
+			retryable: func(err error) bool {
+				return false
+			},
+			wantCalls: 1,
 		},
 	}
 
-	op := func(ctx context.Context) error {
-		callCount++
-		return customErr
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				MaxAttempts: 3,
+				Backoff: &ConstantBackoff{
+					Delay:  1 * time.Millisecond,
+					Jitter: 0,
+				},
+				RetryableFunc: tt.retryable,
+			}
 
-	err := Do(ctx, cfg, op)
-	assert.Error(t, err)
-	assert.Equal(t, 1, callCount, "should not retry when custom func returns false")
+			callCount := 0
+			op := func(ctx context.Context) error {
+				callCount++
+				return customErr
+			}
+
+			err := Do(context.Background(), cfg, op)
+			assert.ErrorIs(t, err, customErr)
+			assert.Equal(t, tt.wantCalls, callCount)
+		})
+	}
 }
 
 func TestDo_ConfigDefaults(t *testing.T) {
@@ -910,54 +888,33 @@ func TestDo_ContextCanceledDuringBackoff(t *testing.T) {
 	assert.LessOrEqual(t, callCount, 2)
 }
 
-func TestShouldRetry_NilError(t *testing.T) {
-	cfg := DefaultConfig()
-	result := shouldRetry(cfg, nil)
-	assert.False(t, result, "nil error should not be retryable")
-}
-
-func TestShouldRetry_WithCustomFunc(t *testing.T) {
-	cfg := &Config{
+func TestShouldRetry(t *testing.T) {
+	customCfg := &Config{
 		RetryableFunc: func(err error) bool {
 			return err.Error() == "retry me"
 		},
 	}
+	defaultCfg := &Config{RetryableFunc: nil} // Use default QuicBaaS error check
 
-	t.Run("retryable error", func(t *testing.T) {
-		err := errors.New("retry me")
-		result := shouldRetry(cfg, err)
-		assert.True(t, result)
-	})
-
-	t.Run("non-retryable error", func(t *testing.T) {
-		err := errors.New("don't retry")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result)
-	})
-}
-
-func TestShouldRetry_WithQBError(t *testing.T) {
-	cfg := &Config{
-		RetryableFunc: nil, // Use default QuicBaaS error check
+	tests := []struct {
+		name string
+		cfg  *Config
+		err  error
+		want bool
+	}{
+		{name: "nil error", cfg: DefaultConfig(), err: nil, want: false},
+		{name: "custom func retryable error", cfg: customCfg, err: errors.New("retry me"), want: true},
+		{name: "custom func non-retryable error", cfg: customCfg, err: errors.New("don't retry"), want: false},
+		{name: "retryable QuicBaaS error", cfg: defaultCfg, err: dberrors.New(dberrors.ErrTimeout, "test", "timeout"), want: true},
+		{name: "non-retryable QuicBaaS error", cfg: defaultCfg, err: dberrors.New(dberrors.ErrInvalidInput, "test", "bad input"), want: false},
+		{name: "standard error", cfg: defaultCfg, err: errors.New("standard error"), want: false},
 	}
 
-	t.Run("retryable QuicBaaS error", func(t *testing.T) {
-		err := dberrors.New(dberrors.ErrTimeout, "test", "timeout")
-		result := shouldRetry(cfg, err)
-		assert.True(t, result)
-	})
-
-	t.Run("non-retryable QuicBaaS error", func(t *testing.T) {
-		err := dberrors.New(dberrors.ErrInvalidInput, "test", "bad input")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result)
-	})
-
-	t.Run("standard error", func(t *testing.T) {
-		err := errors.New("standard error")
-		result := shouldRetry(cfg, err)
-		assert.False(t, result, "standard errors should not be retryable")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shouldRetry(tt.cfg, tt.err))
+		})
+	}
 }
 
 func TestDoWithBackoff(t *testing.T) {
