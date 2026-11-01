@@ -237,6 +237,45 @@ describe('McpCeremonyClient tools', () => {
       want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 2 },
     },
     {
+      name: 'initialize forwards the full officer object',
+      call: (c) =>
+        c.ceremony.initialize({
+          so_pin: 'so-pin-1234',
+          user_pin: 'user-pin-1234',
+          threshold: 1,
+          officers: [
+            {
+              username: 'custodian-1',
+              role: 'custodian',
+              csr_pem: 'CSR-1',
+              encryption_kem: 'ML-KEM-768',
+              encryption_key: 'a2V5',
+              factors: [{ name: 'fido2', params: { rp_id: 'node.example' } }],
+              designated: 'fido2',
+            },
+          ],
+        }),
+      tool: 'qrdb_ceremony_initialize',
+      args: {
+        so_pin: 'so-pin-1234',
+        user_pin: 'user-pin-1234',
+        threshold: 1,
+        officers: [
+          {
+            username: 'custodian-1',
+            role: 'custodian',
+            csr_pem: 'CSR-1',
+            encryption_kem: 'ML-KEM-768',
+            encryption_key: 'a2V5',
+            factors: [{ name: 'fido2', params: { rp_id: 'node.example' } }],
+            designated: 'fido2',
+          },
+        ],
+      },
+      reply: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
+      want: { spki_pin: 'pin', ca_cert_pem: 'CA', tls_cert_pem: 'TLS', state: 'initialized', share_count: 1 },
+    },
+    {
       name: 'initialize without the optional fields',
       call: (c) => c.ceremony.initialize({ so_pin: 'so-pin-1234', user_pin: 'user-pin-1234', threshold: 0 }),
       tool: 'qrdb_ceremony_initialize',
