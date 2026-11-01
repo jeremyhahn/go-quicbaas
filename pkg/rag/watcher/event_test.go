@@ -295,10 +295,6 @@ func TestProcessEvents_ExcludeInEvent(t *testing.T) {
 	err = w.Start(ctx)
 	require.NoError(t, err)
 
-	// Wait for watcher to initialize using timer pattern
-	initTimer := time.NewTimer(500 * time.Millisecond)
-	<-initTimer.C
-
 	// Create files that should be excluded
 	tmpFile := filepath.Join(tmpDir, "test.tmp")
 	err = os.WriteFile(tmpFile, []byte("temp"), 0644)
@@ -312,11 +308,6 @@ func TestProcessEvents_ExcludeInEvent(t *testing.T) {
 	txtFile := filepath.Join(tmpDir, "test.txt")
 	err = os.WriteFile(txtFile, []byte("text"), 0644)
 	require.NoError(t, err)
-
-	// Wait for at least 2 batch intervals to ensure events are flushed
-	// BatchInterval is 100ms, so wait 250ms to be safe
-	batchTimer := time.NewTimer(250 * time.Millisecond)
-	<-batchTimer.C
 
 	// Check events channel - wait generously for the expected event
 	events := w.Events()
@@ -371,9 +362,6 @@ func TestProcessEvents_HiddenFilesFiltered(t *testing.T) {
 
 	err = w.Start(ctx)
 	require.NoError(t, err)
-
-	// Give watcher time to initialize
-	time.Sleep(500 * time.Millisecond)
 
 	// Create a hidden file
 	hiddenFile := filepath.Join(tmpDir, ".hidden")
@@ -851,38 +839,47 @@ func TestRemovePath_WatcherRemoveError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPathNotWatched)
 }
 
-// TestProcessEvents_WatcherClosed tests processEvents when watcher is closed.
+// TestProcessEvents_WatcherClosed tests that Stop and a cancelled Start
+// context both end processing and close the events channel.
 func TestProcessEvents_WatcherClosed(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
+	tests := []struct {
+		name string
+		stop func(t *testing.T, w Watcher, cancel context.CancelFunc)
+	}{
+		{name: "Stop", stop: func(t *testing.T, w Watcher, _ context.CancelFunc) { require.NoError(t, w.Stop()) }},
+		{name: "context cancelled", stop: func(_ *testing.T, _ Watcher, cancel context.CancelFunc) { cancel() }},
 	}
 
-	w, err := New(config)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, err := New(Config{
+				Paths:         []string{t.TempDir()},
+				DebounceDelay: 50 * time.Millisecond,
+				BatchInterval: 100 * time.Millisecond,
+				BufferSize:    100,
+			})
+			require.NoError(t, err)
+			defer w.Stop()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			require.NoError(t, w.Start(ctx))
 
-	err = w.Start(ctx)
-	require.NoError(t, err)
+			tt.stop(t, w, cancel)
 
-	time.Sleep(500 * time.Millisecond)
-
-	// Stop immediately - this closes the watcher
-	err = w.Stop()
-	require.NoError(t, err)
-
-	// Channels should be closed
-	select {
-	case _, ok := <-w.Events():
-		assert.False(t, ok, "events channel should be closed")
-	default:
-		// Channel might already be drained
+			// The goroutines exit and the events channel is closed.
+			timeout := time.After(5 * time.Second)
+			for {
+				select {
+				case _, ok := <-w.Events():
+					if !ok {
+						return
+					}
+				case <-timeout:
+					t.Fatal("events channel was not closed")
+				}
+			}
+		})
 	}
 }
 
@@ -1123,44 +1120,6 @@ func TestAddPath_StatError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to stat path")
 }
 
-// TestProcessEvents_ContextDoneBeforeEvent tests processEvents exiting on context.Done().
-func TestProcessEvents_ContextCancellation(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Cancel context immediately
-	cancel()
-
-	// Give time for goroutines to exit
-	time.Sleep(500 * time.Millisecond)
-
-	// Events channel should eventually be closed
-	select {
-	case _, ok := <-w.Events():
-		if !ok {
-			// Good, channel is closed
-		}
-	default:
-		// Also OK
-	}
-}
-
 // TestAddRecursive_MaxDepth tests how deep a recursive walk watches.
 func TestAddRecursive_MaxDepth(t *testing.T) {
 	tests := []struct {
@@ -1204,36 +1163,6 @@ func TestAddRecursive_MaxDepth(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestProcessEvents_StopChannelClosed tests processEvents when stopCh is closed.
-func TestProcessEvents_StopCh(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Stop the watcher - this closes stopCh
-	err = w.Stop()
-	require.NoError(t, err)
-
-	// Give time for goroutines to exit
-	time.Sleep(500 * time.Millisecond)
 }
 
 // TestRemovePath_WatcherRemoveFails tests RemovePath when watcher.Remove returns an error.
