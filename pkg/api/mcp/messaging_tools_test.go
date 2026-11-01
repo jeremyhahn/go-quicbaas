@@ -62,25 +62,6 @@ func TestMsgCreateChannel_MissingName(t *testing.T) {
 	assert.Contains(t, err.Error(), "name is required")
 }
 
-func TestMsgCreateChannel_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			createFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
-				return nil, &dberrors.MessageError{Message: "channel already exists"}
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_create_channel", map[string]interface{}{
-		"name": "existing",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestMsgDeleteChannel_Success(t *testing.T) {
 	registry := newMessagingRegistry(t)
 	ctx := context.Background()
@@ -138,23 +119,6 @@ func TestMsgListChannels_Success(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, resultMap, "channels")
 	assert.Contains(t, resultMap, "count")
-}
-
-func TestMsgListChannels_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			listFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
-				return nil, &dberrors.MessageError{Message: "internal error"}
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_list_channels", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestMsgSubscribe_Success(t *testing.T) {
@@ -429,133 +393,122 @@ func (m *nilStatsMessagingService) GetStats() *messaging.Stats {
 // Messaging Service Error Path Tests
 // =============================================================================
 
-func TestHandleMsgDeleteChannel_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			deleteFunc: func(ctx context.Context, name string) error {
-				return expectedErr
+// TestMsgTools_ServiceError checks that each messaging tool wraps a service
+// failure in its operation error and returns no result.
+func TestMsgTools_ServiceError(t *testing.T) {
+	svcErr := errors.New("service failure")
+	tests := []struct {
+		name        string
+		tool        string
+		svc         *mockMessagingService
+		args        map[string]interface{}
+		errContains string
+	}{
+		{
+			name: "create channel",
+			tool: "quicbaas_msg_create_channel",
+			svc: &mockMessagingService{
+				createFunc: func(ctx context.Context, name string, opts ...messaging.CreateChannelOption) (*messaging.Channel, error) {
+					return nil, &dberrors.MessageError{Message: "channel already exists"}
+				},
 			},
+			args:        map[string]interface{}{"name": "existing"},
+			errContains: "create channel failed",
+		},
+		{
+			name: "delete channel",
+			tool: "quicbaas_msg_delete_channel",
+			svc: &mockMessagingService{
+				deleteFunc: func(ctx context.Context, name string) error {
+					return svcErr
+				},
+			},
+			args:        map[string]interface{}{"name": "nonexistent"},
+			errContains: "delete channel failed",
+		},
+		{
+			name: "get channel",
+			tool: "quicbaas_msg_get_channel",
+			svc: &mockMessagingService{
+				getFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"name": "nonexistent"},
+			errContains: "get channel failed",
+		},
+		{
+			name: "list channels",
+			tool: "quicbaas_msg_list_channels",
+			svc: &mockMessagingService{
+				listFunc: func(ctx context.Context) ([]*messaging.Channel, error) {
+					return nil, &dberrors.MessageError{Message: "internal error"}
+				},
+			},
+			args:        map[string]interface{}{},
+			errContains: "list channels failed",
+		},
+		{
+			name: "subscribe",
+			tool: "quicbaas_msg_subscribe",
+			svc: &mockMessagingService{
+				subscribeFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"channel": "nonexistent"},
+			errContains: "subscribe failed",
+		},
+		{
+			name: "unsubscribe",
+			tool: "quicbaas_msg_unsubscribe",
+			svc: &mockMessagingService{
+				unsubFunc: func(ctx context.Context, subscriptionID string) error {
+					return svcErr
+				},
+			},
+			args:        map[string]interface{}{"subscription_id": "invalid-sub"},
+			errContains: "unsubscribe failed",
+		},
+		{
+			name: "publish",
+			tool: "quicbaas_msg_publish",
+			svc: &mockMessagingService{
+				publishFunc: func(ctx context.Context, channel string, payload interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
+					return nil, svcErr
+				},
+			},
+			args:        map[string]interface{}{"channel": "events", "payload": "test message"},
+			errContains: "publish failed",
+		},
+		{
+			name: "publish delta",
+			tool: "quicbaas_msg_publish_delta",
+			svc: &mockMessagingService{
+				pubDeltaFunc: func(ctx context.Context, channel string, old, new interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
+					return nil, svcErr
+				},
+			},
+			args: map[string]interface{}{
+				"channel":   "events",
+				"old_state": `{"count":1}`,
+				"new_state": `{"count":2}`,
+			},
+			errContains: "publish delta failed",
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_delete_channel", map[string]interface{}{
-		"name": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete channel failed")
-}
-
-func TestHandleMsgGetChannel_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			getFunc: func(ctx context.Context, name string) (*messaging.Channel, error) {
-				return nil, expectedErr
-			},
-		},
+	log, err := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
+	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := NewToolRegistry(&extendedMockService{messagingSvc: tc.svc}, log)
+			result, err := registry.ExecuteTool(context.Background(), tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.errContains)
+		})
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_get_channel", map[string]interface{}{
-		"name": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get channel failed")
-}
-
-func TestHandleMsgUnsubscribe_ServiceError(t *testing.T) {
-	expectedErr := errors.New("subscription not found")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			unsubFunc: func(ctx context.Context, subscriptionID string) error {
-				return expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_unsubscribe", map[string]interface{}{
-		"subscription_id": "invalid-sub",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "unsubscribe failed")
-}
-
-func TestHandleMsgSubscribe_ServiceError(t *testing.T) {
-	expectedErr := errors.New("channel does not exist")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			subscribeFunc: func(ctx context.Context, channel string, opts ...messaging.SubscribeOption) (*messaging.Subscription, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_subscribe", map[string]interface{}{
-		"channel": "nonexistent",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "subscribe failed")
-}
-
-func TestHandleMsgPublish_ServiceError(t *testing.T) {
-	expectedErr := errors.New("publish quota exceeded")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			publishFunc: func(ctx context.Context, channel string, payload interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish", map[string]interface{}{
-		"channel": "events",
-		"payload": "test message",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "publish failed")
-}
-
-func TestHandleMsgPublishDelta_ServiceError(t *testing.T) {
-	expectedErr := errors.New("delta publish failed")
-	svc := &extendedMockService{
-		messagingSvc: &mockMessagingService{
-			pubDeltaFunc: func(ctx context.Context, channel string, old, new interface{}, opts ...messaging.PublishOption) (*messaging.PublishResult, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_msg_publish_delta", map[string]interface{}{
-		"channel":   "events",
-		"old_state": `{"count":1}`,
-		"new_state": `{"count":2}`,
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "publish delta failed")
 }
 
 func TestHandleMsgCreateChannel_InvalidTTL(t *testing.T) {
