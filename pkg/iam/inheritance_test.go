@@ -532,59 +532,56 @@ func TestEffectivePermissionsValidation(t *testing.T) {
 	assert.Error(t, p.Validate())
 }
 
-func TestAddRoleParentNonexistentRoles(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to add parent with nonexistent child
-	err := manager.AddRoleParent(ctx, tenantID, "nonexistent-child", "nonexistent-parent", 1)
-	assert.Error(t, err)
-}
-
-func TestRemoveNonexistentRoleParent(t *testing.T) {
-	manager, storage, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Create roles
-	role1 := &Role{
-		ID:       "role1",
-		Name:     "Role 1",
-		TenantID: tenantID,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+func TestInheritanceManager_NotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, manager *InheritanceManager, tenantID string) error
+	}{
+		{
+			name: "add parent to nonexistent roles",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				return manager.AddRoleParent(ctx, tenantID, "nonexistent-child", "nonexistent-parent", 1)
+			},
+		},
+		{
+			name: "remove nonexistent hierarchy",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				return manager.RemoveRoleParent(ctx, tenantID, "role1", "role2")
+			},
+		},
+		{
+			name: "effective permissions of nonexistent role",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				_, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "nonexistent")
+				return err
+			},
+		},
+		{
+			name: "effective permissions of nonexistent user",
+			call: func(ctx context.Context, manager *InheritanceManager, tenantID string) error {
+				_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 99999)
+				return err
+			},
+		},
 	}
-	require.NoError(t, storage.CreateRole(ctx, role1))
 
-	role2 := &Role{
-		ID:       "role2",
-		Name:     "Role 2",
-		TenantID: tenantID,
-		Created:  time.Now(),
-		Updated:  time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, storage, ctx := setupInheritanceTest(t)
+			tenantID := "test-tenant"
+			for _, id := range []string{"role1", "role2"} {
+				require.NoError(t, storage.CreateRole(ctx, &Role{
+					ID:       id,
+					Name:     id,
+					TenantID: tenantID,
+					Created:  time.Now(),
+					Updated:  time.Now(),
+				}))
+			}
+
+			assert.Error(t, tt.call(ctx, manager, tenantID))
+		})
 	}
-	require.NoError(t, storage.CreateRole(ctx, role2))
-
-	// Try to remove nonexistent hierarchy
-	err := manager.RemoveRoleParent(ctx, tenantID, "role1", "role2")
-	assert.Error(t, err)
-}
-
-func TestGetEffectiveRolePermissionsNonexistent(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to get permissions for nonexistent role
-	_, err := manager.GetEffectiveRolePermissions(ctx, tenantID, "nonexistent")
-	assert.Error(t, err)
-}
-
-func TestGetEffectiveUserPermissionsNonexistentUser(t *testing.T) {
-	manager, _, ctx := setupInheritanceTest(t)
-	tenantID := "test-tenant"
-
-	// Try to get permissions for nonexistent user
-	_, err := manager.GetEffectiveUserPermissions(ctx, tenantID, 99999)
-	assert.Error(t, err)
 }
 
 func TestMemoryHierarchyStorage_GetRoleHierarchy_Success(t *testing.T) {
@@ -712,59 +709,42 @@ func TestMemoryHierarchyStorage_CacheEffectivePermissions_InvalidInput(t *testin
 // SessionExt.Validate - Additional coverage for error paths
 // =============================================================================
 
-func TestSessionExtValidate_MissingUserID(t *testing.T) {
-	session := &SessionExt{
-		ID:       "session-1",
-		TenantID: "tenant-1",
-		// Missing UserID
-		TokenHash: "hash123",
+func TestSessionExt_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		session *SessionExt
+		wantErr bool
+	}{
+		{
+			name:    "valid",
+			session: &SessionExt{ID: "session-1", UserID: 10001, TenantID: "tenant-1", TokenHash: "hash123"},
+		},
+		{
+			name:    "missing session ID",
+			session: &SessionExt{UserID: 10001, TenantID: "tenant-1", TokenHash: "hash123"},
+			wantErr: true,
+		},
+		{
+			name:    "missing user ID",
+			session: &SessionExt{ID: "session-1", TenantID: "tenant-1", TokenHash: "hash123"},
+			wantErr: true,
+		},
+		{
+			name:    "missing token hash",
+			session: &SessionExt{ID: "session-1", UserID: 10001, TenantID: "tenant-1"},
+			wantErr: true,
+		},
 	}
 
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing user ID")
-	}
-}
-
-func TestSessionExtValidate_MissingTokenHash(t *testing.T) {
-	session := &SessionExt{
-		ID:       "session-1",
-		UserID:   10001,
-		TenantID: "tenant-1",
-		// Missing TokenHash
-	}
-
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing token hash")
-	}
-}
-
-func TestSessionExtValidate_MissingSessionID(t *testing.T) {
-	session := &SessionExt{
-		// Missing ID
-		UserID:    10001,
-		TenantID:  "tenant-1",
-		TokenHash: "hash123",
-	}
-
-	err := session.Validate()
-	if err == nil {
-		t.Error("expected validation error for missing session ID")
-	}
-}
-
-func TestSessionExtValidate_Valid(t *testing.T) {
-	session := &SessionExt{
-		ID:        "session-1",
-		UserID:    10001,
-		TenantID:  "tenant-1",
-		TokenHash: "hash123",
-	}
-
-	err := session.Validate()
-	if err != nil {
-		t.Errorf("expected no error for valid session, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.session.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
 }
 
