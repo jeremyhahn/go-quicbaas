@@ -120,23 +120,6 @@ func TestEvent_IsDeletion(t *testing.T) {
 	}
 }
 
-func TestEvent_Fields(t *testing.T) {
-	now := time.Now()
-	event := Event{
-		Type:      EventCreate,
-		Path:      "/path/to/file.txt",
-		Timestamp: now,
-		Size:      1024,
-		OldPath:   "/old/path.txt",
-	}
-
-	assert.Equal(t, EventCreate, event.Type)
-	assert.Equal(t, "/path/to/file.txt", event.Path)
-	assert.Equal(t, now, event.Timestamp)
-	assert.Equal(t, int64(1024), event.Size)
-	assert.Equal(t, "/old/path.txt", event.OldPath)
-}
-
 // TestAddRecursive_Exclusions checks which entries a recursive walk watches
 // under exclude patterns, IgnoreHidden, and plain files.
 func TestAddRecursive_Exclusions(t *testing.T) {
@@ -712,8 +695,6 @@ func TestConvertEvent_DeletedFile(t *testing.T) {
 	require.NoError(t, err)
 	defer w.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	// Delete the file - this triggers delete event where os.Stat will fail
 	err = os.Remove(testFile)
 	require.NoError(t, err)
@@ -726,55 +707,6 @@ func TestConvertEvent_DeletedFile(t *testing.T) {
 		assert.Equal(t, int64(0), event.Size)
 	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for delete event")
-	}
-}
-
-// TestConvertEvent_RenameAsDelete tests rename events treated as delete.
-func TestConvertEvent_RenameAsDelete(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-
-	err := os.WriteFile(testFile, []byte("content"), 0644)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-		IgnoreHidden:  false,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Rename the file
-	newName := filepath.Join(tmpDir, "renamed.txt")
-	err = os.Rename(testFile, newName)
-	require.NoError(t, err)
-
-	// Should receive events (delete for old name, create for new name)
-	timeout := time.After(5 * time.Second)
-	eventCount := 0
-	for eventCount < 2 {
-		select {
-		case event := <-w.Events():
-			eventCount++
-			// Either delete or create is acceptable
-			assert.True(t, event.Type == EventDelete || event.Type == EventCreate)
-		case <-timeout:
-			// May only get one event on some systems
-			return
-		}
 	}
 }
 
@@ -954,31 +886,51 @@ func TestProcessEvents_WatcherClosed(t *testing.T) {
 	}
 }
 
-// TestConvertEvent_UnknownOp tests convertEvent with unknown operation.
-func TestConvertEvent_UnknownOp(t *testing.T) {
+// TestConvertEvent tests the event type and size convertEvent derives from
+// each fsnotify operation, and that chmod and unknown operations are dropped.
+func TestConvertEvent(t *testing.T) {
 	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("content"), 0644))
 
-	config := Config{
+	w, err := New(Config{
 		Paths:         []string{tmpDir},
 		DebounceDelay: 50 * time.Millisecond,
 		BatchInterval: 100 * time.Millisecond,
 		BufferSize:    100,
-	}
-
-	w, err := New(config)
+	})
 	require.NoError(t, err)
 	defer w.Stop()
+	fw := w.(*fsWatcher)
 
-	// Create an fsnotify event with no operation flags
-	fsEvent := fsnotify.Event{
-		Name: tmpDir + "/test.txt",
-		Op:   0, // No operation
+	tests := []struct {
+		name     string
+		op       fsnotify.Op
+		wantNil  bool
+		wantType EventType
+		wantSize int64
+	}{
+		{name: "create", op: fsnotify.Create, wantType: EventCreate, wantSize: 7},
+		{name: "write", op: fsnotify.Write, wantType: EventModify, wantSize: 7},
+		{name: "remove", op: fsnotify.Remove, wantType: EventDelete, wantSize: 0},
+		{name: "rename", op: fsnotify.Rename, wantType: EventDelete, wantSize: 0},
+		{name: "chmod", op: fsnotify.Chmod, wantNil: true},
+		{name: "unknown", op: 0, wantNil: true},
 	}
 
-	// Get internal watcher
-	fw := w.(*fsWatcher)
-	result := fw.convertEvent(fsEvent)
-	assert.Nil(t, result, "should return nil for unknown operations")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event := fw.convertEvent(fsnotify.Event{Name: testFile, Op: tt.op})
+			if tt.wantNil {
+				assert.Nil(t, event)
+				return
+			}
+			require.NotNil(t, event)
+			assert.Equal(t, tt.wantType, event.Type)
+			assert.Equal(t, testFile, event.Path)
+			assert.Equal(t, tt.wantSize, event.Size)
+		})
+	}
 }
 
 // TestAddPath_FileNotDirectory tests adding a file path instead of directory.
@@ -1147,47 +1099,6 @@ func TestWatcher_CreateDirectory(t *testing.T) {
 		// Got event, that's fine
 	case <-time.After(1 * time.Second):
 		// No event, also fine - directories might not trigger events
-	}
-}
-
-// TestConvertEvent_ChmodIgnored tests that chmod events are ignored.
-func TestConvertEvent_ChmodIgnored(t *testing.T) {
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.txt")
-	err := os.WriteFile(testFile, []byte("content"), 0644)
-	require.NoError(t, err)
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-		IgnoreHidden:  false,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Change file permissions
-	err = os.Chmod(testFile, 0600)
-	require.NoError(t, err)
-
-	// Chmod events should be filtered out
-	select {
-	case event := <-w.Events():
-		// Some systems might send write events along with chmod
-		_ = event
-	case <-time.After(1 * time.Second):
-		// Expected - no event for chmod
 	}
 }
 
