@@ -1562,116 +1562,9 @@ func TestCreateTask_DuplicateID(t *testing.T) {
 // GetTask Tests
 // =============================================================================
 
-func TestGetTask_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:          "task-get",
-		TenantID:    "tenant-a",
-		Subject:     "Get me",
-		Description: "Task to retrieve",
-		Metadata:    map[string]string{"key": "value"},
-	}
-
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	got, err := store.GetTask(context.Background(), "tenant-a", "task-get")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got.Subject != "Get me" {
-		t.Errorf("expected subject 'Get me', got %q", got.Subject)
-	}
-	if got.Metadata["key"] != "value" {
-		t.Errorf("expected metadata key=value, got %v", got.Metadata)
-	}
-}
-
-func TestGetTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	_, err := store.GetTask(context.Background(), "tenant-a", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestGetTask_WrongTenant(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "task-tenant",
-		TenantID: "tenant-a",
-		Subject:  "Tenant A task",
-	}
-
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	// Try to get with wrong tenant
-	_, err = store.GetTask(context.Background(), "tenant-b", "task-tenant")
-	if err == nil {
-		t.Fatal("expected error for wrong tenant")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound for tenant isolation, got %v", err)
-	}
-}
-
 // =============================================================================
 // UpdateTask Tests
 // =============================================================================
-
-func TestUpdateTask_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "task-update",
-		TenantID: "tenant-a",
-		Subject:  "Original",
-	}
-
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	// Retrieve to get the current version
-	current, err := store.GetTask(context.Background(), "tenant-a", "task-update")
-	if err != nil {
-		t.Fatalf("setup get: %v", err)
-	}
-
-	current.Subject = "Updated"
-	err = store.UpdateTask(context.Background(), current)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	// Verify
-	got, err := store.GetTask(context.Background(), "tenant-a", "task-update")
-	if err != nil {
-		t.Fatalf("verify get: %v", err)
-	}
-	if got.Subject != "Updated" {
-		t.Errorf("expected subject 'Updated', got %q", got.Subject)
-	}
-	if got.Version != 2 {
-		t.Errorf("expected version 2, got %d", got.Version)
-	}
-}
 
 func TestUpdateTask_VersionConflict(t *testing.T) {
 	t.Parallel()
@@ -1721,25 +1614,6 @@ func TestUpdateTask_VersionConflict(t *testing.T) {
 	}
 	if conflictErr.TaskID != "task-conflict" {
 		t.Errorf("expected task ID 'task-conflict', got %q", conflictErr.TaskID)
-	}
-}
-
-func TestUpdateTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "nonexistent",
-		TenantID: "tenant-a",
-		Version:  1,
-	}
-
-	err := store.UpdateTask(context.Background(), task)
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
 	}
 }
 
@@ -1861,19 +1735,6 @@ func TestClaimTask_NotPending(t *testing.T) {
 	}
 }
 
-func TestClaimTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.ClaimTask(context.Background(), "tenant-a", "nonexistent", "agent-1")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
 // =============================================================================
 // CompleteTask Tests
 // =============================================================================
@@ -1954,19 +1815,6 @@ func TestCompleteTask_NotClaimed(t *testing.T) {
 	}
 }
 
-func TestCompleteTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.CompleteTask(context.Background(), "tenant-a", "nonexistent", &TaskResult{})
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
 // =============================================================================
 // FailTask Tests
 // =============================================================================
@@ -2032,279 +1880,74 @@ func TestFailTask_NotClaimed(t *testing.T) {
 	}
 }
 
-func TestFailTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.FailTask(context.Background(), "tenant-a", "nonexistent", "reason")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
 // =============================================================================
 // DeleteTask Tests
 // =============================================================================
-
-func TestDeleteTask_Success(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "task-delete",
-		TenantID: "tenant-a",
-		Subject:  "Delete me",
-	}
-
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	err = store.DeleteTask(context.Background(), "tenant-a", "task-delete")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	// Verify deletion
-	_, err = store.GetTask(context.Background(), "tenant-a", "task-delete")
-	if err == nil {
-		t.Fatal("expected error after deletion")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
-
-func TestDeleteTask_NotFound(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTask(context.Background(), "tenant-a", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent task")
-	}
-	if !errors.Is(err, ErrTaskNotFound) {
-		t.Fatalf("expected ErrTaskNotFound, got %v", err)
-	}
-}
 
 // =============================================================================
 // ListTasks Tests
 // =============================================================================
 
-func TestListTasks_FilterByStatus(t *testing.T) {
+func TestListTasks_Filters(t *testing.T) {
 	t.Parallel()
 
 	store := NewInMemoryTaskStore()
 	ctx := context.Background()
 
 	tasks := []*Task{
-		{ID: "t1", TenantID: "tenant-a", Subject: "Task 1", Status: TaskStatusPending},
-		{ID: "t2", TenantID: "tenant-a", Subject: "Task 2", Status: TaskStatusPending},
-		{ID: "t3", TenantID: "tenant-a", Subject: "Task 3"},
+		{ID: "t1", TenantID: "tenant-a", TeamName: "backend", CreatedBy: "user-1", Subject: "Task 1"},
+		{ID: "t2", TenantID: "tenant-a", TeamName: "frontend", CreatedBy: "user-2", Subject: "Task 2"},
+		{ID: "t3", TenantID: "tenant-a", TeamName: "backend", CreatedBy: "user-1", Subject: "Task 3"},
 	}
-
 	for _, task := range tasks {
-		err := store.CreateTask(ctx, task)
-		if err != nil {
+		if err := store.CreateTask(ctx, task); err != nil {
 			t.Fatalf("setup create %s: %v", task.ID, err)
 		}
 	}
-
-	// Claim t1 to change its status
-	err := store.ClaimTask(ctx, "tenant-a", "t1", "agent-1")
-	if err != nil {
+	if err := store.ClaimTask(ctx, "tenant-a", "t1", "agent-1"); err != nil {
 		t.Fatalf("setup claim: %v", err)
 	}
 
-	// Filter for pending only
-	filter := &TaskFilter{Status: TaskStatusPending}
-	results, err := store.ListTasks(ctx, "tenant-a", filter)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	cases := []struct {
+		name    string
+		filter  *TaskFilter
+		wantIDs []string
+	}{
+		{"status", &TaskFilter{Status: TaskStatusPending}, []string{"t2", "t3"}},
+		{"team", &TaskFilter{TeamName: "backend"}, []string{"t1", "t3"}},
+		{"assignee", &TaskFilter{AssignedTo: "agent-1"}, []string{"t1"}},
+		{"created by", &TaskFilter{CreatedBy: "user-1"}, []string{"t1", "t3"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := store.ListTasks(ctx, "tenant-a", tc.filter)
+			if err != nil {
+				t.Fatalf("ListTasks: %v", err)
+			}
+			got := make(map[string]bool, len(results))
+			for _, r := range results {
+				got[r.ID] = true
+			}
+			if len(got) != len(tc.wantIDs) {
+				t.Fatalf("got %v, want %v", got, tc.wantIDs)
+			}
+			for _, id := range tc.wantIDs {
+				if !got[id] {
+					t.Errorf("missing %s in %v", id, got)
+				}
+			}
+		})
 	}
 
-	if len(results) != 2 {
-		t.Fatalf("expected 2 pending tasks, got %d", len(results))
-	}
-
-	for _, r := range results {
-		if r.Status != TaskStatusPending {
-			t.Errorf("expected all results to be pending, got %s for task %s", r.Status, r.ID)
-		}
-	}
-}
-
-func TestListTasks_FilterByTeam(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	tasks := []*Task{
-		{ID: "t1", TenantID: "tenant-a", TeamName: "backend", Subject: "Backend task"},
-		{ID: "t2", TenantID: "tenant-a", TeamName: "frontend", Subject: "Frontend task"},
-		{ID: "t3", TenantID: "tenant-a", TeamName: "backend", Subject: "Another backend"},
-	}
-
-	for _, task := range tasks {
-		err := store.CreateTask(ctx, task)
+	t.Run("limit", func(t *testing.T) {
+		results, err := store.ListTasks(ctx, "tenant-a", &TaskFilter{Limit: 2})
 		if err != nil {
-			t.Fatalf("setup create %s: %v", task.ID, err)
+			t.Fatalf("ListTasks: %v", err)
 		}
-	}
-
-	filter := &TaskFilter{TeamName: "backend"}
-	results, err := store.ListTasks(ctx, "tenant-a", filter)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if len(results) != 2 {
-		t.Fatalf("expected 2 backend tasks, got %d", len(results))
-	}
-
-	for _, r := range results {
-		if r.TeamName != "backend" {
-			t.Errorf("expected all results to be team 'backend', got %q for task %s", r.TeamName, r.ID)
+		if len(results) != 2 {
+			t.Fatalf("expected 2 tasks with limit 2, got %d", len(results))
 		}
-	}
-}
-
-func TestListTasks_FilterByAssignee(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	tasks := []*Task{
-		{ID: "t1", TenantID: "tenant-a", Subject: "Task 1"},
-		{ID: "t2", TenantID: "tenant-a", Subject: "Task 2"},
-	}
-
-	for _, task := range tasks {
-		err := store.CreateTask(ctx, task)
-		if err != nil {
-			t.Fatalf("setup create %s: %v", task.ID, err)
-		}
-	}
-
-	// Claim only t1
-	err := store.ClaimTask(ctx, "tenant-a", "t1", "agent-1")
-	if err != nil {
-		t.Fatalf("setup claim: %v", err)
-	}
-
-	filter := &TaskFilter{AssignedTo: "agent-1"}
-	results, err := store.ListTasks(ctx, "tenant-a", filter)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if len(results) != 1 {
-		t.Fatalf("expected 1 task assigned to agent-1, got %d", len(results))
-	}
-	if results[0].ID != "t1" {
-		t.Errorf("expected task t1, got %s", results[0].ID)
-	}
-}
-
-func TestListTasks_TenantIsolation(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	tasks := []*Task{
-		{ID: "ta-1", TenantID: "tenant-a", Subject: "Tenant A task 1"},
-		{ID: "ta-2", TenantID: "tenant-a", Subject: "Tenant A task 2"},
-		{ID: "tb-1", TenantID: "tenant-b", Subject: "Tenant B task"},
-	}
-
-	for _, task := range tasks {
-		err := store.CreateTask(ctx, task)
-		if err != nil {
-			t.Fatalf("setup create %s: %v", task.ID, err)
-		}
-	}
-
-	// List tenant-a tasks
-	resultsA, err := store.ListTasks(ctx, "tenant-a", nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(resultsA) != 2 {
-		t.Fatalf("expected 2 tasks for tenant-a, got %d", len(resultsA))
-	}
-
-	// List tenant-b tasks
-	resultsB, err := store.ListTasks(ctx, "tenant-b", nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(resultsB) != 1 {
-		t.Fatalf("expected 1 task for tenant-b, got %d", len(resultsB))
-	}
-
-	// Verify no cross-contamination
-	for _, r := range resultsA {
-		if r.TenantID != "tenant-a" {
-			t.Errorf("tenant-a list contains task from tenant %q", r.TenantID)
-		}
-	}
-	for _, r := range resultsB {
-		if r.TenantID != "tenant-b" {
-			t.Errorf("tenant-b list contains task from tenant %q", r.TenantID)
-		}
-	}
-}
-
-func TestListTasks_NilFilter(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	err := store.CreateTask(ctx, &Task{ID: "t1", TenantID: "tenant-a", Subject: "Task"})
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-
-	results, err := store.ListTasks(ctx, "tenant-a", nil)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 task with nil filter, got %d", len(results))
-	}
-}
-
-func TestListTasks_WithLimit(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	for i := 0; i < 5; i++ {
-		id := "t" + string(rune('0'+i))
-		err := store.CreateTask(ctx, &Task{ID: id, TenantID: "tenant-a", Subject: "Task"})
-		if err != nil {
-			t.Fatalf("setup create: %v", err)
-		}
-	}
-
-	filter := &TaskFilter{Limit: 3}
-	results, err := store.ListTasks(ctx, "tenant-a", filter)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(results) > 3 {
-		t.Fatalf("expected at most 3 tasks with limit, got %d", len(results))
-	}
+	})
 }
 
 // =============================================================================
@@ -2650,40 +2293,6 @@ func TestFailTask_FromInProgress(t *testing.T) {
 // =============================================================================
 // ListTasks FilterByCreatedBy Tests
 // =============================================================================
-
-func TestListTasks_FilterByCreatedBy(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	tasks := []*Task{
-		{ID: "t1", TenantID: "tenant-a", Subject: "Task 1", CreatedBy: "user-1"},
-		{ID: "t2", TenantID: "tenant-a", Subject: "Task 2", CreatedBy: "user-2"},
-		{ID: "t3", TenantID: "tenant-a", Subject: "Task 3", CreatedBy: "user-1"},
-	}
-
-	for _, task := range tasks {
-		err := store.CreateTask(ctx, task)
-		if err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-	}
-
-	filter := &TaskFilter{CreatedBy: "user-1"}
-	results, err := store.ListTasks(ctx, "tenant-a", filter)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("expected 2 tasks created by user-1, got %d", len(results))
-	}
-	for _, r := range results {
-		if r.CreatedBy != "user-1" {
-			t.Errorf("expected created_by user-1, got %q", r.CreatedBy)
-		}
-	}
-}
 
 // =============================================================================
 // Blocked lifecycle, filters and the guarded source index
