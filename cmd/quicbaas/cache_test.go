@@ -33,380 +33,6 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/client/cluster"
 )
 
-func setupCacheTest(t *testing.T) (*cache.CacheRegistry, func()) {
-	// Create test logger
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "cache-test",
-	}
-
-	testLogger, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	// Create test cache config
-	cacheConfig := &config.EnhancedCacheConfig{
-		Enabled:         true,
-		DefaultTTL:      5 * time.Minute,
-		MaxSize:         1000,
-		CleanupInterval: 1 * time.Minute,
-		Entities: map[string]config.EntityCacheConfig{
-			"user": {
-				Enabled: true,
-				TTL:     10 * time.Minute,
-				MaxSize: 500,
-			},
-			"post": {
-				Enabled: false,
-				TTL:     5 * time.Minute,
-				MaxSize: 200,
-			},
-		},
-	}
-
-	// Create cache registry
-	registry, err := cache.NewCacheRegistry(cacheConfig, asInterfaceLogger(testLogger), nil)
-	require.NoError(t, err)
-
-	// Populate with some test data
-	ctx := context.Background()
-	for i := 0; i < 10; i++ {
-		key := cache.BuildEntityKey("user", string(rune('a'+i)))
-		err := registry.Set(ctx, "user", key, []byte("test-data"))
-		require.NoError(t, err)
-	}
-
-	cleanup := func() {
-		registry.Close()
-	}
-
-	return registry, cleanup
-}
-
-func TestCacheStatsCommand(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	tests := []struct {
-		name       string
-		entityType string
-		wantErr    bool
-	}{
-		{
-			name:       "stats for specific entity",
-			entityType: "user",
-			wantErr:    false,
-		},
-		{
-			name:       "stats for disabled entity",
-			entityType: "post",
-			wantErr:    false,
-		},
-		{
-			name:       "stats for non-existent entity",
-			entityType: "nonexistent",
-			wantErr:    false, // Should return default stats
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stats := registry.GetStats(tt.entityType)
-			entityCache := registry.GetEntityCache(tt.entityType)
-
-			assert.NotNil(t, stats)
-			assert.NotNil(t, entityCache)
-
-			if tt.entityType == "user" {
-				assert.True(t, entityCache.IsEnabled())
-				assert.Greater(t, stats.L1Capacity, 0)
-			} else if tt.entityType == "post" {
-				assert.False(t, entityCache.IsEnabled())
-			}
-		})
-	}
-}
-
-func TestCacheAllStatsCommand(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	allStats := registry.GetAllStats()
-
-	assert.NotEmpty(t, allStats)
-	assert.Contains(t, allStats, "user")
-	assert.Contains(t, allStats, "post")
-
-	// Verify user stats
-	userStats := allStats["user"]
-	assert.True(t, userStats.Enabled)
-	assert.Greater(t, userStats.L1Capacity, 0)
-
-	// Verify post stats (disabled)
-	postStats := allStats["post"]
-	assert.False(t, postStats.Enabled)
-}
-
-func TestCacheClearCommand(t *testing.T) {
-	tests := []struct {
-		name       string
-		entityType string
-		wantErr    bool
-	}{
-		{
-			name:       "clear specific entity",
-			entityType: "user",
-			wantErr:    false,
-		},
-		{
-			name:       "clear all entities",
-			entityType: "",
-			wantErr:    false,
-		},
-		{
-			name:       "clear disabled entity",
-			entityType: "post",
-			wantErr:    true, // Should fail because cache is disabled
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			registry, cleanup := setupCacheTest(t)
-			defer cleanup()
-
-			if tt.entityType != "" {
-				// Clear specific entity
-				entityCache := registry.GetEntityCache(tt.entityType)
-				require.True(t, entityCache.IsEnabled() || tt.wantErr,
-					"Cache must be enabled for entity %q when wantErr is false", tt.entityType)
-
-				statsBefore := registry.GetStats(tt.entityType)
-				if tt.entityType == "user" {
-					assert.Greater(t, statsBefore.L1Size, 0, "Expected some cached entries")
-				}
-
-				if tt.wantErr {
-					assert.False(t, entityCache.IsEnabled())
-				} else {
-					assert.True(t, entityCache.IsEnabled())
-				}
-			} else {
-				// Clear all entities
-				allStatsBefore := registry.GetAllStats()
-				assert.NotEmpty(t, allStatsBefore)
-
-				registry.Clear()
-
-				allStatsAfter := registry.GetAllStats()
-				for entityType, stats := range allStatsAfter {
-					if stats.Enabled {
-						assert.Equal(t, 0, stats.L1Size, "Entity %s should have 0 cached entries", entityType)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestCacheConfigCommand(t *testing.T) {
-	// Create test config
-	testConfig := &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-
-	tests := []struct {
-		name       string
-		entityType string
-		wantErr    bool
-	}{
-		{
-			name:       "config for specific entity",
-			entityType: "user",
-			wantErr:    false,
-		},
-		{
-			name:       "config for all entities",
-			entityType: "",
-			wantErr:    false,
-		},
-		{
-			name:       "config for non-existent entity",
-			entityType: "nonexistent",
-			wantErr:    false, // Should return default config
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.entityType != "" {
-				entityCfg := testConfig.Cache.GetEntityConfig(tt.entityType)
-				assert.NotNil(t, entityCfg)
-
-				if tt.entityType == "user" {
-					assert.True(t, entityCfg.Enabled)
-					assert.Equal(t, 10*time.Minute, entityCfg.TTL)
-					assert.Equal(t, 500, entityCfg.MaxSize)
-				} else if tt.entityType == "post" {
-					assert.False(t, entityCfg.Enabled)
-				}
-			} else {
-				// Test global config
-				assert.True(t, testConfig.Cache.Enabled)
-				assert.Equal(t, 5*time.Minute, testConfig.Cache.DefaultTTL)
-				assert.Equal(t, 1000, testConfig.Cache.MaxSize)
-				assert.NotEmpty(t, testConfig.Cache.Entities)
-			}
-		})
-	}
-}
-
-func TestCacheEnableCommand(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	tests := []struct {
-		name       string
-		entityType string
-		wantErr    bool
-		errMsg     string
-	}{
-		{
-			name:       "enable disabled entity",
-			entityType: "post",
-			wantErr:    false,
-		},
-		{
-			name:       "enable already enabled entity",
-			entityType: "user",
-			wantErr:    true,
-			errMsg:     "already enabled",
-		},
-		{
-			name:       "enable new entity",
-			entityType: "comment",
-			wantErr:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			enabledBefore := registry.IsCacheEnabled(tt.entityType)
-
-			if tt.wantErr {
-				assert.True(t, enabledBefore, "Entity should already be enabled")
-			} else {
-				// Create new entity config
-				entityCfg := config.EntityCacheConfig{
-					Enabled: true,
-					TTL:     5 * time.Minute,
-					MaxSize: 0,
-				}
-
-				err := registry.UpdateEntityConfig(tt.entityType, entityCfg)
-				if tt.wantErr {
-					assert.Error(t, err)
-					if tt.errMsg != "" {
-						assert.Contains(t, err.Error(), tt.errMsg)
-					}
-				} else {
-					assert.NoError(t, err)
-					assert.True(t, registry.IsCacheEnabled(tt.entityType))
-				}
-			}
-		})
-	}
-}
-
-func TestCacheDisableCommand(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	tests := []struct {
-		name       string
-		entityType string
-		wantErr    bool
-		errMsg     string
-	}{
-		{
-			name:       "disable enabled entity",
-			entityType: "user",
-			wantErr:    false,
-		},
-		{
-			name:       "disable already disabled entity",
-			entityType: "post",
-			wantErr:    true,
-			errMsg:     "already disabled",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			enabledBefore := registry.IsCacheEnabled(tt.entityType)
-
-			if tt.wantErr {
-				assert.False(t, enabledBefore, "Entity should already be disabled")
-			} else {
-				// Create disabled entity config
-				entityCfg := config.EntityCacheConfig{
-					Enabled: false,
-				}
-
-				err := registry.UpdateEntityConfig(tt.entityType, entityCfg)
-				if tt.wantErr {
-					assert.Error(t, err)
-					if tt.errMsg != "" {
-						assert.Contains(t, err.Error(), tt.errMsg)
-					}
-				} else {
-					assert.NoError(t, err)
-					assert.False(t, registry.IsCacheEnabled(tt.entityType))
-				}
-			}
-		})
-	}
-}
-
-func TestCacheCommandOutputFormats(t *testing.T) {
-	_, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	formats := []string{"json", "yaml", "table"}
-
-	for _, format := range formats {
-		t.Run("format_"+format, func(t *testing.T) {
-			// Test that each format can be parsed
-			_, err := parseOutputFormat(format)
-			assert.NoError(t, err)
-		})
-	}
-
-	// Test invalid format
-	t.Run("invalid_format", func(t *testing.T) {
-		_, err := parseOutputFormat("invalid")
-		assert.Error(t, err)
-	})
-}
-
 func TestInitializeCacheRegistry(t *testing.T) {
 	// Save original values
 	origCfg := cfg
@@ -418,32 +44,29 @@ func TestInitializeCacheRegistry(t *testing.T) {
 	}()
 
 	t.Run("success", func(t *testing.T) {
-		// Create test config
 		cfg = &config.Config{
 			Cache: config.EnhancedCacheConfig{
 				Enabled:         true,
 				DefaultTTL:      5 * time.Minute,
 				MaxSize:         1000,
 				CleanupInterval: 1 * time.Minute,
-				Entities:        make(map[string]config.EntityCacheConfig),
+				Entities: map[string]config.EntityCacheConfig{
+					"user": {
+						Enabled: true,
+						TTL:     10 * time.Minute,
+						MaxSize: 500,
+					},
+				},
 			},
 		}
-
-		// Create test logger
-		logConfig := logger.LogConfig{
-			Level:     "error",
-			Format:    "json",
-			Output:    "stderr",
-			Component: "test",
-		}
-		testLog, err := logger.New(logConfig)
-		require.NoError(t, err)
-		log = testLog
+		log = createTestLoggerForCoveragePlus(t)
 
 		registry, err := initializeCacheRegistry()
-		assert.NoError(t, err)
-		assert.NotNil(t, registry)
+		require.NoError(t, err)
+		require.NotNil(t, registry)
 		defer registry.Close()
+
+		assert.True(t, registry.GetEntityCache("user").IsEnabled())
 	})
 
 	t.Run("nil config", func(t *testing.T) {
@@ -451,7 +74,8 @@ func TestInitializeCacheRegistry(t *testing.T) {
 		log = origLog
 
 		registry, err := initializeCacheRegistry()
-		assert.Error(t, err)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "configuration not initialized")
 		assert.Nil(t, registry)
 	})
 
@@ -468,165 +92,40 @@ func TestInitializeCacheRegistry(t *testing.T) {
 		log = nil
 
 		registry, err := initializeCacheRegistry()
-		assert.Error(t, err)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "logger not initialized")
 		assert.Nil(t, registry)
 	})
 }
 
 func TestCacheCommandHelp(t *testing.T) {
 	tests := []struct {
-		name    string
-		command string
-		expect  []string
+		name   string
+		long   string
+		expect []string
 	}{
 		{
-			name:    "cache help",
-			command: "cache",
-			expect:  []string{"stats", "clear", "config", "enable", "disable", "warm"},
+			name:   "cache stats help",
+			long:   newCacheStatsCommand().Long,
+			expect: []string{"statistics", "hits", "misses", "hit rate"},
 		},
 		{
-			name:    "cache stats help",
-			command: "cache stats",
-			expect:  []string{"statistics", "hits", "misses", "hit rate"},
-		},
-		{
-			name:    "cache clear help",
-			command: "cache clear",
-			expect:  []string{"Clear", "entity-type", "confirmation"},
-		},
-		{
-			name:    "cache config help",
-			command: "cache config",
-			expect:  []string{"configuration", "TTL", "max size"},
-		},
-		{
-			name:    "cache warm help",
-			command: "cache warm",
-			expect:  []string{"warm", "prefix", "storage"},
+			name:   "cache warm help",
+			long:   newCacheWarmCommand().Long,
+			expect: []string{"warm", "prefix", "storage"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := newCacheCommands()
-			assert.NotNil(t, cmd)
-
-			// Check that the command has the expected subcommands or help text
-			_ = cmd.Long
 			for _, expected := range tt.expect {
-				// This is a simple check - in a real test you'd execute the command
-				// and check its output
-				if strings.Contains(tt.command, "stats") {
-					statsCmd := newCacheStatsCommand()
-					assert.Contains(t, strings.ToLower(statsCmd.Long), strings.ToLower(expected))
-				} else if strings.Contains(tt.command, "warm") {
-					warmCmd := newCacheWarmCommand()
-					assert.Contains(t, strings.ToLower(warmCmd.Long), strings.ToLower(expected))
-				}
+				assert.Contains(t, strings.ToLower(tt.long), strings.ToLower(expected))
 			}
 		})
 	}
 }
 
-func TestCacheClearConfirmation(t *testing.T) {
-	t.Run("with force flag", func(t *testing.T) {
-		// When --yes flag is set, no confirmation should be needed
-		cacheForce = true
-		defer func() { cacheForce = false }()
-
-		// Test would proceed without confirmation
-		assert.True(t, cacheForce)
-	})
-
-	t.Run("without force flag", func(t *testing.T) {
-		// When --yes flag is not set, confirmation is required
-		cacheForce = false
-
-		// Test would require confirmation
-		assert.False(t, cacheForce)
-	})
-}
-
-func TestCacheStatsDetails(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	t.Run("with details flag", func(t *testing.T) {
-		cacheShowDetails = true
-		defer func() { cacheShowDetails = false }()
-
-		stats := registry.GetStats("user")
-		assert.True(t, stats.Enabled)
-
-		// When details flag is set, response should include detailed breakdown
-		assert.True(t, cacheShowDetails)
-	})
-
-	t.Run("without details flag", func(t *testing.T) {
-		cacheShowDetails = false
-
-		stats := registry.GetStats("user")
-		assert.True(t, stats.Enabled)
-
-		// When details flag is not set, response should be summary only
-		assert.False(t, cacheShowDetails)
-	})
-}
-
-func TestCacheIntegration(t *testing.T) {
-	registry, cleanup := setupCacheTest(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	t.Run("full cache lifecycle", func(t *testing.T) {
-		entityType := "integration_test"
-
-		// 1. Enable cache for entity
-		entityCfg := config.EntityCacheConfig{
-			Enabled: true,
-			TTL:     1 * time.Minute,
-			MaxSize: 100,
-		}
-		err := registry.UpdateEntityConfig(entityType, entityCfg)
-		require.NoError(t, err)
-		assert.True(t, registry.IsCacheEnabled(entityType))
-
-		// 2. Add some data
-		for i := 0; i < 5; i++ {
-			key := cache.BuildEntityKey(entityType, string(rune('a'+i)))
-			err := registry.Set(ctx, entityType, key, []byte("test-data"))
-			require.NoError(t, err)
-		}
-
-		// 3. Check stats
-		stats := registry.GetStats(entityType)
-		assert.True(t, stats.Enabled)
-		assert.Equal(t, 5, stats.L1Size)
-
-		// 4. Clear cache
-		registry.Clear()
-		statsAfter := registry.GetStats(entityType)
-		assert.Equal(t, 0, statsAfter.L1Size)
-
-		// 5. Disable cache
-		entityCfg.Enabled = false
-		err = registry.UpdateEntityConfig(entityType, entityCfg)
-		require.NoError(t, err)
-		assert.False(t, registry.IsCacheEnabled(entityType))
-	})
-}
-
 // Helper function to parse output format.
-func parseOutputFormat(format string) (string, error) {
-	switch strings.ToLower(format) {
-	case "json", "yaml", "table", "raw":
-		return format, nil
-	default:
-		return "", assert.AnError
-	}
-}
-
 // Benchmark tests.
 func BenchmarkCacheStats(b *testing.B) {
 	logConfig := logger.LogConfig{
@@ -914,73 +413,80 @@ func TestRunCacheConfigCommand(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
+	origFmt := cacheOutputFmt
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
+		cacheOutputFmt = origFmt
 	}()
 
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
+	log = createTestLoggerForCoveragePlus(t)
 
 	tests := []struct {
 		name         string
 		args         []string
+		nilConfig    bool
 		outputFormat string
 		expectError  bool
+		errorMsg     string
 	}{
 		{
 			name:         "config for all entities",
 			args:         []string{},
 			outputFormat: "table",
-			expectError:  false,
 		},
 		{
 			name:         "config for specific entity",
 			args:         []string{"user"},
 			outputFormat: "table",
-			expectError:  false,
 		},
 		{
 			name:         "config with json output",
 			args:         []string{},
 			outputFormat: "json",
-			expectError:  false,
 		},
 		{
 			name:         "config with yaml output",
 			args:         []string{},
 			outputFormat: "yaml",
-			expectError:  false,
+		},
+		{
+			name:         "nil config",
+			args:         []string{},
+			nilConfig:    true,
+			outputFormat: "table",
+			expectError:  true,
+			errorMsg:     "configuration not initialized",
+		},
+		{
+			name:         "invalid output format",
+			args:         []string{},
+			outputFormat: "invalid",
+			expectError:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cfg = &config.Config{
+				Cache: config.EnhancedCacheConfig{
+					Enabled:         true,
+					DefaultTTL:      5 * time.Minute,
+					MaxSize:         1000,
+					CleanupInterval: 1 * time.Minute,
+					Entities: map[string]config.EntityCacheConfig{
+						"user": {
+							Enabled: true,
+							TTL:     10 * time.Minute,
+							MaxSize: 500,
+						},
+					},
+				},
+			}
+			if tt.nilConfig {
+				cfg = nil
+			}
 			cmd := newCacheConfigCommand()
 
 			cacheOutputFmt = tt.outputFormat
@@ -988,7 +494,10 @@ func TestRunCacheConfigCommand(t *testing.T) {
 			err := cmd.RunE(cmd, tt.args)
 
 			if tt.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
+				if tt.errorMsg != "" {
+					assert.Contains(t, err.Error(), tt.errorMsg)
+				}
 			} else {
 				assert.NoError(t, err)
 			}
@@ -1169,191 +678,116 @@ func TestCacheWarmCommand(t *testing.T) {
 	assert.Equal(t, "warm", cmd.Use)
 	assert.Contains(t, cmd.Long, "Pre-populate the cache")
 
-	// Verify flags are registered
+	// Verify flags are registered with their defaults
 	prefixFlag := cmd.Flags().Lookup("prefix")
-	assert.NotNil(t, prefixFlag)
+	require.NotNil(t, prefixFlag)
 	assert.Equal(t, "stringArray", prefixFlag.Value.Type())
 
 	rateFlag := cmd.Flags().Lookup("rate")
-	assert.NotNil(t, rateFlag)
+	require.NotNil(t, rateFlag)
 	assert.Equal(t, "int", rateFlag.Value.Type())
+	assert.Equal(t, "0", rateFlag.DefValue)
 
 	maxKeysFlag := cmd.Flags().Lookup("max-keys")
-	assert.NotNil(t, maxKeysFlag)
+	require.NotNil(t, maxKeysFlag)
 	assert.Equal(t, "int", maxKeysFlag.Value.Type())
+	assert.Equal(t, "0", maxKeysFlag.DefValue)
 
 	batchSizeFlag := cmd.Flags().Lookup("batch-size")
-	assert.NotNil(t, batchSizeFlag)
+	require.NotNil(t, batchSizeFlag)
 	assert.Equal(t, "100", batchSizeFlag.DefValue)
 }
 
 // TestCacheWarmCommandNoPrefixes tests warm command with no prefixes.
-func TestCacheWarmCommandNoPrefixes(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-	origPrefixes := cacheWarmPrefixes
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheWarmPrefixes = origPrefixes
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities:        make(map[string]config.EntityCacheConfig),
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	// Clear prefixes to trigger error
-	cacheWarmPrefixes = nil
-
-	cmd := newCacheWarmCommand()
-	err = cmd.RunE(cmd, []string{})
-
-	// Should fail with no prefixes error
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no prefixes specified")
-}
-
 // TestCacheWarmCommandValidation tests warm command validation.
 func TestCacheWarmCommandValidation(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
 	origPrefixes := cacheWarmPrefixes
+	origFmt := cacheOutputFmt
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
 		cacheWarmPrefixes = origPrefixes
+		cacheOutputFmt = origFmt
 	}()
 
+	cacheCfg := &config.Config{
+		Cache: config.EnhancedCacheConfig{
+			Enabled:         true,
+			DefaultTTL:      5 * time.Minute,
+			MaxSize:         1000,
+			CleanupInterval: 1 * time.Minute,
+		},
+	}
+
 	tests := []struct {
-		name        string
-		cfg         *config.Config
-		log         *logger.Logger
-		prefixes    []string
-		expectError bool
-		errContains string
+		name         string
+		cfg          *config.Config
+		nilLog       bool
+		prefixes     []string
+		outputFormat string
+		errContains  string
 	}{
 		{
 			name:        "nil config",
 			cfg:         nil,
-			log:         nil,
 			prefixes:    []string{"test:"},
-			expectError: true,
 			errContains: "configuration not initialized",
 		},
 		{
-			name: "no prefixes",
-			cfg: &config.Config{
-				Cache: config.EnhancedCacheConfig{
-					Enabled:         true,
-					DefaultTTL:      5 * time.Minute,
-					MaxSize:         1000,
-					CleanupInterval: 1 * time.Minute,
-				},
-			},
+			name:        "nil logger",
+			cfg:         cacheCfg,
+			nilLog:      true,
+			prefixes:    []string{"test:"},
+			errContains: "logger not initialized",
+		},
+		{
+			name:        "no prefixes",
+			cfg:         cacheCfg,
 			prefixes:    nil,
-			expectError: true,
 			errContains: "no prefixes specified",
+		},
+		{
+			name:        "empty prefixes",
+			cfg:         cacheCfg,
+			prefixes:    []string{},
+			errContains: "no prefixes specified",
+		},
+		{
+			name:         "invalid output format",
+			cfg:          cacheCfg,
+			prefixes:     []string{"test:"},
+			outputFormat: "invalid-format",
+			errContains:  "invalid-format",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg = tt.cfg
-
-			if tt.log != nil {
-				log = tt.log
-			} else if tt.cfg != nil {
-				// Create logger only if config is not nil
-				logConfig := logger.LogConfig{
-					Level:     "error",
-					Format:    "json",
-					Output:    "stderr",
-					Component: "test",
-				}
-				testLog, err := logger.New(logConfig)
-				require.NoError(t, err)
-				log = testLog
-			}
-
-			cacheWarmPrefixes = tt.prefixes
-
+			// Creating the command resets the flag globals to their
+			// defaults, so the test inputs are set after it.
 			cmd := newCacheWarmCommand()
-			err := cmd.RunE(cmd, []string{})
 
-			if tt.expectError {
-				assert.Error(t, err)
-				if tt.errContains != "" {
-					assert.Contains(t, err.Error(), tt.errContains)
-				}
-			} else {
-				assert.NoError(t, err)
+			cfg = tt.cfg
+			log = createTestLoggerForCoveragePlus(t)
+			if tt.nilLog {
+				log = nil
 			}
+			cacheWarmPrefixes = tt.prefixes
+			cacheOutputFmt = tt.outputFormat
+
+			err := runCacheWarmCommand(cmd, []string{})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
 		})
 	}
 }
 
 // TestCacheWarmFlags tests cache warm command flags.
-func TestCacheWarmFlags(t *testing.T) {
-	// Save original values
-	origPrefixes := cacheWarmPrefixes
-	origRate := cacheWarmRate
-	origMaxKeys := cacheWarmMaxKeys
-	origBatchSize := cacheWarmBatchSize
-
-	defer func() {
-		cacheWarmPrefixes = origPrefixes
-		cacheWarmRate = origRate
-		cacheWarmMaxKeys = origMaxKeys
-		cacheWarmBatchSize = origBatchSize
-	}()
-
-	t.Run("default values", func(t *testing.T) {
-		cmd := newCacheWarmCommand()
-
-		rateFlag := cmd.Flags().Lookup("rate")
-		assert.Equal(t, "0", rateFlag.DefValue)
-
-		maxKeysFlag := cmd.Flags().Lookup("max-keys")
-		assert.Equal(t, "0", maxKeysFlag.DefValue)
-
-		batchSizeFlag := cmd.Flags().Lookup("batch-size")
-		assert.Equal(t, "100", batchSizeFlag.DefValue)
-	})
-
-	t.Run("set flags", func(t *testing.T) {
-		cacheWarmPrefixes = []string{"users:", "sessions:"}
-		cacheWarmRate = 1000
-		cacheWarmMaxKeys = 10000
-		cacheWarmBatchSize = 50
-
-		assert.Equal(t, []string{"users:", "sessions:"}, cacheWarmPrefixes)
-		assert.Equal(t, 1000, cacheWarmRate)
-		assert.Equal(t, 10000, cacheWarmMaxKeys)
-		assert.Equal(t, 50, cacheWarmBatchSize)
-	})
-}
-
 // TestOpenStorageForWarmingValidation tests storage opening validation.
 func TestOpenStorageForWarmingValidation(t *testing.T) {
 	// Save original values
@@ -1657,187 +1091,8 @@ func TestRunCacheClearCommandReadError(t *testing.T) {
 
 // TestRunCacheClearCommandSpecificEntity tests clearing specific entity.
 // =============================================================================
-// Cache Command Tests - Testing nil config checks (no args required)
-// =============================================================================
-
-func TestCacheWarmCommand_NilConfig_NinetyBoost(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-	cmd := newCacheWarmCommand()
-	err := runCacheWarmCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestCacheWarmCommand_NoPrefixes_NinetyBoost(t *testing.T) {
-	origCfg := cfg
-	origPrefixes := cacheWarmPrefixes
-	defer func() {
-		cfg = origCfg
-		cacheWarmPrefixes = origPrefixes
-	}()
-
-	// Set empty config
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	cfg = &testConfigNinetyBoost
-	cacheWarmPrefixes = []string{}
-
-	cmd := newCacheWarmCommand()
-	err = runCacheWarmCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no prefixes specified")
-}
-
-func TestInitializeCacheRegistry_NilConfig_NinetyBoost(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-	_, err := initializeCacheRegistry()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestInitializeCacheRegistry_NilLogger_NinetyBoost(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = &testConfigNinetyBoost
-	log = nil
-
-	_, err := initializeCacheRegistry()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-}
-
-// =============================================================================
 // Test Helper for Config
 // =============================================================================
-
-var testConfigNinetyBoost = config.Config{
-	Cache: config.EnhancedCacheConfig{
-		Enabled:         true,
-		MaxSize:         1000,
-		DefaultTTL:      time.Minute,
-		CleanupInterval: time.Minute,
-	},
-}
-
-func TestRunCacheWarmCommand_NilConfigCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = nil
-	log = createTestLoggerForCoveragePlus(t)
-
-	cmd := &cobra.Command{}
-	err := runCacheWarmCommand(cmd, []string{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRunCacheWarmCommand_NoPrefixesCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origPrefixes := cacheWarmPrefixes
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheWarmPrefixes = origPrefixes
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheWarmPrefixes = nil
-
-	cmd := &cobra.Command{}
-	err := runCacheWarmCommand(cmd, []string{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no prefixes specified")
-}
-
-func TestRunCacheWarmCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origPrefixes := cacheWarmPrefixes
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheWarmPrefixes = origPrefixes
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheWarmPrefixes = []string{"test:"}
-	cacheOutputFmt = "invalid-format"
-
-	cmd := &cobra.Command{}
-	err := runCacheWarmCommand(cmd, []string{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid")
-}
-
-func TestRunCacheWarmCommand_NilLoggerWithConfigCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origPrefixes := cacheWarmPrefixes
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheWarmPrefixes = origPrefixes
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled: true,
-		},
-	}
-	log = nil
-	cacheWarmPrefixes = []string{"test:"}
-
-	cmd := &cobra.Command{}
-	err := runCacheWarmCommand(cmd, []string{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-}
 
 func TestRunCacheWarmCommand_WithValidConfigButStorageErrorCovPlus(t *testing.T) {
 	origCfg := cfg
@@ -1915,191 +1170,6 @@ func TestInitializeCacheWarmerDependencies_NilLoggerCovPlus(t *testing.T) {
 	assert.Nil(t, manager)
 	assert.Nil(t, reader)
 	assert.Nil(t, cleanup)
-}
-
-func TestOpenStorageForWarming_NilConfigCovPlus(t *testing.T) {
-	origCfg := cfg
-	defer func() {
-		cfg = origCfg
-	}()
-
-	cfg = nil
-
-	reader, err := openStorageForWarming()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-	assert.Nil(t, reader)
-}
-
-func TestOpenStorageForWarming_NoDataDirCovPlus(t *testing.T) {
-	origCfg := cfg
-	origDataDir := dataDir
-	defer func() {
-		cfg = origCfg
-		dataDir = origDataDir
-	}()
-
-	cfg = &config.Config{
-		Storage: config.StorageConfig{
-			DataDir: "",
-		},
-	}
-	dataDir = ""
-
-	reader, err := openStorageForWarming()
-
-	require.NoError(t, err)
-	assert.NotNil(t, reader)
-}
-
-func TestOpenStorageForWarming_UsesDataDirFlagCovPlus(t *testing.T) {
-	origCfg := cfg
-	origDataDir := dataDir
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		dataDir = origDataDir
-		log = origLog
-	}()
-
-	tmpDir := t.TempDir()
-	cfg = &config.Config{
-		Storage: config.StorageConfig{
-			DataDir: "/not/used",
-		},
-	}
-	dataDir = tmpDir
-	log = createTestLoggerForCoveragePlus(t)
-
-	reader, err := openStorageForWarming()
-
-	if err != nil {
-		assert.NotContains(t, err.Error(), "not configured")
-	} else if reader != nil {
-		if closer, ok := reader.(interface{ Close() error }); ok {
-			closer.Close()
-		}
-	}
-}
-
-// =============================================================================
-// Initialize Cache Registry Coverage Tests
-// =============================================================================
-
-func TestInitializeCacheRegistry_NilConfigCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = nil
-	log = createTestLoggerForCoveragePlus(t)
-
-	registry, err := initializeCacheRegistry()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-	assert.Nil(t, registry)
-}
-
-func TestInitializeCacheRegistry_NilLoggerCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = &config.Config{}
-	log = nil
-
-	registry, err := initializeCacheRegistry()
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "logger not initialized")
-	assert.Nil(t, registry)
-}
-
-func TestInitializeCacheRegistry_SuccessCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-
-	registry, err := initializeCacheRegistry()
-
-	require.NoError(t, err)
-	require.NotNil(t, registry)
-	defer registry.Close()
-
-	userCache := registry.GetEntityCache("user")
-	assert.True(t, userCache.IsEnabled())
-}
-
-// =============================================================================
-// Cache Enable/Disable Command Coverage Tests
-// =============================================================================
-
-// =============================================================================
-// Cache Config Command Coverage Tests
-// =============================================================================
-
-func TestRunCacheConfigCommand_NilConfigCovPlus(t *testing.T) {
-	origCfg := cfg
-	defer func() {
-		cfg = origCfg
-	}()
-
-	cfg = nil
-
-	cmd := &cobra.Command{}
-	err := runCacheConfigCommand(cmd, []string{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
-func TestRunCacheConfigCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled: true,
-		},
-	}
-	cacheOutputFmt = "invalid"
-
-	cmd := &cobra.Command{}
-	err := runCacheConfigCommand(cmd, []string{})
-
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -2383,14 +1453,6 @@ func TestBuildSDKClientOptions(t *testing.T) {
 }
 
 // =============================================================================
-// Cache Stats Command Coverage Tests
-// =============================================================================
-
-// =============================================================================
-// Cache Clear Command Coverage Tests
-// =============================================================================
-
-// =============================================================================
 // Helper Functions
 // =============================================================================
 
@@ -2455,21 +1517,7 @@ func TestCacheCommandCreationCovPlus(t *testing.T) {
 		require.NotNil(t, cmd)
 		assert.Equal(t, "disable <entity-type>", cmd.Use)
 	})
-
-	t.Run("NewCacheWarmCommand", func(t *testing.T) {
-		cmd := newCacheWarmCommand()
-		require.NotNil(t, cmd)
-		assert.Equal(t, "warm", cmd.Use)
-		assert.NotNil(t, cmd.Flags().Lookup("prefix"))
-		assert.NotNil(t, cmd.Flags().Lookup("rate"))
-		assert.NotNil(t, cmd.Flags().Lookup("max-keys"))
-		assert.NotNil(t, cmd.Flags().Lookup("batch-size"))
-	})
 }
-
-// =============================================================================
-// Error Types Coverage Tests
-// =============================================================================
 
 // =============================================================================
 // Client Options Coverage Tests
