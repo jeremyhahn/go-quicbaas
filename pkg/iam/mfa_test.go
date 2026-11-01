@@ -197,6 +197,7 @@ func createMFATestUser(t *testing.T, m *DefaultMFAManager) {
 }
 
 func TestNewMFAManager(t *testing.T) {
+	customStorage := NewMemoryMFAStorage()
 	tests := []struct {
 		name        string
 		opts        []MFAManagerOption
@@ -243,11 +244,11 @@ func TestNewMFAManager(t *testing.T) {
 		{
 			name: "custom storage",
 			opts: []MFAManagerOption{
-				WithMFAStorage(NewMemoryMFAStorage()),
+				WithMFAStorage(customStorage),
 			},
 			expectError: false,
 			validate: func(t *testing.T, m *DefaultMFAManager) {
-				assert.NotNil(t, m.storage)
+				assert.Same(t, customStorage, m.storage)
 			},
 		},
 		{
@@ -1446,10 +1447,6 @@ func TestGenerateBackupCodes(t *testing.T) {
 			expectError: nil,
 			validate: func(t *testing.T, codes []string, m *DefaultMFAManager) {
 				assert.Len(t, codes, m.config.BackupCodes)
-				for _, code := range codes {
-					assert.Len(t, code, 9) // XXXX-XXXX format
-					assert.Contains(t, code, "-")
-				}
 			},
 		},
 		{
@@ -1845,11 +1842,7 @@ func TestGenerateBackupCode(t *testing.T) {
 		code, err := generateBackupCode()
 		assert.NoError(t, err)
 		assert.Len(t, code, 9) // XXXX-XXXX format
-		assert.Contains(t, code, "-")
-
-		// Verify format: 4 chars, dash, 4 chars
-		parts := len(code)
-		assert.Equal(t, 9, parts)
+		assert.Equal(t, "-", code[4:5])
 
 		// Ensure uniqueness
 		assert.False(t, codes[code], "duplicate code generated: %s", code)
