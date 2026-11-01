@@ -1083,11 +1083,10 @@ func TestMessagingServer_WatchChannel(t *testing.T) {
 
 func TestMessagingServer_GetStats(t *testing.T) {
 	tests := []struct {
-		name        string
-		mockFunc    func() *messaging.Stats
-		isRunning   bool
-		expectError bool
-		validate    func(t *testing.T, resp *pb.MessagingGetStatsResponse)
+		name      string
+		mockFunc  func() *messaging.Stats
+		isRunning bool
+		validate  func(t *testing.T, resp *pb.MessagingGetStatsResponse)
 	}{
 		{
 			name: "successful_get_stats",
@@ -1102,8 +1101,7 @@ func TestMessagingServer_GetStats(t *testing.T) {
 					BufferUtilization:  0.75,
 				}
 			},
-			isRunning:   true,
-			expectError: false,
+			isRunning: true,
 			validate: func(t *testing.T, resp *pb.MessagingGetStatsResponse) {
 				require.NotNil(t, resp)
 				require.NotNil(t, resp.Stats)
@@ -1119,8 +1117,7 @@ func TestMessagingServer_GetStats(t *testing.T) {
 			mockFunc: func() *messaging.Stats {
 				return &messaging.Stats{}
 			},
-			isRunning:   false,
-			expectError: false,
+			isRunning: false,
 			validate: func(t *testing.T, resp *pb.MessagingGetStatsResponse) {
 				require.NotNil(t, resp)
 				assert.False(t, resp.IsRunning)
@@ -1131,8 +1128,7 @@ func TestMessagingServer_GetStats(t *testing.T) {
 			mockFunc: func() *messaging.Stats {
 				return nil
 			},
-			isRunning:   true,
-			expectError: false,
+			isRunning: true,
 			validate: func(t *testing.T, resp *pb.MessagingGetStatsResponse) {
 				require.NotNil(t, resp)
 				assert.Nil(t, resp.Stats)
@@ -1151,14 +1147,8 @@ func TestMessagingServer_GetStats(t *testing.T) {
 
 			resp, err := server.GetStats(context.Background(), &pb.MessagingGetStatsRequest{})
 
-			if tc.expectError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				if tc.validate != nil {
-					tc.validate(t, resp)
-				}
-			}
+			require.NoError(t, err)
+			tc.validate(t, resp)
 		})
 	}
 }
