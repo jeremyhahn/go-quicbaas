@@ -1239,34 +1239,35 @@ func TestHandleOrchestratorListWorkflows_NoAgent(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
-func TestHandleOrchestratorGetWorkflow_NotFound(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
+// TestHandleOrchestratorGetWorkflow_Errors maps each get-workflow failure to
+// its HTTP status. An unset name URL param simulates a missing name.
+func TestHandleOrchestratorGetWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		wfName     string
+		wantStatus int
+	}{
+		{name: "not found", wfName: "does-not-exist", wantStatus: http.StatusNotFound},
+		{name: "missing name", wantStatus: http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/does-not-exist", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "does-not-exist")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/"+tc.wfName, nil)
+			rctx := chi.NewRouteContext()
+			if tc.wfName != "" {
+				rctx.URLParams.Add("name", tc.wfName)
+			}
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorGetWorkflow(rec, req)
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorGetWorkflow(rec, req)
 
-	assert.Equal(t, http.StatusNotFound, rec.Code)
-}
-
-func TestHandleOrchestratorGetWorkflow_MissingName(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodGet, "/api/v1/orchestrator/workflows/", nil)
-	rctx := chi.NewRouteContext()
-	// Do not set "name" URL param — simulates a missing name.
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorGetWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Equal(t, tc.wantStatus, rec.Code)
+		})
+	}
 }
 
 func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
@@ -1296,54 +1297,38 @@ func TestHandleOrchestratorCreateWorkflow_Success(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, rec.Code)
 }
 
-func TestHandleOrchestratorCreateWorkflow_MissingName(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := map[string]interface{}{
-		"definition": map[string]interface{}{
-			"mode": "autonomous",
+// TestHandleOrchestratorCreateWorkflow_Errors proves each malformed create
+// request answers 400, including a definition that still sets the retired
+// system_prompt, whose error names the offending field.
+func TestHandleOrchestratorCreateWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantContain string
+	}{
+		{name: "missing name", body: `{"definition":{"mode":"autonomous"}}`},
+		{name: "missing definition", body: `{"name":"test-workflow"}`},
+		{name: "invalid json", body: `{invalid`},
+		{
+			name:        "retired system prompt",
+			body:        `{"name":"my-workflow","definition":` + retiredSystemPromptDefinition + `}`,
+			wantContain: "agents[0].system_prompt",
 		},
 	}
-	bodyBytes, err := json.Marshal(body)
-	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
 
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
+			req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorCreateWorkflow(rec, req)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleOrchestratorCreateWorkflow_MissingDefinition(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := map[string]interface{}{
-		"name": "test-workflow",
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.wantContain)
+		})
 	}
-	bodyBytes, err := json.Marshal(body)
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleOrchestratorCreateWorkflow_InvalidJSON(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(`{invalid`)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 // =============================================================================
@@ -1390,66 +1375,57 @@ func TestHandleUpdateWorkflow_Success(t *testing.T) {
 const retiredSystemPromptDefinition = `{"name":"my-workflow","mode":"autonomous",` +
 	`"agents":[{"role":"worker","backend":"claude","system_prompt":"be careful"}]}`
 
-func TestHandleUpdateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-	agentSvc.updateWorkflowFunc = func(*orchestration.WorkflowDefinition) error {
-		t.Fatal("a definition carrying a retired field must not reach the service")
-		return nil
+// TestHandleUpdateWorkflow_Errors maps each update failure to its HTTP
+// status. A definition carrying the retired system_prompt must be refused
+// before it reaches the service.
+func TestHandleUpdateWorkflow_Errors(t *testing.T) {
+	tests := []struct {
+		name        string
+		wfName      string
+		body        string
+		updateErr   error
+		wantStatus  int
+		wantContain string
+	}{
+		{
+			name:        "retired system prompt",
+			wfName:      "my-workflow",
+			body:        retiredSystemPromptDefinition,
+			wantStatus:  http.StatusBadRequest,
+			wantContain: "agents[0].system_prompt",
+		},
+		{
+			name:       "not found",
+			wfName:     "ghost",
+			body:       `{"name":"ghost","mode":"autonomous"}`,
+			updateErr:  &orchestration.WorkflowNotFoundError{Name: "ghost"},
+			wantStatus: http.StatusNotFound,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server, agentSvc, cleanup := setupOrchestratorMockServer(t)
+			defer cleanup()
+			agentSvc.updateWorkflowFunc = func(*orchestration.WorkflowDefinition) error {
+				if tc.updateErr == nil {
+					t.Fatal("a definition carrying a retired field must not reach the service")
+				}
+				return tc.updateErr
+			}
 
-	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/my-workflow",
-		bytes.NewReader([]byte(retiredSystemPromptDefinition)))
-	req.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "my-workflow")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorUpdateWorkflow(rec, req)
+			req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/"+tc.wfName, bytes.NewReader([]byte(tc.body)))
+			req.Header.Set("Content-Type", "application/json")
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("name", tc.wfName)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
-}
+			rec := httptest.NewRecorder()
+			server.HandleOrchestratorUpdateWorkflow(rec, req)
 
-func TestHandleOrchestratorCreateWorkflow_RefusesRetiredSystemPrompt(t *testing.T) {
-	server, _, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	body := `{"name":"my-workflow","definition":` + retiredSystemPromptDefinition + `}`
-	req := systemRequest(http.MethodPost, "/api/v1/orchestrator/workflows", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorCreateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Contains(t, rec.Body.String(), "agents[0].system_prompt")
-}
-
-// TestHandleUpdateWorkflow_NotFound verifies that a missing workflow returns 404.
-func TestHandleUpdateWorkflow_NotFound(t *testing.T) {
-	server, agentSvc, cleanup := setupOrchestratorMockServer(t)
-	defer cleanup()
-
-	agentSvc.updateWorkflowFunc = func(def *orchestration.WorkflowDefinition) error {
-		return &orchestration.WorkflowNotFoundError{Name: def.Name}
+			assert.Equal(t, tc.wantStatus, rec.Code)
+			assert.Contains(t, rec.Body.String(), tc.wantContain)
+		})
 	}
-
-	body, err := json.Marshal(orchestration.WorkflowDefinition{
-		Name: "ghost",
-		Mode: "autonomous",
-	})
-	require.NoError(t, err)
-
-	req := systemRequest(http.MethodPut, "/api/v1/orchestrator/workflows/ghost", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("name", "ghost")
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	rec := httptest.NewRecorder()
-	server.HandleOrchestratorUpdateWorkflow(rec, req)
-
-	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // =============================================================================
