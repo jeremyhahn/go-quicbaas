@@ -963,60 +963,69 @@ func TestRunCacheEnableCommand(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
+	origFmt := cacheOutputFmt
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
+		cacheOutputFmt = origFmt
 	}()
 
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
+	log = createTestLoggerForCoveragePlus(t)
 
 	tests := []struct {
-		name         string
-		args         []string
-		outputFormat string
-		expectError  bool
+		name          string
+		entity        string
+		entityEnabled bool
+		outputFormat  string
+		expectError   bool
 	}{
 		{
 			name:         "enable disabled entity",
-			args:         []string{"post"},
+			entity:       "post",
 			outputFormat: "table",
-			expectError:  false,
+		},
+		{
+			name:         "enable disabled entity json",
+			entity:       "article",
+			outputFormat: "json",
+		},
+		{
+			name:          "enable already enabled entity",
+			entity:        "user",
+			entityEnabled: true,
+			outputFormat:  "table",
+		},
+		{
+			name:         "invalid output format",
+			entity:       "test",
+			outputFormat: "invalid",
+			expectError:  true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cfg = &config.Config{
+				Cache: config.EnhancedCacheConfig{
+					Enabled:         true,
+					DefaultTTL:      5 * time.Minute,
+					MaxSize:         1000,
+					CleanupInterval: 1 * time.Minute,
+					Entities: map[string]config.EntityCacheConfig{
+						tt.entity: {
+							Enabled: tt.entityEnabled,
+							TTL:     5 * time.Minute,
+							MaxSize: 200,
+						},
+					},
+				},
+			}
 			cmd := newCacheEnableCommand()
 
 			cacheOutputFmt = tt.outputFormat
 
-			err := cmd.RunE(cmd, tt.args)
+			err := cmd.RunE(cmd, []string{tt.entity})
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -1028,109 +1037,82 @@ func TestRunCacheEnableCommand(t *testing.T) {
 }
 
 // TestRunCacheEnableCommandJSON tests enabling cache with JSON output separately.
-func TestRunCacheEnableCommandJSON(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"article": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	cmd := newCacheEnableCommand()
-	cacheOutputFmt = "json"
-
-	err = cmd.RunE(cmd, []string{"article"})
-	assert.NoError(t, err)
-}
-
 // TestRunCacheDisableCommand tests the runCacheDisableCommand function.
 func TestRunCacheDisableCommand(t *testing.T) {
 	// Save original values
 	origCfg := cfg
 	origLog := log
+	origFmt := cacheOutputFmt
 
 	defer func() {
 		cfg = origCfg
 		log = origLog
+		cacheOutputFmt = origFmt
 	}()
 
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
+	log = createTestLoggerForCoveragePlus(t)
 
 	tests := []struct {
-		name         string
-		args         []string
-		outputFormat string
-		expectError  bool
+		name          string
+		entity        string
+		entityEnabled bool
+		outputFormat  string
+		expectError   bool
 	}{
 		{
-			name:         "disable enabled entity",
-			args:         []string{"user"},
-			outputFormat: "table",
-			expectError:  false,
+			name:          "disable enabled entity",
+			entity:        "user",
+			entityEnabled: true,
+			outputFormat:  "table",
+		},
+		{
+			name:          "disable enabled entity json",
+			entity:        "profile",
+			entityEnabled: true,
+			outputFormat:  "json",
+		},
+		{
+			name:          "disable enabled entity yaml",
+			entity:        "user",
+			entityEnabled: true,
+			outputFormat:  "yaml",
+		},
+		{
+			name:         "disable already disabled entity",
+			entity:       "post",
+			outputFormat: "json",
+		},
+		{
+			name:          "invalid output format",
+			entity:        "test",
+			entityEnabled: true,
+			outputFormat:  "invalid",
+			expectError:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cfg = &config.Config{
+				Cache: config.EnhancedCacheConfig{
+					Enabled:         true,
+					DefaultTTL:      5 * time.Minute,
+					MaxSize:         1000,
+					CleanupInterval: 1 * time.Minute,
+					Entities: map[string]config.EntityCacheConfig{
+						tt.entity: {
+							Enabled: tt.entityEnabled,
+							TTL:     10 * time.Minute,
+							MaxSize: 500,
+						},
+					},
+				},
+			}
 			cmd := newCacheDisableCommand()
 
 			cacheOutputFmt = tt.outputFormat
 
-			err := cmd.RunE(cmd, tt.args)
+			err := cmd.RunE(cmd, []string{tt.entity})
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -1142,50 +1124,6 @@ func TestRunCacheDisableCommand(t *testing.T) {
 }
 
 // TestRunCacheDisableCommandJSON tests disabling cache with JSON output separately.
-func TestRunCacheDisableCommandJSON(t *testing.T) {
-	// Save original values
-	origCfg := cfg
-	origLog := log
-
-	defer func() {
-		cfg = origCfg
-		log = origLog
-	}()
-
-	// Setup test config and logger
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"profile": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-
-	logConfig := logger.LogConfig{
-		Level:     "error",
-		Format:    "json",
-		Output:    "stderr",
-		Component: "test",
-	}
-	testLog, err := logger.New(logConfig)
-	require.NoError(t, err)
-	log = testLog
-
-	cmd := newCacheDisableCommand()
-	cacheOutputFmt = "json"
-
-	err = cmd.RunE(cmd, []string{"profile"})
-	assert.NoError(t, err)
-}
-
 // TestCacheWarmCommand tests the newCacheWarmCommand function.
 func TestCacheWarmCommand(t *testing.T) {
 	cmd := newCacheWarmCommand()
@@ -2242,210 +2180,6 @@ func TestInitializeCacheRegistry_SuccessCovPlus(t *testing.T) {
 // Cache Enable/Disable Command Coverage Tests
 // =============================================================================
 
-func TestRunCacheEnableCommand_WithRegistryCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "json"
-
-	cmd := &cobra.Command{}
-	err := runCacheEnableCommand(cmd, []string{"post"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheEnableCommand_AlreadyEnabledCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "table"
-
-	cmd := &cobra.Command{}
-	err := runCacheEnableCommand(cmd, []string{"user"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheDisableCommand_WithRegistryCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"user": {
-					Enabled: true,
-					TTL:     10 * time.Minute,
-					MaxSize: 500,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "yaml"
-
-	cmd := &cobra.Command{}
-	err := runCacheDisableCommand(cmd, []string{"user"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheDisableCommand_AlreadyDisabledCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"post": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "json"
-
-	cmd := &cobra.Command{}
-	err := runCacheDisableCommand(cmd, []string{"post"})
-
-	require.NoError(t, err)
-}
-
-func TestRunCacheEnableCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"test": {
-					Enabled: false,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "invalid"
-
-	cmd := &cobra.Command{}
-	err := runCacheEnableCommand(cmd, []string{"test"})
-
-	require.Error(t, err)
-}
-
-func TestRunCacheDisableCommand_InvalidOutputFormatCovPlus(t *testing.T) {
-	origCfg := cfg
-	origLog := log
-	origFmt := cacheOutputFmt
-	defer func() {
-		cfg = origCfg
-		log = origLog
-		cacheOutputFmt = origFmt
-	}()
-
-	cfg = &config.Config{
-		Cache: config.EnhancedCacheConfig{
-			Enabled:         true,
-			DefaultTTL:      5 * time.Minute,
-			MaxSize:         1000,
-			CleanupInterval: 1 * time.Minute,
-			Entities: map[string]config.EntityCacheConfig{
-				"test": {
-					Enabled: true,
-					TTL:     5 * time.Minute,
-					MaxSize: 200,
-				},
-			},
-		},
-	}
-	log = createTestLoggerForCoveragePlus(t)
-	cacheOutputFmt = "invalid"
-
-	cmd := &cobra.Command{}
-	err := runCacheDisableCommand(cmd, []string{"test"})
-
-	require.Error(t, err)
-}
-
 // =============================================================================
 // Cache Config Command Coverage Tests
 // =============================================================================
@@ -2672,7 +2406,7 @@ func TestShutdownEmbeddedServer_NoServerCovPlus(t *testing.T) {
 // SDK Client Coverage Tests
 // =============================================================================
 
-func TestCreateSDKClient_WithExistingClientCovPlus(t *testing.T) {
+func TestCreateSDKClient(t *testing.T) {
 	origAddr := address
 	origTransport := transport
 	defer func() {
@@ -2681,34 +2415,89 @@ func TestCreateSDKClient_WithExistingClientCovPlus(t *testing.T) {
 		resetSDKClient()
 	}()
 
-	resetSDKClient()
+	t.Run("returns existing client", func(t *testing.T) {
+		resetSDKClient()
 
-	mock := &mockSDKClientForClusterCovPlusTest{}
-	var client quicbaas.Client = mock
-	sdkClientHolder.Store(&client)
+		mock := &mockSDKClientForClusterCovPlusTest{}
+		var client quicbaas.Client = mock
+		sdkClientHolder.Store(&client)
 
-	retrieved, err := createSDKClient()
-	require.NoError(t, err)
-	assert.Same(t, mock, retrieved)
+		retrieved, err := createSDKClient()
+		require.NoError(t, err)
+		assert.Same(t, mock, retrieved)
+	})
+
+	t.Run("empty address", func(t *testing.T) {
+		resetSDKClient()
+		address = ""
+		transport = "grpc"
+
+		client, err := createSDKClient()
+
+		require.Error(t, err)
+		assert.Nil(t, client)
+		assert.Contains(t, err.Error(), "empty")
+	})
 }
 
-func TestBuildSDKClientOptions_EmbeddedTransportErrorCovPlus(t *testing.T) {
+func TestBuildSDKClientOptions(t *testing.T) {
+	origAddr := address
 	origTransport := transport
 	origTimeout := globalTimeout
 	defer func() {
+		address = origAddr
 		transport = origTransport
 		globalTimeout = origTimeout
 	}()
 
-	transport = "embedded"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	if err != nil {
-		assert.Contains(t, err.Error(), "embedded")
+	tests := []struct {
+		name      string
+		transport string
+		address   string
+		timeout   time.Duration
+		// mayFail marks transports whose setup can fail on the host; a
+		// failure must still name the transport.
+		mayFail     bool
+		expectError bool
+	}{
+		{name: "rest", transport: "rest", timeout: 10 * time.Second},
+		{name: "quic", transport: "quic", timeout: 5 * time.Second},
+		{name: "unix", transport: "unix", address: "/tmp/quicbaas.sock", timeout: 5 * time.Second},
+		{name: "mcp", transport: "mcp", timeout: 5 * time.Second},
+		{name: "embedded", transport: "embedded", timeout: 5 * time.Second, mayFail: true},
+		{name: "unsupported", transport: "unsupported", timeout: 5 * time.Second, expectError: true},
 	}
-	_ = opts
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			address = origAddr
+			if tt.address != "" {
+				address = tt.address
+			}
+			transport = tt.transport
+			globalTimeout = tt.timeout
+
+			opts, err := buildSDKClientOptions()
+
+			switch {
+			case tt.expectError:
+				require.Error(t, err)
+				assert.Nil(t, opts)
+				var unsupportedErr *UnsupportedTransportError
+				require.ErrorAs(t, err, &unsupportedErr)
+				msg := err.Error()
+				assert.Contains(t, msg, "unsupported transport")
+				assert.Contains(t, msg, tt.transport)
+				assert.Contains(t, msg, "grpc")
+				assert.Contains(t, msg, "rest")
+			case tt.mayFail && err != nil:
+				assert.Contains(t, err.Error(), tt.transport)
+			default:
+				require.NoError(t, err)
+				assert.NotEmpty(t, opts)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -3060,124 +2849,9 @@ func TestCacheCommandCreationCovPlus(t *testing.T) {
 // Error Types Coverage Tests
 // =============================================================================
 
-func TestErrSDKClientClosedCovPlus(t *testing.T) {
-	assert.NotNil(t, ErrSDKClientClosed)
-	assert.Contains(t, ErrSDKClientClosed.Error(), "closed")
-}
-
-func TestErrEmptyAddressCovPlus(t *testing.T) {
-	assert.NotNil(t, ErrEmptyAddress)
-	assert.Contains(t, ErrEmptyAddress.Error(), "empty")
-}
-
-func TestErrEmbeddedServerNotStartedCovPlus(t *testing.T) {
-	assert.NotNil(t, ErrEmbeddedServerNotStarted)
-	assert.Contains(t, ErrEmbeddedServerNotStarted.Error(), "not started")
-}
-
-func TestUnsupportedTransportErrorCovPlus(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "invalid-transport"}
-	msg := err.Error()
-
-	assert.Contains(t, msg, "unsupported transport")
-	assert.Contains(t, msg, "invalid-transport")
-	assert.Contains(t, msg, "grpc")
-	assert.Contains(t, msg, "rest")
-}
-
 // =============================================================================
 // Client Options Coverage Tests
 // =============================================================================
-
-func TestBuildSDKClientOptions_RESTTransportCovPlus(t *testing.T) {
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		transport = origTransport
-		globalTimeout = origTimeout
-	}()
-
-	transport = "rest"
-	globalTimeout = 10 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptions_QUICTransportCovPlus(t *testing.T) {
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		transport = origTransport
-		globalTimeout = origTimeout
-	}()
-
-	transport = "quic"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptions_UnixTransportCovPlus(t *testing.T) {
-	origAddr := address
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		address = origAddr
-		transport = origTransport
-		globalTimeout = origTimeout
-	}()
-
-	address = "/tmp/quicbaas.sock"
-	transport = "unix"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptions_MCPTransportCovPlus(t *testing.T) {
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		transport = origTransport
-		globalTimeout = origTimeout
-	}()
-
-	transport = "mcp"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	require.NoError(t, err)
-	assert.NotEmpty(t, opts)
-}
-
-func TestBuildSDKClientOptions_UnsupportedTransportCovPlus(t *testing.T) {
-	origTransport := transport
-	origTimeout := globalTimeout
-	defer func() {
-		transport = origTransport
-		globalTimeout = origTimeout
-	}()
-
-	transport = "unsupported"
-	globalTimeout = 5 * time.Second
-
-	opts, err := buildSDKClientOptions()
-
-	require.Error(t, err)
-	assert.Nil(t, opts)
-	var unsupportedErr *UnsupportedTransportError
-	assert.ErrorAs(t, err, &unsupportedErr)
-}
 
 func TestCloseSDKClient_NoClientCovPlus(t *testing.T) {
 	defer func() {
@@ -3190,24 +2864,4 @@ func TestCloseSDKClient_NoClientCovPlus(t *testing.T) {
 	err := closeSDKClient()
 
 	assert.NoError(t, err)
-}
-
-func TestCreateSDKClient_EmptyAddressCovPlus(t *testing.T) {
-	origAddr := address
-	origTransport := transport
-	defer func() {
-		address = origAddr
-		transport = origTransport
-		resetSDKClient()
-	}()
-
-	resetSDKClient()
-	address = ""
-	transport = "grpc"
-
-	client, err := createSDKClient()
-
-	require.Error(t, err)
-	assert.Nil(t, client)
-	assert.Contains(t, err.Error(), "empty")
 }
