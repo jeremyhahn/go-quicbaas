@@ -3830,6 +3830,18 @@ func TestAgentRegistry_EmptyArgument(t *testing.T) {
 				return reg.Heartbeat(ctx, "t-hb", "", nil)
 			},
 		},
+		{
+			name: "UpdateFleetNode empty ID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.UpdateFleetNode(ctx, &FleetNode{ID: "", TenantID: "t1"})
+			},
+		},
+		{
+			name: "UpdateFleetNode empty tenantID",
+			call: func(ctx context.Context, reg FleetRegistry) error {
+				return reg.UpdateFleetNode(ctx, &FleetNode{ID: "agent-1", TenantID: ""})
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -4817,24 +4829,6 @@ func TestOrchestrator_DiscoverProjects_FilePath(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// session_store — ListSessions with cancelled context
-// =============================================================================
-
-func TestSessionStore_ListSessions_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	// Cancelled context should return an error.
-	_, err := store.ListSessions(ctx, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
 func TestOrchestrator_DiscoverProjects_EmptyRootPath(t *testing.T) {
 	t.Parallel()
 
@@ -5340,233 +5334,30 @@ func TestOrchestrator_SpawnSession_WithProjectModel(t *testing.T) {
 }
 
 // =============================================================================
-// agent_registry — UpdateFleetNode validation errors
+// Stores — cancelled context paths the store test files do not cover
 // =============================================================================
 
-func TestAgentRegistry_UpdateAgent_EmptyID(t *testing.T) {
+func TestAgentRegistry_GetFleetNode_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
-	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
-		ID:       "",
-		TenantID: "t1",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty agent ID")
-	}
-}
-
-func TestAgentRegistry_UpdateAgent_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	err := reg.UpdateFleetNode(context.Background(), &FleetNode{
-		ID:       "agent-1",
-		TenantID: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty tenant ID")
-	}
-}
-
-// =============================================================================
-// agent_registry — GetFleetNode with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_GetAgent_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := reg.GetFleetNode(ctx, "t1", "agent-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
+	_, err := NewInMemoryFleetRegistry().GetFleetNode(ctx, "t1", "agent-1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
-// =============================================================================
-// agent_registry — Heartbeat with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_Heartbeat_CancelledContext(t *testing.T) {
+func TestSessionStore_UpdateSessionStatus_CancelledContext(t *testing.T) {
 	t.Parallel()
 
-	reg := NewInMemoryFleetRegistry()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := reg.Heartbeat(ctx, "t1", "agent-1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — GetTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_GetTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := ts.GetTask(ctx, "t1", "task-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — CompleteTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_CompleteTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.CompleteTask(ctx, "t1", "task-1", &TaskResult{Output: "done"})
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — FailTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_FailTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.FailTask(ctx, "t1", "task-1", "reason")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — ClaimTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_ClaimTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.ClaimTask(ctx, "t1", "task-1", "agent-x")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — UpdateTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_UpdateTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.UpdateTask(ctx, &Task{ID: "task-1", TenantID: "t1", Subject: "x"})
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — ListTasks with cancelled context
-// =============================================================================
-
-func TestTaskStore_ListTasks_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := ts.ListTasks(ctx, "t1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — DeleteTask with cancelled context
-// =============================================================================
-
-func TestTaskStore_DeleteTask_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	ts := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := ts.DeleteTask(ctx, "t1", "task-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// agent_registry — ListFleetNodes with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_ListAgents_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := reg.ListFleetNodes(ctx, "t1", nil)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// agent_registry — DeleteTenantFleetNodes with cancelled context
-// =============================================================================
-
-func TestAgentRegistry_DeleteTenantAgents_CancelledContext(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := reg.DeleteTenantFleetNodes(ctx, "t1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// container_runtime — Logs with empty containerID
-// =============================================================================
-
-func TestContainerRuntime_Logs_EmptyContainerIDV2(t *testing.T) {
-	t.Parallel()
-
-	rt := newFakeContainerRuntime(t)
-	_, err := rt.Logs(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty containerID")
+	err := NewInMemoryAgentStore().UpdateSessionStatus(ctx, "", "sess-1", SessionStateClosed)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
 
@@ -5595,65 +5386,7 @@ func TestOrchestrator_DefaultBackendName_MultipleBackends(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — ListFleetNodes success path (orchestrator wrapper)
-// =============================================================================
-
-func TestOrchestrator_ListAgents_SuccessPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	// Register some agents.
-	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-			TenantID: "t-la-s",
-			Name:     "agent-las-" + itoa(i),
-			Host:     "host-las:9090",
-			NodeType: "worker",
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	agents, err := impl.ListFleetNodes(ctx, "t-la-s", nil)
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) < 2 {
-		t.Errorf("expected at least 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
-// orchestrator — FleetNodeHeartbeat success path
-// =============================================================================
-
-func TestOrchestrator_AgentHeartbeat_SuccessPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	resp, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-		TenantID: "t-hb-s",
-		Name:     "agent-hbs",
-		Host:     "host-hbs:9090",
-		NodeType: "worker",
-	})
-	if err != nil {
-		t.Fatalf("RegisterFleetNode: %v", err)
-	}
-
-	if err := impl.FleetNodeHeartbeat(ctx, "t-hb-s", resp.Node.ID, nil); err != nil {
-		t.Fatalf("FleetNodeHeartbeat: %v", err)
-	}
-}
-
-// =============================================================================
-// orchestrator — CancelJob success path (job found and cancelled)
+// orchestrator — CancelJob on a job that is only persisted
 // =============================================================================
 
 func TestOrchestrator_CancelJob_KVFallback(t *testing.T) {
@@ -5669,33 +5402,13 @@ func TestOrchestrator_CancelJob_KVFallback(t *testing.T) {
 		State:    JobStateCompleted,
 	})
 
+	// Only a running job can be cancelled; a persisted one is not found.
 	ctx := ContextWithTenant(context.Background(), "t-cj-kv")
-	// CancelJob on a non-running (KV-only) job should return not-found error.
 	err := impl.CancelJob(ctx, "t-cj-kv", "job-cj-1")
-	// Expected: not found since job isn't in memory.
-	if err == nil {
-		t.Log("CancelJob on KV-only job returned nil (job might be gone)")
+	var notFound *JobNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *JobNotFoundError, got %T: %v", err, err)
 	}
-}
-
-// =============================================================================
-// orchestrator — SubscribeJobEvents coverage
-// =============================================================================
-
-// =============================================================================
-// orchestrator — publishEvent with valid event type
-// =============================================================================
-
-func TestOrchestrator_PublishEvent_ValidEvent(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := ContextWithTenant(context.Background(), "t-pub")
-
-	// publishEvent should not panic and should handle nil/empty gracefully.
-	impl.publishEvent(ctx, "t-pub", "test_event", map[string]string{
-		"key": "value",
-	})
 }
 
 // =============================================================================
@@ -5784,36 +5497,6 @@ func TestOrchestrator_LookupProject_Found(t *testing.T) {
 // =============================================================================
 // session_store — GetSession not found
 // =============================================================================
-
-func TestSessionStore_GetSession_Cancelled(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := store.GetSession(ctx, "", "sess-1")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// session_store — UpdateSessionStatus with cancelled context
-// =============================================================================
-
-func TestSessionStore_UpdateSessionStatus_Cancelled(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := store.UpdateSessionStatus(ctx, "", "sess-1", SessionStateClosed)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
 
 // =============================================================================
 // session_store — UpdateSessionActivity with empty sessionID
@@ -6125,85 +5808,6 @@ func TestOrchestrator_ListProjects_PaginationClamping(t *testing.T) {
 			t.Fatalf("ListProjects second page: %v", err)
 		}
 		_ = second
-	}
-}
-
-// =============================================================================
-// agent_registry — cancelled context paths
-// =============================================================================
-
-func TestAgentRegistry_UpdateAgent_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	agent := &FleetNode{
-		ID:       "agent-update-ctx",
-		TenantID: "t-upd",
-		Name:     "update-agent",
-	}
-	err := registry.UpdateFleetNode(ctx, agent)
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-func TestAgentRegistry_RemoveAgent_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	registry := NewInMemoryFleetRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
-
-	err := registry.RemoveFleetNode(ctx, "t-rm", "agent-rm-ctx")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// task_store — uncovered validation paths
-// =============================================================================
-
-func TestTaskStore_DeleteTenantTasks_CancelledCtx(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := store.DeleteTenantTasks(ctx, "tenant-a")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
-	}
-}
-
-// =============================================================================
-// session_store — ListSessions with cancelled ctx (triggers store error path)
-// =============================================================================
-
-func TestSessionStore_ListSessions_StoreError(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryAgentStore()
-
-	// Store valid data then cancel context during call.
-	if err := store.PutSession(context.Background(), &SessionRecord{
-		SessionID: "sess-store-err",
-		Backend:   "acp",
-		Status:    SessionStateIdle,
-	}); err != nil {
-		t.Fatalf("PutSession: %v", err)
-	}
-
-	// Now use a cancelled context so ListSessions returns ctx error.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := store.ListSessions(ctx, "")
-	if err == nil {
-		t.Fatal("expected error for cancelled context")
 	}
 }
 
