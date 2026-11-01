@@ -120,7 +120,9 @@ func TestConfigProcessor_Process_Slices(t *testing.T) {
 	}
 
 	type Config struct {
+		Strings  []string
 		Backends []Backend
+		Items    []*Backend
 	}
 
 	registry := NewResolverRegistry()
@@ -129,33 +131,43 @@ func TestConfigProcessor_Process_Slices(t *testing.T) {
 	processor := NewConfigProcessor(registry)
 
 	cfg := &Config{
+		Strings: []string{"mock://s1", "literal", "mock://s3"},
 		Backends: []Backend{
 			{Name: "tpm", Secret: "mock://tpm-secret"},
-			{Name: "pkcs11", Secret: "mock://pkcs11-secret"},
 			{Name: "plain", Secret: "not-a-secret"},
+		},
+		Items: []*Backend{
+			{Secret: "mock://item1"},
+			nil, // nil pointer should be skipped
+			{Secret: "mock://item3"},
 		},
 	}
 
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
+	result, err := processor.Process(context.Background(), cfg)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
+	if result.Resolved != 5 {
+		t.Fatalf("expected 5 resolved secrets, got %d", result.Resolved)
 	}
 
-	// Verify values
-	if cfg.Backends[0].Secret != "tpm-secret" {
-		t.Errorf("expected 'tpm-secret', got %q", cfg.Backends[0].Secret)
+	checks := []struct {
+		name, got, want string
+	}{
+		{"Strings[0]", cfg.Strings[0], "s1"},
+		{"Strings[1]", cfg.Strings[1], "literal"},
+		{"Strings[2]", cfg.Strings[2], "s3"},
+		{"Backends[0]", cfg.Backends[0].Secret, "tpm-secret"},
+		{"Backends[1]", cfg.Backends[1].Secret, "not-a-secret"},
+		{"Items[0]", cfg.Items[0].Secret, "item1"},
+		{"Items[2]", cfg.Items[2].Secret, "item3"},
 	}
-	if cfg.Backends[1].Secret != "pkcs11-secret" {
-		t.Errorf("expected 'pkcs11-secret', got %q", cfg.Backends[1].Secret)
-	}
-	if cfg.Backends[2].Secret != "not-a-secret" {
-		t.Errorf("expected 'not-a-secret', got %q", cfg.Backends[2].Secret)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
+		}
 	}
 }
 
@@ -504,47 +516,6 @@ func TestConfigProcessor_Process_UnexportedFields(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_SliceOfPointers(t *testing.T) {
-	type Item struct {
-		Secret string
-	}
-
-	type Config struct {
-		Items []*Item
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Items: []*Item{
-			{Secret: "mock://item1"},
-			nil, // nil pointer should be skipped
-			{Secret: "mock://item3"},
-		},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.Items[0].Secret != "item1" {
-		t.Errorf("expected 'item1', got %q", cfg.Items[0].Secret)
-	}
-	if cfg.Items[2].Secret != "item3" {
-		t.Errorf("expected 'item3', got %q", cfg.Items[2].Secret)
-	}
-}
-
 func TestConfigProcessor_Process_DeeplyNestedStructs(t *testing.T) {
 	type Level4 struct {
 		Secret string
@@ -686,42 +657,6 @@ func TestConfigProcessor_Process_SchemelessValueIsVerbatim(t *testing.T) {
 
 	if cfg.Mode != "auto" {
 		t.Errorf("expected Mode 'auto', got %q", cfg.Mode)
-	}
-}
-
-func TestConfigProcessor_Process_SliceOfStrings(t *testing.T) {
-	type Config struct {
-		Secrets []string
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(&mockResolver{})
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secrets: []string{"mock://s1", "literal", "mock://s3"},
-	}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Resolved != 2 {
-		t.Fatalf("expected 2 resolved secrets, got %d", result.Resolved)
-	}
-
-	if cfg.Secrets[0] != "s1" {
-		t.Errorf("expected 's1', got %q", cfg.Secrets[0])
-	}
-	if cfg.Secrets[1] != "literal" {
-		t.Errorf("expected 'literal', got %q", cfg.Secrets[1])
-	}
-	if cfg.Secrets[2] != "s3" {
-		t.Errorf("expected 's3', got %q", cfg.Secrets[2])
 	}
 }
 
