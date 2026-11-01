@@ -1389,25 +1389,6 @@ func TestCreateNamespace_SDKSuccess(t *testing.T) {
 	assert.Equal(t, "new-ns", resp.Namespace)
 }
 
-func TestCreateNamespace_SDKError(t *testing.T) {
-	svc, storage, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
-	}
-	vt.createNamespaceFn = func(_ context.Context, _ *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-
-	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{
-		Namespace: "new-ns", Dimension: 128,
-	})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
 func TestCreateNamespace_AlreadyExists(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{Namespace: "test-ns", Dimension: 128})
@@ -1417,40 +1398,11 @@ func TestCreateNamespace_AlreadyExists(t *testing.T) {
 	assert.Equal(t, qbErrors.ErrAlreadyExists, qbErr.Code)
 }
 
-func TestCreateNamespace_NoSDKProvider(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return nil, errors.New("not found")
-	}
-	_, err := svc.CreateNamespace(tenantctx.WithSystem(context.Background()), &CreateNamespaceRequest{Namespace: "new-ns", Dimension: 128})
-	require.Error(t, err)
-}
-
 func TestDeleteNamespace_SDKSuccess(t *testing.T) {
 	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
 	resp, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
-}
-
-func TestDeleteNamespace_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	vt.deleteNamespaceFn = func(_ context.Context, _ *qrdbtransport.DeleteNamespaceRequest) (*qrdbtransport.DeleteNamespaceResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
-func TestDeleteNamespace_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.DeleteNamespace(tenantctx.WithSystem(context.Background()), &DeleteNamespaceRequest{Namespace: "test-ns"})
-	require.Error(t, err)
 }
 
 func TestUpsertVector_SDKSuccess(t *testing.T) {
@@ -1460,29 +1412,6 @@ func TestUpsertVector_SDKSuccess(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
-}
-
-func TestUpsertVector_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	vt.upsertVectorFn = func(_ context.Context, _ *qrdbtransport.UpsertVectorRequest) (*qrdbtransport.UpsertVectorResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3},
-	})
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
-}
-
-func TestUpsertVector_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.sdkProvider = nil
-	_, err := svc.UpsertVector(tenantctx.WithSystem(context.Background()), &UpsertVectorRequest{
-		Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3},
-	})
-	require.Error(t, err)
 }
 
 func TestUpsertVector_EnsureIndexFails(t *testing.T) {
@@ -1512,22 +1441,6 @@ func TestUpsertVector_IndexInsertError(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestDeleteVector_SDKSuccess(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	resp, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.NoError(t, err)
-	assert.True(t, resp.Success)
-}
-
-func TestDeleteVector_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	vt.deleteVectorFn = func(_ context.Context, _ *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.Error(t, err)
-}
-
 func TestDeleteVector_WithHNSWIndex(t *testing.T) {
 	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
 	deleted := false
@@ -1546,25 +1459,22 @@ func TestDeleteVector_HNSWDeleteError(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestDeleteVector_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.sdkProvider = nil
-	_, err := svc.DeleteVector(tenantctx.WithSystem(context.Background()), &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
-	require.Error(t, err)
-}
-
 func TestDeleteVector_TenantForbidden(t *testing.T) {
 	// With prefix-based tenant isolation, the attacker's scoped namespace
-	// "tenant/other/test-ns" is a different namespace than the owner's "test-ns".
-	// The SDK mock silently succeeds on the scoped namespace, so no error is
-	// returned. The owner's data is never touched because the delete operates
-	// on a completely different (non-existent) scoped namespace.
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	// is a different namespace than the owner's "test-ns", so the delete
+	// never reaches the owner's data.
+	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 128)
+	var deletedNamespace string
+	vt.deleteVectorFn = func(_ context.Context, req *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
+		deletedNamespace = req.Namespace
+		return &qrdbtransport.DeleteVectorResponse{Success: true}, nil
+	}
 	ctx := tenantctx.WithTenant(context.Background(), "other")
 	resp, err := svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
 	require.NoError(t, err)
-	assert.NotNil(t, resp)
 	assert.True(t, resp.Success)
+	assert.NotEqual(t, "test-ns", deletedNamespace)
+	assert.Contains(t, deletedNamespace, "other")
 }
 
 func TestBatchUpsert_SDKSuccess(t *testing.T) {
@@ -1576,28 +1486,6 @@ func TestBatchUpsert_SDKSuccess(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, 2, resp.InsertedCount)
-}
-
-func TestBatchUpsert_SDKError(t *testing.T) {
-	svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	vt.batchUpsertFn = func(_ context.Context, _ *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error) {
-		return nil, errors.New("sdk error")
-	}
-	_, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "test-ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
-	})
-	require.Error(t, err)
-}
-
-func TestBatchUpsert_NoSDKProvider(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.sdkProvider = nil
-	_, err := svc.BatchUpsert(tenantctx.WithSystem(context.Background()), &BatchUpsertRequest{
-		Namespace: "test-ns",
-		Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
-	})
-	require.Error(t, err)
 }
 
 func TestBatchUpsert_EnsureIndexFails(t *testing.T) {
@@ -1625,6 +1513,80 @@ func TestBatchUpsert_IndexInsertError(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
+}
+
+// vectorWriteCalls invokes each SDK-backed write operation of the vector
+// service with a valid request, one entry per operation.
+var vectorWriteCalls = []struct {
+	name string
+	call func(ctx context.Context, svc *vectorService) error
+}{
+	{name: "CreateNamespace", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.CreateNamespace(ctx, &CreateNamespaceRequest{Namespace: "new-ns", Dimension: 3})
+		return err
+	}},
+	{name: "DeleteNamespace", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.DeleteNamespace(ctx, &DeleteNamespaceRequest{Namespace: "test-ns"})
+		return err
+	}},
+	{name: "UpsertVector", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.UpsertVector(ctx, &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{1, 2, 3}})
+		return err
+	}},
+	{name: "DeleteVector", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.DeleteVector(ctx, &DeleteVectorRequest{Namespace: "test-ns", ID: 1})
+		return err
+	}},
+	{name: "BatchUpsert", call: func(ctx context.Context, svc *vectorService) error {
+		_, err := svc.BatchUpsert(ctx, &BatchUpsertRequest{
+			Namespace: "test-ns",
+			Vectors:   []*VectorData{{ID: 1, Vector: []float32{1, 2, 3}}},
+		})
+		return err
+	}},
+}
+
+func TestVectorWrites_NoSDKProvider(t *testing.T) {
+	for _, op := range vectorWriteCalls {
+		t.Run(op.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			svc.sdkProvider = nil
+			err := op.call(tenantctx.WithSystem(context.Background()), svc)
+			require.Error(t, err)
+			var qbErr *qbErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
+		})
+	}
+}
+
+func TestVectorWrites_SDKError(t *testing.T) {
+	sdkErr := errors.New("sdk error")
+	for _, op := range vectorWriteCalls {
+		t.Run(op.name, func(t *testing.T) {
+			svc, _, vt, _ := newVecSvcWithSDK(t, "test-ns", 3)
+			vt.createNamespaceFn = func(_ context.Context, _ *qrdbtransport.CreateNamespaceRequest) (*qrdbtransport.CreateNamespaceResponse, error) {
+				return nil, sdkErr
+			}
+			vt.deleteNamespaceFn = func(_ context.Context, _ *qrdbtransport.DeleteNamespaceRequest) (*qrdbtransport.DeleteNamespaceResponse, error) {
+				return nil, sdkErr
+			}
+			vt.upsertVectorFn = func(_ context.Context, _ *qrdbtransport.UpsertVectorRequest) (*qrdbtransport.UpsertVectorResponse, error) {
+				return nil, sdkErr
+			}
+			vt.deleteVectorFn = func(_ context.Context, _ *qrdbtransport.DeleteVectorRequest) (*qrdbtransport.DeleteVectorResponse, error) {
+				return nil, sdkErr
+			}
+			vt.batchUpsertFn = func(_ context.Context, _ *qrdbtransport.BatchUpsertRequest) (*qrdbtransport.BatchUpsertResponse, error) {
+				return nil, sdkErr
+			}
+			err := op.call(tenantctx.WithSystem(context.Background()), svc)
+			require.Error(t, err)
+			var qbErr *qbErrors.QBError
+			require.True(t, errors.As(err, &qbErr))
+			assert.Equal(t, qbErrors.ErrRaft, qbErr.Code)
+		})
+	}
 }
 
 func TestSearchSimilar_WithResults(t *testing.T) {
