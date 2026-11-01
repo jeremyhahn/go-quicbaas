@@ -251,18 +251,40 @@ func TestACMEClient_NewOrder_HappyPath(t *testing.T) {
 	}
 }
 
-func TestACMEClient_NewOrder_NoIdentifiers(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.NewOrder(context.Background(), nil, "http-01")
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
+// TestACMEClient_RejectsInvalidInputLocally checks that each client verb
+// rejects a missing argument before it reaches the transport.
+func TestACMEClient_RejectsInvalidInputLocally(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(c *acmeClientImpl) error
+	}{
+		{"NewOrder without identifiers", func(c *acmeClientImpl) error {
+			_, err := c.NewOrder(context.Background(), nil, "http-01")
+			return err
+		}},
+		{"FinalizeOrder without CSR", func(c *acmeClientImpl) error {
+			_, err := c.FinalizeOrder(context.Background(), "url", nil)
+			return err
+		}},
+		{"Renew without URL", func(c *acmeClientImpl) error {
+			_, err := c.Renew(context.Background(), "")
+			return err
+		}},
 	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			touched := false
+			c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
+				touched = true
+				return nil, nil
+			}}}
+			if err := tc.call(c); sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
+				t.Errorf("expected invalid input, got %v", err)
+			}
+			if touched {
+				t.Error("must not touch the transport on validation failure")
+			}
+		})
 	}
 }
 
@@ -292,21 +314,6 @@ func TestACMEClient_FinalizeOrder_HappyPath(t *testing.T) {
 	}
 }
 
-func TestACMEClient_FinalizeOrder_EmptyCSR(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.FinalizeOrder(context.Background(), "url", nil)
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
-	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
-	}
-}
-
 func TestACMEClient_Renew_PropagatesTransportError(t *testing.T) {
 	wantErr := sdkerrors.NewInvalidInput("acme.Renew",
 		"renewal requires a fresh CSR via NewOrder/FinalizeOrder")
@@ -324,21 +331,6 @@ func TestACMEClient_Renew_PropagatesTransportError(t *testing.T) {
 	_, err := c.Renew(context.Background(), "ff")
 	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
 		t.Errorf("expected propagated invalid-input error, got %v", err)
-	}
-}
-
-func TestACMEClient_Renew_EmptyURL(t *testing.T) {
-	touched := false
-	c := &acmeClientImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		touched = true
-		return nil, nil
-	}}}
-	_, err := c.Renew(context.Background(), "")
-	if sdkerrors.Code(err) != sdkerrors.CodeInvalidInput {
-		t.Errorf("expected invalid input, got %v", err)
-	}
-	if touched {
-		t.Error("must not touch the transport on validation failure")
 	}
 }
 
@@ -363,38 +355,31 @@ func TestNewACMEService_ReturnsBothClients(t *testing.T) {
 // trustServiceImpl tests
 // =============================================================================
 
-func TestTrust_PublishDANE_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
+func TestTrust_PublishDANE_Errors(t *testing.T) {
 	cert := makeSelfSignedCert(t)
+	var nilCtx context.Context
 	tests := []struct {
-		name string
-		ctx  context.Context
-		host string
-		port int
-		c    *x509.Certificate
+		name    string
+		ctx     context.Context
+		host    string
+		port    int
+		c       *x509.Certificate
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty name", context.Background(), "", 443, cert},
-		{"non-positive port", context.Background(), "example.com", 0, cert},
-		{"nil cert", context.Background(), "example.com", 443, nil},
-		{"nil ctx", nil, "example.com", 443, cert},
+		{"empty name", context.Background(), "", 443, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"non-positive port", context.Background(), "example.com", 0, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil cert", context.Background(), "example.com", 443, nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, "example.com", 443, cert, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), "example.com", 443, cert, respondWith(nil, errBoom), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := s.PublishDANE(tc.ctx, tc.host, tc.port, tc.c)
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			s := &trustServiceImpl{t: tc.tr}
+			if err := s.PublishDANE(tc.ctx, tc.host, tc.port, tc.c); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestTrust_PublishDANE_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	cert := makeSelfSignedCert(t)
-	if err := s.PublishDANE(context.Background(), "example.com", 443, cert); err == nil {
-		t.Fatal("expected error to propagate")
 	}
 }
 
@@ -512,35 +497,28 @@ func TestTrust_CrossSignedRoots_NilResponse_ReturnsNoRoots(t *testing.T) {
 	}
 }
 
-func TestTrust_AutoImportAIA_Validation(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{}}
+func TestTrust_AutoImportAIA_Errors(t *testing.T) {
 	cert := makeSelfSignedCert(t)
+	var nilCtx context.Context
 	tests := []struct {
-		name  string
-		ctx   context.Context
-		chain []*x509.Certificate
+		name    string
+		ctx     context.Context
+		chain   []*x509.Certificate
+		tr      *mockTransport
+		wantErr func(error) bool
 	}{
-		{"empty chain", context.Background(), nil},
-		{"nil ctx", nil, []*x509.Certificate{cert}},
-		{"nil chain entry", context.Background(), []*x509.Certificate{cert, nil}},
+		{"empty chain", context.Background(), nil, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil ctx", nilCtx, []*x509.Certificate{cert}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"nil chain entry", context.Background(), []*x509.Certificate{cert, nil}, &mockTransport{}, sdkerrors.IsInvalidInput},
+		{"transport error", context.Background(), []*x509.Certificate{cert}, respondWith(nil, errBoom), isAnyError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := s.AutoImportAIA(tc.ctx, tc.chain)
-			if err == nil || !sdkerrors.IsInvalidInput(err) {
-				t.Errorf("expected InvalidInput, got %v", err)
+			s := &trustServiceImpl{t: tc.tr}
+			if err := s.AutoImportAIA(tc.ctx, tc.chain); err == nil || !tc.wantErr(err) {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
-	}
-}
-
-func TestTrust_AutoImportAIA_TransportError(t *testing.T) {
-	s := &trustServiceImpl{t: &mockTransport{requestFn: func(context.Context, string, string, interface{}) (interface{}, error) {
-		return nil, errBoom
-	}}}
-	cert := makeSelfSignedCert(t)
-	if err := s.AutoImportAIA(context.Background(), []*x509.Certificate{cert}); err == nil {
-		t.Fatal("expected error to propagate")
 	}
 }
 
@@ -563,13 +541,6 @@ func TestTrust_Bootstrap_ReturnsClient(t *testing.T) {
 	s := &trustServiceImpl{t: &mockTransport{}}
 	if s.Bootstrap() == nil {
 		t.Fatal("expected non-nil bootstrap client")
-	}
-}
-
-func TestNewTrustService_NonNil(t *testing.T) {
-	svc := newTrustService(&mockTransport{})
-	if svc == nil {
-		t.Fatal("expected non-nil TrustService")
 	}
 }
 
@@ -1619,59 +1590,31 @@ func TestAuthService_Accessors(t *testing.T) {
 // extendedSecurityService wiring tests (sync.Once paths in services.go)
 // =============================================================================
 
-func TestSecurity_ACME_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.ACME()
-	second := sec.ACME()
-	if first == nil || second == nil {
-		t.Fatal("ACME() must not return nil")
+// TestSecurity_SubServicesAreSingletons checks that each lazily built
+// Security() sub-service is non-nil and the same instance on every call.
+func TestSecurity_SubServicesAreSingletons(t *testing.T) {
+	tests := []struct {
+		name string
+		get  func(*securityService) interface{}
+	}{
+		{"ACME", func(s *securityService) interface{} { return s.ACME() }},
+		{"Trust", func(s *securityService) interface{} { return s.Trust() }},
+		{"CertificateExt", func(s *securityService) interface{} { return s.CertificateExt() }},
+		{"Auth", func(s *securityService) interface{} { return s.Auth() }},
 	}
-	if first != second {
-		t.Error("ACME() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_Trust_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.Trust()
-	second := sec.Trust()
-	if first == nil || second == nil {
-		t.Fatal("Trust() must not return nil")
-	}
-	if first != second {
-		t.Error("Trust() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_CertificateExt_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.CertificateExt()
-	second := sec.CertificateExt()
-	if first == nil || second == nil {
-		t.Fatal("CertificateExt() must not return nil")
-	}
-	if first != second {
-		t.Error("CertificateExt() must return the same instance across calls (sync.Once)")
-	}
-}
-
-func TestSecurity_Auth_Idempotent(t *testing.T) {
-	mt := &mockTransport{}
-	c := &client{transport: mt, opts: defaultOptions()}
-	sec := c.Security().(*securityService)
-	first := sec.Auth()
-	second := sec.Auth()
-	if first == nil || second == nil {
-		t.Fatal("Auth() must not return nil")
-	}
-	if first != second {
-		t.Error("Auth() must return the same instance across calls (sync.Once)")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &client{transport: &mockTransport{}, opts: defaultOptions()}
+			sec := c.Security().(*securityService)
+			first := tc.get(sec)
+			second := tc.get(sec)
+			if first == nil || second == nil {
+				t.Fatalf("%s() must not return nil", tc.name)
+			}
+			if first != second {
+				t.Errorf("%s() must return the same instance across calls (sync.Once)", tc.name)
+			}
+		})
 	}
 }
 
