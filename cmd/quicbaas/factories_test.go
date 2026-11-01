@@ -240,18 +240,41 @@ func TestParseSecretsStoreResponse_ValidInput(t *testing.T) {
 	assert.False(t, resp.Timestamp.IsZero())
 }
 
-func TestParseSecretsStoreResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsStoreResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
+// TestParseSecretsResponses_InvalidInput checks that every secrets response
+// parser rejects a result that does not decode to a JSON object.
+func TestParseSecretsResponses_InvalidInput(t *testing.T) {
+	parsers := map[string]func(interface{}) (interface{}, error){
+		"store": func(v interface{}) (interface{}, error) { return parseSecretsStoreResponse(v) },
+		"get":   func(v interface{}) (interface{}, error) { return parseSecretsGetResponse(v) },
+		"delete": func(v interface{}) (interface{}, error) {
+			return parseSecretsDeleteResponse(v)
+		},
+		"list": func(v interface{}) (interface{}, error) { return parseSecretsListResponse(v) },
+		"get_by_prefix": func(v interface{}) (interface{}, error) {
+			return parseSecretsGetByPrefixResponse(v)
+		},
+		"rotate": func(v interface{}) (interface{}, error) { return parseSecretsRotateResponse(v) },
+		"list_versions": func(v interface{}) (interface{}, error) {
+			return parseSecretsListVersionsResponse(v)
+		},
+		"rollback": func(v interface{}) (interface{}, error) { return parseSecretsRollbackResponse(v) },
+		"update_status": func(v interface{}) (interface{}, error) {
+			return parseSecretsUpdateStatusResponse(v)
+		},
+	}
+	for name, parse := range parsers {
+		t.Run(name, func(t *testing.T) {
+			resp, err := parse("invalid")
+			assert.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 func TestParseSecretsGetResponse_ValidInput(t *testing.T) {
-	encoded := base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`))
 	input := map[string]interface{}{
 		"secret_id":  "test/secret",
 		"version":    float64(2),
-		"data":       encoded,
 		"created_at": float64(1700000000),
 		"timestamp":  float64(1700000001),
 		"metadata": map[string]interface{}{
@@ -263,53 +286,43 @@ func TestParseSecretsGetResponse_ValidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, uint64(2), resp.Version)
-	assert.Contains(t, string(resp.Data), "key")
 	assert.Equal(t, "admin", resp.Metadata["author"])
 }
 
-func TestParseSecretsGetResponse_RawStringData(t *testing.T) {
-	// Data that is not valid base64 should be treated as raw string
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-		"data":      "not-base64!!!",
+func TestParseSecretsGetResponse_Data(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		wantData []byte
+	}{
+		{
+			name:     "base64 string is decoded",
+			input:    map[string]interface{}{"data": base64.StdEncoding.EncodeToString([]byte(`{"key":"value"}`))},
+			wantData: []byte(`{"key":"value"}`),
+		},
+		{
+			name:     "non-base64 string is kept raw",
+			input:    map[string]interface{}{"data": "not-base64!!!"},
+			wantData: []byte("not-base64!!!"),
+		},
+		{
+			name:     "direct bytes are kept",
+			input:    map[string]interface{}{"data": []byte("raw bytes")},
+			wantData: []byte("raw bytes"),
+		},
+		{
+			name:  "no data and no metadata",
+			input: map[string]interface{}{"secret_id": "test/secret"},
+		},
 	}
-
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.Equal(t, "not-base64!!!", string(resp.Data))
-}
-
-func TestParseSecretsGetResponse_BytesData(t *testing.T) {
-	// Data provided as direct bytes (empty string path)
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-		"data":      []byte("raw bytes"),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := parseSecretsGetResponse(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantData, resp.Data)
+			assert.Nil(t, resp.Metadata)
+		})
 	}
-
-	// When data string is empty, it falls through to getBytes path
-	// But since we pass []byte directly and getString returns "", it hits getBytes
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestParseSecretsGetResponse_NoMetadata(t *testing.T) {
-	input := map[string]interface{}{
-		"secret_id": "test/secret",
-		"version":   float64(1),
-	}
-
-	resp, err := parseSecretsGetResponse(input)
-	require.NoError(t, err)
-	assert.Nil(t, resp.Metadata)
-}
-
-func TestParseSecretsGetResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsGetResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsDeleteResponse_ValidInput(t *testing.T) {
@@ -323,12 +336,6 @@ func TestParseSecretsDeleteResponse_ValidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.True(t, resp.Deleted)
-}
-
-func TestParseSecretsDeleteResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsDeleteResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsListResponse_ValidInput(t *testing.T) {
@@ -395,12 +402,6 @@ func TestParseSecretsListResponse_InvalidSecretEntry(t *testing.T) {
 	resp, err := parseSecretsListResponse(input)
 	require.NoError(t, err)
 	assert.Empty(t, resp.Secrets) // invalid entry skipped
-}
-
-func TestParseSecretsListResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsListResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsGetByPrefixResponse_ValidInput(t *testing.T) {
@@ -476,12 +477,6 @@ func TestParseSecretsGetByPrefixResponse_InvalidPathData(t *testing.T) {
 	assert.NotContains(t, resp.Secrets, "app/db")
 }
 
-func TestParseSecretsGetByPrefixResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsGetByPrefixResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestParseSecretsRotateResponse_ValidInput(t *testing.T) {
 	input := map[string]interface{}{
 		"secret_id":   "test/secret",
@@ -495,12 +490,6 @@ func TestParseSecretsRotateResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, uint64(1), resp.OldVersion)
 	assert.Equal(t, uint64(2), resp.NewVersion)
-}
-
-func TestParseSecretsRotateResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsRotateResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsListVersionsResponse_ValidInput(t *testing.T) {
@@ -549,12 +538,6 @@ func TestParseSecretsListVersionsResponse_NoVersions(t *testing.T) {
 	assert.Empty(t, resp.Versions)
 }
 
-func TestParseSecretsListVersionsResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsListVersionsResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-}
-
 func TestParseSecretsRollbackResponse_ValidInput(t *testing.T) {
 	input := map[string]interface{}{
 		"secret_id":   "test/secret",
@@ -566,12 +549,6 @@ func TestParseSecretsRollbackResponse_ValidInput(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, uint64(3), resp.NewVersion)
-}
-
-func TestParseSecretsRollbackResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsRollbackResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsUpdateStatusResponse_ValidInput(t *testing.T) {
@@ -587,12 +564,6 @@ func TestParseSecretsUpdateStatusResponse_ValidInput(t *testing.T) {
 	assert.Equal(t, "test/secret", resp.SecretID)
 	assert.Equal(t, service.SecretStatus("active"), resp.OldStatus)
 	assert.Equal(t, service.SecretStatus("disabled"), resp.NewStatus)
-}
-
-func TestParseSecretsUpdateStatusResponse_InvalidInput(t *testing.T) {
-	resp, err := parseSecretsUpdateStatusResponse("invalid")
-	assert.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestParseSecretsTimestamp_ValidTimestamp(t *testing.T) {
