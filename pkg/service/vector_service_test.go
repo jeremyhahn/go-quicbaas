@@ -2171,18 +2171,21 @@ func TestBatchDeleteVectors_Success(t *testing.T) {
 	assert.Equal(t, 3, resp.DeletedCount)
 }
 
-func TestBatchDeleteVectors_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestBatchDeleteVectors_EmptyIDs(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), &BatchDeleteVectorsRequest{
-		Namespace: "test-ns", IDs: []uint64{},
-	})
-	require.Error(t, err)
+func TestBatchDeleteVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *BatchDeleteVectorsRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty ids", req: &BatchDeleteVectorsRequest{Namespace: "test-ns", IDs: []uint64{}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.BatchDeleteVectors(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestBatchDeleteVectors_FallbackToIndividual(t *testing.T) {
@@ -2199,22 +2202,22 @@ func TestBatchDeleteVectors_FallbackToIndividual(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestUpdateMetadata_NilRequest(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), nil)
-	require.Error(t, err)
-}
-
-func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{ID: 1})
-	require.Error(t, err)
-}
-
-func TestUpdateMetadata_ZeroID(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{Namespace: "test-ns"})
-	require.Error(t, err)
+func TestUpdateMetadata_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *UpdateVectorMetadataRequest
+	}{
+		{name: "nil request", req: nil},
+		{name: "empty namespace", req: &UpdateVectorMetadataRequest{ID: 1}},
+		{name: "zero id", req: &UpdateVectorMetadataRequest{Namespace: "test-ns"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
+			_, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestUpdateMetadata_VectorNotFound(t *testing.T) {
