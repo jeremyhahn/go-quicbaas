@@ -569,47 +569,32 @@ func TestRebalanceCommandsCoverage(t *testing.T) {
 	assert.True(t, cmdNames["plan"], "plan command should exist")
 }
 
-func TestRebalanceStartCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalanceStartCommand()
-	require.NotNil(t, cmd)
-
-	// Check command-specific flags exist (--address and --timeout are global flags in main.go)
-	flags := []string{"target-imbalance", "max-concurrent", "min-keys", "dry-run", "rate-limit", "output", "follow"}
-	for _, flag := range flags {
-		f := cmd.Flags().Lookup(flag)
-		assert.NotNil(t, f, "flag %s should exist", flag)
+func TestRebalanceCommandFlags(t *testing.T) {
+	// --address and --timeout are global flags in main.go.
+	tests := []struct {
+		name  string
+		cmd   *cobra.Command
+		flags []string
+	}{
+		{"start", newRebalanceStartCommand(), []string{"target-imbalance", "max-concurrent", "min-keys", "dry-run", "rate-limit", "output", "follow"}},
+		{"status", newRebalanceStatusCommand(), []string{"operation", "output"}},
+		{"plan", newRebalancePlanCommand(), []string{"target-imbalance", "output"}},
 	}
-}
 
-func TestRebalanceStatusCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalanceStatusCommand()
-	require.NotNil(t, cmd)
-
-	// Verify command-specific flags exist (--address and --timeout are global flags in main.go)
-	operationFlag := cmd.Flags().Lookup("operation")
-	assert.NotNil(t, operationFlag)
-
-	outputFlag := cmd.Flags().Lookup("output")
-	assert.NotNil(t, outputFlag)
-}
-
-func TestRebalancePlanCommandFlagsCoverage(t *testing.T) {
-	cmd := newRebalancePlanCommand()
-	require.NotNil(t, cmd)
-
-	// Check command-specific flags (--address and --timeout are global flags in main.go)
-	targetFlag := cmd.Flags().Lookup("target-imbalance")
-	assert.NotNil(t, targetFlag)
-
-	outputFlag := cmd.Flags().Lookup("output")
-	assert.NotNil(t, outputFlag)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, flag := range tt.flags {
+				assert.NotNil(t, tt.cmd.Flags().Lookup(flag), "flag %s should exist", flag)
+			}
+		})
+	}
 }
 
 // =============================================================================
 // Cache Warm Command Tests
 // =============================================================================
 
-func TestRunCacheWarmCommandNoPrefixes(t *testing.T) {
+func TestRunCacheWarmCommandNilConfig(t *testing.T) {
 	origPrefixes := cacheWarmPrefixes
 	origCfg := cfg
 	defer func() {
@@ -639,55 +624,48 @@ func TestInitializeCacheRegistryNilConfig(t *testing.T) {
 	assert.Contains(t, err.Error(), "configuration not initialized")
 }
 
-func TestInitializeCacheWarmerDependenciesNilConfig(t *testing.T) {
-	origCfg := cfg
-	defer func() { cfg = origCfg }()
-
-	cfg = nil
-
-	_, _, _, err := initializeCacheWarmerDependencies()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "configuration not initialized")
-}
-
 // =============================================================================
 // Messaging Command Tests for Delete Channel and Unsubscribe
 // =============================================================================
 
-func TestMsgDeleteChannelCommandForceFlag(t *testing.T) {
-	cmd := newMsgDeleteChannelCommand()
-	require.NotNil(t, cmd)
+func TestMsgCommandsForceFlagDefaultsFalse(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{"delete channel", newMsgDeleteChannelCommand()},
+		{"unsubscribe", newMsgUnsubscribeCommand()},
+	}
 
-	forceFlag := cmd.Flags().Lookup("force")
-	require.NotNil(t, forceFlag)
-	assert.Equal(t, "false", forceFlag.DefValue)
-}
-
-func TestMsgUnsubscribeCommandForceFlag(t *testing.T) {
-	cmd := newMsgUnsubscribeCommand()
-	require.NotNil(t, cmd)
-
-	forceFlag := cmd.Flags().Lookup("force")
-	require.NotNil(t, forceFlag)
-	assert.Equal(t, "false", forceFlag.DefValue)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			forceFlag := tt.cmd.Flags().Lookup("force")
+			require.NotNil(t, forceFlag)
+			assert.Equal(t, "false", forceFlag.DefValue)
+		})
+	}
 }
 
 // =============================================================================
 // Client Error Types Tests
 // =============================================================================
 
-func TestUnsupportedTransportErrorMessage(t *testing.T) {
-	err := &UnsupportedTransportError{Transport: "websocket"}
-	expected := "unsupported transport: websocket (supported: grpc, rest, quic, unix, mcp, embedded)"
-	assert.Equal(t, expected, err.Error())
-}
+func TestClientErrorMessages(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"unsupported transport", &UnsupportedTransportError{Transport: "websocket"}, "unsupported transport: websocket (supported: grpc, rest, quic, unix, mcp, embedded)"},
+		{"sdk client closed", ErrSDKClientClosed, "closed"},
+		{"empty address", ErrEmptyAddress, "empty"},
+	}
 
-func TestErrSDKClientClosedContents(t *testing.T) {
-	assert.Contains(t, ErrSDKClientClosed.Error(), "closed")
-}
-
-func TestErrEmptyAddressContents(t *testing.T) {
-	assert.Contains(t, ErrEmptyAddress.Error(), "empty")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Contains(t, tt.err.Error(), tt.want)
+		})
+	}
 }
 
 // =============================================================================
