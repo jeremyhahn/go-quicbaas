@@ -1962,57 +1962,6 @@ func TestTriageRunner_AVerdictReplacesThePreviousDisposition(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain is go-quicbaas#1013's
-// thread: every merge reopened the parked issue, triage reached the same
-// "duplicate of #981" each time, and posted it again — sixteen identical
-// comments. A merge still reopens the issue; a re-judgement that reaches the
-// verdict triage already gave says nothing new and posts nothing. A different
-// verdict — another duplicate target — is news, and is posted.
-func TestTriageRunner_AnIdenticalVerdictIsNotPostedAgain(t *testing.T) {
-	rig := newTriageRig(t)
-	trigger := rig.binding.Forge.TriggerLabel
-	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", trigger)
-	rig.forge.putIssue(982, "agent-side sockets in pkg/sdlc/agent.go", trigger)
-	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
-	duplicateOf := func(number string) string {
-		return "The same work as " + number + ".\n\nSDLC-TRIAGE-DUPLICATE: " + number + "\nSDLC-TRIAGE: duplicate"
-	}
-	merge := func(sha string) {
-		rig.forge.mu.Lock()
-		rig.forge.branchSHA = sha
-		rig.forge.mu.Unlock()
-	}
-
-	rig.answers(duplicateOf("#981"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("first pass: %v", err)
-	}
-	if got := rig.comments(1013); len(got) != 1 || !strings.Contains(got[0], "#981") {
-		t.Fatalf("first pass posted %v, want the one duplicate verdict", got)
-	}
-
-	merge("1111222233334444555566667777888899990000")
-	rig.answers(duplicateOf("#981"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
-	if prompts := rig.agents.promptTexts(); len(prompts) == 0 {
-		t.Fatal("the merge did not reopen the issue at all")
-	}
-	if got := rig.comments(1013); len(got) != 1 {
-		t.Fatalf("an identical verdict was posted again: %d comments", len(got))
-	}
-
-	merge("aaaabbbbccccddddeeeeffff0000111122223333")
-	rig.answers(duplicateOf("#982"))
-	if err := rig.run(); err != nil {
-		t.Fatalf("third pass: %v", err)
-	}
-	if got := rig.comments(1013); len(got) != 2 || !strings.Contains(got[1], "#982") {
-		t.Fatalf("a changed verdict was not posted: %v", got)
-	}
-}
-
 // TestSameTriageVerdict_ComparesOutcomeAndHeadline covers the comparison on its
 // own: the agent's prose around a verdict differs every time and does not make
 // it a new one; the outcome or the headline does.
@@ -2061,15 +2010,20 @@ func TestSameTriageVerdict_ComparesOutcomeAndHeadline(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged: a merge reopens the
-// issue and triage reaches the verdict it already posted, so nothing is posted
-// — and the head it judged is remembered, so the next sweep at that same head
-// spends no model turn re-reaching it.
+// TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged is go-quicbaas#1013's
+// thread: every merge reopened the parked issue, triage reached the same
+// "duplicate of #981" each time, and posted it again — sixteen identical
+// comments. A merge still reopens the issue; triage reaching the verdict it
+// already posted posts nothing — and the head it judged is remembered, so the
+// next sweep at that same head spends no model turn re-reaching it. A
+// different verdict — another duplicate target — is news, and is posted.
 func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
 	rig := newTriageRig(t)
 	rig.forge.putIssue(981, "agent-side workspaces in pkg/sdlc/agent.go", rig.binding.Forge.TriggerLabel)
+	rig.forge.putIssue(982, "agent-side sockets in pkg/sdlc/agent.go", rig.binding.Forge.TriggerLabel)
 	rig.forge.putIssue(1013, "relay the signing agent from pkg/sdlc/agent.go")
 	duplicate := "The same work as #981.\n\nSDLC-TRIAGE-DUPLICATE: #981\nSDLC-TRIAGE: duplicate"
+	changed := "The same work as #982.\n\nSDLC-TRIAGE-DUPLICATE: #982\nSDLC-TRIAGE: duplicate"
 
 	rig.answers(duplicate)
 	if err := rig.run(); err != nil {
@@ -2098,9 +2052,22 @@ func TestTriageRunner_ASuppressedVerdictRecordsTheHeadItJudged(t *testing.T) {
 		t.Fatalf("a sweep at the head already judged spent %d more turn(s)", got-turns)
 	}
 
+	// A changed verdict at a new head is posted.
+	rig.forge.mu.Lock()
+	rig.forge.branchSHA = "aaaabbbbccccddddeeeeffff0000111122223333"
+	rig.forge.mu.Unlock()
+	rig.answers(changed)
+	if err := rig.run(); err != nil {
+		t.Fatalf("pass with a changed verdict: %v", err)
+	}
+	if got := rig.comments(1013); len(got) != 2 || !strings.Contains(got[1], "#982") {
+		t.Fatalf("a changed verdict was not posted: %v", got)
+	}
+
 	// A person speaking is still new information at that head.
-	rig.forge.putComment(1013, "It is not a duplicate: #981 never touched the socket.", time.Now().Add(time.Hour))
-	rig.answers(duplicate)
+	turns = len(rig.agents.promptTexts())
+	rig.forge.putComment(1013, "It is not a duplicate: #982 never touched the socket.", time.Now().Add(time.Hour))
+	rig.answers(changed)
 	if err := rig.run(); err != nil {
 		t.Fatalf("pass after a comment: %v", err)
 	}
