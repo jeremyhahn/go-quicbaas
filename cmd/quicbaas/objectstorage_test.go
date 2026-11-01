@@ -699,798 +699,257 @@ func createTestLoggerForCoverageNinetyOne(t *testing.T) *logger.Logger {
 	return testLog
 }
 
-func TestFormatObjectPutResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.PutObjectResponse{
-		Key:      "bucket/test-key",
-		Size:     1024,
-		Version:  1,
-		Checksum: []byte{0xaa, 0xbb, 0xcc},
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
+// objectFormatCase is one row of a formatter table: the output format, the
+// response to render, and whether rendering must fail.
+type objectFormatCase[R any] struct {
+	name        string
+	format      string
+	includeMeta bool
+	resp        R
+	wantErr     bool
 }
 
-func TestFormatObjectPutResponse_WithTimestampAndReplicas(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.PutObjectResponse{
-		Key:          "bucket/test-key",
-		Size:         2048,
-		Version:      3,
-		Checksum:     []byte{0xde, 0xad},
-		CreatedAt:    timestamppb.New(now),
-		ReplicatedTo: []string{"store-a", "store-b"},
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.PutObjectResponse{
-		Key:     "bucket/json-key",
-		Size:    512,
-		Version: 1,
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.PutObjectResponse{
-		Key:     "bucket/yaml-key",
-		Size:    256,
-		Version: 1,
-	}
-	err := formatObjectPutResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPutResponse_InvalidFormatErr(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "invalid-fmt"
-
-	resp := &pb.PutObjectResponse{Key: "bucket/key"}
-	err := formatObjectPutResponse(resp)
-	assert.Error(t, err)
-}
-
-func TestFormatObjectGetResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/get-key",
-		Found: true,
-		Value: []byte("hello world"),
-		Size:  11,
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectGetResponse_JSONWithMeta(t *testing.T) {
-	orig := objectOutputFormat
+// runObjectFormatCases renders each row with the given formatter under the
+// row's output format, restoring the package globals afterwards.
+func runObjectFormatCases[R any](t *testing.T, format func(R) error, cases []objectFormatCase[R]) {
+	t.Helper()
+	origFormat := objectOutputFormat
 	origMeta := objectIncludeMeta
-	defer func() {
-		objectOutputFormat = orig
+	t.Cleanup(func() {
+		objectOutputFormat = origFormat
 		objectIncludeMeta = origMeta
-	}()
-	objectOutputFormat = "json"
-	objectIncludeMeta = true
-
-	resp := &pb.GetObjectResponse{
-		Key:         "bucket/json-get",
-		Found:       true,
-		Value:       []byte("data"),
-		Size:        4,
-		Version:     2,
-		ContentType: "text/plain",
-		Checksum:    []byte{0x01, 0x02},
-		Tags:        map[string]string{"env": "prod"},
-		Metadata: &pb.ObjectMetadata{
-			Owner: "admin",
-		},
+	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			objectOutputFormat = tc.format
+			objectIncludeMeta = tc.includeMeta
+			err := format(tc.resp)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
 	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
 }
 
-func TestFormatObjectGetResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/yaml-get",
-		Found: true,
-		Tags:  map[string]string{"tier": "hot"},
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectGetResponse_RawOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "raw"
-
-	resp := &pb.GetObjectResponse{
-		Key:   "bucket/raw-get",
-		Found: true,
-		Value: []byte("raw binary content"),
-	}
-	err := formatObjectGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectDeleteResponse_DefaultDeleted(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
+func TestFormatObjectPutResponse_Formats(t *testing.T) {
 	now := time.Now()
-	resp := &pb.DeleteObjectResponse{
-		Key:       "bucket/del-key",
-		Deleted:   true,
-		Permanent: false,
-		DeletedAt: timestamppb.New(now),
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+	runObjectFormatCases(t, formatObjectPutResponse, []objectFormatCase[*pb.PutObjectResponse]{
+		{name: "default", resp: &pb.PutObjectResponse{Key: "bucket/test-key", Size: 1024, Version: 1, Checksum: []byte{0xaa, 0xbb, 0xcc}}},
+		{name: "default with timestamp and replicas", resp: &pb.PutObjectResponse{
+			Key: "bucket/test-key", Size: 2048, Version: 3, Checksum: []byte{0xde, 0xad},
+			CreatedAt: timestamppb.New(now), ReplicatedTo: []string{"store-a", "store-b"},
+		}},
+		{name: "json", format: "json", resp: &pb.PutObjectResponse{Key: "bucket/json-key", Size: 512, Version: 1}},
+		{name: "yaml", format: "yaml", resp: &pb.PutObjectResponse{Key: "bucket/yaml-key", Size: 256, Version: 1}},
+		{name: "invalid format", format: "invalid-fmt", resp: &pb.PutObjectResponse{Key: "bucket/key"}, wantErr: true},
+	})
 }
 
-func TestFormatObjectDeleteResponse_DefaultPermanent(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.DeleteObjectResponse{
-		Key:       "bucket/del-perm",
-		Deleted:   true,
-		Permanent: true,
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectGetResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectGetResponse, []objectFormatCase[*pb.GetObjectResponse]{
+		{name: "default", resp: &pb.GetObjectResponse{Key: "bucket/get-key", Found: true, Value: []byte("hello world"), Size: 11}},
+		{name: "json with meta", format: "json", includeMeta: true, resp: &pb.GetObjectResponse{
+			Key: "bucket/json-get", Found: true, Value: []byte("data"), Size: 4, Version: 2,
+			ContentType: "text/plain", Checksum: []byte{0x01, 0x02},
+			Tags: map[string]string{"env": "prod"}, Metadata: &pb.ObjectMetadata{Owner: "admin"},
+		}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectResponse{Key: "bucket/yaml-get", Found: true, Tags: map[string]string{"tier": "hot"}}},
+		{name: "raw", format: "raw", resp: &pb.GetObjectResponse{Key: "bucket/raw-get", Found: true, Value: []byte("raw binary content")}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_DefaultNotFound(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.DeleteObjectResponse{
-		Key:     "bucket/not-found",
-		Deleted: false,
-	}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectDeleteResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectDeleteResponse, []objectFormatCase[*pb.DeleteObjectResponse]{
+		{name: "default deleted", resp: &pb.DeleteObjectResponse{Key: "bucket/del-key", Deleted: true, DeletedAt: timestamppb.New(time.Now())}},
+		{name: "default permanent", resp: &pb.DeleteObjectResponse{Key: "bucket/del-perm", Deleted: true, Permanent: true}},
+		{name: "default not found", resp: &pb.DeleteObjectResponse{Key: "bucket/not-found"}},
+		{name: "json", format: "json", resp: &pb.DeleteObjectResponse{Key: "bucket/del-json", Deleted: true}},
+		{name: "yaml", format: "yaml", resp: &pb.DeleteObjectResponse{Key: "bucket/del-yaml", Deleted: true}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.DeleteObjectResponse{Key: "bucket/del-json", Deleted: true}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
+func TestFormatObjectHeadResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectHeadResponse, []objectFormatCase[*pb.HeadObjectResponse]{
+		{name: "default exists", resp: &pb.HeadObjectResponse{
+			Key: "bucket/head-key", Exists: true, Size: 4096, ContentType: "application/json",
+			Version: 5, Checksum: []byte{0xff}, Status: pb.ObjectStatus_OBJECT_STATUS_ACTIVE,
+			Tier: pb.StorageTier_STORAGE_TIER_HOT, ModifiedAt: timestamppb.New(time.Now()),
+			Tags: map[string]string{"env": "staging"},
+		}},
+		{name: "default not found", resp: &pb.HeadObjectResponse{Key: "bucket/missing"}},
+		{name: "json", format: "json", resp: &pb.HeadObjectResponse{Key: "bucket/head-json", Exists: true, Size: 100}},
+		{name: "yaml", format: "yaml", resp: &pb.HeadObjectResponse{Key: "bucket/head-yaml", Exists: true}},
+	})
 }
 
-func TestFormatObjectDeleteResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.DeleteObjectResponse{Key: "bucket/del-yaml", Deleted: true}
-	err := formatObjectDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_DefaultExists(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.HeadObjectResponse{
-		Key:         "bucket/head-key",
-		Exists:      true,
-		Size:        4096,
-		ContentType: "application/json",
-		Version:     5,
-		Checksum:    []byte{0xff},
-		Status:      pb.ObjectStatus_OBJECT_STATUS_ACTIVE,
-		Tier:        pb.StorageTier_STORAGE_TIER_HOT,
-		ModifiedAt:  timestamppb.New(now),
-		Tags:        map[string]string{"env": "staging"},
-	}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_DefaultNotFound(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.HeadObjectResponse{
-		Key:    "bucket/missing",
-		Exists: false,
-	}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.HeadObjectResponse{Key: "bucket/head-json", Exists: true, Size: 100}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectHeadResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.HeadObjectResponse{Key: "bucket/head-yaml", Exists: true}
-	err := formatObjectHeadResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.ListObjectsResponse{
-		Objects: []*pb.ObjectInfo{
-			{Key: "bucket/obj1", Size: 100, Version: 1, ModifiedAt: timestamppb.New(now)},
-			{Key: "bucket/obj2", Size: 200, Version: 2},
-		},
-		Total:      2,
-		NextCursor: "cursor-abc",
-		HasMore:    true,
-	}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListObjectsResponse{Total: 0}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListObjectsResponse{Total: 1, Objects: []*pb.ObjectInfo{{Key: "k"}}}
-	err := formatObjectListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTagResponse{
-		Keys:       []string{"key1", "key2"},
-		Total:      2,
-		NextCursor: "next",
-		HasMore:    true,
-	}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTagResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}
-	err := formatObjectListByTagResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_DefaultWithObjects(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTenantResponse{
-		Objects: []*pb.ObjectInfo{
-			{Key: "tenant/obj1", Size: 100, Version: 1},
-		},
-		Total:      1,
-		NextCursor: "c2",
-		HasMore:    true,
-	}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_DefaultWithKeys(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListByTenantResponse{
-		Keys:  []string{"key-a", "key-b"},
-		Total: 2,
-	}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListByTenantResponse{Total: 0}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectListByTenantResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListByTenantResponse{Total: 0}
-	err := formatObjectListByTenantResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectCopyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.CopyObjectResponse{
-		Key:       "bucket/dest-key",
-		Version:   2,
-		Size:      512,
-		CreatedAt: timestamppb.New(now),
-	}
-	err := formatObjectCopyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectCopyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.CopyObjectResponse{Key: "bucket/copy-json"}
-	err := formatObjectCopyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.ArchiveObjectResponse{
-		Key:          "bucket/archive-key",
-		Success:      true,
-		ArchiveStore: "cold-store",
-		OriginalSize: 2048,
-		ArchivedSize: 1024,
-		ArchivedAt:   timestamppb.New(now),
-	}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ArchiveObjectResponse{Key: "bucket/archive-fail", Success: false}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectArchiveResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ArchiveObjectResponse{Key: "bucket/archive-json", Success: true}
-	err := formatObjectArchiveResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.RestoreObjectResponse{
-		Key:                 "bucket/restore-key",
-		Success:             true,
-		RestoredTo:          "hot-store",
-		OperationId:         "op-123",
-		EstimatedCompletion: timestamppb.New(now.Add(time.Hour)),
-	}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.RestoreObjectResponse{Key: "bucket/restore-fail", Success: false}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectRestoreResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.RestoreObjectResponse{Key: "bucket/restore-json", Success: true}
-	err := formatObjectRestoreResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_DefaultValid(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.VerifyObjectResponse{
-		Key:      "bucket/verify-key",
-		Valid:    true,
-		Repaired: false,
-		Locations: []*pb.LocationVerification{
-			{Store: "store-a", Valid: true, Size: 100},
-			{Store: "store-b", Valid: false, Error: "checksum mismatch", Size: 100},
-		},
-	}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_DefaultInvalid(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.VerifyObjectResponse{Key: "bucket/verify-inv", Valid: false, Repaired: true}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectVerifyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.VerifyObjectResponse{Key: "bucket/verify-json", Valid: true}
-	err := formatObjectVerifyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ReplicateObjectResponse{
-		Key:          "bucket/rep-key",
-		Success:      true,
-		ReplicatedTo: []string{"store-a", "store-b"},
-		OperationId:  "rep-op-1",
-	}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_DefaultPartialFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ReplicateObjectResponse{
-		Key:          "bucket/rep-fail",
-		Success:      false,
-		ReplicatedTo: []string{"store-a"},
-		FailedStores: []string{"store-c"},
-	}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectReplicateResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ReplicateObjectResponse{Key: "bucket/rep-json", Success: true}
-	err := formatObjectReplicateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_DefaultSuccess(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.MigrateObjectResponse{
-		Key:           "bucket/mig-key",
-		Success:       true,
-		OldBackend:    "cold-store",
-		NewBackend:    "hot-store",
-		SourceDeleted: true,
-		Verified:      true,
-	}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_DefaultFailed(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.MigrateObjectResponse{
-		Key:        "bucket/mig-fail",
-		Success:    false,
-		OldBackend: "hot",
-		NewBackend: "cold",
-	}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectMigrateResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.MigrateObjectResponse{Key: "bucket/mig-json", Success: true}
-	err := formatObjectMigrateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "bucket/pol-key",
-		Policy: &pb.ObjectPolicy{
-			ReplicationPolicy: &pb.ReplicationPolicy{
-				Enabled:      true,
-				MinReplicas:  3,
-				Mode:         pb.ReplicationMode_REPLICATION_MODE_SYNC,
-				TargetStores: []string{"store-a", "store-b"},
+func TestFormatObjectListResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListResponse, []objectFormatCase[*pb.ListObjectsResponse]{
+		{name: "default with cursor", resp: &pb.ListObjectsResponse{
+			Objects: []*pb.ObjectInfo{
+				{Key: "bucket/obj1", Size: 100, Version: 1, ModifiedAt: timestamppb.New(time.Now())},
+				{Key: "bucket/obj2", Size: 200, Version: 2},
 			},
-			ArchivePolicy: &pb.ArchivePolicy{
-				Enabled:           true,
-				ArchiveAfterDays:  30,
-				TargetStore:       "archive-store",
-				DeleteFromPrimary: true,
+			Total: 2, NextCursor: "cursor-abc", HasMore: true,
+		}},
+		{name: "json", format: "json", resp: &pb.ListObjectsResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListObjectsResponse{Total: 1, Objects: []*pb.ObjectInfo{{Key: "k"}}}},
+	})
+}
+
+func TestFormatObjectListByTagResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListByTagResponse, []objectFormatCase[*pb.ListByTagResponse]{
+		{name: "default with cursor", resp: &pb.ListByTagResponse{Keys: []string{"key1", "key2"}, Total: 2, NextCursor: "next", HasMore: true}},
+		{name: "json", format: "json", resp: &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}},
+		{name: "yaml", format: "yaml", resp: &pb.ListByTagResponse{Keys: []string{"k"}, Total: 1}},
+	})
+}
+
+func TestFormatObjectListByTenantResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectListByTenantResponse, []objectFormatCase[*pb.ListByTenantResponse]{
+		{name: "default with objects", resp: &pb.ListByTenantResponse{
+			Objects: []*pb.ObjectInfo{{Key: "tenant/obj1", Size: 100, Version: 1}},
+			Total:   1, NextCursor: "c2", HasMore: true,
+		}},
+		{name: "default with keys", resp: &pb.ListByTenantResponse{Keys: []string{"key-a", "key-b"}, Total: 2}},
+		{name: "json", format: "json", resp: &pb.ListByTenantResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListByTenantResponse{}},
+	})
+}
+
+func TestFormatObjectCopyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectCopyResponse, []objectFormatCase[*pb.CopyObjectResponse]{
+		{name: "default", resp: &pb.CopyObjectResponse{Key: "bucket/dest-key", Version: 2, Size: 512, CreatedAt: timestamppb.New(time.Now())}},
+		{name: "json", format: "json", resp: &pb.CopyObjectResponse{Key: "bucket/copy-json"}},
+	})
+}
+
+func TestFormatObjectArchiveResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectArchiveResponse, []objectFormatCase[*pb.ArchiveObjectResponse]{
+		{name: "default success", resp: &pb.ArchiveObjectResponse{
+			Key: "bucket/archive-key", Success: true, ArchiveStore: "cold-store",
+			OriginalSize: 2048, ArchivedSize: 1024, ArchivedAt: timestamppb.New(time.Now()),
+		}},
+		{name: "default failed", resp: &pb.ArchiveObjectResponse{Key: "bucket/archive-fail"}},
+		{name: "json", format: "json", resp: &pb.ArchiveObjectResponse{Key: "bucket/archive-json", Success: true}},
+	})
+}
+
+func TestFormatObjectRestoreResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectRestoreResponse, []objectFormatCase[*pb.RestoreObjectResponse]{
+		{name: "default success", resp: &pb.RestoreObjectResponse{
+			Key: "bucket/restore-key", Success: true, RestoredTo: "hot-store", OperationId: "op-123",
+			EstimatedCompletion: timestamppb.New(time.Now().Add(time.Hour)),
+		}},
+		{name: "default failed", resp: &pb.RestoreObjectResponse{Key: "bucket/restore-fail"}},
+		{name: "json", format: "json", resp: &pb.RestoreObjectResponse{Key: "bucket/restore-json", Success: true}},
+	})
+}
+
+func TestFormatObjectVerifyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectVerifyResponse, []objectFormatCase[*pb.VerifyObjectResponse]{
+		{name: "default valid with locations", resp: &pb.VerifyObjectResponse{
+			Key: "bucket/verify-key", Valid: true,
+			Locations: []*pb.LocationVerification{
+				{Store: "store-a", Valid: true, Size: 100},
+				{Store: "store-b", Valid: false, Error: "checksum mismatch", Size: 100},
 			},
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 90,
-				MaxVersions:   5,
-				LegalHold:     false,
+		}},
+		{name: "default invalid repaired", resp: &pb.VerifyObjectResponse{Key: "bucket/verify-inv", Repaired: true}},
+		{name: "json", format: "json", resp: &pb.VerifyObjectResponse{Key: "bucket/verify-json", Valid: true}},
+	})
+}
+
+func TestFormatObjectReplicateResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectReplicateResponse, []objectFormatCase[*pb.ReplicateObjectResponse]{
+		{name: "default success", resp: &pb.ReplicateObjectResponse{
+			Key: "bucket/rep-key", Success: true, ReplicatedTo: []string{"store-a", "store-b"}, OperationId: "rep-op-1",
+		}},
+		{name: "default partial failure", resp: &pb.ReplicateObjectResponse{
+			Key: "bucket/rep-fail", ReplicatedTo: []string{"store-a"}, FailedStores: []string{"store-c"},
+		}},
+		{name: "json", format: "json", resp: &pb.ReplicateObjectResponse{Key: "bucket/rep-json", Success: true}},
+	})
+}
+
+func TestFormatObjectMigrateResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectMigrateResponse, []objectFormatCase[*pb.MigrateObjectResponse]{
+		{name: "default success", resp: &pb.MigrateObjectResponse{
+			Key: "bucket/mig-key", Success: true, OldBackend: "cold-store", NewBackend: "hot-store",
+			SourceDeleted: true, Verified: true,
+		}},
+		{name: "default failed", resp: &pb.MigrateObjectResponse{Key: "bucket/mig-fail", OldBackend: "hot", NewBackend: "cold"}},
+		{name: "json", format: "json", resp: &pb.MigrateObjectResponse{Key: "bucket/mig-json", Success: true}},
+	})
+}
+
+func TestFormatObjectPolicyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectPolicyResponse, []objectFormatCase[*pb.GetObjectPolicyResponse]{
+		{name: "default with effective explicit and inherited", resp: &pb.GetObjectPolicyResponse{
+			Key: "bucket/pol-key",
+			Policy: &pb.ObjectPolicy{
+				ReplicationPolicy: &pb.ReplicationPolicy{
+					Enabled: true, MinReplicas: 3, Mode: pb.ReplicationMode_REPLICATION_MODE_SYNC,
+					TargetStores: []string{"store-a", "store-b"},
+				},
+				ArchivePolicy: &pb.ArchivePolicy{
+					Enabled: true, ArchiveAfterDays: 30, TargetStore: "archive-store", DeleteFromPrimary: true,
+				},
+				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 90, MaxVersions: 5},
 			},
-		},
-		ExplicitPolicy: &pb.ObjectPolicy{
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 30,
-				MaxVersions:   3,
+			ExplicitPolicy: &pb.ObjectPolicy{
+				RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 30, MaxVersions: 3},
 			},
-		},
-		InheritedPolicy: &pb.ObjectPolicy{
-			ReplicationPolicy: &pb.ReplicationPolicy{
-				Enabled:     true,
-				MinReplicas: 2,
+			InheritedPolicy: &pb.ObjectPolicy{
+				ReplicationPolicy: &pb.ReplicationPolicy{Enabled: true, MinReplicas: 2},
 			},
-		},
+		}},
+		{name: "json", format: "json", resp: &pb.GetObjectPolicyResponse{Key: "bucket/pol-json"}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectPolicyResponse{Key: "bucket/pol-yaml"}},
+	})
+}
+
+func TestFormatObjectSetPolicyResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectSetPolicyResponse, []objectFormatCase[*pb.SetObjectPolicyResponse]{
+		{name: "default", resp: &pb.SetObjectPolicyResponse{Key: "bucket/setpol-key", Version: 2, UpdatedAt: timestamppb.New(time.Now())}},
+		{name: "json", format: "json", resp: &pb.SetObjectPolicyResponse{Key: "bucket/setpol-json", Version: 1}},
+	})
+}
+
+func TestFormatObjectStatsResponse_Formats(t *testing.T) {
+	runObjectFormatCases(t, formatObjectStatsResponse, []objectFormatCase[*pb.ListBackendsResponse]{
+		{name: "default with healthy and unhealthy backends", resp: &pb.ListBackendsResponse{
+			Total: 2,
+			Backends: []*pb.BackendInfo{
+				{
+					Name: "primary-store", Type: pb.BackendType_BACKEND_TYPE_LOCAL, Tier: pb.StorageTier_STORAGE_TIER_HOT,
+					Enabled: true, Healthy: true, UsedBytes: 1073741824, CapacityBytes: 10737418240,
+				},
+				{
+					Name: "archive-store", Type: pb.BackendType_BACKEND_TYPE_S3, Tier: pb.StorageTier_STORAGE_TIER_ARCHIVE,
+					Enabled: true, UsedBytes: 536870912, CapacityBytes: 1099511627776,
+				},
+			},
+		}},
+		{name: "json", format: "json", resp: &pb.ListBackendsResponse{}},
+		{name: "yaml", format: "yaml", resp: &pb.ListBackendsResponse{}},
+	})
+}
+
+func TestFormatObjectLifecycleResponse_Formats(t *testing.T) {
+	formatBucket := func(resp *pb.GetObjectPolicyResponse) error {
+		return formatObjectLifecycleResponse("bucket", resp)
 	}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/pol-json"}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectPolicyResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/pol-yaml"}
-	err := formatObjectPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	now := time.Now()
-	resp := &pb.SetObjectPolicyResponse{
-		Key:       "bucket/setpol-key",
-		Version:   2,
-		UpdatedAt: timestamppb.New(now),
-	}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectSetPolicyResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.SetObjectPolicyResponse{Key: "bucket/setpol-json", Version: 1}
-	err := formatObjectSetPolicyResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.ListBackendsResponse{
-		Total: 2,
-		Backends: []*pb.BackendInfo{
-			{
-				Name:          "primary-store",
-				Type:          pb.BackendType_BACKEND_TYPE_LOCAL,
-				Tier:          pb.StorageTier_STORAGE_TIER_HOT,
-				Enabled:       true,
-				Healthy:       true,
-				UsedBytes:     1073741824,
-				CapacityBytes: 10737418240,
-			},
-			{
-				Name:          "archive-store",
-				Type:          pb.BackendType_BACKEND_TYPE_S3,
-				Tier:          pb.StorageTier_STORAGE_TIER_ARCHIVE,
-				Enabled:       true,
-				Healthy:       false,
-				UsedBytes:     536870912,
-				CapacityBytes: 1099511627776,
-			},
-		},
-	}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.ListBackendsResponse{Total: 0}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectStatsResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.ListBackendsResponse{Total: 0}
-	err := formatObjectStatsResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_DefaultOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{
-		Key: "bucket/*",
-		Policy: &pb.ObjectPolicy{
-			RetentionPolicy: &pb.RetentionPolicy{
-				Enabled:       true,
-				RetentionDays: 365,
-			},
-		},
-	}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_DefaultNoPolicy(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = ""
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_JSONOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "json"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatObjectLifecycleResponse_YAMLOutput(t *testing.T) {
-	orig := objectOutputFormat
-	defer func() { objectOutputFormat = orig }()
-	objectOutputFormat = "yaml"
-
-	resp := &pb.GetObjectPolicyResponse{Key: "bucket/*"}
-	err := formatObjectLifecycleResponse("bucket", resp)
-	assert.NoError(t, err)
+	runObjectFormatCases(t, formatBucket, []objectFormatCase[*pb.GetObjectPolicyResponse]{
+		{name: "default with retention", resp: &pb.GetObjectPolicyResponse{
+			Key:    "bucket/*",
+			Policy: &pb.ObjectPolicy{RetentionPolicy: &pb.RetentionPolicy{Enabled: true, RetentionDays: 365}},
+		}},
+		{name: "default no policy", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+		{name: "json", format: "json", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+		{name: "yaml", format: "yaml", resp: &pb.GetObjectPolicyResponse{Key: "bucket/*"}},
+	})
 }
 
 // =============================================================================
