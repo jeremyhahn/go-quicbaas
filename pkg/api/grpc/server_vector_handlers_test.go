@@ -17,14 +17,12 @@ import (
 	"context"
 	"io"
 	"math"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	pb "github.com/jeremyhahn/go-quicbaas/api/proto"
@@ -1264,87 +1262,41 @@ func TestHybridSearch_ServiceError(t *testing.T) {
 // SearchByMetadata Tests
 // =============================================================================
 
-func TestSearchByMetadata_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(nil, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByMetadata_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+func TestSearchByMetadata_InvalidRequest(t *testing.T) {
+	filters := []*pb.MetadataFilter{{Key: "category", Value: "test"}}
+	tests := []struct {
+		name    string
+		req     *pb.SearchByMetadataRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.SearchByMetadataRequest{Namespace: "", MetadataFilters: filters}, ""},
+		{
+			"empty filters",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: []*pb.MetadataFilter{}},
+			"at least one metadata filter is required",
 		},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestSearchByMetadata_EmptyFilters(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace:       "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{},
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "at least one metadata filter is required")
-}
-
-func TestSearchByMetadata_LimitExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+		{
+			"limit exceeds max",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: filters, Limit: 10001},
+			"exceeds maximum",
 		},
-		Limit: 10001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "exceeds maximum")
-}
-
-func TestSearchByMetadata_NegativeOffset(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
-	err := srv.SearchByMetadata(&pb.SearchByMetadataRequest{
-		Namespace: "test-ns",
-		MetadataFilters: []*pb.MetadataFilter{
-			{Key: "category", Value: "test"},
+		{
+			"negative offset",
+			&pb.SearchByMetadataRequest{Namespace: "test-ns", MetadataFilters: filters, Offset: -1},
+			"offset cannot be negative",
 		},
-		Offset: -1,
-	}, stream)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "offset cannot be negative")
+			stream := NewMockSearchByMetadataStream(tenantctx.WithSystem(context.Background()))
+			err := srv.SearchByMetadata(tt.req, stream)
+
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestSearchByMetadata_Success(t *testing.T) {
@@ -1404,62 +1356,27 @@ func TestSearchByMetadata_ServiceError(t *testing.T) {
 // ListVectors Tests
 // =============================================================================
 
-func TestListVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestListVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     *pb.ListVectorsRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.ListVectorsRequest{Namespace: ""}, ""},
+		{"negative page size", &pb.ListVectorsRequest{Namespace: "test-ns", PageSize: -1}, "page size cannot be negative"},
+		{"page size exceeds max", &pb.ListVectorsRequest{Namespace: "test-ns", PageSize: 1001}, "page size cannot exceed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(nil, stream)
+			stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.ListVectors(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestListVectors_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "",
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestListVectors_NegativePageSize(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "test-ns",
-		PageSize:  -1,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "page size cannot be negative")
-}
-
-func TestListVectors_PageSizeExceedsMax(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockListVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ListVectors(&pb.ListVectorsRequest{
-		Namespace: "test-ns",
-		PageSize:  1001,
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "page size cannot exceed")
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestListVectors_NamespaceNotFound(t *testing.T) {
@@ -1642,30 +1559,24 @@ func TestGetVectorStats_ClusterWideWithDetails(t *testing.T) {
 // RebuildIndex Tests
 // =============================================================================
 
-func TestRebuildIndex_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestRebuildIndex_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.RebuildIndexRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.RebuildIndexRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestRebuildIndex_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.RebuildIndex(tenantctx.WithSystem(context.Background()), &pb.RebuildIndexRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestRebuildIndex_Success(t *testing.T) {
@@ -1694,31 +1605,24 @@ func TestRebuildIndex_Success(t *testing.T) {
 // GetIndexProgress Tests
 // =============================================================================
 
-func TestGetIndexProgress_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetIndexProgress_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetIndexProgressRequest
+	}{
+		{"nil request", nil},
+		{"no operation or namespace", &pb.GetIndexProgressRequest{OperationId: "", Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetIndexProgress_NoOperationOrNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetIndexProgress(tenantctx.WithSystem(context.Background()), &pb.GetIndexProgressRequest{
-		OperationId: "",
-		Namespace:   "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetIndexProgress_Success(t *testing.T) {
@@ -1924,30 +1828,24 @@ func TestCompactNamespace_ServiceError(t *testing.T) {
 // GetCompactionProgress Tests
 // =============================================================================
 
-func TestGetCompactionProgress_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestGetCompactionProgress_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.GetCompactionProgressRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.GetCompactionProgressRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestGetCompactionProgress_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.GetCompactionProgress(tenantctx.WithSystem(context.Background()), &pb.GetCompactionProgressRequest{
-		Namespace: "",
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestGetCompactionProgress_InProgress(t *testing.T) {
@@ -2026,30 +1924,24 @@ func TestGetCompactionProgress_Failed(t *testing.T) {
 // ExportVectors Tests
 // =============================================================================
 
-func TestExportVectors_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestExportVectors_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *pb.ExportVectorsRequest
+	}{
+		{"nil request", nil},
+		{"empty namespace", &pb.ExportVectorsRequest{Namespace: ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ExportVectors(nil, stream)
+			stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
+			err := srv.ExportVectors(tt.req, stream)
 
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestExportVectors_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	stream := NewMockExportVectorsStream(tenantctx.WithSystem(context.Background()))
-	err := srv.ExportVectors(&pb.ExportVectorsRequest{
-		Namespace: "",
-	}, stream)
-
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
+			requireVectorInvalidArgument(t, err, "")
+		})
+	}
 }
 
 func TestExportVectors_EmptyNamespace_EmptyBatch(t *testing.T) {
@@ -2245,65 +2137,32 @@ func TestImportVectors_SkipExisting(t *testing.T) {
 // UpdateMetadata Tests
 // =============================================================================
 
-func TestUpdateMetadata_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
+func TestUpdateMetadata_InvalidRequest(t *testing.T) {
+	md := map[string]string{"key": "value"}
+	tests := []struct {
+		name    string
+		req     *pb.UpdateMetadataRequest
+		wantMsg string
+	}{
+		{"nil request", nil, ""},
+		{"empty namespace", &pb.UpdateMetadataRequest{Namespace: "", Id: "vec1", Metadata: md}, ""},
+		{"empty id", &pb.UpdateMetadataRequest{Namespace: "test-ns", Id: "", Metadata: md}, ""},
+		{
+			"empty metadata",
+			&pb.UpdateMetadataRequest{Namespace: "test-ns", Id: "vec1", Metadata: map[string]string{}},
+			"metadata cannot be empty",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
 
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), nil)
+			resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), tt.req)
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyNamespace(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "",
-		Id:        "vec1",
-		Metadata:  map[string]string{"key": "value"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyID(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "test-ns",
-		Id:        "",
-		Metadata:  map[string]string{"key": "value"},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-}
-
-func TestUpdateMetadata_EmptyMetadata(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-
-	resp, err := srv.UpdateMetadata(tenantctx.WithSystem(context.Background()), &pb.UpdateMetadataRequest{
-		Namespace: "test-ns",
-		Id:        "vec1",
-		Metadata:  map[string]string{},
-	})
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.InvalidArgument, st.Code())
-	assert.Contains(t, st.Message(), "metadata cannot be empty")
+			assert.Nil(t, resp)
+			requireVectorInvalidArgument(t, err, tt.wantMsg)
+		})
+	}
 }
 
 func TestUpdateMetadata_VectorNotFound(t *testing.T) {
@@ -2393,25 +2252,6 @@ func TestUpdateMetadata_Success_Replace(t *testing.T) {
 // =============================================================================
 // MockServerStreamBase Concurrency Tests
 // =============================================================================
-
-func TestMockServerStreamBase_ConcurrentAccess(t *testing.T) {
-	base := &MockServerStreamBase{ctx: tenantctx.WithSystem(context.Background())}
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = base.SetHeader(metadata.New(map[string]string{"key": "value"}))
-			_ = base.SendHeader(metadata.New(map[string]string{"key": "value"}))
-			base.SetTrailer(metadata.New(map[string]string{"key": "value"}))
-			_ = base.SendMsg("test")
-			_ = base.RecvMsg(nil)
-			_ = base.Context()
-		}()
-	}
-	wg.Wait()
-}
 
 // =============================================================================
 // Additional SearchByID Tests for Coverage
