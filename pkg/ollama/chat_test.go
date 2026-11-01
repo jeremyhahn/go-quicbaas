@@ -114,47 +114,73 @@ func TestChatService_Chat(t *testing.T) {
 	}
 }
 
-func TestChatService_Chat_EmptyMessages(t *testing.T) {
+// TestChatService_EmptyInput checks that every method rejects an empty model,
+// prompt or message list with ErrInvalidInput before any request is sent.
+func TestChatService_EmptyInput(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
 	defer client.Close()
 
-	svc := NewChatService(client, "llama3")
 	ctx := context.Background()
+	messages := []ChatMessage{{Role: ChatRoleUser, Content: "Hello"}}
 
-	_, err := svc.Chat(ctx, nil, nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
+	tests := []struct {
+		name  string
+		model string
+		call  func(svc *ChatService) error
+	}{
+		{"Chat nil messages", "llama3", func(svc *ChatService) error {
+			_, err := svc.Chat(ctx, nil, nil)
+			return err
+		}},
+		{"Chat empty messages", "llama3", func(svc *ChatService) error {
+			_, err := svc.Chat(ctx, []ChatMessage{}, nil)
+			return err
+		}},
+		{"Chat empty model", "", func(svc *ChatService) error {
+			_, err := svc.Chat(ctx, messages, nil)
+			return err
+		}},
+		{"ChatWithModel empty model", "llama3", func(svc *ChatService) error {
+			_, err := svc.ChatWithModel(ctx, "", messages, nil)
+			return err
+		}},
+		{"ChatWithModel nil messages", "llama3", func(svc *ChatService) error {
+			_, err := svc.ChatWithModel(ctx, "llama3", nil, nil)
+			return err
+		}},
+		{"Generate empty prompt", "llama3", func(svc *ChatService) error {
+			_, err := svc.Generate(ctx, "", nil)
+			return err
+		}},
+		{"Generate empty model", "", func(svc *ChatService) error {
+			_, err := svc.Generate(ctx, "Hello", nil)
+			return err
+		}},
+		{"GenerateWithModel empty model", "llama3", func(svc *ChatService) error {
+			_, err := svc.GenerateWithModel(ctx, "", "Hello", nil)
+			return err
+		}},
+		{"GenerateWithModel empty prompt", "llama3", func(svc *ChatService) error {
+			_, err := svc.GenerateWithModel(ctx, "llama3", "", nil)
+			return err
+		}},
+		{"GenerateWithSystem empty prompt", "llama3", func(svc *ChatService) error {
+			_, err := svc.GenerateWithSystem(ctx, "", "system prompt", nil)
+			return err
+		}},
+		{"GenerateWithSystem empty model", "", func(svc *ChatService) error {
+			_, err := svc.GenerateWithSystem(ctx, "Hello", "system prompt", nil)
+			return err
+		}},
 	}
 
-	_, err = svc.Chat(ctx, []ChatMessage{}, nil)
-	if err == nil {
-		t.Fatal("expected error for empty slice, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput for empty slice, got %v", err)
-	}
-}
-
-func TestChatService_Chat_EmptyModel(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "")
-	ctx := context.Background()
-
-	messages := []ChatMessage{
-		{Role: ChatRoleUser, Content: "Hello"},
-	}
-
-	_, err := svc.Chat(ctx, messages, nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(NewChatService(client, tt.model))
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Errorf("expected ErrInvalidInput, got %v", err)
+			}
+		})
 	}
 }
 
@@ -438,38 +464,6 @@ func TestChatService_Generate(t *testing.T) {
 	}
 }
 
-func TestChatService_Generate_EmptyPrompt(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	_, err := svc.Generate(ctx, "", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestChatService_Generate_EmptyModel(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "")
-	ctx := context.Background()
-
-	_, err := svc.Generate(ctx, "Hello", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
 func TestChatService_Generate_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -580,38 +574,6 @@ func TestChatService_GenerateWithSystem(t *testing.T) {
 	}
 }
 
-func TestChatService_GenerateWithSystem_EmptyPrompt(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	_, err := svc.GenerateWithSystem(ctx, "", "system prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestChatService_GenerateWithSystem_EmptyModel(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "")
-	ctx := context.Background()
-
-	_, err := svc.GenerateWithSystem(ctx, "Hello", "system prompt", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
 func TestChatService_Generate_InvalidResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -685,74 +647,6 @@ func TestChatService_Generate_ModelNotFound(t *testing.T) {
 	}
 	if !errors.Is(err, ErrModelNotFound) {
 		t.Errorf("expected ErrModelNotFound, got %v", err)
-	}
-}
-
-func TestChatService_ChatWithModel_EmptyModel(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	messages := []ChatMessage{
-		{Role: ChatRoleUser, Content: "Hello"},
-	}
-
-	_, err := svc.ChatWithModel(ctx, "", messages, nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestChatService_ChatWithModel_EmptyMessages(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	_, err := svc.ChatWithModel(ctx, "llama3", nil, nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestChatService_GenerateWithModel_EmptyModel(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	_, err := svc.GenerateWithModel(ctx, "", "Hello", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
-	}
-}
-
-func TestChatService_GenerateWithModel_EmptyPrompt(t *testing.T) {
-	client := NewClient(ClientConfig{BaseURL: "http://localhost:11434"})
-	defer client.Close()
-
-	svc := NewChatService(client, "llama3")
-	ctx := context.Background()
-
-	_, err := svc.GenerateWithModel(ctx, "llama3", "", nil)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
 }
 
