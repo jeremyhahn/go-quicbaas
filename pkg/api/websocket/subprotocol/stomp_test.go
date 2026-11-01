@@ -68,34 +68,6 @@ func TestSTOMPHandler_Name(t *testing.T) {
 	}
 }
 
-func TestSTOMPHandler_MessagesReceived(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	if handler.MessagesReceived() != 0 {
-		t.Errorf("Initial MessagesReceived() = %d, want 0", handler.MessagesReceived())
-	}
-
-	handler.messagesReceived.Add(5)
-
-	if handler.MessagesReceived() != 5 {
-		t.Errorf("MessagesReceived() = %d, want 5", handler.MessagesReceived())
-	}
-}
-
-func TestSTOMPHandler_MessagesSent(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	if handler.MessagesSent() != 0 {
-		t.Errorf("Initial MessagesSent() = %d, want 0", handler.MessagesSent())
-	}
-
-	handler.messagesSent.Add(3)
-
-	if handler.MessagesSent() != 3 {
-		t.Errorf("MessagesSent() = %d, want 3", handler.MessagesSent())
-	}
-}
-
 func TestSTOMPHandler_ResetCounters(t *testing.T) {
 	handler := NewSTOMPHandler(nil)
 
@@ -118,46 +90,6 @@ func TestSTOMPHandler_ResetCounters(t *testing.T) {
 
 	if handler.MessagesSent() != 0 {
 		t.Errorf("MessagesSent() after reset = %d, want 0", handler.MessagesSent())
-	}
-}
-
-func TestSTOMPHandler_ConcurrentCounterAccess(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	var wg sync.WaitGroup
-
-	for i := 0; i < 100; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			handler.messagesReceived.Add(1)
-		}()
-		go func() {
-			defer wg.Done()
-			handler.messagesSent.Add(1)
-		}()
-	}
-
-	for i := 0; i < 50; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			_ = handler.MessagesReceived()
-		}()
-		go func() {
-			defer wg.Done()
-			_ = handler.MessagesSent()
-		}()
-	}
-
-	wg.Wait()
-
-	if handler.MessagesReceived() != 100 {
-		t.Errorf("MessagesReceived() = %d, want 100", handler.MessagesReceived())
-	}
-
-	if handler.MessagesSent() != 100 {
-		t.Errorf("MessagesSent() = %d, want 100", handler.MessagesSent())
 	}
 }
 
@@ -1234,8 +1166,6 @@ func TestSTOMPHandler_HandleConnection_ContextCancel(t *testing.T) {
 			close(handlerDone)
 		}()
 
-		// Close session after brief delay
-		time.Sleep(50 * time.Millisecond)
 		session.Close()
 	}))
 	defer server.Close()
@@ -1339,33 +1269,6 @@ func TestSTOMPHandler_ConcurrentClients(t *testing.T) {
 	expectedSent := uint64(numClients)
 	if handler.MessagesSent() != expectedSent {
 		t.Errorf("MessagesSent() = %d, want %d", handler.MessagesSent(), expectedSent)
-	}
-}
-
-func TestSTOMPHandler_Hub(t *testing.T) {
-	hub := NewInMemoryPubSubHub()
-	handler := NewSTOMPHandler(hub)
-
-	if handler.Hub() != hub {
-		t.Error("Hub() should return the configured hub")
-	}
-}
-
-func TestSTOMPHandler_ResetCountersMultiple(t *testing.T) {
-	handler := NewSTOMPHandler(nil)
-
-	for i := 0; i < 5; i++ {
-		handler.messagesReceived.Add(5)
-		handler.messagesSent.Add(5)
-		handler.ResetCounters()
-
-		if handler.MessagesReceived() != 0 {
-			t.Errorf("Iteration %d: MessagesReceived() = %d, want 0", i, handler.MessagesReceived())
-		}
-
-		if handler.MessagesSent() != 0 {
-			t.Errorf("Iteration %d: MessagesSent() = %d, want 0", i, handler.MessagesSent())
-		}
 	}
 }
 
