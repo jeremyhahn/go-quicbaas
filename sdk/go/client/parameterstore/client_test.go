@@ -579,131 +579,98 @@ func TestClient_SetParameters_Success(t *testing.T) {
 }
 
 func TestClient_SetParameters_Validation(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return &SetParametersResponse{Results: []*SetParameterResult{}, Timestamp: time.Now()}, nil
-		},
-	}
-	c := NewClient(mockT)
 	ctx := context.Background()
+	validReq := &SetParametersRequest{Parameters: []*SetParameterRequest{
+		{Path: "/app/config/a", Value: []byte("value")},
+	}}
+	validResp := &SetParametersResponse{Results: []*SetParameterResult{}, Timestamp: time.Now()}
 
 	tests := []struct {
-		name    string
-		req     *SetParametersRequest
-		wantErr bool
+		name     string
+		req      *SetParametersRequest
+		resp     interface{}
+		respErr  error
+		wantErr  bool
+		wantCode errors.ErrorCode
 	}{
 		{
-			name:    "nil request",
-			req:     nil,
-			wantErr: true,
+			name:     "nil request",
+			req:      nil,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
-			name:    "empty parameters",
-			req:     &SetParametersRequest{Parameters: []*SetParameterRequest{}},
-			wantErr: true,
+			name:     "empty parameters",
+			req:      &SetParametersRequest{Parameters: []*SetParameterRequest{}},
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "nil parameter in slice",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				nil,
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "parameter with empty path",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				{Value: []byte("value")},
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
 		},
 		{
 			name: "parameter with empty value",
 			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
 				{Path: "/app/config/a"},
 			}},
-			wantErr: true,
+			wantErr:  true,
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			name:     "transport error",
+			req:      validReq,
+			respErr:  errors.NewUnavailable("test", "server unavailable"),
+			wantErr:  true,
+			wantCode: errors.CodeUnavailable,
+		},
+		{
+			name:     "nil response",
+			req:      validReq,
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
+		},
+		{
+			name:     "invalid response type",
+			req:      validReq,
+			resp:     "invalid-type",
+			wantErr:  true,
+			wantCode: errors.CodeInternal,
 		},
 		{
 			name: "valid request",
-			req: &SetParametersRequest{Parameters: []*SetParameterRequest{
-				{Path: "/app/config/a", Value: []byte("value")},
-			}},
-			wantErr: false,
+			req:  validReq,
+			resp: validResp,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			c := NewClient(&mockTransport{
+				requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
+					return tt.resp, tt.respErr
+				},
+			})
 			_, err := c.SetParameters(ctx, tt.req)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("SetParameters() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("SetParameters() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && err != nil {
-				if !errors.IsInvalidInput(err) {
-					t.Errorf("expected InvalidInput error, got %v", err)
-				}
+			if tt.wantErr && errors.Code(err) != tt.wantCode {
+				t.Errorf("expected %v error, got %v", tt.wantCode, err)
 			}
 		})
-	}
-}
-
-func TestClient_SetParameters_TransportError(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, errors.NewUnavailable("test", "server unavailable")
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error")
-	}
-	if !errors.IsUnavailable(err) {
-		t.Errorf("expected Unavailable error, got %v", err)
-	}
-}
-
-func TestClient_SetParameters_NilResponse(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return nil, nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error for nil response")
-	}
-}
-
-func TestClient_SetParameters_InvalidResponseType(t *testing.T) {
-	mockT := &mockTransport{
-		requestFn: func(ctx context.Context, service, method string, req interface{}) (interface{}, error) {
-			return "invalid-type", nil
-		},
-	}
-	c := NewClient(mockT)
-	ctx := context.Background()
-
-	_, err := c.SetParameters(ctx, &SetParametersRequest{
-		Parameters: []*SetParameterRequest{
-			{Path: "/app/config/a", Value: []byte("value")},
-		},
-	})
-	if err == nil {
-		t.Error("expected error for invalid response type")
 	}
 }
 
