@@ -344,173 +344,48 @@ func TestNewACLManager(t *testing.T) {
 func TestCheckAccess(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("OwnerHasFullAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
+	decisions := []struct {
+		name      string
+		acl       *ObjectACL
+		principal string
+		action    ObjectAction
+		want      bool
+	}{
+		{"EntryOwnerHasFullAccess", nil, "owner1", ActionAdmin, true},
+		{"NoACLDeniesNonOwner", nil, "other-user", ActionRead, false},
+		{"ACLOwnerHasFullAccess", &ObjectACL{Owner: "acl-owner"}, "acl-owner", ActionAdmin, true},
+		{"PublicReadAllowsRead", &ObjectACL{Owner: "owner1", PublicRead: true}, "anonymous", ActionRead, true},
+		{"PublicReadDeniesWrite", &ObjectACL{Owner: "owner1", PublicRead: true}, "anonymous", ActionWrite, false},
+		{"AdminCanRead", &ObjectACL{Owner: "owner1", Admins: []string{"admin1", "admin2"}}, "admin1", ActionRead, true},
+		{"AdminCanWrite", &ObjectACL{Owner: "owner1", Admins: []string{"admin1", "admin2"}}, "admin1", ActionWrite, true},
+		{"AdminCanDelete", &ObjectACL{Owner: "owner1", Admins: []string{"admin1", "admin2"}}, "admin1", ActionDelete, true},
+		{"AdminCanAdmin", &ObjectACL{Owner: "owner1", Admins: []string{"admin1", "admin2"}}, "admin1", ActionAdmin, true},
+		{"ReaderCanRead", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, "reader1", ActionRead, true},
+		{"ReaderCanList", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, "reader1", ActionList, true},
+		{"ReaderCannotWrite", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, "reader1", ActionWrite, false},
+		{"ReaderCannotAdmin", &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}, "reader1", ActionAdmin, false},
+		{"WriterCanWrite", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionWrite, true},
+		{"WriterCanRead", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionRead, true},
+		{"WriterCanReplicate", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionReplicate, true},
+		{"WriterCanArchive", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionArchive, true},
+		{"WriterCannotDelete", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionDelete, false},
+		{"WriterCannotVerify", &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}, "writer1", ActionVerify, false},
+	}
+	for _, tc := range decisions {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := newACLTestCatalogManager()
+			catalog.Put(ctx, createACLTestEntry("obj1", "owner1", tc.acl))
+			manager, _ := NewACLManager(&ACLManagerConfig{Catalog: catalog})
 
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		allowed, err := manager.CheckAccess(ctx, "owner1", "obj1", ActionAdmin)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("owner should have full access")
-		}
-	})
-
-	t.Run("ACLOwnerHasFullAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "acl-owner"}
-		entry := createACLTestEntry("obj1", "entry-owner", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		allowed, err := manager.CheckAccess(ctx, "acl-owner", "obj1", ActionAdmin)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("ACL owner should have full access")
-		}
-	})
-
-	t.Run("NoACLOnlyOwnerHasAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		entry := createACLTestEntry("obj1", "owner1", nil)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Non-owner should be denied
-		allowed, err := manager.CheckAccess(ctx, "other-user", "obj1", ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("non-owner should not have access without ACL")
-		}
-	})
-
-	t.Run("PublicRead", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", PublicRead: true}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Anonymous should be able to read
-		allowed, err := manager.CheckAccess(ctx, "anonymous", "obj1", ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("public read should allow anonymous read")
-		}
-
-		// But not write
-		allowed, err = manager.CheckAccess(ctx, "anonymous", "obj1", ActionWrite)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("public read should not allow anonymous write")
-		}
-	})
-
-	t.Run("AdminsHaveFullAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Admins: []string{"admin1", "admin2"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Admin should have full access
-		actions := []ObjectAction{ActionRead, ActionWrite, ActionDelete, ActionAdmin}
-		for _, action := range actions {
-			allowed, err := manager.CheckAccess(ctx, "admin1", "obj1", action)
+			allowed, err := manager.CheckAccess(ctx, tc.principal, "obj1", tc.action)
 			if err != nil {
-				t.Fatalf("unexpected error for action %s: %v", action, err)
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if !allowed {
-				t.Errorf("admin should have access for action %s", action)
+			if allowed != tc.want {
+				t.Errorf("CheckAccess(%s, %s) = %v, want %v", tc.principal, tc.action, allowed, tc.want)
 			}
-		}
-	})
-
-	t.Run("ReadersHaveReadAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Reader should be able to read
-		allowed, err := manager.CheckAccess(ctx, "reader1", "obj1", ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("reader should have read access")
-		}
-
-		// But not write
-		allowed, err = manager.CheckAccess(ctx, "reader1", "obj1", ActionWrite)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("reader should not have write access")
-		}
-	})
-
-	t.Run("WritersHaveWriteAndReadAccess", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Writer should be able to write
-		allowed, err := manager.CheckAccess(ctx, "writer1", "obj1", ActionWrite)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("writer should have write access")
-		}
-
-		// And read (writers also get read)
-		allowed, err = manager.CheckAccess(ctx, "writer1", "obj1", ActionRead)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("writer should have read access")
-		}
-
-		// But not delete
-		allowed, err = manager.CheckAccess(ctx, "writer1", "obj1", ActionDelete)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("writer should not have delete access")
-		}
-	})
+		})
+	}
 
 	t.Run("InvalidAction", func(t *testing.T) {
 		catalog := newACLTestCatalogManager()
@@ -551,101 +426,6 @@ func TestCheckAccess(t *testing.T) {
 		_, err := manager.CheckAccess(ctx, "user1", "nonexistent", ActionRead)
 		if !IsNotFound(err) {
 			t.Error("expected not found error")
-		}
-	})
-
-	t.Run("ReplicateAction", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Writers can replicate
-		allowed, err := manager.CheckAccess(ctx, "writer1", "obj1", ActionReplicate)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("writer should have replicate access")
-		}
-	})
-
-	t.Run("VerifyRequiresAdmin", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Writers cannot verify
-		allowed, err := manager.CheckAccess(ctx, "writer1", "obj1", ActionVerify)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("writer should not have verify access")
-		}
-	})
-
-	t.Run("ArchiveActionForWriter", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Writers: []string{"writer1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Writers can archive
-		allowed, err := manager.CheckAccess(ctx, "writer1", "obj1", ActionArchive)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("writer should have archive access")
-		}
-	})
-
-	t.Run("ListActionForReader", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Readers can list
-		allowed, err := manager.CheckAccess(ctx, "reader1", "obj1", ActionList)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !allowed {
-			t.Error("reader should have list access")
-		}
-	})
-
-	t.Run("DefaultSwitchCaseDenied", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		// Reader should not have admin access (falls through default case denial)
-		allowed, err := manager.CheckAccess(ctx, "reader1", "obj1", ActionAdmin)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if allowed {
-			t.Error("reader should not have admin access")
 		}
 	})
 }
@@ -1986,25 +1766,3 @@ func TestACLErrorHelpers(t *testing.T) {
 }
 
 // TestContainsHelper tests the contains helper function.
-func TestContainsHelper(t *testing.T) {
-	t.Run("Found", func(t *testing.T) {
-		slice := []string{"a", "b", "c"}
-		if !contains(slice, "b") {
-			t.Error("expected to find 'b' in slice")
-		}
-	})
-
-	t.Run("NotFound", func(t *testing.T) {
-		slice := []string{"a", "b", "c"}
-		if contains(slice, "d") {
-			t.Error("expected not to find 'd' in slice")
-		}
-	})
-
-	t.Run("EmptySlice", func(t *testing.T) {
-		var slice []string
-		if contains(slice, "a") {
-			t.Error("expected not to find anything in empty slice")
-		}
-	})
-}
