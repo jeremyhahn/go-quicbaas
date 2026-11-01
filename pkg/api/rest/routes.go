@@ -387,6 +387,8 @@ func rawRouteSpecs() []RouteSpec {
 		{Method: "DELETE", Pattern: "/api/v1/entities/{type}/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleDelete }},
 		{Method: "GET", Pattern: "/api/v1/entities/{type}/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleGet }},
 		{Method: "PUT", Pattern: "/api/v1/entities/{type}/{id}", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandlePut }},
+		{Method: "POST", Pattern: "/api/v1/entities/{type}/{id}/compare-and-swap", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleCompareAndSwap }},
+		{Method: "POST", Pattern: "/api/v1/entities/{type}/{id}/put-if-absent", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandlePutIfAbsent }},
 		{Method: "GET", Pattern: "/api/v1/entity-types", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleListEntityTypes }},
 		{Method: "GET", Pattern: "/api/v1/health", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleHealth }},
 		{Method: "GET", Pattern: "/api/v1/health/live", Group: GroupAPI, Handler: func(s *Server) http.HandlerFunc { return s.HandleLiveness }},

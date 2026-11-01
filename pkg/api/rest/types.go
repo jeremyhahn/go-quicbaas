@@ -52,6 +52,32 @@ type PutResponse struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+// CompareAndSwapRequest is the body of POST
+// /api/v1/entities/{type}/{id}/compare-and-swap. Expect and Set are raw bytes,
+// base64-encoded in JSON, so the stored value is compared byte for byte.
+type CompareAndSwapRequest struct {
+	// Expect is the value the entity must currently hold
+	Expect []byte `json:"expect"`
+
+	// Set is the value stored when Expect matches
+	Set []byte `json:"set"`
+}
+
+// PutIfAbsentRequest is the body of POST
+// /api/v1/entities/{type}/{id}/put-if-absent. Data is raw bytes,
+// base64-encoded in JSON.
+type PutIfAbsentRequest struct {
+	// Data is the value stored when the entity is absent
+	Data []byte `json:"data"`
+}
+
+// ConditionalPutResponse reports whether a conditional write was stored.
+// A missed precondition is a normal outcome, reported as Applied == false.
+type ConditionalPutResponse struct {
+	// Applied is true when the precondition held and the write was stored
+	Applied bool `json:"applied"`
+}
+
 // GetRequest represents a request to retrieve an entity.
 type GetRequest struct {
 	// EntityType is the type/category of the entity

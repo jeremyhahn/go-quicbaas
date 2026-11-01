@@ -452,6 +452,97 @@ func (s *Server) HandlePut(w http.ResponseWriter, r *http.Request) {
 	RespondJSON(w, r, statusCode, resp)
 }
 
+// HandleCompareAndSwap handles POST /api/v1/entities/{type}/{id}/compare-and-swap.
+// qrdb decides the match; a stale expect value is reported as applied=false.
+func (s *Server) HandleCompareAndSwap(w http.ResponseWriter, r *http.Request) {
+	entityType, entityID, ok := entityPathParams(w, r)
+	if !ok {
+		return
+	}
+
+	var req CompareAndSwapRequest
+	if !decodeConditionalPutBody(w, r, &req) {
+		return
+	}
+
+	incRestShardRequest(s.shardRouter.Route(entityType, entityID), entityType, "compare_and_swap")
+	resp, err := s.service.CompareAndSwap(r.Context(), &service.CompareAndSwapRequest{
+		EntityType: entityType,
+		ID:         entityID,
+		Expect:     req.Expect,
+		Set:        req.Set,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, ConditionalPutResponse{Applied: resp.Applied})
+}
+
+// HandlePutIfAbsent handles POST /api/v1/entities/{type}/{id}/put-if-absent.
+// A present entity is reported as applied=false.
+func (s *Server) HandlePutIfAbsent(w http.ResponseWriter, r *http.Request) {
+	entityType, entityID, ok := entityPathParams(w, r)
+	if !ok {
+		return
+	}
+
+	var req PutIfAbsentRequest
+	if !decodeConditionalPutBody(w, r, &req) {
+		return
+	}
+
+	incRestShardRequest(s.shardRouter.Route(entityType, entityID), entityType, "put_if_absent")
+	resp, err := s.service.PutIfAbsent(r.Context(), &service.PutIfAbsentRequest{
+		EntityType: entityType,
+		ID:         entityID,
+		Data:       req.Data,
+	})
+	if err != nil {
+		s.handleServiceError(w, r, err)
+		return
+	}
+
+	RespondJSON(w, r, http.StatusOK, ConditionalPutResponse{Applied: resp.Applied})
+}
+
+// entityPathParams reads the {type} and {id} URL parameters of an entity
+// route, responding 400 and returning false when either is missing or invalid.
+func entityPathParams(w http.ResponseWriter, r *http.Request) (string, uint64, bool) {
+	entityType := chi.URLParam(r, "type")
+	if entityType == "" {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Field:   "type",
+			Message: "entity type is required",
+		})
+		return "", 0, false
+	}
+
+	entityID, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Field:   "id",
+			Message: "invalid entity ID",
+		})
+		return "", 0, false
+	}
+	return entityType, entityID, true
+}
+
+// decodeConditionalPutBody decodes a conditional write's JSON body into dst,
+// responding 400 and returning false when the body is not valid JSON.
+func decodeConditionalPutBody(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		RespondError(w, r, http.StatusBadRequest, &ValidationError{
+			Message: "invalid JSON body",
+		})
+		return false
+	}
+	return true
+}
+
 // HandleGet handles GET requests to retrieve a single entity.
 func (s *Server) HandleGet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

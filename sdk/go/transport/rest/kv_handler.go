@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -49,6 +50,10 @@ func (h *kvHandler) handleRequest(ctx context.Context, method string, req interf
 		return h.handleDelete(ctx, req)
 	case "List":
 		return h.handleList(ctx, req)
+	case "CompareAndSwap":
+		return h.handleCompareAndSwap(ctx, req)
+	case "PutIfAbsent":
+		return h.handlePutIfAbsent(ctx, req)
 	default:
 		return nil, errors.NewUnimplemented("kvHandler.handleRequest",
 			"unsupported KV method: "+method)
@@ -129,6 +134,78 @@ func (h *kvHandler) handlePut(ctx context.Context, req interface{}) (interface{}
 		ID:        sdkReq.ID,
 		Timestamp: restResp.Timestamp.UnixNano(),
 	}, nil
+}
+
+// handleCompareAndSwap handles CompareAndSwap requests via
+// POST /api/v1/entities/{type}/{id}/compare-and-swap.
+func (h *kvHandler) handleCompareAndSwap(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*service.CompareAndSwapRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("kvHandler.handleCompareAndSwap",
+			"invalid request type, expected *service.CompareAndSwapRequest")
+	}
+	body := map[string][]byte{
+		"expect": sdkReq.Expect,
+		"set":    sdkReq.Set,
+	}
+	return h.conditionalPut(ctx, "kvHandler.handleCompareAndSwap",
+		sdkReq.EntityType, sdkReq.ID, "compare-and-swap", body)
+}
+
+// handlePutIfAbsent handles PutIfAbsent requests via
+// POST /api/v1/entities/{type}/{id}/put-if-absent.
+func (h *kvHandler) handlePutIfAbsent(ctx context.Context, req interface{}) (interface{}, error) {
+	sdkReq, ok := req.(*service.PutIfAbsentRequest)
+	if !ok || sdkReq == nil {
+		return nil, errors.NewInvalidInput("kvHandler.handlePutIfAbsent",
+			"invalid request type, expected *service.PutIfAbsentRequest")
+	}
+	body := map[string][]byte{
+		"data": sdkReq.Data,
+	}
+	return h.conditionalPut(ctx, "kvHandler.handlePutIfAbsent",
+		sdkReq.EntityType, sdkReq.ID, "put-if-absent", body)
+}
+
+// conditionalPut posts a conditional write to an entity's {verb} route and
+// returns the server's {"applied": bool} as a ConditionalPutResponse.
+func (h *kvHandler) conditionalPut(ctx context.Context, op, entityType string, id uint64, verb string, body map[string][]byte) (interface{}, error) {
+	url := h.transport.baseURL + h.transport.basePath +
+		fmt.Sprintf("/api/v1/entities/%s/%d/%s", neturl.PathEscape(entityType), id, verb)
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInvalidInput, op, "failed to marshal request body")
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, op, "failed to create HTTP request")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	for k, v := range h.transport.headers {
+		httpReq.Header.Set(k, v)
+	}
+
+	resp, err := h.transport.client.Do(httpReq)
+	if err != nil {
+		return nil, h.transport.convertHTTPError(err, op)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, op, "failed to read response body")
+	}
+	if resp.StatusCode >= 400 {
+		return nil, h.transport.parseErrorResponse(resp.StatusCode, respBody)
+	}
+
+	var condResp service.ConditionalPutResponse
+	if err := json.Unmarshal(respBody, &condResp); err != nil {
+		return nil, errors.Wrap(err, errors.CodeInternal, op, "failed to parse response")
+	}
+	return &condResp, nil
 }
 
 // handleGet handles Get requests.

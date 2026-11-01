@@ -438,6 +438,8 @@ var frozenRoutePermissions = map[string]frozenPermission{
 	"POST /api/v1/embedding/batch":                                                     {auth: RouteAuthPermission, resource: "embedding", action: "embed"},
 	"POST /api/v1/embedding/generate":                                                  {auth: RouteAuthPermission, resource: "embedding", action: "embed"},
 	"POST /api/v1/entities/{type}/":                                                    {auth: RouteAuthPermission, resource: "kv", action: "put"},
+	"POST /api/v1/entities/{type}/{id}/compare-and-swap":                               {auth: RouteAuthPermission, resource: "kv", action: "put"},
+	"POST /api/v1/entities/{type}/{id}/put-if-absent":                                  {auth: RouteAuthPermission, resource: "kv", action: "put"},
 	"POST /api/v1/hooks/task-completed":                                                {auth: RouteAuthPermission, resource: "orchestrator", action: "hook"},
 	"POST /api/v1/hooks/task-created":                                                  {auth: RouteAuthPermission, resource: "orchestrator", action: "hook"},
 	"POST /api/v1/hooks/teammate-idle":                                                 {auth: RouteAuthPermission, resource: "orchestrator", action: "hook"},

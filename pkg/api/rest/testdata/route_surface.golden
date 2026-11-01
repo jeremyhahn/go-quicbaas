@@ -406,6 +406,8 @@ POST /api/v1/crypto/verify/{name}
 POST /api/v1/embedding/batch
 POST /api/v1/embedding/generate
 POST /api/v1/entities/{type}/
+POST /api/v1/entities/{type}/{id}/compare-and-swap
+POST /api/v1/entities/{type}/{id}/put-if-absent
 POST /api/v1/hooks/task-completed
 POST /api/v1/hooks/task-created
 POST /api/v1/hooks/teammate-idle

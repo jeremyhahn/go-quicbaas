@@ -395,6 +395,8 @@ POST /api/v1/crypto/verify/{name} permission keys:create
 POST /api/v1/embedding/batch permission embedding:embed
 POST /api/v1/embedding/generate permission embedding:embed
 POST /api/v1/entities/{type}/ permission kv:put
+POST /api/v1/entities/{type}/{id}/compare-and-swap permission kv:put
+POST /api/v1/entities/{type}/{id}/put-if-absent permission kv:put
 POST /api/v1/hooks/task-completed permission orchestrator:hook
 POST /api/v1/hooks/task-created permission orchestrator:hook
 POST /api/v1/hooks/teammate-idle permission orchestrator:hook
