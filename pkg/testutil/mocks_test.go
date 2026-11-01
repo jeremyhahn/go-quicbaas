@@ -473,22 +473,14 @@ func TestMockQuicBaaS_Operations(t *testing.T) {
 // Lifecycle Methods
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_Close_Success(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.On("Close").Return(nil)
-
-	err := m.Close()
-	assert.NoError(t, err)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_Close_Error(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.On("Close").Return(errTest)
-
-	err := m.Close()
-	assert.ErrorIs(t, err, errTest)
-	m.AssertExpectations(t)
+func TestMockQuicBaaS_Close(t *testing.T) {
+	runMockCalls(t, []mockCall{
+		{
+			method:  "Close",
+			errOnly: true,
+			call:    func(m *MockQuicBaaS) (any, error) { return nil, m.Close() },
+		},
+	})
 }
 
 func TestMockQuicBaaS_SetIAMProvider(t *testing.T) {
@@ -509,29 +501,23 @@ func TestMockQuicBaaS_SetMessagingService(t *testing.T) {
 // Delegated Accessors (testify mock.Called)
 // ---------------------------------------------------------------------------
 
-func TestMockQuicBaaS_KMSManager(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.On("KMSManager").Return(nil)
+func TestMockQuicBaaS_DelegatedAccessors(t *testing.T) {
+	tests := []struct {
+		method string
+		get    func(m *MockQuicBaaS) any
+	}{
+		{method: "KMSManager", get: func(m *MockQuicBaaS) any { return m.KMSManager() }},
+		{method: "Messaging", get: func(m *MockQuicBaaS) any { return m.Messaging() }},
+		{method: "WatchManager", get: func(m *MockQuicBaaS) any { return m.WatchManager() }},
+	}
 
-	result := m.KMSManager()
-	assert.Nil(t, result)
-	m.AssertExpectations(t)
-}
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			m := NewMockQuicBaaS()
+			m.On(tt.method).Return(nil)
 
-func TestMockQuicBaaS_Messaging(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.On("Messaging").Return(nil)
-
-	result := m.Messaging()
-	assert.Nil(t, result)
-	m.AssertExpectations(t)
-}
-
-func TestMockQuicBaaS_WatchManager(t *testing.T) {
-	m := NewMockQuicBaaS()
-	m.On("WatchManager").Return(nil)
-
-	result := m.WatchManager()
-	assert.Nil(t, result)
-	m.AssertExpectations(t)
+			assert.Nil(t, tt.get(m))
+			m.AssertExpectations(t)
+		})
+	}
 }
