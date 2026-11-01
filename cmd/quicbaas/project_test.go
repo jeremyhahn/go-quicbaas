@@ -233,17 +233,70 @@ func TestRunProjectCreate_FactoryError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no transport")
 }
 
-func TestRunProjectCreate_TransportError(t *testing.T) {
-	mc := &mockProjectClient{
-		createFn: func(_ context.Context, _ *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
-			return nil, stderrors.New("create boom")
+func TestRunProject_TransportErrorIsReturned(t *testing.T) {
+	transportErr := stderrors.New("transport boom")
+	for _, tc := range []struct {
+		name string
+		mc   *mockProjectClient
+		run  func() error
+	}{
+		{
+			name: "create",
+			mc: &mockProjectClient{
+				createFn: func(_ context.Context, _ *projectSDK.CreateProjectRequest) (*projectSDK.ProjectInfo, error) {
+					return nil, transportErr
+				},
+			},
+			run: func() error {
+				cmd := newProjectCreateCommand()
+				projectName = "web-api"
+				return runProjectCreate(cmd, nil)
+			},
 		},
+		{
+			name: "list",
+			mc: &mockProjectClient{
+				listFn: func(_ context.Context, _ *projectSDK.ListProjectsRequest) (*projectSDK.ListProjectsResponse, error) {
+					return nil, transportErr
+				},
+			},
+			run: func() error { return runProjectList(newProjectListCommand(), nil) },
+		},
+		{
+			name: "update",
+			mc: &mockProjectClient{
+				updateFn: func(_ context.Context, _ *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
+					return nil, transportErr
+				},
+			},
+			run: func() error { return runProjectUpdate(newProjectUpdateCommand(), []string{"proj_42"}) },
+		},
+		{
+			name: "delete",
+			mc: &mockProjectClient{
+				deleteFn: func(_ context.Context, _, _ string) error { return transportErr },
+			},
+			run: func() error { return runProjectDelete(newProjectDeleteCommand(), []string{"proj_42"}) },
+		},
+		{
+			name: "revoke-role",
+			mc: &mockProjectClient{
+				revokeRoleFn: func(_ context.Context, _ *projectSDK.RevokeFleetNodeRoleRequest) (*projectSDK.RevokeFleetNodeRoleResponse, error) {
+					return nil, transportErr
+				},
+			},
+			run: func() error {
+				cmd := newProjectRevokeRoleCommand()
+				projectFleetNodeID = "agent_abc"
+				return runProjectRevokeRole(cmd, []string{"proj_42"})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withMockProject(t, tc.mc)
+			require.Error(t, tc.run())
+		})
 	}
-	withMockProject(t, mc)
-	cmd := newProjectCreateCommand()
-	projectName = "web-api"
-
-	require.Error(t, runProjectCreate(cmd, nil))
 }
 
 // =============================================================================
@@ -265,17 +318,6 @@ func TestRunProjectList_Happy(t *testing.T) {
 
 	require.NoError(t, runProjectList(newProjectListCommand(), nil))
 	assert.Equal(t, "acme", capturedTenant)
-}
-
-func TestRunProjectList_TransportError(t *testing.T) {
-	mc := &mockProjectClient{
-		listFn: func(_ context.Context, _ *projectSDK.ListProjectsRequest) (*projectSDK.ListProjectsResponse, error) {
-			return nil, stderrors.New("list boom")
-		},
-	}
-	withMockProject(t, mc)
-
-	require.Error(t, runProjectList(newProjectListCommand(), nil))
 }
 
 // =============================================================================
@@ -360,17 +402,6 @@ func TestRunProjectUpdate_Happy(t *testing.T) {
 	assert.Equal(t, "3f1a9c2", captured.GitCurrentSHA)
 }
 
-func TestRunProjectUpdate_TransportError(t *testing.T) {
-	mc := &mockProjectClient{
-		updateFn: func(_ context.Context, _ *projectSDK.UpdateProjectRequest) (*projectSDK.ProjectInfo, error) {
-			return nil, stderrors.New("update boom")
-		},
-	}
-	withMockProject(t, mc)
-
-	require.Error(t, runProjectUpdate(newProjectUpdateCommand(), []string{"proj_42"}))
-}
-
 // =============================================================================
 // Delete
 // =============================================================================
@@ -387,15 +418,6 @@ func TestRunProjectDelete_Happy(t *testing.T) {
 
 	require.NoError(t, runProjectDelete(newProjectDeleteCommand(), []string{"proj_42"}))
 	assert.Equal(t, "proj_42", capturedID)
-}
-
-func TestRunProjectDelete_TransportError(t *testing.T) {
-	mc := &mockProjectClient{
-		deleteFn: func(_ context.Context, _, _ string) error { return stderrors.New("delete boom") },
-	}
-	withMockProject(t, mc)
-
-	require.Error(t, runProjectDelete(newProjectDeleteCommand(), []string{"proj_42"}))
 }
 
 // =============================================================================
@@ -463,44 +485,32 @@ func TestRunProjectRevokeRole_Happy(t *testing.T) {
 	assert.Equal(t, "agent_abc", captured.FleetNodeID)
 }
 
-func TestRunProjectRevokeRole_TransportError(t *testing.T) {
-	mc := &mockProjectClient{
-		revokeRoleFn: func(_ context.Context, _ *projectSDK.RevokeFleetNodeRoleRequest) (*projectSDK.RevokeFleetNodeRoleResponse, error) {
-			return nil, stderrors.New("revoke boom")
-		},
-	}
-	withMockProject(t, mc)
-	cmd := newProjectRevokeRoleCommand()
-	projectFleetNodeID = "agent_abc"
-
-	require.Error(t, runProjectRevokeRole(cmd, []string{"proj_42"}))
-}
-
 // =============================================================================
 // Role Parsing
 // =============================================================================
 
-func TestParseProjectRole_Valid(t *testing.T) {
+func TestParseProjectRole(t *testing.T) {
 	for _, tc := range []struct {
-		in   string
-		want projectSDK.ProjectRole
+		in      string
+		want    projectSDK.ProjectRole
+		wantErr bool
 	}{
-		{"lead", projectSDK.ProjectRoleLead},
-		{"WORKER", projectSDK.ProjectRoleWorker},
-		{"  observer  ", projectSDK.ProjectRoleObserver},
-		{"denied", projectSDK.ProjectRoleDenied},
+		{in: "lead", want: projectSDK.ProjectRoleLead},
+		{in: "WORKER", want: projectSDK.ProjectRoleWorker},
+		{in: "  observer  ", want: projectSDK.ProjectRoleObserver},
+		{in: "denied", want: projectSDK.ProjectRoleDenied},
+		{in: "", wantErr: true},
+		{in: "admin", wantErr: true},
+		{in: "lead ish", wantErr: true},
 	} {
 		got, err := parseProjectRole(tc.in)
+		if tc.wantErr {
+			require.Errorf(t, err, "role %q must be rejected", tc.in)
+			assert.Contains(t, err.Error(), "invalid project role")
+			continue
+		}
 		require.NoErrorf(t, err, "role %q", tc.in)
 		assert.Equal(t, tc.want, got)
-	}
-}
-
-func TestParseProjectRole_Invalid(t *testing.T) {
-	for _, in := range []string{"", "admin", "lead ish"} {
-		_, err := parseProjectRole(in)
-		require.Errorf(t, err, "role %q must be rejected", in)
-		assert.Contains(t, err.Error(), "invalid project role")
 	}
 }
 
@@ -508,8 +518,8 @@ func TestParseProjectRole_Invalid(t *testing.T) {
 // Formatting
 // =============================================================================
 
-func TestFormatProjectDetail_Formats(t *testing.T) {
-	info := &projectSDK.ProjectInfo{
+func TestFormatProjectDetail(t *testing.T) {
+	full := &projectSDK.ProjectInfo{
 		ID:          "proj_1",
 		TenantID:    "acme",
 		Name:        "web-api",
@@ -522,19 +532,122 @@ func TestFormatProjectDetail_Formats(t *testing.T) {
 		Metadata:  map[string]string{"env": "prod"},
 		CreatedAt: time.Unix(1700000000, 0),
 	}
-
-	for _, format := range []string{"table", "json", "yaml", ""} {
-		var buf bytes.Buffer
-		require.NoErrorf(t, formatProjectDetail(info, format, &buf), "format %q", format)
-		assert.Containsf(t, buf.String(), "proj_1", "format %q must render the project ID", format)
+	minimal := &projectSDK.ProjectInfo{ID: "proj_1", Name: "api", TenantID: "acme"}
+	storage := &projectSDK.ProjectInfo{
+		ID: "proj_1", TenantID: "acme", Name: "api",
+		Storage: projectSDK.ProjectStorage{
+			WorkspaceTier:     projectSDK.WorkspaceTierEphemeral,
+			WorkspaceTmpfsMB:  4096,
+			ContainerMemoryMB: 8192,
+		},
 	}
 
-	// Table output must order agent roles and metadata deterministically.
-	var table bytes.Buffer
-	require.NoError(t, formatProjectDetail(info, "table", &table))
-	out := table.String()
-	assert.Less(t, strings.Index(out, "agent_a"), strings.Index(out, "agent_b"))
-	assert.Contains(t, out, "unlimited", "a zero quota must render as unlimited")
+	for _, tc := range []struct {
+		name        string
+		info        *projectSDK.ProjectInfo
+		format      string
+		contains    []string
+		notContains []string
+		check       func(t *testing.T, out string)
+	}{
+		{name: "json", info: full, format: "json", contains: []string{"proj_1"}},
+		{name: "yaml", info: full, format: "yaml", contains: []string{"proj_1"}},
+		{name: "default format", info: full, format: "", contains: []string{"proj_1"}},
+		{
+			name: "table orders roles and renders a zero quota as unlimited", info: full, format: "table",
+			contains: []string{"proj_1", "unlimited"},
+			check: func(t *testing.T, out string) {
+				assert.Less(t, strings.Index(out, "agent_a"), strings.Index(out, "agent_b"))
+			},
+		},
+		{
+			name: "git identity",
+			info: &projectSDK.ProjectInfo{
+				ID: "proj_1", Name: "api", TenantID: "acme", DefaultWorkflow: "sdlc",
+				Git: projectSDK.ProjectGit{
+					Author:  projectSDK.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
+					Signing: projectSDK.CommitSigning{Enabled: true, Key: projectSDK.KMSKeyRef{Name: "api-signing"}},
+					SSHKey:  projectSDK.KMSKeyRef{Name: "api-access"},
+				},
+			},
+			format:   "table",
+			contains: []string{"Default Workflow:", "sdlc", "agent-api <agent-api@example.test>", "api-signing", "api-access"},
+		},
+		{
+			name: "autonomy and context repos",
+			info: &projectSDK.ProjectInfo{
+				ID: "proj_1", Name: "api", TenantID: "acme",
+				Autonomous: true,
+				ContextRepos: []projectSDK.ContextRepo{
+					{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
+				},
+			},
+			format: "table",
+			contains: []string{
+				"Autonomous:", "true",
+				"Context Repos:", "handbook", "https://forge.example/org/handbook@main",
+			},
+		},
+		{
+			// An operator-driven project says so rather than staying silent.
+			name: "operator-driven project without context repos", info: minimal, format: "table",
+			contains:    []string{"Autonomous:"},
+			notContains: []string{"Context Repos:"},
+		},
+		{
+			name: "storage table", info: storage, format: "table",
+			contains: []string{"Workspace Tier:", "ephemeral", "4096 MiB", "8192 MiB"},
+		},
+		{
+			name: "storage json", info: storage, format: "json",
+			check: func(t *testing.T, out string) {
+				var decoded struct {
+					Storage map[string]interface{} `json:"storage"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+				assert.Equal(t, "ephemeral", decoded.Storage["workspace_tier"])
+				assert.Equal(t, float64(4096), decoded.Storage["workspace_tmpfs_mb"])
+				assert.Equal(t, float64(8192), decoded.Storage["container_memory_mb"])
+			},
+		},
+		{
+			name: "default session rotation and unparked", info: minimal, format: "table",
+			contains: []string{"Session Rotation:", "resume (default)"},
+			check: func(t *testing.T, out string) {
+				assert.Regexp(t, `Parked:\s+no`, out)
+			},
+		},
+		{
+			name:        "fresh session rotation",
+			info:        &projectSDK.ProjectInfo{ID: "proj_1", Name: "api", SessionRotation: projectSDK.SessionRotationFresh},
+			format:      "table",
+			contains:    []string{"fresh"},
+			notContains: []string{"(default)"},
+		},
+		{
+			name: "parked",
+			info: &projectSDK.ProjectInfo{
+				ID: "proj_1", Name: "api", Parked: true, ParkedAt: time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC), ParkedBy: "ops",
+			},
+			format:   "table",
+			contains: []string{"yes, since 2026-09-25T12:00:00Z by ops"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, formatProjectDetail(tc.info, tc.format, &buf))
+			out := buf.String()
+			for _, want := range tc.contains {
+				assert.Contains(t, out, want)
+			}
+			for _, unwanted := range tc.notContains {
+				assert.NotContains(t, out, unwanted)
+			}
+			if tc.check != nil {
+				tc.check(t, out)
+			}
+		})
+	}
 }
 
 func TestFormatProject_InvalidFormat(t *testing.T) {
@@ -643,22 +756,6 @@ func TestRunProjectUpdate_SigningFlagIsTriState(t *testing.T) {
 	assert.Equal(t, "rotated", captured.GitSSHKeyName)
 
 	assert.Nil(t, gitSigningFlag(nil), "no command means no flag")
-}
-
-func TestFormatProjectDetail_ShowsGitIdentity(t *testing.T) {
-	info := &projectSDK.ProjectInfo{
-		ID: "proj_1", Name: "api", TenantID: "acme", DefaultWorkflow: "sdlc",
-		Git: projectSDK.ProjectGit{
-			Author:  projectSDK.GitAuthor{Name: "agent-api", Email: "agent-api@example.test"},
-			Signing: projectSDK.CommitSigning{Enabled: true, Key: projectSDK.KMSKeyRef{Name: "api-signing"}},
-			SSHKey:  projectSDK.KMSKeyRef{Name: "api-access"},
-		},
-	}
-	var out bytes.Buffer
-	require.NoError(t, formatProjectDetail(info, "table", &out))
-	for _, want := range []string{"Default Workflow:", "sdlc", "agent-api <agent-api@example.test>", "api-signing", "api-access"} {
-		assert.Contains(t, out.String(), want)
-	}
 }
 
 // =============================================================================
@@ -806,30 +903,6 @@ func TestParseContextRepoFlag_Table(t *testing.T) {
 
 // TestFormatProjectDetail_ShowsAutonomyAndContextRepos pins the describe/get
 // output for both fields.
-func TestFormatProjectDetail_ShowsAutonomyAndContextRepos(t *testing.T) {
-	info := &projectSDK.ProjectInfo{
-		ID: "proj_1", Name: "api", TenantID: "acme",
-		Autonomous: true,
-		ContextRepos: []projectSDK.ContextRepo{
-			{Name: "handbook", RepoURL: "https://forge.example/org/handbook", Ref: "main"},
-		},
-	}
-	var out bytes.Buffer
-	require.NoError(t, formatProjectDetail(info, "table", &out))
-	for _, want := range []string{
-		"Autonomous:", "true",
-		"Context Repos:", "handbook", "https://forge.example/org/handbook@main",
-	} {
-		assert.Contains(t, out.String(), want)
-	}
-
-	// An operator-driven project says so rather than staying silent.
-	var quiet bytes.Buffer
-	require.NoError(t, formatProjectDetail(&projectSDK.ProjectInfo{ID: "p", Name: "n", TenantID: "t"}, "table", &quiet))
-	assert.Contains(t, quiet.String(), "Autonomous:")
-	assert.NotContains(t, quiet.String(), "Context Repos:")
-}
-
 // =============================================================================
 // Storage tier flags
 // =============================================================================
@@ -894,33 +967,6 @@ func TestRunProjectUpdate_StorageSizesArePresenceBased(t *testing.T) {
 
 // TestFormatProjectDetail_ShowsStorage: the table output names the tier and
 // both sizes, and JSON output carries them where `jq .storage` finds them.
-func TestFormatProjectDetail_ShowsStorage(t *testing.T) {
-	info := &projectSDK.ProjectInfo{
-		ID: "proj_1", TenantID: "acme", Name: "api",
-		Storage: projectSDK.ProjectStorage{
-			WorkspaceTier:     projectSDK.WorkspaceTierEphemeral,
-			WorkspaceTmpfsMB:  4096,
-			ContainerMemoryMB: 8192,
-		},
-	}
-	var table bytes.Buffer
-	require.NoError(t, formatProjectDetail(info, "table", &table))
-	assert.Contains(t, table.String(), "Workspace Tier:")
-	assert.Contains(t, table.String(), "ephemeral")
-	assert.Contains(t, table.String(), "4096 MiB")
-	assert.Contains(t, table.String(), "8192 MiB")
-
-	var out bytes.Buffer
-	require.NoError(t, formatProjectDetail(info, "json", &out))
-	var decoded struct {
-		Storage map[string]interface{} `json:"storage"`
-	}
-	require.NoError(t, json.Unmarshal(out.Bytes(), &decoded))
-	assert.Equal(t, "ephemeral", decoded.Storage["workspace_tier"])
-	assert.Equal(t, float64(4096), decoded.Storage["workspace_tmpfs_mb"])
-	assert.Equal(t, float64(8192), decoded.Storage["container_memory_mb"])
-}
-
 // =============================================================================
 // Session rotation flag
 // =============================================================================
@@ -986,19 +1032,6 @@ func TestRunProjectCreate_ASessionRotationTheServerRefusesIsReported(t *testing.
 
 // TestFormatProjectDetail_ShowsSessionRotation: the table names the policy,
 // and a project that never chose one is shown running the default.
-func TestFormatProjectDetail_ShowsSessionRotation(t *testing.T) {
-	var table bytes.Buffer
-	require.NoError(t, formatProjectDetail(&projectSDK.ProjectInfo{ID: "proj_1", Name: "api"}, "table", &table))
-	assert.Contains(t, table.String(), "Session Rotation:")
-	assert.Contains(t, table.String(), "resume (default)")
-
-	table.Reset()
-	fresh := &projectSDK.ProjectInfo{ID: "proj_1", Name: "api", SessionRotation: projectSDK.SessionRotationFresh}
-	require.NoError(t, formatProjectDetail(fresh, "table", &table))
-	assert.Contains(t, table.String(), "fresh")
-	assert.NotContains(t, table.String(), "(default)")
-}
-
 // =============================================================================
 // park / resume
 // =============================================================================
@@ -1039,19 +1072,6 @@ func TestRunProjectPark_ReportsARefusal(t *testing.T) {
 
 	withFailingProjectFactory(t, stderrors.New("no transport"))
 	require.Error(t, runProjectSetParked("proj_1", false))
-}
-
-func TestFormatProjectDetail_ShowsParkState(t *testing.T) {
-	var out bytes.Buffer
-	require.NoError(t, formatProjectDetail(&projectSDK.ProjectInfo{ID: "proj_1", Name: "api"}, "table", &out))
-	assert.Regexp(t, `Parked:\s+no`, out.String())
-
-	out.Reset()
-	parkedAt := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, formatProjectDetail(&projectSDK.ProjectInfo{
-		ID: "proj_1", Name: "api", Parked: true, ParkedAt: parkedAt, ParkedBy: "ops",
-	}, "table", &out))
-	assert.Contains(t, out.String(), "yes, since 2026-09-25T12:00:00Z by ops")
 }
 
 func TestRunProjectUpdate_RetiresASigningKey(t *testing.T) {
