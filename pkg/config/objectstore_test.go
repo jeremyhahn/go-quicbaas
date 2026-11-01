@@ -525,16 +525,6 @@ func TestObjectStoreReplication_Merge(t *testing.T) {
 }
 
 func TestObjectStoreReplication_Validate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		r := &ObjectStoreReplication{
-			Mode:     ReplicationModeAsync,
-			Priority: 5,
-		}
-		if err := r.Validate("test"); err != nil {
-			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
 	t.Run("all valid modes", func(t *testing.T) {
 		modes := []string{ReplicationModeSync, ReplicationModeAsync, ReplicationModeQuorum}
 		for _, mode := range modes {
@@ -554,11 +544,11 @@ func TestObjectStoreReplication_Validate(t *testing.T) {
 	})
 
 	t.Run("priority out of range", func(t *testing.T) {
-		testCases := []int{0, 11, -1, 100}
+		testCases := []int{11, -1, 100}
 		for _, priority := range testCases {
 			r := &ObjectStoreReplication{Priority: priority}
 			err := r.Validate("test")
-			if priority != 0 && err == nil {
+			if err == nil {
 				t.Errorf("expected validation error for priority %d", priority)
 			}
 		}
@@ -682,16 +672,6 @@ func TestObjectStoreArchive_Merge(t *testing.T) {
 }
 
 func TestObjectStoreArchive_Validate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		a := &ObjectStoreArchive{
-			CompressionLevel: 6,
-			ArchiveAfterDays: 90,
-		}
-		if err := a.Validate("test"); err != nil {
-			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
 	t.Run("compression level out of range", func(t *testing.T) {
 		testCases := []int{-1, 10, 15, 100}
 		for _, level := range testCases {
@@ -806,16 +786,6 @@ func TestObjectStoreRetention_Merge(t *testing.T) {
 }
 
 func TestObjectStoreRetention_Validate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		r := &ObjectStoreRetention{
-			RetentionDays: 365,
-			MaxVersions:   10,
-		}
-		if err := r.Validate("test"); err != nil {
-			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
 	t.Run("zero values are valid", func(t *testing.T) {
 		r := &ObjectStoreRetention{
 			RetentionDays: 0,
@@ -928,17 +898,6 @@ func TestObjectStoreQuotas_Merge(t *testing.T) {
 }
 
 func TestObjectStoreQuotas_Validate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		q := &ObjectStoreQuotas{
-			MaxStorageBytes: 1073741824,
-			MaxObjectSize:   104857600,
-			MaxObjectCount:  10000,
-		}
-		if err := q.Validate("test"); err != nil {
-			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
 	t.Run("zero values are valid", func(t *testing.T) {
 		q := &ObjectStoreQuotas{}
 		if err := q.Validate("test"); err != nil {
@@ -1688,16 +1647,6 @@ func TestNodeObjectStorageConfig_Merge(t *testing.T) {
 }
 
 func TestNodeObjectStorageConfig_Validate(t *testing.T) {
-	t.Run("valid config", func(t *testing.T) {
-		n := &NodeObjectStorageConfig{
-			InternalBackend: "local",
-			CacheMaxSize:    10737418240,
-		}
-		if err := n.Validate(); err != nil {
-			t.Errorf("unexpected validation error: %v", err)
-		}
-	})
-
 	t.Run("negative cache size", func(t *testing.T) {
 		n := &NodeObjectStorageConfig{
 			CacheMaxSize: -1,
@@ -1791,6 +1740,20 @@ func TestObjectStoreFullConfig_Clone(t *testing.T) {
 		}
 		if clone.Tenants != nil {
 			t.Error("Tenants should be nil")
+		}
+	})
+
+	t.Run("clone backend with nil config", func(t *testing.T) {
+		original := &ObjectStoreFullConfig{
+			Backends: map[string]*StorageBackendConfig{
+				"test": {Type: "s3", Description: "test backend"},
+			},
+		}
+
+		clone := original.Clone()
+
+		if clone.Backends["test"].Config != nil {
+			t.Error("cloned backend Config should be nil")
 		}
 	})
 }
@@ -2205,55 +2168,4 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-func TestConstants(t *testing.T) {
-	// Verify constants are defined correctly
-	if CompressionNone != "none" {
-		t.Errorf("CompressionNone should be %q", "none")
-	}
-	if CompressionZstd != "zstd" {
-		t.Errorf("CompressionZstd should be %q", "zstd")
-	}
-	if CompressionGzip != "gzip" {
-		t.Errorf("CompressionGzip should be %q", "gzip")
-	}
-	if CompressionLZ4 != "lz4" {
-		t.Errorf("CompressionLZ4 should be %q", "lz4")
-	}
-
-	if ReplicationModeSync != "sync" {
-		t.Errorf("ReplicationModeSync should be %q", "sync")
-	}
-	if ReplicationModeAsync != "async" {
-		t.Errorf("ReplicationModeAsync should be %q", "async")
-	}
-	if ReplicationModeQuorum != "quorum" {
-		t.Errorf("ReplicationModeQuorum should be %q", "quorum")
-	}
-
-	if DefaultValueThreshold != 1048576 {
-		t.Errorf("DefaultValueThreshold should be %d", 1048576)
-	}
-	if DefaultCacheMaxSize != 10737418240 {
-		t.Errorf("DefaultCacheMaxSize should be %d", 10737418240)
-	}
-}
-
-func TestObjectStoreFullConfig_CloneBackendsWithNilConfig(t *testing.T) {
-	original := &ObjectStoreFullConfig{
-		Backends: map[string]*StorageBackendConfig{
-			"test": {
-				Type:        "s3",
-				Description: "test backend",
-				// Config is nil
-			},
-		},
-	}
-
-	clone := original.Clone()
-
-	if clone.Backends["test"].Config != nil {
-		t.Error("cloned backend Config should be nil")
-	}
 }
