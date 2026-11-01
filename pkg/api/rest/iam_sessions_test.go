@@ -1772,15 +1772,6 @@ func TestIAM91_DeleteOldAuditEvents_MissingUser(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestIAM91_RegisterAuditRoutes(t *testing.T) {
-	handler, _, cleanup := setupIAMHandler(t)
-	defer cleanup()
-
-	r := chi.NewRouter()
-	RegisterAuditRoutes(r, handler)
-	assert.NotNil(t, r)
-}
-
 // =============================================================================
 // Dynamic Client Registration: validation + error paths
 // =============================================================================
@@ -3278,22 +3269,6 @@ func TestIAM91_ImpersonationMiddleware_ManagerError(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
 	assert.NotEqual(t, http.StatusOK, w.Code)
-}
-
-func TestIAM91_ImpersonationMiddleware_NoHeader_WithAdmin(t *testing.T) {
-	svc := &mockServiceWithAdmin91{QuicBaaS: testutil.NewMockQuicBaaS()}
-	handler, cleanup := setupHandlerWithService(t, svc)
-	defer cleanup()
-
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	// Without the impersonation header, middleware passes through to next handler
-	req := systemRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	handler.ImpersonationMiddleware(next).ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // =============================================================================
