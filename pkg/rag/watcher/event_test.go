@@ -21,6 +21,7 @@ import (
 
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -426,34 +427,29 @@ loop:
 	assert.True(t, foundVisible, "expected to receive event for visible.txt")
 }
 
-// TestStop_IdempotentMultipleCalls tests Stop is idempotent.
-func TestStop_IdempotentMultipleCalls(t *testing.T) {
-	tmpDir := t.TempDir()
+// TestStop_Idempotent tests that Stop succeeds, and keeps succeeding,
+// whether or not the watcher was started.
+func TestStop_Idempotent(t *testing.T) {
+	for _, started := range []bool{true, false} {
+		t.Run(fmt.Sprintf("started=%v", started), func(t *testing.T) {
+			w, err := New(Config{
+				Paths:         []string{t.TempDir()},
+				DebounceDelay: 50 * time.Millisecond,
+				BatchInterval: 100 * time.Millisecond,
+				BufferSize:    100,
+			})
+			require.NoError(t, err)
 
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     false,
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
+			if started {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				require.NoError(t, w.Start(ctx))
+			}
+
+			assert.NoError(t, w.Stop())
+			assert.NoError(t, w.Stop())
+		})
 	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Stop should succeed
-	err = w.Stop()
-	assert.NoError(t, err)
-
-	// Calling Stop again should be idempotent
-	err = w.Stop()
-	assert.NoError(t, err)
 }
 
 func TestStop_ReportsCloseFailureFromContextCancellation(t *testing.T) {
@@ -886,33 +882,6 @@ func TestMatchWildcard_SingleStar(t *testing.T) {
 	}
 }
 
-// TestWatcher_Stop_NormalClose tests Stop when watcher.Close returns error.
-// Note: This is hard to test without mocking, but we can test normal close.
-func TestWatcher_Stop_NormalClose(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(500 * time.Millisecond)
-
-	err = w.Stop()
-	assert.NoError(t, err)
-}
-
 // TestRemovePath_WatcherRemoveError tests RemovePath when the watched path exists.
 func TestRemovePath_WatcherRemoveError(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1010,80 +979,6 @@ func TestConvertEvent_UnknownOp(t *testing.T) {
 	fw := w.(*fsWatcher)
 	result := fw.convertEvent(fsEvent)
 	assert.Nil(t, result, "should return nil for unknown operations")
-}
-
-// TestWatcher_ContextDone tests context cancellation during event processing.
-func TestWatcher_ContextDone(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Wait for context to timeout
-	<-ctx.Done()
-
-	// Give time for cleanup
-	time.Sleep(500 * time.Millisecond)
-
-	// Events channel should be closed or drained
-	select {
-	case _, ok := <-w.Events():
-		if ok {
-			// Still have some events, that's OK
-		}
-	default:
-		// No events, that's OK too
-	}
-}
-
-// TestWatcher_ErrorChannel tests error channel handling.
-func TestWatcher_ErrorChannel(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Create normal file operation
-	testFile := filepath.Join(tmpDir, "test.txt")
-	err = os.WriteFile(testFile, []byte("content"), 0644)
-	require.NoError(t, err)
-
-	// Wait for event
-	select {
-	case <-w.Events():
-		// Got event, no errors expected
-	case <-time.After(5 * time.Second):
-		// Timeout, but that's OK for this test
-	}
 }
 
 // TestAddPath_FileNotDirectory tests adding a file path instead of directory.
@@ -1296,31 +1191,6 @@ func TestConvertEvent_ChmodIgnored(t *testing.T) {
 	}
 }
 
-// TestWatcher_ErrorHandling tests error channel handling.
-func TestWatcher_ErrorHandling(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	// Just verify the watcher handles normal operations without errors
-	time.Sleep(500 * time.Millisecond)
-}
-
 // TestAddPath_StatError tests that AddPath rejects a path that does not exist.
 func TestAddPath_StatError(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1378,25 +1248,6 @@ func TestProcessEvents_ContextCancellation(t *testing.T) {
 	default:
 		// Also OK
 	}
-}
-
-// TestStop_BeforeStart tests stopping a watcher that hasn't been started.
-func TestStop_NotStarted(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	// Stop without starting - should not error
-	err = w.Stop()
-	assert.NoError(t, err)
 }
 
 // TestAddRecursive_MaxDepth tests how deep a recursive walk watches.
