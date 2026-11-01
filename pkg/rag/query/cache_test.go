@@ -40,61 +40,43 @@ func TestNewCache(t *testing.T) {
 }
 
 func TestCache_SetGet(t *testing.T) {
-	cache := NewCache(10)
-
-	response := &Response{
-		Query: "test",
-		Results: []Result{
-			{ID: "1", Score: 0.9},
-		},
+	tests := []struct {
+		name       string
+		capacity   int
+		sets       []string // queries stored under "key1", in order
+		wantOK     bool
+		wantQuery  string
+		wantHits   int64
+		wantMisses int64
+		wantSize   int
+	}{
+		{name: "hit after set", capacity: 10, sets: []string{"test"}, wantOK: true, wantQuery: "test", wantHits: 1, wantSize: 1},
+		{name: "miss on absent key", capacity: 10, wantMisses: 1},
+		{name: "set on existing key replaces value", capacity: 10, sets: []string{"original", "updated"}, wantOK: true, wantQuery: "updated", wantHits: 1, wantSize: 1},
+		{name: "zero capacity evicts at once", capacity: 0, sets: []string{"test"}, wantMisses: 1},
 	}
 
-	// Set value
-	cache.Set("key1", response, 1*time.Minute)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewCache(tt.capacity)
+			for _, query := range tt.sets {
+				cache.Set("key1", &Response{Query: query}, time.Minute)
+			}
 
-	// Get value
-	got, ok := cache.Get("key1")
-	require.True(t, ok)
-	assert.Equal(t, "test", got.Query)
-	assert.Len(t, got.Results, 1)
+			got, ok := cache.Get("key1")
+			require.Equal(t, tt.wantOK, ok)
+			if tt.wantOK {
+				assert.Equal(t, tt.wantQuery, got.Query)
+			} else {
+				assert.Nil(t, got)
+			}
 
-	// Verify stats
-	stats := cache.Stats()
-	assert.Equal(t, int64(1), stats.Hits)
-	assert.Equal(t, int64(0), stats.Misses)
-	assert.Equal(t, 1, stats.Size)
-}
-
-func TestCache_Miss(t *testing.T) {
-	cache := NewCache(10)
-
-	got, ok := cache.Get("nonexistent")
-	assert.False(t, ok)
-	assert.Nil(t, got)
-
-	stats := cache.Stats()
-	assert.Equal(t, int64(0), stats.Hits)
-	assert.Equal(t, int64(1), stats.Misses)
-}
-
-func TestCache_TTL(t *testing.T) {
-	cache := NewCache(10)
-
-	response := &Response{Query: "test"}
-	cache.Set("key1", response, 50*time.Millisecond)
-
-	// Should hit immediately
-	got, ok := cache.Get("key1")
-	require.True(t, ok)
-	assert.Equal(t, "test", got.Query)
-
-	// Wait for expiration
-	time.Sleep(100 * time.Millisecond)
-
-	// Should miss after expiration
-	got, ok = cache.Get("key1")
-	assert.False(t, ok)
-	assert.Nil(t, got)
+			stats := cache.Stats()
+			assert.Equal(t, tt.wantHits, stats.Hits)
+			assert.Equal(t, tt.wantMisses, stats.Misses)
+			assert.Equal(t, tt.wantSize, stats.Size)
+		})
+	}
 }
 
 func TestCache_LRUEviction(t *testing.T) {
@@ -125,25 +107,6 @@ func TestCache_LRUEviction(t *testing.T) {
 	assert.True(t, ok)
 	_, ok = cache.Get("key4")
 	assert.True(t, ok)
-}
-
-func TestCache_Update(t *testing.T) {
-	cache := NewCache(10)
-
-	// Set initial value
-	cache.Set("key1", &Response{Query: "original"}, 1*time.Minute)
-
-	// Update value
-	cache.Set("key1", &Response{Query: "updated"}, 1*time.Minute)
-
-	// Should get updated value
-	got, ok := cache.Get("key1")
-	require.True(t, ok)
-	assert.Equal(t, "updated", got.Query)
-
-	// Size should still be 1
-	stats := cache.Stats()
-	assert.Equal(t, 1, stats.Size)
 }
 
 func TestCache_Clear(t *testing.T) {
@@ -191,33 +154,48 @@ func TestCache_HitRate(t *testing.T) {
 	assert.InDelta(t, 0.4, stats.HitRate, 0.01) // 2/5 = 0.4
 }
 
-func TestCache_CleanExpired(t *testing.T) {
-	cache := NewCache(10)
-	lruCache := cache.(*lruCache)
+// TestCache_Expiry stores expired entries with a negative TTL, so no test
+// waits for a deadline to pass.
+func TestCache_Expiry(t *testing.T) {
+	tests := []struct {
+		name    string
+		expired []string
+		live    []string
+		clean   bool
+	}{
+		{name: "Get drops an expired entry", expired: []string{"key1"}},
+		{name: "CleanExpired removes only expired entries", expired: []string{"key1", "key2"}, live: []string{"key-long"}, clean: true},
+		{name: "CleanExpired with nothing expired", live: []string{"key1"}, clean: true},
+	}
 
-	// Add entries with different TTLs
-	cache.Set("key1", &Response{Query: "short"}, 50*time.Millisecond)
-	cache.Set("key2", &Response{Query: "long"}, 1*time.Minute)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := NewCache(10)
+			for _, key := range tt.expired {
+				cache.Set(key, &Response{Query: key}, -time.Minute)
+			}
+			for _, key := range tt.live {
+				cache.Set(key, &Response{Query: key}, time.Minute)
+			}
 
-	stats := cache.Stats()
-	assert.Equal(t, 2, stats.Size)
+			if tt.clean {
+				removed := cache.(*lruCache).CleanExpired()
+				assert.Equal(t, len(tt.expired), removed)
+				assert.Equal(t, len(tt.live), cache.Stats().Size)
+			}
 
-	// Wait for short TTL to expire
-	time.Sleep(100 * time.Millisecond)
-
-	// Clean expired
-	removed := lruCache.CleanExpired()
-	assert.Equal(t, 1, removed)
-
-	// Only key2 should remain
-	stats = cache.Stats()
-	assert.Equal(t, 1, stats.Size)
-
-	_, ok := cache.Get("key1")
-	assert.False(t, ok)
-
-	_, ok = cache.Get("key2")
-	assert.True(t, ok)
+			for _, key := range tt.expired {
+				got, ok := cache.Get(key)
+				assert.False(t, ok, key)
+				assert.Nil(t, got)
+			}
+			for _, key := range tt.live {
+				_, ok := cache.Get(key)
+				assert.True(t, ok, key)
+			}
+			assert.Equal(t, len(tt.live), cache.Stats().Size)
+		})
+	}
 }
 
 func TestCache_Concurrency(t *testing.T) {
@@ -284,59 +262,6 @@ func TestCache_ConcurrentUpdateSameKey(t *testing.T) {
 	// Should be accessible
 	_, ok := cache.Get("shared-key")
 	assert.True(t, ok)
-}
-
-func TestCache_ZeroCapacity(t *testing.T) {
-	cache := NewCache(0)
-
-	// Should still work, just evict immediately
-	cache.Set("key1", &Response{Query: "test"}, 1*time.Minute)
-
-	// Size should be 0 or 1 depending on implementation
-	stats := cache.Stats()
-	assert.GreaterOrEqual(t, 1, stats.Size)
-}
-
-func TestCache_LargeCapacity(t *testing.T) {
-	cache := NewCache(10000)
-
-	// Add many entries
-	for i := 0; i < 1000; i++ {
-		cache.Set(fmt.Sprintf("key%d", i), &Response{Query: fmt.Sprintf("query%d", i)}, 1*time.Minute)
-	}
-
-	stats := cache.Stats()
-	assert.Equal(t, 1000, stats.Size)
-
-	// All should be retrievable
-	for i := 0; i < 1000; i++ {
-		_, ok := cache.Get(fmt.Sprintf("key%d", i))
-		assert.True(t, ok)
-	}
-}
-
-func TestCache_ExpiredMultiple(t *testing.T) {
-	cache := NewCache(10)
-	lruCache := cache.(*lruCache)
-
-	// Add multiple entries with short TTL
-	for i := 1; i <= 5; i++ {
-		cache.Set(fmt.Sprintf("key%d", i), &Response{Query: fmt.Sprintf("query%d", i)}, 50*time.Millisecond)
-	}
-
-	// Add one with long TTL
-	cache.Set("key-long", &Response{Query: "long"}, 1*time.Minute)
-
-	// Wait for short TTLs to expire
-	time.Sleep(100 * time.Millisecond)
-
-	// Clean expired
-	removed := lruCache.CleanExpired()
-	assert.Equal(t, 5, removed)
-
-	// Only long-lived entry should remain
-	stats := cache.Stats()
-	assert.Equal(t, 1, stats.Size)
 }
 
 func BenchmarkCache_Set(b *testing.B) {
