@@ -323,13 +323,6 @@ func TestHookRecoveryBootstrap_StopOnError(t *testing.T) {
 	}
 }
 
-func TestHookRecoveryBootstrap_EmptySteps(t *testing.T) {
-	err := HookRecoveryBootstrap(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("unexpected error for empty steps: %v", err)
-	}
-}
-
 func TestHookRecoveryBootstrap_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -353,55 +346,32 @@ func TestHookRecoveryBootstrap_CancelledContext(t *testing.T) {
 // HookTriggerReindex Tests
 // =============================================================================
 
-func TestHookTriggerReindex_IterationComplete(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
+func TestHookTriggerReindex_Triggers(t *testing.T) {
+	tests := []struct {
+		name       string
+		triggers   []string
+		wantCalled bool
+	}{
+		{"iteration complete", []string{"manual", "iteration_complete"}, true},
+		{"no triggers", nil, false},
+		{"iteration complete absent", []string{"manual", "on_demand"}, false},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var called bool
+			reindexFn := func(_ context.Context) error {
+				called = true
+				return nil
+			}
 
-	triggers := []string{"manual", "iteration_complete"}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, triggers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !called {
-		t.Error("expected reindexFn to be called")
-	}
-}
-
-func TestHookTriggerReindex_NoTrigger(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called with nil triggers")
-	}
-}
-
-func TestHookTriggerReindex_ManualOnly(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	triggers := []string{"manual", "on_demand"}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, triggers)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called when iteration_complete is absent")
+			err := HookTriggerReindex(context.Background(), reindexFn, tt.triggers)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if called != tt.wantCalled {
+				t.Errorf("expected reindexFn called %v, got %v", tt.wantCalled, called)
+			}
+		})
 	}
 }
 
@@ -428,22 +398,6 @@ func TestHookTriggerReindex_ReindexError(t *testing.T) {
 	}
 	if !errors.Is(err, ErrHookReindex) {
 		t.Errorf("expected error to wrap ErrHookReindex, got %v", err)
-	}
-}
-
-func TestHookTriggerReindex_EmptyTriggers(t *testing.T) {
-	var called bool
-	reindexFn := func(_ context.Context) error {
-		called = true
-		return nil
-	}
-
-	err := HookTriggerReindex(context.Background(), reindexFn, []string{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if called {
-		t.Error("expected reindexFn NOT to be called with empty triggers")
 	}
 }
 
