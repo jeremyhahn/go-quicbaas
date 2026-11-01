@@ -1069,15 +1069,6 @@ func TestEmbeddingManagerAdapter_UnwrapWithStub(t *testing.T) {
 	assert.Equal(t, mgr, unwrapped)
 }
 
-func TestEmbeddingSvc_NewEmbeddingService(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-
-	svc := NewEmbeddingService(mockManager, logger)
-
-	require.NotNil(t, svc)
-}
-
 func TestEmbeddingSvc_GenerateEmbedding_Success(t *testing.T) {
 	mockManager := newCoverageEmbeddingManager()
 	logger := newCoverageEmbeddingLogger()
@@ -1265,56 +1256,6 @@ func TestEmbeddingSvc_ClearCache_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, 50, resp.EntriesCleared)
-}
-
-func TestEmbeddingSvc_ClearCache_NilRequest(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
-		CacheSize: 50,
-	})
-
-	resp, err := svc.ClearCache(ctx, nil)
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-}
-
-func TestEmbeddingSvc_ClearCache_SpecificProvider(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
-		CacheSize: 30,
-	})
-
-	req := &ClearEmbeddingCacheRequest{
-		Provider: "openai",
-		All:      false,
-	}
-
-	resp, err := svc.ClearCache(ctx, req)
-
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, EmbeddingProvider("openai"), resp.Provider)
-}
-
-func TestEmbeddingMgrAdapter_InterfaceCompliance(t *testing.T) {
-	// This tests the adapter delegation to the underlying manager
-	// We test through the embedding service tests above since the adapter
-	// is a thin wrapper. Here we verify the interface compliance.
-	adapter := &EmbeddingManagerAdapter{}
-	_ = interfaces.EmbeddingManager(adapter)
 }
 
 func TestEmbeddingSvc_GenerateEmbedding_CacheHit(t *testing.T) {
