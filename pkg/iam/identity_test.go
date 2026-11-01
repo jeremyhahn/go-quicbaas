@@ -469,29 +469,6 @@ func TestGetUser_NotFound(t *testing.T) {
 	}
 }
 
-func TestGetUserByEmail_Success(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	email := "test@example.com"
-	created, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    email,
-		Username: "testuser",
-	})
-	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	user, err := store.GetUserByEmail(ctx, "tenant1", email)
-	if err != nil {
-		t.Fatalf("GetUserByEmail failed: %v", err)
-	}
-
-	if user.ID != created.ID {
-		t.Errorf("Expected ID %d, got %d", created.ID, user.ID)
-	}
-}
-
 func TestUpdateUser_Success(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -1400,8 +1377,8 @@ func TestGetUserByEmail_EmailNormalization(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	// Create user with lowercase email
-	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+	// Create user with a mixed-case email
+	created, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
 		Email:    "Test@Example.com",
 		Username: "testuser",
 	})
@@ -1409,12 +1386,15 @@ func TestGetUserByEmail_EmailNormalization(t *testing.T) {
 		t.Fatalf("CreateUser failed: %v", err)
 	}
 
-	// Query with mixed case - should normalize and find it
+	// Query with upper case - should normalize and find it
 	user, err := store.GetUserByEmail(ctx, "tenant1", "TEST@EXAMPLE.COM")
 	if err != nil {
 		t.Fatalf("GetUserByEmail failed: %v", err)
 	}
 
+	if user.ID != created.ID {
+		t.Errorf("Expected ID %d, got %d", created.ID, user.ID)
+	}
 	if user.Email != "test@example.com" {
 		t.Errorf("Expected email to be normalized to lowercase: got %s", user.Email)
 	}
