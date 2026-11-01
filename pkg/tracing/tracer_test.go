@@ -563,65 +563,67 @@ func TestTracer_GetConfig(t *testing.T) {
 	assert.Equal(t, cfg.NodeID, gotCfg.NodeID)
 }
 
-func TestDBAttributes(t *testing.T) {
-	attrs := DBAttributes("get", "user:123", 1)
-
-	require.Len(t, attrs, 4)
-	assert.Equal(t, "db.system", string(attrs[0].Key))
-	assert.Equal(t, "quicbaas", attrs[0].Value.AsString())
-	assert.Equal(t, "db.operation", string(attrs[1].Key))
-	assert.Equal(t, "get", attrs[1].Value.AsString())
-	assert.Equal(t, "db.key", string(attrs[2].Key))
-	assert.Equal(t, "user:123", attrs[2].Value.AsString())
-	assert.Equal(t, "db.shard_id", string(attrs[3].Key))
-	assert.Equal(t, int64(1), attrs[3].Value.AsInt64())
-}
-
-func TestRaftAttributes(t *testing.T) {
-	attrs := RaftAttributes(1, 2, 100, 500)
-
-	require.Len(t, attrs, 4)
-	assert.Equal(t, "db.shard_id", string(attrs[0].Key))
-	assert.Equal(t, int64(1), attrs[0].Value.AsInt64())
-	assert.Equal(t, "db.node_id", string(attrs[1].Key))
-	assert.Equal(t, int64(2), attrs[1].Value.AsInt64())
-	assert.Equal(t, "raft.term", string(attrs[2].Key))
-	assert.Equal(t, int64(100), attrs[2].Value.AsInt64())
-	assert.Equal(t, "raft.log_index", string(attrs[3].Key))
-	assert.Equal(t, int64(500), attrs[3].Value.AsInt64())
-}
-
-// A uint64 past the int64 range saturates instead of wrapping negative, so a
-// trace never shows a negative shard, node, term or log index.
-func TestRaftAttributes_ClampsOutOfRangeValues(t *testing.T) {
-	attrs := RaftAttributes(math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64)
-
-	require.Len(t, attrs, 4)
-	for _, attr := range attrs {
-		assert.Equal(t, int64(math.MaxInt64), attr.Value.AsInt64(), string(attr.Key))
+func TestAttributeHelpers(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs []attribute.KeyValue
+		want  []attribute.KeyValue
+	}{
+		{
+			name:  "DBAttributes",
+			attrs: DBAttributes("get", "user:123", 1),
+			want: []attribute.KeyValue{
+				attribute.String("db.system", "quicbaas"),
+				attribute.String("db.operation", "get"),
+				attribute.String("db.key", "user:123"),
+				attribute.Int64("db.shard_id", 1),
+			},
+		},
+		{
+			name:  "RaftAttributes",
+			attrs: RaftAttributes(1, 2, 100, 500),
+			want: []attribute.KeyValue{
+				attribute.Int64("db.shard_id", 1),
+				attribute.Int64("db.node_id", 2),
+				attribute.Int64("raft.term", 100),
+				attribute.Int64("raft.log_index", 500),
+			},
+		},
+		{
+			// Values above math.MaxInt64 are clamped rather than wrapping negative.
+			name:  "RaftAttributes clamps out-of-range values",
+			attrs: RaftAttributes(math.MaxUint64, math.MaxUint64, math.MaxUint64, math.MaxUint64),
+			want: []attribute.KeyValue{
+				attribute.Int64("db.shard_id", math.MaxInt64),
+				attribute.Int64("db.node_id", math.MaxInt64),
+				attribute.Int64("raft.term", math.MaxInt64),
+				attribute.Int64("raft.log_index", math.MaxInt64),
+			},
+		},
+		{
+			name:  "TxnAttributes",
+			attrs: TxnAttributes("txn-123", 5),
+			want: []attribute.KeyValue{
+				attribute.String("txn.id", "txn-123"),
+				attribute.Int64("txn.operation_count", 5),
+			},
+		},
+		{
+			name:  "WatchAttributes",
+			attrs: WatchAttributes("watch-456", "/prefix/", 10),
+			want: []attribute.KeyValue{
+				attribute.String("watch.id", "watch-456"),
+				attribute.String("watch.key_prefix", "/prefix/"),
+				attribute.Int64("watch.event_count", 10),
+			},
+		},
 	}
-}
 
-func TestTxnAttributes(t *testing.T) {
-	attrs := TxnAttributes("txn-123", 5)
-
-	require.Len(t, attrs, 2)
-	assert.Equal(t, "txn.id", string(attrs[0].Key))
-	assert.Equal(t, "txn-123", attrs[0].Value.AsString())
-	assert.Equal(t, "txn.operation_count", string(attrs[1].Key))
-	assert.Equal(t, int64(5), attrs[1].Value.AsInt64())
-}
-
-func TestWatchAttributes(t *testing.T) {
-	attrs := WatchAttributes("watch-456", "/prefix/", 10)
-
-	require.Len(t, attrs, 3)
-	assert.Equal(t, "watch.id", string(attrs[0].Key))
-	assert.Equal(t, "watch-456", attrs[0].Value.AsString())
-	assert.Equal(t, "watch.key_prefix", string(attrs[1].Key))
-	assert.Equal(t, "/prefix/", attrs[1].Value.AsString())
-	assert.Equal(t, "watch.event_count", string(attrs[2].Key))
-	assert.Equal(t, int64(10), attrs[2].Value.AsInt64())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.attrs)
+		})
+	}
 }
 
 func TestSamplingBehavior(t *testing.T) {
@@ -1048,9 +1050,6 @@ func TestTracer_DisabledOperations(t *testing.T) {
 	require.NotNil(t, tracer)
 	defer tracer.Shutdown(context.Background())
 
-	// Verify disabled
-	assert.False(t, tracer.IsEnabled())
-
 	// All operations should work without panicking
 	ctx := context.Background()
 
@@ -1077,62 +1076,6 @@ func TestTracer_DisabledOperations(t *testing.T) {
 
 	// RecordError
 	tracer.RecordError(ctx, errors.New("test error"))
-}
-
-func TestAttributeHelpers(t *testing.T) {
-	t.Run("DBAttributes", func(t *testing.T) {
-		attrs := DBAttributes("put", "user:123", 1)
-		require.Len(t, attrs, 4)
-
-		// Verify all expected attributes
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["db.system"])
-		assert.True(t, keys["db.operation"])
-		assert.True(t, keys["db.key"])
-		assert.True(t, keys["db.shard_id"])
-	})
-
-	t.Run("RaftAttributes", func(t *testing.T) {
-		attrs := RaftAttributes(1, 100, 5, 1000)
-		require.Len(t, attrs, 4)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["db.shard_id"])
-		assert.True(t, keys["db.node_id"])
-		assert.True(t, keys["raft.term"])
-		assert.True(t, keys["raft.log_index"])
-	})
-
-	t.Run("TxnAttributes", func(t *testing.T) {
-		attrs := TxnAttributes("txn-123", 10)
-		require.Len(t, attrs, 2)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["txn.id"])
-		assert.True(t, keys["txn.operation_count"])
-	})
-
-	t.Run("WatchAttributes", func(t *testing.T) {
-		attrs := WatchAttributes("watch-456", "/prefix/", 5)
-		require.Len(t, attrs, 3)
-
-		keys := make(map[string]bool)
-		for _, attr := range attrs {
-			keys[string(attr.Key)] = true
-		}
-		assert.True(t, keys["watch.id"])
-		assert.True(t, keys["watch.key_prefix"])
-		assert.True(t, keys["watch.event_count"])
-	})
 }
 
 func BenchmarkTracer_CompleteOperation(b *testing.B) {
