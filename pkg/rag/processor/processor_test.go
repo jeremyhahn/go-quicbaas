@@ -17,6 +17,7 @@ package processor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,17 +27,18 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/language"
 )
 
-// TestNew tests processor creation
+// TestNew tests processor creation. Config.Validate normalises every field
+// it checks instead of rejecting it, so New has no reachable error path.
 func TestNew(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  Config
-		wantErr bool
+		name            string
+		config          Config
+		wantConcurrency int
 	}{
 		{
-			name:    "default config",
-			config:  DefaultConfig(),
-			wantErr: false,
+			name:            "default config",
+			config:          DefaultConfig(),
+			wantConcurrency: DefaultConfig().MaxConcurrency,
 		},
 		{
 			name: "custom config",
@@ -45,19 +47,32 @@ func TestNew(t *testing.T) {
 				MaxConcurrency:      4,
 				EnableDeduplication: true,
 			},
-			wantErr: false,
+			wantConcurrency: 4,
+		},
+		{
+			name:            "zero concurrency kept",
+			config:          Config{MaxConcurrency: 0},
+			wantConcurrency: 0,
+		},
+		{
+			name:            "negative concurrency normalised to zero",
+			config:          Config{MaxConcurrency: -1},
+			wantConcurrency: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			proc, err := New(tt.config)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
 			}
-			if !tt.wantErr && proc == nil {
-				t.Error("New() returned nil processor")
+			p, ok := proc.(*processor)
+			if !ok {
+				t.Fatalf("New() returned %T, want *processor", proc)
+			}
+			if p.config.MaxConcurrency != tt.wantConcurrency {
+				t.Errorf("MaxConcurrency = %d, want %d", p.config.MaxConcurrency, tt.wantConcurrency)
 			}
 		})
 	}
@@ -319,36 +334,94 @@ minimum requirements and validate the batch processing functionality works as ex
 	}
 }
 
-// TestProcessContent tests processing content directly
+// TestProcessContent tests processing content directly, one row per content
+// type and per rejection.
 func TestProcessContent(t *testing.T) {
-	content := []byte(`package main
-
-func Hello() {
-	println("hello world from the test function")
-}
-`)
-
-	config := DefaultConfig()
-	proc, err := New(config)
+	proc, err := New(DefaultConfig())
 	if err != nil {
 		t.Fatalf("Failed to create processor: %v", err)
 	}
 
-	ctx := context.Background()
-	chunks, err := proc.ProcessContent(ctx, content, "test.go")
-	if err != nil {
-		t.Fatalf("ProcessContent() error = %v", err)
+	// Long enough to meet the text chunker's minimum chunk size.
+	longText := strings.Repeat("This is a test sentence that adds enough content. ", 15)
+
+	tests := []struct {
+		name     string
+		content  []byte
+		filename string
+		wantLang string
+		wantErr  error
+	}{
+		{
+			name:     "go code",
+			content:  []byte("package main\n\nfunc Hello() {\n\tprintln(\"hello world from the test function\")\n}\n"),
+			filename: "test.go",
+			wantLang: "go",
+		},
+		{
+			name:     "markdown",
+			content:  []byte("# Title\n\n" + longText),
+			filename: "test.md",
+			wantLang: "markdown",
+		},
+		{
+			name:     "plain text",
+			content:  []byte(longText),
+			filename: "test.txt",
+		},
+		{
+			name:     "python code",
+			content:  []byte("def test():\n    " + longText + "\n    pass\n"),
+			filename: "test.py",
+			wantLang: "python",
+		},
+		{
+			name:     "javascript",
+			content:  []byte("function test() { /* " + longText + " */ }\n"),
+			filename: "test.js",
+			wantLang: "javascript",
+		},
+		{
+			name:     "empty content",
+			content:  []byte{},
+			filename: "empty.txt",
+			wantErr:  ErrEmptyContent,
+		},
+		{
+			name:     "binary content",
+			content:  makeBytes(100, 20),
+			filename: "binary.bin",
+			wantErr:  ErrBinaryFile,
+		},
 	}
 
-	if len(chunks) == 0 {
-		t.Error("ProcessContent() returned no chunks")
-	}
-
-	// Verify chunk has Go language - lowercase from detector
-	for _, chunk := range chunks {
-		if !strings.EqualFold(chunk.Metadata.Language, "go") {
-			t.Errorf("Expected Language 'go', got %s", chunk.Metadata.Language)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := proc.ProcessContent(context.Background(), tt.content, tt.filename)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("ProcessContent() error = %v, want %v", err, tt.wantErr)
+				}
+				if chunks != nil {
+					t.Errorf("ProcessContent() returned %d chunks with an error", len(chunks))
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ProcessContent() error = %v", err)
+			}
+			if len(chunks) == 0 {
+				t.Fatal("ProcessContent() returned no chunks")
+			}
+			for i, chunk := range chunks {
+				if chunk.Content == "" {
+					t.Errorf("Chunk %d has empty content", i)
+				}
+				if tt.wantLang != "" && !strings.EqualFold(chunk.Metadata.Language, tt.wantLang) {
+					t.Errorf("Chunk %d Language = %s, want %s", i, chunk.Metadata.Language, tt.wantLang)
+				}
+			}
+		})
 	}
 }
 
@@ -490,27 +563,6 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
-// TestEmptyContent tests handling of empty content
-func TestEmptyContent(t *testing.T) {
-	testDir := t.TempDir()
-	testFile := filepath.Join(testDir, "empty.txt")
-	if err := os.WriteFile(testFile, []byte(""), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	config := DefaultConfig()
-	proc, err := New(config)
-	if err != nil {
-		t.Fatalf("Failed to create processor: %v", err)
-	}
-
-	ctx := context.Background()
-	_, err = proc.Process(ctx, testFile)
-	if err != ErrEmptyContent {
-		t.Errorf("Expected ErrEmptyContent, got %v", err)
-	}
-}
-
 // TestFileNotFound tests handling of non-existent files
 func TestFileNotFound(t *testing.T) {
 	config := DefaultConfig()
@@ -628,15 +680,11 @@ func TestConcurrencyLimit(t *testing.T) {
 	t.Logf("Processed %d files in %v with concurrency limit of 2", len(filePaths), duration)
 }
 
-// TestCalculateHash tests hash calculation
+// TestCalculateHash tests that the hash is a stable SHA-256 hex digest.
 func TestCalculateHash(t *testing.T) {
-	content1 := "test content"
-	content2 := "test content"
-	content3 := "different content"
-
-	hash1 := calculateHash(content1)
-	hash2 := calculateHash(content2)
-	hash3 := calculateHash(content3)
+	hash1 := calculateHash("test content")
+	hash2 := calculateHash("test content")
+	hash3 := calculateHash("different content")
 
 	if hash1 != hash2 {
 		t.Error("Same content should produce same hash")
@@ -649,179 +697,27 @@ func TestCalculateHash(t *testing.T) {
 	}
 }
 
-// TestIsBinary tests binary detection
+// TestIsBinary tests binary detection against the 10% null-byte threshold.
 func TestIsBinary(t *testing.T) {
 	tests := []struct {
 		name    string
 		content []byte
 		want    bool
 	}{
-		{
-			name:    "text content",
-			content: []byte("This is plain text"),
-			want:    false,
-		},
-		{
-			name:    "binary content",
-			content: append([]byte("text"), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
-			want:    true,
-		},
-		{
-			name:    "empty content",
-			content: []byte{},
-			want:    false,
-		},
+		{"text", []byte("This is plain text"), false},
+		{"utf8", []byte("hello 世界"), false},
+		{"empty", []byte{}, false},
+		{"few nulls", makeBytes(100, 5), false},  // 5% nulls
+		{"many nulls", makeBytes(100, 20), true}, // 20% nulls
+		{"short text with nulls", append([]byte("text"), make([]byte, 10)...), true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isBinary(tt.content)
-			if got != tt.want {
+			if got := isBinary(tt.content); got != tt.want {
 				t.Errorf("isBinary() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-// ============================================================================
-// NEW COMPREHENSIVE TESTS FOR 90%+ COVERAGE
-// ============================================================================
-
-// TestNew_ConfigValidation tests all config validation paths
-func TestNew_ConfigValidation(t *testing.T) {
-	tests := []struct {
-		name      string
-		config    Config
-		wantError bool
-	}{
-		{
-			name:      "nil maxconcurrency gets default",
-			config:    Config{MaxConcurrency: 0},
-			wantError: false,
-		},
-		{
-			name:      "negative maxconcurrency gets default",
-			config:    Config{MaxConcurrency: -1},
-			wantError: false,
-		},
-		{
-			name: "valid config",
-			config: Config{
-				MaxConcurrency:      4,
-				EnableDeduplication: true,
-			},
-			wantError: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			proc, err := New(tt.config)
-			if tt.wantError && err == nil {
-				t.Error("Expected error, got nil")
-			}
-			if !tt.wantError && err != nil {
-				t.Errorf("Expected no error, got %v", err)
-			}
-			if !tt.wantError && proc == nil {
-				t.Error("Expected processor, got nil")
-			}
-		})
-	}
-}
-
-// TestProcessContent_AllTypes tests processing various content types with sufficient content
-func TestProcessContent_AllTypes(t *testing.T) {
-	proc, err := New(DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Longer content to meet minimum chunk size
-	longText := strings.Repeat("This is a test sentence that adds enough content. ", 15)
-
-	tests := []struct {
-		name      string
-		content   string
-		filename  string
-		minChunks int
-	}{
-		{
-			name:      "go code",
-			content:   "package main\n\nfunc main() { println(\"hello world\") }\n",
-			filename:  "test.go",
-			minChunks: 1,
-		},
-		{
-			name:      "markdown",
-			content:   "# Title\n\n" + longText,
-			filename:  "test.md",
-			minChunks: 1,
-		},
-		{
-			name:      "plain text",
-			content:   longText,
-			filename:  "test.txt",
-			minChunks: 1,
-		},
-		{
-			name:      "python code",
-			content:   "def test():\n    " + longText + "\n    pass\n",
-			filename:  "test.py",
-			minChunks: 1,
-		},
-		{
-			name:      "javascript",
-			content:   "function test() { /* " + longText + " */ }\n",
-			filename:  "test.js",
-			minChunks: 1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			chunks, err := proc.ProcessContent(context.Background(), []byte(tt.content), tt.filename)
-			if err != nil {
-				// Some short content may fail chunking - that's acceptable
-				t.Logf("ProcessContent returned error (acceptable for short content): %v", err)
-				return
-			}
-			if len(chunks) < tt.minChunks {
-				t.Logf("Expected at least %d chunks, got %d (acceptable for short content)", tt.minChunks, len(chunks))
-			}
-			for i, chunk := range chunks {
-				if chunk.Content == "" {
-					t.Errorf("Chunk %d has empty content", i)
-				}
-			}
-		})
-	}
-}
-
-// TestProcessContent_EmptyAndBinary tests error handling
-func TestProcessContent_EmptyAndBinary(t *testing.T) {
-	proc, err := New(DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Empty content
-	chunks, err := proc.ProcessContent(context.Background(), []byte(""), "empty.txt")
-	if err == nil {
-		t.Error("Expected error for empty content")
-	}
-	if chunks != nil {
-		t.Error("Expected nil chunks for empty content")
-	}
-
-	// Binary content with enough null bytes to trigger binary detection
-	binary := make([]byte, 100)
-	for i := 0; i < 20; i++ {
-		binary[i] = 0 // 20% null bytes
-	}
-	chunks, err = proc.ProcessContent(context.Background(), binary, "binary.bin")
-	if err == nil {
-		t.Error("Expected error for binary content")
 	}
 }
 
@@ -1019,47 +915,6 @@ func TestDeduplication_Behavior(t *testing.T) {
 	// Should process regardless of dedup setting
 	if len(chunks) == 0 {
 		t.Log("No chunks created (acceptable for short content)")
-	}
-}
-
-// TestHashCalculation tests hash function directly
-func TestHashCalculation(t *testing.T) {
-	hash1 := calculateHash("test content")
-	hash2 := calculateHash("test content")
-	hash3 := calculateHash("different")
-
-	if hash1 != hash2 {
-		t.Error("Same content should have same hash")
-	}
-	if hash1 == hash3 {
-		t.Error("Different content should have different hash")
-	}
-	if len(hash1) == 0 {
-		t.Error("Hash should not be empty")
-	}
-}
-
-// TestIsBinary_Cases tests all binary detection cases
-func TestIsBinary_Cases(t *testing.T) {
-	tests := []struct {
-		name     string
-		content  []byte
-		isBinary bool
-	}{
-		{"text", []byte("hello world"), false},
-		{"binary with many nulls", makeBytes(100, 20), true}, // 20% nulls
-		{"utf8", []byte("hello 世界"), false},
-		{"empty", []byte{}, false},
-		{"few nulls", makeBytes(100, 5), false}, // 5% nulls
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isBinary(tt.content)
-			if result != tt.isBinary {
-				t.Errorf("Expected binary=%v, got %v", tt.isBinary, result)
-			}
-		})
 	}
 }
 
