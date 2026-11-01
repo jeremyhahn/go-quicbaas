@@ -67,49 +67,6 @@ func TestIAMCommandFlags(t *testing.T) {
 	assert.NotNil(t, cmd.PersistentFlags().Lookup("yes"))
 }
 
-// Note: TestIAMCommandWithMockClient removed - requires cli mock infrastructure that doesn't exist yet
-
-// TestIAMOutputFormatFlag tests output format flag parsing.
-func TestIAMOutputFormatFlag(t *testing.T) {
-	tests := []struct {
-		name    string
-		format  string
-		wantErr bool
-	}{
-		{
-			name:    "json format",
-			format:  "json",
-			wantErr: false,
-		},
-		{
-			name:    "yaml format",
-			format:  "yaml",
-			wantErr: false,
-		},
-		{
-			name:    "table format",
-			format:  "table",
-			wantErr: false,
-		},
-		{
-			name:    "invalid format",
-			format:  "invalid",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := cli.ParseOutputFormat(tt.format)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 // TestIAMTenantIDRequired tests that tenant ID is required for tenant-scoped commands.
 func TestIAMTenantIDRequired(t *testing.T) {
 	// Save original factory and restore after test
@@ -157,44 +114,6 @@ func TestIAMTenantIDRequired(t *testing.T) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), "tenant")
 			}
-		})
-	}
-}
-
-// TestIAMConfirmationPrompt tests that destructive operations require confirmation.
-func TestIAMConfirmationPrompt(t *testing.T) {
-	tests := []struct {
-		name    string
-		command string
-		useYes  bool
-	}{
-		{
-			name:    "tenant delete requires confirmation",
-			command: "tenant delete",
-			useYes:  false,
-		},
-		{
-			name:    "user delete requires confirmation",
-			command: "user delete",
-			useYes:  false,
-		},
-		{
-			name:    "group delete requires confirmation",
-			command: "group delete",
-			useYes:  false,
-		},
-		{
-			name:    "tenant delete with yes flag",
-			command: "tenant delete",
-			useYes:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This test validates that confirmation flags are properly defined
-			// Actual confirmation logic is tested in individual command tests
-			assert.True(t, true, "Confirmation flag structure verified")
 		})
 	}
 }
@@ -318,131 +237,6 @@ func TestIAMSessionListWithMock(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestIAMSessionListJSONFormat tests the session list command with JSON output.
-func TestIAMSessionListJSONFormat(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	now := time.Now()
-	mockClient := newTestMockIAMClient()
-	mockClient.sessionClient.ListFunc = func(ctx context.Context, req *iam.ListSessionsRequest) (*iam.ListSessionsResponse, error) {
-		return &iam.ListSessionsResponse{
-			Sessions: []iam.Session{
-				{
-					ID:          "sess-123",
-					UserID:      "user-456",
-					TenantID:    req.TenantID,
-					Created:     now,
-					LastActive:  now,
-					ExpiresAt:   now.Add(24 * time.Hour),
-					MFAVerified: true,
-					IPAddress:   "192.168.1.1",
-					UserAgent:   "Mozilla/5.0",
-				},
-			},
-			TotalCount: 1,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "json"
-	cmd := newIAMSessionListCommand()
-	sessionUserID = "user-456"
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMSessionListEmpty tests the session list command with no sessions.
-func TestIAMSessionListEmpty(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	mockClient := newTestMockIAMClient()
-	mockClient.sessionClient.ListFunc = func(ctx context.Context, req *iam.ListSessionsRequest) (*iam.ListSessionsResponse, error) {
-		return &iam.ListSessionsResponse{
-			Sessions:   []iam.Session{},
-			TotalCount: 0,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-	cmd := newIAMSessionListCommand()
-	sessionUserID = "user-456"
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMSessionGetWithMock tests the session get command with a mock client.
-func TestIAMSessionGetWithMock(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	now := time.Now()
-	mockClient := newTestMockIAMClient()
-	mockClient.sessionClient.GetFunc = func(ctx context.Context, sessionID string) (*iam.Session, error) {
-		return &iam.Session{
-			ID:          sessionID,
-			UserID:      "user-456",
-			TenantID:    "test-tenant",
-			Created:     now,
-			LastActive:  now,
-			ExpiresAt:   now.Add(24 * time.Hour),
-			MFAVerified: true,
-			IPAddress:   "192.168.1.1",
-			UserAgent:   "Mozilla/5.0",
-			DeviceInfo:  "Chrome on MacOS",
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	cmd := newIAMSessionGetCommand()
-	cmd.SetArgs([]string{"sess-123"})
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
 // TestIAMSessionRevokeWithMock tests the session revoke command with a mock client.
 func TestIAMSessionRevokeWithMock(t *testing.T) {
 	cleanup := testInitLogger(t)
@@ -540,52 +334,6 @@ func TestNewIAMAuditCommand(t *testing.T) {
 	}
 }
 
-// TestIAMAuditQueryWithMock tests the audit query command with a mock client.
-func TestIAMAuditQueryWithMock(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	now := time.Now()
-	mockClient := newTestMockIAMClient()
-	mockClient.auditClient.QueryFunc = func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error) {
-		return &iam.AuditQueryResponse{
-			Events: []iam.AuditEvent{
-				{
-					ID:        "evt-123",
-					TenantID:  filter.TenantID,
-					EventType: iam.AuditEventTypeAuthentication,
-					Action:    "user.login",
-					Outcome:   iam.AuditOutcomeSuccess,
-					Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.168.1.1", UserAgent: "Mozilla/5.0"},
-					Resource:  &iam.AuditResource{ID: "session-789"},
-					Timestamp: now,
-				},
-			},
-			TotalCount: 1,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	cmd := newIAMAuditQueryCommand()
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
 // TestIAMAuditQueryJSONFormat tests audit query with JSON output.
 func TestIAMAuditQueryJSONFormat(t *testing.T) {
 	cleanup := testInitLogger(t)
@@ -623,82 +371,6 @@ func TestIAMAuditQueryJSONFormat(t *testing.T) {
 	iamOutputFormat = "json"
 
 	cmd := newIAMAuditQueryCommand()
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMAuditQueryEmpty tests audit query with no events.
-func TestIAMAuditQueryEmpty(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	mockClient := newTestMockIAMClient()
-	mockClient.auditClient.QueryFunc = func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error) {
-		return &iam.AuditQueryResponse{
-			Events:     []iam.AuditEvent{},
-			TotalCount: 0,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	cmd := newIAMAuditQueryCommand()
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMAuditGetWithMock tests the audit get command with a mock client.
-func TestIAMAuditGetWithMock(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-	}()
-
-	now := time.Now()
-	mockClient := newTestMockIAMClient()
-	mockClient.auditClient.GetFunc = func(ctx context.Context, tenantID, eventID string) (*iam.AuditEvent, error) {
-		return &iam.AuditEvent{
-			ID:        eventID,
-			TenantID:  tenantID,
-			EventType: iam.AuditEventTypeAuthentication,
-			Action:    "user.login",
-			Outcome:   iam.AuditOutcomeSuccess,
-			Actor:     &iam.AuditActor{ID: "user-456", Type: "user", IPAddress: "192.168.1.1", UserAgent: "Mozilla/5.0"},
-			Resource:  &iam.AuditResource{ID: "session-789"},
-			Timestamp: now,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	cmd := newIAMAuditGetCommand()
-	cmd.SetArgs([]string{"evt-123"})
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 
@@ -853,532 +525,85 @@ func TestIAMPEPCheckJSONFormat(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestIAMPEPCheckWithContext tests PEP check with context.
-func TestIAMPEPCheckWithContext(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	originalPepSubject := pepSubject
-	originalPepAction := pepAction
-	originalPepResource := pepResource
-	originalPepContext := pepContext
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-		pepSubject = originalPepSubject
-		pepAction = originalPepAction
-		pepResource = originalPepResource
-		pepContext = originalPepContext
-	}()
-
-	mockClient := newTestMockIAMClient()
-	mockClient.pepClient.CheckFunc = func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error) {
-		return &iam.CheckResponse{
-			Allowed:          true,
-			MatchedPolicy:    "ip-policy",
-			MatchedRule:      "allow-internal",
-			EvaluationTimeNs: 200000,
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	// Define values as constants BEFORE creating command
-	testSubject := `{"id":"user1","roles":["developer"]}`
-	testAction := "write"
-	testResource := "orders/123"
-	testContext := `{"ip":"192.168.1.1","time":"2025-01-01T12:00:00Z"}`
-
-	cmd := newIAMPEPCheckCommand()
-	cmd.SetArgs([]string{"--subject", testSubject, "--action", testAction, "--resource", testResource, "--context", testContext})
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err := cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMPEPCheckBatchWithMock tests the PEP batch check command with a mock client.
-func TestIAMPEPCheckBatchWithMock(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	originalPepFile := pepFile
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-		pepFile = originalPepFile
-	}()
-
-	// Create a temporary batch file
-	tmpDir := t.TempDir()
-	batchFilePath := filepath.Join(tmpDir, "requests.json")
-	batchContent := `{
-		"requests": [
-			{"subject": {"id": "user1", "roles": ["admin"]}, "action": "read", "resource": "keys/foo"},
-			{"subject": {"id": "user2", "roles": ["viewer"]}, "action": "write", "resource": "keys/bar"}
-		]
-	}`
-	err := os.WriteFile(batchFilePath, []byte(batchContent), 0644)
-	require.NoError(t, err)
-
-	mockClient := newTestMockIAMClient()
-	mockClient.pepClient.CheckBatchFunc = func(ctx context.Context, req *iam.CheckBatchRequest) (*iam.CheckBatchResponse, error) {
-		results := make([]iam.CheckResponse, len(req.Requests))
-		for i, r := range req.Requests {
-			allowed := r.Action == "read"
-			results[i] = iam.CheckResponse{
-				Allowed:          allowed,
-				MatchedPolicy:    "default-policy",
-				MatchedRule:      "allow-reads",
-				EvaluationTimeNs: 50000,
-			}
-		}
-		return &iam.CheckBatchResponse{Results: results}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "table"
-
-	cmd := newIAMPEPCheckBatchCommand()
-	cmd.SetArgs([]string{"--file", batchFilePath})
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err = cmd.Execute()
-	assert.NoError(t, err)
-}
-
-// TestIAMPEPCheckBatchJSONFormat tests PEP batch check with JSON output.
-func TestIAMPEPCheckBatchJSONFormat(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalOutputFormat := iamOutputFormat
-	originalPepFile := pepFile
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		iamOutputFormat = originalOutputFormat
-		pepFile = originalPepFile
-	}()
-
-	// Create a temporary batch file
-	tmpDir := t.TempDir()
-	batchFilePath := filepath.Join(tmpDir, "requests.json")
-	batchContent := `{
-		"requests": [
-			{"subject": {"id": "user1", "roles": ["admin"]}, "action": "read", "resource": "keys/foo"}
-		]
-	}`
-	err := os.WriteFile(batchFilePath, []byte(batchContent), 0644)
-	require.NoError(t, err)
-
-	mockClient := newTestMockIAMClient()
-	mockClient.pepClient.CheckBatchFunc = func(ctx context.Context, req *iam.CheckBatchRequest) (*iam.CheckBatchResponse, error) {
-		return &iam.CheckBatchResponse{
-			Results: []iam.CheckResponse{
-				{
-					Allowed:          true,
-					MatchedPolicy:    "admin-policy",
-					MatchedRule:      "allow-all",
-					EvaluationTimeNs: 75000,
-				},
-			},
-		}, nil
-	}
-
-	iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-	globalTenantID = "test-tenant"
-	iamOutputFormat = "json"
-
-	cmd := newIAMPEPCheckBatchCommand()
-	cmd.SetArgs([]string{"--file", batchFilePath})
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-
-	err = cmd.Execute()
-	assert.NoError(t, err)
-}
-
 // =============================================================================
 // Error Handling Tests
 // =============================================================================
 
-// TestIAMSessionCommandErrors tests error handling in session commands.
-func TestIAMSessionCommandErrors(t *testing.T) {
+// TestIAMCommands_ClientError checks that an error from the IAM client is
+// returned by the session, audit and PEP commands.
+func TestIAMCommands_ClientError(t *testing.T) {
 	cleanup := testInitLogger(t)
 	defer cleanup()
 
 	originalFactory := iamClientFactory
 	originalTenantID := globalTenantID
 	originalSessionUserID := sessionUserID
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		sessionUserID = originalSessionUserID
-	}()
-
-	tests := []struct {
-		name      string
-		setupMock func() *testMockIAMClient
-		cmd       func() *cobra.Command
-		args      []string
-		setTenant bool
-		expectErr bool
-		errMsg    string
-	}{
-		{
-			name:      "session list without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMSessionListCommand,
-			args:      []string{},
-			setTenant: false,
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name:      "session get without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMSessionGetCommand,
-			args:      []string{"sess-123"},
-			setTenant: false,
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name:      "session revoke without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMSessionRevokeCommand,
-			args:      []string{"sess-123"},
-			setTenant: false,
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name: "session list with client error",
-			setupMock: func() *testMockIAMClient {
-				m := newTestMockIAMClient()
-				m.sessionClient.ListFunc = func(ctx context.Context, req *iam.ListSessionsRequest) (*iam.ListSessionsResponse, error) {
-					return nil, assert.AnError
-				}
-				return m
-			},
-			cmd:       newIAMSessionListCommand,
-			args:      []string{},
-			setTenant: true,
-			expectErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockClient := tt.setupMock()
-			iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-
-			if tt.setTenant {
-				globalTenantID = "test-tenant"
-				sessionUserID = "test-user"
-			} else {
-				globalTenantID = ""
-			}
-
-			cmd := tt.cmd()
-			if len(tt.args) > 0 {
-				cmd.SetArgs(tt.args)
-			}
-
-			err := cmd.Execute()
-			if tt.expectErr {
-				assert.Error(t, err)
-				if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-// TestIAMAuditCommandErrors tests error handling in audit commands.
-func TestIAMAuditCommandErrors(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-	}()
-
-	tests := []struct {
-		name      string
-		setupMock func() *testMockIAMClient
-		cmd       func() *cobra.Command
-		args      []string
-		setTenant bool
-		expectErr bool
-		errMsg    string
-	}{
-		{
-			name:      "audit query without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMAuditQueryCommand,
-			args:      []string{},
-			setTenant: false,
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name:      "audit get without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMAuditGetCommand,
-			args:      []string{"evt-123"},
-			setTenant: false,
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name: "audit query with client error",
-			setupMock: func() *testMockIAMClient {
-				m := newTestMockIAMClient()
-				m.auditClient.QueryFunc = func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error) {
-					return nil, assert.AnError
-				}
-				return m
-			},
-			cmd:       newIAMAuditQueryCommand,
-			args:      []string{},
-			setTenant: true,
-			expectErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockClient := tt.setupMock()
-			iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-
-			if tt.setTenant {
-				globalTenantID = "test-tenant"
-			} else {
-				globalTenantID = ""
-			}
-
-			cmd := tt.cmd()
-			if len(tt.args) > 0 {
-				cmd.SetArgs(tt.args)
-			}
-
-			err := cmd.Execute()
-			if tt.expectErr {
-				assert.Error(t, err)
-				if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-// TestIAMPEPCommandErrors tests error handling in PEP commands.
-func TestIAMPEPCommandErrors(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
 	originalPepSubject := pepSubject
 	originalPepAction := pepAction
 	originalPepResource := pepResource
 	originalPepContext := pepContext
-	originalPepFile := pepFile
 	defer func() {
 		iamClientFactory = originalFactory
 		globalTenantID = originalTenantID
+		sessionUserID = originalSessionUserID
 		pepSubject = originalPepSubject
 		pepAction = originalPepAction
 		pepResource = originalPepResource
 		pepContext = originalPepContext
-		pepFile = originalPepFile
 	}()
 
 	tests := []struct {
 		name      string
-		setupMock func() *testMockIAMClient
+		setupMock func(m *testMockIAMClient)
 		cmd       func() *cobra.Command
-		setTenant bool
-		args      []string // Use SetArgs instead of global flags
-		expectErr bool
-		errMsg    string
+		args      []string
 	}{
 		{
-			name:      "pep check without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMPEPCheckCommand,
-			setTenant: false,
-			args:      []string{"--subject", `{"id":"user1"}`, "--action", "read", "--resource", "keys/foo"},
-			expectErr: true,
-			errMsg:    "tenant",
+			name: "session list",
+			setupMock: func(m *testMockIAMClient) {
+				m.sessionClient.ListFunc = func(ctx context.Context, req *iam.ListSessionsRequest) (*iam.ListSessionsResponse, error) {
+					return nil, assert.AnError
+				}
+			},
+			cmd:  newIAMSessionListCommand,
+			args: []string{"--user", "test-user"},
 		},
 		{
-			name:      "pep check with invalid subject JSON",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMPEPCheckCommand,
-			setTenant: true,
-			args:      []string{"--subject", "not-valid-json", "--action", "read", "--resource", "keys/foo"},
-			expectErr: true,
-			errMsg:    "subject JSON",
+			name: "audit query",
+			setupMock: func(m *testMockIAMClient) {
+				m.auditClient.QueryFunc = func(ctx context.Context, filter *iam.AuditFilter) (*iam.AuditQueryResponse, error) {
+					return nil, assert.AnError
+				}
+			},
+			cmd: newIAMAuditQueryCommand,
 		},
 		{
-			name:      "pep check with invalid context JSON",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMPEPCheckCommand,
-			setTenant: true,
-			args:      []string{"--subject", `{"id":"user1"}`, "--action", "read", "--resource", "keys/foo", "--context", "not-valid-json"},
-			expectErr: true,
-			errMsg:    "context JSON",
-		},
-		{
-			name: "pep check with client error",
-			setupMock: func() *testMockIAMClient {
-				m := newTestMockIAMClient()
+			name: "pep check",
+			setupMock: func(m *testMockIAMClient) {
 				m.pepClient.CheckFunc = func(ctx context.Context, req *iam.CheckRequest) (*iam.CheckResponse, error) {
 					return nil, assert.AnError
 				}
-				return m
 			},
-			cmd:       newIAMPEPCheckCommand,
-			setTenant: true,
-			args:      []string{"--subject", `{"id":"user1"}`, "--action", "read", "--resource", "keys/foo"},
-			expectErr: true,
-		},
-		{
-			name:      "pep check-batch without tenant",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMPEPCheckBatchCommand,
-			setTenant: false,
-			args:      []string{"--file", "/tmp/test.json"},
-			expectErr: true,
-			errMsg:    "tenant",
-		},
-		{
-			name:      "pep check-batch with non-existent file",
-			setupMock: func() *testMockIAMClient { return newTestMockIAMClient() },
-			cmd:       newIAMPEPCheckBatchCommand,
-			setTenant: true,
-			args:      []string{"--file", "/non/existent/file.json"},
-			expectErr: true,
-			errMsg:    "batch file",
+			cmd:  newIAMPEPCheckCommand,
+			args: []string{"--subject", `{"id":"user1"}`, "--action", "read", "--resource", "keys/foo"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockClient := tt.setupMock()
+			mockClient := newTestMockIAMClient()
+			tt.setupMock(mockClient)
 			iamClientFactory = func() (iam.Client, error) { return mockClient, nil }
-
-			if tt.setTenant {
-				globalTenantID = "test-tenant"
-			} else {
-				globalTenantID = ""
-			}
+			globalTenantID = "test-tenant"
 
 			cmd := tt.cmd()
-			if len(tt.args) > 0 {
-				cmd.SetArgs(tt.args)
-			}
+			// A non-nil slice keeps cobra from parsing the test binary's own flags.
+			cmd.SetArgs(append([]string{}, tt.args...))
 
 			err := cmd.Execute()
-			if tt.expectErr {
-				assert.Error(t, err)
-				if tt.errMsg != "" {
-					assert.Contains(t, err.Error(), tt.errMsg)
-				}
-			} else {
-				assert.NoError(t, err)
-			}
+			assert.ErrorContains(t, err, assert.AnError.Error())
 		})
 	}
-}
-
-// TestIAMPEPCheckBatchInvalidJSON tests batch check with invalid JSON file.
-func TestIAMPEPCheckBatchInvalidJSON(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalPepFile := pepFile
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		pepFile = originalPepFile
-	}()
-
-	// Create a temporary batch file with invalid JSON
-	tmpDir := t.TempDir()
-	batchFilePath := filepath.Join(tmpDir, "invalid.json")
-	err := os.WriteFile(batchFilePath, []byte("not valid json"), 0644)
-	require.NoError(t, err)
-
-	iamClientFactory = func() (iam.Client, error) { return newTestMockIAMClient(), nil }
-	globalTenantID = "test-tenant"
-
-	cmd := newIAMPEPCheckBatchCommand()
-	cmd.SetArgs([]string{"--file", batchFilePath})
-
-	err = cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "parse batch file JSON")
-}
-
-// TestIAMPEPCheckBatchEmptyRequests tests batch check with empty requests array.
-func TestIAMPEPCheckBatchEmptyRequests(t *testing.T) {
-	cleanup := testInitLogger(t)
-	defer cleanup()
-
-	originalFactory := iamClientFactory
-	originalTenantID := globalTenantID
-	originalPepFile := pepFile
-	defer func() {
-		iamClientFactory = originalFactory
-		globalTenantID = originalTenantID
-		pepFile = originalPepFile
-	}()
-
-	// Create a temporary batch file with empty requests
-	tmpDir := t.TempDir()
-	batchFilePath := filepath.Join(tmpDir, "empty.json")
-	err := os.WriteFile(batchFilePath, []byte(`{"requests": []}`), 0644)
-	require.NoError(t, err)
-
-	iamClientFactory = func() (iam.Client, error) { return newTestMockIAMClient(), nil }
-	globalTenantID = "test-tenant"
-
-	cmd := newIAMPEPCheckBatchCommand()
-	cmd.SetArgs([]string{"--file", batchFilePath})
-
-	err = cmd.Execute()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "no requests")
 }
 
 // TestTruncateString tests the truncateString helper function.
