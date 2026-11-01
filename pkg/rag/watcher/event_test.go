@@ -782,74 +782,72 @@ func TestConvertEvent_RenameAsDelete(t *testing.T) {
 	}
 }
 
-// TestGitIgnoreMatcher_Negation tests negated patterns.
-func TestGitIgnoreMatcher_Negation(t *testing.T) {
-	patterns := []string{"*.log", "!important.log"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
+// TestGitIgnoreMatcher_PatternForms tests Match across the supported pattern forms.
+func TestGitIgnoreMatcher_PatternForms(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		cases    map[string]bool
 	}{
-		{"/app/error.log", true},
-		{"/app/important.log", false}, // Negated
-		{"/app/debug.log", true},
+		{
+			name:     "negation",
+			patterns: []string{"*.log", "!important.log"},
+			cases: map[string]bool{
+				"/app/error.log":     true,
+				"/app/important.log": false,
+				"/app/debug.log":     true,
+			},
+		},
+		{
+			name:     "directory only",
+			patterns: []string{"temp/", "cache/"},
+			cases: map[string]bool{
+				"/app/temp/file.txt":      true,
+				"/app/cache/data":         true,
+				"/app/temp":               true,
+				"/app/cache":              true,
+				"/temp/file.txt":          true,
+				"/app/temporary/file.txt": false,
+				"/app/file.temp":          false,
+			},
+		},
+		{
+			name:     "double star",
+			patterns: []string{"**/*.tmp"},
+			cases: map[string]bool{
+				"/app/build/output.tmp":      true,
+				"/deep/nested/path/file.tmp": true,
+				"/app/src/index.js":          false,
+			},
+		},
+		{
+			name:     "base name wildcard",
+			patterns: []string{"*.txt"},
+			cases: map[string]bool{
+				"/root/file.txt":      true,
+				"/deep/path/file.txt": true,
+				"/file.log":           false,
+			},
+		},
+		{
+			name:     "path component",
+			patterns: []string{"node_modules"},
+			cases: map[string]bool{
+				"/app/node_modules/package":        true,
+				"/node_modules/lib":                true,
+				"/deep/path/node_modules/index.js": true,
+				"/app/not_node_modules/file":       false,
+			},
+		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
-		})
-	}
-}
-
-// TestGitIgnoreMatcher_DirectoryOnly tests directory-only patterns.
-func TestGitIgnoreMatcher_DirectoryOnly(t *testing.T) {
-	patterns := []string{"temp/", "cache/"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/app/temp/file.txt", true},
-		{"/app/cache/data", true},
-		{"/app/temp", true},
-		{"/app/cache", true},
-		{"/app/temporary/file.txt", false},
-		{"/app/file.temp", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
-		})
-	}
-}
-
-// TestGitIgnoreMatcher_DoubleStarWildcard tests ** wildcard patterns.
-func TestGitIgnoreMatcher_DoubleStarWildcard(t *testing.T) {
-	patterns := []string{"**/*.tmp"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/app/build/output.tmp", true},
-		{"/deep/nested/path/file.tmp", true},
-		{"/app/src/index.js", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matcher, err := newGitIgnoreMatcher(tt.patterns)
+			require.NoError(t, err)
+			for path, want := range tt.cases {
+				assert.Equal(t, want, matcher.Match(path), "path: %s", path)
+			}
 		})
 	}
 }
@@ -884,53 +882,6 @@ func TestMatchWildcard_SingleStar(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			matched := matcher.matchWildcard(tc.path, tc.pattern)
 			assert.Equal(t, tc.expected, matched, "path: %s, pattern: %s", tc.path, tc.pattern)
-		})
-	}
-}
-
-// TestMatchPattern_BaseName tests pattern matching against base name.
-func TestMatchPattern_BaseName(t *testing.T) {
-	patterns := []string{"*.txt"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/root/file.txt", true},
-		{"/deep/path/file.txt", true},
-		{"/file.log", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
-		})
-	}
-}
-
-// TestMatchPattern_PathComponents tests matching against path components.
-func TestMatchPattern_PathComponents(t *testing.T) {
-	patterns := []string{"node_modules"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/app/node_modules/package", true},
-		{"/node_modules/lib", true},
-		{"/deep/path/node_modules/index.js", true},
-		{"/app/not_node_modules/file", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
 		})
 	}
 }
@@ -1342,31 +1293,6 @@ func TestConvertEvent_ChmodIgnored(t *testing.T) {
 		_ = event
 	case <-time.After(1 * time.Second):
 		// Expected - no event for chmod
-	}
-}
-
-// TestGitIgnoreMatcher_Wildcard tests wildcard matching.
-func TestGitIgnoreMatcher_Wildcard(t *testing.T) {
-	patterns := []string{"*.log", "temp/"}
-	matcher, err := newGitIgnoreMatcher(patterns)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		path     string
-		expected bool
-	}{
-		{"/app/logs/error.log", true},
-		{"/deep/nested/path/debug.log", true},
-		{"/temp/file.txt", true},
-		{"/other/file.txt", false},
-		{"/app/data.json", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.path, func(t *testing.T) {
-			matched := matcher.Match(tc.path)
-			assert.Equal(t, tc.expected, matched, "path: %s", tc.path)
-		})
 	}
 }
 
