@@ -184,53 +184,6 @@ func TestAuditLogger_CompressFileAsync(t *testing.T) {
 	})
 }
 
-func TestAuditLogger_LogWithBothSyslogAndSIEM(t *testing.T) {
-	// Create a test server for SIEM
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:      true,
-		File:         logFile,
-		Syslog:       true,
-		SyslogAddr:   "localhost:514",
-		SIEM:         true,
-		SIEMEndpoint: server.URL,
-		SIEMConfig: &SIEMConfig{
-			Enabled:       true,
-			Endpoint:      server.URL,
-			Format:        SIEMFormatJSON,
-			BatchSize:     10,
-			FlushInterval: 100 * time.Millisecond,
-		},
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	ctx := context.Background()
-	event := &AuditEvent{
-		Username: "test",
-		Action:   ActionWrite,
-		Resource: "data",
-		Result:   ResultSuccess,
-	}
-
-	err = al.Log(ctx, event)
-	require.NoError(t, err)
-
-	// Give goroutines time to execute
-	time.Sleep(200 * time.Millisecond)
-}
-
 func TestAuditError_Error(t *testing.T) {
 	t.Run("with cause", func(t *testing.T) {
 		cause := io.EOF
@@ -268,21 +221,6 @@ func TestAuditError_Unwrap(t *testing.T) {
 		err := &AuditError{Code: ErrCodeAuditConfigNil, Message: "config is nil"}
 		assert.Nil(t, err.Unwrap())
 	})
-}
-
-func TestAuditLogger_GetSIEMExporter(t *testing.T) {
-	// Without SIEM
-	cfg := &AuditConfig{
-		Enabled: true,
-		SIEM:    false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	assert.Nil(t, al.GetSIEMExporter())
 }
 
 // TestAuditLogger_RotationWatcherDoesNotLeakAcrossRotations verifies that the

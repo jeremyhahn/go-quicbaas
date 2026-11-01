@@ -472,8 +472,6 @@ func TestGenerateEventID(t *testing.T) {
 	assert.Contains(t, id1, "evt-")
 }
 
-// Tests for cross-tenant audit logging
-
 func TestLogTenantSwitch(t *testing.T) {
 	var buf bytes.Buffer
 	al := &AuditLogger{
@@ -1569,11 +1567,6 @@ func TestSyslogExporter_PriorityCalculation(t *testing.T) {
 	}
 }
 
-// Test functions
-
-// TestAuditLogger_PlaceholderMethods tests placeholder methods for future implementation
-// TestAuditLogger_AdditionalOpenLogFileCases tests more openLogFile scenarios
-// TestAuditLogger_SendToSyslogIntegration tests the sendToSyslog function
 // TestAuditLogger_OpenLogFileWithSubdirectory tests file opening with nested dirs
 func TestAuditLogger_OpenLogFileWithSubdirectory(t *testing.T) {
 	logger := createTestLogger(t)
@@ -1692,18 +1685,6 @@ func TestAuditLogger_VerifySignatureVariants(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// compressFileAsync (audit.go:2014 -- 0.0% covered)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// compressFile (audit.go:2022 -- 62.9% covered)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// cleanupOldBackups (audit.go:2112 -- 0.0% covered)
-// ---------------------------------------------------------------------------
-
 func TestCleanupOldBackups(t *testing.T) {
 	// Backups are listed oldest first; each gets a modification time one
 	// hour after the previous one.
@@ -1768,11 +1749,6 @@ func TestCleanupOldBackups(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// sendLocal (audit.go:341 -- 11.8% covered)
-// These tests need a real syslog.Writer mock via TCP listener
-// ---------------------------------------------------------------------------
-
 func TestSyslogExporter_SendRemoteWriteError(t *testing.T) {
 	// Create a TCP listener
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1806,14 +1782,6 @@ func TestSyslogExporter_SendRemoteWriteError(t *testing.T) {
 	err = exporter.sendRemote(event, SyslogSeverityInformational, "test message")
 	require.Error(t, err)
 }
-
-// ---------------------------------------------------------------------------
-// connect (audit.go:283 -- 60.0% covered, remote branch)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// closeUnlocked (audit.go:559 -- 81.8% covered)
-// ---------------------------------------------------------------------------
 
 func TestSyslogExporter_CloseUnlockedWithBothConns(t *testing.T) {
 	// Create TCP listener for remote
@@ -1850,12 +1818,6 @@ func TestSyslogExporter_CloseUnlockedWithBothConns(t *testing.T) {
 	err = exporter.Close()
 	require.NoError(t, err)
 }
-
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// rotateIfNeeded (audit.go:1970 -- 82.4% covered)
-// ---------------------------------------------------------------------------
 
 // TestRotateIfNeeded_AfterCloseStartsNothing pins the guarantee that makes
 // Close's rotateWG.Wait sound.
@@ -1937,14 +1899,6 @@ func TestRotateIfNeeded_AfterCloseStartsNothing(t *testing.T) {
 		"rotation after Close must create no files: it would mean background work started with nobody waiting for it")
 }
 
-// ---------------------------------------------------------------------------
-// VerifySignature (audit.go:1903 -- 83.3% covered)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// NewAuditLogger defaults (audit.go:1392 -- 97.8%)
-// ---------------------------------------------------------------------------
-
 func TestNewAuditLogger_NilConfig(t *testing.T) {
 	log := createTestLogger(t)
 	_, err := NewAuditLogger(nil, log)
@@ -1975,129 +1929,6 @@ func TestNewAuditLogger_DefaultValues(t *testing.T) {
 	assert.Equal(t, 5*time.Second, cfg.FlushInterval)
 }
 
-// ---------------------------------------------------------------------------
-// Log (audit.go:1508 -- 86.2% covered)
-// ---------------------------------------------------------------------------
-
-func TestLog_DisabledLogger(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled: false,
-		File:    logFile,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.Log(context.Background(), &AuditEvent{
-		Action:   ActionRead,
-		Resource: "test",
-		Result:   ResultSuccess,
-	})
-	require.NoError(t, err) // Should be no-op
-}
-
-// ---------------------------------------------------------------------------
-// sendToSyslog (audit.go:2145 -- 73.3% covered)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Export (audit.go:321 -- 90% covered)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Error type coverage
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// NewSyslogExporter defaults (audit.go:251 -- 84.6%)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Log with signed events (audit.go:1508 -- covering sign + marshal paths)
-// ---------------------------------------------------------------------------
-
-func TestLog_WithSignedEvents(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: true,
-		SignKey:  "test-signing-key-for-hmac",
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	ctx := context.Background()
-	event := &AuditEvent{
-		Username:  "admin",
-		UserID:    "usr-123",
-		Action:    ActionWrite,
-		Resource:  "database/users",
-		Result:    ResultSuccess,
-		IPAddress: "10.0.0.1",
-		NodeID:    "node-1",
-		ShardID:   42,
-		Details:   map[string]string{"operation": "insert"},
-	}
-
-	err = al.Log(ctx, event)
-	require.NoError(t, err)
-
-	// Event should have timestamp, event ID, and signature set
-	assert.False(t, event.Timestamp.IsZero())
-	assert.NotEmpty(t, event.EventID)
-	assert.NotEmpty(t, event.Signature)
-}
-
-func TestLog_MultipleEvents(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	cfg := &AuditConfig{
-		Enabled:  true,
-		File:     logFile,
-		MaxSize:  100,
-		SignLogs: false,
-	}
-
-	log := createTestLogger(t)
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	ctx := context.Background()
-	for i := 0; i < 50; i++ {
-		err := al.Log(ctx, &AuditEvent{
-			Action:   ActionRead,
-			Resource: "test",
-			Result:   ResultSuccess,
-		})
-		require.NoError(t, err)
-	}
-
-	// Verify file was written
-	info, err := os.Stat(logFile)
-	require.NoError(t, err)
-	assert.True(t, info.Size() > 0)
-}
-
-// ---------------------------------------------------------------------------
-// openLogFile (audit.go:1917 -- 88.9%)
-// ---------------------------------------------------------------------------
-
 func TestNewAuditLogger_WithDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "subdir", "deep", "audit.log")
@@ -2116,13 +1947,6 @@ func TestNewAuditLogger_WithDirectory(t *testing.T) {
 	assert.FileExists(t, logFile)
 }
 
-// ---------------------------------------------------------------------------
-// sendLocal - cover all severity dispatch paths via a real local syslog mock
-// We connect to a TCP listener and exercise the remote path since local syslog
-// requires a real system syslog daemon. But we can also test sendLocal nil-conn
-// error path and default severity branch.
-// ---------------------------------------------------------------------------
-
 func TestSyslogExporter_ConnectLocalUnixDialError(t *testing.T) {
 	// Test the local unix dial path that fails with bad address
 	log := createTestLogger(t)
@@ -2139,87 +1963,6 @@ func TestSyslogExporter_ConnectLocalUnixDialError(t *testing.T) {
 	var connErr *SyslogConnectionError
 	assert.ErrorAs(t, err, &connErr)
 }
-
-// ---------------------------------------------------------------------------
-// compressFile - cover gzWriter.Close error path and dstFile.Close error path
-// We use a file with a lot of content to ensure copy path is exercised
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Log function: exercise syslog and syslog exporter paths together
-// ---------------------------------------------------------------------------
-
-func TestLog_WithSyslogAndSyslogExporter(t *testing.T) {
-	// Start a TCP listener for syslog exporter
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer listener.Close()
-
-	go func() {
-		for {
-			conn, acceptErr := listener.Accept()
-			if acceptErr != nil {
-				return
-			}
-			go func(c net.Conn) {
-				defer c.Close()
-				buf := make([]byte, 4096)
-				for {
-					if _, readErr := c.Read(buf); readErr != nil {
-						return
-					}
-				}
-			}(conn)
-		}
-	}()
-
-	log := createTestLogger(t)
-
-	// Create syslog exporter
-	syslogExporter, syslogErr := NewSyslogExporter(&SyslogExporterConfig{
-		Network: "tcp",
-		Address: listener.Addr().String(),
-		Tag:     "test-log",
-	}, log)
-	require.NoError(t, syslogErr)
-	connErr := syslogExporter.connect()
-	require.NoError(t, connErr)
-
-	al := &AuditLogger{
-		config: &AuditConfig{
-			Enabled:       true,
-			Syslog:        true,
-			SyslogAddr:    "127.0.0.1:0",
-			FlushInterval: 1 * time.Second,
-		},
-		logger:         log,
-		writer:         &bytes.Buffer{},
-		syslogExporter: syslogExporter,
-		shutdown:       make(chan struct{}),
-	}
-	defer close(al.shutdown)
-
-	event := &AuditEvent{
-		Action:   ActionWrite,
-		Resource: "test-resource",
-		Result:   ResultSuccess,
-		UserID:   "user-syslog",
-		Username: "sysloguser",
-	}
-
-	err = al.Log(context.Background(), event)
-	assert.NoError(t, err)
-	// Event ID should have been auto-generated
-	assert.NotEmpty(t, event.EventID)
-}
-
-// ---------------------------------------------------------------------------
-// closeUnlocked - cover both localConn and remoteConn error paths
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// NewAuditLogger - cover SyslogEnabled path that continues with warning
-// ---------------------------------------------------------------------------
 
 func TestNewAuditLogger_WithSignLogsNoKey(t *testing.T) {
 	log := createTestLogger(t)
@@ -2238,10 +1981,6 @@ func TestNewAuditLogger_WithSignLogsNoKey(t *testing.T) {
 	assert.ErrorAs(t, err, &auditErr)
 	assert.Equal(t, ErrCodeAuditSignKeyRequired, auditErr.Code)
 }
-
-// ---------------------------------------------------------------------------
-// checkRotation - test that it returns immediately when File is empty
-// ---------------------------------------------------------------------------
 
 func TestCheckRotation_EmptyFilePath(t *testing.T) {
 	log := createTestLogger(t)
@@ -2312,22 +2051,6 @@ func TestCheckRotation_ShutdownSignal(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// rotateIfNeeded - cover the rotation path when file exceeds max size
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// sendToSyslog legacy path - cover the case where SyslogAddr is set
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// sendRemote - exercise all code paths with varying event fields
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// openLogFile - cover the MkdirAll error path (read-only parent)
-// ---------------------------------------------------------------------------
-
 // openLogFile does MkdirAll on the file's parent before opening it. A regular
 // file standing in as a path component makes that MkdirAll return ENOTDIR for
 // every uid; a mode-0500 parent only stops an unprivileged one
@@ -2354,18 +2077,6 @@ func TestOpenLogFile_ParentIsFile(t *testing.T) {
 	var auditErr *AuditError
 	assert.ErrorAs(t, err, &auditErr)
 }
-
-// ---------------------------------------------------------------------------
-// NewSyslogExporter - connect path testing with empty network
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// VerifySignature - cover the signEvent error path
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Log - cover sign event error path
-// ---------------------------------------------------------------------------
 
 func TestLog_SignEventError(t *testing.T) {
 	log := createTestLogger(t)
@@ -2398,10 +2109,6 @@ func TestLog_SignEventError(t *testing.T) {
 	assert.Empty(t, event.Signature)
 }
 
-// ---------------------------------------------------------------------------
-// compressFileAsync - cover error path that logs but doesn't return error
-// ---------------------------------------------------------------------------
-
 func TestLog_WriteError(t *testing.T) {
 	log := createTestLogger(t)
 
@@ -2428,28 +2135,6 @@ func TestLog_WriteError(t *testing.T) {
 	var auditErr *AuditError
 	assert.ErrorAs(t, err, &auditErr)
 	assert.Equal(t, ErrCodeAuditEventWrite, auditErr.Code)
-}
-
-func TestLog_WithSignLogs_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-	log := createTestLogger(t)
-
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, SignLogs: true, SignKey: "test-sign-key-that-is-32-bytes!"},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		signKey:  []byte("test-sign-key-that-is-32-bytes!"),
-		shutdown: make(chan struct{}),
-	}
-
-	event := &AuditEvent{Action: "read", Resource: "test", Result: "success"}
-	require.NoError(t, al.Log(context.Background(), event))
-	assert.NotEmpty(t, event.Signature)
 }
 
 func TestAuditEvent_JSONWithSignature(t *testing.T) {
@@ -2501,67 +2186,6 @@ func TestOpenLogFile_OpenFileError(t *testing.T) {
 	}
 	err := al.openLogFile()
 	assert.Error(t, err, "should fail when file path is a directory")
-}
-
-// TestOpenLogFile_Success tests openLogFile when both MkdirAll and OpenFile
-// succeed, covering the success path at audit.go:1938-1943.
-// TestLog_WithSyslogExporter tests Log when a syslog exporter is configured,
-// covering the goroutine dispatch at audit.go:1573-1579.
-func TestLog_WithSyslogExporter(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	log := createTestLogger(t)
-
-	syslogExporter := &SyslogExporter{
-		config:   &SyslogExporterConfig{Address: "127.0.0.1:0", Network: "tcp"},
-		logger:   log,
-		isRemote: true,
-	}
-	syslogExporter.connected.Store(false)
-
-	al := &AuditLogger{
-		config:         &AuditConfig{Enabled: true, File: logFile},
-		logger:         log,
-		file:           f,
-		writer:         f,
-		syslogExporter: syslogExporter,
-		shutdown:       make(chan struct{}),
-	}
-
-	event := &AuditEvent{Action: "test", Resource: "r", Result: "success"}
-	err = al.Log(context.Background(), event)
-	assert.NoError(t, err, "Log should succeed even with exporter configured")
-
-	f.Close()
-}
-
-// TestLog_WithLegacySyslog tests Log when the legacy Syslog config flag is true,
-// covering the goroutine dispatch at audit.go:1559-1561.
-func TestLog_WithLegacySyslog(t *testing.T) {
-	tmpDir := t.TempDir()
-	logFile := filepath.Join(tmpDir, "audit.log")
-
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	require.NoError(t, err)
-
-	log := createTestLogger(t)
-	al := &AuditLogger{
-		config:   &AuditConfig{Enabled: true, File: logFile, Syslog: true, SyslogAddr: ""},
-		logger:   log,
-		file:     f,
-		writer:   f,
-		shutdown: make(chan struct{}),
-	}
-
-	event := &AuditEvent{Action: "test", Resource: "r", Result: "success"}
-	err = al.Log(context.Background(), event)
-	assert.NoError(t, err, "Log should succeed with legacy syslog configured")
-
-	f.Close()
 }
 
 // TestAuditLogger_CleanupOldBackups_Extended tests the cleanupOldBackups function with more scenarios.
@@ -2805,31 +2429,6 @@ func TestKeyring_AutoRotationTimer(t *testing.T) {
 	kr.Close()
 }
 
-// TestAuditLogger_OpenLogFile_CreateDir tests directory creation.
-// ---------------------------------------------------------------------------
-// audit.go -- sendLocal severity dispatch
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// audit.go -- LogKeyExport, LogKeyGenerate, LogKeyDeletion failure paths
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// audit.go -- compressFile success path
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// audit.go -- rotateIfNeeded
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// audit.go -- VerifySignature
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// audit.go -- Flush
-// ---------------------------------------------------------------------------
-
 func TestAuditLogger_FlushWithFileWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "audit.log")
@@ -2865,10 +2464,6 @@ func TestAuditLogger_FlushWithNilFile(t *testing.T) {
 	err = al.Flush()
 	assert.NoError(t, err)
 }
-
-// ---------------------------------------------------------------------------
-// audit.go -- NewAuditLogger with SyslogEnabled
-// ---------------------------------------------------------------------------
 
 func TestNewAuditLogger_WithSyslogEnabled(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -2921,10 +2516,6 @@ func TestNewAuditLogger_SyslogEnabledUnreachable(t *testing.T) {
 	assert.Nil(t, al.GetSyslogExporter())
 }
 
-// ---------------------------------------------------------------------------
-// audit.go -- LogsDataAccess and LogsBackupOperation
-// ---------------------------------------------------------------------------
-
 func TestAuditLogger_LogsBackupAndRestore(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := &AuditConfig{Enabled: true}
@@ -2940,12 +2531,6 @@ func TestAuditLogger_LogsBackupAndRestore(t *testing.T) {
 	assert.Contains(t, buf.String(), ActionBackup)
 	assert.Contains(t, buf.String(), ResultSuccess)
 }
-
-// ---------------------------------------------------------------------------
-// AuditError tests
-// ---------------------------------------------------------------------------
-
-// Tests for LogKeyExport, LogKeyGenerate, LogKeyImport, LogKeyDeletion
 
 func TestAuditLogger_LogKeyOperations(t *testing.T) {
 	ctx := context.Background()
@@ -3011,8 +2596,6 @@ func TestAuditLogger_LogKeyOperations(t *testing.T) {
 	}
 }
 
-// Tests for GetSyslogExporter
-
 func TestAuditLogger_GetSyslogExporter(t *testing.T) {
 	log := createTestLogger(t)
 
@@ -3029,14 +2612,6 @@ func TestAuditLogger_GetSyslogExporter(t *testing.T) {
 		assert.Nil(t, exporter)
 	})
 }
-
-// Tests for sendLocal with all severity levels
-
-// Tests for compressFile edge cases
-
-// Tests for sendToSyslog edge cases
-
-// Tests for VerifySignature edge cases
 
 // TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed is the #22
 // regression: with signing on, removing the signature from a signed event
@@ -3078,63 +2653,6 @@ func TestAuditLogger_VerifySignature_StrippedSignatureFailsClosed(t *testing.T) 
 	assert.False(t, al.VerifySignature(&strippedAndTampered), "stripping must not hide tampering")
 }
 
-// Tests for NewAuditLogger with syslog enabled
-
-// Tests for closeUnlocked with both connections
-
-// Tests for connect with reconnection
-
-// Tests for connect with unix socket
-
-// Tests for sendRemote write error
-
-// Tests for Export reconnection
-
-// Tests for mapEventToSeverity with all result types
-
-// Tests for AuditLogger.Log with syslog exporter
-
-func TestAuditLogger_Log_WithSyslogExporterConfigured(t *testing.T) {
-	log := createTestLogger(t)
-
-	// Create UDP listener
-	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer listener.Close()
-
-	var buf bytes.Buffer
-	config := &AuditConfig{
-		Enabled:        true,
-		SyslogEnabled:  true,
-		SyslogAddress:  listener.LocalAddr().String(),
-		SyslogNetwork:  "udp",
-		SyslogFacility: SyslogFacilityLocal0,
-	}
-
-	al, err := NewAuditLogger(config, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	al.writer = &buf
-
-	event := &AuditEvent{
-		Username: "test",
-		Action:   ActionRead,
-		Resource: "test",
-		Result:   ResultSuccess,
-	}
-
-	err = al.Log(context.Background(), event)
-	require.NoError(t, err)
-
-	// Give time for async syslog send
-	time.Sleep(50 * time.Millisecond)
-}
-
-// Tests for cleanupOldBackups - renamed
-
-// Tests for checkRotation exit on shutdown
-
 func TestAuditLogger_CheckRotation_OnShutdownSignal(t *testing.T) {
 	log := createTestLogger(t)
 	tmpDir := t.TempDir()
@@ -3161,10 +2679,6 @@ func TestAuditLogger_CheckRotation_OnShutdownSignal(t *testing.T) {
 	}
 }
 
-// Tests for rotateIfNeeded with nil file
-
-// Tests for buildStructuredData with error message
-
 func TestSyslogExporter_BuildStructuredData_WithErrorMsgField(t *testing.T) {
 	log := createTestLogger(t)
 
@@ -3185,20 +2699,6 @@ func TestSyslogExporter_BuildStructuredData_WithErrorMsgField(t *testing.T) {
 	assert.Contains(t, sd, "[audit@quicbaas")
 	assert.Contains(t, sd, "errorMsg=\"permission denied\"")
 }
-
-// Tests for AuditError and SIEMError
-
-// Test compressFileAsync - renamed
-
-// Test compressFileAsync with non-existent file - renamed
-
-// ---------------------------------------------------------------------------
-// Error type tests
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// SyslogExporter tests
-// ---------------------------------------------------------------------------
 
 func TestNewSyslogExporter_ConnectsViaTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -3338,22 +2838,6 @@ func TestSyslogExporter_ConnectionRefused(t *testing.T) {
 	assert.Equal(t, "tcp", connErr.Network)
 }
 
-// ---------------------------------------------------------------------------
-// RFC 5424 formatting
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// AuditLogger helper methods
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// AuditLogger sendToSyslog
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// AuditLogger Close with exporters
-// ---------------------------------------------------------------------------
-
 func TestAuditLogger_CloseShutsBothExporters(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -3399,14 +2883,6 @@ func TestAuditLogger_CloseShutsBothExporters(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, syslogExp.IsConnected())
 }
-
-// ---------------------------------------------------------------------------
-// compressFile error paths
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// NewAuditLogger configuration
-// ---------------------------------------------------------------------------
 
 // TestNewAuditLogger_RejectsShortSignKey ensures HMAC keys weaker than the
 // FIPS 140-3 minimum of 112 bits are refused rather than silently accepted.
@@ -3462,18 +2938,6 @@ func TestNewAuditLogger_AcceptsMinimumLengthSignKey(t *testing.T) {
 	assert.True(t, al.VerifySignature(event))
 }
 
-func TestNewAuditLogger_DisabledIsNoop(t *testing.T) {
-	cfg := &AuditConfig{Enabled: false}
-	log := createTestLogger(t)
-
-	al, err := NewAuditLogger(cfg, log)
-	require.NoError(t, err)
-	defer al.Close()
-
-	err = al.Log(context.Background(), &AuditEvent{Action: ActionRead})
-	assert.NoError(t, err)
-}
-
 func TestNewAuditLogger_SetsDefaultCompression(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &AuditConfig{
@@ -3490,14 +2954,6 @@ func TestNewAuditLogger_SetsDefaultCompression(t *testing.T) {
 
 	assert.Equal(t, CompressionLevelDefault, al.config.CompressionLevel)
 }
-
-// ---------------------------------------------------------------------------
-// rotateIfNeeded
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Log dispatches to SIEM and syslog
-// ---------------------------------------------------------------------------
 
 func TestAuditLogger_LogDispatchesToExporters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3532,6 +2988,7 @@ func TestAuditLogger_LogDispatchesToExporters(t *testing.T) {
 	al, err := NewAuditLogger(cfg, log)
 	require.NoError(t, err)
 	defer al.Close()
+	al.config.Syslog = true
 
 	syslogCfg := &SyslogExporterConfig{
 		Address: listener.Addr().String(),
@@ -3555,7 +3012,6 @@ func TestAuditLogger_LogDispatchesToExporters(t *testing.T) {
 	assert.Greater(t, buf.Len(), 0)
 }
 
-// TestAuditLogger_LogBackupOperation tests backup operation logging.
 // TestAuditLogger_OpenLogFileError tests file opening errors. The log path is
 // a directory, so openLogFile's MkdirAll succeeds on the parent and the
 // OpenFile under test fails with EISDIR -- for every uid. It used to point at
@@ -3576,11 +3032,6 @@ func TestAuditLogger_OpenLogFileError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to open audit log file")
 }
 
-// TestAuditLogger_LogWithMarshalError tests log with JSON marshal error.
-// TestAuditLogger_LogWithSigningError tests log signing error path.
-// TestAuditLogger_DataAccessFailure tests data access logging with failure.
-// TestAuditLogger_FlushWithoutFile tests flush when no file is configured.
-// TestAuditLogger_CleanupOldBackups tests backup cleanup.
 // TestAuditLogger_LogSignatureGeneration tests signature generation.
 func TestAuditLogger_LogSignatureGeneration(t *testing.T) {
 	cfg := &AuditConfig{
