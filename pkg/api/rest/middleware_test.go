@@ -266,56 +266,19 @@ func TestRecoveryMiddleware(t *testing.T) {
 	}
 }
 
+// TestTimeoutMiddleware checks that a handler finishing inside the timeout is
+// served unchanged; TestTimeoutMiddleware_TimeoutFires503 covers expiry.
 func TestTimeoutMiddleware(t *testing.T) {
-	tests := []struct {
-		name           string
-		timeout        time.Duration
-		expectedStatus int
-		shouldTimeout  bool
-	}{
-		{
-			name:           "completes before timeout",
-			timeout:        100 * time.Millisecond,
-			expectedStatus: http.StatusOK,
-			shouldTimeout:  false,
-		},
-		{
-			// Per RFC 7231 §6.5.7, server-side handler timeouts are 503
-			// (the canonical http.TimeoutHandler behavior). 408 is reserved
-			// for client-side request stalls.
-			name:           "times out",
-			timeout:        50 * time.Millisecond,
-			expectedStatus: http.StatusServiceUnavailable,
-			shouldTimeout:  true,
-		},
-	}
+	wrappedHandler := TimeoutMiddleware(time.Second)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			middleware := TimeoutMiddleware(tt.timeout)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	w := httptest.NewRecorder()
 
-			handlerStarted := make(chan struct{})
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				close(handlerStarted)
-				if tt.shouldTimeout {
-					<-r.Context().Done()
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-			})
+	wrappedHandler.ServeHTTP(w, req)
 
-			wrappedHandler := middleware(handler)
-
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req = req.WithContext(context.WithValue(req.Context(), requestIDKey, "test-123"))
-			w := httptest.NewRecorder()
-
-			wrappedHandler.ServeHTTP(w, req)
-			<-handlerStarted
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-		})
-	}
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestCORSMiddlewareVariations(t *testing.T) {
@@ -682,6 +645,14 @@ func TestMiddlewareErrorTypes(t *testing.T) {
 			},
 			expected: "request timeout after 30s",
 		},
+		{
+			name: "rate limit error",
+			err: &RateLimitError{
+				Limit:  100,
+				Period: "1s",
+			},
+			expected: "rate limit exceeded: 100 requests per 1s",
+		},
 	}
 
 	for _, tt := range tests {
@@ -760,34 +731,6 @@ func BenchmarkMetricsMiddleware(b *testing.B) {
 		w := httptest.NewRecorder()
 		wrappedHandler.ServeHTTP(w, req)
 	}
-}
-
-func TestCORSMiddlewareOptionsPreflightRequest(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://example.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-	req.Header.Set("Origin", "https://example.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// OPTIONS should return 204 No Content
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.NotEmpty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestRateLimitErrorMessageFormatting(t *testing.T) {
-	err := &RateLimitError{
-		Limit:  100,
-		Period: "1s",
-	}
-	assert.Equal(t, "rate limit exceeded: 100 requests per 1s", err.Error())
 }
 
 // TestTimeoutMiddleware_HandlerEmitted503PassesThrough is the regression guard
@@ -900,75 +843,6 @@ func TestSealedWindowMiddleware_Returns503NotRewritten(t *testing.T) {
 	assert.Equal(t, "5", w.Header().Get("Retry-After"))
 	assert.Contains(t, w.Body.String(), `"barrier sealed"`)
 	assert.Contains(t, w.Body.String(), `"SEALED"`)
-}
-
-func TestInternalServerErrorMessageOutput(t *testing.T) {
-	err := &InternalServerError{Message: "database connection failed"}
-	assert.Equal(t, "database connection failed", err.Error())
-}
-
-func TestRequestTimeoutErrorMessageOutput(t *testing.T) {
-	tests := []struct {
-		name     string
-		timeout  time.Duration
-		expected string
-	}{
-		{
-			name:     "5 seconds",
-			timeout:  5 * time.Second,
-			expected: "request timeout after 5s",
-		},
-		{
-			name:     "100 milliseconds",
-			timeout:  100 * time.Millisecond,
-			expected: "request timeout after 100ms",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &RequestTimeoutError{Timeout: tt.timeout}
-			assert.Equal(t, tt.expected, err.Error())
-		})
-	}
-}
-
-func TestCORSMiddlewareDisallowedOrigin(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://allowed.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("Origin", "https://notallowed.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-}
-
-func TestCORSMiddlewareOptionsWithDisallowedOrigin(t *testing.T) {
-	middleware := CORSMiddleware([]string{"https://allowed.com"})
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	wrappedHandler := middleware(handler)
-
-	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-	req.Header.Set("Origin", "https://notallowed.com")
-	w := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(w, req)
-
-	// OPTIONS still returns 204 but no CORS headers
-	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
 func TestRateLimiterAllowNewClient(t *testing.T) {
@@ -1190,60 +1064,48 @@ func TestTokenBucketDirectConsume(t *testing.T) {
 	})
 }
 
+// TestCORSMiddlewarePreflightRequest checks that an OPTIONS preflight is
+// answered 204 without reaching the handler, and carries the allow-origin
+// header only for a configured origin.
 func TestCORSMiddlewarePreflightRequest(t *testing.T) {
-	t.Run("preflight returns 204 with allowed origin", func(t *testing.T) {
-		middleware := CORSMiddleware([]string{"https://example.com"})
+	tests := []struct {
+		name           string
+		allowedOrigins []string
+		requestOrigin  string
+		expectedOrigin string
+	}{
+		{
+			name:           "allowed origin",
+			allowedOrigins: []string{"https://example.com"},
+			requestOrigin:  "https://example.com",
+			expectedOrigin: "https://example.com",
+		},
+		{
+			name:           "disallowed origin returns no CORS headers",
+			allowedOrigins: []string{"https://example.com"},
+			requestOrigin:  "https://evil.com",
+		},
+		{
+			name: "nil origins denies cross-origin",
+		},
+	}
 
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrappedHandler := CORSMiddleware(tt.allowedOrigins)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+			if tt.requestOrigin != "" {
+				req.Header.Set("Origin", tt.requestOrigin)
+			}
+			w := httptest.NewRecorder()
+
+			wrappedHandler.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusNoContent, w.Code)
+			assert.Equal(t, tt.expectedOrigin, w.Header().Get("Access-Control-Allow-Origin"))
 		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		req.Header.Set("Origin", "https://example.com")
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Equal(t, "https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
-	})
-
-	t.Run("preflight with disallowed origin returns no CORS headers", func(t *testing.T) {
-		middleware := CORSMiddleware([]string{"https://example.com"})
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		req.Header.Set("Origin", "https://evil.com")
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-	})
-
-	t.Run("preflight with nil origins denies cross-origin", func(t *testing.T) {
-		middleware := CORSMiddleware(nil)
-
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})
-
-		wrappedHandler := middleware(handler)
-
-		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
-		w := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNoContent, w.Code)
-		assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
-	})
+	}
 }
