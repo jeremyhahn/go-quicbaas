@@ -15,6 +15,7 @@ package messaging
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -225,9 +226,68 @@ func TestDeltaComputer_Compute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(delta.Changes) == 0 {
-			t.Error("expected changes for new entity")
+
+		foundName := false
+		foundAge := false
+		for _, c := range delta.Changes {
+			if c.Path == "name" && c.Operation == OpSet {
+				foundName = true
+			}
+			if c.Path == "age" && c.Operation == OpSet {
+				foundAge = true
+			}
 		}
+		assert.True(t, foundName, "expected name set on new entity")
+		assert.True(t, foundAge, "expected age set on new entity")
+	})
+
+	t.Run("nil old value extracts nested pointer and struct fields", func(t *testing.T) {
+		t.Parallel()
+		log := newDeltaTestLogger(t)
+		dc := NewDeltaComputer(log)
+
+		newVal := &testNestedEntity{
+			ID:      "nested-1",
+			Profile: &testProfile{Bio: "developer", Email: "dev@example.com"},
+			Config:  testConfig{Theme: "dark", Language: "en"},
+		}
+
+		delta, err := dc.Compute(nil, newVal)
+		require.NoError(t, err)
+
+		foundBio := false
+		foundTheme := false
+		for _, c := range delta.Changes {
+			if c.Path == "profile.bio" {
+				foundBio = true
+			}
+			if c.Path == "config.theme" {
+				foundTheme = true
+			}
+		}
+		assert.True(t, foundBio, "expected extracted field profile.bio")
+		assert.True(t, foundTheme, "expected extracted field config.theme")
+	})
+
+	t.Run("detects time field change", func(t *testing.T) {
+		t.Parallel()
+		log := newDeltaTestLogger(t)
+		dc := NewDeltaComputer(log)
+
+		now := time.Now()
+		old := &testEntity{ID: "1", Name: "test", UpdatedAt: now}
+		newVal := &testEntity{ID: "1", Name: "test", UpdatedAt: now.Add(time.Hour)}
+
+		delta, err := dc.Compute(old, newVal)
+		require.NoError(t, err)
+
+		found := false
+		for _, c := range delta.Changes {
+			if c.Path == "updated_at" && c.Operation == OpSet {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected OpSet for changed time field")
 	})
 
 	t.Run("nil new value returns error", func(t *testing.T) {
@@ -775,47 +835,33 @@ func TestDeltaErrorConstructors(t *testing.T) {
 	})
 }
 
-// TestDeltaErrorCheckers_QBErrorWrapping tests the QBError code path
-// in each IsDelta* error checker function.
-func TestDeltaErrorCheckers_QBErrorWrapping(t *testing.T) {
-	tests := []struct {
+// TestDeltaErrorCheckers tests each IsDelta* checker against a nil error, its
+// typed error, a QBError with its code and a QBError with another code.
+func TestDeltaErrorCheckers(t *testing.T) {
+	otherCode := &errors.QBError{Code: errors.ErrorCode(9999), Op: "test"}
+
+	checkers := []struct {
 		name    string
 		checker func(error) bool
+		typed   error
 		code    errors.ErrorCode
 	}{
-		{"IsDeltaNilInput via QBError", IsDeltaNilInput, ErrCodeDeltaNilInput},
-		{"IsDeltaTypeMismatch via QBError", IsDeltaTypeMismatch, ErrCodeDeltaTypeMismatch},
-		{"IsDeltaMaxDepthExceeded via QBError", IsDeltaMaxDepthExceeded, ErrCodeDeltaMaxDepthExceeded},
-		{"IsDeltaUnsupportedType via QBError", IsDeltaUnsupportedType, ErrCodeDeltaUnsupportedType},
-		{"IsDeltaDeserializationFailed via QBError", IsDeltaDeserializationFailed, ErrCodeDeltaDeserializationFailed},
-		{"IsDeltaDiffFailed via QBError", IsDeltaDiffFailed, ErrCodeDeltaDiffFailed},
+		{"IsDeltaNilInput", IsDeltaNilInput, &DeltaNilInputError{Parameter: "new"}, ErrCodeDeltaNilInput},
+		{"IsDeltaTypeMismatch", IsDeltaTypeMismatch, &DeltaTypeMismatchError{OldType: "int", NewType: "string"}, ErrCodeDeltaTypeMismatch},
+		{"IsDeltaMaxDepthExceeded", IsDeltaMaxDepthExceeded, &DeltaMaxDepthExceededError{MaxDepth: 10, Path: "a.b"}, ErrCodeDeltaMaxDepthExceeded},
+		{"IsDeltaUnsupportedType", IsDeltaUnsupportedType, &DeltaUnsupportedTypeError{Type: "chan", Path: "root"}, ErrCodeDeltaUnsupportedType},
+		{"IsDeltaDeserializationFailed", IsDeltaDeserializationFailed, &DeltaDeserializationError{Cause: "bad data"}, ErrCodeDeltaDeserializationFailed},
+		{"IsDeltaDiffFailed", IsDeltaDiffFailed, &DeltaDiffError{Cause: "test diff error"}, ErrCodeDeltaDiffFailed},
 	}
 
-	for _, tc := range tests {
+	for _, tc := range checkers {
 		t.Run(tc.name, func(t *testing.T) {
-			qbErr := &errors.QBError{
-				Code: tc.code,
-				Op:   "test",
-			}
-			assert.True(t, tc.checker(qbErr), "expected checker to return true for QBError with matching code")
+			assert.False(t, tc.checker(nil), "nil error")
+			assert.True(t, tc.checker(tc.typed), "typed error")
+			assert.True(t, tc.checker(&errors.QBError{Code: tc.code, Op: "test"}), "QBError with matching code")
+			assert.False(t, tc.checker(otherCode), "QBError with another code")
 		})
 	}
-}
-
-// TestDeltaErrorCheckers_NonMatchingError tests that error checkers return false
-// for errors that don't match their expected type or code.
-func TestDeltaErrorCheckers_NonMatchingError(t *testing.T) {
-	nonMatchingErr := &errors.QBError{
-		Code: errors.ErrorCode(9999),
-		Op:   "test",
-	}
-
-	assert.False(t, IsDeltaNilInput(nonMatchingErr))
-	assert.False(t, IsDeltaTypeMismatch(nonMatchingErr))
-	assert.False(t, IsDeltaMaxDepthExceeded(nonMatchingErr))
-	assert.False(t, IsDeltaUnsupportedType(nonMatchingErr))
-	assert.False(t, IsDeltaDeserializationFailed(nonMatchingErr))
-	assert.False(t, IsDeltaDiffFailed(nonMatchingErr))
 }
 
 // TestDeltaComputer_CompareStructsSpecialType tests the compareStructs function
@@ -902,5 +948,78 @@ func TestDeltaComputer_MapFieldDelta(t *testing.T) {
 			}
 		}
 		assert.True(t, found, "expected changed map entry tags.a")
+	})
+}
+
+// TestDeltaComputer_ReflectionHelpers covers the edge cases of the reflection
+// helpers that Compute cannot reach with the test entities above.
+func TestDeltaComputer_ReflectionHelpers(t *testing.T) {
+	t.Parallel()
+	dc := NewDeltaComputer(newDeltaTestLogger(t))
+
+	t.Run("extractEntityType strips pointer", func(t *testing.T) {
+		assert.Equal(t, "testEntity", dc.extractEntityType(reflect.TypeOf(testEntity{})))
+		assert.Equal(t, "testEntity", dc.extractEntityType(reflect.TypeOf(&testEntity{})))
+	})
+
+	t.Run("extractEntityID", func(t *testing.T) {
+		type noID struct {
+			Name string
+		}
+		assert.Equal(t, "entity-123", dc.extractEntityID(&testEntity{ID: "entity-123"}))
+		assert.Empty(t, dc.extractEntityID(nil))
+		assert.Empty(t, dc.extractEntityID("not-a-struct"))
+		assert.Empty(t, dc.extractEntityID(&noID{Name: "test"}))
+	})
+
+	t.Run("isZeroValue", func(t *testing.T) {
+		var p *string
+		var m map[string]string
+		assert.True(t, dc.isZeroValue(reflect.Value{}))
+		assert.True(t, dc.isZeroValue(reflect.ValueOf(&p).Elem()))
+		assert.True(t, dc.isZeroValue(reflect.ValueOf([3]int{})))
+		assert.False(t, dc.isZeroValue(reflect.ValueOf([3]int{1, 0, 0})))
+		assert.True(t, dc.isZeroValue(reflect.ValueOf(time.Time{})))
+		assert.False(t, dc.isZeroValue(reflect.ValueOf(time.Now())))
+		assert.True(t, dc.isZeroValue(reflect.ValueOf(m)))
+	})
+
+	t.Run("isSpecialType", func(t *testing.T) {
+		now := time.Now()
+		assert.True(t, dc.isSpecialType(reflect.TypeOf(time.Time{})))
+		assert.True(t, dc.isSpecialType(reflect.TypeOf(&now)))
+		assert.False(t, dc.isSpecialType(reflect.TypeOf(testConfig{})))
+	})
+
+	t.Run("extractValue", func(t *testing.T) {
+		var p *string
+		s := "hello"
+		var i interface{} = 42
+		assert.Nil(t, dc.extractValue(reflect.Value{}))
+		assert.Nil(t, dc.extractValue(reflect.ValueOf(&p).Elem()))
+		assert.Equal(t, "hello", dc.extractValue(reflect.ValueOf(&s)))
+		assert.Equal(t, 42, dc.extractValue(reflect.ValueOf(&i).Elem()))
+	})
+
+	t.Run("getFieldPath", func(t *testing.T) {
+		type tagged struct {
+			NoTag int
+			Skip  int `json:"-"`
+		}
+		tests := []struct {
+			typ   reflect.Type
+			field string
+			want  string
+		}{
+			{reflect.TypeOf(testEntity{}), "Name", "name"},
+			{reflect.TypeOf(testNestedEntity{}), "Profile", "profile"},
+			{reflect.TypeOf(tagged{}), "NoTag", "NoTag"},
+			{reflect.TypeOf(tagged{}), "Skip", "-"},
+		}
+		for _, tc := range tests {
+			field, ok := tc.typ.FieldByName(tc.field)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, dc.getFieldPath(field), tc.field)
+		}
 	})
 }

@@ -915,6 +915,7 @@ func TestNotificationHub_ClientRegistration(t *testing.T) {
 		}, testTimeout, testPollInterval)
 
 		hub.RegisterClient(nil)
+		hub.UnregisterClient(nil)
 
 		// Should not crash and client count should remain 0
 		assert.Equal(t, 0, hub.ClientCount())
@@ -1086,6 +1087,15 @@ func TestNotificationHub_DeleteNonExistentChannel(t *testing.T) {
 
 		err := hub.DeleteChannel("non-existent")
 		require.Error(t, err)
+	})
+
+	t.Run("returns error for empty channel name", func(t *testing.T) {
+		t.Parallel()
+		hub := NewNotificationHub(newTestLogger(t))
+
+		err := hub.DeleteChannel("")
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, ErrEmptyChannelName))
 	})
 }
 
