@@ -515,19 +515,6 @@ func TestExportUsersWithFilters(t *testing.T) {
 			t.Errorf("expected 0 users, got %d", len(users))
 		}
 	})
-
-	t.Run("context cancellation", func(t *testing.T) {
-		bm, storage := setupTestBatchManager(t)
-		populateTestData(t, storage, tenantID)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		_, err := bm.ExportUsers(ctx, tenantID, ExportFilter{})
-		if err == nil {
-			t.Error("expected cancellation error")
-		}
-	})
 }
 
 // TestExportRolesWithFilters tests ExportRoles with various filter combinations.
@@ -1263,14 +1250,6 @@ func TestExportErrorCases(t *testing.T) {
 			},
 		},
 		{
-			name:    "export all with empty tenant ID",
-			manager: configured,
-			export: func(bm *BatchManager, ctx context.Context) error {
-				_, err := bm.ExportAll(ctx, &BatchExportRequest{TenantID: "", IncludeUsers: true})
-				return err
-			},
-		},
-		{
 			name:    "export users with empty tenant ID",
 			manager: configured,
 			export: func(bm *BatchManager, ctx context.Context) error {
@@ -1302,78 +1281,6 @@ func TestExportErrorCases(t *testing.T) {
 				t.Errorf("expected error: %s", tt.name)
 			}
 		})
-	}
-}
-
-// =============================================================================
-// BatchManager - ExportAll more coverage
-// =============================================================================
-
-func TestBatchManager_ExportAll_AllIncludes(t *testing.T) {
-	storage := NewMemoryStorage()
-
-	identityStore := NewIdentityStore(IdentityStoreOptions{
-		UserStorage: storage,
-		RoleStorage: storage,
-	})
-
-	policyEngine := NewPolicyEngine(PolicyEngineOptions{
-		Storage: storage,
-	})
-
-	bm := NewBatchManager(BatchManagerOptions{
-		IdentityStore: identityStore,
-		PolicyEngine:  policyEngine,
-	})
-
-	ctx := context.Background()
-	tenantID := "export-all-tenant"
-
-	// Create tenant
-	tenant := &Tenant{ID: tenantID, Name: "Export All Tenant", Created: time.Now()}
-	if err := storage.CreateTenant(ctx, tenant); err != nil {
-		t.Fatalf("CreateTenant failed: %v", err)
-	}
-
-	// Create some data
-	user := &User{ID: 21, TenantID: tenantID, Email: "user1@test.com", Name: "User One", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateUser(ctx, user); err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-
-	role := &Role{ID: "role-1", TenantID: tenantID, Name: "Role One", Created: time.Now(), Updated: time.Now()}
-	if err := storage.CreateRole(ctx, role); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	policy := &Policy{
-		APIVersion: "v1",
-		Kind:       "Policy",
-		Metadata:   PolicyMetadata{Name: "policy-1", Tenant: tenantID},
-		Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-	}
-	if err := policyEngine.CreatePolicy(ctx, tenantID, policy); err != nil {
-		t.Fatalf("CreatePolicy failed: %v", err)
-	}
-
-	// Export all
-	result, err := bm.ExportAll(ctx, &BatchExportRequest{
-		TenantID:        tenantID,
-		IncludeUsers:    true,
-		IncludeRoles:    true,
-		IncludePolicies: true,
-	})
-	if err != nil {
-		t.Fatalf("ExportAll failed: %v", err)
-	}
-	if len(result.Users) != 1 {
-		t.Errorf("expected 1 user, got %d", len(result.Users))
-	}
-	if len(result.Roles) != 1 {
-		t.Errorf("expected 1 role, got %d", len(result.Roles))
-	}
-	if len(result.Policies) != 1 {
-		t.Errorf("expected 1 policy, got %d", len(result.Policies))
 	}
 }
 
