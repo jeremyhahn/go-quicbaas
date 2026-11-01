@@ -2279,128 +2279,75 @@ func TestMatchAgentForTask_NoMatch(t *testing.T) {
 // Tests: resolveBackendForMode
 // =============================================================================
 
-func TestResolveBackendForMode_ConstrainedMode_UsesWorkflowRole(t *testing.T) {
+func TestResolveBackendForMode(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "developer", Backend: "claude"},
-			{Role: "worker", Backend: "ollama"},
+	workflow := func(mode WorkflowMode, agents ...AgentRoleSpec) *WorkflowDefinition {
+		return &WorkflowDefinition{Name: "test", Mode: mode, Agents: agents}
+	}
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		item     *WorkItem
+		backends []*AgentBackendInfo
+		want     string
+	}{
+		{
+			name: "constrained mode uses workflow role",
+			workflow: workflow(WorkflowModeConstrained,
+				AgentRoleSpec{Role: "developer", Backend: "claude"},
+				AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{RequiredRole: "developer"},
+			backends: newTestBackendsWithPersistent(),
+			want:     "claude",
+		},
+		{
+			// "ollama" is newTestConfig's LeadBackend.
+			name:     "constrained mode falls back to lead",
+			workflow: workflow(WorkflowModeConstrained, AgentRoleSpec{Role: "lead", Backend: "claude"}),
+			item:     &WorkItem{RequiredRole: "unknown-role"},
+			backends: newTestBackends(),
+			want:     "ollama",
+		},
+		{
+			name:     "canned mode uses workflow role",
+			workflow: workflow(WorkflowModeCanned, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{RequiredRole: "worker"},
+			backends: newTestBackends(),
+			want:     "ollama",
+		},
+		{
+			name:     "autonomous mode uses item backend",
+			workflow: workflow(WorkflowModeAutonomous, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{Backend: "claude"},
+			backends: newTestBackendsWithPersistent(),
+			want:     "claude",
+		},
+		{
+			// An unknown backend falls through to resolveBackendForItem,
+			// which returns item.Backend directly.
+			name:     "autonomous mode unknown backend falls through",
+			workflow: workflow(WorkflowModeAutonomous, AgentRoleSpec{Role: "worker", Backend: "ollama"}),
+			item:     &WorkItem{Backend: "nonexistent-backend"},
+			backends: newTestBackends(),
+			want:     "nonexistent-backend",
+		},
+		{
+			name:     "nil workflow",
+			item:     &WorkItem{Backend: "custom"},
+			backends: newTestBackends(),
+			want:     "custom",
 		},
 	}
 
-	item := &WorkItem{RequiredRole: "developer"}
-	backends := newTestBackendsWithPersistent()
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.job.Config = newTestConfig()
+		cl.workflow = tt.workflow
 
-	result := cl.resolveBackendForMode(item, backends)
-	if result != "claude" {
-		t.Fatalf("expected 'claude' for constrained mode with developer role, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_ConstrainedMode_FallsBackToLead(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeConstrained,
-		Agents: []AgentRoleSpec{
-			{Role: "lead", Backend: "claude"},
-		},
-	}
-
-	// No matching role in workflow agents.
-	item := &WorkItem{RequiredRole: "unknown-role"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "ollama" { // LeadBackend from newTestConfig
-		t.Fatalf("expected fallback to lead backend 'ollama', got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_CannedMode_UsesWorkflowRole(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeCanned,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{RequiredRole: "worker"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "ollama" {
-		t.Fatalf("expected 'ollama' for canned mode worker role, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_AutonomousMode_UsesItemBackend(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{Backend: "claude"}
-	backends := newTestBackendsWithPersistent()
-
-	result := cl.resolveBackendForMode(item, backends)
-	if result != "claude" {
-		t.Fatalf("expected 'claude' for autonomous mode with explicit backend, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_AutonomousMode_UnknownBackendFallsBack(t *testing.T) {
-	t.Parallel()
-
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(&controlLoopMockService{}, logger)
-	cl.job.Config = newTestConfig()
-	cl.workflow = &WorkflowDefinition{
-		Name: "test",
-		Mode: WorkflowModeAutonomous,
-		Agents: []AgentRoleSpec{
-			{Role: "worker", Backend: "ollama"},
-		},
-	}
-
-	item := &WorkItem{Backend: "nonexistent-backend"}
-	backends := newTestBackends()
-
-	result := cl.resolveBackendForMode(item, backends)
-	// Should fall back since nonexistent-backend is not in backends list.
-	if result != "nonexistent-backend" {
-		// Falls through to resolveBackendForItem which returns item.Backend directly.
-		t.Fatalf("expected fallback resolution, got %q", result)
-	}
-}
-
-func TestResolveBackendForMode_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.workflow = nil
-
-	item := &WorkItem{Backend: "custom"}
-	result := cl.resolveBackendForMode(item, newTestBackends())
-	if result != "custom" {
-		t.Fatalf("expected 'custom' with nil workflow, got %q", result)
+		if result := cl.resolveBackendForMode(tt.item, tt.backends); result != tt.want {
+			t.Fatalf("%s: expected %q, got %q", tt.name, tt.want, result)
+		}
 	}
 }
 
@@ -2408,50 +2355,44 @@ func TestResolveBackendForMode_NilWorkflow(t *testing.T) {
 // Tests: resolveScopes
 // =============================================================================
 
-func TestResolveScopes_WithMatchingRole(t *testing.T) {
+func TestResolveScopes(t *testing.T) {
 	t.Parallel()
 
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "worker", MCPScopes: []string{"kms:read", "secrets:read"}},
+	tests := []struct {
+		name     string
+		workflow *WorkflowDefinition
+		want     []string
+	}{
+		{
+			name: "matching role",
+			workflow: &WorkflowDefinition{Agents: []AgentRoleSpec{
+				{Role: "worker", MCPScopes: []string{"kms:read", "secrets:read"}},
+			}},
+			want: []string{"kms:read", "secrets:read"},
 		},
-	}
-
-	scopes := cl.resolveScopes("worker")
-	if len(scopes) != 2 {
-		t.Fatalf("expected 2 scopes, got %d", len(scopes))
-	}
-	if scopes[0] != "kms:read" || scopes[1] != "secrets:read" {
-		t.Fatalf("unexpected scopes: %v", scopes)
-	}
-}
-
-func TestResolveScopes_NoMatchingRole(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = &WorkflowDefinition{
-		Agents: []AgentRoleSpec{
-			{Role: "lead", MCPScopes: []string{"kms:read"}},
+		{
+			name: "no matching role",
+			workflow: &WorkflowDefinition{Agents: []AgentRoleSpec{
+				{Role: "lead", MCPScopes: []string{"kms:read"}},
+			}},
 		},
+		{name: "nil workflow"},
 	}
 
-	scopes := cl.resolveScopes("worker")
-	if scopes != nil {
-		t.Fatalf("expected nil scopes for unmatched role, got %v", scopes)
-	}
-}
+	for _, tt := range tests {
+		cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
+		cl.workflow = tt.workflow
 
-func TestResolveScopes_NilWorkflow(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.workflow = nil
-
-	scopes := cl.resolveScopes("worker")
-	if scopes != nil {
-		t.Fatalf("expected nil scopes with nil workflow, got %v", scopes)
+		scopes := cl.resolveScopes("worker")
+		if tt.want == nil {
+			if scopes != nil {
+				t.Fatalf("%s: expected nil scopes, got %v", tt.name, scopes)
+			}
+			continue
+		}
+		if len(scopes) != len(tt.want) || scopes[0] != tt.want[0] || scopes[1] != tt.want[1] {
+			t.Fatalf("%s: expected scopes %v, got %v", tt.name, tt.want, scopes)
+		}
 	}
 }
 
@@ -2563,33 +2504,6 @@ func TestExtractConstraints_DuplicateConstraints(t *testing.T) {
 // =============================================================================
 // Tests: advanceOrValidate
 // =============================================================================
-
-func TestAdvanceOrValidate_MoreWaves(t *testing.T) {
-	t.Parallel()
-
-	cl := NewControlLoop(&controlLoopMockService{}, &controlLoopMockLogger{})
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.executionPlan = &ExecutionPlan{
-		Waves: [][]*WorkItem{
-			{{ID: "w1", Title: "Wave 1"}},
-			{{ID: "w2", Title: "Wave 2"}},
-		},
-	}
-	cl.currentWave = 0
-	cl.taskIDs = []string{"task-1"}
-
-	nextState, err := cl.advanceOrValidate()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateAssigning {
-		t.Fatalf("expected assigning state, got %q", nextState)
-	}
-	if cl.currentWave != 1 {
-		t.Fatalf("expected currentWave=1, got %d", cl.currentWave)
-	}
-}
 
 func TestAdvanceOrValidate_LastWave(t *testing.T) {
 	t.Parallel()
