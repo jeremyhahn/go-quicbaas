@@ -16,6 +16,8 @@ package grpc
 import (
 	"context"
 	stderrors "errors"
+	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -309,15 +311,18 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 		return nil, api.NewInvalidInputError("list keys cursor " + req.Cursor + " is not a multiple of the page size " + strconv.Itoa(int(limit)))
 	}
 
+	if err := xkmsCheckListKeysFilter(req.Filter); err != nil {
+		return nil, err
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
 
 	xkmsReq := &kctypes.ProtoListKeysRequest{
-		Backend:   xkmsBackend(req.Filter["backend"]),
-		Partition: req.Filter["partition"],
-		Limit:     limit,
-		Offset:    offset,
+		Backend: xkmsBackend(""),
+		Limit:   limit,
+		Offset:  offset,
 	}
 	xkmsResp := &kctypes.ProtoListKeysResponse{}
 	if err := c.conn.Invoke(ctx, xkmsKeystoreListKeys, xkmsReq, xkmsResp); err != nil {
@@ -346,6 +351,28 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 		resp.NextCursor = strconv.Itoa(next)
 	}
 	return resp, nil
+}
+
+// xkmsCheckListKeysFilter refuses every filter the xkms.v1 ListKeys endpoint
+// cannot apply. go-xkms's handler applies only the backend, limit and offset;
+// it ignores the partition, and has no prefix or other filter. Filtering on
+// the client instead would leave the totals and cursors unfiltered. A
+// backend other than the default one is refused too: KMSGenerateKey creates
+// keys only there, and KMSDeleteKey reaches no other. Empty values count as
+// absent.
+func xkmsCheckListKeysFilter(filter map[string]string) error {
+	for _, key := range slices.Sorted(maps.Keys(filter)) {
+		value := filter[key]
+		if value == "" || (key == "backend" && value == xkmsBackend("")) {
+			continue
+		}
+		return &errors.QBError{
+			Code: errors.ErrInvalidInput,
+			Op:   "Client.KMSListKeys",
+			Err:  &KMSListKeysFilterUnsupportedError{Key: key, Value: value},
+		}
+	}
+	return nil
 }
 
 // KMSRotateKey creates a new version of an existing key.

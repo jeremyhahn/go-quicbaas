@@ -332,17 +332,106 @@ func TestClientKMSListKeys_XKMSKeystore(t *testing.T) {
 	assert.Equal(t, "5", resp.NextCursor)
 
 	// The cursor is the xkms.v1 offset of the next page.
-	// A backend the caller names in the filter is the one listed.
+	// The default backend, named in the filter, is the one listed.
 	_, err = client.KMSListKeys(context.Background(), &service.ListKeysRequest{
 		Limit:  5,
 		Cursor: resp.NextCursor,
-		Filter: map[string]string{"backend": string(xkmssdk.StorePKCS11)},
+		Filter: map[string]string{"backend": string(xkmssdk.StoreSoftware)},
 	})
 	require.NoError(t, err)
 	fake.mu.Lock()
 	assert.Equal(t, int32(5), fake.listReq.GetOffset())
-	assert.Equal(t, string(xkmssdk.StorePKCS11), fake.listReq.GetBackend())
+	assert.Equal(t, string(xkmssdk.StoreSoftware), fake.listReq.GetBackend())
 	fake.mu.Unlock()
+}
+
+// TestClientKMSListKeys_XKMSKeystoreUnappliedFilter verifies that a filter the
+// xkms.v1 ListKeys handler does not apply is refused before any request is
+// sent: the server would answer with unfiltered keys, totals and cursors.
+func TestClientKMSListKeys_XKMSKeystoreUnappliedFilter(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter map[string]string
+		key    string
+	}{
+		{name: "prefix", filter: map[string]string{"prefix": "app-"}, key: "prefix"},
+		{name: "partition", filter: map[string]string{"partition": "p1"}, key: "partition"},
+		{name: "non-default backend", filter: map[string]string{"backend": string(xkmssdk.StorePKCS11)}, key: "backend"},
+		{name: "unknown key", filter: map[string]string{"owner": "alice"}, key: "owner"},
+		{name: "prefix beside the default backend", filter: map[string]string{"backend": "software", "prefix": "app-"}, key: "prefix"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &recordingKeystoreServer{
+				listKeys: []*xkmssdk.ProtoKeyInfo{
+					{KeyId: "app-1", KeyType: "SECRET", Algorithm: "aes256-gcm", KeyVersion: 1},
+					{KeyId: "other-1", KeyType: "SECRET", Algorithm: "aes256-gcm", KeyVersion: 1},
+				},
+				total: 2,
+			}
+			client := newXKMSKeystoreClient(t, fake)
+
+			resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Filter: tt.filter})
+			if resp != nil {
+				ids := make([]string, len(resp.Keys))
+				for i, k := range resp.Keys {
+					ids[i] = k.KeyID
+				}
+				t.Logf("unfiltered keys returned: %v (total %d)", ids, resp.TotalCount)
+			}
+			require.Error(t, err)
+			var filterErr *KMSListKeysFilterUnsupportedError
+			require.True(t, stderrors.As(err, &filterErr), "got %T: %v", err, err)
+			assert.Equal(t, tt.key, filterErr.Key)
+			assert.Equal(t, tt.filter[tt.key], filterErr.Value)
+			assert.Contains(t, err.Error(), tt.key)
+			assert.Contains(t, err.Error(), "xkms.v1")
+			var qbErr *errors.QBError
+			require.True(t, stderrors.As(err, &qbErr), "error must be a typed QBError, got %T", err)
+			assert.Equal(t, errors.ErrInvalidInput, qbErr.Code)
+
+			fake.mu.Lock()
+			assert.Nil(t, fake.listReq, "no ListKeys request may be sent")
+			fake.mu.Unlock()
+		})
+	}
+}
+
+// TestClientKMSListKeys_XKMSKeystoreAppliedFilter verifies that empty filter
+// values count as absent and that the default backend, the one filter the
+// xkms.v1 ListKeys handler applies, is forwarded.
+func TestClientKMSListKeys_XKMSKeystoreAppliedFilter(t *testing.T) {
+	tests := []struct {
+		name   string
+		filter map[string]string
+	}{
+		{name: "empty prefix", filter: map[string]string{"prefix": ""}},
+		{name: "empty values", filter: map[string]string{"prefix": "", "partition": "", "backend": "", "owner": ""}},
+		{name: "default backend", filter: map[string]string{"backend": "software"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &recordingKeystoreServer{
+				listKeys: []*xkmssdk.ProtoKeyInfo{
+					{KeyId: "app-1", KeyType: "SECRET", Algorithm: "aes256-gcm", KeyVersion: 1},
+					{KeyId: "other-1", KeyType: "SECRET", Algorithm: "aes256-gcm", KeyVersion: 1},
+				},
+				total: 2,
+			}
+			client := newXKMSKeystoreClient(t, fake)
+
+			resp, err := client.KMSListKeys(context.Background(), &service.ListKeysRequest{Filter: tt.filter})
+			require.NoError(t, err)
+			require.Len(t, resp.Keys, 2)
+			assert.Equal(t, 2, resp.TotalCount)
+
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			require.NotNil(t, fake.listReq)
+			assert.Equal(t, "software", fake.listReq.GetBackend())
+			assert.Empty(t, fake.listReq.GetPartition())
+		})
+	}
 }
 
 func TestClientKMSListKeys_XKMSKeystoreErrors(t *testing.T) {
