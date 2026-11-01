@@ -1066,6 +1066,11 @@ func TestHandleDecompose_Success(t *testing.T) {
 	// Feedback from an earlier iteration is folded into the decompose prompt.
 	cl.job.memory.AddFeedback("review feedback from iteration 1")
 
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
+
 	nextState, err := cl.handleDecompose(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1075,6 +1080,17 @@ func TestHandleDecompose_Success(t *testing.T) {
 	}
 	if len(cl.workItems) != 2 {
 		t.Fatalf("expected 2 work items, got %d", len(cl.workItems))
+	}
+
+	// decompose_start, one work_item per item, decomposed.
+	if len(auditEvents) != 4 {
+		t.Fatalf("expected 4 audit events, got %d: %v", len(auditEvents), auditEvents)
+	}
+	if !strings.Contains(auditEvents[0], "lead:decompose_start") {
+		t.Fatalf("expected decompose_start audit event, got %q", auditEvents[0])
+	}
+	if !strings.Contains(auditEvents[3], "orchestration:decomposed") {
+		t.Fatalf("expected decomposed audit event, got %q", auditEvents[3])
 	}
 }
 
@@ -1095,6 +1111,11 @@ func TestHandleSchedule_Success(t *testing.T) {
 		{ID: "w2", Title: "Task 2", Dependencies: []string{"w1"}},
 	}
 
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
+
 	nextState, err := cl.handleSchedule(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1110,6 +1131,9 @@ func TestHandleSchedule_Success(t *testing.T) {
 	}
 	if cl.currentWave != 0 {
 		t.Fatalf("expected currentWave=0, got %d", cl.currentWave)
+	}
+	if len(auditEvents) != 1 || !strings.Contains(auditEvents[0], "orchestration:scheduled") {
+		t.Fatalf("expected one scheduled audit event, got %v", auditEvents)
 	}
 }
 
@@ -1644,6 +1668,11 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 		},
 	}
 
+	var auditEvents []string
+	cl.job.auditFn = func(eventType, details string) {
+		auditEvents = append(auditEvents, eventType+":"+details)
+	}
+
 	nextState, err := cl.handleRedelegate(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1659,6 +1688,9 @@ func TestHandleRedelegate_WithinLimit(t *testing.T) {
 	}
 	if len(cl.job.memory.FailedApproaches) != 1 {
 		t.Fatalf("expected 1 failed approach, got %d", len(cl.job.memory.FailedApproaches))
+	}
+	if len(auditEvents) != 1 || !strings.Contains(auditEvents[0], "orchestration:redelegate") {
+		t.Fatalf("expected one redelegate audit event, got %v", auditEvents)
 	}
 }
 
@@ -3078,88 +3110,6 @@ func TestHandleReview_ConsultsCommunicationPolicy(t *testing.T) {
 }
 
 // =============================================================================
-// Tests: handleDecompose - Audit Event
-// =============================================================================
-
-func TestHandleDecompose_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{
-		decomposeResponse: &DecomposeTaskResponse{
-			WorkItems: []*WorkItem{
-				{ID: "w1", Title: "Task 1"},
-			},
-		},
-	}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.job.memory = NewJobMemory()
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleDecompose(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateScheduling {
-		t.Fatalf("expected scheduling state, got %q", nextState)
-	}
-
-	// Expect 3 audit events: decompose_start, work_item (1 item), decomposed
-	if len(auditEvents) != 3 {
-		t.Fatalf("expected 3 audit events, got %d: %v", len(auditEvents), auditEvents)
-	}
-	if !strings.Contains(auditEvents[0], "lead:decompose_start") {
-		t.Fatalf("expected decompose_start audit event, got %q", auditEvents[0])
-	}
-	if !strings.Contains(auditEvents[2], "orchestration:decomposed") {
-		t.Fatalf("expected decomposed audit event, got %q", auditEvents[2])
-	}
-}
-
-// =============================================================================
-// Tests: handleSchedule - Audit Event
-// =============================================================================
-
-func TestHandleSchedule_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.JobID = "test-job"
-	cl.workItems = []*WorkItem{
-		{ID: "w1", Title: "Task 1"},
-	}
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleSchedule(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateAssigning {
-		t.Fatalf("expected assigning state, got %q", nextState)
-	}
-
-	if len(auditEvents) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(auditEvents))
-	}
-	if !strings.Contains(auditEvents[0], "orchestration:scheduled") {
-		t.Fatalf("expected scheduled audit event, got %q", auditEvents[0])
-	}
-}
-
-// =============================================================================
 // Tests: handleComplete - Audit Event
 // =============================================================================
 
@@ -3190,44 +3140,6 @@ func TestHandleComplete_EmitsAuditEvent(t *testing.T) {
 	}
 	if !strings.Contains(auditEvents[0], "orchestration:job_completing") {
 		t.Fatalf("expected job_completing audit event, got %q", auditEvents[0])
-	}
-}
-
-// =============================================================================
-// Tests: handleRedelegate - Audit Event
-// =============================================================================
-
-func TestHandleRedelegate_EmitsAuditEvent(t *testing.T) {
-	t.Parallel()
-
-	svc := &controlLoopMockService{}
-	logger := &controlLoopMockLogger{}
-	cl := NewControlLoop(svc, logger)
-	cl.job.Config = newTestConfig()
-	cl.job.Config.MaxIterations = 10
-	cl.job.JobID = "test-job"
-	cl.job.iteration = 0
-	cl.job.memory = NewJobMemory()
-	cl.reviewResponse = &ReviewResponse{Feedback: "try again"}
-
-	var auditEvents []string
-	cl.job.auditFn = func(eventType, details string) {
-		auditEvents = append(auditEvents, eventType+":"+details)
-	}
-
-	nextState, err := cl.handleRedelegate(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if nextState != JobStateDecomposing {
-		t.Fatalf("expected decomposing state, got %q", nextState)
-	}
-
-	if len(auditEvents) != 1 {
-		t.Fatalf("expected 1 audit event, got %d", len(auditEvents))
-	}
-	if !strings.Contains(auditEvents[0], "orchestration:redelegate") {
-		t.Fatalf("expected redelegate audit event, got %q", auditEvents[0])
 	}
 }
 
@@ -3284,6 +3196,9 @@ func TestBuildWorkerPrompt_WithToolGuidance(t *testing.T) {
 	if !strings.Contains(prompt, guidance) {
 		t.Fatal("expected prompt to contain tool guidance text")
 	}
+	if count := strings.Count(prompt, "TOOL USAGE RULES"); count != 1 {
+		t.Fatalf("expected guidance to appear exactly once, found %d occurrences", count)
+	}
 	if !strings.Contains(prompt, "Create API handler") {
 		t.Fatal("expected prompt to contain item title")
 	}
@@ -3307,23 +3222,6 @@ func TestBuildWorkerPrompt_WithoutToolGuidance(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Setup tests") {
 		t.Fatal("expected prompt to contain item title")
-	}
-}
-
-func TestBuildWorkerPrompt_ToolGuidanceNotDuplicated(t *testing.T) {
-	t.Parallel()
-
-	item := &WorkItem{
-		Title: "Build feature",
-	}
-	guidance := "TOOL USAGE RULES (required by this agent):\n- Bash needs 'description'.\n"
-
-	prompt := buildWorkerPrompt(workflowPrompts, item, "", guidance)
-
-	// Count occurrences of the guidance text.
-	count := strings.Count(prompt, "TOOL USAGE RULES")
-	if count != 1 {
-		t.Fatalf("expected guidance to appear exactly once, found %d occurrences", count)
 	}
 }
 
