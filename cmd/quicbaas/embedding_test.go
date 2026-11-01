@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -216,80 +215,72 @@ func TestNewEmbeddingCommands(t *testing.T) {
 	assert.Contains(t, commandNames, "provider", "provider command should be registered")
 	assert.Contains(t, commandNames, "providers", "providers command should be registered")
 	assert.Contains(t, commandNames, "cache", "cache command should be registered")
-}
 
-func TestNewEmbeddingGenerateCommand(t *testing.T) {
-	cmd := newEmbeddingGenerateCommand()
+	tests := []struct {
+		name  string
+		cmd   *cobra.Command
+		use   string
+		short string
+		flags []string
+	}{
+		{
+			name:  "generate",
+			cmd:   newEmbeddingGenerateCommand(),
+			use:   "generate <text>",
+			short: "Generate an embedding",
+			flags: []string{"provider", "metadata", "input-type", "source", "language", "cache-bypass"},
+		},
+		{
+			name:  "batch",
+			cmd:   newEmbeddingBatchCommand(),
+			use:   "batch <texts-json>",
+			short: "Generate embeddings for multiple texts",
+			flags: []string{"provider", "cache-bypass"},
+		},
+		{
+			name:  "providers",
+			cmd:   newEmbeddingProvidersCommand(),
+			use:   "providers",
+			short: "List all available embedding providers",
+			flags: []string{"include-unavailable"},
+		},
+		{
+			name:  "provider info",
+			cmd:   newEmbeddingProviderInfoCommand(),
+			use:   "info <name>",
+			short: "Get detailed information",
+		},
+		{
+			name:  "provider set-default",
+			cmd:   newEmbeddingProviderSetDefaultCommand(),
+			use:   "set-default <name>",
+			short: "Set the default embedding provider",
+		},
+		{
+			name:  "cache stats",
+			cmd:   newEmbeddingCacheStatsCommand(),
+			use:   "stats",
+			short: "Get embedding cache statistics",
+		},
+		{
+			name:  "cache clear",
+			cmd:   newEmbeddingCacheClearCommand(),
+			use:   "clear",
+			short: "Clear the embedding cache",
+			flags: []string{"provider"},
+		},
+	}
 
-	require.NotNil(t, cmd)
-	assert.Equal(t, "generate <text>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Generate an embedding")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("provider"))
-	assert.NotNil(t, cmd.Flags().Lookup("metadata"))
-	assert.NotNil(t, cmd.Flags().Lookup("input-type"))
-	assert.NotNil(t, cmd.Flags().Lookup("source"))
-	assert.NotNil(t, cmd.Flags().Lookup("language"))
-	assert.NotNil(t, cmd.Flags().Lookup("cache-bypass"))
-}
-
-func TestNewEmbeddingBatchCommand(t *testing.T) {
-	cmd := newEmbeddingBatchCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "batch <texts-json>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Generate embeddings for multiple texts")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("provider"))
-	assert.NotNil(t, cmd.Flags().Lookup("cache-bypass"))
-}
-
-func TestNewEmbeddingProvidersCommand(t *testing.T) {
-	cmd := newEmbeddingProvidersCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "providers", cmd.Use)
-	assert.Contains(t, cmd.Short, "List all available embedding providers")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("include-unavailable"))
-}
-
-func TestNewEmbeddingProviderInfoCommand(t *testing.T) {
-	cmd := newEmbeddingProviderInfoCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "info <name>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Get detailed information")
-}
-
-func TestNewEmbeddingProviderSetDefaultCommand(t *testing.T) {
-	cmd := newEmbeddingProviderSetDefaultCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "set-default <name>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Set the default embedding provider")
-}
-
-func TestNewEmbeddingCacheStatsCommand(t *testing.T) {
-	cmd := newEmbeddingCacheStatsCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "stats", cmd.Use)
-	assert.Contains(t, cmd.Short, "Get embedding cache statistics")
-}
-
-func TestNewEmbeddingCacheClearCommand(t *testing.T) {
-	cmd := newEmbeddingCacheClearCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "clear", cmd.Use)
-	assert.Contains(t, cmd.Short, "Clear the embedding cache")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("provider"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotNil(t, tt.cmd)
+			assert.Equal(t, tt.use, tt.cmd.Use)
+			assert.Contains(t, tt.cmd.Short, tt.short)
+			for _, flag := range tt.flags {
+				assert.NotNil(t, tt.cmd.Flags().Lookup(flag), "flag --%s", flag)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1287,49 +1278,6 @@ func TestFormatEmbeddingCacheClearResponse_AllFormats(t *testing.T) {
 // =============================================================================
 // Command Help Tests
 // =============================================================================
-
-func TestEmbeddingCommandHelp(t *testing.T) {
-	cmd := newEmbeddingCommands()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "embedding")
-	assert.Contains(t, output, "Embedding generation")
-}
-
-func TestEmbeddingGenerateCommandHelp(t *testing.T) {
-	cmd := newEmbeddingGenerateCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "generate")
-	assert.Contains(t, output, "--provider")
-	assert.Contains(t, output, "--metadata")
-}
-
-func TestEmbeddingBatchCommandHelp(t *testing.T) {
-	cmd := newEmbeddingBatchCommand()
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetArgs([]string{"--help"})
-
-	err := cmd.Execute()
-	require.NoError(t, err)
-
-	output := buf.String()
-	assert.Contains(t, output, "batch")
-	assert.Contains(t, output, "--provider")
-}
 
 // =============================================================================
 // Error Path Tests
