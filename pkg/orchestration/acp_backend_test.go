@@ -703,102 +703,85 @@ func TestACPBackendCapabilitiesKind_InvalidKind(t *testing.T) {
 	}
 }
 
-func TestACPBackend_Spawn_NilRequest(t *testing.T) {
+func TestACPBackend_InvalidInputAndNotFound(t *testing.T) {
 	backend := NewACPBackend(ACPBackendConfig{Command: "echo"})
-
 	ctx := context.Background()
-	_, err := backend.Spawn(ctx, nil)
-	if err == nil {
-		t.Fatal("Spawn(nil) should return error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("error = %v, want ErrInvalidInput", err)
-	}
-}
 
-func TestACPBackend_Spawn_EmptyWorkDir(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{Command: "echo"})
-
-	ctx := context.Background()
-	_, err := backend.Spawn(ctx, &SpawnRequest{WorkDir: ""})
-	if err == nil {
-		t.Fatal("Spawn with empty WorkDir should return error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestACPBackend_Prompt_NilRequest(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-
-	ctx := context.Background()
-	_, err := backend.Prompt(ctx, nil)
-	if err == nil {
-		t.Fatal("Prompt(nil) should return error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestACPBackend_Prompt_EmptyPrompt(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-
-	ctx := context.Background()
-	_, err := backend.Prompt(ctx, &PromptRequest{Prompt: ""})
-	if err == nil {
-		t.Fatal("Prompt with empty prompt should return error")
-	}
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestACPBackend_Prompt_SessionNotFound(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-
-	ctx := context.Background()
-	_, err := backend.Prompt(ctx, &PromptRequest{
-		SessionID: "nonexistent",
-		Prompt:    "Hello",
-	})
-	if err == nil {
-		t.Fatal("Prompt() should return error for nonexistent session")
-	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("error = %v, want ErrSessionNotFound", err)
-	}
-}
-
-func TestACPBackend_Status_NotFound(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-
-	ctx := context.Background()
-	_, err := backend.Status(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("Status() should return error for nonexistent session")
-	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("error = %v, want ErrSessionNotFound", err)
+	tests := []struct {
+		name    string
+		call    func() error
+		wantErr error
+	}{
+		{
+			name: "Spawn nil request",
+			call: func() error {
+				_, err := backend.Spawn(ctx, nil)
+				return err
+			},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name: "Spawn empty WorkDir",
+			call: func() error {
+				_, err := backend.Spawn(ctx, &SpawnRequest{WorkDir: ""})
+				return err
+			},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name: "Prompt nil request",
+			call: func() error {
+				_, err := backend.Prompt(ctx, nil)
+				return err
+			},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name: "Prompt empty prompt",
+			call: func() error {
+				_, err := backend.Prompt(ctx, &PromptRequest{Prompt: ""})
+				return err
+			},
+			wantErr: ErrInvalidInput,
+		},
+		{
+			name: "Prompt unknown session",
+			call: func() error {
+				_, err := backend.Prompt(ctx, &PromptRequest{SessionID: "nonexistent", Prompt: "Hello"})
+				return err
+			},
+			wantErr: ErrSessionNotFound,
+		},
+		{
+			name: "Status unknown session",
+			call: func() error {
+				_, err := backend.Status(ctx, "nonexistent")
+				return err
+			},
+			wantErr: ErrSessionNotFound,
+		},
+		{
+			name: "Close unknown session",
+			call: func() error {
+				return backend.Close(ctx, "nonexistent")
+			},
+			wantErr: ErrSessionNotFound,
+		},
 	}
 
-	var target *SessionNotFoundError
-	if !errors.As(err, &target) {
-		t.Error("error should be SessionNotFoundError")
-	}
-}
-
-func TestACPBackend_Close_NotFound(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-
-	ctx := context.Background()
-	err := backend.Close(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("Close() should return error for nonexistent session")
-	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Errorf("error = %v, want ErrSessionNotFound", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr == ErrSessionNotFound {
+				var target *SessionNotFoundError
+				if !errors.As(err, &target) {
+					t.Errorf("error = %T, want *SessionNotFoundError", err)
+				}
+			}
+		})
 	}
 }
 
@@ -1548,47 +1531,6 @@ func TestACPBackend_CLI_PromptClosedSession(t *testing.T) {
 // Error Type Tests
 // =============================================================================
 
-func TestOneShotExecutionError_Error(t *testing.T) {
-	err := &OneShotExecutionError{
-		Command: "claude",
-		Stderr:  "permission denied",
-		Cause:   errors.New("exit status 1"),
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "claude") {
-		t.Errorf("error message should contain command name, got: %s", msg)
-	}
-	// THE STDERR TAIL IS WITHHELD FROM THE MESSAGE, on purpose: an error string
-	// reaches every %v in the process, and an agent's diagnostics can carry the
-	// credential material its environment holds. The count says evidence exists;
-	// the field carries it for a caller that asks by name.
-	if strings.Contains(msg, "permission denied") {
-		t.Errorf("error message rendered the stderr tail, which is a secret-to-log path: %s", msg)
-	}
-	if !strings.Contains(msg, "withheld") {
-		t.Errorf("error message should say evidence was withheld, got: %s", msg)
-	}
-	if err.Stderr != "permission denied" {
-		t.Errorf("the tail was dropped from the struct; a caller that asks by name gets nothing")
-	}
-}
-
-func TestOneShotExecutionError_Unwrap(t *testing.T) {
-	cause := errors.New("exit status 1")
-	err := &OneShotExecutionError{
-		Command: "claude",
-		Cause:   cause,
-	}
-
-	if !errors.Is(err, ErrOneShotExecution) {
-		t.Error("should unwrap to ErrOneShotExecution")
-	}
-	if !errors.Is(err, cause) {
-		t.Error("should unwrap to cause")
-	}
-}
-
 func TestOneShotExecutionError_UnwrapNoCause(t *testing.T) {
 	err := &OneShotExecutionError{
 		Command: "claude",
@@ -1605,84 +1547,78 @@ func TestOneShotExecutionError_UnwrapNoCause(t *testing.T) {
 	}
 }
 
-func TestStreamJSONError_Error(t *testing.T) {
-	err := &StreamJSONError{
-		Command: "claude",
-		Result:  "rate limit exceeded",
+func TestACPBackendErrors_ErrorAndUnwrap(t *testing.T) {
+	oneShotCause := errors.New("exit status 1")
+
+	tests := []struct {
+		name        string
+		err         error
+		wantContain []string
+		wantAbsent  []string
+		wantIs      []error
+	}{
+		{
+			// THE STDERR TAIL IS WITHHELD FROM THE MESSAGE, on purpose: an error string
+			// reaches every %v in the process, and an agent's diagnostics can carry the
+			// credential material its environment holds. The count says evidence exists;
+			// the field carries it for a caller that asks by name.
+			name: "OneShotExecutionError",
+			err: &OneShotExecutionError{
+				Command: "claude",
+				Stderr:  "permission denied",
+				Cause:   oneShotCause,
+			},
+			wantContain: []string{"claude", "withheld"},
+			wantAbsent:  []string{"permission denied"},
+			wantIs:      []error{ErrOneShotExecution, oneShotCause},
+		},
+		{
+			// INVERTED (review 1330): the agent's own result text is the most likely
+			// place in this package for a credential to appear — it is whatever the
+			// model wrote about what went wrong, and what went wrong is often a command
+			// it ran with a token in it. Error() reports its SIZE, never its content.
+			name: "StreamJSONError",
+			err: &StreamJSONError{
+				Command: "claude",
+				Result:  "rate limit exceeded",
+			},
+			wantContain: []string{"claude", "19 bytes of result withheld"},
+			wantAbsent:  []string{"rate limit exceeded"},
+			wantIs:      []error{ErrStreamJSON},
+		},
+		{
+			name:        "StreamJSONProcessExitedError",
+			err:         &StreamJSONProcessExitedError{Command: "claude"},
+			wantContain: []string{"claude", "process exited"},
+			wantIs:      []error{ErrStreamJSONProcessExited},
+		},
+		{
+			name:        "SessionClosedError",
+			err:         &SessionClosedError{SessionID: "test-session"},
+			wantContain: []string{"test-session", "session closed"},
+			wantIs:      []error{ErrSessionClosed},
+		},
 	}
 
-	msg := err.Error()
-	if !strings.Contains(msg, "claude") {
-		t.Errorf("error message should contain command name, got: %s", msg)
-	}
-	// INVERTED (review 1330): the agent's own result text is the most likely
-	// place in this package for a credential to appear — it is whatever the
-	// model wrote about what went wrong, and what went wrong is often a command
-	// it ran with a token in it. Error() reports its SIZE, never its content.
-	if strings.Contains(msg, "rate limit exceeded") {
-		t.Errorf("error message must not contain the agent's result text, got: %s", msg)
-	}
-	if !strings.Contains(msg, "19 bytes of result withheld") {
-		t.Errorf("error message should report the withheld size, got: %s", msg)
-	}
-}
-
-func TestStreamJSONError_Unwrap(t *testing.T) {
-	err := &StreamJSONError{
-		Command: "claude",
-		Result:  "error",
-	}
-
-	if !errors.Is(err, ErrStreamJSON) {
-		t.Error("should unwrap to ErrStreamJSON")
-	}
-}
-
-func TestStreamJSONProcessExitedError_Error(t *testing.T) {
-	err := &StreamJSONProcessExitedError{
-		Command: "claude",
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "claude") {
-		t.Errorf("error message should contain command name, got: %s", msg)
-	}
-	if !strings.Contains(msg, "process exited") {
-		t.Errorf("error message should contain 'process exited', got: %s", msg)
-	}
-}
-
-func TestStreamJSONProcessExitedError_Unwrap(t *testing.T) {
-	err := &StreamJSONProcessExitedError{
-		Command: "claude",
-	}
-
-	if !errors.Is(err, ErrStreamJSONProcessExited) {
-		t.Error("should unwrap to ErrStreamJSONProcessExited")
-	}
-}
-
-func TestSessionClosedError_Error(t *testing.T) {
-	err := &SessionClosedError{
-		SessionID: "test-session",
-	}
-
-	msg := err.Error()
-	if !strings.Contains(msg, "test-session") {
-		t.Errorf("error message should contain session ID, got: %s", msg)
-	}
-	if !strings.Contains(msg, "session closed") {
-		t.Errorf("error message should contain 'session closed', got: %s", msg)
-	}
-}
-
-func TestSessionClosedError_Unwrap(t *testing.T) {
-	err := &SessionClosedError{
-		SessionID: "test-session",
-	}
-
-	if !errors.Is(err, ErrSessionClosed) {
-		t.Error("should unwrap to ErrSessionClosed")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := tt.err.Error()
+			for _, want := range tt.wantContain {
+				if !strings.Contains(msg, want) {
+					t.Errorf("Error() = %q, want it to contain %q", msg, want)
+				}
+			}
+			for _, secret := range tt.wantAbsent {
+				if strings.Contains(msg, secret) {
+					t.Errorf("Error() = %q rendered %q, which is a secret-to-log path", msg, secret)
+				}
+			}
+			for _, target := range tt.wantIs {
+				if !errors.Is(tt.err, target) {
+					t.Errorf("errors.Is(%T, %v) = false, want true", tt.err, target)
+				}
+			}
+		})
 	}
 }
 
@@ -1713,64 +1649,42 @@ func TestGenerateSessionID(t *testing.T) {
 // ToolGuidance Tests
 // =============================================================================
 
-func TestACPBackend_ToolGuidance_OpenCode(t *testing.T) {
+func TestACPBackend_ToolGuidance(t *testing.T) {
 	t.Parallel()
 
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "opencode",
-		DefaultModel: "some-model",
-	})
-
-	guidance := backend.ToolGuidance()
-	if guidance == "" {
-		t.Fatal("expected non-empty guidance for opencode backend")
+	tests := []struct {
+		command     string
+		model       string
+		wantContain []string // nil means the guidance must be empty
+	}{
+		// opencode's Bash tool needs a 'description' field and its file tools a 'filePath'.
+		{command: "opencode", model: "some-model", wantContain: []string{"description", "filePath"}},
+		{command: "claude", model: "claude-sonnet-4-5-20250514"},
+		{command: "codex", model: "o3-mini"},
+		{command: "some-unknown-agent", model: "model-x"},
 	}
-	if !strings.Contains(guidance, "description") {
-		t.Error("opencode guidance should mention the 'description' field requirement for Bash tool")
-	}
-	if !strings.Contains(guidance, "filePath") {
-		t.Error("opencode guidance should mention the 'filePath' field requirement")
-	}
-}
 
-func TestACPBackend_ToolGuidance_Claude(t *testing.T) {
-	t.Parallel()
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			t.Parallel()
 
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "claude",
-		DefaultModel: "claude-sonnet-4-5-20250514",
-	})
+			backend := NewACPBackend(ACPBackendConfig{
+				Command:      tt.command,
+				DefaultModel: tt.model,
+			})
 
-	guidance := backend.ToolGuidance()
-	if guidance != "" {
-		t.Errorf("expected empty guidance for claude backend, got %q", guidance)
-	}
-}
-
-func TestACPBackend_ToolGuidance_Codex(t *testing.T) {
-	t.Parallel()
-
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "codex",
-		DefaultModel: "o3-mini",
-	})
-
-	guidance := backend.ToolGuidance()
-	if guidance != "" {
-		t.Errorf("expected empty guidance for codex backend, got %q", guidance)
-	}
-}
-
-func TestACPBackend_ToolGuidance_UnknownCommand(t *testing.T) {
-	t.Parallel()
-
-	backend := NewACPBackend(ACPBackendConfig{
-		Command:      "some-unknown-agent",
-		DefaultModel: "model-x",
-	})
-
-	guidance := backend.ToolGuidance()
-	if guidance != "" {
-		t.Errorf("expected empty guidance for unknown command, got %q", guidance)
+			guidance := backend.ToolGuidance()
+			if tt.wantContain == nil {
+				if guidance != "" {
+					t.Errorf("ToolGuidance() = %q, want empty", guidance)
+				}
+				return
+			}
+			for _, want := range tt.wantContain {
+				if !strings.Contains(guidance, want) {
+					t.Errorf("ToolGuidance() = %q, want it to contain %q", guidance, want)
+				}
+			}
+		})
 	}
 }
