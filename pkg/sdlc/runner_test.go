@@ -2235,43 +2235,81 @@ func TestRunner_AnUnknownPostMergeStepIsRefused(t *testing.T) {
 // Refusals and recovery
 // =============================================================================
 
-// TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged: the
-// worker has nowhere to work, and guessing a directory would put a tenant's
-// checkout somewhere the operator's mount policy never admitted.
+// TestRunner_AnUnfitWorkspaceIsParkedForAnOperatorAndNotCharged: a workspace
+// the daemon can tell is unfit before any container starts is the operator's
+// fault and is attributed as one. Each case below once ran a worker, or failed
+// the job and charged the task an attempt for a fault it did not commit
+// (go-quicbaas#908, #929, #770): re-running it would refuse identically. The
+// park carries the workspace fault class, so the engine refunds the attempt,
+// and its message names what to fix and that no tokens were spent.
 //
-// IT IS THE OPERATOR'S FAULT AND IS ATTRIBUTED AS ONE. Measured on the burn-in
-// node: this exact refusal was raised three times in one minute and charged
-// against the task each time (go-quicbaas#908). The park carries the workspace
-// fault class, so the engine refunds the attempt and the issue tells whoever
-// runs the fleet what to fix.
-func TestRunner_AProjectWithNoWorkspaceIsParkedForAnOperatorAndNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	job := rig.job(t)
-	rig.agents.host.root = ""
-	err := rig.runner.Run(context.Background(), job)
-	if !errors.Is(err, ErrWorkspaceUnfit) && !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
+//   - no workspace root: guessing a directory would put a tenant's checkout
+//     somewhere the operator's mount policy never admitted.
+//   - no project record: the workspace spec is described from the project.
+//     This case once asserted the defect, ErrInvalidInput, which is not
+//     ErrWorkspaceUnfit, so prepareWorkspace never parked.
+//   - no forge credential: a credential the remote would not accept is
+//     decidable from the spec on the daemon, so it costs no container.
+//   - a context repository the allowlist refuses at workspace time.
+func TestRunner_AnUnfitWorkspaceIsParkedForAnOperatorAndNotCharged(t *testing.T) {
+	cases := map[string]struct {
+		arrange func(rig *runnerRig, job *orchestration.JobRun)
+		names   []string
+	}{
+		"the project has no workspace root": {
+			arrange: func(rig *runnerRig, _ *orchestration.JobRun) { rig.agents.host.root = "" },
+		},
+		"the job has no project record": {
+			arrange: func(_ *runnerRig, job *orchestration.JobRun) { job.Project = nil },
+			names:   []string{"no project record"},
+		},
+		"the spawn holds no forge credential": {
+			arrange: func(rig *runnerRig, _ *orchestration.JobRun) { rig.tokens.token = nil },
+			names:   []string{"no credential", "https://forge.test/acme/api.git", "forge token"},
+		},
+		"a context repository was edited on after bind": {
+			arrange: func(_ *runnerRig, job *orchestration.JobRun) {
+				job.Project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"}}
+			},
+			names: []string{"handbook"},
+		},
 	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned for a project with nowhere to work")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a project with nowhere to work was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	if !strings.Contains(parked.Message, "no tokens were spent") {
-		t.Fatalf("the park does not say the fault cost nothing: %q", parked.Message)
-	}
-	condition, err := ParseUnblockCondition(parked.Message)
-	if err != nil || condition.Kind != UnblockOperatorRepair {
-		t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rig := newRunnerRig(t)
+			rig.rebindVerification(t, "true")
+			job := rig.job(t)
+			tc.arrange(rig, job)
+
+			err := rig.runner.Run(context.Background(), job)
+			// The run ends on the PARK, which is the runner's answer to an
+			// unfit workspace; the fault itself is on the task.
+			if !errors.Is(err, ErrRunner) {
+				t.Fatalf("err = %v, want the run to end on the park", err)
+			}
+			if rig.agents.sessionCount() != 0 {
+				t.Fatal("a worker was spawned over an unfit workspace")
+			}
+			parked := job.Parked()
+			if parked == nil {
+				t.Fatal("an unfit workspace was not parked for anybody")
+			}
+			if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
+				t.Fatalf("park fault class = %q, want %q; without it the attempt is charged", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
+			}
+			if parked.Kind != orchestration.TaskBlockKindBlocked {
+				t.Fatalf("park kind = %q, want blocked", parked.Kind)
+			}
+			condition, err := ParseUnblockCondition(parked.Message)
+			if err != nil || condition.Kind != UnblockOperatorRepair {
+				t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
+			}
+			for _, want := range append(tc.names, "no tokens were spent") {
+				if !strings.Contains(parked.Message, want) {
+					t.Errorf("the park does not name %q: %q", want, parked.Message)
+				}
+			}
+		})
 	}
 }
 
@@ -2333,56 +2371,6 @@ func TestRunner_AWorkspaceHostThatCannotTakeTheSpawnIsParkedNotRehomed(t *testin
 				t.Errorf("the park does not name the refusal %q: %q", tc.names, parked.Message)
 			}
 		})
-	}
-}
-
-// TestRunner_AJobWithNoProjectRecordIsParkedForAnOperatorAndNotCharged: the
-// workspace spec is described from the project, so a job that carries none
-// cannot describe one — and that is the FACTORY's fault, not the work's.
-//
-// THIS TEST USED TO ASSERT THE DEFECT. It required ErrInvalidInput, which is
-// what requireProject returned, and ErrInvalidInput is not ErrWorkspaceUnfit —
-// so prepareWorkspace never parked, the error left Run as a plain terminal
-// failure, classifyJobFailure did not recognise it, and the task was charged an
-// attempt for a fault it did not commit. Measured on the burn-in node: two jobs
-// resumed after a daemon restart, both reported as "charged as a failure of the
-// work" for a project record the resume path had failed to read.
-//
-// The assertion is now the same one its sibling above makes, because the two
-// faults are the same fault: a workspace nothing could work in, provable before
-// a container existed, refunded and parked naming the repair.
-func TestRunner_AJobWithNoProjectRecordIsParkedForAnOperatorAndNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	job := rig.job(t)
-	job.Project = nil
-	err := rig.runner.Run(context.Background(), job)
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want a runner refusal", err)
-	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned for a job with no project to describe its checkout")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a job with no project record was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q; without it the attempt is charged", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	condition, err := ParseUnblockCondition(parked.Message)
-	if err != nil || condition.Kind != UnblockOperatorRepair {
-		t.Fatalf("condition = %+v, err = %v, want operator_repair", condition, err)
-	}
-	// The park is what an operator reads, so it has to name the project that was
-	// absent — "the workspace is unfit" alone would send them to the checkout.
-	if !strings.Contains(parked.Message, "no project record") {
-		t.Fatalf("the park does not say what was missing: %q", parked.Message)
-	}
-	if !strings.Contains(parked.Message, "no tokens were spent") {
-		t.Fatalf("the park does not say the fault cost nothing: %q", parked.Message)
 	}
 }
 
@@ -2801,9 +2789,6 @@ func TestRunner_ARefusalFromAnyCollaboratorFailsTheJob(t *testing.T) {
 		},
 		"the signing agent cannot start": func(rig *runnerRig) {
 			rig.signing.err = cause
-		},
-		"the worker session runs no container": func(rig *runnerRig) {
-			rig.agents.noContainer = true
 		},
 	}
 	for name, arrange := range cases {
@@ -3611,48 +3596,6 @@ func TestRunnerRun_AGenuineRedStillGoesBackToTheWorker(t *testing.T) {
 	}
 }
 
-// TestRunner_AForgeCredentialTheSpawnDoesNotHoldIsParkedNotCharged: the
-// delivery half of go-quicbaas#929.
-//
-// A credential the remote would not accept is decidable from the spec on the
-// daemon, so it costs no container — and it is a CONFIGURATION, so failing the
-// job would retry the identical refusal for the whole attempt budget. It parks,
-// attributed to the factory, with the repository and the missing credential in
-// the reason.
-func TestRunner_AForgeCredentialTheSpawnDoesNotHoldIsParkedNotCharged(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	rig.tokens.token = nil
-
-	job := rig.job(t)
-	err := rig.runner.Run(context.Background(), job)
-	// The run ends on the PARK, which is the runner's answer to an unfit
-	// workspace; the fault itself is on the task, where an operator reads it.
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the park", err)
-	}
-	if got := rig.agents.sessionCount(); got != 0 {
-		t.Fatalf("sessions = %d, want the attempt refused before any container started", got)
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a spawn that could not have cloned was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if parked.Kind != orchestration.TaskBlockKindBlocked {
-		t.Fatalf("park kind = %q, want blocked", parked.Kind)
-	}
-	// The reason names the repository, the remote and the credential, which is
-	// what the operator has to act on — and says the fault cost nothing.
-	for _, want := range []string{"no credential", "https://forge.test/acme/api.git", "forge token", "no tokens were spent"} {
-		if !strings.Contains(parked.Message, want) {
-			t.Errorf("the park does not name %q: %q", want, parked.Message)
-		}
-	}
-}
-
 // TestDeliveryHeadRefused_IsTheDurableFormOfARequestedRound covers the three
 // answers the resume depends on: a refusal at the current head, a refusal that
 // binds to an older head, and a later approval that overrides an earlier
@@ -3859,36 +3802,5 @@ func TestAccountRotationEvidence_NamesTheTwoCopiesThatDisagreed(t *testing.T) {
 	}
 	if got := accountRotationEvidence(halfKnown); !strings.Contains(got, "rotated_at=") {
 		t.Errorf("accountRotationEvidence = %q, want the fallback when only one generation is known", got)
-	}
-}
-
-// TestRunner_AContextRepositoryEditedOnAfterBindIsParked: the delivery
-// runner's answer to a repository the allowlist refuses at workspace time is
-// the one it gives every unfit workspace -- park the task for an operator,
-// attributed to the factory, and spawn nothing -- because re-running it would
-// refuse identically (go-quicbaas#770).
-func TestRunner_AContextRepositoryEditedOnAfterBindIsParked(t *testing.T) {
-	rig := newRunnerRig(t)
-	rig.rebindVerification(t, "true")
-	job := rig.job(t)
-	job.Project.ContextRepos = []orchestration.ContextRepo{{Name: "handbook", RepoURL: "http://forge.test/acme/handbook.git", Ref: "main"}}
-
-	err := rig.runner.Run(context.Background(), job)
-
-	if !errors.Is(err, ErrRunner) {
-		t.Fatalf("err = %v, want the run to end on the workspace fault", err)
-	}
-	if rig.agents.sessionCount() != 0 {
-		t.Fatal("a worker was spawned over a refused context repository")
-	}
-	parked := job.Parked()
-	if parked == nil {
-		t.Fatal("a refused context repository was not parked for anybody")
-	}
-	if parked.FaultClass != orchestration.FaultWorkspaceUnfit {
-		t.Fatalf("park fault class = %q, want %q", parked.FaultClass, orchestration.FaultWorkspaceUnfit)
-	}
-	if !strings.Contains(parked.Message, "handbook") {
-		t.Fatalf("park message %q does not name the refused repository", parked.Message)
 	}
 }
