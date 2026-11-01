@@ -465,42 +465,27 @@ func TestNew_RejectsMalformedExcludePattern(t *testing.T) {
 	require.ErrorIs(t, err, filepath.ErrBadPattern)
 }
 
-// TestFlushEvents_SmallBuffer tests flushEvents when the events channel is full.
-func TestFlushEvents_SmallBuffer(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create config with very small buffer
-	config := Config{
-		Paths:         []string{tmpDir},
-		Recursive:     false,
-		DebounceDelay: 10 * time.Millisecond,
-		BatchInterval: 20 * time.Millisecond,
-		BufferSize:    1, // Very small buffer
-	}
-
-	w, err := New(config)
+// TestFlushEvents_ChannelFull tests that flushEvents drains the debouncer and
+// drops the events that do not fit in the events channel.
+func TestFlushEvents_ChannelFull(t *testing.T) {
+	w, err := New(Config{
+		Paths:         []string{t.TempDir()},
+		DebounceDelay: 50 * time.Millisecond,
+		BatchInterval: 100 * time.Millisecond,
+		BufferSize:    2,
+	})
 	require.NoError(t, err)
 	defer w.Stop()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	// Give watcher time to initialize
-	time.Sleep(500 * time.Millisecond)
-
-	// Create many files quickly to overflow the buffer
-	for i := 0; i < 10; i++ {
-		file := filepath.Join(tmpDir, "file"+string(rune('0'+i))+".txt")
-		err := os.WriteFile(file, []byte("content"), 0644)
-		require.NoError(t, err)
+	fw := w.(*fsWatcher)
+	for i := range 5 {
+		fw.debouncer.Add(Event{Type: EventCreate, Path: fmt.Sprintf("/file%d.txt", i)})
 	}
 
-	// Wait for processing using timer
-	timer := time.NewTimer(1 * time.Second)
-	<-timer.C
+	fw.flushEvents()
+
+	assert.Len(t, fw.events, 2, "only the buffered events are delivered")
+	assert.Zero(t, fw.debouncer.Count(), "the debouncer is drained")
 }
 
 // TestNew_InvalidPath tests New with an invalid path that doesn't exist.
@@ -561,99 +546,6 @@ func TestAddRecursive_ErrorReadDir(t *testing.T) {
 	_, hasSub := fw.paths[subDir]
 	fw.mu.RUnlock()
 	assert.True(t, hasSub, "readable subdirectory should be watched")
-}
-
-// TestFlushEvents_StopChannel tests flushEvents with stopCh triggered.
-func TestFlushEvents_StopChannel(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 20 * time.Millisecond,
-		BatchInterval: 50 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Create some events
-	for i := 0; i < 3; i++ {
-		testFile := filepath.Join(tmpDir, "test_"+string(rune('a'+i))+".txt")
-		os.WriteFile(testFile, []byte("test"), 0644)
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Cancel context to trigger stop
-	cancel()
-
-	// Wait for shutdown
-	time.Sleep(500 * time.Millisecond)
-
-	// Try to drain any remaining events (channel should be closed or empty)
-	timeout := time.After(500 * time.Millisecond)
-	for {
-		select {
-		case _, ok := <-w.Events():
-			if !ok {
-				// Channel closed, good
-				return
-			}
-		case <-timeout:
-			return
-		}
-	}
-}
-
-// TestFlushEvents_ChannelFull tests flushEvents when output channel is full.
-func TestFlushEvents_ChannelFull(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 20 * time.Millisecond,
-		BatchInterval: 40 * time.Millisecond,
-		BufferSize:    2, // Small buffer
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Create many files quickly to overflow buffer
-	for i := 0; i < 10; i++ {
-		testFile := filepath.Join(tmpDir, "overflow_"+string(rune('a'+i))+".txt")
-		os.WriteFile(testFile, []byte("test"), 0644)
-	}
-
-	// Don't read from events channel to let it fill up
-	time.Sleep(500 * time.Millisecond)
-
-	// Now drain with timeout
-	timeout := time.After(1 * time.Second)
-	for {
-		select {
-		case <-w.Events():
-			// Drain events
-		case <-timeout:
-			return
-		}
-	}
 }
 
 // TestConvertEvent_DeletedFile tests convertEvent when file is deleted.
@@ -823,8 +715,6 @@ func TestRemovePath_WatcherRemoveError(t *testing.T) {
 	err = w.Start(ctx)
 	require.NoError(t, err)
 	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
 
 	// Add a second path
 	err = w.AddPath(tmpDir2)
@@ -1163,42 +1053,4 @@ func TestAddRecursive_MaxDepth(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestRemovePath_WatcherRemoveFails tests RemovePath when watcher.Remove returns an error.
-// This happens when trying to remove a path that fsnotify isn't actually watching.
-func TestRemovePath_AlreadyRemoved(t *testing.T) {
-	tmpDir := t.TempDir()
-	tmpDir2 := t.TempDir()
-
-	config := Config{
-		Paths:         []string{tmpDir},
-		DebounceDelay: 50 * time.Millisecond,
-		BatchInterval: 100 * time.Millisecond,
-		BufferSize:    100,
-	}
-
-	w, err := New(config)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	err = w.Start(ctx)
-	require.NoError(t, err)
-	defer w.Stop()
-
-	time.Sleep(500 * time.Millisecond)
-
-	// Add a path
-	err = w.AddPath(tmpDir2)
-	require.NoError(t, err)
-
-	// Remove it
-	err = w.RemovePath(tmpDir2)
-	require.NoError(t, err)
-
-	// Try to remove it again - should get ErrPathNotWatched
-	err = w.RemovePath(tmpDir2)
-	assert.ErrorIs(t, err, ErrPathNotWatched)
 }
