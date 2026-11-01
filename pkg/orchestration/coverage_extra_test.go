@@ -802,40 +802,46 @@ func TestAgentRegistry_CorruptRecord(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// session_store: GetSession corrupt-entry branches
+// session_store: corrupt-record branches
 // -----------------------------------------------------------------------------
 
-// TestAgentStore_GetSession_CorruptJSON covers GetSession's unmarshal-error
-// branch: a record whose stored bytes are not a decodable session record is
-// reported as a marshal error rather than surfacing as an empty session.
-func TestAgentStore_GetSession_CorruptJSON(t *testing.T) {
-	kv := kvstore.NewMemory()
-	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
+// TestAgentStore_CorruptRecord covers the decode-failure branch of the single
+// read and of the scan: a corrupt record is reported under the marshal
+// sentinel rather than surfacing as an empty session or a shortened listing.
+func TestAgentStore_CorruptRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		invoke func(context.Context, AgentStore) error
+	}{
+		{
+			name: "GetSession",
+			invoke: func(ctx context.Context, store AgentStore) error {
+				_, err := store.GetSession(ctx, "", "sess-1")
+				return err
+			},
+		},
+		{
+			name: "ListSessions",
+			invoke: func(ctx context.Context, store AgentStore) error {
+				_, err := store.ListSessions(ctx, "system")
+				return err
+			},
+		},
 	}
-	store := NewAgentStore(kv)
 
-	_, err := store.GetSession(context.Background(), "", "sess-1")
-	var se *AgentStoreError
-	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
-		t.Fatalf("want AgentStoreError(marshal), got %v", err)
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := kvstore.NewMemory()
+			if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
+				t.Fatalf("seed corrupt record: %v", err)
+			}
 
-// TestAgentStore_ListSessions_CorruptJSON covers the scan path's decode-error
-// branch: a corrupt record aborts the listing with a typed error rather than
-// silently shortening the result.
-func TestAgentStore_ListSessions_CorruptJSON(t *testing.T) {
-	kv := kvstore.NewMemory()
-	if err := kv.Put(context.Background(), "orch/session/system/sess-1", []byte("{not json")); err != nil {
-		t.Fatalf("seed corrupt record: %v", err)
-	}
-	store := NewAgentStore(kv)
-
-	_, err := store.ListSessions(context.Background(), "system")
-	var se *AgentStoreError
-	if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
-		t.Fatalf("want AgentStoreError(marshal), got %v", err)
+			err := tc.invoke(context.Background(), NewAgentStore(kv))
+			var se *AgentStoreError
+			if !errors.As(err, &se) || !errors.Is(se, ErrAgentStoreMarshal) {
+				t.Fatalf("want AgentStoreError(marshal), got %v", err)
+			}
+		})
 	}
 }
 
