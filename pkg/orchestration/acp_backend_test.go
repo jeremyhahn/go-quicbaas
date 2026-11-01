@@ -673,33 +673,15 @@ func TestACPBackend_Capabilities(t *testing.T) {
 	if !caps.ACP {
 		t.Error("ACP should be true")
 	}
+	if caps.Kind != BackendKindAgent {
+		t.Errorf("Kind = %q, want %q", caps.Kind, BackendKindAgent)
+	}
 }
 
 func TestACPBackend_Type(t *testing.T) {
 	backend := NewACPBackend(ACPBackendConfig{})
 	if got := backend.Type(); got != "acp" {
 		t.Errorf("Type() = %q, want %q", got, "acp")
-	}
-}
-
-func TestACPBackendCapabilitiesKind(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-	caps := backend.Capabilities()
-
-	if caps.Kind != BackendKindAgent {
-		t.Errorf("Capabilities().Kind = %q, want %q", caps.Kind, BackendKindAgent)
-	}
-}
-
-func TestACPBackendCapabilitiesKind_InvalidKind(t *testing.T) {
-	backend := NewACPBackend(ACPBackendConfig{})
-	caps := backend.Capabilities()
-
-	if caps.Kind == BackendKindModelServer {
-		t.Error("ACP backend Kind should not be BackendKindModelServer")
-	}
-	if caps.Kind == "" {
-		t.Error("ACP backend Kind should not be empty")
 	}
 }
 
@@ -1362,34 +1344,15 @@ func TestACPBackend_CLI_StatusAfterClose(t *testing.T) {
 	}
 
 	// Session should be removed after close.
+	if _, ok := backend.sessions.Load(sess.ID); ok {
+		t.Error("session should be removed after close")
+	}
 	_, err = backend.Status(ctx, sess.ID)
 	if err == nil {
 		t.Fatal("Status after Close should return error")
 	}
 	if !errors.Is(err, ErrSessionNotFound) {
 		t.Errorf("error = %v, want ErrSessionNotFound", err)
-	}
-}
-
-func TestACPBackend_CLI_Close(t *testing.T) {
-	backend := newTestCLIBackend(t, "TestStreamJSONHelper", "STREAM_JSON_HELPER")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	sess, err := backend.Spawn(ctx, &SpawnRequest{WorkDir: "/tmp", Persistent: true})
-	if err != nil {
-		t.Fatalf("Spawn() error = %v", err)
-	}
-
-	if closeErr := backend.Close(ctx, sess.ID); closeErr != nil {
-		t.Fatalf("Close() error = %v", closeErr)
-	}
-
-	// Session should be removed.
-	_, ok := backend.sessions.Load(sess.ID)
-	if ok {
-		t.Error("session should be removed after close")
 	}
 }
 
@@ -1432,7 +1395,7 @@ func TestACPBackend_CLI_Ephemeral(t *testing.T) {
 	}
 }
 
-func TestACPBackend_CLI_SessionIDFromInit(t *testing.T) {
+func TestACPBackend_CLI_SessionAndModelFromInit(t *testing.T) {
 	backend := newTestCLIBackend(t, "TestStreamJSONHelper", "STREAM_JSON_HELPER")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1444,25 +1407,11 @@ func TestACPBackend_CLI_SessionIDFromInit(t *testing.T) {
 	}
 	defer backend.Close(context.Background(), sess.ID)
 
-	// The mock helper writes session_id="cli-test-session" in the init message.
+	// The mock helper writes session_id="cli-test-session" and
+	// model="claude-sonnet-4-5-20250514" in the init message.
 	if sess.ID != "cli-test-session" {
 		t.Errorf("SessionID = %q, want %q (from init message)", sess.ID, "cli-test-session")
 	}
-}
-
-func TestACPBackend_CLI_ModelFromInit(t *testing.T) {
-	backend := newTestCLIBackend(t, "TestStreamJSONHelper", "STREAM_JSON_HELPER")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	sess, err := backend.Spawn(ctx, &SpawnRequest{WorkDir: "/tmp", Persistent: true})
-	if err != nil {
-		t.Fatalf("Spawn() error = %v", err)
-	}
-	defer backend.Close(context.Background(), sess.ID)
-
-	// The mock helper writes model="claude-sonnet-4-5-20250514" in the init message.
 	if sess.Model != "claude-sonnet-4-5-20250514" {
 		t.Errorf("Model = %q, want %q (from init message)", sess.Model, "claude-sonnet-4-5-20250514")
 	}
