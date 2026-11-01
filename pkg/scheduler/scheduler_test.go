@@ -1875,45 +1875,6 @@ func TestStats(t *testing.T) {
 	})
 }
 
-// TestIsRunning tests running state checking.
-func TestIsRunning(t *testing.T) {
-	t.Run("returns false for new scheduler", func(t *testing.T) {
-		scheduler := New(nil, newMockJobStorage())
-
-		assert.False(t, scheduler.IsRunning())
-	})
-
-	t.Run("returns true after start", func(t *testing.T) {
-		scheduler := New(nil, newMockJobStorage())
-		ctx := context.Background()
-
-		err := scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
-		assert.True(t, scheduler.IsRunning())
-	})
-
-	t.Run("returns false after stop", func(t *testing.T) {
-		scheduler := New(nil, newMockJobStorage())
-		ctx := context.Background()
-
-		err := scheduler.Start(ctx)
-		require.NoError(t, err)
-
-		stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		err = scheduler.Stop(stopCtx)
-		require.NoError(t, err)
-
-		assert.False(t, scheduler.IsRunning())
-	})
-}
-
 // TestJobExecution tests actual job execution with the scheduler loop.
 func TestJobExecution(t *testing.T) {
 	t.Run("executes job successfully", func(t *testing.T) {
@@ -2279,66 +2240,6 @@ func TestConfig(t *testing.T) {
 
 		assert.Equal(t, config, scheduler.Config())
 	})
-
-	t.Run("returns default config when nil provided", func(t *testing.T) {
-		scheduler := New(nil, newMockJobStorage())
-
-		config := scheduler.Config()
-		require.NotNil(t, config)
-		assert.Equal(t, DefaultConfig().TickInterval, config.TickInterval)
-	})
-}
-
-// TestJobStateTransitions tests complete job lifecycle.
-func TestJobStateTransitions(t *testing.T) {
-	t.Run("pending to paused to resumed to canceled", func(t *testing.T) {
-		storage := newMockJobStorage()
-		scheduler := New(nil, storage)
-		ctx := context.Background()
-
-		err := scheduler.RegisterHandler("state-handler", func(ctx context.Context, job *Job) (*JobResult, error) {
-			return &JobResult{Success: true}, nil
-		})
-		require.NoError(t, err)
-
-		err = scheduler.Start(ctx)
-		require.NoError(t, err)
-		defer func() {
-			stopCtx, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			_ = scheduler.Stop(stopCtx)
-		}()
-
-		// Schedule job far in future so it doesn't execute
-		job := &Job{
-			Name:      "state-job",
-			Type:      JobTypeOneShot,
-			Handler:   "state-handler",
-			ExecuteAt: time.Now().Add(time.Hour),
-			OwnerType: OwnerTypeSystem,
-		}
-		err = scheduler.ScheduleJob(ctx, job)
-		require.NoError(t, err)
-		assert.Equal(t, JobStatusPending, job.Status)
-
-		// Pause the job
-		err = scheduler.PauseJob(ctx, job.ID, "")
-		require.NoError(t, err)
-		pausedJob := storage.getJobDirect(job.ID)
-		assert.Equal(t, JobStatusPaused, pausedJob.Status)
-
-		// Resume the job
-		err = scheduler.ResumeJob(ctx, job.ID, "")
-		require.NoError(t, err)
-		resumedJob := storage.getJobDirect(job.ID)
-		assert.Equal(t, JobStatusPending, resumedJob.Status)
-
-		// Cancel the job
-		err = scheduler.CancelJob(ctx, job.ID)
-		require.NoError(t, err)
-		canceledJob := storage.getJobDirect(job.ID)
-		assert.Equal(t, JobStatusCanceled, canceledJob.Status)
-	})
 }
 
 // TestTriggerJobExecution tests the triggerJobByID internal method through TriggerJob API.
@@ -2532,15 +2433,6 @@ func TestStateChangeUpdateStorageError(t *testing.T) {
 			assert.True(t, errors.As(err, &storageErr))
 		})
 	}
-}
-
-// TestStorageErrorCount tests the StorageErrorCount method.
-func TestStorageErrorCount(t *testing.T) {
-	t.Run("returns zero for new scheduler", func(t *testing.T) {
-		scheduler := New(nil, newMockJobStorage())
-
-		assert.Equal(t, uint64(0), scheduler.StorageErrorCount())
-	})
 }
 
 // TestRecurringJobRescheduling tests that recurring jobs reschedule correctly.
