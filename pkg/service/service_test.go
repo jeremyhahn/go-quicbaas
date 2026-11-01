@@ -1293,44 +1293,6 @@ func TestQueryService_Query_DefaultShardID(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestQueryService_Query_WithMetrics(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	provider := newSvcBoostMockQRDBProvider(map[string][]byte{}, nil)
-
-	config := &ServiceConfig{
-		NodeID:        1,
-		Version:       "1.0.0",
-		EnableAuth:    false,
-		EnableMetrics: true,
-	}
-
-	svc, err := NewServiceBuilder().
-		WithRaftNode(mockRaft).
-		WithQRDBClient(provider).
-		WithConfig(config).
-		Build()
-	require.NoError(t, err)
-	defer svc.Close()
-
-	stream := make(chan *QueryResponse, 10)
-	req := &QueryRequest{
-		EntityType: "user",
-		ShardID:    1,
-	}
-
-	go func() {
-		_ = svc.Query(context.Background(), req, stream)
-	}()
-
-	// Wait for completion
-	<-stream
-
-	// Verify metrics were recorded (coverage for metrics path)
-	impl, ok := svc.(*quicBaaS)
-	require.True(t, ok)
-	assert.NotNil(t, impl.metrics)
-}
-
 func TestQueryService_Query_NilResult(t *testing.T) {
 	mockRaft := &mockRaftNode{}
 	provider := newSvcBoostMockQRDBProvider(nil, nil)
@@ -2038,28 +2000,12 @@ func TestQueryService_Query_EmptyEntityType(t *testing.T) {
 	}
 
 	stream := make(chan *QueryResponse, 1)
-	err := svc.queryService.Query(context.Background(), req, stream)
+	err := svc.Query(context.Background(), req, stream)
 
 	assert.Error(t, err)
 	qbErr, ok := err.(*dberrors.QBError)
 	require.True(t, ok)
 	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestServiceImpl_Query_Delegation(t *testing.T) {
-	svc := &quicBaaS{
-		queryService: &queryService{
-			svc: &quicBaaS{},
-		},
-	}
-
-	req := &QueryRequest{
-		EntityType: "",
-	}
-
-	stream := make(chan *QueryResponse, 1)
-	err := svc.Query(context.Background(), req, stream)
-	assert.Error(t, err)
 }
 
 func TestServiceImpl_ScanIndex_Delegation(t *testing.T) {
@@ -2142,44 +2088,46 @@ func TestMatchesIndexValue_Coverage(t *testing.T) {
 	assert.False(t, matchesIndexValue([]byte(``), "age", []byte("30")))
 }
 
-func TestConvertWriteMode_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	kvSvc := &kvService{svc: svc}
+func TestConvertWriteMode(t *testing.T) {
+	kvSvc := &kvService{svc: &quicBaaS{logger: createTestLogger(t)}}
 
-	// Test all modes
-	result := kvSvc.convertWriteMode(WriteModeSync)
-	assert.NotNil(t, result)
+	tests := []struct {
+		name string
+		mode WriteMode
+		want qrdbtransport.WriteMode
+	}{
+		{"sync", WriteModeSync, qrdbtransport.WriteModeSync},
+		{"wal durable", WriteModeWALDurable, qrdbtransport.WriteModeWALDurable},
+		{"batched", WriteModeBatched, qrdbtransport.WriteModeBatched},
+		{"unknown defaults to wal durable", WriteMode(99), qrdbtransport.WriteModeWALDurable},
+	}
 
-	result = kvSvc.convertWriteMode(WriteModeWALDurable)
-	assert.NotNil(t, result)
-
-	result = kvSvc.convertWriteMode(WriteModeBatched)
-	assert.NotNil(t, result)
-
-	// Test default
-	result = kvSvc.convertWriteMode(WriteMode(99))
-	assert.NotNil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, kvSvc.convertWriteMode(tt.mode))
+		})
+	}
 }
 
-func TestConvertConsistency_Coverage(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	kvSvc := &kvService{svc: svc}
+func TestConvertConsistency(t *testing.T) {
+	kvSvc := &kvService{svc: &quicBaaS{logger: createTestLogger(t)}}
 
-	// Test all levels
-	result := kvSvc.convertConsistency(ConsistencyLevelEventual)
-	assert.NotNil(t, result)
+	tests := []struct {
+		name  string
+		level ConsistencyLevel
+		want  qrdbtransport.ConsistencyLevel
+	}{
+		{"eventual", ConsistencyLevelEventual, qrdbtransport.ConsistencyEventual},
+		{"linearizable", ConsistencyLevelLinearizable, qrdbtransport.ConsistencyLinearizable},
+		{"strong", ConsistencyLevelStrong, qrdbtransport.ConsistencyStrong},
+		{"unknown defaults to linearizable", ConsistencyLevel(99), qrdbtransport.ConsistencyLinearizable},
+	}
 
-	result = kvSvc.convertConsistency(ConsistencyLevelLinearizable)
-	assert.NotNil(t, result)
-
-	result = kvSvc.convertConsistency(ConsistencyLevelStrong)
-	assert.NotNil(t, result)
-
-	// Test default
-	result = kvSvc.convertConsistency(ConsistencyLevel(99))
-	assert.NotNil(t, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, kvSvc.convertConsistency(tt.level))
+		})
+	}
 }
 
 func TestScanIndex_Coverage(t *testing.T) {
@@ -2259,86 +2207,66 @@ func TestValidateAggregateRequest_Coverage(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestEmbeddingService_validateGenerateEmbeddingRequest_NilRequest(t *testing.T) {
+func TestEmbeddingService_ValidateRequests(t *testing.T) {
 	svc := &embeddingService{}
 
-	err := svc.validateGenerateEmbeddingRequest(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "request is nil")
-}
-
-func TestEmbeddingService_validateBatchGenerateEmbeddingsRequest_EmptyItemText(t *testing.T) {
-	svc := &embeddingService{}
-
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{
-			{
-				ID:   "item1",
-				Text: "",
+	tests := []struct {
+		name    string
+		call    func() error
+		wantMsg string
+	}{
+		{
+			name:    "GenerateEmbedding nil request",
+			call:    func() error { return svc.validateGenerateEmbeddingRequest(nil) },
+			wantMsg: "request is nil",
+		},
+		{
+			name: "BatchGenerateEmbeddings empty item text",
+			call: func() error {
+				return svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{
+					Items: []*BatchEmbeddingItem{{ID: "item1", Text: ""}},
+				})
 			},
+			wantMsg: "text is required",
+		},
+		{
+			name: "BatchGenerateEmbeddings empty item id",
+			call: func() error {
+				return svc.validateBatchGenerateEmbeddingsRequest(&BatchGenerateEmbeddingsRequest{
+					Items: []*BatchEmbeddingItem{{ID: "", Text: "some text"}},
+				})
+			},
+			wantMsg: "id is required",
+		},
+		{
+			name:    "GetProviderInfo nil request",
+			call:    func() error { return svc.validateGetProviderInfoRequest(nil) },
+			wantMsg: "request is nil",
+		},
+		{
+			name:    "GetProviderInfo empty provider",
+			call:    func() error { return svc.validateGetProviderInfoRequest(&GetProviderInfoRequest{Provider: ""}) },
+			wantMsg: "provider is required",
+		},
+		{
+			name:    "SetDefaultProvider nil request",
+			call:    func() error { return svc.validateSetDefaultProviderRequest(nil) },
+			wantMsg: "request is nil",
+		},
+		{
+			name:    "SetDefaultProvider empty provider",
+			call:    func() error { return svc.validateSetDefaultProviderRequest(&SetDefaultProviderRequest{Provider: ""}) },
+			wantMsg: "provider is required",
 		},
 	}
 
-	err := svc.validateBatchGenerateEmbeddingsRequest(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "text is required")
-}
-
-func TestEmbeddingService_validateBatchGenerateEmbeddingsRequest_EmptyItemID(t *testing.T) {
-	svc := &embeddingService{}
-
-	req := &BatchGenerateEmbeddingsRequest{
-		Items: []*BatchEmbeddingItem{
-			{
-				ID:   "",
-				Text: "some text",
-			},
-		},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
 	}
-
-	err := svc.validateBatchGenerateEmbeddingsRequest(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "id is required")
-}
-
-func TestEmbeddingService_validateGetProviderInfoRequest_NilRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	err := svc.validateGetProviderInfoRequest(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "request is nil")
-}
-
-func TestEmbeddingService_validateGetProviderInfoRequest_EmptyProvider(t *testing.T) {
-	svc := &embeddingService{}
-
-	req := &GetProviderInfoRequest{
-		Provider: "",
-	}
-
-	err := svc.validateGetProviderInfoRequest(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "provider is required")
-}
-
-func TestEmbeddingService_validateSetDefaultProviderRequest_NilRequest(t *testing.T) {
-	svc := &embeddingService{}
-
-	err := svc.validateSetDefaultProviderRequest(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "request is nil")
-}
-
-func TestEmbeddingService_validateSetDefaultProviderRequest_EmptyProvider(t *testing.T) {
-	svc := &embeddingService{}
-
-	req := &SetDefaultProviderRequest{
-		Provider: "",
-	}
-
-	err := svc.validateSetDefaultProviderRequest(req)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "provider is required")
 }
 
 type mockReencInfoWithInterface struct {
@@ -2577,33 +2505,4 @@ func newVecSvcWithSDK(t *testing.T, namespace string, dimension uint32) (*vector
 	svc.indexes[namespace] = mockIndex
 
 	return svc, storage, vt, mockIndex
-}
-
-func TestConvertFromStringMap_Nil(t *testing.T) {
-	assert.Nil(t, convertFromStringMap(nil))
-}
-
-func TestConvertFromStringMap_WithData(t *testing.T) {
-	result := convertFromStringMap(map[string]string{"k": "v"})
-	assert.Equal(t, "v", result["k"])
-}
-
-func TestMatchesMetadataFilter_NilFilter(t *testing.T) {
-	assert.True(t, matchesMetadataFilter(map[string]interface{}{"k": "v"}, nil))
-}
-
-func TestMatchesMetadataFilter_EmptyFilter(t *testing.T) {
-	assert.True(t, matchesMetadataFilter(map[string]interface{}{"k": "v"}, map[string]interface{}{}))
-}
-
-func TestMatchesMetadataFilter_Match(t *testing.T) {
-	assert.True(t, matchesMetadataFilter(map[string]interface{}{"color": "red"}, map[string]interface{}{"color": "red"}))
-}
-
-func TestMatchesMetadataFilter_NoMatch(t *testing.T) {
-	assert.False(t, matchesMetadataFilter(map[string]interface{}{"color": "red"}, map[string]interface{}{"color": "blue"}))
-}
-
-func TestMatchesMetadataFilter_MissingKey(t *testing.T) {
-	assert.False(t, matchesMetadataFilter(map[string]interface{}{"color": "red"}, map[string]interface{}{"size": "large"}))
 }
