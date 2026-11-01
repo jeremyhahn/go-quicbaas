@@ -1200,7 +1200,6 @@ func TestPolicyCache_EnforceMaxSize_MultipleCycles(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		policy := &Policy{Metadata: PolicyMetadata{Name: stringFromInt(i)}}
 		cache.Set("tenant-1", policy)
-		time.Sleep(10 * time.Millisecond) // Different timestamps for eviction order
 	}
 
 	// Enforce max size
@@ -1383,72 +1382,64 @@ func TestMemoryDeletionStorage_ListDeletionRequests_NoMatchingTenant(t *testing.
 // BatchProcessor - ImportGroups and ImportPolicies path coverage
 // =============================================================================
 
-func TestBatchProcessor_ImportPolicies_NoPolicyObject(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// Import with Name but no Policy object - should construct policy from fields
-	items := []PolicyImportItem{
+// TestBatchProcessor_ProcessPolicies runs the import worker synchronously, so
+// the progress counters are read after it returns rather than after a sleep.
+func TestBatchProcessor_ProcessPolicies(t *testing.T) {
+	const tenantID = "test-tenant"
+	rule := Rule{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}
+	tests := []struct {
+		name          string
+		items         []PolicyImportItem
+		opts          BatchOptions
+		wantSucceeded int
+		wantFailed    int
+	}{
 		{
-			Name:        "inline-policy",
-			Description: "Policy from fields",
-			Subjects:    SubjectSelector{Users: []string{"user-1"}},
-			Rules:       []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+			name: "policy built from item fields when no Policy object",
+			items: []PolicyImportItem{{
+				Name:        "inline-policy",
+				Description: "Policy from fields",
+				Subjects:    SubjectSelector{Users: []string{"user-1"}},
+				Rules:       []Rule{rule},
+			}},
+			wantSucceeded: 1,
 		},
-	}
-
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
-
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	if saved.Progress.Succeeded != 1 {
-		t.Errorf("expected 1 successful import, got %d (failed: %d)", saved.Progress.Succeeded, saved.Progress.Failed)
-	}
-}
-
-func TestBatchProcessor_ImportPolicies_ContinueOnErrorBreak(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	// First item invalid, second valid - with ContinueOnError=false should break
-	items := []PolicyImportItem{
-		{Name: "", Description: "Invalid policy - no name"},
 		{
-			Name: "valid-policy",
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata:   PolicyMetadata{Name: "valid-policy", Tenant: tenantID},
-				Spec:       PolicySpec{Rules: []Rule{{Name: "r1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
+			name: "first failure stops the run without ContinueOnError",
+			items: []PolicyImportItem{
+				{Name: "", Description: "Invalid policy - no name"},
+				{Name: "valid-policy", Policy: &Policy{
+					APIVersion: "v1",
+					Kind:       "Policy",
+					Metadata:   PolicyMetadata{Name: "valid-policy", Tenant: tenantID},
+					Spec:       PolicySpec{Rules: []Rule{rule}},
+				}},
 			},
+			opts:       BatchOptions{ContinueOnError: false},
+			wantFailed: 1,
 		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := newMockBatchStorage()
+			bp := NewIAMBatchProcessor(storage, newMockTenantManager())
+			op := bp.createOperation(tenantID, BatchOperationTypePolicies, len(tt.items), tt.opts)
+			if err := storage.SaveOperation(ctx, op); err != nil {
+				t.Fatalf("SaveOperation failed: %v", err)
+			}
 
-	op, err := bp.ImportPolicies(ctx, tenantID, items, BatchOptions{
-		ContinueOnError: false,
-	})
-	if err != nil {
-		t.Fatalf("ImportPolicies failed: %v", err)
-	}
+			bp.processPolicies(ctx, op, tt.items, tt.opts)
 
-	time.Sleep(300 * time.Millisecond)
-
-	saved, _ := storage.GetOperation(ctx, op.ID)
-	// Should stop after first error
-	if saved.Progress.Failed != 1 {
-		t.Errorf("expected 1 failed (break on error), got %d", saved.Progress.Failed)
+			saved, err := storage.GetOperation(ctx, op.ID)
+			if err != nil {
+				t.Fatalf("GetOperation failed: %v", err)
+			}
+			if saved.Progress.Succeeded != tt.wantSucceeded || saved.Progress.Failed != tt.wantFailed {
+				t.Errorf("progress = %d succeeded, %d failed; want %d, %d",
+					saved.Progress.Succeeded, saved.Progress.Failed, tt.wantSucceeded, tt.wantFailed)
+			}
+		})
 	}
 }
 
