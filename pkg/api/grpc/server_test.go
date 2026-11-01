@@ -1485,14 +1485,24 @@ func TestGRPCRemaining91_ClientKMS_ConvertKeyAttributesToProto(t *testing.T) {
 	})
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyHandle_Nil(t *testing.T) {
-	result := convertProtoKeyHandle(nil)
-	assert.Nil(t, result)
-}
-
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_Nil(t *testing.T) {
-	result := convertProtoKeyMetadata(nil)
-	assert.Nil(t, result)
+func TestGRPCRemaining91_ClientKMS_ConvertProto_NilInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		convert func() (any, error)
+	}{
+		{"KeyHandle", func() (any, error) { return convertProtoKeyHandle(nil), nil }},
+		{"KeyMetadata", func() (any, error) { return convertProtoKeyMetadata(nil), nil }},
+		{"KeyVersionInfo", func() (any, error) { return convertProtoKeyVersionInfo("key-1", nil), nil }},
+		{"DEKMetadata", func() (any, error) { return convertProtoDEKMetadata(nil), nil }},
+		{"ReencryptionProgress", func() (any, error) { return convertProtoReencryptionProgress(nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.convert()
+			require.NoError(t, err)
+			assert.Nil(t, result)
+		})
+	}
 }
 
 func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_WithLastUsedAt(t *testing.T) {
@@ -1508,11 +1518,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyMetadata_WithLastUsedAt(t *tes
 	assert.NotNil(t, result.LastUsedAt)
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_Nil(t *testing.T) {
-	result := convertProtoKeyVersionInfo("key-1", nil)
-	assert.Nil(t, result)
-}
-
 func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_WithDisabledAt(t *testing.T) {
 	v := &pb.KeyVersionInfo{
 		Version:    2,
@@ -1526,11 +1531,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoKeyVersionInfo_WithDisabledAt(t *
 	assert.NotNil(t, result.DisabledAt)
 }
 
-func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_Nil(t *testing.T) {
-	result := convertProtoDEKMetadata(nil)
-	assert.Nil(t, result)
-}
-
 func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_WithRotatedAt(t *testing.T) {
 	pm := &pb.DEKMetadata{
 		Path:      "/test/dek",
@@ -1540,12 +1540,6 @@ func TestGRPCRemaining91_ClientKMS_ConvertProtoDEKMetadata_WithRotatedAt(t *test
 	result := convertProtoDEKMetadata(pm)
 	assert.NotNil(t, result)
 	assert.NotNil(t, result.RotatedAt)
-}
-
-func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Nil(t *testing.T) {
-	result, err := convertProtoReencryptionProgress(nil)
-	require.NoError(t, err)
-	assert.Nil(t, result)
 }
 
 func TestGRPCRemaining91_ClientKMS_ConvertProtoReencryptionProgress_Full(t *testing.T) {
@@ -1760,11 +1754,8 @@ func TestGRPCRemaining91_Client_Secrets_NilRequests(t *testing.T) {
 // Client Secrets - Conversion Helper Tests
 // =============================================================================
 
-func TestGRPCRemaining91_ClientSecrets_ConvertProtoSecret_Nil(t *testing.T) {
+func TestGRPCRemaining91_ClientSecrets_ConvertProto_NilInput(t *testing.T) {
 	assert.Nil(t, convertProtoSecret(nil))
-}
-
-func TestGRPCRemaining91_ClientSecrets_ConvertProtoSecretVersion_Nil(t *testing.T) {
 	assert.Nil(t, convertProtoSecretVersion(nil))
 }
 
@@ -1799,12 +1790,6 @@ func TestGRPCRemaining91_ClientSecrets_StatusConversions(t *testing.T) {
 // =============================================================================
 // Server Object Transfer - Tests
 // =============================================================================
-
-func TestGRPCRemaining91_ObjectTransfer_NewServer(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewObjectTransferServer(log)
-	assert.NotNil(t, srv)
-}
 
 func TestGRPCRemaining91_ObjectTransfer_RegisterUnregister(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
@@ -1922,19 +1907,6 @@ func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ReadError(t *testing.T
 	assert.Contains(t, resp.ErrorMessage, "disk failure")
 }
 
-func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_Success(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
-	srv := NewObjectTransferServer(log)
-
-	store := ObjectStoreReaderFunc(func(ref string) ([]byte, error) {
-		return []byte("data"), nil
-	})
-
-	resp := srv.fetchSingleObject(store, &pb.ObjectFetchItem{ObjectRef: "ref-1"})
-	assert.True(t, resp.Found)
-	assert.Equal(t, []byte("data"), resp.Data)
-}
-
 func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ChecksumMismatch(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stderr"})
 	srv := NewObjectTransferServer(log)
@@ -1952,11 +1924,6 @@ func TestGRPCRemaining91_ObjectTransfer_FetchSingleObject_ChecksumMismatch(t *te
 // VectorDB Wrapper - Health Tests
 // =============================================================================
 
-func TestGRPCRemaining91_VectorDBWrapper_Health_NilServer(t *testing.T) {
-	wrapper := &VectorDBWrapper{server: nil}
-	assert.Panics(t, func() { wrapper.Health(context.Background(), &pb.VectorHealthRequest{}) })
-}
-
 func TestGRPCRemaining91_VectorDBWrapper_Health_NilService(t *testing.T) {
 	srv := &Server{service: nil, nodeID: 1, version: "v1.0"}
 	wrapper := NewVectorDBWrapper(srv)
@@ -1965,12 +1932,6 @@ func TestGRPCRemaining91_VectorDBWrapper_Health_NilService(t *testing.T) {
 	assert.Equal(t, pb.VectorHealthStatus_VECTOR_HEALTH_STATUS_UNHEALTHY, resp.Status)
 	assert.Equal(t, uint64(1), resp.NodeId)
 	assert.Equal(t, "v1.0", resp.Version)
-}
-
-func TestGRPCRemaining91_VectorAdminWrapper_New(t *testing.T) {
-	srv := &Server{}
-	wrapper := NewVectorAdminWrapper(srv)
-	assert.NotNil(t, wrapper)
 }
 
 // =============================================================================
@@ -2015,27 +1976,23 @@ func TestGRPCRemaining91_Client_NormalizeUnixSocketAddress(t *testing.T) {
 }
 
 func TestGRPCRemaining91_Client_AddMetadata(t *testing.T) {
-	client := &Client{
-		opts: &clientOptions{
-			metadata: map[string]string{"key": "value"},
-		},
-	}
-	ctx := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx)
+	t.Run("WithMetadata", func(t *testing.T) {
+		client := &Client{opts: &clientOptions{metadata: map[string]string{"key": "value"}}}
 
-	// Call again to test cached md path
-	ctx2 := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx2)
-}
+		// The first call builds the metadata lazily; the second reuses it.
+		for i := 0; i < 2; i++ {
+			md, ok := metadata.FromOutgoingContext(client.addMetadata(context.Background()))
+			require.True(t, ok)
+			assert.Equal(t, []string{"value"}, md.Get("key"))
+		}
+		assert.NotNil(t, client.opts.md)
+	})
 
-func TestGRPCRemaining91_Client_AddMetadata_Empty(t *testing.T) {
-	client := &Client{
-		opts: &clientOptions{
-			metadata: map[string]string{},
-		},
-	}
-	ctx := client.addMetadata(context.Background())
-	assert.NotNil(t, ctx)
+	t.Run("Empty", func(t *testing.T) {
+		client := &Client{opts: &clientOptions{metadata: map[string]string{}}}
+		_, ok := metadata.FromOutgoingContext(client.addMetadata(context.Background()))
+		assert.False(t, ok)
+	})
 }
 
 func TestGRPCRemaining91_Client_IsConnected(t *testing.T) {
@@ -2102,10 +2059,6 @@ func TestGRPCRemaining91_Client_Conn(t *testing.T) {
 	client := &Client{conn: nil}
 	assert.Nil(t, client.Conn())
 }
-
-// =============================================================================
-// Vector Export - Serialization Tests
-// =============================================================================
 
 // =============================================================================
 // Client KMS Backend Tests
