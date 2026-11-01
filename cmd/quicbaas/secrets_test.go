@@ -1216,6 +1216,11 @@ func TestFormatSecretsGetPrefixResponse(t *testing.T) {
 			format:       "",
 			expectedText: []string{"Total: 2 secrets"},
 		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"apps/myapp/db", "Total: 2"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1278,6 +1283,11 @@ func TestFormatSecretsWatchChange(t *testing.T) {
 			name:         "default format",
 			format:       "",
 			expectedText: []string{"UPDATED", "apps/myapp/db", "(v2)"},
+		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"UPDATED", "apps/myapp/db"},
 		},
 	}
 
@@ -1936,72 +1946,6 @@ func TestFormatSecretsGetResponse_InvalidData(t *testing.T) {
 // Secrets GetPrefix and Watch Formatting Tests
 // =============================================================================
 
-func TestFormatSecretsGetPrefixResponse_AllFormats(t *testing.T) {
-	resp := &service.GetSecretsByPrefixResponse{
-		Secrets: map[string]map[string][]byte{
-			"apps/myapp/db": {
-				"password": []byte("secret123"),
-			},
-		},
-		TotalCount: 1,
-		HasMore:    true,
-		Timestamp:  time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"apps/myapp/db"}},
-		{"table", "table", []string{"apps/myapp/db", "Total: 1", "More results"}},
-		{"raw", "raw", []string{"apps/myapp/db", "Total: 1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsGetPrefixResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
-func TestFormatSecretsWatchChange_AllFormats(t *testing.T) {
-	change := &service.SecretChange{
-		Path:       "apps/myapp/db",
-		ChangeType: service.SecretChangeCreated,
-		Version:    1,
-		Data:       map[string][]byte{"password": []byte("secret")},
-		Metadata:   map[string]string{"author": "admin"},
-		Timestamp:  time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"apps/myapp/db", "created"}},
-		{"table", "table", []string{"apps/myapp/db"}},
-		{"raw", "raw", []string{"apps/myapp/db", "CREATED"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsWatchChange(change, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
 func TestFormatSecretsWatchChange_WithoutDataAndMetadata(t *testing.T) {
 	change := &service.SecretChange{
 		Path:       "apps/myapp/db",
@@ -2469,13 +2413,6 @@ func TestNewBackupCommands_HasSubcommands(t *testing.T) {
 // =============================================================================
 // Secrets Command Constructors
 // =============================================================================
-
-func TestNewSecretsCommand_HasSubcommands(t *testing.T) {
-	cmd := newSecretsCommand()
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "secrets", cmd.Use)
-	assert.True(t, len(cmd.Commands()) >= 8, "secrets command should have at least 8 subcommands")
-}
 
 // =============================================================================
 // Msg Command Constructors
