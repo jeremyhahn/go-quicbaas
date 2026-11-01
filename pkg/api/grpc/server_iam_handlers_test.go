@@ -919,6 +919,114 @@ func TestIAMServer_MissingRequiredField(t *testing.T) {
 			_, err := s.ReconcileRoles(ctx, &iampb.ReconcileRolesRequest{})
 			return err
 		}},
+		{"RegisterApp/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RegisterApp(ctx, &iampb.RegisterAppRequest{Name: "Test"})
+			return err
+		}},
+		{"RegisterApp/name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RegisterApp(ctx, &iampb.RegisterAppRequest{TenantId: "t1"})
+			return err
+		}},
+		{"GetApp/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetApp(ctx, &iampb.GetAppRequest{ClientId: "c1"})
+			return err
+		}},
+		{"GetApp/client_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetApp(ctx, &iampb.GetAppRequest{TenantId: "t1"})
+			return err
+		}},
+		{"UpdateApp/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateApp(ctx, &iampb.UpdateAppRequest{ClientId: "c1"})
+			return err
+		}},
+		{"UpdateApp/client_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdateApp(ctx, &iampb.UpdateAppRequest{TenantId: "t1"})
+			return err
+		}},
+		{"DeleteApp/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteApp(ctx, &iampb.DeleteAppRequest{ClientId: "c1"})
+			return err
+		}},
+		{"DeleteApp/client_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeleteApp(ctx, &iampb.DeleteAppRequest{TenantId: "t1"})
+			return err
+		}},
+		{"ListApps/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListApps(ctx, &iampb.ListAppsRequest{})
+			return err
+		}},
+		{"RotateAppSecret/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RotateAppSecret(ctx, &iampb.RotateAppSecretRequest{ClientId: "c1"})
+			return err
+		}},
+		{"RotateAppSecret/client_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.RotateAppSecret(ctx, &iampb.RotateAppSecretRequest{TenantId: "t1"})
+			return err
+		}},
+		{"CreatePolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreatePolicy(ctx, &iampb.CreatePolicyRequest{Name: "test", SpecYaml: []byte("rules: []")})
+			return err
+		}},
+		{"CreatePolicy/name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreatePolicy(ctx, &iampb.CreatePolicyRequest{TenantId: "t1", SpecYaml: []byte("rules: []")})
+			return err
+		}},
+		{"CreatePolicy/spec", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.CreatePolicy(ctx, &iampb.CreatePolicyRequest{TenantId: "t1", Name: "test"})
+			return err
+		}},
+		{"GetPolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetPolicy(ctx, &iampb.GetPolicyRequest{PolicyName: "test"})
+			return err
+		}},
+		{"GetPolicy/policy_name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.GetPolicy(ctx, &iampb.GetPolicyRequest{TenantId: "t1"})
+			return err
+		}},
+		{"UpdatePolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdatePolicy(ctx, &iampb.UpdatePolicyRequest{PolicyName: "test"})
+			return err
+		}},
+		{"UpdatePolicy/policy_name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.UpdatePolicy(ctx, &iampb.UpdatePolicyRequest{TenantId: "t1"})
+			return err
+		}},
+		{"DeletePolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeletePolicy(ctx, &iampb.DeletePolicyRequest{PolicyName: "test"})
+			return err
+		}},
+		{"DeletePolicy/policy_name", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.DeletePolicy(ctx, &iampb.DeletePolicyRequest{TenantId: "t1"})
+			return err
+		}},
+		{"ListPolicies/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ListPolicies(ctx, &iampb.ListPoliciesRequest{})
+			return err
+		}},
+		{"ValidatePolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ValidatePolicy(ctx, &iampb.ValidatePolicyRequest{SpecYaml: []byte("x")})
+			return err
+		}},
+		{"ValidatePolicy/spec", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.ValidatePolicy(ctx, &iampb.ValidatePolicyRequest{TenantId: "t1"})
+			return err
+		}},
+		{"TestPolicy/tenant_id", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.TestPolicy(ctx, &iampb.TestPolicyRequest{Subject: &iampb.Subject{}, Action: "read", Resource: "x"})
+			return err
+		}},
+		{"TestPolicy/subject", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Action: "read", Resource: "x"})
+			return err
+		}},
+		{"TestPolicy/action", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Subject: &iampb.Subject{}, Resource: "x"})
+			return err
+		}},
+		{"TestPolicy/resource", func(ctx context.Context, s *IAMServer) error {
+			_, err := s.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Subject: &iampb.Subject{}, Action: "read"})
+			return err
+		}},
 	}
 
 	for _, tt := range tests {
@@ -952,16 +1060,6 @@ func TestIAMServer_RegisterApp_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_RegisterApp_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.RegisterApp(callerContext("t1"), &iampb.RegisterAppRequest{Name: "Test"})
-	require.Error(t, err)
-
-	_, err = srv.RegisterApp(callerContext("t1"), &iampb.RegisterAppRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetApp_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -974,16 +1072,6 @@ func TestIAMServer_GetApp_Success(t *testing.T) {
 	assert.Equal(t, "c1", resp.ClientId)
 	assert.Empty(t, resp.ClientSecret, "client secret should be redacted in GET")
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetApp_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetApp(callerContext("t1"), &iampb.GetAppRequest{ClientId: "c1"})
-	require.Error(t, err)
-
-	_, err = srv.GetApp(callerContext("t1"), &iampb.GetAppRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_UpdateApp_Success(t *testing.T) {
@@ -1001,16 +1089,6 @@ func TestIAMServer_UpdateApp_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdateApp_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdateApp(callerContext("t1"), &iampb.UpdateAppRequest{ClientId: "c1"})
-	require.Error(t, err)
-
-	_, err = srv.UpdateApp(callerContext("t1"), &iampb.UpdateAppRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_DeleteApp_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1021,16 +1099,6 @@ func TestIAMServer_DeleteApp_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeleteApp_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeleteApp(callerContext("t1"), &iampb.DeleteAppRequest{ClientId: "c1"})
-	require.Error(t, err)
-
-	_, err = srv.DeleteApp(callerContext("t1"), &iampb.DeleteAppRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ListApps_Success(t *testing.T) {
@@ -1047,13 +1115,6 @@ func TestIAMServer_ListApps_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_ListApps_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListApps(callerContext("t1"), &iampb.ListAppsRequest{})
-	require.Error(t, err)
-}
-
 func TestIAMServer_RotateAppSecret_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1065,16 +1126,6 @@ func TestIAMServer_RotateAppSecret_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "new-secret", resp.ClientSecret, "secret should be returned after rotation")
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_RotateAppSecret_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.RotateAppSecret(callerContext("t1"), &iampb.RotateAppSecretRequest{ClientId: "c1"})
-	require.Error(t, err)
-
-	_, err = srv.RotateAppSecret(callerContext("t1"), &iampb.RotateAppSecretRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -1143,20 +1194,6 @@ func TestIAMServer_CreatePolicy_SpecOnly(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_CreatePolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.CreatePolicy(ctx, &iampb.CreatePolicyRequest{Name: "test", SpecYaml: []byte("rules: []")})
-	require.Error(t, err)
-
-	_, err = srv.CreatePolicy(ctx, &iampb.CreatePolicyRequest{TenantId: "t1", SpecYaml: []byte("rules: []")})
-	require.Error(t, err)
-
-	_, err = srv.CreatePolicy(ctx, &iampb.CreatePolicyRequest{TenantId: "t1", Name: "test"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_GetPolicy_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1168,16 +1205,6 @@ func TestIAMServer_GetPolicy_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-policy", resp.Name)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_GetPolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.GetPolicy(callerContext("t1"), &iampb.GetPolicyRequest{PolicyName: "test"})
-	require.Error(t, err)
-
-	_, err = srv.GetPolicy(callerContext("t1"), &iampb.GetPolicyRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_UpdatePolicy_Success(t *testing.T) {
@@ -1210,16 +1237,6 @@ func TestIAMServer_UpdatePolicy_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_UpdatePolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.UpdatePolicy(callerContext("t1"), &iampb.UpdatePolicyRequest{PolicyName: "test"})
-	require.Error(t, err)
-
-	_, err = srv.UpdatePolicy(callerContext("t1"), &iampb.UpdatePolicyRequest{TenantId: "t1"})
-	require.Error(t, err)
-}
-
 func TestIAMServer_DeletePolicy_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1230,16 +1247,6 @@ func TestIAMServer_DeletePolicy_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_DeletePolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.DeletePolicy(callerContext("t1"), &iampb.DeletePolicyRequest{PolicyName: "test"})
-	require.Error(t, err)
-
-	_, err = srv.DeletePolicy(callerContext("t1"), &iampb.DeletePolicyRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_ListPolicies_Success(t *testing.T) {
@@ -1255,13 +1262,6 @@ func TestIAMServer_ListPolicies_Success(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestIAMServer_ListPolicies_MissingTenantID(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ListPolicies(callerContext("t1"), &iampb.ListPoliciesRequest{})
-	require.Error(t, err)
-}
-
 func TestIAMServer_ValidatePolicy_Success(t *testing.T) {
 	srv, svc := newTestIAMServer(t)
 
@@ -1275,16 +1275,6 @@ func TestIAMServer_ValidatePolicy_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Valid)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_ValidatePolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-
-	_, err := srv.ValidatePolicy(callerContext("t1"), &iampb.ValidatePolicyRequest{SpecYaml: []byte("x")})
-	require.Error(t, err)
-
-	_, err = srv.ValidatePolicy(callerContext("t1"), &iampb.ValidatePolicyRequest{TenantId: "t1"})
-	require.Error(t, err)
 }
 
 func TestIAMServer_TestPolicy_Success(t *testing.T) {
@@ -1305,23 +1295,6 @@ func TestIAMServer_TestPolicy_Success(t *testing.T) {
 	assert.True(t, resp.Allowed)
 	assert.Equal(t, "p1", resp.MatchedPolicy)
 	svc.AssertExpectations(t)
-}
-
-func TestIAMServer_TestPolicy_MissingFields(t *testing.T) {
-	srv, _ := newTestIAMServer(t)
-	ctx := callerContext("t1")
-
-	_, err := srv.TestPolicy(ctx, &iampb.TestPolicyRequest{Subject: &iampb.Subject{}, Action: "read", Resource: "x"})
-	require.Error(t, err)
-
-	_, err = srv.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Action: "read", Resource: "x"})
-	require.Error(t, err)
-
-	_, err = srv.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Subject: &iampb.Subject{}, Resource: "x"})
-	require.Error(t, err)
-
-	_, err = srv.TestPolicy(ctx, &iampb.TestPolicyRequest{TenantId: "t1", Subject: &iampb.Subject{}, Action: "read"})
-	require.Error(t, err)
 }
 
 // =============================================================================
