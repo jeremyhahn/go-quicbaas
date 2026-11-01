@@ -288,6 +288,14 @@ func TestStorage_StoreFaults(t *testing.T) {
 			inject: func(kv *mockKVStore) { kv.putErr = storeErr },
 			call:   func(ctx context.Context, s *Storage) error { return s.SaveExecution(ctx, execution()) },
 		},
+		{
+			name:   "GetExecutions scan",
+			inject: func(kv *mockKVStore) { kv.scanErr = storeErr },
+			call: func(ctx context.Context, s *Storage) error {
+				_, err := s.GetExecutions(ctx, 1, "", 10)
+				return err
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -723,52 +731,40 @@ func TestSaveExecution_WithExistingID(t *testing.T) {
 }
 
 func TestGetExecutions_Success(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Save multiple executions for the same job
-	for i := 0; i < 5; i++ {
-		exec := &scheduler.JobExecution{
-			JobID:     1,
-			Status:    scheduler.JobStatusCompleted,
-			StartedAt: time.Now(),
-		}
-		storage.SaveExecution(ctx, exec)
+	tests := []struct {
+		name  string
+		saved int
+		limit int
+		want  int
+	}{
+		{name: "fewer than limit", saved: 5, limit: 10, want: 5},
+		{name: "limit caps result", saved: 10, limit: 5, want: 5},
 	}
 
-	executions, err := storage.GetExecutions(ctx, 1, "", 10)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	if len(executions) != 5 {
-		t.Errorf("expected 5 executions, got %d", len(executions))
-	}
-}
+			for i := 0; i < tt.saved; i++ {
+				exec := &scheduler.JobExecution{
+					JobID:     1,
+					Status:    scheduler.JobStatusCompleted,
+					StartedAt: time.Now(),
+				}
+				if err := storage.SaveExecution(ctx, exec); err != nil {
+					t.Fatalf("failed to save execution: %v", err)
+				}
+			}
 
-func TestGetExecutions_Limit(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Save multiple executions
-	for i := 0; i < 10; i++ {
-		exec := &scheduler.JobExecution{
-			JobID:     1,
-			Status:    scheduler.JobStatusCompleted,
-			StartedAt: time.Now(),
-		}
-		storage.SaveExecution(ctx, exec)
-	}
-
-	executions, err := storage.GetExecutions(ctx, 1, "", 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(executions) != 5 {
-		t.Errorf("expected 5 executions with limit, got %d", len(executions))
+			executions, err := storage.GetExecutions(ctx, 1, "", tt.limit)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(executions) != tt.want {
+				t.Errorf("expected %d executions, got %d", tt.want, len(executions))
+			}
+		})
 	}
 }
 
