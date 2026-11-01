@@ -254,35 +254,27 @@ func TestAgentService_DiscoverProjects(t *testing.T) {
 	}
 }
 
-func TestAgentService_DiscoverProjects_EmptyPath(t *testing.T) {
+func TestAgentService_DiscoverProjects_InvalidRootPath(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{
-		RootPath: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty root path")
+	tests := []struct {
+		name     string
+		rootPath string
+	}{
+		{name: "empty path", rootPath: ""},
+		{name: "nonexistent path", rootPath: "/nonexistent/path/that/does/not/exist"},
 	}
-	if !errors.Is(err, ErrRootPathRequired) {
-		t.Fatalf("expected ErrRootPathRequired, got %v", err)
-	}
-}
 
-func TestAgentService_DiscoverProjects_NonexistentPath(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{
-		RootPath: "/nonexistent/path/that/does/not/exist",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent path")
-	}
-	if !errors.Is(err, ErrRootPathRequired) {
-		t.Fatalf("expected ErrRootPathRequired, got %v", err)
+			_, err := svc.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{RootPath: tt.rootPath})
+			if !errors.Is(err, ErrRootPathRequired) {
+				t.Fatalf("expected ErrRootPathRequired, got %v", err)
+			}
+		})
 	}
 }
 
@@ -344,10 +336,18 @@ func TestAgentService_RegisterProject_InvalidInput(t *testing.T) {
 func TestAgentService_ListProjects(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+	svc := newAgentServiceForTest(t)
+
+	empty, err := svc.ListProjects(context.Background(), &ListProjectsRequest{})
+	if err != nil {
+		t.Fatalf("expected no error listing an empty store, got %v", err)
+	}
+	if len(empty.Projects) != 0 {
+		t.Fatalf("expected 0 projects before registration, got %d", len(empty.Projects))
+	}
 
 	// Register two projects
-	_, err := svc.RegisterProject(context.Background(), &RegisterProjectRequest{
+	_, err = svc.RegisterProject(context.Background(), &RegisterProjectRequest{
 		Name: "project-b",
 		Path: "/tmp/b",
 	})
@@ -374,20 +374,6 @@ func TestAgentService_ListProjects(t *testing.T) {
 	// Verify sorted by name
 	if resp.Projects[0].Name != "project-a" {
 		t.Errorf("expected first project to be 'project-a', got %q", resp.Projects[0].Name)
-	}
-}
-
-func TestAgentService_ListProjects_Empty(t *testing.T) {
-	t.Parallel()
-
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	resp, err := svc.ListProjects(context.Background(), &ListProjectsRequest{})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(resp.Projects) != 0 {
-		t.Fatalf("expected 0 projects, got %d", len(resp.Projects))
 	}
 }
 
@@ -491,36 +477,28 @@ func TestAgentService_PromptSession(t *testing.T) {
 	}
 }
 
-func TestAgentService_PromptSession_EmptyPrompt(t *testing.T) {
+func TestAgentService_PromptSession_InvalidInput(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.PromptSession(context.Background(), &PromptSessionRequest{
-		Backend: "mock",
-		Prompt:  "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty prompt")
+	tests := []struct {
+		name    string
+		req     *PromptSessionRequest
+		wantErr error
+	}{
+		{name: "empty prompt", req: &PromptSessionRequest{Backend: "mock", Prompt: ""}, wantErr: ErrPromptRequired},
+		{name: "no backend or session", req: &PromptSessionRequest{Prompt: "Hello"}, wantErr: ErrBackendRequired},
 	}
-	if !errors.Is(err, ErrPromptRequired) {
-		t.Fatalf("expected ErrPromptRequired, got %v", err)
-	}
-}
 
-func TestAgentService_PromptSession_NoBackendOrSession(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.PromptSession(context.Background(), &PromptSessionRequest{
-		Prompt: "Hello",
-	})
-	if err == nil {
-		t.Fatal("expected error when neither backend nor session_id provided")
-	}
-	if !errors.Is(err, ErrBackendRequired) {
-		t.Fatalf("expected ErrBackendRequired, got %v", err)
+			_, err := svc.PromptSession(context.Background(), tt.req)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -595,6 +573,16 @@ func TestAgentService_PromptSession_RecordsConversationEvents(t *testing.T) {
 	}
 	sessionID := spawnResp.SessionID
 
+	// Before any prompt the log holds only the spawn marker: no conversation
+	// events are recorded for an un-prompted session.
+	spawned, _, err := log.Range(ctx, tenant, sessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("Range after spawn: %v", err)
+	}
+	if len(spawned) != 1 || spawned[0].Kind != KindSystemMessage {
+		t.Fatalf("expected exactly 1 spawn-marker event before the prompt, got %+v", spawned)
+	}
+
 	resp, err := svc.PromptSession(ctx, &PromptSessionRequest{
 		SessionID: sessionID,
 		Prompt:    "the question",
@@ -641,46 +629,6 @@ func TestAgentService_PromptSession_RecordsConversationEvents(t *testing.T) {
 	}
 }
 
-// TestAgentService_PromptSession_NoConversationEventsWithoutPrompt is the
-// negative guard: spawning a session but never prompting it produces only the
-// system "session spawned" marker — no operator-prompt or assistant-reply
-// events. This proves the conversation events come strictly from PromptSession
-// and aren't fabricated on spawn.
-func TestAgentService_PromptSession_NoConversationEventsWithoutPrompt(t *testing.T) {
-	t.Parallel()
-
-	backends := map[string]AgentBackend{"mock": &mockAgentBackend{}}
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-
-	log := NewMemorySessionEventLog()
-	svc.(*agentServiceImpl).SetSessionEventLog(log)
-
-	const tenant = "tenant-empty"
-	ctx := ContextWithTenant(context.Background(), tenant)
-
-	spawnResp, err := svc.SpawnSession(ctx, &SpawnSessionRequest{Backend: "mock", Persistent: true})
-	if err != nil {
-		t.Fatalf("failed to spawn session: %v", err)
-	}
-
-	events, _, err := log.Range(ctx, tenant, spawnResp.SessionID, 0, 0)
-	if err != nil {
-		t.Fatalf("Range: %v", err)
-	}
-	// Only the spawn marker; no prompt/assistant conversation events.
-	if len(events) != 1 {
-		t.Fatalf("expected exactly 1 spawn-marker event, got %d: %+v", len(events), events)
-	}
-	if events[0].Kind != KindSystemMessage {
-		t.Fatalf("event[0] kind = %q, want %q", events[0].Kind, KindSystemMessage)
-	}
-	for _, ev := range events {
-		if ev.Kind == KindPromptSubmitted || ev.Kind == KindAssistantChunk {
-			t.Fatalf("un-prompted session must have no conversation events, found %q", ev.Kind)
-		}
-	}
-}
-
 // =============================================================================
 // SessionStatus Tests
 // =============================================================================
@@ -713,35 +661,28 @@ func TestAgentService_SessionStatus(t *testing.T) {
 	}
 }
 
-func TestAgentService_SessionStatus_EmptyID(t *testing.T) {
+func TestAgentService_SessionStatus_InvalidID(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.SessionStatus(context.Background(), &SessionStatusRequest{
-		SessionID: "",
-	})
-	if err == nil {
-		t.Fatal("expected error for empty session ID")
+	tests := []struct {
+		name      string
+		sessionID string
+		wantErr   error
+	}{
+		{name: "empty ID", sessionID: "", wantErr: ErrSessionIDRequired},
+		{name: "not found", sessionID: "nonexistent", wantErr: ErrSessionNotFound},
 	}
-	if !errors.Is(err, ErrSessionIDRequired) {
-		t.Fatalf("expected ErrSessionIDRequired, got %v", err)
-	}
-}
 
-func TestAgentService_SessionStatus_NotFound(t *testing.T) {
-	t.Parallel()
+	svc := newAgentServiceForTest(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
-
-	_, err := svc.SessionStatus(context.Background(), &SessionStatusRequest{
-		SessionID: "nonexistent",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent session")
-	}
-	if !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("expected ErrSessionNotFound, got %v", err)
+			_, err := svc.SessionStatus(context.Background(), &SessionStatusRequest{SessionID: tt.sessionID})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
@@ -812,52 +753,6 @@ func TestAgentService_ListSessions(t *testing.T) {
 	t.Parallel()
 
 	callCount := 0
-	backends := map[string]AgentBackend{
-		"mock": &mockAgentBackend{
-			spawnFn: func(ctx context.Context, req *SpawnRequest) (*Session, error) {
-				callCount++
-				return &Session{
-					ID:        "session-" + req.ProjectID,
-					ProjectID: req.ProjectID,
-					Backend:   "mock",
-					Status:    SessionStateActive,
-					CreatedAt: int64(callCount * 1000),
-				}, nil
-			},
-		},
-	}
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), backends, &agentTestLogger{})
-
-	// Spawn two sessions
-	_, err := svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend:   "mock",
-		ProjectID: "proj-1",
-	})
-	if err != nil {
-		t.Fatalf("failed to spawn session 1: %v", err)
-	}
-
-	_, err = svc.SpawnSession(context.Background(), &SpawnSessionRequest{
-		Backend:   "mock",
-		ProjectID: "proj-2",
-	})
-	if err != nil {
-		t.Fatalf("failed to spawn session 2: %v", err)
-	}
-
-	resp, err := svc.ListSessions(context.Background(), &ListSessionsRequest{})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if len(resp.Sessions) != 2 {
-		t.Fatalf("expected 2 sessions, got %d", len(resp.Sessions))
-	}
-}
-
-func TestAgentService_ListSessions_FilterByBackend(t *testing.T) {
-	t.Parallel()
-
-	callCount := 0
 	sessionIDGen := func(ctx context.Context, req *SpawnRequest) (*Session, error) {
 		callCount++
 		id := "session-" + req.ProjectID
@@ -890,6 +785,14 @@ func TestAgentService_ListSessions_FilterByBackend(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("failed to spawn on beta: %v", err)
+	}
+
+	all, err := svc.ListSessions(context.Background(), &ListSessionsRequest{})
+	if err != nil {
+		t.Fatalf("expected no error listing all sessions, got %v", err)
+	}
+	if len(all.Sessions) != 2 {
+		t.Fatalf("expected 2 sessions without a filter, got %d", len(all.Sessions))
 	}
 
 	resp, err := svc.ListSessions(context.Background(), &ListSessionsRequest{
@@ -1052,7 +955,7 @@ func TestAgentService_ListBackends(t *testing.T) {
 func TestAgentService_ListBackends_Empty(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := NewAgentService(NewInMemoryAgentStore(), nil, &agentTestLogger{})
+	svc := newAgentServiceForTest(t)
 
 	result, err := svc.ListBackends(context.Background())
 	if err != nil {
