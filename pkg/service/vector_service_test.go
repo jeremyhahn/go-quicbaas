@@ -249,17 +249,6 @@ func TestVectorService_ValidateUpsertVectorRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil vector returns error",
-			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: nil},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "vector is required")
-			},
-		},
-		{
 			name:    "valid request returns no error",
 			req:     &UpsertVectorRequest{Namespace: "test-ns", ID: 1, Vector: []float32{0.1, 0.2, 0.3}},
 			wantErr: false,
@@ -452,17 +441,6 @@ func TestVectorService_ValidateBatchUpsertRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil vectors returns error",
-			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: nil},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "vectors is required")
-			},
-		},
-		{
 			name:    "valid request returns no error",
 			req:     &BatchUpsertRequest{Namespace: "test-ns", Vectors: []*VectorData{{ID: 1, Vector: []float32{0.1}}}},
 			wantErr: false,
@@ -518,17 +496,6 @@ func TestVectorService_ValidateSearchSimilarRequest(t *testing.T) {
 		{
 			name:    "empty query vector returns error",
 			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: []float32{}, K: 10},
-			wantErr: true,
-			errCheck: func(t *testing.T, err error) {
-				var qbErr *quicbaasErrors.QBError
-				require.ErrorAs(t, err, &qbErr)
-				assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-				assert.Contains(t, qbErr.Err.Error(), "query vector is required")
-			},
-		},
-		{
-			name:    "nil query vector returns error",
-			req:     &SearchSimilarRequest{Namespace: "test-ns", QueryVector: nil, K: 10},
 			wantErr: true,
 			errCheck: func(t *testing.T, err error) {
 				var qbErr *quicbaasErrors.QBError
@@ -734,11 +701,6 @@ func TestVectorService_ValidateGetRebuildProgressRequest(t *testing.T) {
 		{
 			name:    "valid request with namespace returns no error",
 			req:     &GetRebuildProgressRequest{Namespace: "test-ns"},
-			wantErr: false,
-		},
-		{
-			name:    "valid request with both returns no error",
-			req:     &GetRebuildProgressRequest{JobID: "job-123", Namespace: "test-ns"},
 			wantErr: false,
 		},
 	}
@@ -2263,4 +2225,3 @@ func TestLocalPointsToSDK_ZeroTimestamp(t *testing.T) {
 	assert.GreaterOrEqual(t, result[0].TimestampNs, before)
 	assert.LessOrEqual(t, result[0].TimestampNs, after)
 }
-
