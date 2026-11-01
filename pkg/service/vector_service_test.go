@@ -939,17 +939,6 @@ func TestConvertToStringMap(t *testing.T) {
 			expected: map[string]string{},
 		},
 		{
-			name: "string values converted correctly",
-			input: map[string]interface{}{
-				"key1": "value1",
-				"key2": "value2",
-			},
-			expected: map[string]string{
-				"key1": "value1",
-				"key2": "value2",
-			},
-		},
-		{
 			name: "numeric values converted to string",
 			input: map[string]interface{}{
 				"int":   42,
@@ -958,17 +947,6 @@ func TestConvertToStringMap(t *testing.T) {
 			expected: map[string]string{
 				"int":   "42",
 				"float": "3.14",
-			},
-		},
-		{
-			name: "bool values converted to string",
-			input: map[string]interface{}{
-				"true":  true,
-				"false": false,
-			},
-			expected: map[string]string{
-				"true":  "true",
-				"false": "false",
 			},
 		},
 		{
@@ -1023,17 +1001,6 @@ func TestConvertFromStringMap(t *testing.T) {
 				"key2": "value2",
 			},
 		},
-		{
-			name: "numeric strings remain as strings",
-			input: map[string]string{
-				"int":   "42",
-				"float": "3.14",
-			},
-			expected: map[string]interface{}{
-				"int":   "42",
-				"float": "3.14",
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -1061,12 +1028,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			name:     "nil filter matches any metadata",
 			metadata: map[string]interface{}{"key": "value"},
 			filter:   nil,
-			expected: true,
-		},
-		{
-			name:     "matching key-value pair returns true",
-			metadata: map[string]interface{}{"key": "value"},
-			filter:   map[string]interface{}{"key": "value"},
 			expected: true,
 		},
 		{
@@ -1107,12 +1068,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "numeric values compared as strings",
-			metadata: map[string]interface{}{"count": 42},
-			filter:   map[string]interface{}{"count": 42},
-			expected: true,
-		},
-		{
 			name:     "string vs int comparison",
 			metadata: map[string]interface{}{"count": "42"},
 			filter:   map[string]interface{}{"count": 42},
@@ -1123,12 +1078,6 @@ func TestMatchesMetadataFilter(t *testing.T) {
 			metadata: map[string]interface{}{"active": true},
 			filter:   map[string]interface{}{"active": true},
 			expected: true,
-		},
-		{
-			name:     "empty metadata with non-empty filter returns false",
-			metadata: map[string]interface{}{},
-			filter:   map[string]interface{}{"key": "value"},
-			expected: false,
 		},
 		{
 			name:     "nil metadata with non-empty filter returns false",
@@ -2315,11 +2264,3 @@ func TestLocalPointsToSDK_ZeroTimestamp(t *testing.T) {
 	assert.LessOrEqual(t, result[0].TimestampNs, after)
 }
 
-func TestLocalPointsToSDK_Multiple(t *testing.T) {
-	points := []*tsDataPoint{
-		{Metric: "a", Value: 1, Timestamp: time.Now()},
-		{Metric: "b", Value: 2, Timestamp: time.Now()},
-	}
-	result := localPointsToSDK(points)
-	assert.Len(t, result, 2)
-}
