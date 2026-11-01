@@ -194,15 +194,6 @@ func seedTask(t *testing.T, store TaskStore, tenantID, taskID string) *Task {
 // Constructor Tests
 // =============================================================================
 
-func TestNewInMemoryTaskStore(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	if store == nil {
-		t.Fatal("expected non-nil store")
-	}
-}
-
 // TestNewTaskStore_NilKV proves a store built without a backing KV refuses work
 // instead of panicking: a nil KV is a wiring bug, not a storage mode.
 func TestNewTaskStore_NilKV(t *testing.T) {
@@ -1742,52 +1733,42 @@ func TestClaimTask_NotPending(t *testing.T) {
 func TestCompleteTask_Success(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "task-complete",
-		TenantID: "tenant-a",
-		Subject:  "Complete me",
-	}
+	for _, from := range []TaskStatus{TaskStatusClaimed, TaskStatusInProgress} {
+		t.Run(string(from), func(t *testing.T) {
+			t.Parallel()
 
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup create: %v", err)
-	}
+			ctx := context.Background()
+			store := NewInMemoryTaskStore()
+			seedTaskInStatus(t, store, "tenant-a", "task-complete", from)
 
-	// Claim first
-	err = store.ClaimTask(context.Background(), "tenant-a", "task-complete", "agent-1")
-	if err != nil {
-		t.Fatalf("setup claim: %v", err)
-	}
+			result := &TaskResult{
+				Output: "All done",
+				Files:  []string{"main.go", "main_test.go"},
+				Metadata: map[string]string{
+					"lines_changed": "42",
+				},
+			}
+			if err := store.CompleteTask(ctx, "tenant-a", "task-complete", result); err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
 
-	result := &TaskResult{
-		Output: "All done",
-		Files:  []string{"main.go", "main_test.go"},
-		Metadata: map[string]string{
-			"lines_changed": "42",
-		},
-	}
-
-	err = store.CompleteTask(context.Background(), "tenant-a", "task-complete", result)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	got, err := store.GetTask(context.Background(), "tenant-a", "task-complete")
-	if err != nil {
-		t.Fatalf("verify get: %v", err)
-	}
-	if got.Status != TaskStatusCompleted {
-		t.Errorf("expected status completed, got %s", got.Status)
-	}
-	if got.Result == nil {
-		t.Fatal("expected result to be set")
-	}
-	if got.Result.Output != "All done" {
-		t.Errorf("expected result output 'All done', got %q", got.Result.Output)
-	}
-	if got.CompletedAt == 0 {
-		t.Error("expected completed_at to be set")
+			got, err := store.GetTask(ctx, "tenant-a", "task-complete")
+			if err != nil {
+				t.Fatalf("verify get: %v", err)
+			}
+			if got.Status != TaskStatusCompleted {
+				t.Errorf("expected status completed, got %s", got.Status)
+			}
+			if got.Result == nil {
+				t.Fatal("expected result to be set")
+			}
+			if got.Result.Output != "All done" {
+				t.Errorf("expected result output 'All done', got %q", got.Result.Output)
+			}
+			if got.CompletedAt == 0 {
+				t.Error("expected completed_at to be set")
+			}
+		})
 	}
 }
 
@@ -1822,37 +1803,29 @@ func TestCompleteTask_NotClaimed(t *testing.T) {
 func TestFailTask_Success(t *testing.T) {
 	t.Parallel()
 
-	store := NewInMemoryTaskStore()
-	task := &Task{
-		ID:       "task-fail",
-		TenantID: "tenant-a",
-		Subject:  "Fail me",
-	}
+	for _, from := range []TaskStatus{TaskStatusClaimed, TaskStatusInProgress} {
+		t.Run(string(from), func(t *testing.T) {
+			t.Parallel()
 
-	err := store.CreateTask(context.Background(), task)
-	if err != nil {
-		t.Fatalf("setup create: %v", err)
-	}
+			ctx := context.Background()
+			store := NewInMemoryTaskStore()
+			seedTaskInStatus(t, store, "tenant-a", "task-fail", from)
 
-	err = store.ClaimTask(context.Background(), "tenant-a", "task-fail", "agent-1")
-	if err != nil {
-		t.Fatalf("setup claim: %v", err)
-	}
+			if err := store.FailTask(ctx, "tenant-a", "task-fail", "compilation error"); err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
 
-	err = store.FailTask(context.Background(), "tenant-a", "task-fail", "compilation error")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	got, err := store.GetTask(context.Background(), "tenant-a", "task-fail")
-	if err != nil {
-		t.Fatalf("verify get: %v", err)
-	}
-	if got.Status != TaskStatusFailed {
-		t.Errorf("expected status failed, got %s", got.Status)
-	}
-	if got.Result == nil || got.Result.Output != "compilation error" {
-		t.Errorf("expected failure reason in result, got %v", got.Result)
+			got, err := store.GetTask(ctx, "tenant-a", "task-fail")
+			if err != nil {
+				t.Fatalf("verify get: %v", err)
+			}
+			if got.Status != TaskStatusFailed {
+				t.Errorf("expected status failed, got %s", got.Status)
+			}
+			if got.Result == nil || got.Result.Output != "compilation error" {
+				t.Errorf("expected failure reason in result, got %v", got.Result)
+			}
+		})
 	}
 }
 
@@ -2195,100 +2168,6 @@ func TestTaskKeyError_PassesOtherErrorsThrough(t *testing.T) {
 // =============================================================================
 // InProgress State Tests
 // =============================================================================
-
-func TestCompleteTask_FromInProgress(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-progress",
-		TenantID: "tenant-a",
-		Subject:  "In progress task",
-	}
-
-	err := store.CreateTask(ctx, task)
-	if err != nil {
-		t.Fatalf("setup create: %v", err)
-	}
-
-	// Claim then update to in_progress
-	err = store.ClaimTask(ctx, "tenant-a", "task-progress", "agent-1")
-	if err != nil {
-		t.Fatalf("setup claim: %v", err)
-	}
-
-	current, err := store.GetTask(ctx, "tenant-a", "task-progress")
-	if err != nil {
-		t.Fatalf("setup get: %v", err)
-	}
-	current.Status = TaskStatusInProgress
-	err = store.UpdateTask(ctx, current)
-	if err != nil {
-		t.Fatalf("setup update to in_progress: %v", err)
-	}
-
-	// Complete from in_progress
-	err = store.CompleteTask(ctx, "tenant-a", "task-progress", &TaskResult{Output: "done"})
-	if err != nil {
-		t.Fatalf("expected no error completing from in_progress, got %v", err)
-	}
-
-	got, err := store.GetTask(ctx, "tenant-a", "task-progress")
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if got.Status != TaskStatusCompleted {
-		t.Errorf("expected completed, got %s", got.Status)
-	}
-}
-
-func TestFailTask_FromInProgress(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	ctx := context.Background()
-
-	task := &Task{
-		ID:       "task-fail-progress",
-		TenantID: "tenant-a",
-		Subject:  "Fail from in progress",
-	}
-
-	err := store.CreateTask(ctx, task)
-	if err != nil {
-		t.Fatalf("setup create: %v", err)
-	}
-
-	err = store.ClaimTask(ctx, "tenant-a", "task-fail-progress", "agent-1")
-	if err != nil {
-		t.Fatalf("setup claim: %v", err)
-	}
-
-	current, err := store.GetTask(ctx, "tenant-a", "task-fail-progress")
-	if err != nil {
-		t.Fatalf("setup get: %v", err)
-	}
-	current.Status = TaskStatusInProgress
-	err = store.UpdateTask(ctx, current)
-	if err != nil {
-		t.Fatalf("setup update: %v", err)
-	}
-
-	err = store.FailTask(ctx, "tenant-a", "task-fail-progress", "timeout")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	got, err := store.GetTask(ctx, "tenant-a", "task-fail-progress")
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if got.Status != TaskStatusFailed {
-		t.Errorf("expected failed, got %s", got.Status)
-	}
-}
 
 // =============================================================================
 // ListTasks FilterByCreatedBy Tests
