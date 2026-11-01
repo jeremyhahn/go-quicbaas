@@ -397,14 +397,12 @@ func TestUpdateJob_Success(t *testing.T) {
 		t.Fatalf("failed to create job: %v", err)
 	}
 
-	originalUpdatedAt := job.UpdatedAt
+	// Backdate UpdatedAt so the refresh is observable without waiting.
+	originalUpdatedAt := job.UpdatedAt.Add(-time.Hour)
+	job.UpdatedAt = originalUpdatedAt
 
-	// Update the job
 	job.Name = "updated-job"
 	job.Status = scheduler.JobStatusRunning
-
-	// Small delay to ensure timestamp changes
-	time.Sleep(time.Millisecond)
 
 	err = storage.UpdateJob(ctx, job)
 	if err != nil {
