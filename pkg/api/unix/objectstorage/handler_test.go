@@ -448,7 +448,124 @@ func TestHandleOpcodes(t *testing.T) {
 				assert.Equal(t, "dest-key", resp.(*service.CopyObjectResponse).Key)
 			},
 		},
-		// FAMILY2_ROWS
+		{
+			name: "replicate object",
+			op:   OpReplicateObject,
+			req:  &service.ReplicateObjectRequest{Key: "test-key", Targets: []string{"backend-1", "backend-2"}},
+			resp: &service.ReplicateObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "test-key", resp.(*service.ReplicateObjectResponse).Key)
+			},
+		},
+		{
+			name: "migrate object",
+			op:   OpMigrateObject,
+			req:  &service.MigrateObjectRequest{Key: "test-key", TargetBackend: "backend-2"},
+			resp: &service.MigrateObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.MigrateObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Success)
+			},
+		},
+		{
+			name: "archive object",
+			op:   OpArchiveObject,
+			req:  &service.ArchiveObjectRequest{Key: "test-key"},
+			resp: &service.ArchiveObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.ArchiveObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Success)
+			},
+		},
+		{
+			name: "restore object",
+			op:   OpRestoreObject,
+			req:  &service.RestoreObjectRequest{Key: "test-key"},
+			resp: &service.RestoreObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.RestoreObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Success)
+			},
+		},
+		{
+			name: "verify object",
+			op:   OpVerifyObject,
+			req:  &service.VerifyObjectRequest{Key: "test-key"},
+			resp: &service.VerifyObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.VerifyObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Valid)
+			},
+		},
+		{
+			name: "set object policy",
+			op:   OpSetObjectPolicy,
+			req:  &service.SetObjectPolicyRequest{Key: "test-key"},
+			resp: &service.SetObjectPolicyResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.SetObjectPolicyResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Success)
+			},
+		},
+		{
+			name: "get object policy",
+			op:   OpGetObjectPolicy,
+			req:  &service.GetObjectPolicyRequest{Key: "test-key"},
+			resp: &service.GetObjectPolicyResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "test-key", resp.(*service.GetObjectPolicyResponse).Key)
+			},
+		},
+		{
+			name: "list backends",
+			op:   OpListBackends,
+			req:  &service.ListBackendsRequest{IncludeHealth: true},
+			resp: &service.ListBackendsResponse{},
+		},
+		{
+			name: "get backend health",
+			op:   OpGetBackendHealth,
+			req:  &service.GetBackendHealthRequest{Name: "backend-1"},
+			resp: &service.GetBackendHealthResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.GetBackendHealthResponse)
+				assert.Equal(t, "backend-1", r.Name)
+				assert.True(t, r.Healthy)
+			},
+		},
+		{
+			name: "get tenant usage",
+			op:   OpGetTenantUsage,
+			req:  &service.GetTenantUsageRequest{TenantID: "tenant-1"},
+			resp: &service.GetTenantUsageResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "tenant-1", resp.(*service.GetTenantUsageResponse).TenantID)
+			},
+		},
+		{
+			name: "get tenant quotas",
+			op:   OpGetTenantQuotas,
+			req:  &service.GetTenantQuotasRequest{TenantID: "tenant-1"},
+			resp: &service.GetTenantQuotasResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "tenant-1", resp.(*service.GetTenantQuotasResponse).TenantID)
+			},
+		},
+		{
+			name: "set tenant quotas",
+			op:   OpSetTenantQuotas,
+			req:  &service.SetTenantQuotasRequest{TenantID: "tenant-1", MaxStorageBytes: 1024 * 1024 * 1024},
+			resp: &service.SetTenantQuotasResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "tenant-1", resp.(*service.SetTenantQuotasResponse).TenantID)
+			},
+		},
+		// BATCH_ROWS
 	}
 
 	for _, tt := range tests {
@@ -472,230 +589,6 @@ func TestHandleOpcodes(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestHandleReplicateObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ReplicateObjectRequest{
-		Key:     "test-key",
-		Targets: []string{"backend-1", "backend-2"},
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpReplicateObject, reqPayload)
-	require.NoError(t, err)
-
-	var replResp service.ReplicateObjectResponse
-	err = DecodePayload(resp, &replResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", replResp.Key)
-}
-
-func TestHandleMigrateObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.MigrateObjectRequest{
-		Key:           "test-key",
-		TargetBackend: "backend-2",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpMigrateObject, reqPayload)
-	require.NoError(t, err)
-
-	var migrResp service.MigrateObjectResponse
-	err = DecodePayload(resp, &migrResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", migrResp.Key)
-	assert.True(t, migrResp.Success)
-}
-
-func TestHandleArchiveObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ArchiveObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpArchiveObject, reqPayload)
-	require.NoError(t, err)
-
-	var archResp service.ArchiveObjectResponse
-	err = DecodePayload(resp, &archResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", archResp.Key)
-	assert.True(t, archResp.Success)
-}
-
-func TestHandleRestoreObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.RestoreObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpRestoreObject, reqPayload)
-	require.NoError(t, err)
-
-	var restResp service.RestoreObjectResponse
-	err = DecodePayload(resp, &restResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", restResp.Key)
-	assert.True(t, restResp.Success)
-}
-
-func TestHandleVerifyObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.VerifyObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpVerifyObject, reqPayload)
-	require.NoError(t, err)
-
-	var verResp service.VerifyObjectResponse
-	err = DecodePayload(resp, &verResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", verResp.Key)
-	assert.True(t, verResp.Valid)
-}
-
-func TestHandleSetObjectPolicy(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.SetObjectPolicyRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSetObjectPolicy, reqPayload)
-	require.NoError(t, err)
-
-	var polResp service.SetObjectPolicyResponse
-	err = DecodePayload(resp, &polResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", polResp.Key)
-	assert.True(t, polResp.Success)
-}
-
-func TestHandleGetObjectPolicy(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetObjectPolicyRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpGetObjectPolicy, reqPayload)
-	require.NoError(t, err)
-
-	var polResp service.GetObjectPolicyResponse
-	err = DecodePayload(resp, &polResp)
-	require.NoError(t, err)
-	assert.Equal(t, "test-key", polResp.Key)
-}
-
-func TestHandleListBackends(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListBackendsRequest{
-		IncludeHealth: true,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpListBackends, reqPayload)
-	require.NoError(t, err)
-
-	var listResp service.ListBackendsResponse
-	err = DecodePayload(resp, &listResp)
-	require.NoError(t, err)
-}
-
-func TestHandleGetBackendHealth(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetBackendHealthRequest{
-		Name: "backend-1",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpGetBackendHealth, reqPayload)
-	require.NoError(t, err)
-
-	var healthResp service.GetBackendHealthResponse
-	err = DecodePayload(resp, &healthResp)
-	require.NoError(t, err)
-	assert.Equal(t, "backend-1", healthResp.Name)
-	assert.True(t, healthResp.Healthy)
-}
-
-func TestHandleGetTenantUsage(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetTenantUsageRequest{
-		TenantID: "tenant-1",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpGetTenantUsage, reqPayload)
-	require.NoError(t, err)
-
-	var usageResp service.GetTenantUsageResponse
-	err = DecodePayload(resp, &usageResp)
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", usageResp.TenantID)
-}
-
-func TestHandleGetTenantQuotas(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetTenantQuotasRequest{
-		TenantID: "tenant-1",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpGetTenantQuotas, reqPayload)
-	require.NoError(t, err)
-
-	var quotaResp service.GetTenantQuotasResponse
-	err = DecodePayload(resp, &quotaResp)
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", quotaResp.TenantID)
-}
-
-func TestHandleSetTenantQuotas(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.SetTenantQuotasRequest{
-		TenantID:        "tenant-1",
-		MaxStorageBytes: 1024 * 1024 * 1024,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpSetTenantQuotas, reqPayload)
-	require.NoError(t, err)
-
-	var quotaResp service.SetTenantQuotasResponse
-	err = DecodePayload(resp, &quotaResp)
-	require.NoError(t, err)
-	assert.Equal(t, "tenant-1", quotaResp.TenantID)
 }
 
 func TestHandleServiceError(t *testing.T) {
