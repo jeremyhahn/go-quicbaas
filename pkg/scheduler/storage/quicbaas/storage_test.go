@@ -508,110 +508,83 @@ func TestListJobs_Empty(t *testing.T) {
 	}
 }
 
-func TestListJobs_FilterByStatus(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	// Create jobs with different statuses
-	job1 := createTestJob("pending-job", scheduler.OwnerTypeSystem, "")
-	job1.Status = scheduler.JobStatusPending
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("running-job", scheduler.OwnerTypeSystem, "")
-	job2.Status = scheduler.JobStatusRunning
-	storage.CreateJob(ctx, job2)
-
-	job3 := createTestJob("completed-job", scheduler.OwnerTypeSystem, "")
-	job3.Status = scheduler.JobStatusCompleted
-	storage.CreateJob(ctx, job3)
-
-	// Filter by pending status
-	query := &scheduler.JobQuery{Status: scheduler.JobStatusPending}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestListJobs_Filters(t *testing.T) {
+	type jobSpec struct {
+		name   string
+		owner  scheduler.OwnerType
+		mutate func(job *scheduler.Job)
 	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 pending job, got %d", len(jobs))
+
+	tests := []struct {
+		name     string
+		jobs     []jobSpec
+		query    *scheduler.JobQuery
+		wantName string
+	}{
+		{
+			name: "status",
+			jobs: []jobSpec{
+				{"pending-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusPending }},
+				{"running-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusRunning }},
+				{"completed-job", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Status = scheduler.JobStatusCompleted }},
+			},
+			query:    &scheduler.JobQuery{Status: scheduler.JobStatusPending},
+			wantName: "pending-job",
+		},
+		{
+			name: "handler",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Handler = "handler-a" }},
+				{"job-2", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Handler = "handler-b" }},
+			},
+			query:    &scheduler.JobQuery{Handler: "handler-a"},
+			wantName: "job-1",
+		},
+		{
+			name: "labels",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "prod", "tier": "frontend"} }},
+				{"job-2", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "prod", "tier": "backend"} }},
+				{"job-3", scheduler.OwnerTypeSystem, func(j *scheduler.Job) { j.Labels = map[string]string{"env": "dev"} }},
+			},
+			query:    &scheduler.JobQuery{Labels: map[string]string{"env": "prod", "tier": "backend"}},
+			wantName: "job-2",
+		},
+		{
+			name: "target tenant",
+			jobs: []jobSpec{
+				{"job-1", scheduler.OwnerTypeDelegated, func(j *scheduler.Job) { j.TargetTenantID = "tenant-A" }},
+				{"job-2", scheduler.OwnerTypeDelegated, func(j *scheduler.Job) { j.TargetTenantID = "tenant-B" }},
+			},
+			query:    &scheduler.JobQuery{TargetTenantID: "tenant-A"},
+			wantName: "job-1",
+		},
 	}
-	if jobs[0].Status != scheduler.JobStatusPending {
-		t.Errorf("expected pending status, got %s", jobs[0].Status)
-	}
-}
 
-func TestListJobs_FilterByHandler(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			storage := NewStorage(newMockKVStore())
 
-	job1 := createTestJob("job-1", scheduler.OwnerTypeSystem, "")
-	job1.Handler = "handler-a"
-	storage.CreateJob(ctx, job1)
+			for _, spec := range tt.jobs {
+				job := createTestJob(spec.name, spec.owner, "")
+				spec.mutate(job)
+				if err := storage.CreateJob(ctx, job); err != nil {
+					t.Fatalf("failed to create job %s: %v", spec.name, err)
+				}
+			}
 
-	job2 := createTestJob("job-2", scheduler.OwnerTypeSystem, "")
-	job2.Handler = "handler-b"
-	storage.CreateJob(ctx, job2)
-
-	query := &scheduler.JobQuery{Handler: "handler-a"}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job with handler-a, got %d", len(jobs))
-	}
-}
-
-func TestListJobs_FilterByLabels(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job1 := createTestJob("job-1", scheduler.OwnerTypeSystem, "")
-	job1.Labels = map[string]string{"env": "prod", "tier": "frontend"}
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("job-2", scheduler.OwnerTypeSystem, "")
-	job2.Labels = map[string]string{"env": "prod", "tier": "backend"}
-	storage.CreateJob(ctx, job2)
-
-	job3 := createTestJob("job-3", scheduler.OwnerTypeSystem, "")
-	job3.Labels = map[string]string{"env": "dev"}
-	storage.CreateJob(ctx, job3)
-
-	query := &scheduler.JobQuery{
-		Labels: map[string]string{"env": "prod", "tier": "backend"},
-	}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job matching labels, got %d", len(jobs))
-	}
-}
-
-func TestListJobs_FilterByTargetTenantID(t *testing.T) {
-	ctx := context.Background()
-	kv := newMockKVStore()
-	storage := NewStorage(kv)
-
-	job1 := createTestJob("job-1", scheduler.OwnerTypeDelegated, "")
-	job1.TargetTenantID = "tenant-A"
-	storage.CreateJob(ctx, job1)
-
-	job2 := createTestJob("job-2", scheduler.OwnerTypeDelegated, "")
-	job2.TargetTenantID = "tenant-B"
-	storage.CreateJob(ctx, job2)
-
-	query := &scheduler.JobQuery{TargetTenantID: "tenant-A"}
-	jobs, _, err := storage.ListJobs(ctx, query)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(jobs) != 1 {
-		t.Errorf("expected 1 job for tenant-A, got %d", len(jobs))
+			jobs, _, err := storage.ListJobs(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(jobs) != 1 {
+				t.Fatalf("expected 1 job, got %d", len(jobs))
+			}
+			if jobs[0].Name != tt.wantName {
+				t.Errorf("expected job %s, got %s", tt.wantName, jobs[0].Name)
+			}
+		})
 	}
 }
 
