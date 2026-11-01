@@ -242,126 +242,27 @@ func TestEmbeddingService_GenerateEmbedding_WithDefaultProvider(t *testing.T) {
 	assert.NotNil(t, resp.Embedding)
 }
 
-func TestEmbeddingService_GenerateEmbedding_NilRequest(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), nil)
-	assert.Error(t, err, "nil request must return a validation error, not panic")
-	assert.Nil(t, resp)
-}
-
-func TestEmbeddingService_GenerateEmbedding_EmptyText(t *testing.T) {
-	mgr, _ := createTestManager(t, "openai")
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "",
+func TestEmbeddingService_GenerateEmbedding_InvalidRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *GenerateEmbeddingRequest
+	}{
+		{name: "NilRequest", req: nil},
+		{name: "EmptyText", req: &GenerateEmbeddingRequest{Text: ""}},
 	}
 
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, _ := createTestManager(t, "openai")
+			svc := NewEmbeddingService(mgr, newMockEmbeddingLogger())
 
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "text is required")
+			resp, err := svc.GenerateEmbedding(systemTenantCtx(), tt.req)
 
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
-	}
-}
-
-func TestEmbeddingService_GenerateEmbedding_ProviderError(t *testing.T) {
-	mgr, provider := createTestManager(t, "openai")
-	provider.embedFunc = func(ctx context.Context, text string) ([]float32, error) {
-		return nil, embedding.ErrProviderUnavailable
-	}
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "Test text",
-	}
-
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrUnavailable, dErr.Code)
-	}
-}
-
-func TestEmbeddingService_GenerateEmbedding_RateLimitError(t *testing.T) {
-	mgr, provider := createTestManager(t, "openai")
-	provider.embedFunc = func(ctx context.Context, text string) ([]float32, error) {
-		return nil, embedding.ErrRateLimitExceeded
-	}
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "Test text",
-	}
-
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrRateLimited, dErr.Code)
-	}
-}
-
-func TestEmbeddingService_GenerateEmbedding_TokenLimitError(t *testing.T) {
-	mgr, provider := createTestManager(t, "openai")
-	provider.embedFunc = func(ctx context.Context, text string) ([]float32, error) {
-		return nil, embedding.ErrTokenLimitExceeded
-	}
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "Test text",
-	}
-
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrResourceExhausted, dErr.Code)
-	}
-}
-
-func TestEmbeddingService_GenerateEmbedding_InvalidInputError(t *testing.T) {
-	mgr, provider := createTestManager(t, "openai")
-	provider.embedFunc = func(ctx context.Context, text string) ([]float32, error) {
-		return nil, embedding.ErrInvalidInput
-	}
-	logger := newMockEmbeddingLogger()
-	svc := NewEmbeddingService(mgr, logger)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "Test text",
-	}
-
-	resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *quicbaasErrors.QBError
-	if errors.As(err, &dErr) {
-		assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
+			assert.Nil(t, resp)
+			var dErr *quicbaasErrors.QBError
+			require.True(t, errors.As(err, &dErr))
+			assert.Equal(t, quicbaasErrors.ErrInvalidInput, dErr.Code)
+		})
 	}
 }
 
@@ -992,8 +893,9 @@ func TestEmbeddingService_ErrorMapping(t *testing.T) {
 				Text: "test",
 			}
 
-			_, err := svc.GenerateEmbedding(systemTenantCtx(), req)
+			resp, err := svc.GenerateEmbedding(systemTenantCtx(), req)
 
+			assert.Nil(t, resp)
 			var dErr *quicbaasErrors.QBError
 			require.True(t, errors.As(err, &dErr))
 			assert.Equal(t, tt.expectedCode, dErr.Code)
@@ -1273,49 +1175,6 @@ func TestEmbeddingSvc_GenerateEmbedding_Success(t *testing.T) {
 	assert.Equal(t, expectedEmbedding, resp.Embedding)
 	assert.NotNil(t, resp.Metadata)
 	assert.Equal(t, 3, resp.Metadata.Dimensions)
-}
-
-func TestEmbeddingSvc_GenerateEmbedding_EmptyText(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-	req := &GenerateEmbeddingRequest{
-		Text: "",
-	}
-
-	resp, err := svc.GenerateEmbedding(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
-	var qbErr *quicbaasErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, quicbaasErrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestEmbeddingSvc_GenerateEmbedding_ProviderError(t *testing.T) {
-	mockManager := newCoverageEmbeddingManager()
-	logger := newCoverageEmbeddingLogger()
-	svc := NewEmbeddingService(mockManager, logger)
-
-	ctx := systemTenantCtx()
-
-	// Setup mock expectations
-	mockManager.On("GetStats").Return(interfaces.EmbeddingStats{
-		CacheHits:   0,
-		CacheMisses: 0,
-	})
-	mockManager.On("Embed", ctx, "test text").Return(nil, embedding.ErrProviderNotFound)
-
-	req := &GenerateEmbeddingRequest{
-		Text: "test text",
-	}
-
-	resp, err := svc.GenerateEmbedding(ctx, req)
-
-	require.Error(t, err)
-	assert.Nil(t, resp)
 }
 
 func TestEmbeddingSvc_BatchGenerateEmbeddings_Success(t *testing.T) {
