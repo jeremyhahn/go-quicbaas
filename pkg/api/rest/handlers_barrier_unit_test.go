@@ -341,10 +341,46 @@ func TestHandleBarrierInitialize(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierInitialize_BadJSON(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/initialize", `{bad`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
+// TestHandleBarrier_BadInput checks that every barrier handler that takes a
+// body rejects malformed JSON and out-of-range values with 400.
+func TestHandleBarrier_BadInput(t *testing.T) {
+	sealNotReached := &fakeBarrierService{sealFn: func(context.Context, *service.BarrierSealRequest) error {
+		t.Error("a malformed body must not reach the service")
+		return nil
+	}}
+	tests := []struct {
+		name string
+		svc  *fakeBarrierService
+		path string
+		body string
+	}{
+		{name: "initialize bad json", path: "/api/v1/barrier/initialize", body: `{bad`},
+		{name: "seal malformed body", svc: sealNotReached, path: "/api/v1/barrier/seal", body: `{"so_pin":`},
+		{name: "shamir initialize zero threshold", path: "/api/v1/barrier/shamir/initialize", body: `{"secret":"eA==","threshold":0,"total_shares":3}`},
+		{name: "shamir initialize zero total", path: "/api/v1/barrier/shamir/initialize", body: `{"secret":"eA==","threshold":2,"total_shares":0}`},
+		{name: "shamir initialize threshold over total", path: "/api/v1/barrier/shamir/initialize", body: `{"secret":"eA==","threshold":4,"total_shares":3}`},
+		{name: "shamir unseal share empty", path: "/api/v1/barrier/shamir/unseal-share", body: `{"share":""}`},
+		{name: "shamir unseal shares empty", path: "/api/v1/barrier/shamir/unseal-shares", body: `{"shares":[]}`},
+		{name: "rekey zero threshold", path: "/api/v1/barrier/rekey", body: `{"threshold":0,"total":3}`},
+		{name: "rekey zero total", path: "/api/v1/barrier/rekey", body: `{"threshold":2,"total":0}`},
+		{name: "rekey threshold over total", path: "/api/v1/barrier/rekey", body: `{"threshold":4,"total":3}`},
+		{name: "recovery generate zero threshold", path: "/api/v1/barrier/recovery/generate", body: `{"threshold":0,"total":3}`},
+		{name: "recovery generate zero total", path: "/api/v1/barrier/recovery/generate", body: `{"threshold":2,"total":0}`},
+		{name: "recovery generate threshold over total", path: "/api/v1/barrier/recovery/generate", body: `{"threshold":5,"total":3}`},
+		{name: "recovery recover empty", path: "/api/v1/barrier/recovery/recover", body: `{"keys":[]}`},
+		{name: "root token empty", path: "/api/v1/barrier/root-token", body: `{"shares":[]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := tt.svc
+			if svc == nil {
+				svc = &fakeBarrierService{}
+			}
+			w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, tt.path, tt.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d", w.Code)
+			}
+		})
 	}
 }
 
@@ -413,17 +449,6 @@ func TestHandleBarrierSeal_SOPIN(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierSeal_MalformedBody(t *testing.T) {
-	svc := &fakeBarrierService{sealFn: func(context.Context, *service.BarrierSealRequest) error {
-		t.Error("a malformed body must not reach the service")
-		return nil
-	}}
-	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/seal", `{"so_pin":`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
 // =============================================================================
 // Shamir initialize (validation + happy path)
 // =============================================================================
@@ -452,21 +477,6 @@ func TestHandleBarrierShamirInitialize_OK(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierShamirInitialize_Validation(t *testing.T) {
-	svc := &fakeBarrierService{}
-	cases := []string{
-		`{"secret":"eA==","threshold":0,"total_shares":3}`,
-		`{"secret":"eA==","threshold":2,"total_shares":0}`,
-		`{"secret":"eA==","threshold":4,"total_shares":3}`,
-	}
-	for _, body := range cases {
-		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/initialize", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
-	}
-}
-
 // =============================================================================
 // Shamir unseal-share / unseal-shares
 // =============================================================================
@@ -490,25 +500,11 @@ func TestHandleBarrierShamirUnsealShare_OK(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierShamirUnsealShare_MissingShare(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/shamir/unseal-share", `{"share":""}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-}
-
 func TestHandleBarrierShamirUnsealShares_OK(t *testing.T) {
 	svc := &fakeBarrierService{unsealWithSharesFn: func(ctx context.Context, shares []string) error { return nil }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":["a","b"]}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierShamirUnsealShares_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", `{"shares":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -525,20 +521,6 @@ func TestHandleBarrierRekey_OK(t *testing.T) {
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", `{"threshold":2,"total":3}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRekey_Validation(t *testing.T) {
-	svc := &fakeBarrierService{}
-	for _, body := range []string{
-		`{"threshold":0,"total":3}`,
-		`{"threshold":2,"total":0}`,
-		`{"threshold":4,"total":3}`,
-	} {
-		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/rekey", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
 	}
 }
 
@@ -569,32 +551,11 @@ func TestHandleBarrierRecoveryGenerate_OK(t *testing.T) {
 	}
 }
 
-func TestHandleBarrierRecoveryGenerate_Validation(t *testing.T) {
-	svc := &fakeBarrierService{}
-	for _, body := range []string{
-		`{"threshold":0,"total":3}`,
-		`{"threshold":2,"total":0}`,
-		`{"threshold":5,"total":3}`,
-	} {
-		w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/generate", body)
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("body %s: expected 400, got %d", body, w.Code)
-		}
-	}
-}
-
 func TestHandleBarrierRecoveryRecover_OK(t *testing.T) {
 	svc := &fakeBarrierService{recoverWithKeysFn: func(ctx context.Context, keys []string) error { return nil }}
 	w := doBarrierReq(t, barrierServer(t, svc), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":["a","b"]}`)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", w.Code)
-	}
-}
-
-func TestHandleBarrierRecoveryRecover_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/recovery/recover", `{"keys":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -670,13 +631,6 @@ func TestHandleBarrierRootToken_OK(t *testing.T) {
 	}
 	if _, ok := resp["created_at"]; !ok {
 		t.Fatalf("expected created_at in body: %v", resp)
-	}
-}
-
-func TestHandleBarrierRootToken_Empty(t *testing.T) {
-	w := doBarrierReq(t, barrierServer(t, &fakeBarrierService{}), http.MethodPost, "/api/v1/barrier/root-token", `{"shares":[]}`)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 
