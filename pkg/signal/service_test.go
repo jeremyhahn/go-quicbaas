@@ -314,7 +314,9 @@ func TestSignalService_GetTenantConfig_NotFound(t *testing.T) {
 	}
 }
 
-func TestSignalService_RegisterAccount(t *testing.T) {
+// TestSignalService_RegisterAndGetAccount registers an account and reads it
+// back through GetAccount.
+func TestSignalService_RegisterAndGetAccount(t *testing.T) {
 	svc, _ := newEnabledService(t)
 	provisionTestTenant(t, svc, "reg-tenant")
 	ctx := tenantCtx("reg-tenant")
@@ -335,6 +337,17 @@ func TestSignalService_RegisterAccount(t *testing.T) {
 	}
 	if resp.DeviceID != 1 {
 		t.Fatalf("expected device ID 1, got %d", resp.DeviceID)
+	}
+
+	account, err := svc.GetAccount(ctx, resp.UUID)
+	if err != nil {
+		t.Fatalf("GetAccount failed: %v", err)
+	}
+	if account.UUID != resp.UUID {
+		t.Fatalf("expected UUID %s, got %s", resp.UUID, account.UUID)
+	}
+	if account.Number != "+15551234567" {
+		t.Fatalf("expected number +15551234567, got %s", account.Number)
 	}
 }
 
@@ -376,32 +389,6 @@ func TestSignalService_RegisterAccount_QuotaExceeded(t *testing.T) {
 	var target *AccountQuotaExceededError
 	if !errors.As(err, &target) {
 		t.Fatalf("expected AccountQuotaExceededError, got %T: %v", err, err)
-	}
-}
-
-func TestSignalService_GetAccount(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "getacc-tenant")
-	ctx := tenantCtx("getacc-tenant")
-
-	resp, err := svc.RegisterAccount(ctx, &RegisterRequest{
-		Number:     "+15553334444",
-		Password:   "pw",
-		DeviceName: "dev",
-	})
-	if err != nil {
-		t.Fatalf("RegisterAccount failed: %v", err)
-	}
-
-	account, err := svc.GetAccount(ctx, resp.UUID)
-	if err != nil {
-		t.Fatalf("GetAccount failed: %v", err)
-	}
-	if account.UUID != resp.UUID {
-		t.Fatalf("expected UUID %s, got %s", resp.UUID, account.UUID)
-	}
-	if account.Number != "+15553334444" {
-		t.Fatalf("expected number +15553334444, got %s", account.Number)
 	}
 }
 
