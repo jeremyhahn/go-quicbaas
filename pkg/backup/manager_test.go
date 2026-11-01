@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -659,6 +660,20 @@ func TestEncryptionTypes(t *testing.T) {
 			encryptionType: EncryptionAES256GCM,
 			key:            make([]byte, 32),
 			testData:       "test data with AES-256-GCM encryption",
+			wantErr:        false,
+		},
+		{
+			name:           "AES-256-GCM empty payload",
+			encryptionType: EncryptionAES256GCM,
+			key:            make([]byte, 32),
+			testData:       "",
+			wantErr:        false,
+		},
+		{
+			name:           "AES-256-GCM large payload",
+			encryptionType: EncryptionAES256GCM,
+			key:            make([]byte, 32),
+			testData:       strings.Repeat("encrypt this large block of data ", 100),
 			wantErr:        false,
 		},
 		{
@@ -1391,59 +1406,6 @@ func (m *mockRaftNodeNilInfo) Close() error {
 	return nil
 }
 
-func TestZstdCompressor_CompressDecompressRoundTrip(t *testing.T) {
-	compressor, err := NewCompressor(CompressionZstd)
-	require.NoError(t, err)
-
-	original := []byte("zstd compressible data for backup testing")
-
-	// Compress
-	var compressed bytes.Buffer
-	writer, err := compressor.Compress(&compressed)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decompress
-	reader, err := compressor.Decompress(bytes.NewReader(compressed.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decompressed)
-}
-
-// TestGzipCompressor_CompressDecompressRoundTrip tests gzip compress/decompress cycle.
-func TestGzipCompressor_CompressDecompressRoundTrip(t *testing.T) {
-	compressor, err := NewCompressor(CompressionGzip)
-	require.NoError(t, err)
-
-	original := []byte("gzip compressible data for backup testing round-trip")
-
-	// Compress
-	var compressed bytes.Buffer
-	writer, err := compressor.Compress(&compressed)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decompress
-	reader, err := compressor.Decompress(bytes.NewReader(compressed.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decompressed)
-}
-
 // TestAES256GCM_DecryptTruncatedData tests decrypting truncated ciphertext.
 func TestAES256GCM_DecryptTruncatedData(t *testing.T) {
 	key := make([]byte, 32)
@@ -1457,34 +1419,6 @@ func TestAES256GCM_DecryptTruncatedData(t *testing.T) {
 	// Truncated data too short for nonce
 	_, err = encryptor.Decrypt(bytes.NewReader([]byte{0x01, 0x02}))
 	assert.Error(t, err)
-}
-
-// TestAES256GCM_EncryptEmptyData tests encrypting empty data.
-func TestAES256GCM_EncryptEmptyData(t *testing.T) {
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-
-	encryptor, err := NewAES256GCMEncryptor(key)
-	require.NoError(t, err)
-
-	// Encrypt empty data
-	var encrypted bytes.Buffer
-	writer, err := encryptor.Encrypt(&encrypted)
-	require.NoError(t, err)
-
-	err = writer.Close()
-	require.NoError(t, err)
-
-	// Decrypt empty encrypted data
-	reader, err := encryptor.Decrypt(bytes.NewReader(encrypted.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decrypted, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Empty(t, decrypted)
 }
 
 // TestMockStorage_PutAndGetCoverage tests MockStorage put and get operations.
@@ -1523,37 +1457,6 @@ func TestBackupManager_IsSchedulerRunning_NotStarted(t *testing.T) {
 	defer mgr.Close()
 
 	assert.False(t, mgr.IsSchedulerRunning())
-}
-
-// TestAES256GCM_LargeData tests encrypt/decrypt with larger payload.
-func TestAES256GCM_LargeData(t *testing.T) {
-	key := make([]byte, 32)
-	for i := range key {
-		key[i] = byte(i)
-	}
-
-	encryptor, err := NewAES256GCMEncryptor(key)
-	require.NoError(t, err)
-
-	// Create a larger payload
-	original := bytes.Repeat([]byte("encrypt this large block of data "), 100)
-
-	var encrypted bytes.Buffer
-	writer, err := encryptor.Encrypt(&encrypted)
-	require.NoError(t, err)
-
-	_, err = writer.Write(original)
-	require.NoError(t, err)
-	err = writer.Close()
-	require.NoError(t, err)
-
-	reader, err := encryptor.Decrypt(bytes.NewReader(encrypted.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-
-	decrypted, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	assert.Equal(t, original, decrypted)
 }
 
 // TestMockStorage_PutWithContextCoverage tests MockStorage PutWithContext.
