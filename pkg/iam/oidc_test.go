@@ -416,6 +416,124 @@ func TestOIDCAuthorize_CrossTenantClientRefused(t *testing.T) {
 	}
 }
 
+// TestOIDCToken_CrossTenantAuthCodeRefused checks that the code exchange
+// refuses a code whose tenant is not the client's, so a code minted for the
+// wrong tenant never becomes tokens.
+func TestOIDCToken_CrossTenantAuthCodeRefused(t *testing.T) {
+	provider, tokenStorage := createCrossTenantOIDCProvider(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		wantErr  bool
+	}{
+		{name: "other tenant is invalid_grant", tenantID: "tenant-A", wantErr: true},
+		{name: "client tenant succeeds", tenantID: "tenant-B"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code := "code-" + tt.tenantID
+			if err := tokenStorage.StoreAuthCode(ctx, &AuthCodeData{
+				Code:                code,
+				UserID:              123,
+				TenantID:            tt.tenantID,
+				ClientID:            "tenant-b-client",
+				RedirectURI:         "https://app.example/cb",
+				CodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+				CodeChallengeMethod: CodeChallengeMethodS256,
+				ExpiresAt:           time.Now().Add(time.Minute),
+				CreatedAt:           time.Now(),
+			}); err != nil {
+				t.Fatalf("StoreAuthCode() error = %v", err)
+			}
+			resp, err := provider.Token(ctx, &TokenRequest{
+				GrantType:    GrantTypeAuthorizationCode,
+				Code:         code,
+				ClientID:     "tenant-b-client",
+				ClientSecret: "test-secret",
+				CodeVerifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+			})
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("Token() error = %v", err)
+				}
+				if resp.AccessToken == "" {
+					t.Error("Token() returned empty access token")
+				}
+				return
+			}
+			var oauthErr *OAuthError
+			if !errors.As(err, &oauthErr) || oauthErr.ErrorCode != ErrOAuthInvalidGrant {
+				t.Fatalf("Token() error = %v, want %s", err, ErrOAuthInvalidGrant)
+			}
+			if resp != nil {
+				t.Errorf("Token() response = %+v, want nil", resp)
+			}
+		})
+	}
+}
+
+// TestOIDCToken_CrossTenantRefreshTokenRefused checks that the refresh grant
+// refuses a refresh token whose tenant is not the client's, and does not
+// consume it.
+func TestOIDCToken_CrossTenantRefreshTokenRefused(t *testing.T) {
+	provider, tokenStorage := createCrossTenantOIDCProvider(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		wantErr  bool
+	}{
+		{name: "other tenant is invalid_grant", tenantID: "tenant-A", wantErr: true},
+		{name: "client tenant succeeds", tenantID: "tenant-B"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			value := "refresh-" + tt.tenantID
+			stored := &Token{
+				JTI:       "jti-" + tt.tenantID,
+				Subject:   "123",
+				TenantID:  tt.tenantID,
+				TokenType: TokenTypeRefresh,
+				ClientID:  "tenant-b-client",
+				Expires:   time.Now().Add(time.Hour),
+			}
+			if err := tokenStorage.StoreToken(ctx, stored); err != nil {
+				t.Fatalf("StoreToken() error = %v", err)
+			}
+			tokenStorage.tokenValues[value] = stored
+
+			resp, err := provider.Token(ctx, &TokenRequest{
+				GrantType:    GrantTypeRefreshToken,
+				RefreshToken: value,
+				ClientID:     "tenant-b-client",
+				ClientSecret: "test-secret",
+			})
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("Token() error = %v", err)
+				}
+				if resp.AccessToken == "" {
+					t.Error("Token() returned empty access token")
+				}
+				return
+			}
+			var oauthErr *OAuthError
+			if !errors.As(err, &oauthErr) || oauthErr.ErrorCode != ErrOAuthInvalidGrant {
+				t.Fatalf("Token() error = %v, want %s", err, ErrOAuthInvalidGrant)
+			}
+			if resp != nil {
+				t.Errorf("Token() response = %+v, want nil", resp)
+			}
+			if stored.Revoked {
+				t.Error("a refused refresh grant must not rotate the refresh token")
+			}
+		})
+	}
+}
+
 func TestOIDCAuthorize(t *testing.T) {
 	provider, _, appStorage, _, _ := createTestOIDCProvider(t)
 	ctx := context.Background()

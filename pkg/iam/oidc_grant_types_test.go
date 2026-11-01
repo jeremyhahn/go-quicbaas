@@ -148,9 +148,10 @@ func TestOIDCProvider_RequireGrantType_UnknownClient(t *testing.T) {
 	t.Parallel()
 	f := newGrantTypesFixture(t, GrantTypeRefreshToken)
 
-	err := f.provider.requireGrantType(context.Background(), "no-such-client", GrantTypeRefreshToken)
+	app, err := f.provider.requireGrantType(context.Background(), "no-such-client", GrantTypeRefreshToken)
 
 	var oauthErr *OAuthError
 	require.ErrorAs(t, err, &oauthErr)
 	assert.Equal(t, ErrOAuthInvalidClient, oauthErr.ErrorCode)
+	assert.Nil(t, app, "an unknown client has no application")
 }
