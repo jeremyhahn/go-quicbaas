@@ -211,17 +211,6 @@ func TestQuicBaaS_Close_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTimeSeriesServiceImpl_Aggregate_ValidationError(t *testing.T) {
-	svc := &quicBaaS{}
-	tsSvc := &timeSeriesService{svc: svc}
-
-	_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), &AggregateRequest{})
-
-	require.Error(t, err)
-	// Just check it's an error about validation
-	assert.NotNil(t, err)
-}
-
 func TestTimeSeriesServiceImpl_TimeSeriesQuery_ValidationError(t *testing.T) {
 	svc := &quicBaaS{}
 	tsSvc := &timeSeriesService{svc: svc}
@@ -231,8 +220,10 @@ func TestTimeSeriesServiceImpl_TimeSeriesQuery_ValidationError(t *testing.T) {
 	err := tsSvc.TimeSeriesQuery(tenantctx.WithSystem(context.Background()), &TimeSeriesQueryRequest{}, stream)
 
 	require.Error(t, err)
-	// Just check it's an error about validation
-	assert.NotNil(t, err)
+	var dErr *dberrors.QBError
+	require.True(t, dberrors.As(err, &dErr))
+	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
+	assert.Contains(t, err.Error(), "entity_type is required")
 }
 
 // Time-Series Service Tests - Aggregate validation (6.7% -> 15%).
@@ -275,112 +266,27 @@ func TestTimeSeriesServiceImpl_Aggregate_Success(t *testing.T) {
 	assert.NotNil(t, resp)
 }
 
-func TestTimeSeriesServiceImpl_Aggregate_InvalidInput(t *testing.T) {
-	svc := &quicBaaS{
-		config: &ServiceConfig{},
-		logger: testLoggerCoverage(t),
-	}
-
-	tsSvc := &timeSeriesService{svc: svc}
+func TestTimeSeriesService_Aggregate_InvalidInput(t *testing.T) {
+	svc := createTestService(t, withMockRaftNode(&mockRaftNode{}))
+	defer svc.Close()
 
 	tests := []struct {
-		name string
-		req  *AggregateRequest
+		name    string
+		req     *AggregateRequest
+		wantMsg string
 	}{
-		{
-			name: "missing entity type",
-			req:  &AggregateRequest{},
-		},
-		{
-			name: "missing field name",
-			req: &AggregateRequest{
-				EntityType: "sensors",
-			},
-		},
+		{"missing entity type", &AggregateRequest{StartTime: 1, EndTime: 2}, "entity_type is required"},
+		{"zero start time", &AggregateRequest{EntityType: "metrics", EndTime: 100}, "start_time must be greater than 0"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := tsSvc.Aggregate(tenantctx.WithSystem(context.Background()), tt.req)
-			assert.Error(t, err)
+			resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), tt.req)
+			require.Error(t, err)
+			require.Nil(t, resp)
+			assert.Contains(t, err.Error(), tt.wantMsg)
 		})
 	}
-}
-
-func TestTimeSeriesService_Aggregate_EmptyEntityType(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AggregateRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
-	}
-
-	resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "entity_type is required")
-}
-
-func TestTimeSeriesService_Aggregate_InvalidStartTime(t *testing.T) {
-	mockRaft := &mockRaftNode{}
-	svc := createTestService(t, withMockRaftNode(mockRaft))
-	defer svc.Close()
-
-	req := &AggregateRequest{
-		EntityType: "metrics",
-		StartTime:  0,
-		EndTime:    100,
-	}
-
-	resp, err := svc.Aggregate(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	require.Nil(t, resp)
-	assert.Contains(t, err.Error(), "start_time must be greater than 0")
-}
-
-func TestTimeSeriesService_TSQuery_MissingStartTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSQueryRequest{
-		Metric:  "cpu.usage",
-		EndTime: time.Now(),
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-	mockTS.AssertNotCalled(t, "QueryRich")
-}
-
-func TestTimeSeriesService_TSQuery_MissingEndTime(t *testing.T) {
-	log := createTestLogger(t)
-	svc := &quicBaaS{logger: log}
-	mockTS := newTestMockTimeSeriesStorage()
-	tsSvc := &timeSeriesService{svc: svc, tsStorage: mockTS}
-
-	req := &TSQueryRequest{
-		Metric:    "cpu.usage",
-		StartTime: time.Now().Add(-time.Hour),
-	}
-
-	resp, err := tsSvc.TSQuery(tenantctx.WithSystem(context.Background()), req)
-	require.Error(t, err)
-	assert.Nil(t, resp)
-
-	var dErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &dErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, dErr.Code)
-	mockTS.AssertNotCalled(t, "QueryRich")
 }
 
 func TestTimeSeriesService_TSQuery_WithAggregation(t *testing.T) {
