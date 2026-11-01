@@ -121,35 +121,97 @@ func TestNewFetcher(t *testing.T) {
 // under the stripped secret path or directly in the output dir when
 // FlattenKeys is set.
 func TestFetch_WriteAsFiles(t *testing.T) {
+	database := []SecretData{
+		{Path: "apps/myapp/database", Data: map[string]string{"username": "admin", "password": "secret123"}},
+	}
+
 	tests := []struct {
 		name        string
+		secrets     []SecretData
+		keys        []string
 		stripPrefix bool
 		flatten     bool
+		wantSecrets int
+		wantKeys    int
 		want        map[string]string // path relative to the output dir -> content
+		wantAbsent  []string
 	}{
 		{
 			name:        "per-secret directory",
+			secrets:     database,
 			stripPrefix: true,
+			wantSecrets: 1,
+			wantKeys:    2,
 			want: map[string]string{
 				filepath.Join("database", "username"): "admin",
 				filepath.Join("database", "password"): "secret123",
 			},
 		},
 		{
-			name:    "flattened into output dir",
-			flatten: true,
-			want:    map[string]string{"username": "admin", "password": "secret123"},
+			name:        "full path kept without strip prefix",
+			secrets:     database,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want: map[string]string{
+				filepath.Join("apps", "myapp", "database", "username"): "admin",
+				filepath.Join("apps", "myapp", "database", "password"): "secret123",
+			},
+		},
+		{
+			name:        "flattened into output dir",
+			secrets:     database,
+			flatten:     true,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want:        map[string]string{"username": "admin", "password": "secret123"},
+		},
+		{
+			name: "multiple secrets",
+			secrets: []SecretData{
+				{Path: "apps/myapp/database", Data: map[string]string{"host": "db.example.com"}},
+				{Path: "apps/myapp/cache", Data: map[string]string{"host": "cache.example.com"}},
+				{Path: "apps/myapp/api", Data: map[string]string{"key": "api-key-123"}},
+			},
+			stripPrefix: true,
+			wantSecrets: 3,
+			wantKeys:    3,
+			want: map[string]string{
+				filepath.Join("database", "host"): "db.example.com",
+				filepath.Join("cache", "host"):    "cache.example.com",
+				filepath.Join("api", "key"):       "api-key-123",
+			},
+		},
+		{
+			name: "key filter keeps only the listed keys",
+			secrets: []SecretData{
+				{Path: "apps/myapp/database", Data: map[string]string{
+					"host": "localhost", "port": "5432", "username": "admin", "password": "secret123",
+				}},
+			},
+			keys:        []string{"username", "password"},
+			stripPrefix: true,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want: map[string]string{
+				filepath.Join("database", "username"): "admin",
+				filepath.Join("database", "password"): "secret123",
+			},
+			wantAbsent: []string{filepath.Join("database", "host"), filepath.Join("database", "port")},
+		},
+		{
+			name:    "key filter matching nothing skips the secret",
+			secrets: database,
+			keys:    []string{"nonexistent"},
+		},
+		{
+			name:    "no secrets writes nothing",
+			secrets: []SecretData{},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
-			provider := &mockSecretsProvider{
-				secrets: []SecretData{
-					{Path: "apps/myapp/database", Data: map[string]string{"username": "admin", "password": "secret123"}},
-				},
-			}
 			config := FetchConfig{
 				Prefix:      "apps/myapp/",
 				OutputDir:   tmpDir,
@@ -157,18 +219,19 @@ func TestFetch_WriteAsFiles(t *testing.T) {
 				CreateDirs:  true,
 				FileMode:    0o600,
 				DirMode:     0o700,
+				Keys:        tc.keys,
 				StripPrefix: tc.stripPrefix,
 				FlattenKeys: tc.flatten,
 			}
 
-			fetcher, err := NewFetcher(provider, config)
+			fetcher, err := NewFetcher(&mockSecretsProvider{secrets: tc.secrets}, config)
 			require.NoError(t, err)
 
 			result, err := fetcher.Fetch(context.Background())
 			require.NoError(t, err)
 
-			assert.Equal(t, 1, result.SecretsCount)
-			assert.Equal(t, 2, result.KeysCount)
+			assert.Equal(t, tc.wantSecrets, result.SecretsCount)
+			assert.Equal(t, tc.wantKeys, result.KeysCount)
 			assert.Len(t, result.FilesWritten, len(tc.want))
 
 			for rel, wantContent := range tc.want {
@@ -177,6 +240,10 @@ func TestFetch_WriteAsFiles(t *testing.T) {
 				content, err := os.ReadFile(path)
 				require.NoError(t, err)
 				assert.Equal(t, wantContent, string(content))
+			}
+			for _, rel := range tc.wantAbsent {
+				_, err := os.Stat(filepath.Join(tmpDir, rel))
+				assert.True(t, os.IsNotExist(err), rel)
 			}
 		})
 	}
@@ -370,6 +437,16 @@ func TestFetch_WriteAsJSON(t *testing.T) {
 			},
 		},
 		{
+			name: "secret at the prefix itself lands at root",
+			secrets: []SecretData{
+				{Path: "apps/myapp/", Data: map[string]string{"global_key": "global_value"}},
+			},
+			stripPrefix: true,
+			wantSecrets: 1,
+			wantKeys:    1,
+			want:        map[string]interface{}{"global_key": "global_value"},
+		},
+		{
 			name:    "no secrets writes empty object",
 			secrets: []SecretData{},
 			want:    map[string]interface{}{},
@@ -411,241 +488,49 @@ func TestFetch_WriteAsJSON(t *testing.T) {
 	}
 }
 
-// TestFetch_FilterKeys tests filtering specific keys.
-func TestFetch_FilterKeys(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host":     "localhost",
-					"port":     "5432",
-					"username": "admin",
-					"password": "secret123",
-				},
-			},
+// TestFetch_Errors checks that a provider failure and a missing output dir
+// with CreateDirs off both fail the fetch without a result.
+func TestFetch_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   *mockSecretsProvider
+		createDirs bool
+		subdir     string
+	}{
+		{
+			name:       "provider error",
+			provider:   &mockSecretsProvider{err: assert.AnError},
+			createDirs: true,
+		},
+		{
+			name: "output dir missing and CreateDirs off",
+			provider: &mockSecretsProvider{secrets: []SecretData{
+				{Path: "apps/myapp/database", Data: map[string]string{"host": "localhost"}},
+			}},
+			subdir: filepath.Join("nonexistent", "path"),
 		},
 	}
 
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		Keys:        []string{"username", "password"}, // Only these keys
-		StripPrefix: true,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config := FetchConfig{
+				Prefix:      "apps/myapp/",
+				OutputDir:   filepath.Join(t.TempDir(), tc.subdir),
+				Format:      OutputFormatFile,
+				CreateDirs:  tc.createDirs,
+				FileMode:    0o600,
+				DirMode:     0o700,
+				StripPrefix: true,
+			}
+
+			fetcher, err := NewFetcher(tc.provider, config)
+			require.NoError(t, err)
+
+			result, err := fetcher.Fetch(context.Background())
+			assert.Error(t, err)
+			assert.Nil(t, result)
+		})
 	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// Should only have 2 keys, not 4
-	assert.Equal(t, 2, result.KeysCount)
-
-	// username and password should exist
-	_, err = os.ReadFile(filepath.Join(tmpDir, "database", "username"))
-	assert.NoError(t, err)
-	_, err = os.ReadFile(filepath.Join(tmpDir, "database", "password"))
-	assert.NoError(t, err)
-
-	// host and port should NOT exist
-	_, err = os.ReadFile(filepath.Join(tmpDir, "database", "host"))
-	assert.True(t, os.IsNotExist(err))
-	_, err = os.ReadFile(filepath.Join(tmpDir, "database", "port"))
-	assert.True(t, os.IsNotExist(err))
-}
-
-// TestFetch_FilterKeys_NoMatch tests filtering when no keys match.
-func TestFetch_FilterKeys_NoMatch(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "localhost",
-				},
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatFile,
-		CreateDirs: true,
-		FileMode:   0o600,
-		DirMode:    0o700,
-		Keys:       []string{"nonexistent"},
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// No keys should be written
-	assert.Equal(t, 0, result.SecretsCount)
-	assert.Equal(t, 0, result.KeysCount)
-	assert.Empty(t, result.FilesWritten)
-}
-
-// TestFetch_EmptySecrets tests fetching when no secrets exist.
-func TestFetch_EmptySecrets(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{}, // Empty
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatFile,
-		CreateDirs: true,
-		FileMode:   0o600,
-		DirMode:    0o700,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, result.SecretsCount)
-	assert.Equal(t, 0, result.KeysCount)
-	assert.Empty(t, result.FilesWritten)
-}
-
-// TestFetch_ProviderError tests handling provider errors.
-func TestFetch_ProviderError(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		err: assert.AnError, // Simulated error
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatFile,
-		CreateDirs: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
-// TestFetch_MultipleSecrets tests fetching multiple secrets.
-func TestFetch_MultipleSecrets(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "db.example.com",
-				},
-			},
-			{
-				Path: "apps/myapp/cache",
-				Data: map[string]string{
-					"host": "cache.example.com",
-				},
-			},
-			{
-				Path: "apps/myapp/api",
-				Data: map[string]string{
-					"key": "api-key-123",
-				},
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		StripPrefix: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	assert.Equal(t, 3, result.SecretsCount)
-	assert.Equal(t, 3, result.KeysCount)
-	assert.Len(t, result.FilesWritten, 3)
-
-	// Verify each secret was written
-	dbHost, _ := os.ReadFile(filepath.Join(tmpDir, "database", "host"))
-	assert.Equal(t, "db.example.com", string(dbHost))
-
-	cacheHost, _ := os.ReadFile(filepath.Join(tmpDir, "cache", "host"))
-	assert.Equal(t, "cache.example.com", string(cacheHost))
-
-	apiKey, _ := os.ReadFile(filepath.Join(tmpDir, "api", "key"))
-	assert.Equal(t, "api-key-123", string(apiKey))
-}
-
-// TestFetch_NoStripPrefix tests preserving full path structure.
-func TestFetch_NoStripPrefix(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "localhost",
-				},
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		StripPrefix: false, // Keep full path
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// File should be at full path: apps/myapp/database/host
-	expectedFile := filepath.Join(tmpDir, "apps", "myapp", "database", "host")
-	assert.Contains(t, result.FilesWritten, expectedFile)
-
-	content, err := os.ReadFile(expectedFile)
-	require.NoError(t, err)
-	assert.Equal(t, "localhost", string(content))
 }
 
 // TestToEnvVarName tests environment variable name conversion.
@@ -697,43 +582,6 @@ func TestEscapeEnvValue(t *testing.T) {
 	}
 }
 
-// TestFetch_CreateDirs_Disabled tests behavior when CreateDirs is false.
-func TestFetch_CreateDirs_Disabled(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "localhost",
-				},
-			},
-		},
-	}
-
-	// Create a non-existent subdirectory path
-	nonExistentDir := filepath.Join(tmpDir, "nonexistent", "path")
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   nonExistentDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  false, // Don't create dirs
-		FileMode:    0o600,
-		DirMode:     0o700,
-		StripPrefix: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	// Should fail because directory doesn't exist
-	result, err := fetcher.Fetch(context.Background())
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
 // TestFetch_FilePermissions tests that files are created with correct permissions.
 func TestFetch_FilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -770,48 +618,6 @@ func TestFetch_FilePermissions(t *testing.T) {
 	info, err := os.Stat(file)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-// TestFetch_MultipleSecretsWithEmptyPath tests secrets at root level.
-func TestFetch_MultipleSecretsWithEmptyPath(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/", // Prefix matches exactly
-				Data: map[string]string{
-					"global_key": "global_value",
-				},
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatJSON,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		StripPrefix: true, // After strip, path becomes empty
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "secrets.json"))
-	require.NoError(t, err)
-
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-
-	// Empty path should put keys directly at root
-	assert.Equal(t, "global_value", output["global_key"])
-	assert.Equal(t, 1, result.KeysCount)
 }
 
 // TestOutputFormat_String tests OutputFormat string representation.
