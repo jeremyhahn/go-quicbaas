@@ -1201,136 +1201,99 @@ func TestResolveShardID_Zero(t *testing.T) {
 	assert.Equal(t, shards.PlatformShardID, svc.resolveShardID(0))
 }
 
-func TestEnsureHNSWIndex_AlreadyExists(t *testing.T) {
-	svc, _, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 128)
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.Equal(t, mockIndex, index)
-}
-
-func TestEnsureHNSWIndex_NoFactory(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	svc.indexFactory = nil
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.Error(t, err)
-	var qbErr *qbErrors.QBError
-	require.True(t, errors.As(err, &qbErr))
-	assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
-}
-
-func TestEnsureHNSWIndex_NamespaceNotFound(t *testing.T) {
-	svc, _, _, _ := newVecSvcWithSDK(t, "test-ns", 128)
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "nonexistent-ns")
-	require.Error(t, err)
-}
-
-func TestEnsureHNSWIndex_CreateAndLoadVectors(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "COSINE"}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return []*interfaces.VectorValue{
-			{ID: 1, Embedding: []float32{1.0, 2.0, 3.0}},
-			{ID: 2, Embedding: []float32{4.0, 5.0, 6.0}},
-		}, nil
+func TestEnsureHNSWIndex(t *testing.T) {
+	twoVectors := []*interfaces.VectorValue{
+		{ID: 1, Embedding: []float32{1.0, 2.0, 3.0}},
+		{ID: 2, Embedding: []float32{4.0, 5.0, 6.0}},
 	}
 
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_DotProductMetric(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "DOT_PRODUCT"}, nil
+	tests := []struct {
+		name         string
+		namespace    string
+		keepIndex    bool
+		noFactory    bool
+		metric       string
+		scanned      []*interfaces.VectorValue
+		scanErr      error
+		factoryErr   error
+		insertErr    error
+		wantInternal bool
+		wantErrText  string
+		wantErr      bool
+		wantMetric   string
+		wantInserts  int
+	}{
+		{name: "already exists", namespace: "test-ns", keepIndex: true},
+		{name: "no factory", namespace: "test-ns", noFactory: true, wantErr: true, wantInternal: true},
+		{name: "namespace not found", namespace: "nonexistent-ns", wantErr: true},
+		{name: "cosine loads vectors", namespace: "test-ns", metric: "COSINE", scanned: twoVectors, wantMetric: "cosine", wantInserts: 2},
+		{name: "dot product metric", namespace: "test-ns", metric: "DOT_PRODUCT", wantMetric: "dot_product"},
+		{name: "unknown metric defaults to l2", namespace: "test-ns", metric: "UNKNOWN", wantMetric: "l2"},
+		{name: "factory error", namespace: "test-ns", factoryErr: errors.New("factory error"), wantErr: true, wantErrText: "create vector index"},
+		{name: "scan error still returns index", namespace: "test-ns", metric: "L2", scanErr: errors.New("scan failed"), wantMetric: "l2"},
+		{name: "insert error still returns index", namespace: "test-ns", scanned: twoVectors[:1], insertErr: errors.New("insert failed"), wantMetric: "l2", wantInserts: 1},
 	}
 
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage, _, mockIndex := newVecSvcWithSDK(t, "test-ns", 3)
+			if !tt.keepIndex {
+				svc.indexMu.Lock()
+				delete(svc.indexes, "test-ns")
+				svc.indexMu.Unlock()
+			}
+			if tt.metric != "" {
+				storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
+					return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: tt.metric}, nil
+				}
+			}
+			storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				return tt.scanned, tt.scanErr
+			}
 
-func TestEnsureHNSWIndex_DefaultL2Metric(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
+			created := newVecMockVectorIndex()
+			inserts := 0
+			created.insertFn = func(_ uint64, _ []float32) error {
+				inserts++
+				return tt.insertErr
+			}
+			var gotMetric string
+			svc.indexFactory = &vecMockVectorIndexFactory{
+				createFn: func(config *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
+					gotMetric = config.DistanceMetric
+					if tt.factoryErr != nil {
+						return nil, tt.factoryErr
+					}
+					return created, nil
+				},
+			}
+			if tt.noFactory {
+				svc.indexFactory = nil
+			}
 
-	storage.getNamespaceInfoFn = func(_ context.Context, ns string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: ns, Dimension: 3, DistanceMetric: "UNKNOWN"}, nil
+			index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), tt.namespace)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantInternal {
+					var qbErr *qbErrors.QBError
+					require.True(t, errors.As(err, &qbErr))
+					assert.Equal(t, qbErrors.ErrInternal, qbErr.Code)
+				}
+				if tt.wantErrText != "" {
+					assert.Contains(t, err.Error(), tt.wantErrText)
+				}
+				return
+			}
+			require.NoError(t, err)
+			if tt.keepIndex {
+				assert.Equal(t, mockIndex, index)
+				return
+			}
+			assert.Equal(t, created, index)
+			assert.Equal(t, tt.wantMetric, gotMetric)
+			assert.Equal(t, tt.wantInserts, inserts)
+		})
 	}
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_FactoryCreateError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3}, nil
-	}
-	svc.indexFactory = &vecMockVectorIndexFactory{
-		createFn: func(_ *interfaces.VectorIndexConfig) (interfaces.VectorIndex, error) {
-			return nil, errors.New("factory error")
-		},
-	}
-	_, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "create vector index")
-}
-
-func TestEnsureHNSWIndex_ScanError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3, DistanceMetric: "L2"}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return nil, errors.New("scan failed")
-	}
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
-}
-
-func TestEnsureHNSWIndex_InsertError(t *testing.T) {
-	svc, storage, _, _ := newVecSvcWithSDK(t, "test-ns", 3)
-	svc.indexMu.Lock()
-	delete(svc.indexes, "test-ns")
-	svc.indexMu.Unlock()
-
-	storage.getNamespaceInfoFn = func(_ context.Context, _ string) (*interfaces.VectorNamespaceInfo, error) {
-		return &interfaces.VectorNamespaceInfo{Name: "test-ns", Dimension: 3}, nil
-	}
-	storage.scanNamespaceFn = func(_ context.Context, _ string, _ *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		return []*interfaces.VectorValue{{ID: 1, Embedding: []float32{1, 2, 3}}}, nil
-	}
-	failIndex := newVecMockVectorIndex()
-	failIndex.insertFn = func(_ uint64, _ []float32) error { return errors.New("insert failed") }
-	svc.indexFactory = newVecMockVectorIndexFactory(failIndex)
-	index, err := svc.ensureIndex(tenantctx.WithSystem(context.Background()), "test-ns")
-	require.NoError(t, err)
-	assert.NotNil(t, index)
 }
 
 func TestEnsureHNSWIndex_ConcurrentCreation(t *testing.T) {
