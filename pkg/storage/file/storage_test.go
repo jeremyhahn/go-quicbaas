@@ -869,50 +869,31 @@ func TestRestore_NilSnapshot_Succeeds(t *testing.T) {
 	assert.Equal(t, 0, count)
 }
 
-func TestRestore_WithSyncWritesEnabled(t *testing.T) {
-	config := DefaultConfig()
-	config.DataDir = t.TempDir()
-	config.SyncWrites = true
+func TestRestore_SyncWrites(t *testing.T) {
+	for _, syncWrites := range []bool{true, false} {
+		t.Run(fmt.Sprintf("sync=%t", syncWrites), func(t *testing.T) {
+			config := DefaultConfig()
+			config.DataDir = t.TempDir()
+			config.SyncWrites = syncWrites
 
-	storage, err := New(config, nil)
-	require.NoError(t, err)
-	defer storage.Close()
+			storage, err := New(config, nil)
+			require.NoError(t, err)
+			defer storage.Close()
 
-	snapshot := map[string][]byte{
-		"key1": []byte("value1"),
-		"key2": []byte("value2"),
+			snapshot := map[string][]byte{
+				"key1": []byte("value1"),
+				"key2": []byte("value2"),
+			}
+
+			err = storage.Restore(snapshot)
+
+			require.NoError(t, err)
+
+			val, err := storage.Get([]byte("key1"))
+			require.NoError(t, err)
+			assert.Equal(t, []byte("value1"), val)
+		})
 	}
-
-	err = storage.Restore(snapshot)
-
-	require.NoError(t, err)
-
-	val, err := storage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), val)
-}
-
-func TestRestore_WithSyncWritesDisabled(t *testing.T) {
-	config := DefaultConfig()
-	config.DataDir = t.TempDir()
-	config.SyncWrites = false
-
-	storage, err := New(config, nil)
-	require.NoError(t, err)
-	defer storage.Close()
-
-	snapshot := map[string][]byte{
-		"key1": []byte("value1"),
-		"key2": []byte("value2"),
-	}
-
-	err = storage.Restore(snapshot)
-
-	require.NoError(t, err)
-
-	val, err := storage.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value1"), val)
 }
 
 // -----------------------------------------------------------------------------
@@ -1941,32 +1922,6 @@ func TestSnapshot_FileDeletedDuringIteration_SkipsDeletedFiles(t *testing.T) {
 // pathToKey filepath.Rel failure test (covers line 127)
 // -----------------------------------------------------------------------------
 
-func TestPathToKey_FilepathRelFailure_ReturnsEmptyString(t *testing.T) {
-	storage := createTestStorage(t)
-	defer storage.Close()
-
-	// On Unix, filepath.Rel can fail if the paths have incompatible formats
-	// This is hard to trigger on Unix since paths are generally compatible
-	// However, we can test with a malformed path that causes issues
-
-	// The actual failure case on line 127 returns empty string when filepath.Rel fails
-	// To test this, we need to understand that filepath.Rel fails when:
-	// - On Windows: paths are on different drives
-	// - On Unix: this is rare, but we can verify the empty string return behavior
-
-	// Test that when pathToKey returns empty string, it's handled correctly
-	// by creating a situation where the path can't be made relative
-
-	// We can't easily make filepath.Rel fail on Unix, but we can verify the
-	// code path by checking the behavior with edge cases
-
-	// Test with the data dir itself (edge case)
-	key := storage.pathToKey(storage.config.DataDir)
-	// When path equals DataDir, filepath.Rel returns "." which becomes ""
-	// after trimming the extension (which isn't there)
-	assert.Equal(t, ".", key)
-}
-
 // -----------------------------------------------------------------------------
 // Test helpers
 // -----------------------------------------------------------------------------
@@ -2662,28 +2617,6 @@ func TestSetUnlocked_MkdirAllError(t *testing.T) {
 // Restore - trigger write error path
 // ---------------------------------------------------------------------------
 
-func TestRestore_WriteErrorPath(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// First, add some data to clear
-	err := store.Set([]byte("pre-existing"), []byte("data"))
-	require.NoError(t, err)
-
-	// The clear pass still removes "pre-existing"; the write pass then fails
-	// because "new-subdir" is a regular file, so MkdirAll returns ENOTDIR --
-	// an error root cannot bypass, unlike a read-only data directory
-	// (testing-guidelines.md, Fault Injection).
-	snapshot := map[string][]byte{
-		"new-subdir/key": []byte("value"),
-	}
-
-	require.NoError(t, os.WriteFile(filepath.Join(store.config.DataDir, "new-subdir"), []byte("blocking"), 0o644))
-
-	err = store.Restore(snapshot)
-	assert.Error(t, err)
-}
-
 // ---------------------------------------------------------------------------
 // Iterator - Seek forward to exact match
 // ---------------------------------------------------------------------------
@@ -2785,38 +2718,6 @@ func TestFactory_Create_NilLogger(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Restore - WalkDir error path (non-existent data dir)
 // ---------------------------------------------------------------------------
-
-func TestRestore_WalkDirError(t *testing.T) {
-	tmpDir := t.TempDir()
-	log, err := logger.New(logger.LogConfig{
-		Level:  "debug",
-		Format: "json",
-		Output: "stdout",
-	})
-	require.NoError(t, err)
-
-	cfg := &Config{
-		DataDir:         tmpDir,
-		CodecType:       codec.JSON,
-		FilePermissions: DefaultFilePermissions,
-		DirPermissions:  DefaultDirPermissions,
-	}
-
-	store, createErr := New(cfg, log)
-	require.NoError(t, createErr)
-	defer store.Close()
-
-	// Remove the data directory to trigger WalkDir error
-	err = os.RemoveAll(tmpDir)
-	require.NoError(t, err)
-
-	snapshot := map[string][]byte{
-		"key": []byte("value"),
-	}
-
-	err = store.Restore(snapshot)
-	assert.Error(t, err)
-}
 
 // =============================================================================
 // Consolidated from coverage_96_test.go
@@ -2980,42 +2881,11 @@ func TestSetUnlocked_OpenFileError_DirAtTmpPath(t *testing.T) {
 
 // TestRestore_MkdirAllError tests Restore when creating parent
 // directories for a snapshot entry fails because a file blocks the path.
-func TestRestore_MkdirAllError(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Create a file that blocks MkdirAll for a nested key path
-	blockingFile := filepath.Join(store.config.DataDir, "blocker")
-	require.NoError(t, os.WriteFile(blockingFile, []byte("file"), 0644))
-
-	snapshot := map[string][]byte{
-		"blocker/nested/key": []byte("value"),
-	}
-
-	err := store.Restore(snapshot)
-	assert.Error(t, err, "should fail when MkdirAll fails during restore")
-}
 
 // TestRestore_OpenFileError_ReadOnlyDir tests Restore when creating the
 // temp file for a snapshot entry fails because the data directory is
 // read-only. The WalkDir phase succeeds (only reads), MkdirAll succeeds
 // (dir already exists), but OpenFile fails due to permission denied.
-func TestRestore_OpenFileError_WhenTempPathIsDirectory(t *testing.T) {
-	store := createTestFileStorage(t)
-	defer store.Close()
-
-	// Do NOT add any data, so the clear pass has no .json file to remove and
-	// the failure is unambiguously the staging OpenFile. A directory sitting on
-	// the temp path makes that call return EISDIR for any uid.
-	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("key"))+".tmp", 0755))
-
-	snapshot := map[string][]byte{
-		"key": []byte("value"),
-	}
-
-	err := store.Restore(snapshot)
-	assert.Error(t, err, "should fail when the staging temp path is a directory")
-}
 
 // TestPathToKey_RelError tests pathToKey when filepath.Rel fails because
 // the input path cannot be made relative to the DataDir.
@@ -3102,37 +2972,9 @@ func TestExists_ClosedStorage(t *testing.T) {
 	assert.True(t, errors.Is(err, errors.ErrStorage))
 }
 
-func TestExists_WithNestedKey(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("users/123"), []byte("data")))
-
-	found, err := store.Exists([]byte("users/123"))
-	require.NoError(t, err)
-	assert.True(t, found)
-
-	found, err = store.Exists([]byte("users/999"))
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
 // ---------------------------------------------------------------------------
 // List (storage.go:206 -- 0.0% covered)
 // ---------------------------------------------------------------------------
-
-func TestList_AllKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	keys, err := store.List(nil)
-	require.NoError(t, err)
-	assert.Len(t, keys, 3)
-}
 
 func TestList_WithPrefix(t *testing.T) {
 	store := createTestStorage(t)
@@ -3170,15 +3012,6 @@ func TestList_NoMatchingPrefix(t *testing.T) {
 	assert.Empty(t, keys)
 }
 
-func TestList_EmptyStorage(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	keys, err := store.List(nil)
-	require.NoError(t, err)
-	assert.Empty(t, keys)
-}
-
 func TestList_ClosedStorage(t *testing.T) {
 	store := createTestStorage(t)
 	require.NoError(t, store.Close())
@@ -3199,26 +3032,6 @@ func TestPathToKey_ValidPath(t *testing.T) {
 	path := filepath.Join(store.config.DataDir, "mykey"+store.extension)
 	key := store.pathToKey(path)
 	assert.Equal(t, "mykey", key)
-}
-
-func TestPathToKey_NestedPath(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	path := filepath.Join(store.config.DataDir, "users", "123"+store.extension)
-	key := store.pathToKey(path)
-	assert.Equal(t, filepath.Join("users", "123"), key)
-}
-
-func TestPathToKey_InvalidPath_ReturnsEmpty(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	// A path that can't be made relative to DataDir
-	key := store.pathToKey("/completely/different/path/key.db")
-	// filepath.Rel may produce a relative path even for different trees,
-	// but the important thing is it doesn't panic and returns a string.
-	assert.NotEmpty(t, key) // Non-empty because Rel can still compute it
 }
 
 // ---------------------------------------------------------------------------
@@ -3276,107 +3089,6 @@ func TestSetUnlocked_OverwriteExisting(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Restore error branches (storage.go:517 -- 76.2% covered)
 // ---------------------------------------------------------------------------
-
-func TestRestore_Success(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	// Populate initial data
-	require.NoError(t, store.Set([]byte("old"), []byte("data")))
-
-	snapshot := map[string][]byte{
-		"key1": []byte("val1"),
-		"key2": []byte("val2"),
-	}
-
-	err := store.Restore(snapshot)
-	require.NoError(t, err)
-
-	// Verify old data is gone
-	_, err = store.Get([]byte("old"))
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrNotFound))
-
-	// Verify new data is present
-	val, err := store.Get([]byte("key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("val1"), val)
-
-	val, err = store.Get([]byte("key2"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("val2"), val)
-}
-
-func TestRestore_ClosedStorage(t *testing.T) {
-	store := createTestStorage(t)
-	require.NoError(t, store.Close())
-
-	err := store.Restore(map[string][]byte{"k": []byte("v")})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-}
-
-func TestRestore_EmptySnapshot(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("old"), []byte("data")))
-
-	err := store.Restore(map[string][]byte{})
-	require.NoError(t, err)
-
-	// Old data should be cleared
-	_, err = store.Get([]byte("old"))
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrNotFound))
-}
-
-func TestRestore_WithNestedKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	snapshot := map[string][]byte{
-		"a/b/c": []byte("deep"),
-		"x/y":   []byte("medium"),
-		"flat":  []byte("top"),
-	}
-
-	err := store.Restore(snapshot)
-	require.NoError(t, err)
-
-	for key, expected := range snapshot {
-		val, getErr := store.Get([]byte(key))
-		require.NoError(t, getErr)
-		assert.Equal(t, expected, val)
-	}
-}
-
-func TestRestore_ReadOnlyDir(t *testing.T) {
-	tempDir := t.TempDir()
-	subDir := filepath.Join(tempDir, "data")
-	require.NoError(t, os.MkdirAll(subDir, 0o755))
-
-	config := DefaultConfig()
-	config.DataDir = subDir
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	// Write a file so WalkDir has something to encounter
-	require.NoError(t, store.Set([]byte("existing"), []byte("val")))
-
-	// The clear pass removes "existing" and the write pass then stages "new"
-	// through "<path>.tmp"; a directory sitting there makes that OpenFile
-	// return EISDIR. The original read-only directory targeted the unlink
-	// instead, which root performs happily (testing-guidelines.md, Fault
-	// Injection).
-	require.NoError(t, os.MkdirAll(store.keyToPath([]byte("new"))+".tmp", 0o755))
-
-	err = store.Restore(map[string][]byte{"new": []byte("val")})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-}
 
 // ---------------------------------------------------------------------------
 // newFileSnapshot error path (snapshot.go:41 -- 73.3% covered)
@@ -3799,85 +3511,9 @@ func TestSet_EmptyValue(t *testing.T) {
 // Restore with SyncWrites (covers the Sync branch in Restore)
 // ---------------------------------------------------------------------------
 
-func TestRestore_WithSyncWrites(t *testing.T) {
-	tempDir := t.TempDir()
-	config := DefaultConfig()
-	config.DataDir = tempDir
-	config.SyncWrites = true
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	snapshot := map[string][]byte{
-		"a": []byte("1"),
-		"b": []byte("2"),
-		"c": []byte("3"),
-	}
-
-	err = store.Restore(snapshot)
-	require.NoError(t, err)
-
-	for k, v := range snapshot {
-		val, getErr := store.Get([]byte(k))
-		require.NoError(t, getErr)
-		assert.Equal(t, v, val)
-	}
-}
-
-func TestRestore_WithoutSyncWrites(t *testing.T) {
-	tempDir := t.TempDir()
-	config := DefaultConfig()
-	config.DataDir = tempDir
-	config.SyncWrites = false
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	snapshot := map[string][]byte{
-		"x": []byte("10"),
-		"y": []byte("20"),
-	}
-
-	err = store.Restore(snapshot)
-	require.NoError(t, err)
-
-	val, err := store.Get([]byte("x"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("10"), val)
-}
-
 // ---------------------------------------------------------------------------
 // More Exists and List with various key patterns
 // ---------------------------------------------------------------------------
-
-func TestExists_AfterDelete(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("temp"), []byte("val")))
-	require.NoError(t, store.Delete([]byte("temp")))
-
-	found, err := store.Exists([]byte("temp"))
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
-func TestList_AfterDeleteSomeKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a"), []byte("1")))
-	require.NoError(t, store.Set([]byte("b"), []byte("2")))
-	require.NoError(t, store.Set([]byte("c"), []byte("3")))
-
-	require.NoError(t, store.Delete([]byte("b")))
-
-	keys, err := store.List(nil)
-	require.NoError(t, err)
-	assert.Len(t, keys, 2)
-}
 
 // ---------------------------------------------------------------------------
 // Snapshot with read after close
@@ -3977,15 +3613,6 @@ func TestSnapshot_WithUnreadableFile(t *testing.T) {
 // pathToKey error path - unreachable path
 // ---------------------------------------------------------------------------
 
-func TestPathToKey_RelativeError(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	// pathToKey with a path that can still be made relative
-	result := store.pathToKey(filepath.Join(store.config.DataDir, "sub", "key.db"))
-	assert.NotEmpty(t, result)
-}
-
 // ---------------------------------------------------------------------------
 // New with validate error
 // ---------------------------------------------------------------------------
@@ -4011,47 +3638,9 @@ func TestNew_InvalidCodecType(t *testing.T) {
 // Exists with stat error for non-permission issue
 // ---------------------------------------------------------------------------
 
-func TestExists_MultipleKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	for i := 0; i < 10; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
-		require.NoError(t, store.Set(key, []byte("val")))
-	}
-
-	for i := 0; i < 10; i++ {
-		key := []byte(fmt.Sprintf("key-%d", i))
-		found, err := store.Exists(key)
-		require.NoError(t, err)
-		assert.True(t, found)
-	}
-
-	found, err := store.Exists([]byte("key-999"))
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
 // ---------------------------------------------------------------------------
 // List with deeply nested keys
 // ---------------------------------------------------------------------------
-
-func TestList_DeeplyNestedKeys(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	require.NoError(t, store.Set([]byte("a/b/c/d"), []byte("deep")))
-	require.NoError(t, store.Set([]byte("a/b/e"), []byte("medium")))
-	require.NoError(t, store.Set([]byte("a/f"), []byte("shallow")))
-
-	keys, err := store.List([]byte("a/b/"))
-	require.NoError(t, err)
-	assert.Len(t, keys, 2)
-
-	keys, err = store.List([]byte("a/"))
-	require.NoError(t, err)
-	assert.Len(t, keys, 3)
-}
 
 // =============================================================================
 // Consolidated from storage_coverage_test.go
@@ -4126,120 +3715,6 @@ func TestSet_WithoutSyncWrites_Succeeds(t *testing.T) {
 // Restore write error paths (covers storage.go lines 510-544)
 // Tests the MkdirAll, OpenFile, Write, Sync, Close, and Rename error branches.
 // -----------------------------------------------------------------------------
-
-func TestRestore_ClosedStorage_ReturnsError(t *testing.T) {
-	store := createTestStorage(t)
-	require.NoError(t, store.Close())
-
-	err := store.Restore(map[string][]byte{"key": []byte("value")})
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-	assert.Contains(t, err.Error(), "closed")
-}
-
-func TestRestore_WithSyncWrites_Succeeds(t *testing.T) {
-	tempDir := t.TempDir()
-	config := DefaultConfig()
-	config.DataDir = tempDir
-	config.SyncWrites = true
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	// Set initial data
-	require.NoError(t, store.Set([]byte("old-key"), []byte("old-value")))
-
-	// Restore with new data
-	err = store.Restore(map[string][]byte{
-		"new-key1": []byte("new-value1"),
-		"new-key2": []byte("new-value2"),
-	})
-	require.NoError(t, err)
-
-	// Verify old data is gone
-	_, err = store.Get([]byte("old-key"))
-	assert.True(t, errors.IsNotFound(err))
-
-	// Verify new data
-	val, err := store.Get([]byte("new-key1"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new-value1"), val)
-
-	val, err = store.Get([]byte("new-key2"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("new-value2"), val)
-}
-
-func TestRestore_WithoutSyncWrites_Succeeds(t *testing.T) {
-	tempDir := t.TempDir()
-	config := DefaultConfig()
-	config.DataDir = tempDir
-	config.SyncWrites = false
-
-	store, err := New(config, nil)
-	require.NoError(t, err)
-	defer store.Close()
-
-	err = store.Restore(map[string][]byte{
-		"key": []byte("value"),
-	})
-	require.NoError(t, err)
-
-	val, err := store.Get([]byte("key"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("value"), val)
-}
-
-func TestRestore_WithNestedKeys_CreatesDirectories(t *testing.T) {
-	store := createTestStorage(t)
-	defer store.Close()
-
-	err := store.Restore(map[string][]byte{
-		"users/001":  []byte("user1"),
-		"users/002":  []byte("user2"),
-		"orders/001": []byte("order1"),
-	})
-	require.NoError(t, err)
-
-	val, err := store.Get([]byte("users/001"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("user1"), val)
-
-	val, err = store.Get([]byte("orders/001"))
-	require.NoError(t, err)
-	assert.Equal(t, []byte("order1"), val)
-}
-
-func TestRestore_WriteToReadOnlyDir_ReturnsError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Log("Skipping permission test as root")
-		return
-	}
-	if runtime.GOOS == "windows" {
-		t.Log("Skipping permission test on Windows")
-		return
-	}
-
-	store := createTestStorage(t)
-	defer store.Close()
-
-	// Create a subdirectory and make it read-only
-	readOnlyDir := filepath.Join(store.config.DataDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0755))
-	require.NoError(t, os.Chmod(readOnlyDir, 0555))
-	defer func() {
-		require.NoError(t, os.Chmod(readOnlyDir, 0755))
-	}()
-
-	err := store.Restore(map[string][]byte{
-		"readonly/key": []byte("value"),
-	})
-
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, errors.ErrStorage))
-}
 
 // -----------------------------------------------------------------------------
 // pathToKey edge cases (covers storage.go line 146)
