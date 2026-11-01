@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -313,6 +312,57 @@ func TestHandleReplaceNode(t *testing.T) {
 			},
 			expectedStatus: http.StatusNotFound,
 		},
+		{
+			name:         "invalid node id",
+			failedNodeID: "invalid",
+			body: ReplaceNodeRequest{
+				ReplacementNodeID:  3,
+				ReplacementAddress: "192.168.1.3:5001",
+			},
+			setupMock:      func(m *testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:         "missing replacement_node_id",
+			failedNodeID: "2",
+			body: ReplaceNodeRequest{
+				ReplacementAddress: "192.168.1.3:5001",
+			},
+			setupMock:      func(m *testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:         "missing replacement_address",
+			failedNodeID: "2",
+			body: ReplaceNodeRequest{
+				ReplacementNodeID: 3,
+			},
+			setupMock:      func(m *testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "body is not a JSON object",
+			failedNodeID:   "2",
+			body:           "invalid-json",
+			setupMock:      func(m *testutil.MockQuicBaaS) {},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:         "cluster status error",
+			failedNodeID: "2",
+			body: ReplaceNodeRequest{
+				ReplacementNodeID:  3,
+				ReplacementAddress: "192.168.1.3:5001",
+			},
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
+					Code: errors.ErrInternal,
+					Op:   "test",
+					Err:  &errors.MessageError{Message: "cluster error"},
+				}).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
 	}
 
 	for _, tt := range tests {
@@ -394,6 +444,18 @@ func TestHandleListNodes(t *testing.T) {
 				}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "nil status response",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(
+					(*service.ClusterStatusResponse)(nil), nil,
+				).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				assert.Contains(t, w.Body.String(), "cluster status unavailable")
+			},
 		},
 	}
 
@@ -561,6 +623,18 @@ func TestHandleListNonLeaderNodes(t *testing.T) {
 				}).Once()
 			},
 			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "nil status response",
+			setupMock: func(m *testutil.MockQuicBaaS) {
+				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(
+					(*service.ClusterStatusResponse)(nil), nil,
+				).Once()
+			},
+			expectedStatus: http.StatusInternalServerError,
+			checkResponse: func(t *testing.T, w *httptest.ResponseRecorder) {
+				assert.Contains(t, w.Body.String(), "cluster status unavailable")
+			},
 		},
 	}
 
@@ -906,6 +980,11 @@ func TestHandleStartMigration(t *testing.T) {
 			},
 			expectedStatus: http.StatusBadRequest,
 		},
+		{
+			name:           "body is not a JSON object",
+			body:           "{invalid",
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1057,6 +1136,11 @@ func TestHandleStartUpgrade(t *testing.T) {
 			body:           UpgradeRequest{},
 			expectedStatus: http.StatusBadRequest,
 		},
+		{
+			name:           "body is not a JSON object",
+			body:           "{invalid",
+			expectedStatus: http.StatusBadRequest,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1155,42 +1239,6 @@ func TestClusterOperationsIntegration(t *testing.T) {
 	})
 }
 
-func TestHandleListNodesServiceErrorTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// HandleListNodes actually calls ClusterStatus
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		nil, errors.New(errors.ErrInternal, "cluster", "connection error"),
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNodes(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-func TestHandleListNonLeaderNodesServiceErrorTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// HandleListNonLeaderNodes also calls ClusterStatus
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		nil, errors.New(errors.ErrInternal, "cluster", "connection error"),
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes/non-leaders", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNonLeaderNodes(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestHandleCryptoDataKeyMissingKeyNameTarget(t *testing.T) {
 	t.Parallel()
 	server, _, cleanup := setupMockServer(t)
@@ -1207,326 +1255,13 @@ func TestHandleCryptoDataKeyMissingKeyNameTarget(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "key name is required")
 }
 
-func TestHandleStartRebalanceWithInvalidJSONTarget(t *testing.T) {
-	t.Parallel()
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/rebalance", strings.NewReader("{invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleStartRebalance(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestHandleStartMigrationWithInvalidJSONTarget tests start migration with invalid JSON.
-func TestHandleStartMigrationWithInvalidJSONTarget(t *testing.T) {
-	t.Parallel()
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/migrate", strings.NewReader("{invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleStartMigration(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestHandleStartUpgradeWithInvalidJSONTarget tests start upgrade with invalid JSON.
-func TestHandleStartUpgradeWithInvalidJSONTarget(t *testing.T) {
-	t.Parallel()
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/upgrade", strings.NewReader("{invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleStartUpgrade(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestHandleListNonLeaderNodesNilResponseTarget tests nil response from ClusterStatus.
-func TestHandleListNonLeaderNodesNilResponseTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Return nil response
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		(*service.ClusterStatusResponse)(nil), nil,
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes/non-leaders", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNonLeaderNodes(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "cluster status unavailable")
-}
-
 // TestHandleListNonLeaderNodesSuccessTarget tests successful non-leader nodes listing.
-func TestHandleListNonLeaderNodesSuccessTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Return response with mixed nodes
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		&service.ClusterStatusResponse{
-			Nodes: []*service.NodeInfo{
-				{
-					NodeID:       1,
-					Address:      "192.168.1.1:5000",
-					IsLeader:     true,
-					HealthStatus: service.HealthStatusHealthy,
-				},
-				{
-					NodeID:       2,
-					Address:      "192.168.1.2:5000",
-					IsLeader:     false,
-					HealthStatus: service.HealthStatusHealthy,
-				},
-				{
-					NodeID:       3,
-					Address:      "192.168.1.3:5000",
-					IsLeader:     false,
-					HealthStatus: service.HealthStatusUnhealthy, // Should be filtered out
-				},
-			},
-		}, nil,
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes/non-leaders", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNonLeaderNodes(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	// Should only have node 2 (non-leader, healthy)
-	assert.Contains(t, w.Body.String(), "192.168.1.2:5000")
-	assert.NotContains(t, w.Body.String(), "192.168.1.1:5000") // Leader
-	assert.NotContains(t, w.Body.String(), "192.168.1.3:5000") // Unhealthy
-}
-
 // TestHandleReplaceNodeEmptyNodeIDTarget tests node replacement with empty node ID.
-func TestHandleReplaceNodeEmptyNodeIDTarget(t *testing.T) {
-	t.Parallel()
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("node_id", "")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/cluster/nodes//replace", strings.NewReader(`{"new_address": "192.168.1.100:5000"}`))
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	server.HandleReplaceNode(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 // TestHandleListNodesNilResponseTarget tests nil response from ClusterStatus.
-func TestHandleListNodesNilResponseTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Return nil response
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		(*service.ClusterStatusResponse)(nil), nil,
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNodes(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "cluster status unavailable")
-}
-
 // TestHandleListNodesSuccessTarget tests successful nodes listing.
-func TestHandleListNodesSuccessTarget(t *testing.T) {
-	t.Parallel()
-	server, mockService, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Return response with nodes
-	mockService.On("ClusterStatus", mock.Anything, mock.Anything).Return(
-		&service.ClusterStatusResponse{
-			ClusterID: "test-cluster",
-			Nodes: []*service.NodeInfo{
-				{
-					NodeID:       1,
-					Address:      "192.168.1.1:5000",
-					IsLeader:     true,
-					HealthStatus: service.HealthStatusHealthy,
-					Version:      "1.0.0",
-				},
-				{
-					NodeID:       2,
-					Address:      "192.168.1.2:5000",
-					IsLeader:     false,
-					HealthStatus: service.HealthStatusHealthy,
-					Version:      "1.0.0",
-				},
-			},
-		}, nil,
-	).Once()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/cluster/nodes", nil)
-	w := httptest.NewRecorder()
-
-	server.HandleListNodes(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "192.168.1.1:5000")
-	assert.Contains(t, w.Body.String(), "192.168.1.2:5000")
-}
-
-func TestHandleReplaceNode_FullCoverage(t *testing.T) {
-	tests := []struct {
-		name           string
-		path           string
-		body           interface{}
-		setupMock      func(*testutil.MockQuicBaaS)
-		expectedStatus int
-	}{
-		{
-			name: "replace node success",
-			path: "/api/v1/cluster/nodes/1/replace",
-			body: ReplaceNodeRequest{
-				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
-			},
-			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.ExpectedCalls = nil
-				// First call: get cluster status to find shards with the failed node
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
-					Shards: []*service.ShardInfo{
-						{ShardID: 1, Replicas: []uint64{1, 3, 4}},
-						{ShardID: 2, Replicas: []uint64{2, 3, 4}},
-					},
-				}, nil).Once()
-				// Add node to affected shards
-				m.On("AddNode", mock.Anything, mock.Anything).Return(&service.AddNodeResponse{
-					Success: true,
-					Message: "node added",
-				}, nil).Once()
-				// Remove old node from affected shards
-				m.On("RemoveNode", mock.Anything, mock.Anything).Return(&service.RemoveNodeResponse{
-					Success: true,
-					Message: "node removed",
-				}, nil).Once()
-			},
-			expectedStatus: http.StatusOK,
-		},
-		{
-			name: "replace node - invalid node ID",
-			path: "/api/v1/cluster/nodes/invalid/replace",
-			body: ReplaceNodeRequest{
-				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
-			},
-			setupMock:      func(m *testutil.MockQuicBaaS) {},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name: "replace node - missing replacement_node_id",
-			path: "/api/v1/cluster/nodes/1/replace",
-			body: ReplaceNodeRequest{
-				ReplacementAddress: "192.168.1.100:9001",
-			},
-			setupMock:      func(m *testutil.MockQuicBaaS) {},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name: "replace node - missing replacement_address",
-			path: "/api/v1/cluster/nodes/1/replace",
-			body: ReplaceNodeRequest{
-				ReplacementNodeID: 2,
-			},
-			setupMock:      func(m *testutil.MockQuicBaaS) {},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "replace node - invalid JSON",
-			path:           "/api/v1/cluster/nodes/1/replace",
-			body:           "invalid-json",
-			setupMock:      func(m *testutil.MockQuicBaaS) {},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name: "replace node - cluster status error",
-			path: "/api/v1/cluster/nodes/1/replace",
-			body: ReplaceNodeRequest{
-				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
-			},
-			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.ExpectedCalls = nil
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(nil, &errors.QBError{
-					Code: errors.ErrInternal,
-					Op:   "test",
-					Err:  &errors.MessageError{Message: "cluster error"},
-				}).Once()
-			},
-			expectedStatus: http.StatusInternalServerError,
-		},
-		{
-			name: "replace node - node not found in any shard",
-			path: "/api/v1/cluster/nodes/999/replace",
-			body: ReplaceNodeRequest{
-				ReplacementNodeID:  2,
-				ReplacementAddress: "192.168.1.100:9001",
-			},
-			setupMock: func(m *testutil.MockQuicBaaS) {
-				m.ExpectedCalls = nil
-				m.On("ClusterStatus", mock.Anything, mock.Anything).Return(&service.ClusterStatusResponse{
-					Shards: []*service.ShardInfo{
-						{ShardID: 1, Replicas: []uint64{1, 2, 3}},
-					},
-				}, nil).Once()
-			},
-			expectedStatus: http.StatusNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server, mockService, cleanup := setupMockServer(t)
-			defer cleanup()
-
-			tt.setupMock(mockService)
-
-			var reqBody []byte
-			if str, ok := tt.body.(string); ok {
-				reqBody = []byte(str)
-			} else {
-				reqBody, _ = json.Marshal(tt.body)
-			}
-
-			req := httptest.NewRequest(http.MethodPut, tt.path, bytes.NewReader(reqBody))
-			req.Header.Set("Content-Type", "application/json")
-			req = req.WithContext(context.Background())
-
-			w := httptest.NewRecorder()
-			server.GetRouter().ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code, "unexpected status: %s", w.Body.String())
-		})
-	}
-}
-
 func TestHandleStartRebalance_FullCoverage(t *testing.T) {
 	tests := []struct {
 		name           string
