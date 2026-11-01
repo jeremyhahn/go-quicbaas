@@ -117,91 +117,69 @@ func TestNewFetcher(t *testing.T) {
 	}
 }
 
-// TestFetch_WriteAsFiles tests fetching and writing secrets as individual files.
+// TestFetch_WriteAsFiles checks that each key is written as its own file,
+// under the stripped secret path or directly in the output dir when
+// FlattenKeys is set.
 func TestFetch_WriteAsFiles(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"username": "admin",
-					"password": "secret123",
-				},
+	tests := []struct {
+		name        string
+		stripPrefix bool
+		flatten     bool
+		want        map[string]string // path relative to the output dir -> content
+	}{
+		{
+			name:        "per-secret directory",
+			stripPrefix: true,
+			want: map[string]string{
+				filepath.Join("database", "username"): "admin",
+				filepath.Join("database", "password"): "secret123",
 			},
+		},
+		{
+			name:    "flattened into output dir",
+			flatten: true,
+			want:    map[string]string{"username": "admin", "password": "secret123"},
 		},
 	}
 
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		StripPrefix: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	assert.Equal(t, 1, result.SecretsCount)
-	assert.Equal(t, 2, result.KeysCount)
-	assert.Len(t, result.FilesWritten, 2)
-
-	// Verify files were created with correct content
-	usernameContent, err := os.ReadFile(filepath.Join(tmpDir, "database", "username"))
-	require.NoError(t, err)
-	assert.Equal(t, "admin", string(usernameContent))
-
-	passwordContent, err := os.ReadFile(filepath.Join(tmpDir, "database", "password"))
-	require.NoError(t, err)
-	assert.Equal(t, "secret123", string(passwordContent))
-}
-
-// TestFetch_WriteAsFiles_FlattenKeys tests writing with flattened keys.
-func TestFetch_WriteAsFiles_FlattenKeys(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"username": "admin",
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			provider := &mockSecretsProvider{
+				secrets: []SecretData{
+					{Path: "apps/myapp/database", Data: map[string]string{"username": "admin", "password": "secret123"}},
 				},
-			},
-		},
+			}
+			config := FetchConfig{
+				Prefix:      "apps/myapp/",
+				OutputDir:   tmpDir,
+				Format:      OutputFormatFile,
+				CreateDirs:  true,
+				FileMode:    0o600,
+				DirMode:     0o700,
+				StripPrefix: tc.stripPrefix,
+				FlattenKeys: tc.flatten,
+			}
+
+			fetcher, err := NewFetcher(provider, config)
+			require.NoError(t, err)
+
+			result, err := fetcher.Fetch(context.Background())
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, result.SecretsCount)
+			assert.Equal(t, 2, result.KeysCount)
+			assert.Len(t, result.FilesWritten, len(tc.want))
+
+			for rel, wantContent := range tc.want {
+				path := filepath.Join(tmpDir, rel)
+				assert.Contains(t, result.FilesWritten, path)
+				content, err := os.ReadFile(path)
+				require.NoError(t, err)
+				assert.Equal(t, wantContent, string(content))
+			}
+		})
 	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatFile,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		DirMode:     0o700,
-		FlattenKeys: true, // Files go directly to output dir
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// File should be directly in output dir, not in subdirectory
-	usernameFile := filepath.Join(tmpDir, "username")
-	assert.Contains(t, result.FilesWritten, usernameFile)
-
-	content, err := os.ReadFile(usernameFile)
-	require.NoError(t, err)
-	assert.Equal(t, "admin", string(content))
 }
 
 // TestFetch_WriteAsEnv checks the .env output: the header is always written,
@@ -327,149 +305,110 @@ func TestFetch_WriteAsEnv_WithSpecialChars(t *testing.T) {
 	assert.Equal(t, 4, result.KeysCount)
 }
 
-// TestFetch_WriteAsJSON tests writing secrets as a JSON file.
+// TestFetch_WriteAsJSON checks the secrets.json layout: nested by the secret
+// path (with or without the prefix), flat when FlattenKeys is set, and an
+// empty object when there are no secrets.
 func TestFetch_WriteAsJSON(t *testing.T) {
-	tmpDir := t.TempDir()
+	database := []SecretData{
+		{Path: "apps/myapp/database", Data: map[string]string{"host": "localhost", "password": "secret123"}},
+	}
 
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host":     "localhost",
-					"password": "secret123",
+	tests := []struct {
+		name        string
+		secrets     []SecretData
+		stripPrefix bool
+		flatten     bool
+		wantSecrets int
+		wantKeys    int
+		want        map[string]interface{}
+	}{
+		{
+			name:        "nested under stripped path",
+			secrets:     database,
+			stripPrefix: true,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want: map[string]interface{}{
+				"database": map[string]interface{}{"host": "localhost", "password": "secret123"},
+			},
+		},
+		{
+			name:        "full path kept without strip prefix",
+			secrets:     database,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want: map[string]interface{}{
+				"apps": map[string]interface{}{
+					"myapp": map[string]interface{}{
+						"database": map[string]interface{}{"host": "localhost", "password": "secret123"},
+					},
 				},
 			},
 		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatJSON,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		StripPrefix: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, result.SecretsCount)
-	assert.Equal(t, 2, result.KeysCount)
-	assert.Len(t, result.FilesWritten, 1)
-
-	// Verify JSON file was created
-	jsonFile := filepath.Join(tmpDir, "secrets.json")
-	assert.Contains(t, result.FilesWritten, jsonFile)
-
-	content, err := os.ReadFile(jsonFile)
-	require.NoError(t, err)
-
-	// Parse JSON to verify structure
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-
-	// Should have nested structure: database -> {host, password}
-	database, ok := output["database"].(map[string]interface{})
-	require.True(t, ok)
-	assert.Equal(t, "localhost", database["host"])
-	assert.Equal(t, "secret123", database["password"])
-}
-
-// TestFetch_WriteAsJSON_FlattenKeys tests JSON with flattened keys.
-func TestFetch_WriteAsJSON_FlattenKeys(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host":     "localhost",
-					"password": "secret123",
+		{
+			name:        "flattened keys at root",
+			secrets:     database,
+			flatten:     true,
+			wantSecrets: 1,
+			wantKeys:    2,
+			want:        map[string]interface{}{"host": "localhost", "password": "secret123"},
+		},
+		{
+			name: "deeply nested path",
+			secrets: []SecretData{
+				{Path: "apps/myapp/services/api/config", Data: map[string]string{"port": "8080"}},
+			},
+			stripPrefix: true,
+			wantSecrets: 1,
+			wantKeys:    1,
+			want: map[string]interface{}{
+				"services": map[string]interface{}{
+					"api": map[string]interface{}{
+						"config": map[string]interface{}{"port": "8080"},
+					},
 				},
 			},
 		},
-	}
-
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatJSON,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		FlattenKeys: true,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "secrets.json"))
-	require.NoError(t, err)
-
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-
-	// Should be flat: {host, password} directly at root
-	assert.Equal(t, "localhost", output["host"])
-	assert.Equal(t, "secret123", output["password"])
-
-	assert.Equal(t, 2, result.KeysCount)
-}
-
-// TestFetch_WriteAsJSON_NestedPaths tests JSON with deeply nested paths.
-func TestFetch_WriteAsJSON_NestedPaths(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/services/api/config",
-				Data: map[string]string{
-					"port": "8080",
-				},
-			},
+		{
+			name:    "no secrets writes empty object",
+			secrets: []SecretData{},
+			want:    map[string]interface{}{},
 		},
 	}
 
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatJSON,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		StripPrefix: true,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			config := FetchConfig{
+				Prefix:      "apps/myapp/",
+				OutputDir:   tmpDir,
+				Format:      OutputFormatJSON,
+				CreateDirs:  true,
+				FileMode:    0o600,
+				StripPrefix: tc.stripPrefix,
+				FlattenKeys: tc.flatten,
+			}
+
+			fetcher, err := NewFetcher(&mockSecretsProvider{secrets: tc.secrets}, config)
+			require.NoError(t, err)
+
+			result, err := fetcher.Fetch(context.Background())
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantSecrets, result.SecretsCount)
+			assert.Equal(t, tc.wantKeys, result.KeysCount)
+
+			jsonFile := filepath.Join(tmpDir, "secrets.json")
+			assert.Equal(t, []string{jsonFile}, result.FilesWritten)
+
+			content, err := os.ReadFile(jsonFile)
+			require.NoError(t, err)
+
+			var output map[string]interface{}
+			require.NoError(t, json.Unmarshal(content, &output))
+			assert.Equal(t, tc.want, output)
+		})
 	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "secrets.json"))
-	require.NoError(t, err)
-
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-
-	// Should have nested structure: services -> api -> config -> {port}
-	services := output["services"].(map[string]interface{})
-	api := services["api"].(map[string]interface{})
-	cfg := api["config"].(map[string]interface{})
-	assert.Equal(t, "8080", cfg["port"])
-
-	assert.Equal(t, 1, result.KeysCount)
 }
 
 // TestFetch_FilterKeys tests filtering specific keys.
@@ -758,41 +697,6 @@ func TestEscapeEnvValue(t *testing.T) {
 	}
 }
 
-// TestFetch_WriteAsJSON_EmptySecrets tests JSON with no secrets.
-func TestFetch_WriteAsJSON_EmptySecrets(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{},
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatJSON,
-		CreateDirs: true,
-		FileMode:   0o600,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	jsonFile := filepath.Join(tmpDir, "secrets.json")
-	assert.Contains(t, result.FilesWritten, jsonFile)
-
-	content, err := os.ReadFile(jsonFile)
-	require.NoError(t, err)
-
-	// Should be empty JSON object
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-	assert.Empty(t, output)
-}
-
 // TestFetch_CreateDirs_Disabled tests behavior when CreateDirs is false.
 func TestFetch_CreateDirs_Disabled(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -866,51 +770,6 @@ func TestFetch_FilePermissions(t *testing.T) {
 	info, err := os.Stat(file)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-// TestFetch_JSON_PathStripPrefix tests JSON output with different prefix handling.
-func TestFetch_JSON_PathStripPrefix(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "localhost",
-				},
-			},
-		},
-	}
-
-	// Test with StripPrefix=false (keep full path)
-	config := FetchConfig{
-		Prefix:      "apps/myapp/",
-		OutputDir:   tmpDir,
-		Format:      OutputFormatJSON,
-		CreateDirs:  true,
-		FileMode:    0o600,
-		StripPrefix: false,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	_, err = fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, "secrets.json"))
-	require.NoError(t, err)
-
-	var output map[string]interface{}
-	err = json.Unmarshal(content, &output)
-	require.NoError(t, err)
-
-	// Full path should be preserved: apps -> myapp -> database -> {host}
-	apps := output["apps"].(map[string]interface{})
-	myapp := apps["myapp"].(map[string]interface{})
-	database := myapp["database"].(map[string]interface{})
-	assert.Equal(t, "localhost", database["host"])
 }
 
 // TestFetch_MultipleSecretsWithEmptyPath tests secrets at root level.
