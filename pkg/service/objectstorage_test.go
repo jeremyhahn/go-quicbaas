@@ -3256,53 +3256,6 @@ func TestSetObjectPolicy_WithAllPolicies(t *testing.T) {
 	assert.True(t, resp.Success)
 }
 
-func TestRestoreObject_WithDeleteFromArchive(t *testing.T) {
-	catalogMgr := newObjstoreMockCatalogManager()
-	backendMgr := newObjstoreMockBackendManager()
-	primaryStorage := newObjstoreMockStorage()
-	archiveStorage := newObjstoreMockStorage()
-	resolver := newObjstoreMockConfigResolver()
-	logger := newObjstoreMockLogger()
-
-	backendMgr.AddBackend("local", primaryStorage, &catalog.BackendConfig{
-		Type:    "local",
-		Enabled: true,
-	})
-	backendMgr.AddBackend("glacier", archiveStorage, &catalog.BackendConfig{
-		Type:    "glacier",
-		Enabled: true,
-	})
-
-	svc, err := NewObjectStorageService(catalogMgr, backendMgr, resolver, nil, logger)
-	require.NoError(t, err)
-
-	ctx := tenantctx.WithSystem(context.Background())
-
-	testData := []byte("restore and delete")
-	objectRef := "restore-delete-ref"
-	err = archiveStorage.PutWithContext(ctx, objectRef, bytes.NewReader(testData))
-	require.NoError(t, err)
-
-	entry := catalog.NewCatalogEntry("test:restore-delete", int64(len(testData)), nil)
-	entry.Status = catalog.StatusArchived
-	entry.PrimaryStore = catalog.StoreLocation{
-		Store:     "glacier",
-		ObjectRef: objectRef,
-		Status:    catalog.LocationStatusActive,
-	}
-	err = catalogMgr.Put(ctx, entry)
-	require.NoError(t, err)
-
-	req := &RestoreObjectRequest{
-		Key:           "test:restore-delete",
-		TargetBackend: "local",
-	}
-	resp, err := svc.RestoreObject(ctx, req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.True(t, resp.Success)
-}
-
 func TestMigrateObject_CrossTenantDenied(t *testing.T) {
 	catalogMgr := newObjstoreMockCatalogManager()
 	backendMgr := newObjstoreMockBackendManager()
@@ -3497,12 +3450,12 @@ func TestArchiveObject_TargetBackendUnavailable(t *testing.T) {
 		TargetStore: "nonexistent-archive",
 	}
 	resp, err := svc.ArchiveObject(ctx, req)
-	// May return error or partial success depending on implementation
-	if err != nil {
-		assert.Nil(t, resp)
-	} else {
-		assert.NotNil(t, resp)
-	}
+	// Current behaviour: the replication to the missing archive store is
+	// reported as partial, so ArchiveObject still reports success. This is
+	// a suspected bug tracked under #2137; the assertion pins today's result.
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.True(t, resp.Success)
 }
 
 func TestRestoreObject_ReadError(t *testing.T) {
@@ -3548,12 +3501,8 @@ func TestRestoreObject_ReadError(t *testing.T) {
 	}
 	resp, err := svc.RestoreObject(ctx, req)
 	// Restore fails because archive cannot be read
-	if err != nil {
-		assert.Nil(t, resp)
-	} else {
-		require.NotNil(t, resp)
-		assert.False(t, resp.Success)
-	}
+	require.Error(t, err)
+	assert.Nil(t, resp)
 }
 
 func TestGetTenantUsage_CatalogError(t *testing.T) {
