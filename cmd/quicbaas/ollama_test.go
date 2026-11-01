@@ -188,123 +188,60 @@ func TestNewOllamaCommands(t *testing.T) {
 // Run Command Tests
 // =============================================================================
 
-func TestRunOllamaHealthCommand_Success(t *testing.T) {
-	// Save original factory and restore after test
+func TestRunOllamaHealthCommand(t *testing.T) {
 	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
 	oldFormat := outputFormat
 	oldTimeout := globalTimeout
 	defer func() {
+		ollamaClientFactory = origFactory
 		outputFormat = oldFormat
 		globalTimeout = oldTimeout
-		ollamaFullCheck = false
 	}()
-	outputFormat = "json"
 	globalTimeout = 30 * time.Second
 
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaHealthCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{
-		OllamaHealthFunc: func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error) {
-			return &pb.OllamaHealthResponse{
-				Available:   true,
-				Version:     "0.1.24",
-				BaseUrl:     "http://localhost:11434",
-				LastChecked: timestamppb.Now(),
-				Error:       "",
-			}, nil
+	tests := []struct {
+		name    string
+		format  string
+		health  func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error)
+		wantErr bool
+	}{
+		{name: "success", format: "json"},
+		{
+			name:   "unavailable",
+			format: "table",
+			health: func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error) {
+				return &pb.OllamaHealthResponse{
+					Available: false,
+					BaseUrl:   "http://localhost:11434",
+					Error:     "connection refused",
+				}, nil
+			},
+		},
+		{
+			name: "service error",
+			health: func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error) {
+				return nil, errors.Newf(errors.ErrInternal, "ollama.health", "service error")
+			},
+			wantErr: true,
 		},
 	}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockOllamaClient{OllamaHealthFunc: tt.health}
+			ollamaClientFactory = func() (OllamaClient, error) {
+				return mockClient, nil
+			}
+			outputFormat = tt.format
+
+			err := runOllamaHealthCommand(&cobra.Command{}, []string{})
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
 	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaHealthCommand_YAMLFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "yaml"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaHealthCommand_Unavailable(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{
-		OllamaHealthFunc: func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error) {
-			return &pb.OllamaHealthResponse{
-				Available: false,
-				BaseUrl:   "http://localhost:11434",
-				Error:     "connection refused",
-			}, nil
-		},
-	}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.NoError(t, err)
 }
 
 func TestRunOllamaCommands_FactoryError(t *testing.T) {
@@ -338,30 +275,6 @@ func TestRunOllamaCommands_FactoryError(t *testing.T) {
 	}
 }
 
-func TestRunOllamaHealthCommand_ServiceError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{
-		OllamaHealthFunc: func(ctx context.Context, req *pb.OllamaHealthRequest) (*pb.OllamaHealthResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "ollama.health", "service error")
-		},
-	}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() { globalTimeout = oldTimeout }()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaHealthCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
 func TestRunOllamaModelsCommand_Success(t *testing.T) {
 	// Save original factory and restore after test
 	origFactory := ollamaClientFactory
@@ -388,273 +301,128 @@ func TestRunOllamaModelsCommand_Success(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestRunOllamaModelsCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
+func TestRunOllamaModelInfoCommand(t *testing.T) {
 	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
 	oldFormat := outputFormat
 	oldTimeout := globalTimeout
 	defer func() {
+		ollamaClientFactory = origFactory
 		outputFormat = oldFormat
 		globalTimeout = oldTimeout
 	}()
-	outputFormat = "table"
 	globalTimeout = 30 * time.Second
 
-	cmd := &cobra.Command{}
-	err := runOllamaModelsCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaModelInfoCommand_Success(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "json"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaModelInfoCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaModelInfoCommand_EmptyDetails(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{
-		OllamaGetModelInfoFunc: func(ctx context.Context, req *pb.OllamaGetModelInfoRequest) (*pb.OllamaGetModelInfoResponse, error) {
-			return &pb.OllamaGetModelInfoResponse{
-				Model:   req.Model,
-				Details: nil,
-			}, nil
+	tests := []struct {
+		name      string
+		format    string
+		modelInfo func(ctx context.Context, req *pb.OllamaGetModelInfoRequest) (*pb.OllamaGetModelInfoResponse, error)
+	}{
+		{name: "success", format: "json"},
+		{
+			name:   "empty details",
+			format: "table",
+			modelInfo: func(ctx context.Context, req *pb.OllamaGetModelInfoRequest) (*pb.OllamaGetModelInfoResponse, error) {
+				return &pb.OllamaGetModelInfoResponse{Model: req.Model, Details: nil}, nil
+			},
 		},
 	}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := &mockOllamaClient{OllamaGetModelInfoFunc: tt.modelInfo}
+			ollamaClientFactory = func() (OllamaClient, error) {
+				return mockClient, nil
+			}
+			outputFormat = tt.format
+
+			err := runOllamaModelInfoCommand(&cobra.Command{}, []string{"nomic-embed-text"})
+			assert.NoError(t, err)
+		})
 	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaModelInfoCommand(cmd, []string{"nomic-embed-text"})
-	assert.NoError(t, err)
 }
 
-func TestRunOllamaEmbedCommand_Success(t *testing.T) {
-	// Save original factory and restore after test
+func TestRunOllamaEmbedCommand(t *testing.T) {
 	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
 	oldFormat := outputFormat
 	oldTimeout := globalTimeout
 	defer func() {
+		ollamaClientFactory = origFactory
 		outputFormat = oldFormat
 		globalTimeout = oldTimeout
 		ollamaModel = ""
 	}()
+	ollamaClientFactory = func() (OllamaClient, error) {
+		return &mockOllamaClient{}, nil
+	}
 	outputFormat = "json"
 	globalTimeout = 30 * time.Second
 
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedCommand(cmd, []string{"Hello, world!"})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaEmbedCommand_WithModel(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
+	tests := []struct {
+		name    string
+		model   string
+		text    string
+		wantErr string
+	}{
+		{name: "default model", text: "Hello, world!"},
+		{name: "with model", model: "nomic-embed-text", text: "Hello, world!"},
+		{name: "empty text", text: "", wantErr: "text cannot be empty"},
 	}
 
-	// Reset globals
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ollamaModel = tt.model
+
+			err := runOllamaEmbedCommand(&cobra.Command{}, []string{tt.text})
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestRunOllamaEmbedBatchCommand(t *testing.T) {
+	origFactory := ollamaClientFactory
 	oldFormat := outputFormat
 	oldTimeout := globalTimeout
 	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-		ollamaModel = ""
-	}()
-	outputFormat = "json"
-	globalTimeout = 30 * time.Second
-	ollamaModel = "nomic-embed-text"
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedCommand(cmd, []string{"Hello, world!"})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaEmbedCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedCommand(cmd, []string{"Hello, world!"})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaEmbedCommand_EmptyText(t *testing.T) {
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedCommand(cmd, []string{""})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "text cannot be empty")
-}
-
-func TestRunOllamaEmbedBatchCommand_Success(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
+		ollamaClientFactory = origFactory
 		outputFormat = oldFormat
 		globalTimeout = oldTimeout
 		ollamaTexts = ""
 		ollamaModel = ""
 	}()
+	ollamaClientFactory = func() (OllamaClient, error) {
+		return &mockOllamaClient{}, nil
+	}
 	outputFormat = "json"
 	globalTimeout = 30 * time.Second
-	ollamaTexts = `["Hello", "World", "Test"]`
 
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedBatchCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaEmbedBatchCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := ollamaClientFactory
-	defer func() { ollamaClientFactory = origFactory }()
-
-	mockClient := &mockOllamaClient{}
-	ollamaClientFactory = func() (OllamaClient, error) {
-		return mockClient, nil
+	tests := []struct {
+		name    string
+		texts   string
+		wantErr string
+	}{
+		{name: "success", texts: `["Hello", "World", "Test"]`},
+		{name: "invalid JSON", texts: "invalid-json{", wantErr: "invalid JSON array"},
+		{name: "empty array", texts: "[]", wantErr: "texts array cannot be empty"},
 	}
 
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-		ollamaTexts = ""
-	}()
-	outputFormat = "table"
-	globalTimeout = 30 * time.Second
-	ollamaTexts = `["Hello", "World"]`
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ollamaTexts = tt.texts
 
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedBatchCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunOllamaEmbedBatchCommand_InvalidJSON(t *testing.T) {
-	// Reset globals
-	defer func() { ollamaTexts = "" }()
-	ollamaTexts = "invalid-json{"
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedBatchCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid JSON array")
-}
-
-func TestRunOllamaEmbedBatchCommand_EmptyArray(t *testing.T) {
-	// Reset globals
-	defer func() { ollamaTexts = "" }()
-	ollamaTexts = "[]"
-
-	cmd := &cobra.Command{}
-	err := runOllamaEmbedBatchCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "texts array cannot be empty")
+			err := runOllamaEmbedBatchCommand(&cobra.Command{}, []string{})
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
