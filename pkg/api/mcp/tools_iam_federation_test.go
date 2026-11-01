@@ -181,54 +181,70 @@ func TestIdentityServiceUnavailableError(t *testing.T) {
 // getFederationManager Tests
 // =============================================================================
 
-func TestGetFederationManager_ServiceDoesNotSupportFederation(t *testing.T) {
-	log := newTestLogger(t)
-	reg := &ToolRegistry{service: &mockService{}, logger: log}
-
-	_, err := reg.getFederationManager(context.Background())
-	require.Error(t, err)
-	var fedErr *FederationServiceUnavailableError
-	assert.ErrorAs(t, err, &fedErr)
-}
-
-func TestGetFederationManager_NilManager(t *testing.T) {
-	reg := newFederationRegistry(t, nil)
-
-	_, err := reg.getFederationManager(context.Background())
-	require.Error(t, err)
-}
-
-func TestGetFederationManager_Success(t *testing.T) {
-	fedMgr := &mockFederationManager{}
-	reg := newFederationRegistry(t, fedMgr)
-
-	mgr, err := reg.getFederationManager(context.Background())
-	require.NoError(t, err)
-	require.NotNil(t, mgr)
+func TestGetFederationManager(t *testing.T) {
+	tests := []struct {
+		name            string
+		reg             func(t *testing.T) *ToolRegistry
+		wantErr         bool
+		wantUnavailable bool
+	}{
+		{
+			name: "service does not support federation",
+			reg: func(t *testing.T) *ToolRegistry {
+				return &ToolRegistry{service: &mockService{}, logger: newTestLogger(t)}
+			},
+			wantErr:         true,
+			wantUnavailable: true,
+		},
+		{
+			name:    "nil manager",
+			reg:     func(t *testing.T) *ToolRegistry { return newFederationRegistry(t, nil) },
+			wantErr: true,
+		},
+		{
+			name: "success",
+			reg: func(t *testing.T) *ToolRegistry {
+				return newFederationRegistry(t, &mockFederationManager{})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr, err := tt.reg(t).getFederationManager(context.Background())
+			if !tt.wantErr {
+				require.NoError(t, err)
+				require.NotNil(t, mgr)
+				return
+			}
+			require.Error(t, err)
+			if tt.wantUnavailable {
+				var fedErr *FederationServiceUnavailableError
+				assert.ErrorAs(t, err, &fedErr)
+			}
+		})
+	}
 }
 
 // =============================================================================
 // getProviderIDFromArgs Tests
 // =============================================================================
 
-func TestGetProviderIDFromArgs_ID(t *testing.T) {
-	id := getProviderIDFromArgs(map[string]interface{}{"id": "provider-1"})
-	assert.Equal(t, "provider-1", id)
-}
-
-func TestGetProviderIDFromArgs_ProviderID(t *testing.T) {
-	id := getProviderIDFromArgs(map[string]interface{}{"provider_id": "provider-2"})
-	assert.Equal(t, "provider-2", id)
-}
-
-func TestGetProviderIDFromArgs_PrefersID(t *testing.T) {
-	id := getProviderIDFromArgs(map[string]interface{}{"id": "id-1", "provider_id": "pid-2"})
-	assert.Equal(t, "id-1", id)
-}
-
-func TestGetProviderIDFromArgs_Empty(t *testing.T) {
-	id := getProviderIDFromArgs(map[string]interface{}{})
-	assert.Equal(t, "", id)
+func TestGetProviderIDFromArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{name: "id", args: map[string]interface{}{"id": "provider-1"}, want: "provider-1"},
+		{name: "provider_id", args: map[string]interface{}{"provider_id": "provider-2"}, want: "provider-2"},
+		{name: "prefers id", args: map[string]interface{}{"id": "id-1", "provider_id": "pid-2"}, want: "id-1"},
+		{name: "empty", args: map[string]interface{}{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, getProviderIDFromArgs(tt.args))
+		})
+	}
 }
 
 // =============================================================================
