@@ -517,39 +517,63 @@ func TestTriageRunner_AnUnreadableReplyIsNeverReady(t *testing.T) {
 	}
 }
 
-// TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead proves the
-// bound: the same runner sets an issue aside twice at one head and then skips
-// it, audited, until the head moves or somebody speaks.
-func TestTriageRunner_StopsAskingAfterTwoUnusableRepliesAtOneHead(t *testing.T) {
-	first := newTriageRig(t)
-	first.forge.putIssue(303, "some issue")
-	first.answers("SDLC-TRIAGE: not-actionable")
-	if err := first.run(); err != nil {
-		t.Fatalf("first run: %v", err)
+// TestTriageRunner_UnusableRepliesAtOneHead proves the point of not posting
+// and its bound: one reply set aside leaves the issue for the next pass, where
+// a usable reply lands normally; the same runner sets an issue aside twice at
+// one head and then skips it, audited, until the head moves or somebody speaks.
+func TestTriageRunner_UnusableRepliesAtOneHead(t *testing.T) {
+	const unusable = "SDLC-TRIAGE: not-actionable"
+	const verdict = "The change is out of scope for this repository.\n\nSDLC-TRIAGE: not-actionable"
+	tests := []struct {
+		name       string
+		replies    []string
+		wantPosted bool
+	}{
+		{name: "one unusable reply leaves the issue for the next pass", replies: []string{unusable, verdict}, wantPosted: true},
+		{name: "two unusable replies stop the asking at one head", replies: []string{unusable, unusable, verdict}, wantPosted: false},
 	}
-	second := newTriageRigOver(t, first)
-	second.runner = first.runner
-	second.answers("SDLC-TRIAGE: not-actionable")
-	if err := second.run(); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	if !second.audited("sdlc:triage_unusable") {
-		t.Fatal("the second pass still asks, and sets the reply aside")
-	}
-	third := newTriageRigOver(t, first)
-	third.runner = first.runner
-	third.answers("This would have been a fine verdict.\n\nSDLC-TRIAGE: not-actionable")
-	if err := third.run(); err != nil {
-		t.Fatalf("third run: %v", err)
-	}
-	if third.audited("sdlc:triage_verdict") {
-		t.Fatal("the third pass must not ask again at the same head")
-	}
-	if details, ok := third.auditDetails("sdlc:triage_skipped"); !ok || !strings.Contains(details, "issue=303") {
-		t.Fatalf("the skip is audited with the issue, got %q", details)
-	}
-	if got := third.comments(303); len(got) != 0 {
-		t.Fatalf("a skipped issue is not written to, got %v", got)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			first := newTriageRig(t)
+			first.forge.putIssue(302, "some issue")
+			last := len(tc.replies) - 1
+			for i, reply := range tc.replies {
+				rig := first
+				if i > 0 {
+					rig = newTriageRigOver(t, first)
+					rig.runner = first.runner
+				}
+				rig.answers(reply)
+				if err := rig.run(); err != nil {
+					t.Fatalf("pass %d: %v", i+1, err)
+				}
+				if i < last {
+					if !rig.audited("sdlc:triage_unusable") {
+						t.Fatalf("pass %d asks, and sets the reply aside", i+1)
+					}
+					if got := rig.comments(302); len(got) != 0 {
+						t.Fatalf("pass %d must post nothing, got %v", i+1, got)
+					}
+					continue
+				}
+				got := rig.comments(302)
+				if tc.wantPosted {
+					if len(got) != 1 || !strings.Contains(got[0], "out of scope") {
+						t.Fatalf("the last pass judges the issue again and posts its verdict, got %v", got)
+					}
+					continue
+				}
+				if rig.audited("sdlc:triage_verdict") {
+					t.Fatal("the last pass must not ask again at the same head")
+				}
+				if details, ok := rig.auditDetails("sdlc:triage_skipped"); !ok || !strings.Contains(details, "issue=302") {
+					t.Fatalf("the skip is audited with the issue, got %q", details)
+				}
+				if len(got) != 0 {
+					t.Fatalf("a skipped issue is not written to, got %v", got)
+				}
+			}
+		})
 	}
 }
 
@@ -609,30 +633,6 @@ func TestTriageRunner_AFailedMeasurementIsAuditedNotFatal(t *testing.T) {
 	rig.agents.mu.Unlock()
 	if strings.Contains(prompt, "Repository facts") {
 		t.Fatal("no facts section is rendered when the measurement failed")
-	}
-}
-
-// TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass proves the
-// point of not posting: the issue carries no word from triage, so the next
-// pass judges it again -- and a usable reply then lands normally.
-func TestTriageRunner_AnUnusableReplyLeavesTheIssueForTheNextPass(t *testing.T) {
-	first := newTriageRig(t)
-	first.forge.putIssue(302, "some issue")
-	first.answers("SDLC-TRIAGE: not-actionable")
-	if err := first.run(); err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-	if got := first.comments(302); len(got) != 0 {
-		t.Fatalf("the first pass must post nothing, got %v", got)
-	}
-
-	second := newTriageRigOver(t, first)
-	second.answers("The change is out of scope for this repository.\n\nSDLC-TRIAGE: not-actionable")
-	if err := second.run(); err != nil {
-		t.Fatalf("second run: %v", err)
-	}
-	if got := second.comments(302); len(got) != 1 || !strings.Contains(got[0], "out of scope") {
-		t.Fatalf("the second pass judges the issue again and posts its verdict, got %v", got)
 	}
 }
 
@@ -1549,6 +1549,7 @@ func triageRunFor(forge ForgeBackend, binding *ProjectBinding) *triageRun {
 // that are out of scope or waiting on a person, which are exactly the ones a
 // person still needs to see open.
 func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
+	const escalated = "factory:escalated"
 	cases := []struct {
 		name      string
 		mayClose  bool
@@ -1564,6 +1565,7 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			forge := newFakeForge()
 			binding := testBinding()
+			binding.Forge.Labels[LabelEscalated] = escalated
 			binding.TriageMayClose = c.mayClose
 			issue := ForgeIssue{Number: 42, Title: "stale report"}
 			forge.issues[42] = &issue
@@ -1586,6 +1588,17 @@ func TestApplyNotActionable_ClosesOnlyWhenBothConditionsHold(t *testing.T) {
 			// never landed tells a person nothing about why.
 			if len(forge.comments[42]) != 1 {
 				t.Fatalf("the evidence comment must be posted in every case, got %d", len(forge.comments[42]))
+			}
+			// A closed issue is not also escalated; an open one never leaves
+			// without the one label that says a person is the next step.
+			if c.wantClose {
+				if len(forge.labelAdds) != 0 {
+					t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
+				}
+				return
+			}
+			if len(forge.labelAdds) != 1 || forge.labelAdds[0] != escalated {
+				t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, escalated)
 			}
 		})
 	}
@@ -1697,71 +1710,6 @@ func TestTriageAgent_AnUnreadableCatalogIsAnError(t *testing.T) {
 	)
 	if _, err := run.triageAgent(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("an unreadable catalog = %v", err)
-	}
-}
-
-// TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState is the regression
-// that idled the fleet.
-//
-// A not-actionable verdict used to comment and stop, leaving the issue open
-// carrying NO factory label. Because the newest comment was then triage's own,
-// spokenToSinceTriage ruled it not a candidate on every later pass: invisible
-// to the factory and unmarked for a person. Measured on go-luks2 2026-09-16 —
-// five issues in that state and 34 hours of a fleet triaging nothing.
-func TestApplyNotActionable_AnOpenIssueNeverLeavesWithoutAState(t *testing.T) {
-	forge := newFakeForge()
-	binding := testBinding()
-	binding.Forge.Labels[LabelEscalated] = "factory:escalated"
-	binding.TriageMayClose = true
-	issue := ForgeIssue{Number: 42, Title: "needs a ruling before a worker touches it"}
-	forge.issues[42] = &issue
-
-	run := triageRunFor(forge, binding)
-	// Not closable: the verdict did not say the work is already done.
-	verdict := TriageVerdict{
-		Outcome:  TriageOutcomeNotActionable,
-		Comments: true,
-		Headline: "No worker will be spawned for this issue.",
-	}
-	if err := run.applyNotActionable(context.Background(), issue, verdict, "ext2 support is an owner call"); err != nil {
-		t.Fatalf("applyNotActionable: %v", err)
-	}
-	if len(forge.closed) != 0 {
-		t.Fatalf("closed %v, want the issue left open", forge.closed)
-	}
-	want := binding.Forge.Label(LabelEscalated)
-	if want == "" {
-		t.Fatal("the test binding displays no escalated label; the fixture no longer exercises this")
-	}
-	if len(forge.labelAdds) != 1 || forge.labelAdds[0] != want {
-		t.Fatalf("labels added = %v, want exactly [%s] so a person can find it", forge.labelAdds, want)
-	}
-}
-
-// TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated keeps the two
-// terminal states from both being applied: a closed issue carrying "a person
-// must look" is a contradiction that puts it back in somebody's queue.
-func TestApplyNotActionable_AClosedIssueIsNotAlsoEscalated(t *testing.T) {
-	forge := newFakeForge()
-	binding := testBinding()
-	binding.TriageMayClose = true
-	issue := ForgeIssue{Number: 7, Title: "already fixed on main"}
-	forge.issues[7] = &issue
-
-	run := triageRunFor(forge, binding)
-	verdict := TriageVerdict{
-		Outcome: TriageOutcomeNotActionable, Comments: true,
-		Headline:            "No worker will be spawned for this issue.",
-		ClosesAsAlreadyDone: true,
-	}
-	if err := run.applyNotActionable(context.Background(), issue, verdict, "fixed at foo.go:12"); err != nil {
-		t.Fatalf("applyNotActionable: %v", err)
-	}
-	if len(forge.closed) != 1 || forge.closed[0] != 7 {
-		t.Fatalf("closed = %v, want [7]", forge.closed)
-	}
-	if len(forge.labelAdds) != 0 {
-		t.Fatalf("labels added = %v, want none on a closed issue", forge.labelAdds)
 	}
 }
 
