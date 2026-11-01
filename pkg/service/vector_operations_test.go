@@ -81,10 +81,6 @@ func newBasicVecSvc(t *testing.T) (VectorService, *vecMockStorage) {
 }
 
 // =============================================================================
-// DeleteNamespace - New coverage paths
-// =============================================================================
-
-// =============================================================================
 // ListNamespaces - New coverage paths
 // =============================================================================
 
@@ -268,6 +264,10 @@ func TestVecUpsert_DimensionMismatch(t *testing.T) {
 	assert.Equal(t, qbErrors.ErrInvalidInput, qbErr.Code)
 }
 
+// =============================================================================
+// Tenant isolation: cross-tenant access to every method
+// =============================================================================
+
 // TestVecTenantForbidden checks that a tenant cannot reach another tenant's
 // namespace through any vector method. With prefix-based tenant isolation the
 // attacker's request is scoped to "tenant/<attacker>/tenant-ns", which does not
@@ -433,13 +433,6 @@ func TestVecGetVector_WithoutVectorData(t *testing.T) {
 }
 
 // =============================================================================
-// DeleteVector - New coverage paths
-// =============================================================================
-// =============================================================================
-// BatchUpsert - New coverage paths
-// =============================================================================
-
-// =============================================================================
 // SearchSimilar - New coverage paths
 // =============================================================================
 
@@ -568,57 +561,42 @@ func TestVecListVectors_NamespaceNotFound(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecListVectors_WithCursor(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return []*interfaces.VectorValue{{ID: 3, Version: 1}}, nil
+func TestVecListVectors_ScanOptions(t *testing.T) {
+	// The scan asks for one row more than the limit, to know whether a next
+	// page exists.
+	tests := []struct {
+		name       string
+		cursor     string
+		limit      int
+		wantOffset int
+		wantLimit  int
+	}{
+		{name: "cursor sets offset", cursor: "10", limit: 5, wantOffset: 10, wantLimit: 6},
+		{name: "invalid cursor starts at zero", cursor: "invalid", wantOffset: 0, wantLimit: 101},
+		{name: "default limit", limit: 0, wantOffset: 0, wantLimit: 101},
 	}
 
-	resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Cursor:    "10",
-		Limit:     5,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.Equal(t, 10, capturedOpts.Offset)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
 
-func TestVecListVectors_InvalidCursor(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
+			var capturedOpts *interfaces.VectorScanOptions
+			storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
+				capturedOpts = opts
+				return nil, nil
+			}
 
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
+			resp, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
+				Namespace: "list-ns",
+				Cursor:    tt.cursor,
+				Limit:     tt.limit,
+			})
+			require.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.Equal(t, tt.wantOffset, capturedOpts.Offset)
+			assert.Equal(t, tt.wantLimit, capturedOpts.Limit)
+		})
 	}
-
-	_, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Cursor:    "invalid",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 0, capturedOpts.Offset)
-}
-
-func TestVecListVectors_LimitDefaults(t *testing.T) {
-	svc, storage := newVecSvcWithNamespace(t, "list-ns", 3)
-
-	var capturedOpts *interfaces.VectorScanOptions
-	storage.scanNamespaceFn = func(ctx context.Context, namespace string, opts *interfaces.VectorScanOptions) ([]*interfaces.VectorValue, error) {
-		capturedOpts = opts
-		return nil, nil
-	}
-
-	_, err := svc.ListVectors(tenantctx.WithSystem(context.Background()), &ListVectorsRequest{
-		Namespace: "list-ns",
-		Limit:     0,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, 101, capturedOpts.Limit)
 }
 
 func TestVecListVectors_NextCursor(t *testing.T) {
@@ -655,26 +633,27 @@ func TestVecListVectors_ScanError(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
-func TestVecUpdateMetadata_ZeroID(t *testing.T) {
-	svc, _ := newBasicVecSvc(t)
+func TestVecUpdateMetadata_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		id   uint64
+	}{
+		{name: "zero id", id: 0},
+		{name: "vector not found", id: 999},
+	}
 
-	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
-		Namespace: "ns",
-		ID:        0,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newVecSvcWithNamespace(t, "meta-ns", 3)
 
-func TestVecUpdateMetadata_VectorNotFound(t *testing.T) {
-	svc, _ := newVecSvcWithNamespace(t, "meta-ns", 3)
-
-	resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
-		Namespace: "meta-ns",
-		ID:        999,
-	})
-	require.Error(t, err)
-	assert.Nil(t, resp)
+			resp, err := svc.UpdateMetadata(tenantctx.WithSystem(context.Background()), &UpdateVectorMetadataRequest{
+				Namespace: "meta-ns",
+				ID:        tt.id,
+			})
+			require.Error(t, err)
+			assert.Nil(t, resp)
+		})
+	}
 }
 
 // =============================================================================
