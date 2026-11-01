@@ -1149,23 +1149,55 @@ func TestMemoryStorage_UpdateSettings(t *testing.T) {
 	}
 }
 
-func TestMemoryStorage_UpdateTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateTenant(ctx, &Tenant{ID: "nonexistent", Name: "updated"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent tenant")
+// TestMemoryStorage_NotFound pins that every operation on an absent record
+// answers with a not-found QBError, the code callers branch on.
+func TestMemoryStorage_NotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(ctx context.Context, s *MemoryStorage) error
+	}{
+		{"UpdateTenant", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateTenant(ctx, &Tenant{ID: "nonexistent", Name: "updated"})
+		}},
+		{"UpdateUser", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateUser(ctx, &User{ID: 99995, TenantID: "t1", Email: "a@b.com"})
+		}},
+		{"UpdateRole", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateRole(ctx, &Role{ID: "none", TenantID: "t1", Name: "Test"})
+		}},
+		{"DeleteRole", func(ctx context.Context, s *MemoryStorage) error {
+			return s.DeleteRole(ctx, "t1", "nonexistent")
+		}},
+		{"GetQuota", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.GetQuota(ctx, "nonexistent-tenant")
+			return err
+		}},
+		{"UpdateQuota", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateQuota(ctx, "nonexistent", &TenantQuota{})
+		}},
+		{"UpdateApp", func(ctx context.Context, s *MemoryStorage) error {
+			return s.UpdateApp(ctx, &Application{ClientID: "nonexistent"})
+		}},
+		{"DeleteApp", func(ctx context.Context, s *MemoryStorage) error {
+			return s.DeleteApp(ctx, "nonexistent")
+		}},
+		{"ValidateClientSecret", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.ValidateClientSecret(ctx, "nonexistent", "secret")
+			return err
+		}},
+		{"GetAppByTenant", func(ctx context.Context, s *MemoryStorage) error {
+			_, err := s.GetAppByTenant(ctx, "t1", "nonexistent")
+			return err
+		}},
 	}
-}
 
-func TestMemoryStorage_UpdateUser_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateUser(ctx, &User{ID: 99995, TenantID: "t1", Email: "a@b.com"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent user")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(context.Background(), NewMemoryStorage())
+			if !dberrors.IsNotFound(err) {
+				t.Fatalf("%s on an absent record: got %v, want a not-found QBError", tt.name, err)
+			}
+		})
 	}
 }
 
@@ -1272,46 +1304,6 @@ func TestMemoryStorage_DeleteUser_PIVThumbprintCleanup(t *testing.T) {
 	}
 	if _, err := storage.GetUserByPIVThumbprint(ctx, "thumb-1"); err == nil {
 		t.Fatal("expected PIV index to be cleared after DeleteUser")
-	}
-}
-
-func TestMemoryStorage_UpdateRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateRole(ctx, &Role{ID: "none", TenantID: "t1", Name: "Test"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent role")
-	}
-}
-
-func TestMemoryStorage_DeleteRole_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.DeleteRole(ctx, "t1", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent role")
-	}
-}
-
-func TestMemoryStorage_GetQuota_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.GetQuota(ctx, "nonexistent-tenant")
-	if err == nil {
-		t.Fatal("expected error for nonexistent quota")
-	}
-}
-
-func TestMemoryStorage_UpdateQuota_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateQuota(ctx, "nonexistent", &TenantQuota{})
-	if err == nil {
-		t.Fatal("expected error updating quota for nonexistent tenant")
 	}
 }
 
@@ -1423,48 +1415,6 @@ func TestMemoryStorage_CreateApp_DuplicateClientID(t *testing.T) {
 	err := storage.CreateApp(ctx, app2)
 	if err == nil {
 		t.Fatal("expected error for duplicate client ID")
-	}
-}
-
-func TestMemoryStorage_UpdateApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.UpdateApp(ctx, &Application{ClientID: "nonexistent"})
-	if err == nil {
-		t.Fatal("expected error updating nonexistent app")
-	}
-}
-
-func TestMemoryStorage_DeleteApp_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	err := storage.DeleteApp(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error deleting nonexistent app")
-	}
-}
-
-func TestMemoryStorage_ValidateClientSecret_NotFound(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.ValidateClientSecret(ctx, "nonexistent", "secret")
-	if err == nil {
-		t.Fatal("expected error validating secret for nonexistent app")
-	}
-}
-
-func TestMemoryStorage_GetAppByTenant_NotFound(t *testing.T) {
-	ctx := context.Background()
-	storage := NewMemoryStorage()
-
-	_, err := storage.GetAppByTenant(ctx, "t1", "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent app by tenant")
 	}
 }
 
