@@ -15,6 +15,7 @@ package websocket
 
 import (
 	stderrors "errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -160,296 +161,80 @@ func TestNewErrors(t *testing.T) {
 	}
 }
 
-func TestIsSubprotocolNotSupported(t *testing.T) {
+// TestIsPredicates checks each Is* predicate against the typed error, the
+// constructor's QBError, a QBError wrapped once more, a QBError that carries
+// only the code, a QBError of another code, an unrelated error and nil.
+func TestIsPredicates(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name  string
+		is    func(error) bool
+		match *errors.QBError
+		other *errors.QBError
 	}{
 		{
-			name: "nil error",
-			err:  nil,
-			want: false,
+			name:  "IsSubprotocolNotSupported",
+			is:    IsSubprotocolNotSupported,
+			match: NewSubprotocolNotSupportedError("op", "mqtt", []string{"echo"}),
+			other: NewUpgradeFailedError("op", "cause"),
 		},
 		{
-			name: "direct error type",
-			err:  &SubprotocolNotSupportedError{Requested: "mqtt"},
-			want: true,
+			name:  "IsUpgradeFailed",
+			is:    IsUpgradeFailed,
+			match: NewUpgradeFailedError("op", "cause"),
+			other: NewAuthenticationFailedError("op", "reason"),
 		},
 		{
-			name: "qb error with correct code",
-			err:  NewSubprotocolNotSupportedError("op", "mqtt", []string{}),
-			want: true,
+			name:  "IsAuthenticationFailed",
+			is:    IsAuthenticationFailed,
+			match: NewAuthenticationFailedError("op", "reason"),
+			other: NewSessionNotFoundError("op", "session"),
 		},
 		{
-			name: "qb error with different code",
-			err:  NewUpgradeFailedError("op", "cause"),
-			want: false,
+			name:  "IsSessionNotFound",
+			is:    IsSessionNotFound,
+			match: NewSessionNotFoundError("op", "session"),
+			other: NewSessionClosedError("op", "session"),
 		},
 		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
+			name:  "IsSessionClosed",
+			is:    IsSessionClosed,
+			match: NewSessionClosedError("op", "session"),
+			other: NewSessionNotFoundError("op", "session"),
+		},
+		{
+			name:  "IsMessageTooLarge",
+			is:    IsMessageTooLarge,
+			match: NewMessageTooLargeError("op", 100, 50),
+			other: NewInvalidMessageError("op", "reason"),
+		},
+		{
+			name:  "IsServerClosed",
+			is:    IsServerClosed,
+			match: NewServerClosedError("op"),
+			other: NewInvalidMessageError("op", "reason"),
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsSubprotocolNotSupported(tt.err); got != tt.want {
-				t.Errorf("IsSubprotocolNotSupported() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsUpgradeFailed(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &UpgradeFailedError{Cause: "test"},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewUpgradeFailedError("op", "cause"),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewSessionNotFoundError("op", "id"),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsUpgradeFailed(tt.err); got != tt.want {
-				t.Errorf("IsUpgradeFailed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsAuthenticationFailed(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &AuthenticationFailedError{Reason: "test"},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewAuthenticationFailedError("op", "reason"),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewSessionClosedError("op", "id"),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsAuthenticationFailed(tt.err); got != tt.want {
-				t.Errorf("IsAuthenticationFailed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsSessionNotFound(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &SessionNotFoundError{SessionID: "test"},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewSessionNotFoundError("op", "id"),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewServerClosedError("op"),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsSessionNotFound(tt.err); got != tt.want {
-				t.Errorf("IsSessionNotFound() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsSessionClosed(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &SessionClosedError{SessionID: "test"},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewSessionClosedError("op", "id"),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewMessageTooLargeError("op", 100, 50),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsSessionClosed(tt.err); got != tt.want {
-				t.Errorf("IsSessionClosed() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsMessageTooLarge(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &MessageTooLargeError{Size: 100, MaxSize: 50},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewMessageTooLargeError("op", 100, 50),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewReadTimeoutError("op", "id"),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsMessageTooLarge(tt.err); got != tt.want {
-				t.Errorf("IsMessageTooLarge() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsServerClosed(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "nil error",
-			err:  nil,
-			want: false,
-		},
-		{
-			name: "direct error type",
-			err:  &ServerClosedError{},
-			want: true,
-		},
-		{
-			name: "qb error with correct code",
-			err:  NewServerClosedError("op"),
-			want: true,
-		},
-		{
-			name: "qb error with different code",
-			err:  NewInvalidMessageError("op", "reason"),
-			want: false,
-		},
-		{
-			name: "unrelated error",
-			err:  stderrors.New("some error"),
-			want: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsServerClosed(tt.err); got != tt.want {
-				t.Errorf("IsServerClosed() = %v, want %v", got, tt.want)
-			}
-		})
+		cases := []struct {
+			name string
+			err  error
+			want bool
+		}{
+			{name: "typed error", err: stderrors.Unwrap(tt.match), want: true},
+			{name: "constructor", err: tt.match, want: true},
+			{name: "wrapped", err: fmt.Errorf("handler: %w", tt.match), want: true},
+			{name: "code only", err: &errors.QBError{Code: tt.match.Code, Op: "op"}, want: true},
+			{name: "other code", err: tt.other, want: false},
+			{name: "unrelated", err: stderrors.New("some error"), want: false},
+			{name: "nil", err: nil, want: false},
+		}
+		for _, c := range cases {
+			t.Run(tt.name+"/"+c.name, func(t *testing.T) {
+				if got := tt.is(c.err); got != c.want {
+					t.Errorf("%s(%v) = %v, want %v", tt.name, c.err, got, c.want)
+				}
+			})
+		}
 	}
 }
