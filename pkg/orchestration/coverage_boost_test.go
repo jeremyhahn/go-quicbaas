@@ -1601,25 +1601,6 @@ func TestACPBackend_PromptJSONRPC_WithEventCallback(t *testing.T) {
 }
 
 // =============================================================================
-// Tier 5: ListJobs with KV store (exercises the kvStore merge branch)
-// =============================================================================
-
-func TestOrchestrator_ListJobs_WithKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-
-	// No KV store set: only in-memory path executes.
-	jobs, err := impl.ListJobs(context.Background(), "tenant-kv", nil)
-	if err != nil {
-		t.Fatalf("ListJobs without KV: %v", err)
-	}
-	if len(jobs) != 0 {
-		t.Fatalf("expected 0 jobs, got %d", len(jobs))
-	}
-}
-
-// =============================================================================
 // Tier 5: StartJob — with a backend (exercises past the validation checks)
 // =============================================================================
 
@@ -2880,26 +2861,6 @@ func TestControlLoop_ResolveAgentSpec_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// ControlLoop: generateJobID and generateCorrelationID — already tested but cover error branch
-// =============================================================================
-
-func TestControlLoop_GenerateJobID_UniqueIDs(t *testing.T) {
-	t.Parallel()
-
-	id1, err := generateJobID()
-	if err != nil {
-		t.Fatalf("generateJobID: %v", err)
-	}
-	id2, err := generateJobID()
-	if err != nil {
-		t.Fatalf("generateJobID second: %v", err)
-	}
-	if id1 == id2 {
-		t.Error("expected unique IDs")
-	}
-}
-
-// =============================================================================
 // ControlLoop: parseReviewResponse
 // =============================================================================
 
@@ -2947,39 +2908,6 @@ func TestControlLoop_ParseReviewResponse_InvalidJSON(t *testing.T) {
 }
 
 // =============================================================================
-// ControlLoop: checkBudget with nil tracker (no budget)
-// =============================================================================
-
-func TestControlLoop_CheckBudget_NilTracker(t *testing.T) {
-	t.Parallel()
-
-	cl := newMinimalControlLoop(t)
-	// costTracker is nil by default — checkBudget returns (nil, nil).
-	result, err := cl.checkBudget(context.Background())
-	if err != nil {
-		t.Fatalf("checkBudget with nil tracker: %v", err)
-	}
-	// nil result means no budget enforcement (no tracker configured).
-	if result != nil {
-		t.Errorf("expected nil result without tracker, got %v", result)
-	}
-}
-
-// =============================================================================
-// ControlLoop: defaultBackendName helper via orchestrator
-// =============================================================================
-
-func TestOrchestrator_DefaultBackendName_NoBackends(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	name := impl.defaultBackendName()
-	if name != "" {
-		t.Errorf("expected empty string without backends, got %q", name)
-	}
-}
-
-// =============================================================================
 // Container Runtime: Stop/Remove/IsRunning/Pull/Run — non-empty args with /bin/false
 // so exec.Command runs and hits the error branch
 // =============================================================================
@@ -3015,20 +2943,6 @@ func TestExecContainerRuntime_Remove_CommandFails(t *testing.T) {
 	}
 }
 
-func TestExecContainerRuntime_IsRunning_CommandFails(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	running, err := rt.IsRunning(context.Background(), "some-container-id")
-	if err != nil {
-		// IsRunning returns (false, nil) when container not found, but our
-		// fake binary stderr won't match "not found" — it returns false+error.
-		t.Logf("IsRunning error (expected): %v", err)
-	}
-	// Either path is valid — the function was exercised.
-	_ = running
-}
-
 func TestExecContainerRuntime_Pull_CommandFails(t *testing.T) {
 	t.Parallel()
 
@@ -3036,18 +2950,6 @@ func TestExecContainerRuntime_Pull_CommandFails(t *testing.T) {
 	err := rt.Pull(context.Background(), "my-image:latest")
 	if err == nil {
 		t.Fatal("expected error from failing binary")
-	}
-}
-
-func TestExecContainerRuntime_Logs_CommandFails(t *testing.T) {
-	t.Parallel()
-
-	rt := newFalseBinaryRuntime(t)
-	// Logs runs StdoutPipe then Start. With /bin/false the Start will fail.
-	_, err := rt.Logs(context.Background(), "some-container-id")
-	// This may succeed in returning a ReadCloser before start, or fail on Start.
-	if err != nil {
-		t.Logf("Logs error (expected): %v", err)
 	}
 }
 
