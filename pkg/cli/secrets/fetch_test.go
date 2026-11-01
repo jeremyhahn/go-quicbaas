@@ -38,41 +38,37 @@ func (m *mockSecretsProvider) GetSecretsByPrefix(ctx context.Context, prefix str
 	return m.secrets, nil
 }
 
-// TestParseOutputFormat_Valid tests valid output format parsing.
-func TestParseOutputFormat_Valid(t *testing.T) {
+// TestParseOutputFormat checks every accepted alias and that an unknown
+// format is rejected with an empty result.
+func TestParseOutputFormat(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected OutputFormat
+		wantErr  bool
 	}{
-		{"file", OutputFormatFile},
-		{"files", OutputFormatFile},
-		{"FILE", OutputFormatFile},
-		{"env", OutputFormatEnv},
-		{".env", OutputFormatEnv},
-		{"dotenv", OutputFormatEnv},
-		{"ENV", OutputFormatEnv},
-		{"json", OutputFormatJSON},
-		{"JSON", OutputFormatJSON},
+		{input: "file", expected: OutputFormatFile},
+		{input: "files", expected: OutputFormatFile},
+		{input: "FILE", expected: OutputFormatFile},
+		{input: "env", expected: OutputFormatEnv},
+		{input: ".env", expected: OutputFormatEnv},
+		{input: "dotenv", expected: OutputFormatEnv},
+		{input: "ENV", expected: OutputFormatEnv},
+		{input: "json", expected: OutputFormatJSON},
+		{input: "JSON", expected: OutputFormatJSON},
+		{input: "xml", wantErr: true},
+		{input: "yaml", wantErr: true},
+		{input: "", wantErr: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
 			result, err := ParseOutputFormat(tc.input)
-			assert.NoError(t, err)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 			assert.Equal(t, tc.expected, result)
-		})
-	}
-}
-
-// TestParseOutputFormat_Invalid tests invalid output format parsing.
-func TestParseOutputFormat_Invalid(t *testing.T) {
-	invalidFormats := []string{"xml", "yaml", "csv", "invalid", ""}
-
-	for _, format := range invalidFormats {
-		t.Run(format, func(t *testing.T) {
-			result, err := ParseOutputFormat(format)
-			assert.Error(t, err)
-			assert.Equal(t, OutputFormat(""), result)
 		})
 	}
 }
@@ -90,56 +86,35 @@ func TestDefaultFetchConfig(t *testing.T) {
 	assert.True(t, cfg.StripPrefix)
 }
 
-// TestNewFetcher_Valid tests successful Fetcher creation.
-func TestNewFetcher_Valid(t *testing.T) {
-	provider := &mockSecretsProvider{}
-	config := FetchConfig{
-		Prefix:    "apps/myapp/",
-		OutputDir: "/tmp/secrets",
-		Format:    OutputFormatFile,
+// TestNewFetcher checks that a complete config builds a fetcher and that each
+// required field is rejected when missing.
+func TestNewFetcher(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  SecretsProvider
+		prefix    string
+		outputDir string
+		wantErr   bool
+	}{
+		{name: "valid", provider: &mockSecretsProvider{}, prefix: "apps/myapp/", outputDir: "/tmp/secrets"},
+		{name: "nil provider", provider: nil, prefix: "apps/myapp/", outputDir: "/tmp/secrets", wantErr: true},
+		{name: "empty prefix", provider: &mockSecretsProvider{}, prefix: "", outputDir: "/tmp/secrets", wantErr: true},
+		{name: "empty output dir", provider: &mockSecretsProvider{}, prefix: "apps/myapp/", outputDir: "", wantErr: true},
 	}
 
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-	require.NotNil(t, fetcher)
-}
-
-// TestNewFetcher_NilProvider tests Fetcher creation with nil provider.
-func TestNewFetcher_NilProvider(t *testing.T) {
-	config := FetchConfig{
-		Prefix:    "apps/myapp/",
-		OutputDir: "/tmp/secrets",
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config := FetchConfig{Prefix: tc.prefix, OutputDir: tc.outputDir, Format: OutputFormatFile}
+			fetcher, err := NewFetcher(tc.provider, config)
+			if tc.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, fetcher)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, fetcher)
+		})
 	}
-
-	fetcher, err := NewFetcher(nil, config)
-	assert.Error(t, err)
-	assert.Nil(t, fetcher)
-}
-
-// TestNewFetcher_EmptyPrefix tests Fetcher creation with empty prefix.
-func TestNewFetcher_EmptyPrefix(t *testing.T) {
-	provider := &mockSecretsProvider{}
-	config := FetchConfig{
-		Prefix:    "",
-		OutputDir: "/tmp/secrets",
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	assert.Error(t, err)
-	assert.Nil(t, fetcher)
-}
-
-// TestNewFetcher_EmptyOutputDir tests Fetcher creation with empty output dir.
-func TestNewFetcher_EmptyOutputDir(t *testing.T) {
-	provider := &mockSecretsProvider{}
-	config := FetchConfig{
-		Prefix:    "apps/myapp/",
-		OutputDir: "",
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	assert.Error(t, err)
-	assert.Nil(t, fetcher)
 }
 
 // TestFetch_WriteAsFiles tests fetching and writing secrets as individual files.
@@ -229,53 +204,78 @@ func TestFetch_WriteAsFiles_FlattenKeys(t *testing.T) {
 	assert.Equal(t, "admin", string(content))
 }
 
-// TestFetch_WriteAsEnv tests writing secrets as a .env file.
+// TestFetch_WriteAsEnv checks the .env output: the header is always written,
+// keys become env var names, and each secret gets its own comment block.
 func TestFetch_WriteAsEnv(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"db-host":     "localhost",
-					"db.password": "secret123",
-				},
+	tests := []struct {
+		name         string
+		secrets      []SecretData
+		wantSecrets  int
+		wantKeys     int
+		wantContains []string
+		wantCounts   map[string]int
+	}{
+		{
+			name: "keys converted to env names",
+			secrets: []SecretData{
+				{Path: "apps/myapp/database", Data: map[string]string{"db-host": "localhost", "db.password": "secret123"}},
 			},
+			wantSecrets:  1,
+			wantKeys:     2,
+			wantContains: []string{"# Generated by quicbaas secrets fetch", "DB_HOST=localhost", "DB_PASSWORD=secret123"},
+		},
+		{
+			name:         "no secrets writes header only",
+			secrets:      []SecretData{},
+			wantContains: []string{"# Generated by quicbaas secrets fetch"},
+		},
+		{
+			name: "multiple secrets each get a comment",
+			secrets: []SecretData{
+				{Path: "apps/myapp/database", Data: map[string]string{"host": "db.example.com"}},
+				{Path: "apps/myapp/cache", Data: map[string]string{"host": "cache.example.com"}},
+			},
+			wantSecrets:  2,
+			wantKeys:     2,
+			wantContains: []string{"# Secret: apps/myapp/database", "# Secret: apps/myapp/cache"},
+			wantCounts:   map[string]int{"HOST=": 2},
 		},
 	}
 
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatEnv,
-		CreateDirs: true,
-		FileMode:   0o600,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			config := FetchConfig{
+				Prefix:     "apps/myapp/",
+				OutputDir:  tmpDir,
+				Format:     OutputFormatEnv,
+				CreateDirs: true,
+				FileMode:   0o600,
+			}
+
+			fetcher, err := NewFetcher(&mockSecretsProvider{secrets: tc.secrets}, config)
+			require.NoError(t, err)
+
+			result, err := fetcher.Fetch(context.Background())
+			require.NoError(t, err)
+
+			assert.Equal(t, tc.wantSecrets, result.SecretsCount)
+			assert.Equal(t, tc.wantKeys, result.KeysCount)
+
+			envFile := filepath.Join(tmpDir, ".env")
+			assert.Equal(t, []string{envFile}, result.FilesWritten)
+
+			content, err := os.ReadFile(envFile)
+			require.NoError(t, err)
+			contentStr := string(content)
+			for _, want := range tc.wantContains {
+				assert.Contains(t, contentStr, want)
+			}
+			for substr, n := range tc.wantCounts {
+				assert.Equal(t, n, strings.Count(contentStr, substr), substr)
+			}
+		})
 	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	assert.Equal(t, 1, result.SecretsCount)
-	assert.Equal(t, 2, result.KeysCount)
-	assert.Len(t, result.FilesWritten, 1)
-
-	// Verify .env file was created
-	envFile := filepath.Join(tmpDir, ".env")
-	assert.Contains(t, result.FilesWritten, envFile)
-
-	content, err := os.ReadFile(envFile)
-	require.NoError(t, err)
-
-	contentStr := string(content)
-	// Check header
-	assert.Contains(t, contentStr, "# Generated by quicbaas secrets fetch")
-	// Check keys are converted to env var format
-	assert.Contains(t, contentStr, "DB_HOST=localhost")
-	assert.Contains(t, contentStr, "DB_PASSWORD=secret123")
 }
 
 // TestFetch_WriteAsEnv_WithSpecialChars tests .env escaping.
@@ -758,37 +758,6 @@ func TestEscapeEnvValue(t *testing.T) {
 	}
 }
 
-// TestFetch_WriteAsEnv_EmptySecrets tests .env with no secrets.
-func TestFetch_WriteAsEnv_EmptySecrets(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{},
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatEnv,
-		CreateDirs: true,
-		FileMode:   0o600,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	// Should still create .env file with just header
-	envFile := filepath.Join(tmpDir, ".env")
-	assert.Contains(t, result.FilesWritten, envFile)
-
-	content, err := os.ReadFile(envFile)
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "# Generated by quicbaas")
-}
-
 // TestFetch_WriteAsJSON_EmptySecrets tests JSON with no secrets.
 func TestFetch_WriteAsJSON_EmptySecrets(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -1026,53 +995,4 @@ func TestSecretData_Empty(t *testing.T) {
 	assert.Equal(t, 1, result.SecretsCount)
 	assert.Equal(t, 0, result.KeysCount)
 	assert.Empty(t, result.FilesWritten)
-}
-
-// TestFetch_WriteAsEnv_MultipleSecrets tests .env with multiple secrets.
-func TestFetch_WriteAsEnv_MultipleSecrets(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	provider := &mockSecretsProvider{
-		secrets: []SecretData{
-			{
-				Path: "apps/myapp/database",
-				Data: map[string]string{
-					"host": "db.example.com",
-				},
-			},
-			{
-				Path: "apps/myapp/cache",
-				Data: map[string]string{
-					"host": "cache.example.com",
-				},
-			},
-		},
-	}
-
-	config := FetchConfig{
-		Prefix:     "apps/myapp/",
-		OutputDir:  tmpDir,
-		Format:     OutputFormatEnv,
-		CreateDirs: true,
-		FileMode:   0o600,
-	}
-
-	fetcher, err := NewFetcher(provider, config)
-	require.NoError(t, err)
-
-	result, err := fetcher.Fetch(context.Background())
-	require.NoError(t, err)
-
-	assert.Equal(t, 2, result.SecretsCount)
-	assert.Equal(t, 2, result.KeysCount)
-
-	content, err := os.ReadFile(filepath.Join(tmpDir, ".env"))
-	require.NoError(t, err)
-
-	contentStr := string(content)
-	// Both secrets should have comments
-	assert.True(t, strings.Contains(contentStr, "# Secret: apps/myapp/database"))
-	assert.True(t, strings.Contains(contentStr, "# Secret: apps/myapp/cache"))
-	// Both should have HOST key
-	assert.True(t, strings.Count(contentStr, "HOST=") == 2)
 }
