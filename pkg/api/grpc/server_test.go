@@ -780,98 +780,52 @@ func TestServer_Embedding_Errors(t *testing.T) {
 // Certificate Service Error Handling Tests
 // =============================================================================
 
-func TestServer_IssueCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
+func TestServer_Certificate_ServiceError(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		method string
+		call   func(srv *Server) error
+	}{
+		{"IssueCertificate", func(s *Server) error {
+			_, err := s.IssueCertificate(ctx, &pb.IssueCertificateRequest{CommonName: "test.example.com"})
+			return err
+		}},
+		{"SignCSR", func(s *Server) error {
+			_, err := s.SignCSR(ctx, &pb.SignCSRRequest{
+				CsrPem: "-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----",
+			})
+			return err
+		}},
+		{"RevokeCertificate", func(s *Server) error {
+			_, err := s.RevokeCertificate(ctx, &pb.RevokeCertificateRequest{SerialNumber: "12345"})
+			return err
+		}},
+		{"VerifyCertificate", func(s *Server) error {
+			_, err := s.VerifyCertificate(ctx, &pb.VerifyCertificateRequest{
+				CertificatePem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
+			})
+			return err
+		}},
+		{"GetCACertificate", func(s *Server) error {
+			_, err := s.GetCACertificate(ctx, &pb.GetCACertificateRequest{})
+			return err
+		}},
+		{"GetTLSConfig", func(s *Server) error {
+			_, err := s.GetTLSConfig(ctx, &pb.GetTLSConfigRequest{ServerName: "test.example.com"})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			mockCertSvc := &mockCertificateService{}
+			mockSvc.CertificateSvc = mockCertSvc
+			mockCertSvc.On(tt.method, mock.Anything, mock.Anything).Return(nil, assert.AnError).Once()
 
-	mockCertSvc.On("IssueCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.IssueCertificate(context.Background(), &pb.IssueCertificateRequest{
-		CommonName: "test.example.com",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_SignCSR_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("SignCSR", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.SignCSR(context.Background(), &pb.SignCSRRequest{
-		CsrPem: "-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_RevokeCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("RevokeCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.RevokeCertificate(context.Background(), &pb.RevokeCertificateRequest{
-		SerialNumber: "12345",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_VerifyCertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("VerifyCertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.VerifyCertificate(context.Background(), &pb.VerifyCertificateRequest{
-		CertificatePem: "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_GetCACertificate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("GetCACertificate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.GetCACertificate(context.Background(), &pb.GetCACertificateRequest{})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
-}
-
-func TestServer_GetTLSConfig_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-	mockCertSvc := &mockCertificateService{}
-	mockSvc.CertificateSvc = mockCertSvc
-
-	mockCertSvc.On("GetTLSConfig", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.GetTLSConfig(context.Background(), &pb.GetTLSConfigRequest{
-		ServerName: "test.example.com",
-	})
-
-	require.Error(t, err)
-	mockCertSvc.AssertExpectations(t)
+			require.Error(t, tt.call(srv))
+			mockCertSvc.AssertExpectations(t)
+		})
+	}
 }
 
 // --- Merged from server_streaming_coverage_test.go ---
@@ -1381,151 +1335,60 @@ func TestWatchSecretsByPrefix_SendError(t *testing.T) {
 // 675-679, 754-758, 972-976).
 // =============================================================================
 
-func TestServer_List_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+// TestServer_StreamValidationError checks that each streaming read method
+// rejects an invalid request with InvalidArgument. Scan and time-series
+// field rules are covered row by row in TestValidateScanRequest and
+// TestValidateTimeSeriesQueryRequest; their rows here prove the wiring.
+func TestServer_StreamValidationError(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(srv *Server) error
+	}{
+		{"List nil request", func(s *Server) error {
+			return s.List(nil, NewMockListStreamHandler(ctx))
+		}},
+		{"List empty entity type", func(s *Server) error {
+			return s.List(&pb.ListRequest{PageSize: 10}, NewMockListStreamHandler(ctx))
+		}},
+		{"List excessive page size", func(s *Server) error {
+			return s.List(&pb.ListRequest{EntityType: "users", PageSize: 20000}, NewMockListStreamHandler(ctx))
+		}},
+		{"Query nil request", func(s *Server) error {
+			return s.Query(nil, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query empty entity type", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{IndexName: "idx", Value: []byte("v")}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query empty index name", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{EntityType: "users", Value: []byte("v")}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query no value or range", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{EntityType: "users", IndexName: "idx"}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"Query excessive page size", func(s *Server) error {
+			return s.Query(&pb.QueryRequest{
+				EntityType: "users", IndexName: "email_idx", Value: []byte("test@example.com"), PageSize: 20000,
+			}, NewMockQueryStreamHandler(ctx))
+		}},
+		{"ScanIndex nil request", func(s *Server) error {
+			return s.ScanIndex(nil, NewMockScanStreamHandler(ctx))
+		}},
+		{"TimeSeriesQuery invalid time range", func(s *Server) error {
+			return s.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
+				EntityType: "metrics", StartTime: 100, EndTime: 50,
+			}, NewMockTimeSeriesStreamHandler(ctx))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, _ := newMockTestServer(t)
+			err := tt.call(srv)
+			require.Error(t, err)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+		})
+	}
 }
-
-func TestServer_List_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(&pb.ListRequest{EntityType: "", PageSize: 10}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_List_ValidationError_ExcessivePageSize(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockListStreamHandler(context.Background())
-
-	err := srv.List(&pb.ListRequest{EntityType: "users", PageSize: 20000}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "",
-		IndexName:  "idx",
-		Value:      []byte("v"),
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_EmptyIndexName(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "",
-		Value:      []byte("v"),
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_Query_ValidationError_NoValueOrRange(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockQueryStreamHandler(context.Background())
-
-	err := srv.Query(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "idx",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(&pb.ScanRequest{
-		EntityType: "",
-		IndexName:  "idx",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_ScanIndex_ValidationError_EmptyIndexName(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockScanStreamHandler(context.Background())
-
-	err := srv.ScanIndex(&pb.ScanRequest{
-		EntityType: "users",
-		IndexName:  "",
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_NilRequest(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(nil, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_EmptyEntityType(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
-		EntityType: "",
-		StartTime:  1,
-		EndTime:    2,
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServer_TimeSeriesQuery_ValidationError_InvalidTimeRange(t *testing.T) {
-	srv, _ := newMockTestServer(t)
-	stream := NewMockTimeSeriesStreamHandler(context.Background())
-
-	err := srv.TimeSeriesQuery(&pb.TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  100,
-		EndTime:    50,
-	}, stream)
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-// =============================================================================
-// Embedding int32 overflow clamping paths
-// =============================================================================
 
 // =============================================================================
 // Transaction validation - invalid compare condition and failure operation
@@ -1584,35 +1447,6 @@ func TestValidateTransactionRequest_InvalidFailureOperation(t *testing.T) {
 // =============================================================================
 // Validation - excessive page size variants
 // =============================================================================
-
-func TestValidateQueryRequest_ExcessivePageSize(t *testing.T) {
-	err := validateQueryRequest(&pb.QueryRequest{
-		EntityType: "users",
-		IndexName:  "email_idx",
-		Value:      []byte("test@example.com"),
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
-
-func TestValidateScanRequest_ExcessivePageSize(t *testing.T) {
-	err := validateScanRequest(&pb.ScanRequest{
-		EntityType: "users",
-		IndexName:  "name_idx",
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
-
-func TestValidateTimeSeriesQueryRequest_ExcessivePageSize(t *testing.T) {
-	err := validateTimeSeriesQueryRequest(&pb.TimeSeriesQueryRequest{
-		EntityType: "metrics",
-		StartTime:  1,
-		EndTime:    100,
-		PageSize:   20000,
-	})
-	require.Error(t, err)
-}
 
 // --- Merged from remaining_coverage_91_extended_test.go ---
 
