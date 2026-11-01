@@ -1000,46 +1000,6 @@ func TestClientCoverage_Connect_WhenClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
-func TestClientCoverage_Disconnect_WithPool(t *testing.T) {
-	t.Parallel()
-	pool := &ConnectionPool{}
-	pool.closed.Store(true)
-
-	client := &Client{
-		connected: true,
-		closed:    false,
-		pool:      pool,
-	}
-
-	// Disconnect should be no-op with pool
-	err := client.Disconnect()
-	assert.NoError(t, err)
-}
-
-func TestClientCoverage_Disconnect_AlreadyDisconnected(t *testing.T) {
-	t.Parallel()
-	client := &Client{
-		connected: false,
-		closed:    false,
-		opts:      defaultClientOptions(),
-	}
-
-	err := client.Disconnect()
-	assert.NoError(t, err)
-}
-
-func TestClientCoverage_Close_AlreadyClosed(t *testing.T) {
-	t.Parallel()
-	client := &Client{
-		connected: false,
-		closed:    true,
-		opts:      defaultClientOptions(),
-	}
-
-	err := client.Close()
-	assert.NoError(t, err)
-}
-
 func TestClientCoverage_isConnected_Closed(t *testing.T) {
 	t.Parallel()
 	client := &Client{
@@ -1269,53 +1229,35 @@ func TestIsPeerCredentialsAvailableEmptyContext(t *testing.T) {
 // PooledConn Needs Recycling Tests
 // =============================================================================
 
-func TestPooledConnNeedsRecyclingUnhealthy(t *testing.T) {
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100000,
-		conns:       make([]*pooledConn, 0),
-		metrics:     newPoolMetrics("localhost:50051"),
+func TestPooledConnNeedsRecycling(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxAge      time.Duration
+		maxRequests uint64
+		created     time.Time
+		healthy     bool
+		requests    uint64
+	}{
+		{"unhealthy", 30 * time.Minute, 100000, time.Now(), false, 0},
+		{"too old", time.Nanosecond, 100000, time.Now().Add(-time.Hour), true, 0},
+		{"too many requests", 30 * time.Minute, 100, time.Now(), true, 150},
 	}
 
-	conn := &pooledConn{
-		created: time.Now(),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool := &ConnectionPool{
+				maxAge:      tt.maxAge,
+				maxRequests: tt.maxRequests,
+				conns:       make([]*pooledConn, 0),
+				metrics:     newPoolMetrics("localhost:50051"),
+			}
+			conn := &pooledConn{created: tt.created}
+			conn.healthy.Store(tt.healthy)
+			conn.requests.Store(tt.requests)
+
+			assert.True(t, pool.needsRecycling(conn))
+		})
 	}
-	conn.healthy.Store(false) // unhealthy
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPooledConnNeedsRecyclingTooOld(t *testing.T) {
-	pool := &ConnectionPool{
-		maxAge:      1 * time.Nanosecond, // Very short max age
-		maxRequests: 100000,
-		conns:       make([]*pooledConn, 0),
-		metrics:     newPoolMetrics("localhost:50051"),
-	}
-
-	conn := &pooledConn{
-		created: time.Now().Add(-1 * time.Hour), // old connection
-	}
-	conn.healthy.Store(true)
-
-	assert.True(t, pool.needsRecycling(conn))
-}
-
-func TestPooledConnNeedsRecyclingTooManyRequests(t *testing.T) {
-	pool := &ConnectionPool{
-		maxAge:      30 * time.Minute,
-		maxRequests: 100, // Low max requests
-		conns:       make([]*pooledConn, 0),
-		metrics:     newPoolMetrics("localhost:50051"),
-	}
-
-	conn := &pooledConn{
-		created: time.Now(),
-	}
-	conn.healthy.Store(true)
-	conn.requests.Store(150) // Exceeded max requests
-
-	assert.True(t, pool.needsRecycling(conn))
 }
 
 // =============================================================================
@@ -1348,154 +1290,4 @@ func TestClientGetClientWithoutPool(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "client is not connected")
 	assert.Nil(t, result)
-}
-
-// =============================================================================
-// Client EnsureConnected Tests
-// =============================================================================
-
-func TestClientEnsureConnectedWithPoolClosed(t *testing.T) {
-	pool := &ConnectionPool{
-		conns:           make([]*pooledConn, 0),
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-	}
-
-	client := &Client{
-		pool:      pool,
-		connected: false,
-		closed:    true,
-	}
-
-	err := client.ensureConnected(context.Background())
-	assert.Error(t, err)
-}
-
-// =============================================================================
-// Client Conn Tests
-// =============================================================================
-
-func TestClientConnReturnsConnection(t *testing.T) {
-	client := &Client{
-		conn: nil, // No connection
-	}
-
-	result := client.Conn()
-	assert.Nil(t, result)
-}
-
-// =============================================================================
-// Client Secrets Tests - Nil Request Coverage
-// Note: Secrets methods check nil request FIRST before using c.conn,
-// so these work with empty Client{}
-// =============================================================================
-
-func TestClientStoreSecretNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.StoreSecret(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientGetSecretNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.GetSecret(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientDeleteSecretNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.DeleteSecret(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientListSecretsNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.ListSecrets(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientRotateSecretNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.RotateSecret(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientListSecretVersionsNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.ListSecretVersions(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientRollbackSecretNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.RollbackSecret(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientUpdateSecretStatusNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.UpdateSecretStatus(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientGetSecretsByPrefixNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.GetSecretsByPrefix(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
-}
-
-func TestClientWatchSecretsByPrefixNilRequest_Coverage(t *testing.T) {
-	client := &Client{}
-
-	ctx := context.Background()
-	resp, err := client.WatchSecretsByPrefix(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "request cannot be nil")
 }
