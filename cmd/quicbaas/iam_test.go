@@ -1542,22 +1542,143 @@ func TestIAMPEPCheck_InvalidContext(t *testing.T) {
 	pepContext = ""
 }
 
-func TestIAMPEPCheck_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
+// TestIAMCommands_MissingTenant runs each tenant-scoped IAM command with no
+// --tenant and checks that it is refused before any client call.
+func TestIAMCommands_MissingTenant(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{"pep check", func() error {
+			pepSubject = `{"id":"user1"}`
+			pepAction = "read"
+			pepResource = "keys/foo"
+			pepContext = ""
+			return runIAMPEPCheckCommand(newIAMPEPCheckCommand(), []string{})
+		}},
+		{"audit query", func() error {
+			return runIAMAuditQueryCommand(newIAMAuditQueryCommand(), []string{})
+		}},
+		{"audit get", func() error {
+			return runIAMAuditGetCommand(newIAMAuditGetCommand(), []string{"evt_001"})
+		}},
+		{"session list", func() error {
+			return runIAMSessionListCommand(newIAMSessionListCommand(), []string{})
+		}},
+		{"session get", func() error {
+			return runIAMSessionGetCommand(newIAMSessionGetCommand(), []string{"sess_001"})
+		}},
+		{"session revoke", func() error {
+			return runIAMSessionRevokeCommand(newIAMSessionRevokeCommand(), []string{"sess_001"})
+		}},
+		{"session revoke-all", func() error {
+			return runIAMSessionRevokeAllCommand(newIAMSessionRevokeAllCommand(), []string{})
+		}},
+		{"gdpr consent grant", func() error {
+			gdprUserID = "user_001"
+			gdprPurpose = "marketing"
+			return runIAMGDPRConsentGrantCommand(newIAMGDPRConsentGrantCommand(), []string{})
+		}},
+		{"gdpr consent withdraw", func() error {
+			gdprUserID = "user_001"
+			gdprPurpose = "marketing"
+			return runIAMGDPRConsentWithdrawCommand(newIAMGDPRConsentWithdrawCommand(), []string{})
+		}},
+		{"gdpr consent get", func() error {
+			gdprUserID = "user_001"
+			gdprPurpose = "analytics"
+			return runIAMGDPRConsentGetCommand(newIAMGDPRConsentGetCommand(), []string{})
+		}},
+		{"gdpr consent list", func() error {
+			gdprUserID = "user_001"
+			return runIAMGDPRConsentListCommand(newIAMGDPRConsentListCommand(), []string{})
+		}},
+		{"gdpr export request", func() error {
+			gdprUserID = "user_001"
+			gdprExportFormat = "json"
+			return runIAMGDPRExportRequestCommand(newIAMGDPRExportRequestCommand(), []string{})
+		}},
+		{"gdpr export status", func() error {
+			gdprUserID = "user_001"
+			gdprExportID = "export_001"
+			return runIAMGDPRExportStatusCommand(newIAMGDPRExportStatusCommand(), []string{})
+		}},
+		{"gdpr deletion request", func() error {
+			gdprUserID = "user_001"
+			gdprDeletionReason = "reason"
+			return runIAMGDPRDeletionRequestCommand(newIAMGDPRDeletionRequestCommand(), []string{})
+		}},
+		{"gdpr deletion cancel", func() error {
+			gdprUserID = "user_001"
+			gdprDeletionID = "del_001"
+			return runIAMGDPRDeletionCancelCommand(newIAMGDPRDeletionCancelCommand(), []string{})
+		}},
+		{"gdpr deletion status", func() error {
+			gdprUserID = "user_001"
+			gdprDeletionID = "del_001"
+			return runIAMGDPRDeletionStatusCommand(newIAMGDPRDeletionStatusCommand(), []string{})
+		}},
+		{"policy get", func() error {
+			return runIAMPolicyGetCommand(newIAMPolicyGetCommand(), []string{"test-policy"})
+		}},
+		{"policy delete", func() error {
+			return runIAMPolicyDeleteCommand(newIAMPolicyDeleteCommand(), []string{"test-policy"})
+		}},
+		{"policy list", func() error {
+			return runIAMPolicyListCommand(newIAMPolicyListCommand(), []string{})
+		}},
+		{"app register", func() error {
+			iamAppName = "test-app"
+			return runIAMAppRegisterCommand(newIAMAppRegisterCommand(), []string{})
+		}},
+		{"app list", func() error {
+			return runIAMAppListCommand(newIAMAppListCommand(), []string{})
+		}},
+		{"mfa disable", func() error {
+			mfaUserID = "user_001"
+			return runMFADisableCommand(newMFADisableCommand(), []string{})
+		}},
+		{"mfa backup-codes generate", func() error {
+			mfaUserID = "user_001"
+			return runMFABackupCodesGenerateCommand(newMFABackupCodesGenerateCommand(), []string{})
+		}},
+		{"provider get", func() error {
+			providerID = "provider_test"
+			return runIAMProviderGetCommand(newIAMProviderGetCommand(), []string{})
+		}},
+		{"provider delete", func() error {
+			providerID = "provider_test"
+			return runIAMProviderDeleteCommand(newIAMProviderDeleteCommand(), []string{})
+		}},
+		{"provider list", func() error {
+			return runIAMProviderListCommand(newIAMProviderListCommand(), []string{})
+		}},
+		{"identity unlink", func() error {
+			identityUserID = "user_001"
+			identityProviderID = "provider_test"
+			return runIAMIdentityUnlinkCommand(newIAMIdentityUnlinkCommand(), []string{})
+		}},
+		{"identity list", func() error {
+			identityUserID = "user_001"
+			return runIAMIdentityListCommand(newIAMIdentityListCommand(), []string{})
+		}},
+	}
 
-	cmd := newIAMPEPCheckCommand()
-	pepSubject = `{"id":"user1"}`
-	pepAction = "read"
-	pepResource = "keys/foo"
-	pepContext = ""
-	globalTenantID = ""
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, cleanup := setupIAMMock(t)
+			defer cleanup()
+			cleanupLog := testInitLogger(t)
+			defer cleanupLog()
 
-	err := runIAMPEPCheckCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
+			globalTenantID = ""
+			iamForce = true
+
+			err := tt.run()
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "--tenant flag is required")
+		})
+	}
 }
 
 func TestIAMPEPCheck_InvalidSubject(t *testing.T) {
@@ -1707,20 +1828,6 @@ func TestIAMAuditQuery_InvalidEndTime(t *testing.T) {
 	iamAuditEndTime = ""
 }
 
-func TestIAMAuditQuery_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMAuditQueryCommand()
-	globalTenantID = ""
-
-	err := runIAMAuditQueryCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMAuditQuery_EmptyResults(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -1796,20 +1903,6 @@ func TestIAMAuditGet_WithFullDetails(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMAuditGet_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMAuditGetCommand()
-	globalTenantID = ""
-
-	err := runIAMAuditGetCommand(cmd, []string{"evt_001"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 // =============================================================================
 // Session Commands - Additional Paths
 // =============================================================================
@@ -1842,20 +1935,6 @@ func TestIAMSessionList_SuccessYAML(t *testing.T) {
 
 	err := runIAMSessionListCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMSessionList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMSessionListCommand()
-	globalTenantID = ""
-
-	err := runIAMSessionListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMSessionList_EmptyResults(t *testing.T) {
@@ -1904,50 +1983,6 @@ func TestIAMSessionList_LongUserAgent(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMSessionRevoke_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMSessionRevokeCommand()
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMSessionRevokeCommand(cmd, []string{"sess_001"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMSessionRevokeAll_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMSessionRevokeAllCommand()
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMSessionRevokeAllCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMSessionGet_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMSessionGetCommand()
-	globalTenantID = ""
-
-	err := runIAMSessionGetCommand(cmd, []string{"sess_001"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMSessionGet_WithDeviceInfo(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -1991,22 +2026,6 @@ func TestIAMGDPRConsentGrant_SuccessJSON(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMGDPRConsentGrant_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRConsentGrantCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "marketing"
-	globalTenantID = ""
-
-	err := runIAMGDPRConsentGrantCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMGDPRConsentGrant_InvalidPurpose(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2023,23 +2042,6 @@ func TestIAMGDPRConsentGrant_InvalidPurpose(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid purpose")
 }
 
-func TestIAMGDPRConsentWithdraw_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRConsentWithdrawCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "marketing"
-	iamForce = true
-	globalTenantID = ""
-
-	err := runIAMGDPRConsentWithdrawCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMGDPRConsentGet_SuccessJSON(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2054,22 +2056,6 @@ func TestIAMGDPRConsentGet_SuccessJSON(t *testing.T) {
 
 	err := runIAMGDPRConsentGetCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMGDPRConsentGet_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRConsentGetCommand()
-	gdprUserID = "user_001"
-	gdprPurpose = "analytics"
-	globalTenantID = ""
-
-	err := runIAMGDPRConsentGetCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMGDPRConsentGet_WithTimestamps(t *testing.T) {
@@ -2110,21 +2096,6 @@ func TestIAMGDPRConsentList_SuccessJSON(t *testing.T) {
 
 	err := runIAMGDPRConsentListCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMGDPRConsentList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRConsentListCommand()
-	gdprUserID = "user_001"
-	globalTenantID = ""
-
-	err := runIAMGDPRConsentListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMGDPRConsentList_EmptyResults(t *testing.T) {
@@ -2235,22 +2206,6 @@ func TestIAMGDPRExportRequest_InvalidFormat(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid format")
 }
 
-func TestIAMGDPRExportRequest_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRExportRequestCommand()
-	gdprUserID = "user_001"
-	gdprExportFormat = "json"
-	globalTenantID = ""
-
-	err := runIAMGDPRExportRequestCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMGDPRExportStatus_SuccessJSON(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2265,22 +2220,6 @@ func TestIAMGDPRExportStatus_SuccessJSON(t *testing.T) {
 
 	err := runIAMGDPRExportStatusCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMGDPRExportStatus_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRExportStatusCommand()
-	gdprUserID = "user_001"
-	gdprExportID = "export_001"
-	globalTenantID = ""
-
-	err := runIAMGDPRExportStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMGDPRExportStatus_WithFullDetails(t *testing.T) {
@@ -2350,23 +2289,6 @@ func TestIAMGDPRDeletionRequest_SuccessJSON(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMGDPRDeletionRequest_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRDeletionRequestCommand()
-	gdprUserID = "user_001"
-	gdprDeletionReason = "reason"
-	iamForce = true
-	globalTenantID = ""
-
-	err := runIAMGDPRDeletionRequestCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMGDPRDeletionRequest_WithScheduledFor(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2394,22 +2316,6 @@ func TestIAMGDPRDeletionRequest_WithScheduledFor(t *testing.T) {
 	gdprGracePeriodDays = 30
 }
 
-func TestIAMGDPRDeletionCancel_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRDeletionCancelCommand()
-	gdprUserID = "user_001"
-	gdprDeletionID = "del_001"
-	globalTenantID = ""
-
-	err := runIAMGDPRDeletionCancelCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMGDPRDeletionStatus_SuccessJSON(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2424,22 +2330,6 @@ func TestIAMGDPRDeletionStatus_SuccessJSON(t *testing.T) {
 
 	err := runIAMGDPRDeletionStatusCommand(cmd, []string{})
 	assert.NoError(t, err)
-}
-
-func TestIAMGDPRDeletionStatus_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMGDPRDeletionStatusCommand()
-	gdprUserID = "user_001"
-	gdprDeletionID = "del_001"
-	globalTenantID = ""
-
-	err := runIAMGDPRDeletionStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
 }
 
 func TestIAMGDPRDeletionStatus_WithFullDetails(t *testing.T) {
@@ -2535,49 +2425,6 @@ func TestIAMPolicyGet_SuccessYAML(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMPolicyGet_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMPolicyGetCommand()
-	globalTenantID = ""
-
-	err := runIAMPolicyGetCommand(cmd, []string{"test-policy"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMPolicyDelete_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMPolicyDeleteCommand()
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMPolicyDeleteCommand(cmd, []string{"test-policy"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
-func TestIAMPolicyList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMPolicyListCommand()
-	globalTenantID = ""
-
-	err := runIAMPolicyListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 func TestIAMPolicyList_EmptyResults(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2649,20 +2496,6 @@ func TestIAMAdminAssignmentUpdate_WithActive(t *testing.T) {
 // App Commands - Missing Tenant & JSON
 // =============================================================================
 
-func TestIAMAppRegister_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMAppRegisterCommand()
-	iamAppName = "test-app"
-	globalTenantID = ""
-
-	err := runIAMAppRegisterCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
 func TestIAMAppGet_WithRedirectURIs(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2707,19 +2540,6 @@ func TestIAMAppDelete_SuccessForce(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestIAMAppList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMAppListCommand()
-	globalTenantID = ""
-
-	err := runIAMAppListCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
 func TestIAMAppRotateSecret_SuccessJSON(t *testing.T) {
 	_, cleanup := setupIAMMock(t)
 	defer cleanup()
@@ -2738,36 +2558,6 @@ func TestIAMAppRotateSecret_SuccessJSON(t *testing.T) {
 // =============================================================================
 // MFA Missing Tenant Tests
 // =============================================================================
-
-func TestMFADisable_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newMFADisableCommand()
-	mfaUserID = "user_001"
-	globalTenantID = ""
-	iamForce = true
-
-	err := runMFADisableCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestMFABackupCodesGenerate_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newMFABackupCodesGenerateCommand()
-	mfaUserID = "user_001"
-	globalTenantID = ""
-	iamForce = true
-
-	err := runMFABackupCodesGenerateCommand(cmd, []string{})
-	assert.Error(t, err)
-}
 
 // =============================================================================
 // Utility function: truncateString
@@ -3225,79 +3015,17 @@ func TestIAMAppList_EmptyResults(t *testing.T) {
 // Federation Provider Delete - Confirmation Prompt Paths
 // =============================================================================
 
-func TestIAMProviderDelete_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMProviderDeleteCommand()
-	providerID = "provider_test"
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMProviderDeleteCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 // =============================================================================
 // Federation Identity Unlink - Confirmation Prompt
 // =============================================================================
-
-func TestIAMIdentityUnlink_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMIdentityUnlinkCommand()
-	identityUserID = "user_001"
-	identityProviderID = "provider_test"
-	globalTenantID = ""
-	iamForce = true
-
-	err := runIAMIdentityUnlinkCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
 
 // =============================================================================
 // Federation Identity List - JSON & Missing Tenant
 // =============================================================================
 
-func TestIAMIdentityList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMIdentityListCommand()
-	identityUserID = "user_001"
-	globalTenantID = ""
-
-	err := runIAMIdentityListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
-
 // =============================================================================
 // Federation Provider List - JSON, Empty, Missing Tenant
 // =============================================================================
-
-func TestIAMProviderList_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMProviderListCommand()
-	globalTenantID = ""
-
-	err := runIAMProviderListCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
 
 func TestIAMProviderList_EmptyResults(t *testing.T) {
 	mockClient, cleanup := setupIAMMock(t)
@@ -3320,21 +3048,6 @@ func TestIAMProviderList_EmptyResults(t *testing.T) {
 // =============================================================================
 // Federation Provider Get - JSON & Missing Tenant
 // =============================================================================
-
-func TestIAMProviderGet_MissingTenant(t *testing.T) {
-	_, cleanup := setupIAMMock(t)
-	defer cleanup()
-	cleanupLog := testInitLogger(t)
-	defer cleanupLog()
-
-	cmd := newIAMProviderGetCommand()
-	providerID = "provider_test"
-	globalTenantID = ""
-
-	err := runIAMProviderGetCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "--tenant flag is required")
-}
 
 // =============================================================================
 // Role List - Empty
