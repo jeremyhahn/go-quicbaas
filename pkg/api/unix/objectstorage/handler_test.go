@@ -337,14 +337,6 @@ func TestHandlerClosed(t *testing.T) {
 	assert.Equal(t, dberrors.ErrUnavailable, qbErr.Code)
 }
 
-func TestHandleRequestNil(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	resp := handler.HandleRequest(context.Background(), nil)
-	assert.Equal(t, StatusInvalidRequest, resp.Status)
-}
-
 // TestHandleOpcodes drives each opcode through Handle with an encoded
 // request and decodes the response into the opcode's response type.
 func TestHandleOpcodes(t *testing.T) {
@@ -565,7 +557,45 @@ func TestHandleOpcodes(t *testing.T) {
 				assert.Equal(t, "tenant-1", resp.(*service.SetTenantQuotasResponse).TenantID)
 			},
 		},
-		// BATCH_ROWS
+		{
+			name: "batch put objects",
+			op:   OpBatchPutObjects,
+			req: &BatchPutRequest{Objects: []*PutObjectItem{
+				{Key: "key1", Value: []byte("value1")},
+				{Key: "key2", Value: []byte("value2")},
+			}},
+			resp: &BatchPutResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*BatchPutResponse)
+				assert.Equal(t, 2, r.Succeeded)
+				assert.Equal(t, 0, r.Failed)
+				assert.Len(t, r.Results, 2)
+			},
+		},
+		{
+			name: "batch get objects",
+			op:   OpBatchGetObjects,
+			req:  &BatchGetRequest{Keys: []string{"key1", "key2"}},
+			resp: &BatchGetResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*BatchGetResponse)
+				assert.Equal(t, 2, r.Succeeded)
+				assert.Equal(t, 0, r.Failed)
+				assert.Len(t, r.Results, 2)
+			},
+		},
+		{
+			name: "batch delete objects",
+			op:   OpBatchDeleteObjects,
+			req:  &BatchDeleteRequest{Keys: []string{"key1", "key2"}},
+			resp: &BatchDeleteResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*BatchDeleteResponse)
+				assert.Equal(t, 2, r.Succeeded)
+				assert.Equal(t, 0, r.Failed)
+				assert.Len(t, r.Results, 2)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -591,33 +621,6 @@ func TestHandleOpcodes(t *testing.T) {
 	}
 }
 
-func TestHandleServiceError(t *testing.T) {
-	svc := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
-		},
-	}
-
-	handler, err := NewHandler(svc, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetObjectRequest{
-		Key: "missing-key",
-	})
-	require.NoError(t, err)
-
-	_, err = handler.Handle(context.Background(), OpGetObject, reqPayload)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrNotFound, qbErr.Code)
-}
-
 func TestIsAdminOperation(t *testing.T) {
 	tests := []struct {
 		opcode   byte
@@ -639,80 +642,10 @@ func TestIsAdminOperation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(OpcodeToString(tt.opcode), func(t *testing.T) {
-			result := IsAdminOperation(tt.opcode)
-			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expected, IsAdminOperation(tt.opcode))
+			assert.Equal(t, tt.expected, RequiresAdminService(tt.opcode))
 		})
 	}
-}
-
-func TestRequiresAdminService(t *testing.T) {
-	assert.False(t, RequiresAdminService(OpPutObject))
-	assert.False(t, RequiresAdminService(OpGetObject))
-	assert.True(t, RequiresAdminService(OpAdminCreateBackend))
-	assert.True(t, RequiresAdminService(OpAdminRunGC))
-}
-
-func TestHandleBatchPutObjects(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&BatchPutRequest{
-		Objects: []*PutObjectItem{
-			{Key: "key1", Value: []byte("value1")},
-			{Key: "key2", Value: []byte("value2")},
-		},
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpBatchPutObjects, reqPayload)
-	require.NoError(t, err)
-
-	var batchResp BatchPutResponse
-	err = DecodePayload(resp, &batchResp)
-	require.NoError(t, err)
-	assert.Equal(t, 2, batchResp.Succeeded)
-	assert.Equal(t, 0, batchResp.Failed)
-	assert.Len(t, batchResp.Results, 2)
-}
-
-func TestHandleBatchGetObjects(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&BatchGetRequest{
-		Keys: []string{"key1", "key2"},
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpBatchGetObjects, reqPayload)
-	require.NoError(t, err)
-
-	var batchResp BatchGetResponse
-	err = DecodePayload(resp, &batchResp)
-	require.NoError(t, err)
-	assert.Equal(t, 2, batchResp.Succeeded)
-	assert.Equal(t, 0, batchResp.Failed)
-	assert.Len(t, batchResp.Results, 2)
-}
-
-func TestHandleBatchDeleteObjects(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&BatchDeleteRequest{
-		Keys: []string{"key1", "key2"},
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpBatchDeleteObjects, reqPayload)
-	require.NoError(t, err)
-
-	var batchResp BatchDeleteResponse
-	err = DecodePayload(resp, &batchResp)
-	require.NoError(t, err)
-	assert.Equal(t, 2, batchResp.Succeeded)
-	assert.Equal(t, 0, batchResp.Failed)
-	assert.Len(t, batchResp.Results, 2)
 }
 
 func TestHandleBatchWithErrors(t *testing.T) {
@@ -747,51 +680,41 @@ func TestHandleBatchWithErrors(t *testing.T) {
 	assert.Equal(t, 1, batchResp.Failed)
 }
 
-func TestHandleRequestSuccess(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	req := &Request{
-		Opcode:  OpGetObject,
-		Token:   "test-token",
-		Payload: reqPayload,
-	}
-
-	resp := handler.HandleRequest(context.Background(), req)
-	assert.Equal(t, StatusOK, resp.Status)
-	assert.NotEmpty(t, resp.Payload)
-}
-
-func TestHandleRequestWithError(t *testing.T) {
-	svc := &mockObjectStorageService{
+// TestHandleRequest checks that HandleRequest maps a request, and the
+// error its opcode handler returns, to the response status.
+func TestHandleRequest(t *testing.T) {
+	notFound := &mockObjectStorageService{
 		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return nil, &dberrors.QBError{
-				Code: dberrors.ErrNotFound,
-				Op:   "test",
-				Err:  assert.AnError,
-			}
+			return nil, &dberrors.QBError{Code: dberrors.ErrNotFound, Op: "test", Err: assert.AnError}
 		},
 	}
 
-	handler, err := NewHandler(svc, nil, &testLogger{})
+	getPayload, err := EncodePayload(&service.GetObjectRequest{Key: "test-key"})
 	require.NoError(t, err)
+	getRequest := &Request{Opcode: OpGetObject, Token: "test-token", Payload: getPayload}
 
-	reqPayload, err := EncodePayload(&service.GetObjectRequest{
-		Key: "missing-key",
-	})
-	require.NoError(t, err)
-
-	req := &Request{
-		Opcode:  OpGetObject,
-		Token:   "test-token",
-		Payload: reqPayload,
+	tests := []struct {
+		name        string
+		svc         *mockObjectStorageService
+		req         *Request
+		wantStatus  byte
+		wantPayload bool
+	}{
+		{name: "nil request", svc: &mockObjectStorageService{}, req: nil, wantStatus: StatusInvalidRequest},
+		{name: "success", svc: &mockObjectStorageService{}, req: getRequest, wantStatus: StatusOK, wantPayload: true},
+		{name: "service error", svc: notFound, req: getRequest, wantStatus: StatusNotFound},
 	}
 
-	resp := handler.HandleRequest(context.Background(), req)
-	assert.Equal(t, StatusNotFound, resp.Status)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, err := NewHandler(tt.svc, nil, &testLogger{})
+			require.NoError(t, err)
+
+			resp := handler.HandleRequest(context.Background(), tt.req)
+			assert.Equal(t, tt.wantStatus, resp.Status)
+			if tt.wantPayload {
+				assert.NotEmpty(t, resp.Payload)
+			}
+		})
+	}
 }
