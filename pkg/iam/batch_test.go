@@ -1031,186 +1031,139 @@ func TestPolicyMatchesFilter(t *testing.T) {
 	})
 }
 
-func TestImportUsersEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
+// TestBatchManagerSingleTypeImport covers the input checks each single-type
+// import makes before it touches a store: an empty slice is a successful
+// no-op, and a missing tenant ID is a validation error.
+func TestBatchManagerSingleTypeImport(t *testing.T) {
+	importers := map[string]func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error){
+		"users": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*UserImport{{Email: "test@example.com"}}
+			if empty {
+				items = []*UserImport{}
+			}
+			return bm.ImportUsers(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+		"roles": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*RoleImport{{Name: "test"}}
+			if empty {
+				items = []*RoleImport{}
+			}
+			return bm.ImportRoles(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+		"policies": func(bm *BatchManager, tenantID string, empty bool) (*BatchImportResult, error) {
+			items := []*PolicyImport{{Name: "test"}}
+			if empty {
+				items = []*PolicyImport{}
+			}
+			return bm.ImportPolicies(context.Background(), tenantID, items, BatchImportOptions{})
+		},
+	}
 
-	result, err := bm.ImportUsers(ctx, "test-tenant", []*UserImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportRolesEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	result, err := bm.ImportRoles(ctx, "test-tenant", []*RoleImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportPoliciesEmptySlice(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	result, err := bm.ImportPolicies(ctx, "test-tenant", []*PolicyImport{}, BatchImportOptions{})
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if result == nil {
-		t.Fatal("expected result, got nil")
-	}
-	if result.TotalItems != 0 {
-		t.Errorf("expected 0 total items, got %d", result.TotalItems)
-	}
-}
-
-func TestImportUsersMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ImportUsers(ctx, "", []*UserImport{{Email: "test@example.com"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
+	for name, importFn := range importers {
+		t.Run(name+"/empty slice", func(t *testing.T) {
+			result, err := importFn(NewBatchManager(BatchManagerOptions{}), "test-tenant", true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("expected result, got nil")
+			}
+			if result.TotalItems != 0 {
+				t.Errorf("expected 0 total items, got %d", result.TotalItems)
+			}
+		})
+		t.Run(name+"/missing tenant ID", func(t *testing.T) {
+			_, err := importFn(NewBatchManager(BatchManagerOptions{}), "", false)
+			var valErr *ValidationError
+			if !errors.As(err, &valErr) || valErr.Field != "tenant_id" {
+				t.Errorf("expected tenant_id ValidationError, got %v", err)
+			}
+		})
 	}
 }
 
-func TestImportRolesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
+// TestBatchManagerSingleTypeExport covers the checks each single-type export
+// makes: a missing tenant ID is a validation error, and a missing backing
+// store is a batch operation failure.
+func TestBatchManagerSingleTypeExport(t *testing.T) {
+	exporters := map[string]func(bm *BatchManager, tenantID string) error{
+		"users": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportUsers(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+		"roles": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportRoles(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+		"policies": func(bm *BatchManager, tenantID string) error {
+			_, err := bm.ExportPolicies(context.Background(), tenantID, ExportFilter{})
+			return err
+		},
+	}
 
-	_, err := bm.ImportRoles(ctx, "", []*RoleImport{{Name: "test"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
+	for name, exportFn := range exporters {
+		t.Run(name+"/missing tenant ID", func(t *testing.T) {
+			err := exportFn(NewBatchManager(BatchManagerOptions{}), "")
+			var valErr *ValidationError
+			if !errors.As(err, &valErr) || valErr.Field != "tenant_id" {
+				t.Errorf("expected tenant_id ValidationError, got %v", err)
+			}
+		})
+		t.Run(name+"/no backing store", func(t *testing.T) {
+			err := exportFn(NewBatchManager(BatchManagerOptions{}), "test-tenant")
+			if !errors.Is(err, errBatchOperationFailed) {
+				t.Errorf("expected errBatchOperationFailed, got %v", err)
+			}
+		})
 	}
 }
 
-func TestImportPoliciesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
+// TestBatchManagerImportItemNoBackend checks that importing a single valid
+// item without its backing store fails as a batch operation failure.
+func TestBatchManagerImportItemNoBackend(t *testing.T) {
 	ctx := context.Background()
-
-	_, err := bm.ImportPolicies(ctx, "", []*PolicyImport{{Name: "test"}}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportUsersMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportUsers(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportRolesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportRoles(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportPoliciesMissingTenantID(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportPolicies(ctx, "", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing tenant ID")
-	}
-}
-
-func TestExportUsersNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportUsers(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestExportRolesNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportRoles(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestExportPoliciesNoPolicyEngine(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	_, err := bm.ExportPolicies(ctx, "test-tenant", ExportFilter{})
-	if err == nil {
-		t.Error("expected error for missing policy engine")
-	}
-}
-
-func TestImportUserNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importUser(ctx, "test-tenant", &UserImport{
-		Email:    "test@example.com",
-		Username: "testuser",
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestImportRoleNoIdentityStore(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importRole(ctx, "test-tenant", &RoleImport{
-		Name: "test-role",
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing identity store")
-	}
-}
-
-func TestImportPolicyNoPolicyEngine(t *testing.T) {
-	bm := NewBatchManager(BatchManagerOptions{})
-	ctx := context.Background()
-
-	err := bm.importPolicy(ctx, "test-tenant", &PolicyImport{
-		Name: "test-policy",
-		Rules: []Rule{
-			{
-				Name:      "test-rule",
-				Effect:    EffectAllow,
-				Actions:   []string{"*"},
-				Resources: []string{"*"},
+	tests := []struct {
+		name     string
+		importFn func(bm *BatchManager) error
+	}{
+		{
+			name: "user without identity store",
+			importFn: func(bm *BatchManager) error {
+				return bm.importUser(ctx, "test-tenant", &UserImport{
+					Email:    "test@example.com",
+					Username: "testuser",
+				}, BatchImportOptions{})
 			},
 		},
-	}, BatchImportOptions{})
-	if err == nil {
-		t.Error("expected error for missing policy engine")
+		{
+			name: "role without identity store",
+			importFn: func(bm *BatchManager) error {
+				return bm.importRole(ctx, "test-tenant", &RoleImport{Name: "test-role"}, BatchImportOptions{})
+			},
+		},
+		{
+			name: "policy without policy engine",
+			importFn: func(bm *BatchManager) error {
+				return bm.importPolicy(ctx, "test-tenant", &PolicyImport{
+					Name: "test-policy",
+					Rules: []Rule{{
+						Name:      "test-rule",
+						Effect:    EffectAllow,
+						Actions:   []string{"*"},
+						Resources: []string{"*"},
+					}},
+				}, BatchImportOptions{})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.importFn(NewBatchManager(BatchManagerOptions{}))
+			if !errors.Is(err, errBatchOperationFailed) {
+				t.Errorf("expected errBatchOperationFailed, got %v", err)
+			}
+		})
 	}
 }
 
