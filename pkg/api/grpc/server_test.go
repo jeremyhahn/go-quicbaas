@@ -54,6 +54,12 @@ func TestNewServerValidation(t *testing.T) {
 	log, err := logger.New(logConfig)
 	require.NoError(t, err)
 
+	t.Run("Success", func(t *testing.T) {
+		srv, err := NewServer(testutil.NewMockQuicBaaS(), log, 1, "v")
+		require.NoError(t, err)
+		assert.NotNil(t, srv)
+	})
+
 	t.Run("NilService", func(t *testing.T) {
 		srv, err := NewServer(nil, log, 1, "test")
 		assert.Error(t, err)
@@ -282,14 +288,6 @@ func TestValidateTimeSeriesQueryRequest(t *testing.T) {
 }
 
 // --- Merged from server_additional_test.go ---
-
-func TestNewServer_Success_WithMockService(t *testing.T) {
-	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
-	mockSvc := testutil.NewMockQuicBaaS()
-	srv, err := NewServer(mockSvc, log, 1, "v")
-	require.NoError(t, err)
-	assert.NotNil(t, srv)
-}
 
 func TestStreamRecoveryInterceptor_PanicHandled(t *testing.T) {
 	log, _ := logger.New(logger.LogConfig{Level: "error", Format: "json", Output: "stdout"})
