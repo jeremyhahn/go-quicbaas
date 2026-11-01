@@ -1,8 +1,8 @@
 package iam
 
 import (
-	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -335,103 +335,120 @@ func TestBatchProcessor_ImportPolicies(t *testing.T) {
 }
 
 func TestBatchProcessor_ImportFromJSON(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+	bp := NewIAMBatchProcessor(newMockBatchStorage(), newMockTenantManager())
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	t.Run("import users from JSON", func(t *testing.T) {
-		items := []UserImportItem{
-			{Email: "json1@example.com", Name: "JSON User 1"},
-			{Email: "json2@example.com", Name: "JSON User 2"},
-		}
-
-		data, _ := json.Marshal(items)
-		reader := bytes.NewReader(data)
-
-		op, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeUsers, reader, BatchOptions{
-			DryRun: true,
-		})
+	mustMarshal := func(v any) string {
+		data, err := json.Marshal(v)
 		if err != nil {
-			t.Fatalf("ImportFromJSON failed: %v", err)
+			t.Fatalf("marshal: %v", err)
 		}
+		return string(data)
+	}
+	policy := &Policy{
+		APIVersion: "v1",
+		Kind:       "Policy",
+		Metadata:   PolicyMetadata{Name: "test-policy", Tenant: "test-tenant"},
+		Spec: PolicySpec{
+			Rules: []Rule{{Name: "test", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
+		},
+	}
 
-		if op.Type != BatchOperationTypeUsers {
-			t.Errorf("expected type %s, got %s", BatchOperationTypeUsers, op.Type)
-		}
+	tests := []struct {
+		name    string
+		opType  BatchOperationType
+		input   string
+		wantErr any // pointer to the expected error type; nil for success
+	}{
+		{
+			name:   "users",
+			opType: BatchOperationTypeUsers,
+			input: mustMarshal([]UserImportItem{
+				{Email: "json1@example.com", Name: "JSON User 1"},
+				{Email: "json2@example.com", Name: "JSON User 2"},
+			}),
+		},
+		{
+			name:   "roles",
+			opType: BatchOperationTypeRoles,
+			input:  mustMarshal([]RoleImportItem{{ID: "role-1", Name: "Admin"}}),
+		},
+		{
+			name:   "policies",
+			opType: BatchOperationTypePolicies,
+			input:  mustMarshal([]PolicyImportItem{{Policy: policy}}),
+		},
+		{name: "invalid users JSON", opType: BatchOperationTypeUsers, input: "{invalid", wantErr: new(*json.SyntaxError)},
+		{name: "invalid roles JSON", opType: BatchOperationTypeRoles, input: "invalid json", wantErr: new(*json.SyntaxError)},
+		{name: "invalid policies JSON", opType: BatchOperationTypePolicies, input: "invalid json", wantErr: new(*json.SyntaxError)},
+		{name: "unsupported type", opType: "unsupported", input: "[]", wantErr: new(*BatchUnsupportedOperationError)},
+	}
 
-		time.Sleep(100 * time.Millisecond)
-	})
-
-	t.Run("invalid JSON", func(t *testing.T) {
-		reader := strings.NewReader("invalid json")
-
-		_, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeUsers, reader, BatchOptions{})
-		if err == nil {
-			t.Error("expected error for invalid JSON")
-		}
-	})
-
-	t.Run("unsupported type", func(t *testing.T) {
-		reader := strings.NewReader("[]")
-
-		_, err := bp.ImportFromJSON(ctx, tenantID, "unsupported", reader, BatchOptions{})
-		if err == nil {
-			t.Error("expected error for unsupported type")
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			op, err := bp.ImportFromJSON(t.Context(), "test-tenant", tc.opType, strings.NewReader(tc.input), BatchOptions{DryRun: true})
+			if tc.wantErr != nil {
+				if !errors.As(err, tc.wantErr) {
+					t.Fatalf("expected error of type %T, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ImportFromJSON failed: %v", err)
+			}
+			if op.Type != tc.opType {
+				t.Errorf("expected type %s, got %s", tc.opType, op.Type)
+			}
+		})
+	}
 }
 
 func TestBatchProcessor_ImportFromCSV(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
+	bp := NewIAMBatchProcessor(newMockBatchStorage(), newMockTenantManager())
 
-	ctx := context.Background()
-	tenantID := "test-tenant"
+	tests := []struct {
+		name    string
+		opType  BatchOperationType
+		input   string
+		wantErr any // pointer to the expected error type; nil for success
+	}{
+		{
+			name:   "users",
+			opType: BatchOperationTypeUsers,
+			input:  "id,email,name\nuser1,csv1@example.com,CSV User 1\nuser2,csv2@example.com,CSV User 2",
+		},
+		{
+			name:   "roles",
+			opType: BatchOperationTypeRoles,
+			input:  "id,name,description\nrole-1,Admin,Administrator role\nrole-2,Viewer,Viewer role",
+		},
+		{name: "malformed CSV", opType: BatchOperationTypeUsers, input: "a,b\nc", wantErr: new(*csv.ParseError)},
+		{name: "header only", opType: BatchOperationTypeUsers, input: "id,name,email", wantErr: new(*BatchCSVHeaderError)},
+		{
+			name:    "policies not supported",
+			opType:  BatchOperationTypePolicies,
+			input:   "id,name,description\n,read-policy,Read access policy",
+			wantErr: new(*BatchCSVNotSupportedError),
+		},
+		{name: "unsupported type", opType: "unsupported", input: "col1,col2\nval1,val2", wantErr: new(*BatchUnsupportedOperationError)},
+	}
 
-	t.Run("import users from CSV", func(t *testing.T) {
-		csvData := `id,email,name
-user1,csv1@example.com,CSV User 1
-user2,csv2@example.com,CSV User 2`
-
-		reader := strings.NewReader(csvData)
-
-		op, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypeUsers, reader, BatchOptions{
-			DryRun: true,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			op, err := bp.ImportFromCSV(t.Context(), "test-tenant", tc.opType, strings.NewReader(tc.input), BatchOptions{DryRun: true})
+			if tc.wantErr != nil {
+				if !errors.As(err, tc.wantErr) {
+					t.Fatalf("expected error of type %T, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ImportFromCSV failed: %v", err)
+			}
+			if op.Type != tc.opType {
+				t.Errorf("expected type %s, got %s", tc.opType, op.Type)
+			}
 		})
-		if err != nil {
-			t.Fatalf("ImportFromCSV failed: %v", err)
-		}
-
-		if op.Type != BatchOperationTypeUsers {
-			t.Errorf("expected type %s, got %s", BatchOperationTypeUsers, op.Type)
-		}
-
-		time.Sleep(100 * time.Millisecond)
-	})
-
-	t.Run("invalid CSV", func(t *testing.T) {
-		reader := strings.NewReader("invalid\ncsv\ndata\n")
-
-		_, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypeUsers, reader, BatchOptions{})
-		if err != nil {
-			// This is expected, CSV parsing should handle malformed data
-		}
-	})
-
-	t.Run("unsupported type for CSV", func(t *testing.T) {
-		csvData := `name
-policy1`
-		reader := strings.NewReader(csvData)
-
-		_, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypePolicies, reader, BatchOptions{})
-		if err == nil {
-			t.Error("expected error for unsupported CSV type")
-		}
-	})
+	}
 }
 
 func TestBatchProcessor_GetOperation(t *testing.T) {
@@ -923,155 +940,6 @@ func BenchmarkBatchProcessor_ImportUsers(b *testing.B) {
 			DryRun: true,
 		})
 		time.Sleep(200 * time.Millisecond) // Wait for async processing
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromJSON_Users_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	users := []UserImportItem{
-		{Email: "user1@test.com", Name: "User One"},
-		{Email: "user2@test.com", Name: "User Two"},
-	}
-	data, _ := json.Marshal(users)
-
-	op, err := bp.ImportFromJSON(t.Context(), "test-tenant", BatchOperationTypeUsers, bytes.NewReader(data), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON users failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-	if op.Type != BatchOperationTypeUsers {
-		t.Fatalf("expected type users, got %s", op.Type)
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromJSON_Roles_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	roles := []RoleImportItem{
-		{Name: "admin", Description: "Admin role"},
-	}
-	data, _ := json.Marshal(roles)
-
-	op, err := bp.ImportFromJSON(t.Context(), "test-tenant", BatchOperationTypeRoles, bytes.NewReader(data), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON roles failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromJSON_Policies_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	policies := []PolicyImportItem{
-		{Name: "read-only", Description: "Read only"},
-	}
-	data, _ := json.Marshal(policies)
-
-	op, err := bp.ImportFromJSON(t.Context(), "test-tenant", BatchOperationTypePolicies, bytes.NewReader(data), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON policies failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromJSON_UnsupportedType_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	_, err := bp.ImportFromJSON(t.Context(), "t1", "invalid_type", strings.NewReader("[]"), BatchOptions{})
-	if err == nil {
-		t.Fatal("expected error for unsupported type")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromJSON_InvalidJSON_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	_, err := bp.ImportFromJSON(t.Context(), "t1", BatchOperationTypeUsers, strings.NewReader("{invalid"), BatchOptions{})
-	if err == nil {
-		t.Fatal("expected error for invalid JSON")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_Users_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "id,email,name\n,user1@test.com,User One\n,user2@test.com,User Two"
-	op, err := bp.ImportFromCSV(t.Context(), "test-tenant", BatchOperationTypeUsers, strings.NewReader(csv), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromCSV users failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_Roles_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "id,name,description\n,admin,Admin role\n,viewer,Viewer role"
-	op, err := bp.ImportFromCSV(t.Context(), "test-tenant", BatchOperationTypeRoles, strings.NewReader(csv), BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromCSV roles failed: %v", err)
-	}
-	if op == nil {
-		t.Fatal("expected non-nil operation")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_Policies_NotSupported(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "id,name,description\n,read-policy,Read access policy"
-	_, err := bp.ImportFromCSV(t.Context(), "test-tenant", BatchOperationTypePolicies, strings.NewReader(csv), BatchOptions{})
-	if err == nil {
-		t.Fatal("expected error for CSV policy import (not supported)")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_TooFewRows_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "email,name"
-	_, err := bp.ImportFromCSV(t.Context(), "t1", BatchOperationTypeUsers, strings.NewReader(csv), BatchOptions{})
-	if err == nil {
-		t.Fatal("expected error for CSV with only header row")
-	}
-}
-
-func TestIAMBatchProcessor_ImportFromCSV_UnsupportedType_Coverage(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	csv := "col1,col2\nval1,val2"
-	_, err := bp.ImportFromCSV(t.Context(), "t1", "invalid_type", strings.NewReader(csv), BatchOptions{})
-	if err == nil {
-		t.Fatal("expected error for unsupported type")
 	}
 }
 
@@ -1647,170 +1515,9 @@ func TestBatchProcessor_ProcessPolicies_WithDirectConstruction(t *testing.T) {
 // ImportFromJSON with all types
 // =============================================================================
 
-func TestBatchProcessor_ImportFromJSON_Roles(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []RoleImportItem{
-		{ID: "role-1", Name: "Admin"},
-	}
-
-	data, _ := json.Marshal(items)
-	reader := bytes.NewReader(data)
-
-	op, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeRoles, reader, BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypeRoles {
-		t.Errorf("expected type %s, got %s", BatchOperationTypeRoles, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-}
-
-func TestBatchProcessor_ImportFromJSON_Policies(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	items := []PolicyImportItem{
-		{
-			Policy: &Policy{
-				APIVersion: "v1",
-				Kind:       "Policy",
-				Metadata: PolicyMetadata{
-					Name:   "test-policy",
-					Tenant: tenantID,
-				},
-				Spec: PolicySpec{
-					Rules: []Rule{{Name: "test", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}},
-				},
-			},
-		},
-	}
-
-	data, _ := json.Marshal(items)
-	reader := bytes.NewReader(data)
-
-	op, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypePolicies, reader, BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromJSON failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypePolicies {
-		t.Errorf("expected type %s, got %s", BatchOperationTypePolicies, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-}
-
-func TestBatchProcessor_ImportFromJSON_InvalidRoles(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	reader := strings.NewReader("invalid json")
-
-	_, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypeRoles, reader, BatchOptions{})
-	if err == nil {
-		t.Error("expected error for invalid JSON")
-	}
-}
-
-func TestBatchProcessor_ImportFromJSON_InvalidPolicies(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	reader := strings.NewReader("invalid json")
-
-	_, err := bp.ImportFromJSON(ctx, tenantID, BatchOperationTypePolicies, reader, BatchOptions{})
-	if err == nil {
-		t.Error("expected error for invalid JSON")
-	}
-}
-
 // =============================================================================
 // ImportFromCSV with all types
 // =============================================================================
-
-func TestBatchProcessor_ImportFromCSV_Roles(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	csvData := `id,name,description
-role-1,Admin,Administrator role
-role-2,Viewer,Viewer role`
-
-	reader := strings.NewReader(csvData)
-
-	op, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypeRoles, reader, BatchOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ImportFromCSV failed: %v", err)
-	}
-
-	if op.Type != BatchOperationTypeRoles {
-		t.Errorf("expected type %s, got %s", BatchOperationTypeRoles, op.Type)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-}
-
-func TestBatchProcessor_ImportFromCSV_UnsupportedType(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	csvData := `name
-policy1`
-
-	reader := strings.NewReader(csvData)
-
-	_, err := bp.ImportFromCSV(ctx, tenantID, "unsupported", reader, BatchOptions{})
-	if err == nil {
-		t.Error("expected error for unsupported type")
-	}
-}
-
-func TestBatchProcessor_ImportFromCSV_HeaderOnly(t *testing.T) {
-	storage := newMockBatchStorage()
-	tenantMgr := newMockTenantManager()
-	bp := NewIAMBatchProcessor(storage, tenantMgr)
-
-	ctx := context.Background()
-	tenantID := "test-tenant"
-
-	csvData := `id,name,email`
-
-	reader := strings.NewReader(csvData)
-
-	_, err := bp.ImportFromCSV(ctx, tenantID, BatchOperationTypeUsers, reader, BatchOptions{})
-	if err == nil {
-		t.Error("expected error for header-only CSV")
-	}
-}
 
 // =============================================================================
 // CancelOperation edge cases
