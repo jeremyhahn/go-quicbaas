@@ -14,7 +14,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -1145,55 +1144,162 @@ func TestErrEmptyAddressContents(t *testing.T) {
 // Formatter Response Tests
 // =============================================================================
 
-func TestFormatVectorResponsesCoverage(t *testing.T) {
-	var buf bytes.Buffer
-	_ = buf // Suppress unused variable warning
+func TestFormatVectorResponses(t *testing.T) {
+	oldFmt := outputFormat
+	defer func() { outputFormat = oldFmt }()
 
-	t.Run("namespace create response", func(t *testing.T) {
-		resp := &vector.CreateNamespaceResponse{
-			Success:   true,
-			Namespace: "test-ns",
-			Timestamp: time.Now(),
-		}
-		err := formatVectorNamespaceCreateResponse(resp)
-		require.NoError(t, err)
-	})
+	now := time.Now()
+	tests := []struct {
+		name   string
+		format string
+		run    func() error
+	}{
+		{"namespace create success", "table", func() error {
+			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{Success: true, Namespace: "test-ns", Timestamp: now})
+		}},
+		{"namespace create failure", "table", func() error {
+			return formatVectorNamespaceCreateResponse(&vector.CreateNamespaceResponse{Success: false, Namespace: "test-ns", Timestamp: now})
+		}},
+		{"namespace delete success", "table", func() error {
+			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{Deleted: true, VectorsDeleted: 100, Timestamp: now})
+		}},
+		{"namespace delete failure", "table", func() error {
+			return formatVectorNamespaceDeleteResponse(&vector.DeleteNamespaceResponse{Deleted: false, Timestamp: now})
+		}},
+		{"namespace list", "table", func() error {
+			return formatVectorNamespaceListResponse(&vector.ListNamespacesResponse{
+				Namespaces: []*vector.NamespaceInfo{
+					{Config: &vector.NamespaceConfig{Namespace: "ns1", Dimensions: 128}, VectorCount: 50, CreatedAt: now},
+				},
+				TotalCount: 1,
+				Timestamp:  now,
+			})
+		}},
+		{"namespace info with config details", "table", func() error {
+			return formatVectorNamespaceInfoResponse(&vector.GetNamespaceInfoResponse{
+				Info: &vector.NamespaceInfo{
+					Config: &vector.NamespaceConfig{
+						Namespace:   "test-ns",
+						Dimensions:  128,
+						IndexType:   "hnsw",
+						IndexParams: map[string]string{"M": "16", "efConstruction": "200"},
+						Metadata:    map[string]string{"desc": "test namespace"},
+					},
+					VectorCount: 1000,
+					CreatedAt:   now.Add(-24 * time.Hour),
+					UpdatedAt:   now,
+				},
+				Timestamp: now,
+			})
+		}},
+		{"upsert failure", "table", func() error {
+			return formatVectorUpsertResponse(&vector.UpsertResponse{Success: false, Timestamp: now})
+		}},
+		{"batch upsert with failures", "table", func() error {
+			return formatVectorBatchUpsertResponse(&vector.BatchUpsertResponse{VectorsSucceeded: 5, VectorsFailed: 2, Timestamp: now})
+		}},
+		{"get not found", "table", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{Found: false, Timestamp: now})
+		}},
+		{"get with metadata and large vector", "table", func() error {
+			return formatVectorGetResponse(&vector.GetResponse{
+				Found: true,
+				Vector: &vector.VectorEntity{
+					ID:       "vec-1",
+					Version:  2,
+					Vector:   []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7},
+					Metadata: map[string]string{"key": "val"},
+				},
+				Timestamp: now,
+			})
+		}},
+		{"delete failure", "table", func() error {
+			return formatVectorDeleteResponse(&vector.DeleteResponse{Deleted: false, Timestamp: now})
+		}},
+		{"batch delete with errors", "table", func() error {
+			return formatVectorBatchDeleteResponse(&vector.BatchDeleteResponse{
+				DeletedCount: 5,
+				Errors:       map[string]string{"vec-99": "not found"},
+				Timestamp:    now,
+			})
+		}},
+		{"list with next page", "table", func() error {
+			return formatVectorListResponse(&vector.ListVectorsResponse{
+				Vectors:       []*vector.VectorEntity{{ID: "v1", Version: 1}},
+				TotalCount:    100,
+				NextPageToken: "token-abc",
+				Timestamp:     now,
+			})
+		}},
+		{"index rebuild with duration", "table", func() error {
+			return formatVectorIndexRebuildResponse(&vector.RebuildIndexResponse{
+				OperationID:         "op-123",
+				Status:              "started",
+				EstimatedDurationMs: 30000,
+				Timestamp:           now,
+			})
+		}},
+		{"index progress with error message", "table", func() error {
+			return formatVectorIndexProgressResponse(&vector.GetIndexProgressResponse{
+				OperationID:          "op-123",
+				Namespace:            "test-ns",
+				Status:               "in_progress",
+				PercentComplete:      75.0,
+				VectorsIndexed:       7500,
+				TotalVectors:         10000,
+				ElapsedTimeMs:        5000,
+				EstimatedRemainingMs: 2000,
+				ErrorMessage:         "some warning",
+				Timestamp:            now,
+			})
+		}},
+		{"index stats table", "table", func() error {
+			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{
+				Namespace:        "test-ns",
+				VectorCount:      5000,
+				IndexSizeBytes:   1024 * 1024 * 50,
+				StorageSizeBytes: 1024 * 1024 * 100,
+				Timestamp:        now,
+			})
+		}},
+		{"index stats json", "json", func() error {
+			return formatVectorIndexStatsResponse(&vector.GetStatsResponse{Namespace: "test-ns", VectorCount: 5000, Timestamp: now})
+		}},
+		{"update metadata failure", "table", func() error {
+			return formatVectorUpdateMetadataResponse(&vector.UpdateMetadataResponse{Success: false, Timestamp: now})
+		}},
+		{"hybrid search no results", "table", func() error {
+			return formatVectorHybridSearchResponse(&vector.HybridSearchResponse{Timestamp: now})
+		}},
+		{"search by metadata no results", "table", func() error {
+			return formatVectorSearchByMetadataResponse(&vector.SearchByMetadataResponse{Timestamp: now})
+		}},
+		{"search similar table", "table", func() error {
+			return formatVectorSearchSimilarResponse(&vector.SearchSimilarResponse{
+				Results: []*vector.SearchResult{
+					{Vector: &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"type": "doc"}}, Score: 0.95, Distance: 0.05, Rank: 1},
+				},
+				SearchTimeMs: 5,
+				Timestamp:    now,
+			})
+		}},
+		{"search by id table", "table", func() error {
+			return formatVectorSearchByIDResponse(&vector.SearchByIDResponse{
+				Results: []*vector.SearchResult{
+					{Vector: &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"cat": "tech"}}, Score: 0.92, Distance: 0.08, Rank: 1},
+				},
+				SearchTimeMs: 3,
+				Timestamp:    now,
+			})
+		}},
+	}
 
-	t.Run("namespace delete response", func(t *testing.T) {
-		resp := &vector.DeleteNamespaceResponse{
-			Deleted:        true,
-			VectorsDeleted: 100,
-			Timestamp:      time.Now(),
-		}
-		err := formatVectorNamespaceDeleteResponse(resp)
-		require.NoError(t, err)
-	})
-
-	t.Run("namespace list response", func(t *testing.T) {
-		resp := &vector.ListNamespacesResponse{
-			Namespaces: []*vector.NamespaceInfo{
-				{Config: &vector.NamespaceConfig{Namespace: "ns1", Dimensions: 128}, VectorCount: 50, CreatedAt: time.Now()},
-			},
-			TotalCount: 1,
-			Timestamp:  time.Now(),
-		}
-		err := formatVectorNamespaceListResponse(resp)
-		require.NoError(t, err)
-	})
-
-	t.Run("namespace info response", func(t *testing.T) {
-		resp := &vector.GetNamespaceInfoResponse{
-			Info: &vector.NamespaceInfo{
-				Config:      &vector.NamespaceConfig{Namespace: "test-ns", Dimensions: 128},
-				VectorCount: 100,
-				CreatedAt:   time.Now(),
-				UpdatedAt:   time.Now(),
-			},
-			Timestamp: time.Now(),
-		}
-		err := formatVectorNamespaceInfoResponse(resp)
-		require.NoError(t, err)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputFormat = tt.format
+			assert.NoError(t, tt.run())
+		})
+	}
 }
 
 // =============================================================================
@@ -2316,292 +2422,3 @@ func TestCreateVectorClient(t *testing.T) {
 // =============================================================================
 // Additional format function coverage
 // =============================================================================
-
-func TestFormatVectorNamespaceCreateResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.CreateNamespaceResponse{
-		Success:   false,
-		Namespace: "test-ns",
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceCreateResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorNamespaceDeleteResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.DeleteNamespaceResponse{
-		Deleted:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorUpsertResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.UpsertResponse{
-		Success:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpsertResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorBatchUpsertResponseWithErrors(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.BatchUpsertResponse{
-		VectorsSucceeded: 5,
-		VectorsFailed:    2,
-		Timestamp:        time.Now(),
-	}
-	err := formatVectorBatchUpsertResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorGetResponseNotFound(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetResponse{
-		Found:     false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorGetResponseWithMetadataAndLargeVector(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetResponse{
-		Found: true,
-		Vector: &vector.VectorEntity{
-			ID:       "vec-1",
-			Version:  2,
-			Vector:   []float32{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7},
-			Metadata: map[string]string{"key": "val"},
-		},
-		Timestamp: time.Now(),
-	}
-	err := formatVectorGetResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorDeleteResponseFailure(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.DeleteResponse{
-		Deleted:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorBatchDeleteResponseWithErrors(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.BatchDeleteResponse{
-		DeletedCount: 5,
-		Errors:       map[string]string{"vec-99": "not found"},
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorBatchDeleteResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorListResponseWithNextPage(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.ListVectorsResponse{
-		Vectors: []*vector.VectorEntity{
-			{ID: "v1", Version: 1},
-		},
-		TotalCount:    100,
-		NextPageToken: "token-abc",
-		Timestamp:     time.Now(),
-	}
-	err := formatVectorListResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexRebuildResponseWithDuration(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.RebuildIndexResponse{
-		OperationID:         "op-123",
-		Status:              "started",
-		EstimatedDurationMs: 30000,
-		Timestamp:           time.Now(),
-	}
-	err := formatVectorIndexRebuildResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexProgressResponseWithDetails(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetIndexProgressResponse{
-		OperationID:          "op-123",
-		Namespace:            "test-ns",
-		Status:               "in_progress",
-		PercentComplete:      75.0,
-		VectorsIndexed:       7500,
-		TotalVectors:         10000,
-		ElapsedTimeMs:        5000,
-		EstimatedRemainingMs: 2000,
-		ErrorMessage:         "",
-		Timestamp:            time.Now(),
-	}
-	err := formatVectorIndexProgressResponse(resp)
-	assert.NoError(t, err)
-
-	// With error message
-	resp.ErrorMessage = "some warning"
-	err = formatVectorIndexProgressResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorUpdateMetadataResponseFailure(t *testing.T) {
-	resp := &vector.UpdateMetadataResponse{
-		Success:   false,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorUpdateMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorHybridSearchResponseNoResults(t *testing.T) {
-	resp := &vector.HybridSearchResponse{
-		Results:   nil,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorHybridSearchResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByMetadataResponseNoResults(t *testing.T) {
-	resp := &vector.SearchByMetadataResponse{
-		Results:   nil,
-		Timestamp: time.Now(),
-	}
-	err := formatVectorSearchByMetadataResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorNamespaceInfoWithConfigDetails(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.GetNamespaceInfoResponse{
-		Info: &vector.NamespaceInfo{
-			Config: &vector.NamespaceConfig{
-				Namespace:   "test-ns",
-				Dimensions:  128,
-				IndexType:   "hnsw",
-				IndexParams: map[string]string{"M": "16", "efConstruction": "200"},
-				Metadata:    map[string]string{"desc": "test namespace"},
-			},
-			VectorCount: 1000,
-			CreatedAt:   time.Now().Add(-24 * time.Hour),
-			UpdatedAt:   time.Now(),
-		},
-		Timestamp: time.Now(),
-	}
-	err := formatVectorNamespaceInfoResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorIndexStatsResponseCoverage(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-
-	resp := &vector.GetStatsResponse{
-		Namespace:        "test-ns",
-		VectorCount:      5000,
-		IndexSizeBytes:   1024 * 1024 * 50,
-		StorageSizeBytes: 1024 * 1024 * 100,
-		Timestamp:        time.Now(),
-	}
-
-	t.Run("Table", func(t *testing.T) {
-		outputFormat = "table"
-		err := formatVectorIndexStatsResponse(resp)
-		assert.NoError(t, err)
-	})
-
-	t.Run("JSON", func(t *testing.T) {
-		outputFormat = "json"
-		err := formatVectorIndexStatsResponse(resp)
-		assert.NoError(t, err)
-	})
-}
-
-func TestFormatVectorSearchSimilarResponseTable(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.SearchSimilarResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector:   &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"type": "doc"}},
-				Score:    0.95,
-				Distance: 0.05,
-				Rank:     1,
-			},
-		},
-		SearchTimeMs: 5,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchSimilarResponse(resp)
-	assert.NoError(t, err)
-}
-
-func TestFormatVectorSearchByIDResponseTable(t *testing.T) {
-	oldFmt := outputFormat
-	defer func() { outputFormat = oldFmt }()
-	outputFormat = "table"
-
-	resp := &vector.SearchByIDResponse{
-		Results: []*vector.SearchResult{
-			{
-				Vector:   &vector.VectorEntity{ID: "v1", Metadata: map[string]string{"cat": "tech"}},
-				Score:    0.92,
-				Distance: 0.08,
-				Rank:     1,
-			},
-		},
-		SearchTimeMs: 3,
-		Timestamp:    time.Now(),
-	}
-	err := formatVectorSearchByIDResponse(resp)
-	assert.NoError(t, err)
-}
