@@ -518,20 +518,6 @@ func TestXKMSListBackendsHandler(t *testing.T) {
 	assert.True(t, hasBackends, "result must contain 'backends' field")
 }
 
-// TestXKMSListBackendsEmptyArgs verifies listBackends ignores args.
-func TestXKMSListBackendsEmptyArgs(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-
-	ctx := context.Background()
-	result, err := registry.handleXKMSListBackends(ctx, map[string]interface{}{
-		"extra_arg": "ignored",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, result)
-}
-
 // =============================================================================
 // Sign/Verify Base64 Input Validation Tests
 // =============================================================================
@@ -673,40 +659,6 @@ func TestXKMSPIVHandlersNotInitialized(t *testing.T) {
 	}
 }
 
-// TestXKMSPIVHandlersMissingRequiredFields verifies PIV handlers validate
-// required parameters before attempting operations.
-func TestXKMSPIVHandlersMissingRequiredFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// PIV ListSlots - missing backend
-	_, err := registry.handleXKMSPIVListSlots(ctx, map[string]interface{}{})
-	require.Error(t, err)
-	// Returns init error since ensureXKMSInitialized is checked first
-
-	// PIV GetCert - missing backend
-	_, err = registry.handleXKMSPIVGetCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIV StoreCert - missing backend
-	_, err = registry.handleXKMSPIVStoreCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIV DeleteCert - missing backend
-	_, err = registry.handleXKMSPIVDeleteCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIV GenerateKey - missing backend
-	_, err = registry.handleXKMSPIVGenerateKey(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIV GenerateCSR - missing backend
-	_, err = registry.handleXKMSPIVGenerateCSR(ctx, map[string]interface{}{})
-	require.Error(t, err)
-}
-
 // =============================================================================
 // CA Handler Tests - xkms not initialized
 // =============================================================================
@@ -769,31 +721,6 @@ func TestTrustedCAHandlersNotInitialized(t *testing.T) {
 			assert.ErrorAs(t, err, &initErr)
 		})
 	}
-}
-
-// TestTrustedCAHandlersMissingRequiredFields verifies CA handlers validate required
-// parameters before attempting operations.
-func TestTrustedCAHandlersMissingRequiredFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// CA SignCSR - missing csr_pem (init error first since check happens before)
-	_, err := registry.handleTrustedCASignCSR(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// CA IssueCert - missing profile and common_name
-	_, err = registry.handleTrustedCAIssueCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// CA RevokeCert - missing serial_number
-	_, err = registry.handleTrustedCARevokeCert(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// CA IsRevoked - missing serial_number
-	_, err = registry.handleTrustedCAIsRevoked(ctx, map[string]interface{}{})
-	require.Error(t, err)
 }
 
 // =============================================================================
@@ -863,43 +790,6 @@ func TestXKMSPINHandlersNotInitialized(t *testing.T) {
 			assert.ErrorAs(t, err, &initErr)
 		})
 	}
-}
-
-// TestXKMSPINHandlersMissingRequiredFields verifies PIN handlers validate required
-// parameters.
-func TestXKMSPINHandlersMissingRequiredFields(t *testing.T) {
-	log := newTestLogger(t)
-	svc := newMinimalMockService()
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// PIN SetSO - missing new_so_pin (init error first)
-	_, err := registry.handleXKMSPINSetSO(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN SetUser - missing so_pin and new_user_pin (init error first)
-	_, err = registry.handleXKMSPINSetUser(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN ChangeSO - missing pins (init error first)
-	_, err = registry.handleXKMSPINChangeSO(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN ChangeUser - missing pins (init error first)
-	_, err = registry.handleXKMSPINChangeUser(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN VerifySO - missing so_pin (init error first)
-	_, err = registry.handleXKMSPINVerifySO(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN VerifyUser - missing user_pin (init error first)
-	_, err = registry.handleXKMSPINVerifyUser(ctx, map[string]interface{}{})
-	require.Error(t, err)
-
-	// PIN ResetLockout - missing so_pin (init error first)
-	_, err = registry.handleXKMSPINResetLockout(ctx, map[string]interface{}{})
-	require.Error(t, err)
 }
 
 // =============================================================================
