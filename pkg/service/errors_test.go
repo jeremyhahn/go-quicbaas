@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
-	quicbaasErrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 )
 
 // =============================================================================
@@ -404,6 +403,11 @@ func TestIsUnavailable(t *testing.T) {
 			err:      ErrInternal,
 			expected: false,
 		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -437,6 +441,11 @@ func TestIsUnauthorized(t *testing.T) {
 			err:      ErrForbidden,
 			expected: false,
 		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -468,6 +477,11 @@ func TestIsForbidden(t *testing.T) {
 		{
 			name:     "different error",
 			err:      ErrUnauthorized,
+			expected: false,
+		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
 			expected: false,
 		},
 	}
@@ -506,6 +520,11 @@ func TestIsConflict(t *testing.T) {
 		{
 			name:     "different error",
 			err:      ErrInternal,
+			expected: false,
+		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
 			expected: false,
 		},
 	}
@@ -622,6 +641,11 @@ func TestIsRetryable(t *testing.T) {
 			err:      ErrInvalidInput,
 			expected: false,
 		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -653,6 +677,11 @@ func TestIsRaftError(t *testing.T) {
 		{
 			name:     "different error",
 			err:      ErrStorage,
+			expected: false,
+		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
 			expected: false,
 		},
 	}
@@ -688,6 +717,11 @@ func TestIsStorageError(t *testing.T) {
 			err:      ErrRaft,
 			expected: false,
 		},
+		{
+			name:     "plain error",
+			err:      stderrors.New("plain error"),
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -709,6 +743,7 @@ func TestToGRPCError(t *testing.T) {
 		name         string
 		err          error
 		expectedCode codes.Code
+		passThrough  bool
 	}{
 		{
 			name:         "nil error",
@@ -790,11 +825,26 @@ func TestToGRPCError(t *testing.T) {
 			err:          ErrLeaderNotAvailable,
 			expectedCode: codes.Unavailable,
 		},
+		{
+			name:         "plain error",
+			err:          stderrors.New("plain error"),
+			expectedCode: codes.Internal,
+		},
+		{
+			name:         "gRPC status error passes through unchanged",
+			err:          status.Error(codes.NotFound, "not found"),
+			expectedCode: codes.NotFound,
+			passThrough:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			grpcErr := ToGRPCError(tt.err)
+
+			if tt.passThrough && grpcErr != tt.err {
+				t.Error("expected gRPC error to be preserved")
+			}
 
 			if tt.err == nil {
 				if grpcErr != nil {
@@ -891,6 +941,11 @@ func TestFromGRPCError(t *testing.T) {
 			grpcErr:      status.Error(codes.Internal, "rate_limited: slow down"),
 			expectedCode: dberrors.ErrInternal,
 		},
+		{
+			name:         "plain error",
+			grpcErr:      stderrors.New("plain error"),
+			expectedCode: dberrors.ErrInternal,
+		},
 	}
 
 	for _, tt := range tests {
@@ -913,15 +968,6 @@ func TestFromGRPCError(t *testing.T) {
 				t.Errorf("expected code %v, got %v", tt.expectedCode, dErr.Code)
 			}
 		})
-	}
-}
-
-func TestToGRPCError_PreservesGRPCError(t *testing.T) {
-	grpcErr := status.Error(codes.NotFound, "not found")
-	result := ToGRPCError(grpcErr)
-
-	if result != grpcErr {
-		t.Error("expected gRPC error to be preserved")
 	}
 }
 
@@ -1075,6 +1121,7 @@ func TestWithEntityContext(t *testing.T) {
 		if !ok || entityType != "user" {
 			t.Errorf("expected entity_type 'user', got %v", entityType)
 		}
+		assert.Contains(t, err.Error(), "plain error")
 	})
 
 	t.Run("nil error", func(t *testing.T) {
@@ -1111,6 +1158,12 @@ func TestWithShardContext(t *testing.T) {
 		}
 	})
 
+	t.Run("wraps plain error", func(t *testing.T) {
+		err := WithShardContext(stderrors.New("plain error"), 2, 300)
+		require.NotNil(t, err)
+		assert.Contains(t, err.Error(), "plain error")
+	})
+
 	t.Run("nil error", func(t *testing.T) {
 		err := WithShardContext(nil, 1, 100)
 		if err != nil {
@@ -1143,6 +1196,12 @@ func TestWithTimeoutContext(t *testing.T) {
 		if !ok || elapsedMs != int64(5100) {
 			t.Errorf("expected elapsed_ms 5100, got %v", elapsedMs)
 		}
+	})
+
+	t.Run("wraps plain error", func(t *testing.T) {
+		err := WithTimeoutContext(stderrors.New("plain error"), 3000, 5000)
+		require.NotNil(t, err)
+		assert.Contains(t, err.Error(), "plain error")
 	})
 
 	t.Run("nil error", func(t *testing.T) {
@@ -1284,350 +1343,4 @@ func TestGrpcCodeToErrorCode_Comprehensive(t *testing.T) {
 			assert.Equal(t, tt.expectedError, result)
 		})
 	}
-}
-
-func TestWithEntityContext_PlainError(t *testing.T) {
-	t.Run("wraps plain error", func(t *testing.T) {
-		plainErr := stderrors.New("plain error")
-		err := WithEntityContext(plainErr, "role", 456, "delete")
-		assert.NotNil(t, err)
-		// Should still contain the original error
-		assert.Contains(t, err.Error(), "plain error")
-	})
-}
-
-func TestWithShardContext_PlainError(t *testing.T) {
-	t.Run("wraps plain error", func(t *testing.T) {
-		plainErr := stderrors.New("plain error")
-		err := WithShardContext(plainErr, 2, 300)
-		assert.NotNil(t, err)
-		// Should still contain the original error
-		assert.Contains(t, err.Error(), "plain error")
-	})
-}
-
-func TestWithTimeoutContext_PlainError(t *testing.T) {
-	t.Run("wraps plain error", func(t *testing.T) {
-		plainErr := stderrors.New("plain error")
-		err := WithTimeoutContext(plainErr, 3000, 5000)
-		assert.NotNil(t, err)
-		// Should still contain the original error
-		assert.Contains(t, err.Error(), "plain error")
-	})
-}
-
-func TestErrorHelpers_IsUnavailable(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "unavailable error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnavailable,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "different error type",
-			err:      stderrors.New("random error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsUnavailable(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsUnauthorized_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "unauthorized error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrUnauthorized,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsUnauthorized(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsForbidden_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "forbidden error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrForbidden,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsForbidden(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsConflict_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "conflict error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrConflict,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsConflict(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsRetryable_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "retryable error",
-			err: &dberrors.QBError{
-				Code:  dberrors.ErrTimeout,
-				Retry: true,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsRetryable(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsRaftError_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "raft error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrRaft,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsRaftError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestErrorHelpers_IsStorageError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "storage error",
-			err: &dberrors.QBError{
-				Code: dberrors.ErrStorage,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsStorageError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestIsStorageError_NonQBError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name: "storage error",
-			err: &quicbaasErrors.QBError{
-				Code: quicbaasErrors.ErrStorage,
-			},
-			expected: true,
-		},
-		{
-			name:     "nil error",
-			err:      nil,
-			expected: false,
-		},
-		{
-			name:     "non-QBError type",
-			err:      stderrors.New("some other error"),
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsStorageError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestToGRPCError_AlreadyGRPCError(t *testing.T) {
-	// Create a gRPC status error
-	grpcErr := status.Error(codes.NotFound, "not found")
-
-	// ToGRPCError should return it as-is
-	result := ToGRPCError(grpcErr)
-	assert.Equal(t, grpcErr, result)
-
-	// Verify it's still a valid gRPC error
-	st, ok := status.FromError(result)
-	require.True(t, ok)
-	assert.Equal(t, codes.NotFound, st.Code())
-}
-
-func TestToGRPCError_NonQBError(t *testing.T) {
-	// Create a non-QBError
-	err := stderrors.New("some generic error")
-
-	// ToGRPCError should convert it
-	result := ToGRPCError(err)
-	require.NotNil(t, result)
-
-	// Should be a gRPC error with Internal code
-	st, ok := status.FromError(result)
-	require.True(t, ok)
-	assert.Equal(t, codes.Internal, st.Code())
-}
-
-func TestFromGRPCError_NonGRPCError(t *testing.T) {
-	// Create a non-gRPC error
-	err := stderrors.New("some error")
-
-	// FromGRPCError should wrap it
-	result := FromGRPCError(err)
-	require.NotNil(t, result)
-
-	// Should be a QBError
-	var dErr *quicbaasErrors.QBError
-	require.True(t, quicbaasErrors.As(result, &dErr))
-	assert.Equal(t, quicbaasErrors.ErrInternal, dErr.Code)
-}
-
-func TestFromGRPCError_ValidGRPCError(t *testing.T) {
-	// Create a gRPC error
-	grpcErr := status.Error(codes.NotFound, "resource not found")
-
-	// FromGRPCError should convert it
-	result := FromGRPCError(grpcErr)
-	require.NotNil(t, result)
-
-	// Should be a QBError
-	var dErr *quicbaasErrors.QBError
-	require.True(t, quicbaasErrors.As(result, &dErr))
-	assert.Equal(t, quicbaasErrors.ErrNotFound, dErr.Code)
 }
