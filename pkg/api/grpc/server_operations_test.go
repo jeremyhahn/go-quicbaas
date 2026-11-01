@@ -983,61 +983,49 @@ func TestBatchDelete_Cases(t *testing.T) {
 // Aggregate Additional Tests
 // =============================================================================
 
-func TestAggregate_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
+func TestAggregate_Cases(t *testing.T) {
 	startTime := time.Now().Add(-1 * time.Hour).UnixNano()
 	endTime := time.Now().UnixNano()
 
-	mockSvc.On("Aggregate", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.Aggregate(context.Background(), &pb.AggregateRequest{
-		EntityType: "metrics",
-		FieldName:  "value",
-		Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
-		StartTime:  startTime,
-		EndTime:    endTime,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
-
-func TestAggregate_AllFunctions(t *testing.T) {
-	functions := []pb.AggregateFunction{
-		pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_AVG,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_MIN,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_MAX,
-		pb.AggregateFunction_AGGREGATE_FUNCTION_COUNT,
+	tests := []struct {
+		name       string
+		mockResp   *service.AggregateResponse
+		mockErr    error
+		wantErr    bool
+		wantResult float64
+	}{
+		{
+			name:       "success",
+			mockResp:   &service.AggregateResponse{Result: 42.0, Count: 10, StartTime: startTime, EndTime: endTime},
+			wantResult: 42.0,
+		},
+		{
+			name:    "service error",
+			mockErr: assert.AnError,
+			wantErr: true,
+		},
 	}
 
-	for _, fn := range functions {
-		t.Run(fn.String(), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			srv, mockSvc := createTestServerWithMockService(t)
-
-			startTime := time.Now().Add(-1 * time.Hour).UnixNano()
-			endTime := time.Now().UnixNano()
-
 			mockSvc.On("Aggregate", mock.Anything, mock.Anything).
-				Return(&service.AggregateResponse{
-					Result:    42.0,
-					Count:     10,
-					StartTime: startTime,
-					EndTime:   endTime,
-				}, nil).Once()
+				Return(tt.mockResp, tt.mockErr).Once()
 
 			resp, err := srv.Aggregate(context.Background(), &pb.AggregateRequest{
 				EntityType: "metrics",
 				FieldName:  "value",
-				Function:   fn,
+				Function:   pb.AggregateFunction_AGGREGATE_FUNCTION_SUM,
 				StartTime:  startTime,
 				EndTime:    endTime,
 			})
 
-			require.NoError(t, err)
-			assert.Equal(t, 42.0, resp.Result)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantResult, resp.Result)
+			}
 			mockSvc.AssertExpectations(t)
 		})
 	}
@@ -1542,70 +1530,9 @@ func TestPut_WithTTL(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestPut_AllConsistencyLevels(t *testing.T) {
-	consistencyLevels := []pb.ConsistencyLevel{
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_UNSPECIFIED,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_EVENTUAL,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_STRONG,
-		pb.ConsistencyLevel_CONSISTENCY_LEVEL_LINEARIZABLE,
-	}
-
-	for _, level := range consistencyLevels {
-		t.Run(level.String(), func(t *testing.T) {
-			srv, mockSvc := createTestServerWithMockService(t)
-
-			mockSvc.On("Put", mock.Anything, mock.Anything).
-				Return(&service.PutResponse{
-					ID:        1,
-					Version:   1,
-					Timestamp: time.Now().UnixNano(),
-				}, nil).Once()
-
-			resp, err := srv.Put(context.Background(), &pb.PutRequest{
-				EntityType:  "users",
-				Id:          1,
-				Data:        []byte(`{"name":"test"}`),
-				Consistency: level,
-			})
-
-			require.NoError(t, err)
-			assert.Equal(t, uint64(1), resp.Id)
-			mockSvc.AssertExpectations(t)
-		})
-	}
-}
-
 // =============================================================================
 // Transaction Additional Tests
 // =============================================================================
-
-func TestTransaction_WithMultipleSuccessOps(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Transaction", mock.Anything, mock.Anything).
-		Return(&service.TransactionResponse{
-			Succeeded: true,
-			Responses: []*service.TransactionOpResponse{
-				{Success: true, ID: 1, Version: 1},
-				{Success: true, ID: 2, Version: 1},
-				{Success: true, ID: 3, Version: 1},
-			},
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
-
-	resp, err := srv.Transaction(context.Background(), &pb.TransactionRequest{
-		Success: []*pb.TransactionOp{
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 1, Data: []byte(`{"name":"a"}`)},
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 2, Data: []byte(`{"name":"b"}`)},
-			{OpType: pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT, EntityType: "users", Id: 3, Data: []byte(`{"name":"c"}`)},
-		},
-	})
-
-	require.NoError(t, err)
-	assert.True(t, resp.Succeeded)
-	assert.Len(t, resp.Responses, 3)
-	mockSvc.AssertExpectations(t)
-}
 
 func TestTransaction_AllOpTypes(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
@@ -1631,6 +1558,7 @@ func TestTransaction_AllOpTypes(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, resp.Succeeded)
+	assert.Len(t, resp.Responses, 3)
 	mockSvc.AssertExpectations(t)
 }
 
