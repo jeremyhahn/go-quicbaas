@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	dberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
 	"github.com/jeremyhahn/go-quicbaas/pkg/service"
 )
@@ -188,25 +187,6 @@ func TestSchedulerTools_MissingID(t *testing.T) {
 	}
 }
 
-func TestSchedulerGetJob_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-				return nil, &dberrors.MessageError{Message: "job not found"}
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{
-		"job_id": float64(999),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-}
-
 func TestSchedulerUpdateJob_Success(t *testing.T) {
 	registry := newSchedulerRegistry(t)
 	ctx := context.Background()
@@ -313,23 +293,6 @@ func TestSchedulerStatus_Success(t *testing.T) {
 	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_status", map[string]interface{}{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
-}
-
-func TestSchedulerStatus_ServiceError(t *testing.T) {
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			statusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-				return nil, &dberrors.MessageError{Message: "scheduler down"}
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_status", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
 }
 
 func TestIsSchedulerTool(t *testing.T) {
@@ -459,196 +422,130 @@ func TestIsCertificateTool_Exhaustive(t *testing.T) {
 // Scheduler Tool Service Error Path Tests
 // =============================================================================
 
-func TestExecuteSchedulerListJobs_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("list jobs failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-				return nil, expectedErr
+// TestSchedulerTools_ServiceError checks that every scheduler tool returns the
+// scheduler service's error to the caller with no result.
+func TestSchedulerTools_ServiceError(t *testing.T) {
+	ctx := context.Background()
+	jobID := map[string]interface{}{"job_id": float64(123)}
+
+	tests := []struct {
+		tool string
+		args map[string]interface{}
+		fail func(m *mockSchedulerService, err error)
+	}{
+		{
+			tool: "quicbaas_scheduler_create_job",
+			args: map[string]interface{}{"name": "test-job", "type": "one-shot", "handler": "test-handler"},
+			fail: func(m *mockSchedulerService, err error) {
+				m.createJobFunc = func(context.Context, *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_get_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.getJobFunc = func(context.Context, *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_update_job",
+			args: map[string]interface{}{"job_id": float64(123), "name": "updated-job"},
+			fail: func(m *mockSchedulerService, err error) {
+				m.updateJobFunc = func(context.Context, *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_delete_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.deleteJobFunc = func(context.Context, *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_list_jobs",
+			args: map[string]interface{}{},
+			fail: func(m *mockSchedulerService, err error) {
+				m.listJobsFunc = func(context.Context, *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_trigger_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.triggerJobFunc = func(context.Context, *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_pause_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.pauseJobFunc = func(context.Context, *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_resume_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.resumeJobFunc = func(context.Context, *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_cancel_job",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.cancelJobFunc = func(context.Context, *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_job_history",
+			args: jobID,
+			fail: func(m *mockSchedulerService, err error) {
+				m.historyFunc = func(context.Context, *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
+					return nil, err
+				}
+			},
+		},
+		{
+			tool: "quicbaas_scheduler_status",
+			args: map[string]interface{}{},
+			fail: func(m *mockSchedulerService, err error) {
+				m.statusFunc = func(context.Context) (*service.GetSchedulerStatusResponse, error) {
+					return nil, err
+				}
 			},
 		},
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
 
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_list_jobs", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list jobs failed")
-}
+	for _, tc := range tests {
+		t.Run(tc.tool, func(t *testing.T) {
+			scheduler := &mockSchedulerService{}
+			tc.fail(scheduler, errors.New(tc.tool+" failed"))
+			registry := NewToolRegistry(&extendedMockService{schedulerSvc: scheduler}, newTestLogger(t))
 
-func TestExecuteSchedulerGetJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("get job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
+			result, err := registry.ExecuteTool(ctx, tc.tool, tc.args)
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tc.tool+" failed")
+		})
 	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get job failed")
-}
-
-func TestExecuteSchedulerDeleteJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("delete job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_delete_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete job failed")
-}
-
-func TestExecuteSchedulerPauseJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("pause job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_pause_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "pause job failed")
-}
-
-func TestExecuteSchedulerResumeJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("resume job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_resume_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "resume job failed")
-}
-
-func TestExecuteSchedulerTriggerJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("trigger job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_trigger_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "trigger job failed")
-}
-
-func TestExecuteSchedulerCancelJob_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("cancel job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_cancel_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "cancel job failed")
-}
-
-func TestExecuteSchedulerJobHistory_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("get history failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			historyFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	// job_id must be float64 to pass getUint64 conversion
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_job_history", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get history failed")
-}
-
-func TestExecuteSchedulerStatus_ErrorPath(t *testing.T) {
-	expectedErr := errors.New("get status failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			statusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_status", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get status failed")
 }
 
 func TestExecuteSchedulerListJobs_WithPagination(t *testing.T) {
@@ -796,28 +693,6 @@ func TestExecuteSchedulerUpdateJob_InvalidPayloadEncoding(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "invalid payload encoding")
-}
-
-func TestExecuteSchedulerUpdateJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("update job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			updateJobFunc: func(ctx context.Context, req *service.UpdateSchedulerJobRequest) (*service.UpdateSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_update_job", map[string]interface{}{
-		"job_id": float64(123),
-		"name":   "updated-job",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "update job failed")
 }
 
 func TestExecuteSchedulerUpdateJob_WithLabelsNonString(t *testing.T) {
@@ -1074,29 +949,6 @@ func TestExecuteSchedulerCreateJob_InvalidPayload(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid payload encoding")
 }
 
-func TestExecuteSchedulerCreateJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("create job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			createJobFunc: func(ctx context.Context, req *service.CreateSchedulerJobRequest) (*service.CreateSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log, _ := logger.New(logger.LogConfig{Level: "error", Output: "stdout"})
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_create_job", map[string]interface{}{
-		"name":    "test-job",
-		"type":    "one-shot",
-		"handler": "test-handler",
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "create job failed")
-}
-
 func TestExecuteSchedulerCreateJob_WithLabelsNonString(t *testing.T) {
 	svc := &extendedMockService{
 		schedulerSvc: &mockSchedulerService{
@@ -1206,205 +1058,4 @@ func TestObjectAdminSetBackendStatus_ServiceError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "backend status change failed")
-}
-
-// =============================================================================
-// Scheduler List Jobs - ServiceError
-// =============================================================================
-
-func TestExecuteSchedulerListJobs_ServiceError(t *testing.T) {
-	expectedErr := errors.New("list jobs failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			listJobsFunc: func(ctx context.Context, req *service.ListSchedulerJobsRequest) (*service.ListSchedulerJobsResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_list_jobs", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "list jobs failed")
-}
-
-// =============================================================================
-// Scheduler Delete/Trigger/Pause/Resume - Service Errors
-// =============================================================================
-
-func TestExecuteSchedulerDeleteJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("delete job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			deleteJobFunc: func(ctx context.Context, req *service.DeleteSchedulerJobRequest) (*service.DeleteSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_delete_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "delete job failed")
-}
-
-func TestExecuteSchedulerTriggerJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("trigger job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			triggerJobFunc: func(ctx context.Context, req *service.TriggerSchedulerJobRequest) (*service.TriggerSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_trigger_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "trigger job failed")
-}
-
-func TestExecuteSchedulerPauseJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("pause job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			pauseJobFunc: func(ctx context.Context, req *service.PauseSchedulerJobRequest) (*service.PauseSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_pause_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "pause job failed")
-}
-
-func TestExecuteSchedulerResumeJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("resume job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			resumeJobFunc: func(ctx context.Context, req *service.ResumeSchedulerJobRequest) (*service.ResumeSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_resume_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "resume job failed")
-}
-
-func TestExecuteSchedulerCancelJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("cancel job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			cancelJobFunc: func(ctx context.Context, req *service.CancelSchedulerJobRequest) (*service.CancelSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_cancel_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "cancel job failed")
-}
-
-func TestExecuteSchedulerJobHistory_ServiceError(t *testing.T) {
-	expectedErr := errors.New("get history failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			historyFunc: func(ctx context.Context, req *service.GetSchedulerJobHistoryRequest) (*service.GetSchedulerJobHistoryResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_job_history", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get history failed")
-}
-
-// =============================================================================
-// Scheduler Get Job - Service Error
-// =============================================================================
-
-func TestExecuteSchedulerGetJob_ServiceError(t *testing.T) {
-	expectedErr := errors.New("get job failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			getJobFunc: func(ctx context.Context, req *service.GetSchedulerJobRequest) (*service.GetSchedulerJobResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_get_job", map[string]interface{}{
-		"job_id": float64(123),
-	})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "get job failed")
-}
-
-// =============================================================================
-// Scheduler Status - Service Error
-// =============================================================================
-
-func TestExecuteSchedulerStatus_ServiceError(t *testing.T) {
-	expectedErr := errors.New("status failed")
-	svc := &extendedMockService{
-		schedulerSvc: &mockSchedulerService{
-			statusFunc: func(ctx context.Context) (*service.GetSchedulerStatusResponse, error) {
-				return nil, expectedErr
-			},
-		},
-	}
-	log := newTestLogger(t)
-	registry := NewToolRegistry(svc, log)
-	ctx := context.Background()
-
-	result, err := registry.ExecuteTool(ctx, "quicbaas_scheduler_status", map[string]interface{}{})
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "status failed")
 }
