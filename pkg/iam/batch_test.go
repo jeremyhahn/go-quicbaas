@@ -1169,8 +1169,8 @@ func TestBatchOptionsValidate(t *testing.T) {
 	}
 }
 
-// TestBatchOperation_Validate_Coverage tests BatchOperation validation edge cases.
-func TestBatchOperation_Validate_Coverage(t *testing.T) {
+// TestBatchOperationValidate tests BatchOperation validation.
+func TestBatchOperationValidate(t *testing.T) {
 	tests := []struct {
 		name    string
 		op      *BatchOperation
@@ -1223,10 +1223,8 @@ func TestBatchOperation_Validate_Coverage(t *testing.T) {
 			}
 			if err != nil && tt.field != "" {
 				var vErr *ValidationError
-				if errors.As(err, &vErr) {
-					if vErr.Field != tt.field {
-						t.Errorf("Validate() field = %s, want %s", vErr.Field, tt.field)
-					}
+				if !errors.As(err, &vErr) || vErr.Field != tt.field {
+					t.Errorf("Validate() error = %v, want ValidationError on field %s", err, tt.field)
 				}
 			}
 		})
