@@ -413,112 +413,55 @@ func TestNewIAMServiceAdapter(t *testing.T) {
 	assert.NotNil(t, adapter)
 }
 
-func TestIAMServiceAdapter_CreateTenant_MissingName(t *testing.T) {
+func TestIAMServiceAdapter_InvalidInput(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
 
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreateTenant(ctx, iam.CreateTenantOptions{})
+	tests := []struct {
+		name    string
+		call    func(ctx context.Context, a *IAMServiceAdapter) (any, error)
+		wantErr string
+	}{
+		{"CreateTenant missing name", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.CreateTenant(ctx, iam.CreateTenantOptions{})
+		}, "name cannot be nil"},
+		{"UpdateTenant nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.UpdateTenant(ctx, nil)
+		}, "tenant cannot be nil"},
+		{"CreateUser nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			user, _, _, err := a.CreateUser(ctx, nil, 0)
+			return user, err
+		}, "user cannot be nil"},
+		{"UpdateUser nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.UpdateUser(ctx, nil)
+		}, "user cannot be nil"},
+		{"CreateRole nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.CreateRole(ctx, nil)
+		}, "role cannot be nil"},
+		{"UpdateRole nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.UpdateRole(ctx, nil)
+		}, "role cannot be nil"},
+		{"RegisterApp nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.RegisterApp(ctx, nil)
+		}, "application cannot be nil"},
+		{"CreatePolicy nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.CreatePolicy(ctx, nil)
+		}, "policy cannot be nil"},
+		{"UpdatePolicy nil", func(ctx context.Context, a *IAMServiceAdapter) (any, error) {
+			return a.UpdatePolicy(ctx, nil)
+		}, "policy cannot be nil"},
+	}
 
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "name cannot be nil")
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
+			result, err := tt.call(context.Background(), adapter)
 
-func TestIAMServiceAdapter_UpdateTenant_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdateTenant(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "tenant cannot be nil")
-}
-
-func TestIAMServiceAdapter_CreateUser_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, _, _, err := adapter.CreateUser(ctx, nil, 0)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "user cannot be nil")
-}
-
-func TestIAMServiceAdapter_UpdateUser_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdateUser(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "user cannot be nil")
-}
-
-func TestIAMServiceAdapter_CreateRole_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreateRole(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "role cannot be nil")
-}
-
-func TestIAMServiceAdapter_UpdateRole_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdateRole(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "role cannot be nil")
-}
-
-func TestIAMServiceAdapter_RegisterApp_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.RegisterApp(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "application cannot be nil")
-}
-
-func TestIAMServiceAdapter_CreatePolicy_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.CreatePolicy(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "policy cannot be nil")
-}
-
-func TestIAMServiceAdapter_UpdatePolicy_NilInput(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-
-	adapter := NewIAMServiceAdapter(nil, nil, nil, nil, nil, nil)
-	result, err := adapter.UpdatePolicy(ctx, nil)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "policy cannot be nil")
+			require.Error(t, err)
+			assert.Nil(t, result)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }
 
 // --- Merged from iam_adapter_coverage_91_test.go ---
