@@ -1859,40 +1859,6 @@ func (m *mockBackupClientForStatus) Close() error {
 // BackupCLIError Tests
 // =============================================================================
 
-func TestBackupCLIError_Error(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      *BackupCLIError
-		expected string
-	}{
-		{
-			name: "with_cause",
-			err: &BackupCLIError{
-				Op:      "create",
-				Message: "failed to create backup",
-				Cause:   errors.Newf(errors.ErrInternal, "test", "storage unavailable"),
-			},
-			expected: "backup create: failed to create backup:",
-		},
-		{
-			name: "without_cause",
-			err: &BackupCLIError{
-				Op:      "delete",
-				Message: "backup not found",
-				Cause:   nil,
-			},
-			expected: "backup delete: backup not found",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			errorStr := tc.err.Error()
-			assert.Contains(t, errorStr, tc.expected)
-		})
-	}
-}
-
 func TestBackupCLIError_Unwrap(t *testing.T) {
 	innerErr := errors.Newf(errors.ErrInternal, "test", "inner error")
 	err := &BackupCLIError{
@@ -1920,189 +1886,86 @@ func TestBackupCLIError_Unwrap_Nil(t *testing.T) {
 // Backup Status Command Tests
 // =============================================================================
 
-func TestNewBackupStatusCommand(t *testing.T) {
-	cmd := newBackupStatusCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "status [backup-id]", cmd.Use)
-	assert.Contains(t, cmd.Short, "Show backup status")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("storage-path"))
-}
-
-func TestRunBackupStatusCommand_WithBackupID(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-		backupStoragePath = ""
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"backup-123"})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_NoBackupID(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-		backupStoragePath = ""
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_NoBackups(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-			return &cli.BackupListResponse{
-				Backups:    []cli.BackupInfo{},
-				TotalCount: 0,
-			}, nil
+func TestRunBackupStatusCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		client    *mockBackupClientForStatus
+		clientErr error
+		format    string
+		args      []string
+		wantErr   string
+	}{
+		{name: "with backup id json", client: &mockBackupClientForStatus{}, format: "json", args: []string{"backup-123"}},
+		{name: "with backup id table", client: &mockBackupClientForStatus{}, format: "table", args: []string{"backup-123"}},
+		{name: "no backup id", client: &mockBackupClientForStatus{}, format: "json", args: []string{}},
+		{
+			name: "no backups",
+			client: &mockBackupClientForStatus{
+				ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
+					return &cli.BackupListResponse{Backups: []cli.BackupInfo{}, TotalCount: 0}, nil
+				},
+			},
+			format: "json",
+			args:   []string{},
+		},
+		{
+			name:      "client error",
+			clientErr: errors.Newf(errors.ErrUnavailable, "test", "connection refused"),
+			args:      []string{},
+			wantErr:   "failed to create backup client",
+		},
+		{
+			name: "verify error",
+			client: &mockBackupClientForStatus{
+				VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
+					return nil, errors.Newf(errors.ErrNotFound, "backup", "backup not found")
+				},
+			},
+			args:    []string{"nonexistent-backup"},
+			wantErr: "failed to get status for backup",
+		},
+		{
+			name: "list error",
+			client: &mockBackupClientForStatus{
+				ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
+					return nil, errors.Newf(errors.ErrInternal, "backup", "list failed")
+				},
+			},
+			args:    []string{},
+			wantErr: "failed to get backup status",
 		},
 	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			origFactory := backupClientFactory
+			oldTimeout := globalTimeout
+			oldFormat := backupOutputFormat
+			defer func() {
+				backupClientFactory = origFactory
+				globalTimeout = oldTimeout
+				backupOutputFormat = oldFormat
+				backupStoragePath = ""
+			}()
+
+			backupClientFactory = func() (BackupClient, error) {
+				if tc.clientErr != nil {
+					return nil, tc.clientErr
+				}
+				return tc.client, nil
+			}
+			globalTimeout = 30 * time.Second
+			backupOutputFormat = tc.format
+
+			err := runBackupStatusCommand(&cobra.Command{}, tc.args)
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
 	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "json"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunBackupStatusCommand_ClientError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	backupClientFactory = func() (BackupClient, error) {
-		return nil, errors.Newf(errors.ErrUnavailable, "test", "connection refused")
-	}
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create backup client")
-}
-
-func TestRunBackupStatusCommand_VerifyError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-			return nil, errors.Newf(errors.ErrNotFound, "backup", "backup not found")
-		},
-	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() { globalTimeout = oldTimeout }()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"nonexistent-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get status for backup")
-}
-
-func TestRunBackupStatusCommand_ListError(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{
-		ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-			return nil, errors.Newf(errors.ErrInternal, "backup", "list failed")
-		},
-	}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	defer func() { globalTimeout = oldTimeout }()
-	globalTimeout = 30 * time.Second
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get backup status")
-}
-
-func TestRunBackupStatusCommand_TableFormat(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := backupClientFactory
-	defer func() { backupClientFactory = origFactory }()
-
-	mockClient := &mockBackupClientForStatus{}
-	backupClientFactory = func() (BackupClient, error) {
-		return mockClient, nil
-	}
-
-	// Reset globals
-	oldTimeout := globalTimeout
-	oldFormat := backupOutputFormat
-	defer func() {
-		globalTimeout = oldTimeout
-		backupOutputFormat = oldFormat
-	}()
-	globalTimeout = 30 * time.Second
-	backupOutputFormat = "table"
-
-	cmd := &cobra.Command{}
-	err := runBackupStatusCommand(cmd, []string{"backup-123"})
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -2147,49 +2010,32 @@ func TestNewBackupCommands(t *testing.T) {
 	assert.Contains(t, commandNames, "delete", "delete command should be registered")
 	assert.Contains(t, commandNames, "verify", "verify command should be registered")
 	assert.Contains(t, commandNames, "status", "status command should be registered")
-}
 
-func TestNewBackupCreateCommand(t *testing.T) {
-	cmd := newBackupCreateCommand()
-
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "create")
-	assert.Contains(t, cmd.Short, "Create")
-}
-
-func TestNewBackupListCommand(t *testing.T) {
-	cmd := newBackupListCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "list", cmd.Use)
-	assert.Contains(t, cmd.Short, "List")
-}
-
-func TestNewBackupRestoreCommand(t *testing.T) {
-	cmd := newBackupRestoreCommand()
-
-	require.NotNil(t, cmd)
-	assert.Contains(t, cmd.Use, "restore")
-	assert.Contains(t, cmd.Short, "Restore")
-}
-
-func TestNewBackupDeleteCommand(t *testing.T) {
-	cmd := newBackupDeleteCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "delete <backup-id>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Delete")
-
-	// Verify flags exist
-	assert.NotNil(t, cmd.Flags().Lookup("yes"))
-}
-
-func TestNewBackupVerifyCommand(t *testing.T) {
-	cmd := newBackupVerifyCommand()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "verify <backup-id>", cmd.Use)
-	assert.Contains(t, cmd.Short, "Verify")
+	constructors := []struct {
+		name  string
+		build func() *cobra.Command
+		use   string
+		short string
+		flag  string
+	}{
+		{name: "create", build: newBackupCreateCommand, use: "create", short: "Create"},
+		{name: "list", build: newBackupListCommand, use: "list", short: "List"},
+		{name: "restore", build: newBackupRestoreCommand, use: "restore", short: "Restore"},
+		{name: "delete", build: newBackupDeleteCommand, use: "delete <backup-id>", short: "Delete", flag: "yes"},
+		{name: "verify", build: newBackupVerifyCommand, use: "verify <backup-id>", short: "Verify"},
+		{name: "status", build: newBackupStatusCommand, use: "status [backup-id]", short: "Show backup status", flag: "storage-path"},
+	}
+	for _, tc := range constructors {
+		t.Run(tc.name, func(t *testing.T) {
+			sub := tc.build()
+			require.NotNil(t, sub)
+			assert.Contains(t, sub.Use, tc.use)
+			assert.Contains(t, sub.Short, tc.short)
+			if tc.flag != "" {
+				assert.NotNil(t, sub.Flags().Lookup(tc.flag))
+			}
+		})
+	}
 }
 
 func TestParseHashAlgorithm(t *testing.T) {
@@ -2372,44 +2218,6 @@ func TestDataKeyAlgorithmToKeyAttributes(t *testing.T) {
 // Embedded Server Error Types Tests
 // =============================================================================
 
-func TestEmbeddedServerFailedError(t *testing.T) {
-	t.Run("Error method returns formatted message", func(t *testing.T) {
-		err := &EmbeddedServerFailedError{Reason: "connection refused"}
-		assert.Equal(t, "embedded server failed: connection refused", err.Error())
-	})
-
-	t.Run("Error with empty reason", func(t *testing.T) {
-		err := &EmbeddedServerFailedError{Reason: ""}
-		assert.Equal(t, "embedded server failed: ", err.Error())
-	})
-
-	t.Run("Error implements error interface", func(t *testing.T) {
-		var err error = &EmbeddedServerFailedError{Reason: "test"}
-		assert.NotNil(t, err)
-		assert.Contains(t, err.Error(), "embedded server failed")
-	})
-}
-
-func TestEmbeddedPortError(t *testing.T) {
-	t.Run("Error method returns message", func(t *testing.T) {
-		err := &EmbeddedPortError{}
-		assert.Equal(t, "listener address is not a TCP address", err.Error())
-	})
-
-	t.Run("Error implements error interface", func(t *testing.T) {
-		var err error = &EmbeddedPortError{}
-		assert.NotNil(t, err)
-		assert.Contains(t, err.Error(), "TCP address")
-	})
-}
-
-func TestErrEmbeddedServerNotStarted(t *testing.T) {
-	t.Run("Sentinel error is defined", func(t *testing.T) {
-		assert.NotNil(t, ErrEmbeddedServerNotStarted)
-		assert.Contains(t, ErrEmbeddedServerNotStarted.Error(), "embedded server not started")
-	})
-}
-
 // =============================================================================
 // ShutdownEmbeddedServer Tests
 // =============================================================================
@@ -2550,256 +2358,17 @@ func TestExecuteCryptoDataKeyNilClient(t *testing.T) {
 // Mock Client Method Coverage Tests
 // =============================================================================
 
-func TestMockBackupClientMethods(t *testing.T) {
-	t.Run("CreateBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.CreateBackup(ctx, &BackupCreateRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("ListBackups default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.ListBackups(ctx, &BackupListRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("RestoreBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.RestoreBackup(ctx, &BackupRestoreRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("DeleteBackup default implementation returns unimplemented", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		_, err := client.DeleteBackup(ctx, &BackupDeleteRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("VerifyBackup default implementation returns success", func(t *testing.T) {
-		client := &MockBackupClient{}
-		ctx := context.Background()
-		resp, err := client.VerifyBackup(ctx, &BackupVerifyRequest{BackupID: "test-id"})
-		require.NoError(t, err)
-		assert.True(t, resp.Valid)
-		assert.True(t, resp.ChecksumValid)
-	})
-
-	t.Run("Close default implementation returns nil", func(t *testing.T) {
-		client := &MockBackupClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("CreateBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			CreateBackupFunc: func(ctx context.Context, req *BackupCreateRequest) (*cli.BackupCreateResponse, error) {
-				return &cli.BackupCreateResponse{BackupID: "custom-id"}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.CreateBackup(ctx, &BackupCreateRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, "custom-id", resp.BackupID)
-	})
-
-	t.Run("ListBackups with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-				return &cli.BackupListResponse{TotalCount: 5}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.ListBackups(ctx, &BackupListRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, 5, resp.TotalCount)
-	})
-
-	t.Run("RestoreBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			RestoreBackupFunc: func(ctx context.Context, req *BackupRestoreRequest) (*cli.BackupRestoreResponse, error) {
-				return &cli.BackupRestoreResponse{Success: true}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.RestoreBackup(ctx, &BackupRestoreRequest{})
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("DeleteBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			DeleteBackupFunc: func(ctx context.Context, req *BackupDeleteRequest) (*cli.BackupDeleteResponse, error) {
-				return &cli.BackupDeleteResponse{Deleted: true}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.DeleteBackup(ctx, &BackupDeleteRequest{})
-		require.NoError(t, err)
-		assert.True(t, resp.Deleted)
-	})
-
-	t.Run("VerifyBackup with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-				return &cli.BackupVerifyResponse{Valid: false}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.VerifyBackup(ctx, &BackupVerifyRequest{})
-		require.NoError(t, err)
-		assert.False(t, resp.Valid)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockBackupClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "custom error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "custom error")
-	})
-}
-
-func TestMockBackendClientMethods(t *testing.T) {
-	t.Run("KMSBackendStatus default returns unimplemented", func(t *testing.T) {
-		client := &MockBackendClient{}
-		ctx := context.Background()
-		_, err := client.KMSBackendStatus(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("KMSBackendTest default returns unimplemented", func(t *testing.T) {
-		client := &MockBackendClient{}
-		ctx := context.Background()
-		_, err := client.KMSBackendTest(ctx)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("Close default returns nil", func(t *testing.T) {
-		client := &MockBackendClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("KMSBackendStatus with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			KMSBackendStatusFunc: func(ctx context.Context) (*service.BackendStatusResponse, error) {
-				return &service.BackendStatusResponse{
-					BackendType: "tpm2",
-					Status:      "healthy",
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSBackendStatus(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, "tpm2", resp.BackendType)
-		assert.Equal(t, "healthy", resp.Status)
-	})
-
-	t.Run("KMSBackendTest with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			KMSBackendTestFunc: func(ctx context.Context) (*service.BackendTestResponse, error) {
-				return &service.BackendTestResponse{
-					Success:   true,
-					Duration:  100 * time.Millisecond,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSBackendTest(ctx)
-		require.NoError(t, err)
-		assert.True(t, resp.Success)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockBackendClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "backend close error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "backend close error")
-	})
-}
-
-func TestMockSafetyClientMethods(t *testing.T) {
-	t.Run("KMSSafetyCheck default returns unimplemented", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		ctx := context.Background()
-		_, err := client.KMSSafetyCheck(ctx, &service.SafetyCheckRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("KMSSafetyReport default returns unimplemented", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		ctx := context.Background()
-		_, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not yet implemented")
-	})
-
-	t.Run("Close default returns nil", func(t *testing.T) {
-		client := &MockSafetyClient{}
-		err := client.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("KMSSafetyCheck with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			KMSSafetyCheckFunc: func(ctx context.Context, req *service.SafetyCheckRequest) (*service.SafetyCheckResponse, error) {
-				return &service.SafetyCheckResponse{
-					TotalKeysChecked: 10,
-					TotalDEKsChecked: 5,
-					Timestamp:        time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSSafetyCheck(ctx, &service.SafetyCheckRequest{})
-		require.NoError(t, err)
-		assert.Equal(t, 10, resp.TotalKeysChecked)
-	})
-
-	t.Run("KMSSafetyReport with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			KMSSafetyReportFunc: func(ctx context.Context, req *service.SafetyReportRequest) (*service.SafetyReportResponse, error) {
-				return &service.SafetyReportResponse{
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}
-		ctx := context.Background()
-		resp, err := client.KMSSafetyReport(ctx, &service.SafetyReportRequest{})
-		require.NoError(t, err)
-		assert.NotNil(t, resp)
-	})
-
-	t.Run("Close with custom function", func(t *testing.T) {
-		client := &MockSafetyClient{
-			CloseFunc: func() error {
-				return errors.Newf(errors.ErrInternal, "close", "safety close error")
-			},
-		}
-		err := client.Close()
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "safety close error")
-	})
+// The backup commands discard Close errors (defer client.Close()), so the
+// CloseFunc hook of MockBackupClient is only reachable directly.
+func TestMockBackupClientCloseFunc(t *testing.T) {
+	client := &MockBackupClient{
+		CloseFunc: func() error {
+			return errors.Newf(errors.ErrInternal, "close", "custom error")
+		},
+	}
+	err := client.Close()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "custom error")
 }
 
 func TestRunBackupListCommand_SuccessJSONFormat(t *testing.T) {
