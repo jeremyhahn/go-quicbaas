@@ -642,7 +642,8 @@ func TestTriageRunner_AFailedMeasurementIsAuditedNotFatal(t *testing.T) {
 
 // TestTriageRunner_SkipsIssuesAlreadyInTheFactory proves triage does not
 // re-judge work that is already moving: an issue carrying the trigger label,
-// or any of the module's own progress labels, is left alone.
+// or any of the module's own progress labels, is left alone. Nor is a closed
+// issue: there is no work to admit and no person waiting on a verdict.
 func TestTriageRunner_SkipsIssuesAlreadyInTheFactory(t *testing.T) {
 	rig := newTriageRig(t)
 	binding := rig.binding
@@ -650,32 +651,18 @@ func TestTriageRunner_SkipsIssuesAlreadyInTheFactory(t *testing.T) {
 	rig.forge.putIssue(402, "already being worked", binding.Forge.Label(LabelInProgress))
 	rig.forge.putIssue(403, "already in review", binding.Forge.Label(LabelInReview))
 	rig.forge.putIssue(404, "fresh and untriaged")
+	closed := rig.forge.putIssue(405, "closed already")
+	closed.State = "closed"
 	rig.answers("SDLC-TRIAGE: ready")
 
 	if err := rig.run(); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if prompts := rig.agents.promptTexts(); len(prompts) != 1 {
-		t.Fatalf("only the untriaged issue is judged, got %d prompts", len(prompts))
+		t.Fatalf("only the open, untriaged issue is judged, got %d prompts", len(prompts))
 	}
 	if !rig.hasLabel(404, binding.Forge.TriggerLabel) {
 		t.Fatalf("the fresh issue is the one triaged, got %v", rig.labels(404))
-	}
-}
-
-// TestTriageRunner_SkipsClosedIssues proves a closed issue is not triaged:
-// there is no work to admit and no person waiting on a verdict.
-func TestTriageRunner_SkipsClosedIssues(t *testing.T) {
-	rig := newTriageRig(t)
-	issue := rig.forge.putIssue(405, "closed already")
-	issue.State = "closed"
-	rig.answers("SDLC-TRIAGE: ready")
-
-	if err := rig.run(); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if prompts := rig.agents.promptTexts(); len(prompts) != 0 {
-		t.Fatalf("a closed issue is not triaged, got %d prompts", len(prompts))
 	}
 }
 
@@ -1643,60 +1630,62 @@ func triageRunWith(policy TriageAgentPolicy, binding *ProjectBinding) *triageRun
 	}
 }
 
-// TestTriageAgent_TheNodeDefaultOutranksTheWorker is the regression that cost
-// real money: with no node default, every project fell straight through to its
-// worker, so a fleet writing code with a frontier model also re-read its whole
-// backlog with that model on every sweep.
-func TestTriageAgent_TheNodeDefaultOutranksTheWorker(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	agent, err := run.triageAgent(context.Background())
-	if err != nil || agent.AgentID != testTriageAgent {
-		t.Fatalf("triage took the worker over the node default: %+v, %v", agent, err)
+// TestTriageAgent_ChoosesBindingThenNodeDefaultThenWorker pins the order the
+// triage agent is chosen in. The node default outranking the worker is the
+// regression that cost real money: with no node default, every project fell
+// straight through to its worker, so a fleet writing code with a frontier
+// model also re-read its whole backlog with that model on every sweep. The
+// node default stays a DEFAULT: a project naming its own triage agent still
+// gets it. The default is the node's and names one tenant's Agent, so a tenant
+// without it, or whose Agent of that name is not a triage agent, triages with
+// its worker rather than failing every sweep; and an install with no locally
+// served model, with empty config, changes nothing.
+func TestTriageAgent_ChoosesBindingThenNodeDefaultThenWorker(t *testing.T) {
+	worker := orchestration.AgentRefTo(testCoderAgent)
+	cases := []struct {
+		name    string
+		policy  TriageAgentPolicy
+		binding *ProjectBinding
+		want    string
+	}{
+		{
+			name:    "the node default outranks the worker",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testTriageAgent,
+		},
+		{
+			name:    "the binding outranks the node default",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Triage: orchestration.AgentRefTo(testReviewerAgent), Worker: worker},
+			want:    testReviewerAgent,
+		},
+		{
+			name:    "no default still falls back to the worker",
+			policy:  TriageAgentPolicy{},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
+		{
+			name:    "a default the tenant does not define is passed over",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo("elsewhere"), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
+		{
+			name:    "a default that is not a triage agent is passed over",
+			policy:  TriageAgentPolicy{Default: orchestration.AgentRefTo(testQwenAgent), Agents: testAgentCatalog()},
+			binding: &ProjectBinding{Worker: worker},
+			want:    testCoderAgent,
+		},
 	}
-}
-
-// TestTriageAgent_TheBindingOutranksTheNodeDefault keeps the node default a
-// DEFAULT: a project that names its own triage agent still gets it.
-func TestTriageAgent_TheBindingOutranksTheNodeDefault(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testTriageAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Triage: orchestration.AgentRefTo(testReviewerAgent), Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testReviewerAgent {
-		t.Fatalf("the binding's own triage agent was ignored: %+v, %v", agent, err)
-	}
-}
-
-// TestTriageAgent_NoDefaultStillFallsBackToTheWorker pins the behaviour an
-// install with no locally served model keeps: empty config changes nothing.
-func TestTriageAgent_NoDefaultStillFallsBackToTheWorker(t *testing.T) {
-	run := triageRunWith(TriageAgentPolicy{}, &ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)})
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
-		t.Fatalf("an unset node default broke the worker fallback: %+v, %v", agent, err)
-	}
-}
-
-// TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver: the default is
-// the node's and names one tenant's Agent; a tenant without it triages with
-// its worker rather than failing every sweep.
-func TestTriageAgent_ADefaultTheTenantDoesNotDefineIsPassedOver(t *testing.T) {
-	run := triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo("elsewhere"), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, err := run.triageAgent(context.Background()); err != nil || agent.AgentID != testCoderAgent {
-		t.Fatalf("an undefined default must fall through to the worker: %+v, %v", agent, err)
-	}
-	// A default that exists but is not a triage agent is passed over too.
-	run = triageRunWith(
-		TriageAgentPolicy{Default: orchestration.AgentRefTo(testQwenAgent), Agents: testAgentCatalog()},
-		&ProjectBinding{Worker: orchestration.AgentRefTo(testCoderAgent)},
-	)
-	if agent, _ := run.triageAgent(context.Background()); agent.AgentID != testCoderAgent {
-		t.Fatalf("a non-triage default must not be taken: %+v", agent)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			agent, err := triageRunWith(c.policy, c.binding).triageAgent(context.Background())
+			if err != nil || agent.AgentID != c.want {
+				t.Fatalf("triage agent = %+v, %v; want %s", agent, err, c.want)
+			}
+		})
 	}
 }
 
