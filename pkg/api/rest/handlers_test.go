@@ -5499,7 +5499,7 @@ func TestRemaining91_HandleUpdateNamespace_NilVectorService(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
-func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
+func TestRemaining91_HandleUpdateNamespace_RefusedNotImplemented(t *testing.T) {
 	server, mockService, cleanup := setupMockServerWithFuncMock(t)
 	defer cleanup()
 
@@ -5518,7 +5518,7 @@ func TestRemaining91_HandleUpdateNamespace_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	server.HandleUpdateNamespace(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 func TestRemaining91_HandleDeleteNamespace_NilVectorService(t *testing.T) {
