@@ -22,51 +22,46 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/sdk/go/transport"
 )
 
-func TestNew_NilConfig(t *testing.T) {
-	_, err := New(nil)
-	if err == nil {
-		t.Fatal("expected error for nil config")
+func TestNew_InvalidConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      *transport.Config
+		wantCode errors.ErrorCode
+	}{
+		{
+			name:     "nil config",
+			cfg:      nil,
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			name:     "empty address",
+			cfg:      &transport.Config{},
+			wantCode: errors.CodeInvalidInput,
+		},
+		{
+			// TCP addresses require a TLS config.
+			name:     "tcp address without TLS",
+			cfg:      &transport.Config{Address: "localhost:50051", Timeout: 100 * time.Millisecond},
+			wantCode: errors.CodeConfiguration,
+		},
+		{
+			// Unix sockets require a TLS config as well.
+			name:     "unix socket without TLS",
+			cfg:      &transport.Config{Address: "/tmp/nonexistent.sock", Timeout: 100 * time.Millisecond},
+			wantCode: errors.CodeConfiguration,
+		},
 	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput error, got %v", err)
-	}
-}
 
-func TestNew_EmptyAddress(t *testing.T) {
-	_, err := New(&transport.Config{})
-	if err == nil {
-		t.Fatal("expected error for empty address")
-	}
-	if !errors.IsInvalidInput(err) {
-		t.Errorf("expected InvalidInput error, got %v", err)
-	}
-}
-
-func TestNew_TCPAddressWithoutTLS(t *testing.T) {
-	// TCP address requires TLS config
-	cfg := &transport.Config{
-		Address: "localhost:50051",
-		Timeout: 100 * time.Millisecond,
-	}
-	_, err := New(cfg)
-	if err == nil {
-		t.Fatal("expected error for TCP without TLS")
-	}
-	// Should fail due to TLS requirement
-	if errors.Code(err) != errors.CodeConfiguration {
-		t.Errorf("expected Configuration error, got %v", errors.Code(err))
-	}
-}
-
-func TestNew_UnixSocketWithoutTLS(t *testing.T) {
-	// Unix sockets without TLS should fail due to TLS requirement
-	cfg := &transport.Config{
-		Address: "/tmp/nonexistent.sock",
-		Timeout: 100 * time.Millisecond,
-	}
-	_, err := New(cfg)
-	if err == nil {
-		t.Fatal("expected error for socket without TLS")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(tt.cfg)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if got := errors.Code(err); got != tt.wantCode {
+				t.Errorf("error code = %v, want %v", got, tt.wantCode)
+			}
+		})
 	}
 }
 
@@ -168,28 +163,28 @@ func TestBuildDialOptions_WithKeepalive(t *testing.T) {
 	}
 }
 
-func TestTransport_GetConn_Closed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	_, err := tr.getConn()
-	if err == nil {
-		t.Fatal("expected error for closed transport")
+func TestTransport_GetConn_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "closed", closed: true},
+		{name: "no connection", closed: false},
 	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
-	}
-}
 
-func TestTransport_GetConn_NoConnection(t *testing.T) {
-	tr := &Transport{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{}
+			tr.closed.Store(tt.closed)
 
-	_, err := tr.getConn()
-	if err == nil {
-		t.Fatal("expected error for nil connection")
-	}
-	if errors.Code(err) != errors.CodeConnection {
-		t.Errorf("expected Connection error, got %v", errors.Code(err))
+			_, err := tr.getConn()
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if errors.Code(err) != errors.CodeConnection {
+				t.Errorf("expected Connection error, got %v", errors.Code(err))
+			}
+		})
 	}
 }
 
@@ -199,20 +194,24 @@ func TestTransport_ReturnConn_NoPool(t *testing.T) {
 	tr.returnConn(nil)
 }
 
-func TestTransport_Healthy_Closed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	if tr.Healthy() {
-		t.Error("expected unhealthy for closed transport")
+func TestTransport_Healthy_Unavailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+	}{
+		{name: "closed", closed: true},
+		{name: "no connection", closed: false},
 	}
-}
 
-func TestTransport_Healthy_NoConnection(t *testing.T) {
-	tr := &Transport{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{}
+			tr.closed.Store(tt.closed)
 
-	if tr.Healthy() {
-		t.Error("expected unhealthy with nil connection")
+			if tr.Healthy() {
+				t.Error("expected unhealthy transport")
+			}
+		})
 	}
 }
 
@@ -233,44 +232,29 @@ func TestTransport_Conn_ReturnsStoredConnection(t *testing.T) {
 	}
 }
 
-func TestTransport_Close_AlreadyClosed(t *testing.T) {
-	tr := &Transport{}
-	tr.closed.Store(true)
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestTransport_Close_NoConnection(t *testing.T) {
-	tr := &Transport{}
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+func TestTransport_Close(t *testing.T) {
+	tests := []struct {
+		name   string
+		closed bool
+		pool   *Pool
+	}{
+		{name: "already closed", closed: true},
+		{name: "no connection"},
+		{name: "empty pool", pool: &Pool{healthStop: make(chan struct{})}},
 	}
 
-	if !tr.closed.Load() {
-		t.Error("expected transport to be marked closed")
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transport{pool: tt.pool}
+			tr.closed.Store(tt.closed)
 
-func TestTransport_Close_WithPool(t *testing.T) {
-	// Create a transport with a mock pool scenario
-	tr := &Transport{
-		pool: &Pool{
-			healthStop: make(chan struct{}),
-		},
-	}
-
-	err := tr.Close()
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	if !tr.closed.Load() {
-		t.Error("expected transport to be marked closed")
+			if err := tr.Close(); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !tr.closed.Load() {
+				t.Error("expected transport to be marked closed")
+			}
+		})
 	}
 }
 
