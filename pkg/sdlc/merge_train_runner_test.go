@@ -1738,27 +1738,28 @@ func TestTrainErrors_NameTheTrainAndUnwrap(t *testing.T) {
 	cases := []struct {
 		err      error
 		sentinel error
+		cause    error
 		want     []string
 	}{
-		{&TrainUnavailableError{ProjectID: "api"}, ErrTrainUnavailable, []string{"api", "merge train"}},
+		{&TrainUnavailableError{ProjectID: "api"}, ErrTrainUnavailable, nil, []string{"api", "merge train"}},
 		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "the train could not be pushed", Cause: cause},
-			ErrTrainBuild, []string{"#7", "api", "could not be pushed", "remote rejected"}},
-		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "no cause"}, ErrTrainBuild, []string{"#7", "no cause"}},
+			ErrTrainBuild, cause, []string{"#7", "api", "could not be pushed", "remote rejected"}},
+		{&TrainBuildError{ProjectID: "api", Train: 7, Reason: "no cause"}, ErrTrainBuild, nil, []string{"#7", "no cause"}},
 		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "refused", Cause: cause},
-			ErrTrainLanding, []string{"#7", "#901", "refused", "remote rejected"}},
-		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "no cause"}, ErrTrainLanding, []string{"#901"}},
+			ErrTrainLanding, cause, []string{"#7", "#901", "refused", "remote rejected"}},
+		{&TrainLandingError{ProjectID: "api", Train: 7, PullRequest: 901, Reason: "no cause"}, ErrTrainLanding, nil, []string{"#901"}},
 	}
 	for _, tc := range cases {
 		if !errors.Is(tc.err, tc.sentinel) {
 			t.Fatalf("%T does not unwrap to %v", tc.err, tc.sentinel)
+		}
+		if tc.cause != nil && !errors.Is(tc.err, tc.cause) {
+			t.Fatalf("%T hides its cause", tc.err)
 		}
 		for _, want := range tc.want {
 			if !strings.Contains(tc.err.Error(), want) {
 				t.Fatalf("%q lacks %q", tc.err.Error(), want)
 			}
 		}
-	}
-	if !errors.Is(&TrainBuildError{Reason: "x", Cause: cause}, cause) {
-		t.Fatal("a build error hides its cause")
 	}
 }
