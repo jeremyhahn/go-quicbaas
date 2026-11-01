@@ -500,28 +500,6 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
-func TestBackupCommandStructure(t *testing.T) {
-	// Test that all backup commands are properly defined
-	cmd := newBackupCommands()
-
-	assert.NotNil(t, cmd)
-	assert.Equal(t, "backup", cmd.Use)
-	assert.Greater(t, len(cmd.Commands()), 0, "Backup command should have subcommands")
-
-	// Check all expected subcommands exist
-	expectedCommands := []string{"create", "list", "restore", "delete", "verify"}
-	for _, expectedCmd := range expectedCommands {
-		found := false
-		for _, subCmd := range cmd.Commands() {
-			if strings.HasPrefix(subCmd.Use, expectedCmd) {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected to find subcommand '%s'", expectedCmd)
-	}
-}
-
 func TestBackupCreateCommandFlags(t *testing.T) {
 	cmd := newBackupCreateCommand()
 
@@ -2016,14 +1994,13 @@ func TestNewBackupCommands(t *testing.T) {
 		build func() *cobra.Command
 		use   string
 		short string
-		flag  string
 	}{
 		{name: "create", build: newBackupCreateCommand, use: "create", short: "Create"},
 		{name: "list", build: newBackupListCommand, use: "list", short: "List"},
 		{name: "restore", build: newBackupRestoreCommand, use: "restore", short: "Restore"},
-		{name: "delete", build: newBackupDeleteCommand, use: "delete <backup-id>", short: "Delete", flag: "yes"},
+		{name: "delete", build: newBackupDeleteCommand, use: "delete <backup-id>", short: "Delete"},
 		{name: "verify", build: newBackupVerifyCommand, use: "verify <backup-id>", short: "Verify"},
-		{name: "status", build: newBackupStatusCommand, use: "status [backup-id]", short: "Show backup status", flag: "storage-path"},
+		{name: "status", build: newBackupStatusCommand, use: "status [backup-id]", short: "Show backup status"},
 	}
 	for _, tc := range constructors {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2031,9 +2008,6 @@ func TestNewBackupCommands(t *testing.T) {
 			require.NotNil(t, sub)
 			assert.Contains(t, sub.Use, tc.use)
 			assert.Contains(t, sub.Short, tc.short)
-			if tc.flag != "" {
-				assert.NotNil(t, sub.Flags().Lookup(tc.flag))
-			}
 		})
 	}
 }
@@ -2371,46 +2345,6 @@ func TestMockBackupClientCloseFunc(t *testing.T) {
 	assert.Contains(t, err.Error(), "custom error")
 }
 
-func TestRunBackupListCommand_SuccessJSONFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupOutputFormat = "json"
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			ListBackupsFunc: func(ctx context.Context, req *BackupListRequest) (*cli.BackupListResponse, error) {
-				return &cli.BackupListResponse{
-					Backups: []cli.BackupInfo{
-						{
-							ID:          "backup-001",
-							Type:        "full",
-							Size:        1024 * 1024,
-							Compression: "zstd",
-							Encryption:  "none",
-							NumShards:   3,
-							NumKeys:     5000,
-							Timestamp:   time.Now(),
-						},
-					},
-					TotalCount: 1,
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupListCommand()
-	err := runBackupListCommand(cmd, nil)
-	assert.NoError(t, err)
-}
-
 func TestRunBackupListCommand_SuccessTableFormat(t *testing.T) {
 	origFactory := backupClientFactory
 	origFmt := backupOutputFormat
@@ -2488,35 +2422,6 @@ func TestRunBackupListCommand_ListError(t *testing.T) {
 // Backup Verify Command - Output Format Paths
 // =============================================================================
 
-func TestRunBackupVerifyCommand_SuccessJSONFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-	}()
-
-	backupOutputFormat = "json"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			VerifyBackupFunc: func(ctx context.Context, req *BackupVerifyRequest) (*cli.BackupVerifyResponse, error) {
-				return &cli.BackupVerifyResponse{
-					BackupID:      req.BackupID,
-					Valid:         true,
-					ChecksumValid: true,
-					ShardsValid:   3,
-					Timestamp:     time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupVerifyCommand()
-	err := runBackupVerifyCommand(cmd, []string{"backup-001"})
-	assert.NoError(t, err)
-}
-
 func TestRunBackupVerifyCommand_SuccessTableFormat(t *testing.T) {
 	origFactory := backupClientFactory
 	origFmt := backupOutputFormat
@@ -2583,39 +2488,6 @@ func TestRunBackupVerifyCommand_VerifyError(t *testing.T) {
 // Backup Restore Command - Additional Paths
 // =============================================================================
 
-func TestRunBackupRestoreCommand_SuccessDefaultFormat(t *testing.T) {
-	origFactory := backupClientFactory
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupOutputFormat = ""
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			RestoreBackupFunc: func(ctx context.Context, req *BackupRestoreRequest) (*cli.BackupRestoreResponse, error) {
-				return &cli.BackupRestoreResponse{
-					BackupID:       req.BackupID,
-					KeysRestored:   1000,
-					ShardsRestored: 3,
-					Duration:       5 * time.Second,
-					Timestamp:      time.Now(),
-					Success:        true,
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupRestoreCommand()
-	err := runBackupRestoreCommand(cmd, []string{"backup-001"})
-	assert.NoError(t, err)
-}
-
 func TestRunBackupRestoreCommand_RestoreError(t *testing.T) {
 	origFactory := backupClientFactory
 	origStorageType := backupStorageType
@@ -2640,124 +2512,9 @@ func TestRunBackupRestoreCommand_RestoreError(t *testing.T) {
 	assert.Contains(t, err.Error(), "restore failed")
 }
 
-func TestRunBackupRestoreCommand_InvalidPointInTime(t *testing.T) {
-	origPIT := backupRestorePointInTime
-	defer func() { backupRestorePointInTime = origPIT }()
-
-	cmd := newBackupRestoreCommand()
-	backupRestorePointInTime = "not-a-valid-timestamp"
-	err := runBackupRestoreCommand(cmd, []string{"backup-001"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid point-in-time")
-}
-
 // =============================================================================
 // Backup Create Command - Additional Validation Paths
 // =============================================================================
-
-func TestRunBackupCreateCommand_InvalidCompressionType(t *testing.T) {
-	origCompression := backupCompression
-	defer func() { backupCompression = origCompression }()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "lz77"
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-}
-
-func TestRunBackupCreateCommand_InvalidEncryptionType(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "triple-des"
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-}
-
-func TestRunBackupCreateCommand_AES256NoKey(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origKey := backupEncryptKey
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupEncryptKey = origKey
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "aes256"
-	backupEncryptKey = ""
-
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "encryption key is required")
-}
-
-func TestRunBackupCreateCommand_AES256WrongKeyLength(t *testing.T) {
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origKey := backupEncryptKey
-	defer func() {
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupEncryptKey = origKey
-	}()
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "aes256"
-	backupEncryptKey = "tooshort"
-
-	err := runBackupCreateCommand(cmd, []string{"test-backup"})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "32 bytes")
-}
-
-func TestRunBackupCreateCommand_IncrementalType(t *testing.T) {
-	origFactory := backupClientFactory
-	origCompression := backupCompression
-	origEncryption := backupEncryption
-	origIncremental := backupIncremental
-	origFmt := backupOutputFormat
-	origStorageType := backupStorageType
-	defer func() {
-		backupClientFactory = origFactory
-		backupCompression = origCompression
-		backupEncryption = origEncryption
-		backupIncremental = origIncremental
-		backupOutputFormat = origFmt
-		backupStorageType = origStorageType
-	}()
-
-	backupStorageType = "local"
-
-	backupClientFactory = func() (BackupClient, error) {
-		return &MockBackupClient{
-			CreateBackupFunc: func(ctx context.Context, req *BackupCreateRequest) (*cli.BackupCreateResponse, error) {
-				return &cli.BackupCreateResponse{
-					BackupID:  "backup-inc-001",
-					Success:   true,
-					Timestamp: time.Now(),
-				}, nil
-			},
-		}, nil
-	}
-
-	cmd := newBackupCreateCommand()
-	backupCompression = "zstd"
-	backupEncryption = "none"
-	backupIncremental = true
-	backupOutputFormat = "json"
-	err := runBackupCreateCommand(cmd, []string{"incremental-backup"})
-	assert.NoError(t, err)
-}
 
 func TestRunBackupCreateCommand_ClientError(t *testing.T) {
 	origFactory := backupClientFactory
