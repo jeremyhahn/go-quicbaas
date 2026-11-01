@@ -138,6 +138,17 @@ func (c *Client) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyReq
 	if req == nil {
 		return nil, api.NewNilInputError("Client.KMSGenerateKey", "request")
 	}
+	// service.DeleteKeyRequest names no backend, so KMSDeleteKey reaches only
+	// the default one: a key generated anywhere else could not be deleted.
+	if req.KeyAttributes != nil {
+		if store := xkmsBackend(string(req.KeyAttributes.StoreType)); store != xkmsBackend("") {
+			return nil, &errors.QBError{
+				Code: errors.ErrInvalidInput,
+				Op:   "Client.KMSGenerateKey",
+				Err:  &xkmsUndeletableBackendError{KeyID: req.Name, Store: store},
+			}
+		}
+	}
 
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
@@ -391,7 +402,7 @@ func (c *Client) KMSDeleteKey(ctx context.Context, req *service.DeleteKeyRequest
 	}
 
 	// service.DeleteKeyRequest names no backend, so the key is deleted from
-	// the node's default backend.
+	// the node's default backend, the only one KMSGenerateKey creates keys in.
 	xkmsReq := &kctypes.ProtoDeleteKeyRequest{KeyId: req.KeyID, Backend: xkmsBackend("")}
 	xkmsResp := &kctypes.ProtoDeleteKeyResponse{}
 	if err := c.conn.Invoke(ctx, xkmsKeystoreDeleteKey, xkmsReq, xkmsResp); err != nil {
@@ -423,6 +434,19 @@ type xkmsDeleteKeyRefusedError struct {
 
 func (e *xkmsDeleteKeyRefusedError) Error() string {
 	return "xkms.v1 DeleteKey did not delete key " + e.KeyID + ": " + e.Message
+}
+
+// xkmsUndeletableBackendError reports a KMSGenerateKey refused because it
+// names a backend KMSDeleteKey cannot reach, so the key could never be
+// deleted again.
+type xkmsUndeletableBackendError struct {
+	KeyID string
+	Store string
+}
+
+func (e *xkmsUndeletableBackendError) Error() string {
+	return "key " + e.KeyID + " cannot be generated in store " + e.Store +
+		": KMSDeleteKey reaches only the " + xkmsBackend("") + " store, so the key could not be deleted again"
 }
 
 // KMSEncrypt encrypts plaintext using the specified key.
