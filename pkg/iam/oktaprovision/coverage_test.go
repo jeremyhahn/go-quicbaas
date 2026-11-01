@@ -548,49 +548,73 @@ func TestSeedAdminFromTokenOwner_AddOwnerError(t *testing.T) {
 	assertProvOp(t, err, "add_user_to_group")
 }
 
-// seedNamedAdminGroup: a search error on one name is logged and skipped, then a
-// later name is found and its members listed; a member-add failure is tolerated.
-func TestSeedNamedAdminGroup_SearchErrorThenFound(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", func(w http.ResponseWriter, req *http.Request) {
-		switch req.URL.Query().Get("q") {
-		case "Administrators":
-			writeOktaErr(w, http.StatusInternalServerError, "E0000009", "transient")
-		case "Super": // "Super Admins" -> searchTerm "Super"
-			writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "sa", "profile": map[string]interface{}{"name": "Super Admins"}}})
-		default:
-			writeJSON(w, http.StatusOK, []interface{}{})
-		}
-	})
-	r.onPrefix("GET", "/api/v1/groups/sa/users", okJSON([]map[string]interface{}{{"id": "m1"}}))
-	// member add fails but is tolerated (logged, loop continues).
-	r.onPrefix("PUT", "/api/v1/groups/target/users/m1", errStatus(http.StatusNotFound, "E0000007", "gone"))
-	p := newTestProvisioner(t, r)
-	// Should not panic / return; function is fire-and-forget.
-	p.seedNamedAdminGroup(context.Background(), "https://acme.okta.com", "tok", "target")
-}
-
-// seedNamedAdminGroup: group found but listing its members fails -> returns.
-func TestSeedNamedAdminGroup_ListMembersError(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Query().Get("q") == "Administrators" {
-			writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "ad", "profile": map[string]interface{}{"name": "Administrators"}}})
-			return
-		}
-		writeJSON(w, http.StatusOK, []interface{}{})
-	})
-	r.onPrefix("GET", "/api/v1/groups/ad/users", errStatus(http.StatusForbidden, "E0000006", "denied"))
-	p := newTestProvisioner(t, r)
-	p.seedNamedAdminGroup(context.Background(), "https://acme.okta.com", "tok", "target")
-}
-
-// seedNamedAdminGroup: no admin groups found at all -> no-op.
-func TestSeedNamedAdminGroup_NoneFound(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/groups", okJSON([]interface{}{}))
-	p := newTestProvisioner(t, r)
-	p.seedNamedAdminGroup(context.Background(), "https://acme.okta.com", "tok", "target")
+// seedNamedAdminGroup is best-effort: every failure is logged and the
+// function returns nothing, so each row asserts which members it tried to add.
+func TestSeedNamedAdminGroup(t *testing.T) {
+	tests := []struct {
+		name        string
+		groups      http.HandlerFunc
+		membersPath string
+		members     http.HandlerFunc
+		add         http.HandlerFunc
+		wantAdds    []string
+	}{
+		{
+			// A failed search moves on to the next admin name, and a failed
+			// member add is tolerated.
+			name: "search error then found",
+			groups: func(w http.ResponseWriter, req *http.Request) {
+				switch req.URL.Query().Get("q") {
+				case "Administrators":
+					writeOktaErr(w, http.StatusInternalServerError, "E0000009", "transient")
+				case "Super": // "Super Admins" -> searchTerm "Super"
+					writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "sa", "profile": map[string]interface{}{"name": "Super Admins"}}})
+				default:
+					writeJSON(w, http.StatusOK, []interface{}{})
+				}
+			},
+			membersPath: "/api/v1/groups/sa/users",
+			members:     okJSON([]map[string]interface{}{{"id": "m1"}}),
+			add:         errStatus(http.StatusNotFound, "E0000007", "gone"),
+			wantAdds:    []string{"m1"},
+		},
+		{
+			name: "list members error",
+			groups: func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Query().Get("q") == "Administrators" {
+					writeJSON(w, http.StatusOK, []map[string]interface{}{{"id": "ad", "profile": map[string]interface{}{"name": "Administrators"}}})
+					return
+				}
+				writeJSON(w, http.StatusOK, []interface{}{})
+			},
+			membersPath: "/api/v1/groups/ad/users",
+			members:     errStatus(http.StatusForbidden, "E0000006", "denied"),
+		},
+		{
+			name:   "none found",
+			groups: okJSON([]interface{}{}),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			r.on("GET", "/api/v1/groups", tc.groups)
+			if tc.members != nil {
+				r.onPrefix("GET", tc.membersPath, tc.members)
+			}
+			var added []string
+			r.onPrefix("PUT", "/api/v1/groups/target/users/", func(w http.ResponseWriter, req *http.Request) {
+				seg := strings.Split(req.URL.Path, "/")
+				added = append(added, seg[len(seg)-1])
+				tc.add(w, req)
+			})
+			p := newTestProvisioner(t, r)
+			p.seedNamedAdminGroup(context.Background(), "https://acme.okta.com", "tok", "target")
+			if strings.Join(added, ",") != strings.Join(tc.wantAdds, ",") {
+				t.Errorf("added = %v, want %v", added, tc.wantAdds)
+			}
+		})
+	}
 }
 
 // -------------------- configureGroupsScope --------------------
