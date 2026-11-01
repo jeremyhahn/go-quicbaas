@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	stderrors "errors"
+	"strconv"
 	"time"
 
 	kctypes "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -27,7 +28,70 @@ import (
 	"github.com/jeremyhahn/go-quicbaas/pkg/util/conv"
 )
 
-// KMSGenerateKey creates a new cryptographic key with the specified parameters.
+// Full method names of the go-xkms xkms.v1 KeystoreService RPCs the KMS
+// client calls. The node serves xkms.v1 and not quicbaas.kms.v1, and the
+// go-xkms SDK re-exports the message types but no client, so the client
+// invokes these methods on its connection directly.
+const (
+	xkmsKeystoreGenerateKey = "/xkms.v1.KeystoreService/GenerateKey"
+	xkmsKeystoreListKeys    = "/xkms.v1.KeystoreService/ListKeys"
+	xkmsKeystoreDeleteKey   = "/xkms.v1.KeystoreService/DeleteKey"
+)
+
+// xkmsKeySpec is the key_type, key_size, curve and algorithm an xkms.v1
+// GenerateKeyRequest carries for one key algorithm.
+type xkmsKeySpec struct {
+	keyType   string
+	keySize   int32
+	curve     string
+	algorithm string
+}
+
+// xkmsKeySpecs maps each key algorithm the client generates onto its xkms.v1
+// key spec.
+var xkmsKeySpecs = map[pb.KeyAlgorithm]xkmsKeySpec{
+	pb.KeyAlgorithm_KEY_ALG_AES_128_GCM:        {keyType: "symmetric", keySize: 128, algorithm: "aes-128-gcm"},
+	pb.KeyAlgorithm_KEY_ALG_AES_192_GCM:        {keyType: "symmetric", keySize: 192, algorithm: "aes-192-gcm"},
+	pb.KeyAlgorithm_KEY_ALG_AES_256_GCM:        {keyType: "symmetric", keySize: 256, algorithm: "aes-256-gcm"},
+	pb.KeyAlgorithm_KEY_ALG_CHACHA20_POLY1305:  {keyType: "symmetric", keySize: 256, algorithm: "chacha20-poly1305"},
+	pb.KeyAlgorithm_KEY_ALG_XCHACHA20_POLY1305: {keyType: "symmetric", keySize: 256, algorithm: "xchacha20-poly1305"},
+	pb.KeyAlgorithm_KEY_ALG_RSA_2048:           {keyType: "rsa", keySize: 2048},
+	pb.KeyAlgorithm_KEY_ALG_RSA_3072:           {keyType: "rsa", keySize: 3072},
+	pb.KeyAlgorithm_KEY_ALG_RSA_4096:           {keyType: "rsa", keySize: 4096},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P256:         {keyType: "ecdsa", keySize: 256, curve: "P-256"},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P384:         {keyType: "ecdsa", keySize: 384, curve: "P-384"},
+	pb.KeyAlgorithm_KEY_ALG_ECDSA_P521:         {keyType: "ecdsa", keySize: 521, curve: "P-521"},
+	pb.KeyAlgorithm_KEY_ALG_ED25519:            {keyType: "ed25519", keySize: 256},
+}
+
+// xkmsKeyAlgorithms is xkmsKeySpecs inverted, to name the algorithm of a key
+// an xkms.v1 ListKeys returns.
+var xkmsKeyAlgorithms = invertXKMSKeySpecs(xkmsKeySpecs)
+
+func invertXKMSKeySpecs(specs map[pb.KeyAlgorithm]xkmsKeySpec) map[xkmsKeySpec]pb.KeyAlgorithm {
+	out := make(map[xkmsKeySpec]pb.KeyAlgorithm, len(specs))
+	for alg, spec := range specs {
+		out[spec] = alg
+	}
+	return out
+}
+
+// xkmsServiceKeyAlgorithm names the algorithm of an xkms.v1 KeyInfo. Only a
+// symmetric key's algorithm string tells its cipher apart, so it is matched
+// for symmetric keys alone; an unknown key keeps the algorithm xkms reports.
+func xkmsServiceKeyAlgorithm(info *kctypes.ProtoKeyInfo) service.KeyAlgorithm {
+	spec := xkmsKeySpec{keyType: info.GetKeyType(), keySize: info.GetKeySize(), curve: info.GetCurve()}
+	if spec.keyType == "symmetric" {
+		spec.algorithm = info.GetAlgorithm()
+	}
+	if alg, ok := xkmsKeyAlgorithms[spec]; ok {
+		return convertProtoToServiceKeyAlgorithm(alg)
+	}
+	return service.KeyAlgorithm(info.GetAlgorithm())
+}
+
+// KMSGenerateKey creates a new cryptographic key with the specified parameters
+// through the go-xkms xkms.v1 KeystoreService.
 func (c *Client) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyRequest) (*service.GenerateKeyResponse, error) {
 	if req == nil {
 		return nil, api.NewNilInputError("Client.KMSGenerateKey", "request")
@@ -37,36 +101,53 @@ func (c *Client) KMSGenerateKey(ctx context.Context, req *service.GenerateKeyReq
 		return nil, err
 	}
 
-	// Convert KeyAttributes to protobuf KeySpec
-	alg, keySize, usage, exportable, err := convertKeyAttributesToProto(req.KeyAttributes)
+	alg, _, usage, exportable, err := convertKeyAttributesToProto(req.KeyAttributes)
 	if err != nil {
 		return nil, err
 	}
-
-	kmsClient := pb.NewKeyManagementClient(c.conn)
-
-	pbReq := &pb.GenerateKeyRequest{
-		Name:        req.Name,
-		Description: req.Description,
-		Tags:        req.Tags,
-		Owner:       req.Owner,
-		KeySpec: &pb.KeySpec{
-			Algorithm:  alg,
-			KeySize:    keySize,
-			Usage:      usage,
-			Exportable: exportable,
-		},
+	spec, ok := xkmsKeySpecs[alg]
+	if !ok {
+		return nil, api.NewInvalidInputError("key algorithm has no xkms.v1 key spec: " + alg.String())
 	}
 
-	pbResp, err := kmsClient.GenerateKey(ctx, pbReq)
-	if err != nil {
+	xkmsReq := &kctypes.ProtoGenerateKeyRequest{
+		KeyId:      req.Name,
+		KeyType:    spec.keyType,
+		KeySize:    spec.keySize,
+		Curve:      spec.curve,
+		Algorithm:  spec.algorithm,
+		Exportable: exportable,
+	}
+	xkmsResp := &kctypes.ProtoGenerateKeyResponse{}
+	if err := c.conn.Invoke(ctx, xkmsKeystoreGenerateKey, xkmsReq, xkmsResp); err != nil {
 		return nil, convertError(err)
 	}
 
+	createdAt := xkmsResp.GetCreatedAt().AsTime()
+	serviceAlg := convertProtoToServiceKeyAlgorithm(alg)
 	return &service.GenerateKeyResponse{
-		Key:       convertProtoKeyHandle(pbResp.Key),
-		Metadata:  convertProtoKeyMetadata(pbResp.Metadata),
-		Timestamp: time.Unix(pbResp.Timestamp, 0),
+		Key: &service.KeyHandle{
+			KeyID:     xkmsResp.GetKeyId(),
+			Version:   1,
+			Algorithm: serviceAlg,
+			Status:    service.KeyStatusEnabled,
+			CreatedAt: createdAt,
+		},
+		Metadata: &service.KeyMetadata{
+			KeyID:       xkmsResp.GetKeyId(),
+			Name:        req.Name,
+			Description: req.Description,
+			Algorithm:   serviceAlg,
+			Status:      service.KeyStatusEnabled,
+			Usage:       convertProtoToServiceKeyUsageList(usage),
+			Version:     1,
+			Exportable:  exportable,
+			CreatedAt:   createdAt,
+			UpdatedAt:   createdAt,
+			Tags:        req.Tags,
+			Owner:       req.Owner,
+		},
+		Timestamp: createdAt,
 	}, nil
 }
 
@@ -154,35 +235,53 @@ func (c *Client) KMSListKeys(ctx context.Context, req *service.ListKeysRequest) 
 		return nil, err
 	}
 
+	// xkms.v1 pages by offset; the cursor is the offset of the next page.
+	var offset int32
+	if req.Cursor != "" {
+		parsed, parseErr := strconv.ParseInt(req.Cursor, 10, 32)
+		if parseErr != nil || parsed < 0 {
+			return nil, api.NewInvalidInputError("list keys cursor must be a non-negative offset: " + req.Cursor)
+		}
+		offset = int32(parsed)
+	}
+
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
 
-	kmsClient := pb.NewKeyManagementClient(c.conn)
-
-	pbReq := &pb.ListKeysRequest{
-		Limit:  limit,
-		Cursor: req.Cursor,
-		Filter: req.Filter,
+	xkmsReq := &kctypes.ProtoListKeysRequest{
+		Backend:   req.Filter["backend"],
+		Partition: req.Filter["partition"],
+		Limit:     limit,
+		Offset:    offset,
 	}
-
-	pbResp, err := kmsClient.ListKeys(ctx, pbReq)
-	if err != nil {
+	xkmsResp := &kctypes.ProtoListKeysResponse{}
+	if err := c.conn.Invoke(ctx, xkmsKeystoreListKeys, xkmsReq, xkmsResp); err != nil {
 		return nil, convertError(err)
 	}
 
-	keys := make([]*service.KeyHandle, len(pbResp.Keys))
-	for i, key := range pbResp.Keys {
-		keys[i] = convertProtoKeyHandle(key)
+	keys := make([]*service.KeyHandle, len(xkmsResp.GetKeys()))
+	for i, info := range xkmsResp.GetKeys() {
+		keys[i] = &service.KeyHandle{
+			KeyID:     info.GetKeyId(),
+			Version:   uint64(info.GetKeyVersion()),
+			Algorithm: xkmsServiceKeyAlgorithm(info),
+			Status:    service.KeyStatusEnabled,
+			CreatedAt: info.GetCreatedAt().AsTime(),
+		}
 	}
 
-	return &service.ListKeysResponse{
+	resp := &service.ListKeysResponse{
 		Keys:       keys,
-		NextCursor: pbResp.NextCursor,
-		HasMore:    pbResp.HasMore,
-		TotalCount: int(pbResp.TotalCount),
-		Timestamp:  time.Unix(pbResp.Timestamp, 0),
-	}, nil
+		TotalCount: int(xkmsResp.GetTotal()),
+		Timestamp:  time.Now(),
+	}
+	next := int(offset) + len(keys)
+	if len(keys) > 0 && next < resp.TotalCount {
+		resp.HasMore = true
+		resp.NextCursor = strconv.Itoa(next)
+	}
+	return resp, nil
 }
 
 // KMSRotateKey creates a new version of an existing key.
@@ -228,30 +327,47 @@ func (c *Client) KMSDeleteKey(ctx context.Context, req *service.DeleteKeyRequest
 	if err != nil {
 		return nil, err
 	}
+	// xkms.v1 DeleteKey deletes at once: a pending window cannot be honoured,
+	// so it is refused rather than turned into an immediate deletion.
+	if pendingWindowDays != 0 {
+		return nil, api.NewInvalidInputError("pending_window_days is not supported: xkms.v1 DeleteKey deletes the key at once")
+	}
 
 	if err := c.ensureConnected(ctx); err != nil {
 		return nil, err
 	}
 
-	kmsClient := pb.NewKeyManagementClient(c.conn)
-
-	pbReq := &pb.DeleteKeyRequest{
-		KeyId:             req.KeyID,
-		PendingWindowDays: pendingWindowDays,
-		Force:             req.Force,
-	}
-
-	pbResp, err := kmsClient.DeleteKey(ctx, pbReq)
-	if err != nil {
+	xkmsReq := &kctypes.ProtoDeleteKeyRequest{KeyId: req.KeyID}
+	xkmsResp := &kctypes.ProtoDeleteKeyResponse{}
+	if err := c.conn.Invoke(ctx, xkmsKeystoreDeleteKey, xkmsReq, xkmsResp); err != nil {
 		return nil, convertError(err)
 	}
+	if !xkmsResp.GetSuccess() {
+		return nil, &errors.QBError{
+			Code: errors.ErrInternal,
+			Op:   "Client.KMSDeleteKey",
+			Err:  &xkmsDeleteKeyRefusedError{KeyID: req.KeyID, Message: xkmsResp.GetMessage()},
+		}
+	}
 
+	now := time.Now()
 	return &service.DeleteKeyResponse{
-		KeyID:        pbResp.KeyId,
-		Status:       convertProtoToServiceKeyStatus(pbResp.Status),
-		DeletionDate: time.Unix(pbResp.DeletionDate, 0),
-		Timestamp:    time.Unix(pbResp.Timestamp, 0),
+		KeyID:        req.KeyID,
+		Status:       service.KeyStatusDeleted,
+		DeletionDate: now,
+		Timestamp:    now,
 	}, nil
+}
+
+// xkmsDeleteKeyRefusedError reports an xkms.v1 DeleteKey that answered
+// without error but did not delete the key.
+type xkmsDeleteKeyRefusedError struct {
+	KeyID   string
+	Message string
+}
+
+func (e *xkmsDeleteKeyRefusedError) Error() string {
+	return "xkms.v1 DeleteKey did not delete key " + e.KeyID + ": " + e.Message
 }
 
 // KMSEncrypt encrypts plaintext using the specified key.
