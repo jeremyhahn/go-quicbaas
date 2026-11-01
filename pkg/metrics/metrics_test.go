@@ -15,7 +15,6 @@ package metrics
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"math"
@@ -342,82 +341,11 @@ func TestSetRaftSnapshotSize(t *testing.T) {
 	}
 }
 
-func TestMetricsLabels(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Test RequestDuration labels
-	m.RecordRequestDuration("get", "success", 0.01)
-	m.RecordRequestDuration("put", "failure", 0.02)
-
-	// Test RaftProposalLatency labels
-	m.RecordRaftProposalLatency("1", 0.005)
-	m.RecordRaftProposalLatency("2", 0.010)
-
-	// Test RaftSnapshotSize labels
-	m.SetRaftSnapshotSize("1", 1000)
-	m.SetRaftSnapshotSize("2", 2000)
-
-	// Verify labels are working by checking we can retrieve different values
-	shard1Size := testutil.ToFloat64(m.RaftSnapshotSize.With(prometheus.Labels{"shard": "1"}))
-	shard2Size := testutil.ToFloat64(m.RaftSnapshotSize.With(prometheus.Labels{"shard": "2"}))
-
-	assert.Equal(t, 1000.0, shard1Size, "Shard 1 size should be 1000")
-	assert.Equal(t, 2000.0, shard2Size, "Shard 2 size should be 2000")
-}
-
-func TestMetricsBuckets(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Test RequestDuration buckets
-	t.Run("RequestDuration buckets", func(t *testing.T) {
-		m.RecordRequestDuration("get", "success", 0.001)
-		m.RecordRequestDuration("get", "success", 0.01)
-		m.RecordRequestDuration("get", "success", 0.1)
-		m.RecordRequestDuration("get", "success", 1.0)
-
-		count := testutil.CollectAndCount(m.RequestDuration)
-		assert.Greater(t, count, 0, "RequestDuration should have buckets")
-	})
-
-	// Test RequestSize buckets (exponential)
-	t.Run("RequestSize exponential buckets", func(t *testing.T) {
-		m.RecordRequestSize("put", 100)
-		m.RecordRequestSize("put", 1000)
-		m.RecordRequestSize("put", 10000)
-		m.RecordRequestSize("put", 100000)
-
-		count := testutil.CollectAndCount(m.RequestSize)
-		assert.Greater(t, count, 0, "RequestSize should have exponential buckets")
-	})
-
-	// Test TransactionSize buckets
-	t.Run("TransactionSize buckets", func(t *testing.T) {
-		m.RecordTransactionSize(1)
-		m.RecordTransactionSize(10)
-		m.RecordTransactionSize(50)
-		m.RecordTransactionSize(100)
-		m.RecordTransactionSize(500)
-
-		count := testutil.CollectAndCount(m.TransactionSize)
-		assert.Greater(t, count, 0, "TransactionSize should have buckets")
-	})
-}
-
 func TestMetricsRegistration(t *testing.T) {
-	// Reset metrics before test
 	Reset()
-
-	// Initialize metrics
 	m := InitMetrics()
 
-	// Record some values to ensure metrics appear in registry
-	// Histograms and histogram vectors don't appear until they have data
+	// Histograms and vectors appear in the registry only once they hold data.
 	m.RecordRequestDuration("test", "success", 0.01)
 	m.RecordRequestSize("test", 1000)
 	m.IncrementConcurrentRequests()
@@ -426,71 +354,54 @@ func TestMetricsRegistration(t *testing.T) {
 	m.IncrementTransactionConflicts()
 	m.RecordRaftProposalLatency("1", 0.005)
 	m.SetRaftSnapshotSize("1", 1024)
-
-	// Gather metrics from registry
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-
-	// Define expected metrics
-	expectedMetrics := []string{
-		"quicbaas_request_duration_seconds",
-		"quicbaas_request_size_bytes",
-		"quicbaas_concurrent_requests",
-		"quicbaas_transaction_duration_seconds",
-		"quicbaas_transaction_operations",
-		"quicbaas_transaction_conflicts_total",
-		"quicbaas_raft_proposal_latency_seconds",
-		"quicbaas_raft_snapshot_size_bytes",
-	}
-
-	// Build map of registered metric names
-	registeredMetrics := make(map[string]bool)
-	for _, mf := range metricFamilies {
-		registeredMetrics[mf.GetName()] = true
-	}
-
-	// Verify all expected metrics are registered
-	for _, expected := range expectedMetrics {
-		assert.True(t, registeredMetrics[expected], "Metric %s should be registered", expected)
-	}
-}
-
-func TestMetricsHelpText(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Record values to ensure metrics appear in registry
-	m.RecordRequestDuration("test", "success", 0.01)
-	m.RecordRequestSize("test", 1000)
-	m.IncrementConcurrentRequests()
-	m.RecordTransactionDuration(0.1)
-	m.RecordTransactionSize(10)
-	m.IncrementTransactionConflicts()
-	m.RecordRaftProposalLatency("1", 0.005)
-	m.SetRaftSnapshotSize("1", 1024)
+	m.RecordVectorOperation("tenant-1", "embeddings", "upsert", "success")
+	m.RecordVectorOperationDuration("tenant-1", "embeddings", "upsert", 0.01)
+	m.SetVectorStorageBytes("tenant-1", "embeddings", 1048576)
+	m.SetVectorCount("tenant-1", "embeddings", 1000)
+	m.RecordVectorSearchLatency("tenant-1", "embeddings", "similarity", 0.005)
+	m.RecordVectorBatchSize("tenant-1", "embeddings", "upsert", 100)
+	m.SetVectorQuotaUsage("tenant-1", "embeddings", "vectors", 0.5)
+	m.SetVectorNamespaceCount("tenant-1", 5)
 
 	metricFamilies, err := Registry.Gather()
 	require.NoError(t, err, "Should be able to gather metrics")
 
-	expectedHelp := map[string]string{
-		"quicbaas_request_duration_seconds":      "Request latency by operation and status",
-		"quicbaas_request_size_bytes":            "Request payload size in bytes",
-		"quicbaas_concurrent_requests":           "Number of requests currently being processed",
-		"quicbaas_transaction_duration_seconds":  "Transaction execution time",
-		"quicbaas_transaction_operations":        "Number of operations per transaction",
-		"quicbaas_transaction_conflicts_total":   "Number of transaction conflicts (optimistic locking failures)",
-		"quicbaas_raft_proposal_latency_seconds": "Time from proposal to commit by shard",
-		"quicbaas_raft_snapshot_size_bytes":      "Current snapshot size by shard",
+	help := make(map[string]string)
+	for _, mf := range metricFamilies {
+		help[mf.GetName()] = mf.GetHelp()
 	}
 
-	for _, mf := range metricFamilies {
-		name := mf.GetName()
-		if expectedHelp[name] != "" {
-			assert.Equal(t, expectedHelp[name], mf.GetHelp(),
-				"Help text for %s should match", name)
-		}
+	// An empty want leaves the help text unchecked.
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "quicbaas_request_duration_seconds", want: "Request latency by operation and status"},
+		{name: "quicbaas_request_size_bytes", want: "Request payload size in bytes"},
+		{name: "quicbaas_concurrent_requests", want: "Number of requests currently being processed"},
+		{name: "quicbaas_transaction_duration_seconds", want: "Transaction execution time"},
+		{name: "quicbaas_transaction_operations", want: "Number of operations per transaction"},
+		{name: "quicbaas_transaction_conflicts_total", want: "Number of transaction conflicts (optimistic locking failures)"},
+		{name: "quicbaas_raft_proposal_latency_seconds", want: "Time from proposal to commit by shard"},
+		{name: "quicbaas_raft_snapshot_size_bytes", want: "Current snapshot size by shard"},
+		{name: "quicbaas_vector_operations_total"},
+		{name: "quicbaas_vector_operation_duration_seconds"},
+		{name: "quicbaas_vector_storage_bytes"},
+		{name: "quicbaas_vector_count"},
+		{name: "quicbaas_vector_search_latency_seconds"},
+		{name: "quicbaas_vector_batch_size"},
+		{name: "quicbaas_vector_quota_usage_ratio"},
+		{name: "quicbaas_vector_namespace_count"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := help[tt.name]
+			require.True(t, ok, "Metric %s should be registered", tt.name)
+			if tt.want != "" {
+				assert.Equal(t, tt.want, got)
+			}
+		})
 	}
 }
 
@@ -560,36 +471,6 @@ func histogramSampleCount(t *testing.T, family string) float64 {
 	return float64(count)
 }
 
-func TestMetricsExport(t *testing.T) {
-	// Reset metrics before test
-	Reset()
-
-	m := InitMetrics()
-
-	// Record various metrics
-	m.RecordRequestDuration("get", "success", 0.005)
-	m.RecordRequestSize("put", 1024)
-	m.IncrementConcurrentRequests()
-	m.RecordTransactionDuration(0.1)
-	m.RecordTransactionSize(5)
-	m.IncrementTransactionConflicts()
-	m.RecordRaftProposalLatency("1", 0.002)
-	m.SetRaftSnapshotSize("1", 2048)
-
-	// Gather all metrics
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-	assert.NotEmpty(t, metricFamilies, "Should have metric families")
-
-	// Verify we can export metrics (basic smoke test)
-	for _, mf := range metricFamilies {
-		assert.NotEmpty(t, mf.GetName(), "Metric should have a name")
-		if strings.HasPrefix(mf.GetName(), "quicbaas_") {
-			assert.NotEmpty(t, mf.GetMetric(), "QuicBaaS metric should have values")
-		}
-	}
-}
-
 func BenchmarkRecordRequestDuration(b *testing.B) {
 	Reset()
 	m := InitMetrics()
@@ -634,21 +515,6 @@ func BenchmarkRecordRaftMetrics(b *testing.B) {
 }
 
 // Vector multi-tenant metrics tests
-
-func TestVectorMetricsInitialization(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Verify all vector metrics are initialized
-	assert.NotNil(t, m.VectorOperationsTotal, "VectorOperationsTotal should be initialized")
-	assert.NotNil(t, m.VectorOperationDuration, "VectorOperationDuration should be initialized")
-	assert.NotNil(t, m.VectorStorageBytes, "VectorStorageBytes should be initialized")
-	assert.NotNil(t, m.VectorCount, "VectorCount should be initialized")
-	assert.NotNil(t, m.VectorSearchLatency, "VectorSearchLatency should be initialized")
-	assert.NotNil(t, m.VectorBatchSize, "VectorBatchSize should be initialized")
-	assert.NotNil(t, m.VectorQuotaUsage, "VectorQuotaUsage should be initialized")
-	assert.NotNil(t, m.VectorNamespaceCount, "VectorNamespaceCount should be initialized")
-}
 
 func TestRecordVectorOperation(t *testing.T) {
 	Reset()
@@ -1043,49 +909,6 @@ func TestVectorMetricsMultiTenant(t *testing.T) {
 	}
 }
 
-func TestVectorMetricsRegistration(t *testing.T) {
-	Reset()
-	m := InitMetrics()
-
-	// Record some vector metrics
-	m.RecordVectorOperation("tenant-1", "embeddings", "upsert", "success")
-	m.RecordVectorOperationDuration("tenant-1", "embeddings", "upsert", 0.01)
-	m.SetVectorStorageBytes("tenant-1", "embeddings", 1048576)
-	m.SetVectorCount("tenant-1", "embeddings", 1000)
-	m.RecordVectorSearchLatency("tenant-1", "embeddings", "similarity", 0.005)
-	m.RecordVectorBatchSize("tenant-1", "embeddings", "upsert", 100)
-	m.SetVectorQuotaUsage("tenant-1", "embeddings", "vectors", 0.5)
-	m.SetVectorNamespaceCount("tenant-1", 5)
-
-	// Gather metrics from registry
-	metricFamilies, err := Registry.Gather()
-	require.NoError(t, err, "Should be able to gather metrics")
-
-	// Expected vector metrics
-	expectedVectorMetrics := []string{
-		"quicbaas_vector_operations_total",
-		"quicbaas_vector_operation_duration_seconds",
-		"quicbaas_vector_storage_bytes",
-		"quicbaas_vector_count",
-		"quicbaas_vector_search_latency_seconds",
-		"quicbaas_vector_batch_size",
-		"quicbaas_vector_quota_usage_ratio",
-		"quicbaas_vector_namespace_count",
-	}
-
-	// Build map of registered metric names
-	registeredMetrics := make(map[string]bool)
-	for _, mf := range metricFamilies {
-		registeredMetrics[mf.GetName()] = true
-	}
-
-	// Verify all expected vector metrics are registered
-	for _, expected := range expectedVectorMetrics {
-		assert.True(t, registeredMetrics[expected],
-			"Vector metric %s should be registered", expected)
-	}
-}
-
 func BenchmarkRecordVectorOperation(b *testing.B) {
 	Reset()
 	m := InitMetrics()
@@ -1311,5 +1134,3 @@ func TestCollector_NoMetricsRegistered(t *testing.T) {
 		assert.NotContains(t, name, "quicbaas_", "Should not have QuicBaaS metrics yet")
 	}
 }
-
-// TestConcurrency_MixedOperations tests concurrent mixed operations.
