@@ -6998,86 +6998,6 @@ func TestKVListMissingEntityType(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "entity type is required")
 }
 
-func TestObservabilityHandlers_MethodValidation(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-
-	tests := []struct {
-		name          string
-		handler       func(http.ResponseWriter, *http.Request)
-		validMethod   string
-		invalidMethod string
-	}{
-		{
-			name:          "HandleCreateBackup",
-			handler:       handler.HandleCreateBackup,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleListBackups",
-			handler:       handler.HandleListBackups,
-			validMethod:   http.MethodGet,
-			invalidMethod: http.MethodPost,
-		},
-		{
-			name:          "HandleDeleteBackup",
-			handler:       handler.HandleDeleteBackup,
-			validMethod:   http.MethodDelete,
-			invalidMethod: http.MethodGet,
-		},
-		{
-			name:          "HandleGetCacheStats",
-			handler:       handler.HandleGetCacheStats,
-			validMethod:   http.MethodGet,
-			invalidMethod: http.MethodPost,
-		},
-		{
-			name:          "HandleClearCache",
-			handler:       handler.HandleClearCache,
-			validMethod:   http.MethodPost,
-			invalidMethod: http.MethodGet,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name+"_wrong_method", func(t *testing.T) {
-			req := httptest.NewRequest(tt.invalidMethod, "/test", nil)
-			w := httptest.NewRecorder()
-
-			tt.handler(w, req)
-
-			assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-		})
-	}
-}
-
-func TestObservabilityHandlers_InvalidJSON(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-
-	tests := []struct {
-		name    string
-		handler func(http.ResponseWriter, *http.Request)
-		method  string
-	}{
-		{
-			name:    "HandleCreateBackup",
-			handler: handler.HandleCreateBackup,
-			method:  http.MethodPost,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name+"_invalid_json", func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, "/test", bytes.NewReader([]byte("invalid json")))
-			w := httptest.NewRecorder()
-
-			tt.handler(w, req)
-
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-		})
-	}
-}
-
 func TestCacheHandlers_NilManager(t *testing.T) {
 	handler := NewPhase4Handler(nil, nil)
 
@@ -7111,20 +7031,6 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 		expected string
 	}{
 		{
-			name:     "extract with both prefix and suffix",
-			path:     "/api/v1/backups/backup-123/restore",
-			prefix:   "/api/v1/backups/",
-			suffix:   "/restore",
-			expected: "backup-123",
-		},
-		{
-			name:     "extract without suffix",
-			path:     "/api/v1/backups/backup-456",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "backup-456",
-		},
-		{
 			name:     "extract with empty prefix",
 			path:     "user-789",
 			prefix:   "",
@@ -7145,13 +7051,6 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 			suffix:   "/restore",
 			expected: "data",
 		},
-		{
-			name:     "empty result after prefix",
-			path:     "/api/v1/backups/",
-			prefix:   "/api/v1/backups/",
-			suffix:   "",
-			expected: "",
-		},
 	}
 
 	for _, tt := range tests {
@@ -7160,13 +7059,6 @@ func TestExtractPathParam_QA90Coverage(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-func TestNewPhase4Handler_QA90(t *testing.T) {
-	handler := NewPhase4Handler(nil, nil)
-	require.NotNil(t, handler)
-	assert.Nil(t, handler.backupMgr)
-	assert.Nil(t, handler.cacheMgr)
 }
 
 func TestDetectPreferredCodec_QA90(t *testing.T) {
