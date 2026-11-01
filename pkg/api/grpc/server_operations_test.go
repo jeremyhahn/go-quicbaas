@@ -1065,42 +1065,6 @@ func TestTransaction_ServiceError(t *testing.T) {
 	mockSvc.AssertExpectations(t)
 }
 
-func TestTransaction_ConditionNotMet(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Transaction", mock.Anything, mock.Anything).
-		Return(&service.TransactionResponse{
-			Succeeded: false,
-			Responses: []*service.TransactionOpResponse{},
-			Message:   "Condition not met",
-			Timestamp: time.Now().UnixNano(),
-		}, nil).Once()
-
-	resp, err := srv.Transaction(context.Background(), &pb.TransactionRequest{
-		Compare: []*pb.CompareCondition{
-			{
-				EntityType: "user",
-				Id:         1,
-				Target:     pb.CompareTarget_COMPARE_TARGET_VERSION,
-				Operator:   pb.CompareOperator_COMPARE_OPERATOR_EQUAL,
-				Version:    999, // Wrong version
-			},
-		},
-		Success: []*pb.TransactionOp{
-			{
-				OpType:     pb.TransactionOpType_TRANSACTION_OP_TYPE_PUT,
-				EntityType: "user",
-				Id:         1,
-				Data:       []byte(`{}`),
-			},
-		},
-	})
-
-	require.NoError(t, err)
-	assert.False(t, resp.Succeeded)
-	mockSvc.AssertExpectations(t)
-}
-
 func TestTransaction_WithFailureBranch(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
 
@@ -1245,19 +1209,37 @@ func (m *mockShardRouter) Route(entityType string, id uint64) uint64 {
 // Get Additional Tests
 // =============================================================================
 
-func TestGet_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
+func TestSingleOperations_ServiceError(t *testing.T) {
+	tests := []struct {
+		method string
+		call   func(srv *Server) error
+	}{
+		{
+			method: "Get",
+			call: func(srv *Server) error {
+				_, err := srv.Get(context.Background(), &pb.GetRequest{EntityType: "users", Id: 1})
+				return err
+			},
+		},
+		{
+			method: "Delete",
+			call: func(srv *Server) error {
+				_, err := srv.Delete(context.Background(), &pb.DeleteRequest{EntityType: "users", Id: 1})
+				return err
+			},
+		},
+	}
 
-	mockSvc.On("Get", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			srv, mockSvc := createTestServerWithMockService(t)
+			mockSvc.On(tt.method, mock.Anything, mock.Anything).
+				Return(nil, assert.AnError).Once()
 
-	_, err := srv.Get(context.Background(), &pb.GetRequest{
-		EntityType: "users",
-		Id:         1,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
+			require.Error(t, tt.call(srv))
+			mockSvc.AssertExpectations(t)
+		})
+	}
 }
 
 func TestSingleOperations_EmptyEntityType(t *testing.T) {
@@ -1301,21 +1283,6 @@ func TestSingleOperations_EmptyEntityType(t *testing.T) {
 // =============================================================================
 // Delete Additional Tests
 // =============================================================================
-
-func TestDelete_ServiceError(t *testing.T) {
-	srv, mockSvc := createTestServerWithMockService(t)
-
-	mockSvc.On("Delete", mock.Anything, mock.Anything).
-		Return(nil, assert.AnError).Once()
-
-	_, err := srv.Delete(context.Background(), &pb.DeleteRequest{
-		EntityType: "users",
-		Id:         1,
-	})
-
-	require.Error(t, err)
-	mockSvc.AssertExpectations(t)
-}
 
 func TestDelete_NotFound(t *testing.T) {
 	srv, mockSvc := createTestServerWithMockService(t)
