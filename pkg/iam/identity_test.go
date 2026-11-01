@@ -1113,50 +1113,44 @@ func TestIdentityStore_InvalidIDs(t *testing.T) {
 
 // Test GetUserRoles - low coverage
 
-func TestGetUserRoles_EmptyRoles(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	roles, err := store.GetUserRoles(ctx, "tenant1", user.ID)
-	if err != nil {
-		t.Fatalf("GetUserRoles failed: %v", err)
-	}
-
-	if len(roles) != 0 {
-		t.Errorf("Expected 0 roles, got %d", len(roles))
-	}
-}
-
 func TestGetUserRoles_MultipleRoles(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
-	user, _ := store.CreateUser(ctx, "tenant1", CreateUserOptions{
+	user, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
 		Email:    "test@example.com",
 		Username: "testuser",
 	})
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
 
-	// Assign multiple roles
+	assertRoleCount := func(want int) {
+		t.Helper()
+		roles, err := store.GetUserRoles(ctx, "tenant1", user.ID)
+		if err != nil {
+			t.Fatalf("GetUserRoles failed: %v", err)
+		}
+		if len(roles) != want {
+			t.Errorf("Expected %d roles, got %d", want, len(roles))
+		}
+	}
+
+	// A new user has no roles.
+	assertRoleCount(0)
+
 	for i := 0; i < 3; i++ {
-		role, _ := store.CreateRole(ctx, "tenant1", CreateRoleOptions{
+		role, err := store.CreateRole(ctx, "tenant1", CreateRoleOptions{
 			Name: fmt.Sprintf("Role %d", i),
 		})
-		_ = store.AssignRole(ctx, "tenant1", user.ID, role.ID)
+		if err != nil {
+			t.Fatalf("CreateRole %d failed: %v", i, err)
+		}
+		if err := store.AssignRole(ctx, "tenant1", user.ID, role.ID); err != nil {
+			t.Fatalf("AssignRole %d failed: %v", i, err)
+		}
 	}
-
-	roles, err := store.GetUserRoles(ctx, "tenant1", user.ID)
-	if err != nil {
-		t.Fatalf("GetUserRoles failed: %v", err)
-	}
-
-	if len(roles) != 3 {
-		t.Errorf("Expected 3 roles, got %d", len(roles))
-	}
+	assertRoleCount(3)
 }
 
 func TestGetUserRoles_UserNotFound(t *testing.T) {
