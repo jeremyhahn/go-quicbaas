@@ -686,106 +686,46 @@ func TestPartitionDetector_CheckPeerReachability(t *testing.T) {
 	assert.False(t, reachability[3], "node 3 at unreachable address must not be reachable")
 }
 
-// TestPartitionDetector_PingPeer_Reachable tests that pingPeer returns true and
-// a positive RTT when the peer's health endpoint returns HTTP 200.
-func TestPartitionDetector_PingPeer_Reachable(t *testing.T) {
-	srv := newHealthServer(t, http.StatusOK)
-
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		Peers: map[uint64]string{
-			2: serverHostPort(srv),
-		},
-		HealthCheckTimeout: 2 * time.Second,
-		ClusterCA:          caPoolFromServer(srv),
+// TestPartitionDetector_PingPeer tests that pingPeer treats a 2xx response
+// and an HTTP 503 (sealed/not-ready qrdb node, process alive) as reachable,
+// and a refused connection or any other status as unreachable. The RTT is
+// positive even for failed probes.
+func TestPartitionDetector_PingPeer(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int // 0 means no server: the address refuses connections
+		want   bool
+	}{
+		{"reachable", http.StatusOK, true},
+		{"sealed", http.StatusServiceUnavailable, true},
+		{"unreachable", 0, false},
+		{"unhealthy status", http.StatusInternalServerError, false},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRaft := newMockRaftNode()
+			mockRaft.setLeader(1, 1)
 
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
+			config := &PartitionConfig{
+				Peers:              map[uint64]string{2: unreachableAddr},
+				HealthCheckTimeout: 500 * time.Millisecond,
+			}
+			if tt.status != 0 {
+				srv := newHealthServer(t, tt.status)
+				config.Peers[2] = serverHostPort(srv)
+				config.HealthCheckTimeout = 2 * time.Second
+				config.ClusterCA = caPoolFromServer(srv)
+			}
 
-	ctx := context.Background()
-	reachable, rtt := pd.pingPeer(ctx, pd.peers[2])
+			pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
+			require.NoError(t, err)
 
-	assert.True(t, reachable, "peer responding with 200 must be reachable")
-	assert.Greater(t, rtt, time.Duration(0), "RTT must be positive")
-}
+			reachable, rtt := pd.pingPeer(context.Background(), pd.peers[2])
 
-// TestPartitionDetector_PingPeer_Sealed tests that pingPeer treats an HTTP 503
-// response (sealed/not-ready qrdb node) as reachable — the process is alive
-// even if the barrier is not yet unsealed.
-func TestPartitionDetector_PingPeer_Sealed(t *testing.T) {
-	srv := newHealthServer(t, http.StatusServiceUnavailable)
-
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		Peers: map[uint64]string{
-			2: serverHostPort(srv),
-		},
-		HealthCheckTimeout: 2 * time.Second,
-		ClusterCA:          caPoolFromServer(srv),
+			assert.Equal(t, tt.want, reachable)
+			assert.Greater(t, rtt, time.Duration(0), "RTT must be positive")
+		})
 	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	reachable, rtt := pd.pingPeer(ctx, pd.peers[2])
-
-	assert.True(t, reachable, "peer responding with 503 (sealed) must still be considered reachable")
-	assert.Greater(t, rtt, time.Duration(0))
-}
-
-// TestPartitionDetector_PingPeer_Unreachable tests that pingPeer returns false
-// and a non-zero RTT when the peer address refuses connections.
-func TestPartitionDetector_PingPeer_Unreachable(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		Peers: map[uint64]string{
-			2: unreachableAddr,
-		},
-		HealthCheckTimeout: 500 * time.Millisecond,
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	reachable, rtt := pd.pingPeer(ctx, pd.peers[2])
-
-	assert.False(t, reachable, "peer at unreachable address must not be reachable")
-	assert.Greater(t, rtt, time.Duration(0), "RTT must be positive even for failed probes")
-}
-
-// TestPartitionDetector_PingPeer_UnhealthyStatus tests that pingPeer returns
-// false when the peer returns a non-2xx, non-503 HTTP status.
-func TestPartitionDetector_PingPeer_UnhealthyStatus(t *testing.T) {
-	srv := newHealthServer(t, http.StatusInternalServerError)
-
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		Peers: map[uint64]string{
-			2: serverHostPort(srv),
-		},
-		HealthCheckTimeout: 2 * time.Second,
-		ClusterCA:          caPoolFromServer(srv),
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	reachable, rtt := pd.pingPeer(ctx, pd.peers[2])
-
-	assert.False(t, reachable, "peer returning 500 must not be considered reachable")
-	assert.Greater(t, rtt, time.Duration(0))
 }
 
 // TestPartitionDetector_IsPartitioned tests partition detection logic.
@@ -842,8 +782,9 @@ func TestPartitionDetector_IsPartitioned(t *testing.T) {
 	}
 }
 
-// TestPartitionDetector_FindMajorityPartition tests majority partition identification.
-func TestPartitionDetector_FindMajorityPartition(t *testing.T) {
+// TestPartitionDetector_FindPartitions tests that the majority partition holds
+// the reachable peers and the minority partition the unreachable ones.
+func TestPartitionDetector_FindPartitions(t *testing.T) {
 	mockRaft := newMockRaftNode()
 	mockRaft.setLeader(1, 1)
 
@@ -862,34 +803,8 @@ func TestPartitionDetector_FindMajorityPartition(t *testing.T) {
 		3: false,
 	}
 
-	majority := pd.findMajorityPartition(reachability)
-	assert.Len(t, majority, 1)
-	assert.Contains(t, majority, uint64(2))
-}
-
-// TestPartitionDetector_FindMinorityPartition tests minority partition identification.
-func TestPartitionDetector_FindMinorityPartition(t *testing.T) {
-	mockRaft := newMockRaftNode()
-	mockRaft.setLeader(1, 1)
-
-	config := &PartitionConfig{
-		Peers: map[uint64]string{
-			2: "node2:8001",
-			3: "node3:8001",
-		},
-	}
-
-	pd, err := NewPartitionDetector(mockRaft, config, newMockLogger())
-	require.NoError(t, err)
-
-	reachability := map[uint64]bool{
-		2: true,
-		3: false,
-	}
-
-	minority := pd.findMinorityPartition(reachability)
-	assert.Len(t, minority, 1)
-	assert.Contains(t, minority, uint64(3))
+	assert.ElementsMatch(t, []uint64{2}, pd.findMajorityPartition(reachability))
+	assert.ElementsMatch(t, []uint64{3}, pd.findMinorityPartition(reachability))
 }
 
 // TestPartitionDetector_IsInMinority tests minority detection.
@@ -1079,30 +994,23 @@ func TestPartitionDetector_ConcurrentAccess(t *testing.T) {
 // healthURL unit tests
 // ----------------------------------------------------------------------------
 
-// TestHealthURL_BareHostPort verifies that a bare "host:port" address is
-// prefixed with "https://" and the /health path is appended.
-func TestHealthURL_BareHostPort(t *testing.T) {
-	got := healthURL("192.168.1.10:8443")
-	assert.Equal(t, "https://192.168.1.10:8443/health", got)
-}
-
-// TestHealthURL_AlreadyHTTPS verifies that an address with an "https://"
-// prefix is not double-prefixed.
-func TestHealthURL_AlreadyHTTPS(t *testing.T) {
-	got := healthURL("https://node2.cluster.local:8443")
-	assert.Equal(t, "https://node2.cluster.local:8443/health", got)
-}
-
-// TestHealthURL_AlreadyHTTP verifies that an address with an "http://"
-// prefix is preserved as-is (useful in dev/test environments without TLS).
-func TestHealthURL_AlreadyHTTP(t *testing.T) {
-	got := healthURL("http://127.0.0.1:8080")
-	assert.Equal(t, "http://127.0.0.1:8080/health", got)
-}
-
-// TestHealthURL_TrailingSlash verifies that a trailing slash in an explicit
-// scheme URL is trimmed before /health is appended, avoiding double slashes.
-func TestHealthURL_TrailingSlash(t *testing.T) {
-	got := healthURL("https://node3.cluster.local:8443/")
-	assert.Equal(t, "https://node3.cluster.local:8443/health", got)
+// TestHealthURL verifies the health probe URL built from a peer address: a
+// bare host:port gets "https://", an explicit scheme is kept, and a trailing
+// slash is trimmed before /health is appended.
+func TestHealthURL(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{"bare host port", "192.168.1.10:8443", "https://192.168.1.10:8443/health"},
+		{"already https", "https://node2.cluster.local:8443", "https://node2.cluster.local:8443/health"},
+		{"already http", "http://127.0.0.1:8080", "http://127.0.0.1:8080/health"},
+		{"trailing slash", "https://node3.cluster.local:8443/", "https://node3.cluster.local:8443/health"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, healthURL(tt.addr))
+		})
+	}
 }
