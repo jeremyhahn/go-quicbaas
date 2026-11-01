@@ -24,20 +24,46 @@ import (
 // host_affinity.go — strict-bit & resolve-error-holder context plumbing
 // =============================================================================
 
-func TestWithHostAffinityStrict_RoundTrip(t *testing.T) {
-	ctx := WithHostAffinityStrict(context.Background())
-	if !HostAffinityStrictFromContext(ctx) {
-		t.Fatal("strict bit should be set after WithHostAffinityStrict")
-	}
-}
+// TestContextValues checks each context helper of the package: the value a
+// With* helper stamps is the value its reader returns, and an unset or nil
+// context reads as the zero value (or, for the session creator, the tenant).
+func TestContextValues(t *testing.T) {
+	var nilCtx context.Context
+	bg := context.Background()
+	strict := func(ctx context.Context) any { return HostAffinityStrictFromContext(ctx) }
+	gpu := func(ctx context.Context) any { return GpuRequiredFromContext(ctx) }
+	host := func(ctx context.Context) any { return HostAffinityFromContext(ctx) }
+	creator := func(ctx context.Context) any { return sessionCreator(ctx) }
 
-func TestHostAffinityStrictFromContext_DefaultsFalse(t *testing.T) {
-	// nil context and an unset context both report false.
-	if HostAffinityStrictFromContext(nil) {
-		t.Fatal("nil context must report false")
+	tests := []struct {
+		name string
+		ctx  context.Context
+		get  func(context.Context) any
+		want any
+	}{
+		{"host affinity strict set", WithHostAffinityStrict(bg), strict, true},
+		{"host affinity strict unset", bg, strict, false},
+		{"host affinity strict nil context", nilCtx, strict, false},
+		{"gpu required set", WithGpuRequired(bg), gpu, true},
+		{"gpu required unset", bg, gpu, false},
+		{"gpu required nil context", nilCtx, gpu, false},
+		{"host affinity set", WithHostAffinity(bg, "host-7"), host, "host-7"},
+		{"host affinity empty host ignored", WithHostAffinity(bg, ""), host, ""},
+		{"host affinity nil context", nilCtx, host, ""},
+		{"session creator set", WithSessionCreator(bg, "operator-42"), creator, "operator-42"},
+		{
+			"session creator empty falls back to tenant",
+			WithSessionCreator(ContextWithTenant(bg, "tenant-abc"), ""),
+			creator,
+			"tenant-abc",
+		},
 	}
-	if HostAffinityStrictFromContext(context.Background()) {
-		t.Fatal("unset context must report false")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.get(tt.ctx); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -107,63 +133,6 @@ func TestStashResolveError(t *testing.T) {
 
 	// No holder on the context: must be a silent no-op (no panic).
 	StashResolveError(context.Background(), errors.New("dropped"))
-}
-
-// =============================================================================
-// orchestrator.go — GPU-required context plumbing
-// =============================================================================
-
-func TestWithGpuRequired_RoundTrip(t *testing.T) {
-	ctx := WithGpuRequired(context.Background())
-	if !GpuRequiredFromContext(ctx) {
-		t.Fatal("GPU bit should be set after WithGpuRequired")
-	}
-}
-
-func TestGpuRequiredFromContext_DefaultsFalse(t *testing.T) {
-	if GpuRequiredFromContext(nil) {
-		t.Fatal("nil context must report false")
-	}
-	if GpuRequiredFromContext(context.Background()) {
-		t.Fatal("unset context must report false")
-	}
-}
-
-func TestHostAffinityFromContext_EmptyAndNil(t *testing.T) {
-	if HostAffinityFromContext(nil) != "" {
-		t.Fatal("nil context must yield empty host affinity")
-	}
-	// WithHostAffinity ignores empty host, so the context stays unset.
-	if HostAffinityFromContext(WithHostAffinity(context.Background(), "")) != "" {
-		t.Fatal("empty host affinity must round-trip to empty")
-	}
-	if got := HostAffinityFromContext(WithHostAffinity(context.Background(), "host-7")); got != "host-7" {
-		t.Fatalf("expected host-7, got %q", got)
-	}
-}
-
-// =============================================================================
-// orchestrator.go — session creator context helper
-// =============================================================================
-
-func TestWithSessionCreator_RoundTrip(t *testing.T) {
-	ctx := WithSessionCreator(context.Background(), "operator-42")
-	if got := sessionCreator(ctx); got != "operator-42" {
-		t.Fatalf("expected operator-42, got %q", got)
-	}
-}
-
-func TestWithSessionCreator_EmptyFallsBackToTenant(t *testing.T) {
-	// Empty operator ID leaves the context unchanged.
-	base := context.Background()
-	if WithSessionCreator(base, "") != base {
-		t.Fatal("empty operator ID must return the original context")
-	}
-	// sessionCreator falls back to the tenant when no creator is stamped.
-	ctx := ContextWithTenant(context.Background(), "tenant-abc")
-	if got := sessionCreator(ctx); got != "tenant-abc" {
-		t.Fatalf("expected tenant fallback tenant-abc, got %q", got)
-	}
 }
 
 // =============================================================================
