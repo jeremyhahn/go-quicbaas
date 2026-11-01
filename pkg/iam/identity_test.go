@@ -898,42 +898,6 @@ func TestGetRole_NotFound(t *testing.T) {
 	}
 }
 
-func TestGetRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetRole(ctx, "", "role-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "tenant_id" {
-		t.Errorf("Expected field 'tenant_id', got %s", valErr.Field)
-	}
-}
-
-func TestGetRole_InvalidRoleID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetRole(ctx, "tenant1", "")
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "role_id" {
-		t.Errorf("Expected field 'role_id', got %s", valErr.Field)
-	}
-}
-
 // Test ListRoles - 0% coverage
 func TestListRoles_Success(t *testing.T) {
 	store := newTestIdentityStore()
@@ -972,24 +936,6 @@ func TestListRoles_EmptyList(t *testing.T) {
 
 	if len(roles) != 0 {
 		t.Errorf("Expected 0 roles, got %d", len(roles))
-	}
-}
-
-func TestListRoles_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.ListRoles(ctx, "", ListOptions{})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-	if valErr.Field != "tenant_id" {
-		t.Errorf("Expected field 'tenant_id', got %s", valErr.Field)
 	}
 }
 
@@ -1089,6 +1035,115 @@ func assertFieldValidation(t *testing.T, err error, wantErr bool, field string) 
 	}
 }
 
+// TestIdentityStore_InvalidIDs checks that every public method taking a
+// tenant, user or role ID rejects an empty or zero ID with a ValidationError
+// naming that field, before touching storage.
+func TestIdentityStore_InvalidIDs(t *testing.T) {
+	newEmail := "test@example.com"
+	newName := "New Name"
+	createUser := CreateUserOptions{Email: "test@example.com", Username: "testuser"}
+
+	tests := []struct {
+		name      string
+		call      func(ctx context.Context, store *IdentityStore) error
+		wantField string
+	}{
+		{"CreateUser tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.CreateUser(ctx, "", createUser)
+			return err
+		}, "tenant_id"},
+		{"GetUser tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetUser(ctx, "", 40001)
+			return err
+		}, "tenant_id"},
+		{"GetUser user", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetUser(ctx, "tenant1", 0)
+			return err
+		}, "user_id"},
+		{"UpdateUser tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.UpdateUser(ctx, "", 40001, UpdateUserOptions{Email: &newEmail})
+			return err
+		}, "tenant_id"},
+		{"UpdateUser user", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.UpdateUser(ctx, "tenant1", 0, UpdateUserOptions{Email: &newEmail})
+			return err
+		}, "user_id"},
+		{"DeleteUser tenant", func(ctx context.Context, s *IdentityStore) error {
+			return s.DeleteUser(ctx, "", 40001)
+		}, "tenant_id"},
+		{"DeleteUser user", func(ctx context.Context, s *IdentityStore) error {
+			return s.DeleteUser(ctx, "tenant1", 0)
+		}, "user_id"},
+		{"ListUsers tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.ListUsers(ctx, "", ListOptions{})
+			return err
+		}, "tenant_id"},
+		{"CreateRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.CreateRole(ctx, "", CreateRoleOptions{Name: "Test Role"})
+			return err
+		}, "tenant_id"},
+		{"GetRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetRole(ctx, "", "role-id")
+			return err
+		}, "tenant_id"},
+		{"GetRole role", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetRole(ctx, "tenant1", "")
+			return err
+		}, "role_id"},
+		{"UpdateRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.UpdateRole(ctx, "", "role-id", UpdateRoleOptions{Name: &newName})
+			return err
+		}, "tenant_id"},
+		{"UpdateRole role", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.UpdateRole(ctx, "tenant1", "", UpdateRoleOptions{Name: &newName})
+			return err
+		}, "role_id"},
+		{"DeleteRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			return s.DeleteRole(ctx, "", "role-id")
+		}, "tenant_id"},
+		{"DeleteRole role", func(ctx context.Context, s *IdentityStore) error {
+			return s.DeleteRole(ctx, "tenant1", "")
+		}, "role_id"},
+		{"ListRoles tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.ListRoles(ctx, "", ListOptions{})
+			return err
+		}, "tenant_id"},
+		{"AssignRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			return s.AssignRole(ctx, "", 40001, "role-id")
+		}, "tenant_id"},
+		{"AssignRole user", func(ctx context.Context, s *IdentityStore) error {
+			return s.AssignRole(ctx, "tenant1", 0, "role-id")
+		}, "user_id"},
+		{"AssignRole role", func(ctx context.Context, s *IdentityStore) error {
+			return s.AssignRole(ctx, "tenant1", 40001, "")
+		}, "role_id"},
+		{"RevokeRole tenant", func(ctx context.Context, s *IdentityStore) error {
+			return s.RevokeRole(ctx, "", 40001, "role-id")
+		}, "tenant_id"},
+		{"RevokeRole user", func(ctx context.Context, s *IdentityStore) error {
+			return s.RevokeRole(ctx, "tenant1", 0, "role-id")
+		}, "user_id"},
+		{"RevokeRole role", func(ctx context.Context, s *IdentityStore) error {
+			return s.RevokeRole(ctx, "tenant1", 40001, "")
+		}, "role_id"},
+		{"GetUserRoles tenant", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetUserRoles(ctx, "", 40001)
+			return err
+		}, "tenant_id"},
+		{"GetUserRoles user", func(ctx context.Context, s *IdentityStore) error {
+			_, err := s.GetUserRoles(ctx, "tenant1", 0)
+			return err
+		}, "user_id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call(context.Background(), newTestIdentityStore())
+			assertFieldValidation(t, err, true, tt.wantField)
+		})
+	}
+}
+
 // Test GetUserRoles - low coverage
 
 func TestGetUserRoles_EmptyRoles(t *testing.T) {
@@ -1134,36 +1189,6 @@ func TestGetUserRoles_MultipleRoles(t *testing.T) {
 
 	if len(roles) != 3 {
 		t.Errorf("Expected 3 roles, got %d", len(roles))
-	}
-}
-
-func TestGetUserRoles_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetUserRoles(ctx, "", 40001)
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetUserRoles_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetUserRoles(ctx, "tenant1", 0)
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
 	}
 }
 
@@ -1245,101 +1270,6 @@ func TestCreateUser_InvalidUsername(t *testing.T) {
 				t.Errorf("Expected ValidationError, got %T", err)
 			}
 		})
-	}
-}
-
-func TestCreateUser_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	opts := CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	}
-
-	_, err := store.CreateUser(ctx, "", opts)
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetUser_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetUser(ctx, "", 40001)
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestGetUser_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.GetUser(ctx, "tenant1", 0)
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestDeleteUser_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteUser(ctx, "", 40001)
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestDeleteUser_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteUser(ctx, "tenant1", 0)
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestListUsers_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.ListUsers(ctx, "", ListOptions{})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
 	}
 }
 
@@ -1533,42 +1463,6 @@ func TestGetUserByEmail_EmailNormalization(t *testing.T) {
 // UpdateUser Tests - Currently 77.4%
 // ============================================================================
 
-func TestUpdateUser_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newEmail := "test@example.com"
-	_, err := store.UpdateUser(ctx, "", 40001, UpdateUserOptions{
-		Email: &newEmail,
-	})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestUpdateUser_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newEmail := "test@example.com"
-	_, err := store.UpdateUser(ctx, "tenant1", 0, UpdateUserOptions{
-		Email: &newEmail,
-	})
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
 func TestUpdateUser_UserNotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -1693,23 +1587,6 @@ func TestListUsers_StorageError(t *testing.T) {
 // CreateRole Tests - Currently 71.4%
 // ============================================================================
 
-func TestCreateRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	_, err := store.CreateRole(ctx, "", CreateRoleOptions{
-		Name: "Test Role",
-	})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
 func TestCreateRole_EmptyName(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -1789,42 +1666,6 @@ func TestCreateRole_NilPermissions(t *testing.T) {
 // UpdateRole Tests - Currently 70.0%
 // ============================================================================
 
-func TestUpdateRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newName := "New Name"
-	_, err := store.UpdateRole(ctx, "", "role-id", UpdateRoleOptions{
-		Name: &newName,
-	})
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestUpdateRole_InvalidRoleID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	newName := "New Name"
-	_, err := store.UpdateRole(ctx, "tenant1", "", UpdateRoleOptions{
-		Name: &newName,
-	})
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
 func TestUpdateRole_NotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -1891,36 +1732,6 @@ func TestUpdateRole_StorageError(t *testing.T) {
 // ============================================================================
 // DeleteRole Tests - Currently 73.9%
 // ============================================================================
-
-func TestDeleteRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteRole(ctx, "", "role-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestDeleteRole_InvalidRoleID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.DeleteRole(ctx, "tenant1", "")
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
 
 func TestDeleteRole_ListUsersError(t *testing.T) {
 	failingUserStorage := &mockUserStorageWithFailure{
@@ -2030,51 +1841,6 @@ func TestListRoles_StorageError(t *testing.T) {
 // AssignRole Tests - Currently 68.4%
 // ============================================================================
 
-func TestAssignRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AssignRole(ctx, "", 40001, "role-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestAssignRole_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AssignRole(ctx, "tenant1", 0, "role-id")
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestAssignRole_InvalidRoleID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.AssignRole(ctx, "tenant1", 40001, "")
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
 func TestAssignRole_UserNotFound(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
@@ -2138,51 +1904,6 @@ func TestAssignRole_UpdateError(t *testing.T) {
 // ============================================================================
 // RevokeRole Tests - Currently 72.7%
 // ============================================================================
-
-func TestRevokeRole_InvalidTenantID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RevokeRole(ctx, "", 40001, "role-id")
-	if err == nil {
-		t.Error("Expected error for empty tenant ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestRevokeRole_InvalidUserID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RevokeRole(ctx, "tenant1", 0, "role-id")
-	if err == nil {
-		t.Error("Expected error for empty user ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
-
-func TestRevokeRole_InvalidRoleID(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	err := store.RevokeRole(ctx, "tenant1", 40001, "")
-	if err == nil {
-		t.Error("Expected error for empty role ID")
-	}
-
-	var valErr *ValidationError
-	if !errors.As(err, &valErr) {
-		t.Errorf("Expected ValidationError, got %T", err)
-	}
-}
 
 func TestRevokeRole_UserNotFound(t *testing.T) {
 	store := newTestIdentityStore()
