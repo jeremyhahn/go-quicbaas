@@ -274,107 +274,106 @@ func TestPoolUpdateMetrics(t *testing.T) {
 // Pool Tests: Stats, Close, String, Get closed pool
 // =============================================================================
 
-func TestPool91_Stats_EmptyPool(t *testing.T) {
+func TestConnectionPool_Stats(t *testing.T) {
 	t.Parallel()
 
-	pool := &ConnectionPool{
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("localhost:50051"),
+	newConn := func(inUse bool) *pooledConn {
+		conn := &pooledConn{created: time.Now()}
+		conn.inUse.Store(inUse)
+		return conn
 	}
 
-	stats := pool.Stats()
-	assert.Equal(t, 0, stats.PoolSize)
-	assert.Equal(t, 0, stats.ActiveConns)
-	assert.Equal(t, 0, stats.IdleConns)
-	assert.Equal(t, uint64(0), stats.TotalRequests)
-	assert.Equal(t, uint64(0), stats.RecycledConns)
-	assert.Equal(t, uint64(0), stats.FailedConns)
-	assert.Equal(t, uint64(0), stats.HealthChecksFailed)
+	tests := []struct {
+		name  string
+		conns []*pooledConn
+		want  PoolStats
+	}{
+		{
+			name:  "empty pool",
+			conns: []*pooledConn{},
+			want:  PoolStats{},
+		},
+		{
+			name:  "active and idle connections with counters",
+			conns: []*pooledConn{newConn(true), newConn(false), newConn(false)},
+			want: PoolStats{
+				PoolSize:           3,
+				ActiveConns:        1,
+				IdleConns:          2,
+				TotalRequests:      42,
+				RecycledConns:      5,
+				FailedConns:        2,
+				HealthChecksFailed: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool := &ConnectionPool{
+				conns:   tt.conns,
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			pool.totalRequests.Store(tt.want.TotalRequests)
+			pool.recycledConns.Store(tt.want.RecycledConns)
+			pool.failedConns.Store(tt.want.FailedConns)
+			pool.healthChecksFailed.Store(tt.want.HealthChecksFailed)
+
+			assert.Equal(t, tt.want, pool.Stats())
+		})
+	}
 }
 
-func TestPool91_Stats_WithConnections(t *testing.T) {
+func TestConnectionPool_String(t *testing.T) {
 	t.Parallel()
 
-	conn1 := &pooledConn{created: time.Now()}
-	conn1.inUse.Store(true)
-	conn1.healthy.Store(true)
-
-	conn2 := &pooledConn{created: time.Now()}
-	conn2.inUse.Store(false)
-	conn2.healthy.Store(true)
-
-	conn3 := &pooledConn{created: time.Now()}
-	conn3.inUse.Store(false)
-	conn3.healthy.Store(false)
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{conn1, conn2, conn3},
-		metrics: newPoolMetrics("localhost:50051"),
+	tests := []struct {
+		name   string
+		active []bool
+		want   []string
+	}{
+		{
+			name: "empty pool",
+			want: []string{"ConnectionPool", "localhost:50051", "size=0"},
+		},
+		{
+			name:   "active and idle connections",
+			active: []bool{true, false},
+			want: []string{"ConnectionPool", "localhost:50051", "size=2", "active=1",
+				"idle=1", "requests=100", "recycled=3"},
+		},
 	}
-	pool.totalRequests.Store(42)
-	pool.recycledConns.Store(5)
-	pool.failedConns.Store(2)
-	pool.healthChecksFailed.Store(1)
 
-	stats := pool.Stats()
-	assert.Equal(t, 3, stats.PoolSize)
-	assert.Equal(t, 1, stats.ActiveConns)
-	assert.Equal(t, 2, stats.IdleConns)
-	assert.Equal(t, uint64(42), stats.TotalRequests)
-	assert.Equal(t, uint64(5), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(1), stats.HealthChecksFailed)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool := &ConnectionPool{
+				address: "localhost:50051",
+				conns:   []*pooledConn{},
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			for _, inUse := range tt.active {
+				conn := &pooledConn{created: time.Now()}
+				conn.inUse.Store(inUse)
+				pool.conns = append(pool.conns, conn)
+			}
+			if len(tt.active) > 0 {
+				pool.totalRequests.Store(100)
+				pool.recycledConns.Store(3)
+			}
+
+			str := pool.String()
+			for _, want := range tt.want {
+				assert.Contains(t, str, want)
+			}
+		})
+	}
 }
 
-func TestPool91_String(t *testing.T) {
-	t.Parallel()
-
-	conn1 := &pooledConn{created: time.Now()}
-	conn1.inUse.Store(true)
-	conn2 := &pooledConn{created: time.Now()}
-	conn2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   []*pooledConn{conn1, conn2},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-	pool.totalRequests.Store(100)
-	pool.recycledConns.Store(3)
-
-	str := pool.String()
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=100")
-	assert.Contains(t, str, "recycled=3")
-}
-
-func TestPool91_Close_EmptyPool(t *testing.T) {
-	t.Parallel()
-
-	logConfig := logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-	log, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	pool := &ConnectionPool{
-		address:         "localhost:50051",
-		conns:           make([]*pooledConn, 0),
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-		logger:          log,
-	}
-
-	err = pool.Close()
-	assert.NoError(t, err)
-}
-
-func TestPool91_Close_AlreadyClosed(t *testing.T) {
+func TestConnectionPool_Close(t *testing.T) {
 	t.Parallel()
 
 	logConfig := logger.LogConfig{
@@ -402,49 +401,35 @@ func TestPool91_Close_AlreadyClosed(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestPool91_Get_ClosedPool(t *testing.T) {
+func TestConnectionPool_Get_Errors(t *testing.T) {
 	t.Parallel()
 
-	logConfig := logger.LogConfig{
-		Level:  "error",
-		Format: "json",
-		Output: "stdout",
-	}
-	log, err := logger.New(logConfig)
-	require.NoError(t, err)
-
-	pool := &ConnectionPool{
-		address:         "localhost:50051",
-		conns:           make([]*pooledConn, 0),
-		metrics:         newPoolMetrics("localhost:50051"),
-		stopHealthCheck: make(chan struct{}),
-		logger:          log,
+	tests := []struct {
+		name    string
+		closed  bool
+		wantErr string
+	}{
+		{name: "closed pool", closed: true, wantErr: "pool is closed"},
+		{name: "pool with no connections", closed: false, wantErr: "pool has no connections"},
 	}
 
-	// Close the pool
-	err = pool.Close()
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Get should fail on closed pool
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool is closed")
-}
+			pool := &ConnectionPool{
+				address: "localhost:50051",
+				conns:   make([]*pooledConn, 0),
+				metrics: newPoolMetrics("localhost:50051"),
+			}
+			pool.closed.Store(tt.closed)
 
-func TestPool91_Get_EmptyPool(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("localhost:50051"),
+			conn, err := pool.Get()
+			require.Error(t, err)
+			assert.Nil(t, conn)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
 	}
-
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool has no connections")
 }
 
 func TestConnectionPool_NeedsRecycling(t *testing.T) {
@@ -521,28 +506,6 @@ func TestPool91_WithMaxConnectionAge_Negative(t *testing.T) {
 	err := WithMaxConnectionAge(-5 * time.Second)(opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "positive")
-}
-
-func TestPool91_PoolStats_StructFields(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      50,
-		FailedConns:        3,
-		HealthChecksFailed: 2,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(3), stats.FailedConns)
-	assert.Equal(t, uint64(2), stats.HealthChecksFailed)
 }
 
 // =============================================================================
@@ -798,107 +761,6 @@ func TestPool91_UpdateMetrics_MixedStates(t *testing.T) {
 // Pool Coverage Tests
 // =============================================================================
 
-func TestConnectionPool_Stats_Coverage(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty pool stats", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns:   make([]*pooledConn, 0),
-			metrics: newPoolMetrics("test:50051"),
-		}
-
-		stats := pool.Stats()
-		assert.Equal(t, 0, stats.PoolSize)
-		assert.Equal(t, 0, stats.ActiveConns)
-		assert.Equal(t, 0, stats.IdleConns)
-		assert.Equal(t, uint64(0), stats.TotalRequests)
-	})
-
-	t.Run("pool with connections", func(t *testing.T) {
-		pool := &ConnectionPool{
-			conns: []*pooledConn{
-				{created: time.Now()},
-				{created: time.Now()},
-				{created: time.Now()},
-			},
-			metrics: newPoolMetrics("test:50051"),
-		}
-
-		// Set up connection states
-		pool.conns[0].inUse.Store(true)
-		pool.conns[1].inUse.Store(false)
-		pool.conns[2].inUse.Store(true)
-		pool.totalRequests.Store(100)
-		pool.recycledConns.Store(5)
-		pool.failedConns.Store(2)
-		pool.healthChecksFailed.Store(1)
-
-		stats := pool.Stats()
-		assert.Equal(t, 3, stats.PoolSize)
-		assert.Equal(t, 2, stats.ActiveConns)
-		assert.Equal(t, 1, stats.IdleConns)
-		assert.Equal(t, uint64(100), stats.TotalRequests)
-		assert.Equal(t, uint64(5), stats.RecycledConns)
-		assert.Equal(t, uint64(2), stats.FailedConns)
-		assert.Equal(t, uint64(1), stats.HealthChecksFailed)
-	})
-}
-
-func TestConnectionPool_String_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns: []*pooledConn{
-			{created: time.Now()},
-			{created: time.Now()},
-		},
-		metrics: newPoolMetrics("test:50051"),
-	}
-
-	pool.conns[0].inUse.Store(true)
-	pool.conns[1].inUse.Store(false)
-	pool.totalRequests.Store(50)
-	pool.recycledConns.Store(3)
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=50")
-	assert.Contains(t, str, "recycled=3")
-}
-
-func TestConnectionPool_Get_ClosedPool_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		metrics: newPoolMetrics("test:50051"),
-	}
-	pool.closed.Store(true)
-
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool is closed")
-}
-
-func TestConnectionPool_Get_EmptyPool_Coverage(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   make([]*pooledConn, 0),
-		metrics: newPoolMetrics("test:50051"),
-	}
-
-	conn, err := pool.Get()
-	assert.Error(t, err)
-	assert.Nil(t, conn)
-	assert.Contains(t, err.Error(), "pool has no connections")
-}
-
 // =============================================================================
 // Peer Credentials Coverage Tests
 // =============================================================================
@@ -945,28 +807,6 @@ func TestPeerCredentialsFromContext_FromContextValue_Coverage(t *testing.T) {
 // =============================================================================
 // PoolStats Tests
 // =============================================================================
-
-func TestPoolStats_Structure_Coverage(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      20,
-		FailedConns:        2,
-		HealthChecksFailed: 1,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(20), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(1), stats.HealthChecksFailed)
-}
 
 // =============================================================================
 // healthCheckLoop Coverage Tests
@@ -1057,41 +897,6 @@ func TestBuildDialOptions_WithPoolSettings_Coverage(t *testing.T) {
 // Pool Tests
 // =============================================================================
 
-func TestPoolStats_ZeroValues(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{}
-	assert.Equal(t, 0, stats.PoolSize)
-	assert.Equal(t, 0, stats.ActiveConns)
-	assert.Equal(t, 0, stats.IdleConns)
-	assert.Equal(t, uint64(0), stats.TotalRequests)
-	assert.Equal(t, uint64(0), stats.RecycledConns)
-	assert.Equal(t, uint64(0), stats.FailedConns)
-	assert.Equal(t, uint64(0), stats.HealthChecksFailed)
-}
-
-func TestPoolStats_WithValues(t *testing.T) {
-	t.Parallel()
-
-	stats := PoolStats{
-		PoolSize:           10,
-		ActiveConns:        5,
-		IdleConns:          5,
-		TotalRequests:      1000,
-		RecycledConns:      50,
-		FailedConns:        2,
-		HealthChecksFailed: 3,
-	}
-
-	assert.Equal(t, 10, stats.PoolSize)
-	assert.Equal(t, 5, stats.ActiveConns)
-	assert.Equal(t, 5, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(2), stats.FailedConns)
-	assert.Equal(t, uint64(3), stats.HealthChecksFailed)
-}
-
 func TestPooledConn_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
@@ -1120,102 +925,6 @@ func TestPooledConn_ConcurrentAccess(t *testing.T) {
 
 	<-done
 	assert.True(t, pc.requests.Load() >= 100)
-}
-
-func TestPoolString_Empty(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		address: "localhost:50051",
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "localhost:50051")
-	assert.Contains(t, str, "size=0")
-}
-
-func TestPoolString_WithConnections(t *testing.T) {
-	t.Parallel()
-
-	pc1 := &pooledConn{created: time.Now()}
-	pc1.inUse.Store(true)
-	pc2 := &pooledConn{created: time.Now()}
-	pc2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "test-server:50051",
-		conns:   []*pooledConn{pc1, pc2},
-		metrics: newPoolMetrics("test-server:50051"),
-	}
-	pool.totalRequests.Store(500)
-	pool.recycledConns.Store(10)
-
-	str := pool.String()
-	assert.Contains(t, str, "ConnectionPool")
-	assert.Contains(t, str, "test-server:50051")
-	assert.Contains(t, str, "size=2")
-	assert.Contains(t, str, "active=1")
-	assert.Contains(t, str, "idle=1")
-	assert.Contains(t, str, "requests=500")
-	assert.Contains(t, str, "recycled=10")
-}
-
-func TestPoolGet_Closed(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-	pool.closed.Store(true)
-
-	_, err := pool.Get()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "pool is closed")
-}
-
-func TestPoolGet_NoConnections(t *testing.T) {
-	t.Parallel()
-
-	pool := &ConnectionPool{
-		conns:   []*pooledConn{},
-		metrics: newPoolMetrics("localhost:50051"),
-	}
-
-	_, err := pool.Get()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "pool has no connections")
-}
-
-func TestPoolStats_Method(t *testing.T) {
-	t.Parallel()
-
-	pc1 := &pooledConn{created: time.Now()}
-	pc1.inUse.Store(true)
-	pc2 := &pooledConn{created: time.Now()}
-	pc2.inUse.Store(false)
-
-	pool := &ConnectionPool{
-		address: "test:50051",
-		conns:   []*pooledConn{pc1, pc2},
-		metrics: newPoolMetrics("test:50051"),
-	}
-	pool.totalRequests.Store(1000)
-	pool.recycledConns.Store(50)
-	pool.failedConns.Store(5)
-	pool.healthChecksFailed.Store(2)
-
-	stats := pool.Stats()
-	assert.Equal(t, 2, stats.PoolSize)
-	assert.Equal(t, 1, stats.ActiveConns)
-	assert.Equal(t, 1, stats.IdleConns)
-	assert.Equal(t, uint64(1000), stats.TotalRequests)
-	assert.Equal(t, uint64(50), stats.RecycledConns)
-	assert.Equal(t, uint64(5), stats.FailedConns)
-	assert.Equal(t, uint64(2), stats.HealthChecksFailed)
 }
 
 // =============================================================================
