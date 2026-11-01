@@ -153,8 +153,10 @@ import (
 // under messaging:watch, the REST face of Messaging.WatchChannel.
 // PLUS 8 for the prompt store's verbs (/api/v1/prompts/{set}[/{name}...],
 // handlers_prompt.go, go-quicbaas#805) under prompts:read, prompts:history
-// and prompts:write.
-const baseRouteTableSize = 672
+// and prompts:write. PLUS 2 for the KV conditional writes
+// (/api/v1/entities/{type}/{id}/compare-and-swap and /put-if-absent,
+// go-quicbaas#2029) under kv:put.
+const baseRouteTableSize = 674
 
 // TestRoutes_SurfaceGuard asserts the table's structural invariants: exact
 // size, absolute patterns, no duplicate method+pattern, and a handler binder
