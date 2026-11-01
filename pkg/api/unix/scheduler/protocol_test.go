@@ -126,11 +126,13 @@ func TestWriteReadRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "both empty",
+			// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC
+			// roles + scp claims legitimately exceed the old 8KB cap
+			// (observed: 11,060 bytes).
+			name: "token above old 8KB limit",
 			req: &Request{
-				Opcode:  OpSchedulerGetStatus,
-				Token:   "",
-				Payload: nil,
+				Opcode: OpSchedulerGetJob,
+				Token:  strings.Repeat("t", 11060),
 			},
 		},
 	}
@@ -152,109 +154,90 @@ func TestWriteReadRequest(t *testing.T) {
 	}
 }
 
-func TestWriteRequestNil(t *testing.T) {
-	buf := &bytes.Buffer{}
-	err := WriteRequest(buf, nil)
-	require.Error(t, err)
-
+// assertErrorCode checks that err is a QBError carrying the wanted code.
+func assertErrorCode(t *testing.T, err error, want dberrors.ErrorCode) {
+	t.Helper()
 	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	require.True(t, dberrors.As(err, &qbErr), "error %v is not a QBError", err)
+	assert.Equal(t, want, qbErr.Code)
 }
 
-func TestWriteRequestPayloadTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerCreateJob,
-		Token:   "token",
-		Payload: make([]byte, MaxPayloadSize+1),
+func TestRequestErrors(t *testing.T) {
+	readRequest := func(wire ...byte) func() error {
+		return func() error {
+			_, err := ReadRequest(bytes.NewReader(wire))
+			return err
+		}
 	}
 
-	err := WriteRequest(buf, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestWriteRequestTokenTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerCreateJob,
-		Token:   strings.Repeat("a", int(MaxTokenSize)+1),
-		Payload: []byte("{}"),
+	tests := []struct {
+		name     string
+		run      func() error
+		wantCode dberrors.ErrorCode
+	}{
+		{
+			name:     "write nil request",
+			run:      func() error { return WriteRequest(&bytes.Buffer{}, nil) },
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write payload over MaxPayloadSize",
+			run: func() error {
+				return WriteRequest(&bytes.Buffer{}, &Request{
+					Opcode:  OpSchedulerCreateJob,
+					Token:   "token",
+					Payload: make([]byte, MaxPayloadSize+1),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write token over MaxTokenSize",
+			run: func() error {
+				return WriteRequest(&bytes.Buffer{}, &Request{
+					Opcode:  OpSchedulerCreateJob,
+					Token:   strings.Repeat("a", int(MaxTokenSize)+1),
+					Payload: []byte("{}"),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write to failing writer",
+			run: func() error {
+				return WriteRequest(&errorWriter{}, &Request{
+					Opcode:  OpSchedulerGetJob,
+					Token:   "token",
+					Payload: []byte(`{}`),
+				})
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read empty stream",
+			run:      readRequest(),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// A token length prefix at the 2-byte wire ceiling (65535, which
+			// equals MaxTokenSize) with no token body must fail the read.
+			name:     "read token length at wire ceiling with no token body",
+			run:      readRequest(OpSchedulerGetJob, 0xFF, 0xFF),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// Payload length 0x02000000 (32MB) exceeds MaxPayloadSize (16MB).
+			name:     "read payload length over MaxPayloadSize",
+			run:      readRequest(OpSchedulerGetJob, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00),
+			wantCode: dberrors.ErrInvalidInput,
+		},
 	}
 
-	err := WriteRequest(buf, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestReadRequestReadError(t *testing.T) {
-	// Test empty reader
-	_, err := ReadRequest(&bytes.Buffer{})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadRequestTokenAtWireCeilingTruncated(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write opcode
-	buf.WriteByte(OpSchedulerGetJob)
-	// Token length prefix at the 2-byte wire ceiling (65535, which equals
-	// MaxTokenSize) with no token body must fail the read.
-	buf.WriteByte(0xFF)
-	buf.WriteByte(0xFF)
-
-	_, err := ReadRequest(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadRequestTokenAboveOld8KBLimit(t *testing.T) {
-	// Regression: RFC 9068 at+jwt tokens carrying qrdb-resolved RBAC roles +
-	// scp claims legitimately exceed the old 8KB cap (observed: 11,060 bytes).
-	req := &Request{
-		Opcode: OpSchedulerGetJob,
-		Token:  strings.Repeat("t", 11060),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorCode(t, tt.run(), tt.wantCode)
+		})
 	}
-	buf := &bytes.Buffer{}
-	require.NoError(t, WriteRequest(buf, req))
-
-	decoded, err := ReadRequest(buf)
-	require.NoError(t, err)
-	assert.Equal(t, req.Token, decoded.Token)
-}
-
-func TestReadRequestPayloadSizeExceeded(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write opcode
-	buf.WriteByte(OpSchedulerGetJob)
-	// Write token length (0)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	// Write payload length that exceeds max (> 16MB)
-	buf.WriteByte(0x02) // 33MB
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	_, err := ReadRequest(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
 }
 
 func TestWriteReadResponse(t *testing.T) {
@@ -301,57 +284,67 @@ func TestWriteReadResponse(t *testing.T) {
 	}
 }
 
-func TestWriteResponseNil(t *testing.T) {
-	buf := &bytes.Buffer{}
-	err := WriteResponse(buf, nil)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestWriteResponsePayloadTooLarge(t *testing.T) {
-	buf := &bytes.Buffer{}
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: make([]byte, MaxPayloadSize+1),
+func TestResponseErrors(t *testing.T) {
+	readResponse := func(wire ...byte) func() error {
+		return func() error {
+			_, err := ReadResponse(bytes.NewReader(wire))
+			return err
+		}
 	}
 
-	err := WriteResponse(buf, resp)
-	require.Error(t, err)
+	tests := []struct {
+		name     string
+		run      func() error
+		wantCode dberrors.ErrorCode
+	}{
+		{
+			name:     "write nil response",
+			run:      func() error { return WriteResponse(&bytes.Buffer{}, nil) },
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write payload over MaxPayloadSize",
+			run: func() error {
+				return WriteResponse(&bytes.Buffer{}, &Response{
+					Status:  StatusOK,
+					Payload: make([]byte, MaxPayloadSize+1),
+				})
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "write to failing writer",
+			run: func() error {
+				return WriteResponse(&errorWriter{}, &Response{
+					Status:  StatusOK,
+					Payload: []byte(`{}`),
+				})
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read empty stream",
+			run:      readResponse(),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name:     "read truncated payload length",
+			run:      readResponse(StatusOK, 0x00, 0x00),
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			// Payload length 0x02000000 (32MB) exceeds MaxPayloadSize (16MB).
+			name:     "read payload length over MaxPayloadSize",
+			run:      readResponse(StatusOK, 0x02, 0x00, 0x00, 0x00),
+			wantCode: dberrors.ErrInvalidInput,
+		},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestReadResponseReadError(t *testing.T) {
-	// Test empty reader
-	_, err := ReadResponse(&bytes.Buffer{})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestReadResponsePayloadSizeExceeded(t *testing.T) {
-	buf := &bytes.Buffer{}
-	// Write status
-	buf.WriteByte(StatusOK)
-	// Write payload length that exceeds max (> 16MB)
-	buf.WriteByte(0x02) // 33MB
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-	buf.WriteByte(0x00)
-
-	_, err := ReadResponse(buf)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertErrorCode(t, tt.run(), tt.wantCode)
+		})
+	}
 }
 
 func TestEncodeDecodePayload(t *testing.T) {
@@ -435,10 +428,7 @@ func TestEncodeDecodePayload(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-
-			var qbErr *dberrors.QBError
-			require.True(t, dberrors.As(err, &qbErr))
-			assert.Equal(t, tt.wantCode, qbErr.Code)
+			assertErrorCode(t, err, tt.wantCode)
 		})
 	}
 }
@@ -641,104 +631,4 @@ type errorWriter struct{}
 
 func (w *errorWriter) Write(p []byte) (n int, err error) {
 	return 0, io.ErrClosedPipe
-}
-
-func TestWriteRequestWriteErrors(t *testing.T) {
-	w := &errorWriter{}
-
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "token",
-		Payload: []byte(`{}`),
-	}
-
-	err := WriteRequest(w, req)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-func TestWriteResponseWriteErrors(t *testing.T) {
-	w := &errorWriter{}
-
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: []byte(`{}`),
-	}
-
-	err := WriteResponse(w, resp)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
-}
-
-// partialReader returns data only up to a specified point.
-type partialReader struct {
-	data   []byte
-	offset int
-	limit  int
-}
-
-func (r *partialReader) Read(p []byte) (n int, err error) {
-	if r.offset >= r.limit || r.offset >= len(r.data) {
-		return 0, io.EOF
-	}
-	remaining := r.limit - r.offset
-	if remaining > len(p) {
-		remaining = len(p)
-	}
-	if remaining > len(r.data)-r.offset {
-		remaining = len(r.data) - r.offset
-	}
-	n = copy(p, r.data[r.offset:r.offset+remaining])
-	r.offset += n
-	if r.offset >= r.limit {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func TestReadRequestPartialRead(t *testing.T) {
-	// Write a valid request
-	buf := &bytes.Buffer{}
-	req := &Request{
-		Opcode:  OpSchedulerGetJob,
-		Token:   "token",
-		Payload: []byte(`{"job_id": 123}`),
-	}
-	err := WriteRequest(buf, req)
-	require.NoError(t, err)
-
-	// Read with partial data (cut off in the middle of token)
-	reader := &partialReader{
-		data:  buf.Bytes(),
-		limit: 5, // Only read opcode and part of token length
-	}
-
-	_, err = ReadRequest(reader)
-	require.Error(t, err)
-}
-
-func TestReadResponsePartialRead(t *testing.T) {
-	// Write a valid response
-	buf := &bytes.Buffer{}
-	resp := &Response{
-		Status:  StatusOK,
-		Payload: []byte(`{"job_id": 123}`),
-	}
-	err := WriteResponse(buf, resp)
-	require.NoError(t, err)
-
-	// Read with partial data
-	reader := &partialReader{
-		data:  buf.Bytes(),
-		limit: 3, // Only read status and part of payload length
-	}
-
-	_, err = ReadResponse(reader)
-	require.Error(t, err)
 }
