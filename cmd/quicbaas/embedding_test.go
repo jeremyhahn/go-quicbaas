@@ -316,9 +316,22 @@ func TestRunEmbeddingGenerateCommand_Success(t *testing.T) {
 	outputFormat = "json"
 	globalTimeout = 30 * time.Second
 
-	cmd := &cobra.Command{}
-	err := runEmbeddingGenerateCommand(cmd, []string{"Hello, world!"})
-	assert.NoError(t, err)
+	tests := []struct {
+		name     string
+		metadata string
+	}{
+		{name: "without metadata"},
+		{name: "with metadata", metadata: `{"doc_id":"123","type":"article"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embeddingMetadata = tt.metadata
+
+			err := runEmbeddingGenerateCommand(&cobra.Command{}, []string{"Hello, world!"})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 func TestRunEmbeddingGenerateCommand_EmptyText(t *testing.T) {
@@ -706,39 +719,22 @@ func TestRunEmbeddingCacheClearCommand_Success(t *testing.T) {
 	outputFormat = "json"
 	globalTimeout = 30 * time.Second
 
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheClearCommand(cmd, []string{})
-	assert.NoError(t, err)
-}
-
-func TestRunEmbeddingCacheClearCommand_WithProvider(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
+	tests := []struct {
+		name     string
+		provider string
+	}{
+		{name: "entire cache"},
+		{name: "one provider", provider: "voyage"},
 	}
 
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-		embeddingProvider = ""
-	}()
-	outputFormat = "json"
-	globalTimeout = 30 * time.Second
-	embeddingProvider = "voyage"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embeddingProvider = tt.provider
 
-	cmd := &cobra.Command{}
-	err := runEmbeddingCacheClearCommand(cmd, []string{})
-	assert.NoError(t, err)
+			err := runEmbeddingCacheClearCommand(&cobra.Command{}, []string{})
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // =============================================================================
@@ -1323,33 +1319,3 @@ func TestCreateEmbeddingClient_FactoryError(t *testing.T) {
 // =============================================================================
 // Additional Edge Case Tests
 // =============================================================================
-
-func TestRunEmbeddingGenerateCommand_WithMetadata(t *testing.T) {
-	// Save original factory and restore after test
-	origFactory := sdkClientFactory
-	defer func() { sdkClientFactory = origFactory }()
-
-	mockEmbed := &mockEmbeddingClient{}
-	sdkClientFactory = func() (quicbaas.Client, error) {
-		return &mockSDKClientWithEmbedding{
-			mockSDKClient:   &mockSDKClient{},
-			embeddingClient: mockEmbed,
-		}, nil
-	}
-
-	// Reset globals
-	oldFormat := outputFormat
-	oldTimeout := globalTimeout
-	defer func() {
-		outputFormat = oldFormat
-		globalTimeout = oldTimeout
-		embeddingMetadata = ""
-	}()
-	outputFormat = "json"
-	globalTimeout = 30 * time.Second
-	embeddingMetadata = `{"doc_id":"123","type":"article"}`
-
-	cmd := &cobra.Command{}
-	err := runEmbeddingGenerateCommand(cmd, []string{"test text"})
-	assert.NoError(t, err)
-}
