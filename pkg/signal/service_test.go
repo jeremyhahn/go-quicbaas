@@ -122,24 +122,6 @@ func tenantCtx(tenantID string) context.Context {
 	return tenantctx.WithTenant(context.Background(), tenantID)
 }
 
-func TestNewSignalService(t *testing.T) {
-	kv := newServiceTestKVClient()
-	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: true})
-	if svc == nil {
-		t.Fatal("expected non-nil service")
-	}
-}
-
-func TestNewSignalService_Disabled(t *testing.T) {
-	kv := newServiceTestKVClient()
-	log := newTestLogger(t)
-	svc := NewSignalService(kv, log, &SignalConfig{Enabled: false})
-	if svc == nil {
-		t.Fatal("expected non-nil service even when disabled")
-	}
-}
-
 func TestSignalService_Start_Disabled(t *testing.T) {
 	kv := newServiceTestKVClient()
 	log := newTestLogger(t)
@@ -183,7 +165,7 @@ func TestSignalService_Start_Enabled(t *testing.T) {
 }
 
 func TestSignalService_ProvisionTenant(t *testing.T) {
-	svc, _ := newEnabledService(t)
+	svc, kv := newEnabledService(t)
 	ctx := context.Background()
 
 	cfg := &SignalTenantConfig{Enabled: true}
@@ -197,6 +179,19 @@ func TestSignalService_ProvisionTenant(t *testing.T) {
 	}
 	if got.MaxAccounts != defaultMaxAccounts {
 		t.Fatalf("expected defaults applied, got MaxAccounts %d", got.MaxAccounts)
+	}
+
+	// The config is persisted in the KV store as well as cached.
+	data, ok := kv.data[tenantConfigKeyPrefix+"new-tenant"+tenantConfigKeySuffix]
+	if !ok {
+		t.Fatal("expected tenant config to be persisted in KV store")
+	}
+	var persisted SignalTenantConfig
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("failed to unmarshal persisted config: %v", err)
+	}
+	if persisted.MaxAccounts != got.MaxAccounts {
+		t.Fatalf("expected persisted MaxAccounts %d, got %d", got.MaxAccounts, persisted.MaxAccounts)
 	}
 }
 
@@ -303,19 +298,6 @@ func TestSignalService_DeprovisionTenant_NotFound(t *testing.T) {
 	var target *TenantNotFoundError
 	if !errors.As(err, &target) {
 		t.Fatalf("expected TenantNotFoundError, got %T: %v", err, err)
-	}
-}
-
-func TestSignalService_GetTenantConfig(t *testing.T) {
-	svc, _ := newEnabledService(t)
-	provisionTestTenant(t, svc, "get-tenant")
-
-	cfg, err := svc.GetTenantConfig(context.Background(), "get-tenant")
-	if err != nil {
-		t.Fatalf("GetTenantConfig failed: %v", err)
-	}
-	if !cfg.Enabled {
-		t.Fatal("expected tenant config to be enabled")
 	}
 }
 
@@ -780,38 +762,6 @@ func TestSignalService_Start_LoadsInvalidConfig(t *testing.T) {
 	_, err := svc.GetTenantConfig(context.Background(), "bad-config-tenant")
 	if err == nil {
 		t.Fatal("expected error for bad config tenant")
-	}
-}
-
-func TestSignalService_ProvisionTenant_MarshalSuccess(t *testing.T) {
-	svc, kv := newEnabledService(t)
-	ctx := context.Background()
-
-	cfg := &SignalTenantConfig{
-		Enabled:          true,
-		MaxAccounts:      200,
-		MaxDevices:       4,
-		MessageRetention: "14d",
-		FIDO2Enabled:     true,
-		AllowFIDO2Only:   true,
-	}
-	if err := svc.ProvisionTenant(ctx, "full-tenant", cfg); err != nil {
-		t.Fatalf("ProvisionTenant failed: %v", err)
-	}
-
-	// Verify persisted in KV store.
-	key := tenantConfigKeyPrefix + "full-tenant" + tenantConfigKeySuffix
-	data, ok := kv.data[key]
-	if !ok {
-		t.Fatal("expected tenant config to be persisted in KV store")
-	}
-
-	var loaded SignalTenantConfig
-	if err := json.Unmarshal(data, &loaded); err != nil {
-		t.Fatalf("failed to unmarshal persisted config: %v", err)
-	}
-	if loaded.MaxAccounts != 200 {
-		t.Fatalf("expected persisted MaxAccounts 200, got %d", loaded.MaxAccounts)
 	}
 }
 
