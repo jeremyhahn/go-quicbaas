@@ -17,7 +17,6 @@ import (
 	"context"
 	stderrors "errors"
 	"testing"
-	"time"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/sdk/go/secret"
 )
@@ -550,167 +549,103 @@ func TestConfigProcessor_Process_HandlesErrorsGracefully(t *testing.T) {
 	}
 }
 
-func TestConfigProcessor_Process_NilConfig(t *testing.T) {
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, nil)
-
-	if err == nil {
-		t.Fatal("expected error for nil config")
-	}
-
-	var pie *ProcessorInputError
-	if !stderrors.As(err, &pie) {
-		t.Fatalf("expected ProcessorInputError, got %T", err)
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
-	}
-}
-
-func TestConfigProcessor_Process_NonPointer(t *testing.T) {
+func TestConfigProcessor_Process_InvalidInput(t *testing.T) {
 	type Config struct {
 		Name string
 	}
 
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
-	cfg := Config{Name: "test"}
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err == nil {
-		t.Fatal("expected error for non-pointer config")
-	}
-
-	var pie *ProcessorInputError
-	if !stderrors.As(err, &pie) {
-		t.Fatalf("expected ProcessorInputError, got %T", err)
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
-	}
-}
-
-func TestConfigProcessor_Process_PointerToNonStruct(t *testing.T) {
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
+	var nilCfg *Config
 	value := "just a string"
-	ctx := context.Background()
-	result, err := processor.Process(ctx, &value)
 
-	if err == nil {
-		t.Fatal("expected error for pointer to non-struct")
+	tests := []struct {
+		name      string
+		ctx       context.Context
+		cfg       interface{}
+		wantInput bool // ProcessorInputError expected; otherwise ErrNilContext
+	}{
+		{name: "nil config", ctx: context.Background(), cfg: nil, wantInput: true},
+		{name: "non-pointer", ctx: context.Background(), cfg: Config{Name: "test"}, wantInput: true},
+		{name: "pointer to non-struct", ctx: context.Background(), cfg: &value, wantInput: true},
+		{name: "nil pointer", ctx: context.Background(), cfg: nilCfg, wantInput: true},
+		{name: "nil context", ctx: nil, cfg: &Config{Name: "test"}},
 	}
 
-	var pie *ProcessorInputError
-	if !stderrors.As(err, &pie) {
-		t.Fatalf("expected ProcessorInputError, got %T", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			processor := NewConfigProcessor(NewResolverRegistry())
 
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
-	}
-}
+			result, err := processor.Process(tt.ctx, tt.cfg)
 
-func TestConfigProcessor_Process_NilPointer(t *testing.T) {
-	type Config struct {
-		Name string
-	}
-
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
-	var cfg *Config
-
-	ctx := context.Background()
-	result, err := processor.Process(ctx, cfg)
-
-	if err == nil {
-		t.Fatal("expected error for nil pointer")
-	}
-
-	var pie *ProcessorInputError
-	if !stderrors.As(err, &pie) {
-		t.Fatalf("expected ProcessorInputError, got %T", err)
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if tt.wantInput {
+				var pie *ProcessorInputError
+				if !stderrors.As(err, &pie) {
+					t.Fatalf("expected ProcessorInputError, got %T", err)
+				}
+			} else if !stderrors.Is(err, qrdbsecret.ErrNilContext) {
+				t.Fatalf("expected ErrNilContext, got %T: %v", err, err)
+			}
+			if result != nil {
+				t.Errorf("expected nil result, got %+v", result)
+			}
+		})
 	}
 }
 
 func TestConfigProcessor_Process_ContextCancellation(t *testing.T) {
 	type Config struct {
-		Secret string
+		Secret1 string
+		Secret2 string
 	}
 
-	// Create a resolver that blocks until context is cancelled.
-	blockingResolver := &mockResolver{
-		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
+	tests := []struct {
+		name string
+		// cancelInResolver cancels the context while the resolver is
+		// running; otherwise the context is cancelled before Process.
+		cancelInResolver bool
+	}{
+		{name: "cancelled before process"},
+		{name: "cancelled during resolve", cancelInResolver: true},
 	}
 
-	registry := NewResolverRegistry()
-	registry.Register(blockingResolver)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if !tt.cancelInResolver {
+				cancel()
+			}
 
-	processor := NewConfigProcessor(registry)
+			blockingResolver := &mockResolver{
+				resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
+					cancel()
+					<-ctx.Done()
+					return nil, ctx.Err()
+				},
+			}
+			registry := NewResolverRegistry()
+			registry.Register(blockingResolver)
+			processor := NewConfigProcessor(registry)
 
-	cfg := &Config{
-		Secret: "mock://blocked",
-	}
+			cfg := &Config{Secret1: "mock://s1", Secret2: "mock://s2"}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+			result, err := processor.Process(ctx, cfg)
 
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected top-level error: %v", err)
-	}
-
-	// The result should have an error due to cancellation.
-	if len(result.Errors) == 0 {
-		t.Fatal("expected errors from cancellation")
-	}
-
-	if len(result.Unresolved) == 0 {
-		t.Fatal("expected unresolved field from cancellation")
-	}
-}
-
-func TestConfigProcessor_Process_NilContext(t *testing.T) {
-	type Config struct {
-		Name string
-	}
-
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{Name: "test"}
-
-	var nilCtx context.Context
-	result, err := processor.Process(nilCtx, cfg)
-
-	if err == nil {
-		t.Fatal("expected error for nil context")
-	}
-
-	if !stderrors.Is(err, qrdbsecret.ErrNilContext) {
-		t.Errorf("expected ErrNilContext, got %T: %v", err, err)
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result, got %+v", result)
+			if err != nil {
+				t.Fatalf("unexpected top-level error: %v", err)
+			}
+			if len(result.Errors) == 0 {
+				t.Fatal("expected errors from cancellation")
+			}
+			if len(result.Unresolved) == 0 {
+				t.Fatal("expected unresolved field from cancellation")
+			}
+			if cfg.Secret1 != "mock://s1" {
+				t.Errorf("cancelled secret must keep its reference, got %q", cfg.Secret1)
+			}
+		})
 	}
 }
 
@@ -1047,15 +982,6 @@ func TestConfigProcessor_Process_SliceOfStrings(t *testing.T) {
 	}
 	if cfg.Secrets[2] != "s3" {
 		t.Errorf("expected 's3', got %q", cfg.Secrets[2])
-	}
-}
-
-func TestNewConfigProcessor(t *testing.T) {
-	registry := NewResolverRegistry()
-	processor := NewConfigProcessor(registry)
-
-	if processor == nil {
-		t.Fatal("expected non-nil processor")
 	}
 }
 
@@ -1779,56 +1705,6 @@ func TestConfigProcessor_Process_InterfaceWithPointerStruct(t *testing.T) {
 
 // TestConfigProcessor_Process_ContextCancellationDuringStruct tests context
 // cancellation while processing struct fields.
-func TestConfigProcessor_Process_ContextCancellationDuringStruct(t *testing.T) {
-	type Config struct {
-		Secret1 string
-		Secret2 string
-		Secret3 string
-	}
-
-	callCount := 0
-	slowResolver := &mockResolver{
-		resolveFunc: func(ctx context.Context, raw string) (*SecretValue, error) {
-			callCount++
-			// First call succeeds, subsequent calls check context.
-			if callCount > 1 {
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				default:
-				}
-			}
-			return NewSecretValue(raw, []byte(raw[7:]), StrategyLocalKMS)
-		},
-	}
-
-	registry := NewResolverRegistry()
-	registry.Register(slowResolver)
-
-	processor := NewConfigProcessor(registry)
-
-	cfg := &Config{
-		Secret1: "mock://s1",
-		Secret2: "mock://s2",
-		Secret3: "mock://s3",
-	}
-
-	// Create a pre-cancelled context.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	result, err := processor.Process(ctx, cfg)
-
-	if err != nil {
-		t.Fatalf("unexpected top-level error: %v", err)
-	}
-
-	// Should have at least one cancellation error.
-	if len(result.Errors) == 0 {
-		t.Fatal("expected errors from context cancellation")
-	}
-}
-
 // TestConfigProcessor_Process_MapWithInterfaceContainingSlice tests map with
 // interface values containing slices.
 func TestConfigProcessor_Process_MapWithInterfaceContainingSlice(t *testing.T) {
