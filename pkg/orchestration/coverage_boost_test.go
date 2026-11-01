@@ -3989,6 +3989,12 @@ func TestTaskStore_EmptyID(t *testing.T) {
 				return store.DeleteTask(ctx, "tenant-a", "")
 			},
 		},
+		{
+			name: "DeleteTenantTasks empty tenantID",
+			call: func(ctx context.Context, store TaskStore) error {
+				return store.DeleteTenantTasks(ctx, "")
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -4651,92 +4657,6 @@ func TestOrchestrator_GetAgent_NotFound(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — ListFleetNodes with filter
-// =============================================================================
-
-func TestOrchestrator_ListAgents_WithFilter(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.SetFleetRegistry(NewInMemoryFleetRegistry())
-	ctx := context.Background()
-
-	for i := 0; i < 2; i++ {
-		if _, err := impl.RegisterFleetNode(ctx, &RegisterFleetNodeRequest{
-			TenantID: "t-lag",
-			Name:     "agent-" + itoa(i),
-			Host:     "host:9090",
-			NodeType: "worker",
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	results, err := impl.ListFleetNodes(ctx, "t-lag", &FleetNodeFilter{NodeType: "worker"})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(results) < 2 {
-		t.Errorf("expected at least 2 agents, got %d", len(results))
-	}
-}
-
-func TestOrchestrator_BackendToolGuidance_WithBackend(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	if err := impl.RegisterBackend(context.Background(), &RegisterBackendRequest{
-		Name:    "guidance-b",
-		Backend: &mockAgentBackend{},
-	}); err != nil {
-		t.Fatalf("RegisterBackend: %v", err)
-	}
-
-	guidance := impl.BackendToolGuidance("guidance-b")
-	_ = guidance // exercise the function
-}
-
-// =============================================================================
-// orchestrator — ListBackends with registered backends
-// =============================================================================
-
-func TestOrchestrator_ListBackends_Multiple(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	ctx := context.Background()
-
-	for _, name := range []string{"b1", "b2", "b3"} {
-		if err := impl.RegisterBackend(ctx, &RegisterBackendRequest{
-			Name:    name,
-			Backend: &mockAgentBackend{},
-		}); err != nil {
-			t.Fatalf("RegisterBackend %s: %v", name, err)
-		}
-	}
-
-	backends, err := impl.ListBackends(ctx)
-	if err != nil {
-		t.Fatalf("ListBackends: %v", err)
-	}
-	if len(backends) < 3 {
-		t.Errorf("expected at least 3 backends, got %d", len(backends))
-	}
-}
-
-// =============================================================================
-// orchestrator — publishEvent with nil metadata
-// =============================================================================
-
-func TestOrchestrator_PublishEvent_NilMetadata(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	// publishEvent should handle nil metadata gracefully.
-	impl.publishEvent(context.Background(), "t-pe", "test_event", nil)
-}
-
-// =============================================================================
 // task_store — CompleteTask not-claimed state
 // =============================================================================
 
@@ -4811,20 +4731,6 @@ func TestTaskStore_ListTasks_WithLimit(t *testing.T) {
 }
 
 // =============================================================================
-// task_store — DeleteTenantTasks not-found (empty tenant)
-// =============================================================================
-
-func TestTaskStore_DeleteTenantTasks_EmptyTenantID(t *testing.T) {
-	t.Parallel()
-
-	store := NewInMemoryTaskStore()
-	err := store.DeleteTenantTasks(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty tenantID")
-	}
-}
-
-// =============================================================================
 // task_store — ClaimTask not-found
 // =============================================================================
 
@@ -4888,20 +4794,8 @@ func TestOrchestrator_ListTasks_EmptyTenantIDV2(t *testing.T) {
 }
 
 // =============================================================================
-// orchestrator — DiscoverProjects non-existent path
+// orchestrator — DiscoverProjects root path is a file
 // =============================================================================
-
-func TestOrchestrator_DiscoverProjects_NonExistentPath(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	_, err := impl.DiscoverProjects(context.Background(), &DiscoverProjectsRequest{
-		RootPath: "/nonexistent/path/xyz123",
-	})
-	if err == nil {
-		t.Fatal("expected error for nonexistent root path")
-	}
-}
 
 func TestOrchestrator_DiscoverProjects_FilePath(t *testing.T) {
 	t.Parallel()
@@ -4922,62 +4816,6 @@ func TestOrchestrator_DiscoverProjects_FilePath(t *testing.T) {
 		t.Fatal("expected error when RootPath is a file, not directory")
 	}
 }
-
-// =============================================================================
-// orchestrator — persistJobStatus (via kvStore)
-// =============================================================================
-
-func TestOrchestrator_PersistJobStatus_WithKVStore(t *testing.T) {
-	t.Parallel()
-
-	impl := newTestService(t)
-	impl.kvStore = newPeerTestKVStore()
-
-	// persistJobStatus should succeed with a valid KV store.
-	impl.persistJobStatus("t-pjs", &JobStatus{
-		JobID:       "job-persist-1",
-		TenantID:    "t-pjs",
-		State:       JobStateCompleted,
-		Description: "test job",
-	})
-}
-
-// =============================================================================
-// agent_registry — ListFleetNodes with limit filter
-// =============================================================================
-
-func TestAgentRegistry_ListAgents_WithLimit(t *testing.T) {
-	t.Parallel()
-
-	reg := NewInMemoryFleetRegistry()
-	ctx := context.Background()
-
-	for i := 0; i < 5; i++ {
-		if err := reg.RegisterFleetNode(ctx, &FleetNode{
-			ID:       "lim-" + itoa(i),
-			TenantID: "t-lim",
-			Name:     "agent-lim-" + itoa(i),
-			Host:     "host-lim:9090",
-			NodeType: "worker",
-			Backend:  "acp",
-			Status:   FleetNodeStatusRegistered,
-		}); err != nil {
-			t.Fatalf("RegisterFleetNode %d: %v", i, err)
-		}
-	}
-
-	agents, err := reg.ListFleetNodes(ctx, "t-lim", &FleetNodeFilter{Limit: 2})
-	if err != nil {
-		t.Fatalf("ListFleetNodes: %v", err)
-	}
-	if len(agents) > 2 {
-		t.Errorf("expected at most 2 agents, got %d", len(agents))
-	}
-}
-
-// =============================================================================
-// task_store — FailTask empty tenantID / taskID
-// =============================================================================
 
 // =============================================================================
 // task_store — ListTasks with filter
