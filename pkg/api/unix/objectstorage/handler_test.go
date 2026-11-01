@@ -275,31 +275,34 @@ func (m *mockObjectStorageService) BatchDeleteObjects(ctx context.Context, req *
 	}, nil
 }
 
-func TestNewHandlerNilService(t *testing.T) {
-	_, err := NewHandler(nil, nil, &testLogger{})
-	require.Error(t, err)
+func TestNewHandler(t *testing.T) {
+	tests := []struct {
+		name    string
+		service service.ObjectStorageService
+		logger  interfaces.Logger
+		wantErr bool
+	}{
+		{name: "nil service", service: nil, logger: &testLogger{}, wantErr: true},
+		{name: "nil logger", service: &mockObjectStorageService{}, logger: nil, wantErr: true},
+		{name: "success", service: &mockObjectStorageService{}, logger: &testLogger{}},
+	}
 
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewHandlerNilLogger(t *testing.T) {
-	_, err := NewHandler(&mockObjectStorageService{}, nil, nil)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestNewHandlerSuccess(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-	require.NotNil(t, handler)
-
-	assert.NotNil(t, handler.Service())
-	assert.Nil(t, handler.AdminService())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, err := NewHandler(tt.service, nil, tt.logger)
+			if tt.wantErr {
+				require.Error(t, err)
+				var qbErr *dberrors.QBError
+				require.True(t, dberrors.As(err, &qbErr))
+				assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, handler)
+			assert.NotNil(t, handler.Service())
+			assert.Nil(t, handler.AdminService())
+		})
+	}
 }
 
 func TestHandlerUnknownOpcode(t *testing.T) {
@@ -342,197 +345,133 @@ func TestHandleRequestNil(t *testing.T) {
 	assert.Equal(t, StatusInvalidRequest, resp.Status)
 }
 
-func TestHandlePutObject(t *testing.T) {
-	svc := &mockObjectStorageService{
-		putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
-			return &service.PutObjectResponse{
-				Key:      req.Key,
-				ObjectID: 123,
-				Size:     int64(len(req.Value)),
-			}, nil
+// TestHandleOpcodes drives each opcode through Handle with an encoded
+// request and decodes the response into the opcode's response type.
+func TestHandleOpcodes(t *testing.T) {
+	tests := []struct {
+		name  string
+		op    byte
+		svc   *mockObjectStorageService
+		req   any
+		resp  any
+		check func(t *testing.T, resp any)
+	}{
+		{
+			name: "put object",
+			op:   OpPutObject,
+			svc: &mockObjectStorageService{
+				putObjectFunc: func(ctx context.Context, req *service.PutObjectRequest) (*service.PutObjectResponse, error) {
+					return &service.PutObjectResponse{Key: req.Key, ObjectID: 123, Size: int64(len(req.Value))}, nil
+				},
+			},
+			req:  &service.PutObjectRequest{Key: "test-key", Value: []byte("test-value")},
+			resp: &service.PutObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.PutObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.Equal(t, uint64(123), r.ObjectID)
+			},
 		},
+		{
+			name: "get object",
+			op:   OpGetObject,
+			svc: &mockObjectStorageService{
+				getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
+					return &service.GetObjectResponse{Key: req.Key, Value: []byte("retrieved-value")}, nil
+				},
+			},
+			req:  &service.GetObjectRequest{Key: "test-key"},
+			resp: &service.GetObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.GetObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.Equal(t, []byte("retrieved-value"), r.Value)
+			},
+		},
+		{
+			name: "delete object",
+			op:   OpDeleteObject,
+			svc: &mockObjectStorageService{
+				deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
+					return &service.DeleteObjectResponse{Key: req.Key, Success: true, Size: 100}, nil
+				},
+			},
+			req:  &service.DeleteObjectRequest{Key: "test-key"},
+			resp: &service.DeleteObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.DeleteObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Success)
+			},
+		},
+		{
+			name: "head object",
+			op:   OpHeadObject,
+			svc: &mockObjectStorageService{
+				headObjectFunc: func(ctx context.Context, req *service.HeadObjectRequest) (*service.HeadObjectResponse, error) {
+					return &service.HeadObjectResponse{Key: req.Key, Exists: true, Size: 256}, nil
+				},
+			},
+			req:  &service.HeadObjectRequest{Key: "test-key"},
+			resp: &service.HeadObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				r := resp.(*service.HeadObjectResponse)
+				assert.Equal(t, "test-key", r.Key)
+				assert.True(t, r.Exists)
+				assert.Equal(t, int64(256), r.Size)
+			},
+		},
+		{
+			name: "list objects",
+			op:   OpListObjects,
+			req:  &service.ListObjectsRequest{Prefix: "test/", Limit: 10},
+			resp: &service.ListObjectsResponse{},
+		},
+		{
+			name: "list by tag",
+			op:   OpListByTag,
+			req:  &service.ListByTagRequest{TagName: "env", TagValue: "prod"},
+			resp: &service.ListByTagResponse{},
+		},
+		{
+			name: "list by tenant",
+			op:   OpListByTenant,
+			req:  &service.ListByTenantRequest{TenantID: "tenant-1"},
+			resp: &service.ListByTenantResponse{},
+		},
+		{
+			name: "copy object",
+			op:   OpCopyObject,
+			req:  &service.CopyObjectRequest{SourceKey: "source-key", DestinationKey: "dest-key"},
+			resp: &service.CopyObjectResponse{},
+			check: func(t *testing.T, resp any) {
+				assert.Equal(t, "dest-key", resp.(*service.CopyObjectResponse).Key)
+			},
+		},
+		// FAMILY2_ROWS
 	}
 
-	handler, err := NewHandler(svc, nil, &testLogger{})
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := tt.svc
+			if svc == nil {
+				svc = &mockObjectStorageService{}
+			}
+			handler, err := NewHandler(svc, nil, &testLogger{})
+			require.NoError(t, err)
 
-	reqPayload, err := EncodePayload(&service.PutObjectRequest{
-		Key:   "test-key",
-		Value: []byte("test-value"),
-	})
-	require.NoError(t, err)
+			reqPayload, err := EncodePayload(tt.req)
+			require.NoError(t, err)
 
-	resp, err := handler.Handle(context.Background(), OpPutObject, reqPayload)
-	require.NoError(t, err)
+			resp, err := handler.Handle(context.Background(), tt.op, reqPayload)
+			require.NoError(t, err)
+			require.NoError(t, DecodePayload(resp, tt.resp))
 
-	var putResp service.PutObjectResponse
-	err = DecodePayload(resp, &putResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-key", putResp.Key)
-	assert.Equal(t, uint64(123), putResp.ObjectID)
-}
-
-func TestHandleGetObject(t *testing.T) {
-	svc := &mockObjectStorageService{
-		getObjectFunc: func(ctx context.Context, req *service.GetObjectRequest) (*service.GetObjectResponse, error) {
-			return &service.GetObjectResponse{
-				Key:   req.Key,
-				Value: []byte("retrieved-value"),
-			}, nil
-		},
+			if tt.check != nil {
+				tt.check(t, tt.resp)
+			}
+		})
 	}
-
-	handler, err := NewHandler(svc, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.GetObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpGetObject, reqPayload)
-	require.NoError(t, err)
-
-	var getResp service.GetObjectResponse
-	err = DecodePayload(resp, &getResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-key", getResp.Key)
-	assert.Equal(t, []byte("retrieved-value"), getResp.Value)
-}
-
-func TestHandleDeleteObject(t *testing.T) {
-	svc := &mockObjectStorageService{
-		deleteObjectFunc: func(ctx context.Context, req *service.DeleteObjectRequest) (*service.DeleteObjectResponse, error) {
-			return &service.DeleteObjectResponse{
-				Key:     req.Key,
-				Success: true,
-				Size:    100,
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.DeleteObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpDeleteObject, reqPayload)
-	require.NoError(t, err)
-
-	var delResp service.DeleteObjectResponse
-	err = DecodePayload(resp, &delResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-key", delResp.Key)
-	assert.True(t, delResp.Success)
-}
-
-func TestHandleHeadObject(t *testing.T) {
-	svc := &mockObjectStorageService{
-		headObjectFunc: func(ctx context.Context, req *service.HeadObjectRequest) (*service.HeadObjectResponse, error) {
-			return &service.HeadObjectResponse{
-				Key:    req.Key,
-				Exists: true,
-				Size:   256,
-			}, nil
-		},
-	}
-
-	handler, err := NewHandler(svc, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.HeadObjectRequest{
-		Key: "test-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpHeadObject, reqPayload)
-	require.NoError(t, err)
-
-	var headResp service.HeadObjectResponse
-	err = DecodePayload(resp, &headResp)
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-key", headResp.Key)
-	assert.True(t, headResp.Exists)
-	assert.Equal(t, int64(256), headResp.Size)
-}
-
-func TestHandleListObjects(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListObjectsRequest{
-		Prefix: "test/",
-		Limit:  10,
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpListObjects, reqPayload)
-	require.NoError(t, err)
-
-	var listResp service.ListObjectsResponse
-	err = DecodePayload(resp, &listResp)
-	require.NoError(t, err)
-}
-
-func TestHandleListByTag(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListByTagRequest{
-		TagName:  "env",
-		TagValue: "prod",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpListByTag, reqPayload)
-	require.NoError(t, err)
-
-	var listResp service.ListByTagResponse
-	err = DecodePayload(resp, &listResp)
-	require.NoError(t, err)
-}
-
-func TestHandleListByTenant(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.ListByTenantRequest{
-		TenantID: "tenant-1",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpListByTenant, reqPayload)
-	require.NoError(t, err)
-
-	var listResp service.ListByTenantResponse
-	err = DecodePayload(resp, &listResp)
-	require.NoError(t, err)
-}
-
-func TestHandleCopyObject(t *testing.T) {
-	handler, err := NewHandler(&mockObjectStorageService{}, nil, &testLogger{})
-	require.NoError(t, err)
-
-	reqPayload, err := EncodePayload(&service.CopyObjectRequest{
-		SourceKey:      "source-key",
-		DestinationKey: "dest-key",
-	})
-	require.NoError(t, err)
-
-	resp, err := handler.Handle(context.Background(), OpCopyObject, reqPayload)
-	require.NoError(t, err)
-
-	var copyResp service.CopyObjectResponse
-	err = DecodePayload(resp, &copyResp)
-	require.NoError(t, err)
-	assert.Equal(t, "dest-key", copyResp.Key)
 }
 
 func TestHandleReplicateObject(t *testing.T) {
