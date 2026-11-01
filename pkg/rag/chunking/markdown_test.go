@@ -1005,67 +1005,123 @@ func TestMarkdownChunker_BlockTypes(t *testing.T) {
 	}
 }
 
-func TestGoCodeChunker_BuildDeclChunk_VarWithoutDoc(t *testing.T) {
-	// Test var declaration without documentation (should not be included)
+func TestGoCodeChunker_BuildDeclChunk_Declarations(t *testing.T) {
+	noComments := GoCodeChunkerConfig{IncludeImports: true, IncludeComments: false, IncludePackage: true}
+
+	tests := []struct {
+		name          string
+		config        GoCodeChunkerConfig
+		content       string
+		wantChunks    int
+		wantType      string // "" means no declaration chunk is expected
+		wantStartLine int
+	}{
+		{
+			name:       "undocumented single var dropped",
+			config:     DefaultGoCodeChunkerConfig(),
+			content:    "package main\n\nvar singleton = \"value\"\n\n// Hello is a greeting function.\nfunc Hello() {\n\tprintln(\"hello\")\n}\n",
+			wantChunks: 1,
+		},
+		{
+			name:          "documented single var kept from its doc line",
+			config:        DefaultGoCodeChunkerConfig(),
+			content:       "package main\n\n// MyVar is documented\nvar MyVar = 42",
+			wantChunks:    1,
+			wantType:      "var_declaration",
+			wantStartLine: 3,
+		},
+		{
+			name:          "documented const",
+			config:        DefaultGoCodeChunkerConfig(),
+			content:       "package main\n\n// Version is the app version\nconst Version = \"1.0\"",
+			wantChunks:    1,
+			wantType:      "const_declaration",
+			wantStartLine: 3,
+		},
+		{
+			name:          "undocumented var block kept",
+			config:        DefaultGoCodeChunkerConfig(),
+			content:       "package main\n\nvar (\n\tGlobalA = 1\n\tGlobalB = 2\n)",
+			wantChunks:    1,
+			wantType:      "var_declaration",
+			wantStartLine: 3,
+		},
+		{
+			name:          "without comments the chunk starts at the declaration",
+			config:        noComments,
+			content:       "package main\n\n// Important var\nvar (\n\tValue1 = 1\n\tValue2 = 2\n)\n",
+			wantChunks:    1,
+			wantType:      "var_declaration",
+			wantStartLine: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := NewGoCodeChunker(tt.config).Chunk([]byte(tt.content), Metadata{})
+			require.NoError(t, err)
+			require.Len(t, chunks, tt.wantChunks)
+
+			for _, chunk := range chunks {
+				chunkType := chunk.Metadata.Context["type"]
+				isDecl := chunkType == "var_declaration" || chunkType == "const_declaration"
+				if tt.wantType == "" {
+					assert.False(t, isDecl, "unexpected declaration chunk %q", chunk.Content)
+					continue
+				}
+				assert.Equal(t, tt.wantType, chunkType)
+				assert.Equal(t, tt.wantStartLine, chunk.Metadata.StartLine)
+			}
+		})
+	}
+}
+
+func TestGoCodeChunker_WriteImports_Cases(t *testing.T) {
+	tests := []struct {
+		name            string
+		content         string
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name:            "single import without parentheses",
+			content:         "package main\n\nimport \"fmt\"\n\n// Hello prints a greeting.\nfunc Hello() {\n\tfmt.Println(\"hello\")\n}\n",
+			wantContains:    []string{"import \"fmt\"\n\n"},
+			wantNotContains: []string{"import ("},
+		},
+		{
+			name:            "only used imports grouped",
+			content:         "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n\t\"strings\"\n)\n\n// Hello uses fmt.\nfunc Hello() {\n\tfmt.Println(strings.ToUpper(\"hello\"))\n}\n",
+			wantContains:    []string{"import (\n\t\"fmt\"\n\t\"strings\"\n)\n\n"},
+			wantNotContains: []string{"\"os\""},
+		},
+		{
+			name:            "file without imports",
+			content:         "package main\n\nfunc Hello() {\n\tprintln(\"hello\")\n}\n",
+			wantNotContains: []string{"import"},
+		},
+		{
+			name:         "no import used keeps every import",
+			content:      "package main\n\nimport \"unused\"\n\nfunc NoImportsUsed() int {\n\treturn 1 + 1\n}",
+			wantContains: []string{"import \"unused\"\n\n"},
+		},
+	}
+
 	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := chunker.Chunk([]byte(tt.content), Metadata{})
+			require.NoError(t, err)
+			require.Len(t, chunks, 1)
 
-	content := []byte(`package main
-
-var singleton = "value"
-
-// Hello is a greeting function.
-func Hello() {
-	println("hello")
-}
-`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-
-	// Should only have the function, not the single var without doc
-	assert.Equal(t, 1, len(chunks))
-	assert.Equal(t, "Hello", chunks[0].Metadata.FunctionName)
-}
-
-func TestGoCodeChunker_WriteImports_SingleImport(t *testing.T) {
-	// Test single import formatting
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	content := []byte(`package main
-
-import "fmt"
-
-// Hello prints a greeting.
-func Hello() {
-	fmt.Println("hello")
-}
-`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	assert.Equal(t, 1, len(chunks))
-
-	// Verify single import format (import "fmt" without parentheses)
-	assert.Contains(t, chunks[0].Content, "import \"fmt\"")
-	assert.NotContains(t, chunks[0].Content, "import (")
-}
-
-func TestGoCodeChunker_WriteImports_NoUsedImports(t *testing.T) {
-	// Test case where no imports are used (edge case in filtering)
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	content := []byte(`package main
-
-import "unused"
-
-const Value = 42`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-
-	// Const with no doc but it's a single value, shouldn't be included
-	// unless it has documentation
-	assert.Equal(t, 0, len(chunks))
+			for _, want := range tt.wantContains {
+				assert.Contains(t, chunks[0].Content, want)
+			}
+			for _, unwanted := range tt.wantNotContains {
+				assert.NotContains(t, chunks[0].Content, unwanted)
+			}
+		})
+	}
 }
 
 // Markdown Chunker edge cases
@@ -1412,66 +1468,6 @@ func TestMarkdownChunker_Chunk_ErrorPath(t *testing.T) {
 	}
 }
 
-// TestGoCodeChunker_BuildDeclChunk_AllPaths tests remaining paths in buildDeclChunk
-func TestGoCodeChunker_BuildDeclChunk_AllPaths(t *testing.T) {
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	t.Run("var with doc and single spec", func(t *testing.T) {
-		// Single var with doc comment
-		content := []byte(`package main
-
-// MyVar is documented
-var MyVar = 42`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Should include because it has a doc comment
-		if len(chunks) != 1 {
-			t.Errorf("Expected 1 chunk for documented var, got %d", len(chunks))
-		}
-	})
-}
-
-// TestGoCodeChunker_WriteImports_AllPaths tests remaining paths in writeImports
-func TestGoCodeChunker_WriteImports_AllPaths(t *testing.T) {
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	t.Run("no imports to write", func(t *testing.T) {
-		content := []byte(`package main
-
-func Hello() {
-	println("hello")
-}
-`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create function chunk")
-		}
-		// Should not have import section
-	})
-
-	t.Run("empty imports list", func(t *testing.T) {
-		// Edge case: file with no imports but chunker has includeImports true
-		content := []byte(`package main
-
-func Test() {}`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunk")
-		}
-	})
-}
-
 // TestMarkdownChunker_Chunk_NoChunksError tests the error path
 func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
 	// Create chunker with settings that will skip all content
@@ -1492,148 +1488,4 @@ func TestMarkdownChunker_Chunk_NoChunksError(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "no chunks") {
 		t.Errorf("Expected 'no chunks' error, got: %v", err)
 	}
-}
-
-// TestGoCodeChunker_BuildDeclChunk_FullCoverage pushes to 100%
-func TestGoCodeChunker_BuildDeclChunk_FullCoverage(t *testing.T) {
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	t.Run("const with doc comment", func(t *testing.T) {
-		content := []byte(`package main
-
-// Version is the app version
-const Version = "1.0"`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Should include documented single const
-		if len(chunks) != 1 {
-			t.Errorf("Expected 1 chunk for documented const, got %d", len(chunks))
-		}
-		if chunks[0].Metadata.Context["type"] != "const_declaration" {
-			t.Error("Should be const_declaration type")
-		}
-	})
-
-	t.Run("var block without doc", func(t *testing.T) {
-		content := []byte(`package main
-
-var (
-	GlobalA = 1
-	GlobalB = 2
-)`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Should include var block even without doc (has multiple specs)
-		if len(chunks) != 1 {
-			t.Errorf("Expected 1 chunk for var block, got %d", len(chunks))
-		}
-		if chunks[0].Metadata.Context["type"] != "var_declaration" {
-			t.Error("Should be var_declaration type")
-		}
-	})
-}
-
-// TestGoCodeChunker_WriteImports_FullCoverage pushes to 100%
-func TestGoCodeChunker_WriteImports_FullCoverage(t *testing.T) {
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	t.Run("filtered imports with some used", func(t *testing.T) {
-		content := []byte(`package main
-
-import (
-	"fmt"
-	"os"
-	"strings"
-)
-
-// Hello uses fmt.
-func Hello() {
-	fmt.Println(strings.ToUpper("hello"))
-}
-`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		if len(chunks) == 0 {
-			t.Error("Should create chunk")
-		}
-		// Should include fmt but may or may not include strings
-		if !strings.Contains(chunks[0].Content, "\"fmt\"") {
-			t.Error("Should include used import fmt")
-		}
-	})
-
-	t.Run("all imports filtered out", func(t *testing.T) {
-		content := []byte(`package main
-
-import "unused"
-
-type MyType int`)
-
-		chunks, err := chunker.Chunk(content, Metadata{})
-		if err != nil {
-			t.Fatalf("Chunk failed: %v", err)
-		}
-		// Type should be included
-		if len(chunks) == 0 {
-			t.Error("Should create type chunk")
-		}
-	})
-}
-
-// Test writeImports with no toWrite (line 368-370)
-func TestGoCodeChunker_WriteImports_NoToWrite(t *testing.T) {
-	chunker := NewGoCodeChunker(DefaultGoCodeChunkerConfig())
-
-	content := []byte(`package main
-
-import "unused"
-
-func NoImportsUsed() int {
-	return 1 + 1
-}`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-	// Function should be chunked but imports might be filtered
-	assert.Equal(t, 1, len(chunks))
-}
-
-// Test buildDeclChunk for var without includeComments but with doc
-func TestGoCodeChunker_BuildDeclChunk_NoCommentsConfig(t *testing.T) {
-	chunker := NewGoCodeChunker(GoCodeChunkerConfig{
-		IncludeImports:  true,
-		IncludeComments: false, // Explicitly false
-		IncludePackage:  true,
-	})
-
-	// Use multiple values to ensure it's included
-	content := []byte(`package main
-
-// Important var
-var (
-	Value1 = 1
-	Value2 = 2
-)
-`)
-
-	chunks, err := chunker.Chunk(content, Metadata{})
-	require.NoError(t, err)
-
-	// Should include var block (multiple values) even without comments in output
-	foundVar := false
-	for _, chunk := range chunks {
-		if chunk.Metadata.Context["type"] == "var_declaration" {
-			foundVar = true
-		}
-	}
-	assert.True(t, foundVar, "Should include var declaration with multiple values")
 }
