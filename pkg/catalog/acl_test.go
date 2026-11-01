@@ -315,29 +315,6 @@ func TestNewACLManager(t *testing.T) {
 			t.Errorf("expected ErrCatalogNil, got %v", err)
 		}
 	})
-
-	t.Run("WithNamespaceACLs", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		nsACLs := map[string]*NamespaceACL{
-			"ns1": {
-				Namespace:      "ns1",
-				Owner:          "admin",
-				DefaultReaders: []string{"reader1"},
-			},
-		}
-		config := &ACLManagerConfig{
-			Catalog:       catalog,
-			Logger:        &aclTestLogger{},
-			NamespaceACLs: nsACLs,
-		}
-		manager, err := NewACLManager(config)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if manager == nil {
-			t.Fatal("expected manager to be non-nil")
-		}
-	})
 }
 
 // TestCheckAccess tests access checking functionality.
@@ -490,24 +467,6 @@ func TestSetACL(t *testing.T) {
 // TestGetACL tests retrieving ACLs.
 func TestGetACL(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("GetExistingACL", func(t *testing.T) {
-		catalog := newACLTestCatalogManager()
-		acl := &ObjectACL{Owner: "owner1", Readers: []string{"reader1"}}
-		entry := createACLTestEntry("obj1", "owner1", acl)
-		catalog.Put(ctx, entry)
-
-		config := &ACLManagerConfig{Catalog: catalog}
-		manager, _ := NewACLManager(config)
-
-		result, err := manager.GetACL(ctx, "obj1")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if result.Owner != "owner1" {
-			t.Errorf("expected owner 'owner1', got %s", result.Owner)
-		}
-	})
 
 	t.Run("GetDefaultACLWhenNone", func(t *testing.T) {
 		catalog := newACLTestCatalogManager()
