@@ -548,22 +548,6 @@ func TestBackendStorage_DeleteTenantCascade(t *testing.T) {
 	assert.Error(t, err, "app should be deleted")
 }
 
-// Benchmark tests. The CreateUser/GetUser benchmarks were removed in phase
-// C1-F (BackendStorage no longer persists users; qrdb owns the user record).
-func BenchmarkBackendStorage_JSONMarshal(b *testing.B) {
-	user := &User{
-		ID:       40050,
-		TenantID: "tenant-1",
-		Email:    "bench@example.com",
-		Name:     "Benchmark User",
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = json.Marshal(user)
-	}
-}
-
 // =============================================================================
 // BatchProcessor - processPolicies additional edge cases
 // =============================================================================
