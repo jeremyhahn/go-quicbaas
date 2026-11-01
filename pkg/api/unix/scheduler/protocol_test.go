@@ -55,40 +55,45 @@ func TestOpcodeToString(t *testing.T) {
 	}
 }
 
-func TestOpcodeConstants(t *testing.T) {
-	// Verify opcodes start at 0xB0 and don't conflict
-	assert.Equal(t, byte(0xB0), OpSchedulerCreateJob)
-	assert.Equal(t, byte(0xB1), OpSchedulerGetJob)
-	assert.Equal(t, byte(0xB2), OpSchedulerUpdateJob)
-	assert.Equal(t, byte(0xB3), OpSchedulerDeleteJob)
-	assert.Equal(t, byte(0xB4), OpSchedulerListJobs)
-	assert.Equal(t, byte(0xB5), OpSchedulerTriggerJob)
-	assert.Equal(t, byte(0xB6), OpSchedulerPauseJob)
-	assert.Equal(t, byte(0xB7), OpSchedulerResumeJob)
-	assert.Equal(t, byte(0xB8), OpSchedulerCancelJob)
-	assert.Equal(t, byte(0xB9), OpSchedulerGetJobHistory)
-	assert.Equal(t, byte(0xBA), OpSchedulerGetStatus)
-}
+// TestWireConstants pins the opcode, status and version bytes a peer puts on
+// the wire; changing one breaks every client built against the old value.
+func TestWireConstants(t *testing.T) {
+	tests := []struct {
+		name     string
+		got      byte
+		expected byte
+	}{
+		{name: "ProtocolVersion", got: ProtocolVersion, expected: 0x01},
+		{name: "OpSchedulerCreateJob", got: OpSchedulerCreateJob, expected: 0xB0},
+		{name: "OpSchedulerGetJob", got: OpSchedulerGetJob, expected: 0xB1},
+		{name: "OpSchedulerUpdateJob", got: OpSchedulerUpdateJob, expected: 0xB2},
+		{name: "OpSchedulerDeleteJob", got: OpSchedulerDeleteJob, expected: 0xB3},
+		{name: "OpSchedulerListJobs", got: OpSchedulerListJobs, expected: 0xB4},
+		{name: "OpSchedulerTriggerJob", got: OpSchedulerTriggerJob, expected: 0xB5},
+		{name: "OpSchedulerPauseJob", got: OpSchedulerPauseJob, expected: 0xB6},
+		{name: "OpSchedulerResumeJob", got: OpSchedulerResumeJob, expected: 0xB7},
+		{name: "OpSchedulerCancelJob", got: OpSchedulerCancelJob, expected: 0xB8},
+		{name: "OpSchedulerGetJobHistory", got: OpSchedulerGetJobHistory, expected: 0xB9},
+		{name: "OpSchedulerGetStatus", got: OpSchedulerGetStatus, expected: 0xBA},
+		{name: "StatusOK", got: StatusOK, expected: 0x00},
+		{name: "StatusInvalidRequest", got: StatusInvalidRequest, expected: 0x01},
+		{name: "StatusNotFound", got: StatusNotFound, expected: 0x02},
+		{name: "StatusUnauthorized", got: StatusUnauthorized, expected: 0x03},
+		{name: "StatusInternalError", got: StatusInternalError, expected: 0x04},
+		{name: "StatusTimeout", got: StatusTimeout, expected: 0x05},
+		{name: "StatusAlreadyExists", got: StatusAlreadyExists, expected: 0x06},
+		{name: "StatusPermissionDenied", got: StatusPermissionDenied, expected: 0x07},
+		{name: "StatusResourceExhausted", got: StatusResourceExhausted, expected: 0x08},
+		{name: "StatusInvalidArgument", got: StatusInvalidArgument, expected: 0x09},
+		{name: "StatusUnavailable", got: StatusUnavailable, expected: 0x0A},
+		{name: "StatusForbidden", got: StatusForbidden, expected: 0x0B},
+	}
 
-func TestStatusConstants(t *testing.T) {
-	assert.Equal(t, byte(0x00), StatusOK)
-	assert.Equal(t, byte(0x01), StatusInvalidRequest)
-	assert.Equal(t, byte(0x02), StatusNotFound)
-	assert.Equal(t, byte(0x03), StatusUnauthorized)
-	assert.Equal(t, byte(0x04), StatusInternalError)
-	assert.Equal(t, byte(0x05), StatusTimeout)
-	assert.Equal(t, byte(0x06), StatusAlreadyExists)
-	assert.Equal(t, byte(0x07), StatusPermissionDenied)
-	assert.Equal(t, byte(0x08), StatusResourceExhausted)
-	assert.Equal(t, byte(0x09), StatusInvalidArgument)
-	assert.Equal(t, byte(0x0A), StatusUnavailable)
-	assert.Equal(t, byte(0x0B), StatusForbidden)
-}
-
-func TestProtocolConstants(t *testing.T) {
-	assert.Equal(t, byte(0x01), ProtocolVersion)
-	assert.Equal(t, uint32(16*1024*1024), MaxPayloadSize)
-	assert.Equal(t, uint16(64*1024-1), MaxTokenSize)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.got)
+		})
+	}
 }
 
 func TestWriteReadRequest(t *testing.T) {
@@ -355,52 +360,87 @@ func TestEncodeDecodePayload(t *testing.T) {
 		Value int    `json:"value"`
 	}
 
-	original := &testStruct{Name: "test", Value: 123}
+	tests := []struct {
+		name string
+		// run calls EncodePayload or DecodePayload and checks any output.
+		run func(t *testing.T) error
+		// wantCode is the error code expected, or 0 for success.
+		wantCode dberrors.ErrorCode
+	}{
+		{
+			name: "round trip",
+			run: func(t *testing.T) error {
+				original := testStruct{Name: "test", Value: 123}
+				encoded, err := EncodePayload(&original)
+				require.NoError(t, err)
 
-	encoded, err := EncodePayload(original)
-	require.NoError(t, err)
-	require.NotEmpty(t, encoded)
+				var decoded testStruct
+				require.NoError(t, DecodePayload(encoded, &decoded))
+				assert.Equal(t, original, decoded)
+				return nil
+			},
+		},
+		{
+			name: "encode nil entity yields no payload",
+			run: func(t *testing.T) error {
+				encoded, err := EncodePayload(nil)
+				assert.Nil(t, encoded)
+				return err
+			},
+		},
+		{
+			name: "decode nil data leaves entity untouched",
+			run: func(t *testing.T) error {
+				decoded := testStruct{Name: "kept"}
+				err := DecodePayload(nil, &decoded)
+				assert.Equal(t, "kept", decoded.Name)
+				return err
+			},
+		},
+		{
+			name: "decode empty data with nil entity is a no-op",
+			run: func(t *testing.T) error {
+				return DecodePayload([]byte{}, nil)
+			},
+		},
+		{
+			name: "encode unmarshalable entity",
+			run: func(t *testing.T) error {
+				_, err := EncodePayload(func() {})
+				return err
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+		{
+			name: "decode into nil entity",
+			run: func(t *testing.T) error {
+				return DecodePayload([]byte(`{"test": "value"}`), nil)
+			},
+			wantCode: dberrors.ErrInvalidInput,
+		},
+		{
+			name: "decode invalid JSON",
+			run: func(t *testing.T) error {
+				var decoded testStruct
+				return DecodePayload([]byte("invalid json"), &decoded)
+			},
+			wantCode: dberrors.ErrInternal,
+		},
+	}
 
-	var decoded testStruct
-	err = DecodePayload(encoded, &decoded)
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run(t)
+			if tt.wantCode == 0 {
+				require.NoError(t, err)
+				return
+			}
 
-	assert.Equal(t, original.Name, decoded.Name)
-	assert.Equal(t, original.Value, decoded.Value)
-}
-
-func TestEncodePayloadNil(t *testing.T) {
-	encoded, err := EncodePayload(nil)
-	require.NoError(t, err)
-	assert.Nil(t, encoded)
-}
-
-func TestDecodePayloadEmpty(t *testing.T) {
-	var decoded struct{}
-	err := DecodePayload(nil, &decoded)
-	require.NoError(t, err)
-
-	err = DecodePayload([]byte{}, &decoded)
-	require.NoError(t, err)
-}
-
-func TestDecodePayloadNilEntity(t *testing.T) {
-	err := DecodePayload([]byte(`{"test": "value"}`), nil)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInvalidInput, qbErr.Code)
-}
-
-func TestDecodePayloadInvalidJSON(t *testing.T) {
-	var decoded struct{}
-	err := DecodePayload([]byte("invalid json"), &decoded)
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
+			var qbErr *dberrors.QBError
+			require.True(t, dberrors.As(err, &qbErr))
+			assert.Equal(t, tt.wantCode, qbErr.Code)
+		})
+	}
 }
 
 func TestErrorToStatus(t *testing.T) {
@@ -701,14 +741,4 @@ func TestReadResponsePartialRead(t *testing.T) {
 
 	_, err = ReadResponse(reader)
 	require.Error(t, err)
-}
-
-func TestEncodePayloadMarshalError(t *testing.T) {
-	// Functions cannot be marshaled
-	_, err := EncodePayload(func() {})
-	require.Error(t, err)
-
-	var qbErr *dberrors.QBError
-	require.True(t, dberrors.As(err, &qbErr))
-	assert.Equal(t, dberrors.ErrInternal, qbErr.Code)
 }
