@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-quicbaas/pkg/cli"
 	clisecrets "github.com/jeremyhahn/go-quicbaas/pkg/cli/secrets"
 	"github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/logger"
@@ -655,6 +654,11 @@ func TestFormatSecretsStoreResponse(t *testing.T) {
 			format:       "",
 			expectedText: []string{"Secret stored", "database/prod", "version 1"},
 		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"Secret stored", "database/prod"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -704,6 +708,11 @@ func TestFormatSecretsGetResponse(t *testing.T) {
 			name:         "default format",
 			format:       "",
 			expectedText: []string{"password=", "username="},
+		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"admin"},
 		},
 	}
 
@@ -762,6 +771,11 @@ func TestFormatSecretsListResponse(t *testing.T) {
 			format:       "",
 			expectedText: []string{"database/prod", "app/config", "Total: 2 secrets"},
 		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"database/prod", "app/config", "Total: 2"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -814,6 +828,18 @@ func TestFormatSecretsDeleteResponse(t *testing.T) {
 			deleted:      false,
 			format:       "",
 			expectedText: []string{"Failed to delete secret", "database/prod"},
+		},
+		{
+			name:         "deleted raw",
+			deleted:      true,
+			format:       "raw",
+			expectedText: []string{"Secret deleted"},
+		},
+		{
+			name:         "not deleted raw",
+			deleted:      false,
+			format:       "raw",
+			expectedText: []string{"Failed to delete"},
 		},
 	}
 
@@ -883,6 +909,11 @@ func TestFormatSecretsVersionsResponse(t *testing.T) {
 			format:       "",
 			expectedText: []string{"v3", "v2", "v1", "Total: 3 versions"},
 		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"v3", "v2", "v1", "Total: 3"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -926,6 +957,11 @@ func TestFormatSecretsRollbackResponse(t *testing.T) {
 			format:       "",
 			expectedText: []string{"Secret rolled back", "database/prod", "new version 4"},
 		},
+		{
+			name:         "raw format",
+			format:       "raw",
+			expectedText: []string{"Secret rolled back", "4"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -937,161 +973,6 @@ func TestFormatSecretsRollbackResponse(t *testing.T) {
 			output := buf.String()
 			for _, expected := range tt.expectedText {
 				assert.Contains(t, output, expected)
-			}
-		})
-	}
-}
-
-func TestSecretsDataParsing(t *testing.T) {
-	tests := []struct {
-		name        string
-		data        []string
-		expectError bool
-		expected    map[string]string
-	}{
-		{
-			name:        "single key-value",
-			data:        []string{"password=secret123"},
-			expectError: false,
-			expected:    map[string]string{"password": "secret123"},
-		},
-		{
-			name:        "multiple key-values",
-			data:        []string{"username=admin", "password=secret", "host=localhost"},
-			expectError: false,
-			expected: map[string]string{
-				"username": "admin",
-				"password": "secret",
-				"host":     "localhost",
-			},
-		},
-		{
-			name:        "value with equals",
-			data:        []string{"connection=host=localhost;port=5432"},
-			expectError: false,
-			expected:    map[string]string{"connection": "host=localhost;port=5432"},
-		},
-		{
-			name:        "invalid format no equals",
-			data:        []string{"invalid"},
-			expectError: true,
-			expected:    nil,
-		},
-		{
-			name:        "invalid format empty key",
-			data:        []string{"=value"},
-			expectError: false, // Parser allows this
-			expected:    map[string]string{"": "value"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dataMap := make(map[string]string)
-			hasError := false
-
-			for _, kv := range tt.data {
-				parts := splitKeyValue(kv, 2)
-				if len(parts) != 2 {
-					hasError = true
-					break
-				}
-				dataMap[parts[0]] = parts[1]
-			}
-
-			if tt.expectError {
-				assert.True(t, hasError)
-			} else {
-				assert.False(t, hasError)
-				if tt.expected != nil {
-					assert.Equal(t, tt.expected, dataMap)
-				}
-			}
-		})
-	}
-}
-
-func TestSecretsTTLParsing(t *testing.T) {
-	tests := []struct {
-		name     string
-		ttl      string
-		expected time.Duration
-		wantErr  bool
-	}{
-		{
-			name:     "1 hour",
-			ttl:      "1h",
-			expected: 1 * time.Hour,
-			wantErr:  false,
-		},
-		{
-			name:     "30 minutes",
-			ttl:      "30m",
-			expected: 30 * time.Minute,
-			wantErr:  false,
-		},
-		{
-			name:     "1 day",
-			ttl:      "24h",
-			expected: 24 * time.Hour,
-			wantErr:  false,
-		},
-		{
-			name:     "invalid format",
-			ttl:      "invalid",
-			expected: 0,
-			wantErr:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			duration, err := time.ParseDuration(tt.ttl)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.expected, duration)
-			}
-		})
-	}
-}
-
-func TestSecretsOutputFormatParsing(t *testing.T) {
-	tests := []struct {
-		name        string
-		format      string
-		expectError bool
-	}{
-		{
-			name:        "json format",
-			format:      "json",
-			expectError: false,
-		},
-		{
-			name:        "table format",
-			format:      "table",
-			expectError: false,
-		},
-		{
-			name:        "yaml format",
-			format:      "yaml",
-			expectError: false,
-		},
-		{
-			name:        "invalid format",
-			format:      "invalid",
-			expectError: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := cli.ParseOutputFormat(tt.format)
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
 			}
 		})
 	}
@@ -1359,33 +1240,6 @@ func TestExecuteSecretsRollback(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Helper function to split key-value pairs
-func splitKeyValue(kv string, n int) []string {
-	parts := make([]string, 0, n)
-	idx := 0
-	for i := 0; i < n-1; i++ {
-		nextIdx := findNextSeparator(kv, idx)
-		if nextIdx == -1 {
-			break
-		}
-		parts = append(parts, kv[idx:nextIdx])
-		idx = nextIdx + 1
-	}
-	if idx < len(kv) {
-		parts = append(parts, kv[idx:])
-	}
-	return parts
-}
-
-func findNextSeparator(s string, start int) int {
-	for i := start; i < len(s); i++ {
-		if s[i] == '=' {
-			return i
-		}
-	}
-	return -1
 }
 
 // =============================================================================
@@ -2440,35 +2294,6 @@ func TestCreateQUICSecretsClient_Stub(t *testing.T) {
 // Secrets Formatting - Store, Get, List, Delete, Versions, Rollback
 // =============================================================================
 
-func TestFormatSecretsStoreResponse_AllFormats(t *testing.T) {
-	resp := &service.StoreSecretResponse{
-		SecretID:  "test/secret",
-		Version:   1,
-		Timestamp: time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"test/secret", "1"}},
-		{"table", "table", []string{"test/secret", "1"}},
-		{"raw", "raw", []string{"Secret stored", "test/secret"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsStoreResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
 func TestFormatSecretsStoreResponse_InvalidFormat(t *testing.T) {
 	resp := &service.StoreSecretResponse{
 		SecretID:  "test/secret",
@@ -2477,36 +2302,6 @@ func TestFormatSecretsStoreResponse_InvalidFormat(t *testing.T) {
 	var buf bytes.Buffer
 	err := formatSecretsStoreResponse(resp, "invalid-format", &buf)
 	assert.Error(t, err)
-}
-
-func TestFormatSecretsGetResponse_AllFormats(t *testing.T) {
-	resp := &service.GetSecretResponse{
-		SecretID:  "test/secret",
-		Version:   3,
-		Data:      []byte(`{"username":"admin","password":"secret"}`),
-		CreatedAt: time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"test/secret", "admin"}},
-		{"table", "table", []string{"test/secret", "3"}},
-		{"raw", "raw", []string{"admin"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsGetResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
 }
 
 func TestFormatSecretsGetResponse_InvalidData(t *testing.T) {
@@ -2518,139 +2313,6 @@ func TestFormatSecretsGetResponse_InvalidData(t *testing.T) {
 	err := formatSecretsGetResponse(resp, "json", &buf)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal")
-}
-
-func TestFormatSecretsListResponse_AllFormats(t *testing.T) {
-	resp := &service.ListSecretsResponse{
-		Secrets: []*service.Secret{
-			{
-				SecretID:       "test/secret-1",
-				CurrentVersion: 2,
-				CreatedAt:      time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-				UpdatedAt:      time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC),
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"test/secret-1"}},
-		{"table", "table", []string{"test/secret-1", "Total: 1"}},
-		{"raw", "raw", []string{"test/secret-1", "Total: 1"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsListResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
-func TestFormatSecretsDeleteResponse_AllFormats(t *testing.T) {
-	tests := []struct {
-		name     string
-		format   string
-		deleted  bool
-		contains []string
-	}{
-		{"json deleted", "json", true, []string{"test/secret"}},
-		{"table deleted", "table", true, []string{"test/secret"}},
-		{"raw deleted", "raw", true, []string{"Secret deleted"}},
-		{"raw not deleted", "raw", false, []string{"Failed to delete"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resp := &service.DeleteSecretResponse{
-				SecretID:  "test/secret",
-				Deleted:   tt.deleted,
-				Timestamp: time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-			}
-			var buf bytes.Buffer
-			err := formatSecretsDeleteResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
-func TestFormatSecretsVersionsResponse_AllFormats(t *testing.T) {
-	deletedAt := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
-	resp := &service.ListSecretVersionsResponse{
-		Versions: []*service.SecretVersion{
-			{
-				Version:   1,
-				CreatedAt: time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-				CreatedBy: "admin",
-			},
-			{
-				Version:   2,
-				CreatedAt: time.Date(2025, 6, 2, 12, 0, 0, 0, time.UTC),
-				CreatedBy: "",
-				DeletedAt: &deletedAt,
-			},
-		},
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"1", "2"}},
-		{"table", "table", []string{"admin", "-", "Total: 2"}},
-		{"raw", "raw", []string{"v1", "v2", "Total: 2"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsVersionsResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
-}
-
-func TestFormatSecretsRollbackResponse_AllFormats(t *testing.T) {
-	resp := &service.RollbackSecretResponse{
-		SecretID:   "test/secret",
-		NewVersion: 4,
-		Timestamp:  time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC),
-	}
-
-	tests := []struct {
-		name     string
-		format   string
-		contains []string
-	}{
-		{"json", "json", []string{"test/secret", "4"}},
-		{"table", "table", []string{"test/secret", "4"}},
-		{"raw", "raw", []string{"Secret rolled back", "4"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			err := formatSecretsRollbackResponse(resp, tt.format, &buf)
-			require.NoError(t, err)
-			for _, c := range tt.contains {
-				assert.Contains(t, buf.String(), c)
-			}
-		})
-	}
 }
 
 // =============================================================================
