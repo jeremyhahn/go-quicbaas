@@ -35,14 +35,6 @@ func TestNewEventDisplay(t *testing.T) {
 	assert.False(t, d.streaming)
 }
 
-func TestNewEventDisplay_NilWriter(t *testing.T) {
-	// newEventDisplay should work with any io.Writer, even if it's a no-op.
-	// Passing nil would panic on use but construction should succeed.
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-	assert.NotNil(t, d)
-}
-
 func TestEventDisplay_AssignColor(t *testing.T) {
 	var buf strings.Builder
 	d := newEventDisplay(&buf)
@@ -93,18 +85,12 @@ func TestEventDisplay_RoleFor(t *testing.T) {
 	var buf strings.Builder
 	d := newEventDisplay(&buf)
 
-	// Unknown session returns "worker".
+	// Unknown and empty session IDs return "worker".
 	assert.Equal(t, "worker", d.roleFor("unknown-session"))
+	assert.Equal(t, "worker", d.roleFor(""))
 
 	d.registerSession("sess-1", "coder")
 	assert.Equal(t, "coder", d.roleFor("sess-1"))
-}
-
-func TestEventDisplay_RoleFor_EmptySessionID(t *testing.T) {
-	var buf strings.Builder
-	d := newEventDisplay(&buf)
-
-	assert.Equal(t, "worker", d.roleFor(""))
 }
 
 func TestEventDisplay_Prefix(t *testing.T) {
