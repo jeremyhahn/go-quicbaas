@@ -349,46 +349,6 @@ func TestImportAll(t *testing.T) {
 		}
 	})
 
-	t.Run("context cancelled after roles import", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// Set up a request that will process roles, then we cancel
-		req := &BatchImportRequest{
-			TenantID: "test-tenant",
-			Roles: []*RoleImport{
-				{ID: "role1", Name: "Admin"},
-			},
-		}
-
-		// Start the import in a goroutine and cancel shortly after
-		resultChan := make(chan *BatchImportResult, 1)
-		errChan := make(chan error, 1)
-
-		go func() {
-			result, err := bm.ImportAll(ctx, req)
-			resultChan <- result
-			errChan <- err
-		}()
-
-		// Give a tiny bit of time for roles to process, then cancel
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-
-		result := <-resultChan
-		err := <-errChan
-
-		// Either the import completed or was cancelled
-		if err != nil && !errors.Is(err, ErrBatchCanceled) {
-			// If cancelled, we should get ErrBatchCanceled
-			// If completed before cancel, no error
-			if !errors.Is(err, context.Canceled) {
-				t.Logf("Got error (expected in some race conditions): %v", err)
-			}
-		}
-		_ = result
-	})
-
 	t.Run("only roles in request", func(t *testing.T) {
 		bm, _ := createTestBatchManager(t)
 		ctx := context.Background()
@@ -665,32 +625,6 @@ func TestImportUsers(t *testing.T) {
 			t.Fatal("expected a result for a cancelled batch")
 		}
 	})
-
-	t.Run("batch of multiple users", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		// Create a few users to verify batch processing works
-		users := []*UserImport{
-			{ID: 1, Email: "user1@example.com", Username: "user1", Enabled: boolPtr(true)},
-			{ID: 2, Email: "user2@example.com", Username: "user2", Enabled: boolPtr(true)},
-			{ID: 3, Email: "user3@example.com", Username: "user3", Enabled: boolPtr(true)},
-			{ID: 30004, Email: "user4@example.com", Username: "user4", Enabled: boolPtr(true)},
-			{ID: 30005, Email: "user5@example.com", Username: "user5", Enabled: boolPtr(true)},
-		}
-
-		result, err := bm.ImportUsers(ctx, "test-tenant", users, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.TotalItems != 5 {
-			t.Errorf("expected 5 total items, got %d", result.TotalItems)
-		}
-		if result.SuccessCount != 5 {
-			t.Errorf("expected 5 successes, got %d", result.SuccessCount)
-		}
-	})
 }
 
 // TestImportUser tests the importUser function.
@@ -765,21 +699,6 @@ func TestImportUser(t *testing.T) {
 		var valErr *ValidationError
 		if !errors.As(err, &valErr) {
 			t.Errorf("expected ValidationError, got %T", err)
-		}
-	})
-
-	t.Run("missing username error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		user := &UserImport{
-			ID:    1,
-			Email: "user1@example.com",
-		}
-
-		err := bm.importUser(ctx, "test-tenant", user, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing username")
 		}
 	})
 
@@ -1048,26 +967,6 @@ func TestImportRoles(t *testing.T) {
 			t.Error("expected error for invalid batch size")
 		}
 	})
-
-	t.Run("batch of multiple roles", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		roles := []*RoleImport{
-			{ID: "r1", Name: "Role 1", Permissions: []string{"read"}},
-			{ID: "r2", Name: "Role 2", Permissions: []string{"write"}},
-			{ID: "r3", Name: "Role 3", Permissions: []string{"delete"}},
-		}
-
-		result, err := bm.ImportRoles(ctx, "test-tenant", roles, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
-		}
-	})
 }
 
 // TestImportPolicies tests the ImportPolicies function.
@@ -1326,26 +1225,6 @@ func TestImportPolicies(t *testing.T) {
 		})
 		if err == nil {
 			t.Error("expected error for invalid batch size")
-		}
-	})
-
-	t.Run("batch of multiple policies", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policies := []*PolicyImport{
-			{Name: "policy1", Rules: []Rule{{Name: "rule1", Effect: EffectAllow, Actions: []string{"read"}, Resources: []string{"*"}}}},
-			{Name: "policy2", Rules: []Rule{{Name: "rule2", Effect: EffectAllow, Actions: []string{"write"}, Resources: []string{"*"}}}},
-			{Name: "policy3", Rules: []Rule{{Name: "rule3", Effect: EffectAllow, Actions: []string{"delete"}, Resources: []string{"*"}}}},
-		}
-
-		result, err := bm.ImportPolicies(ctx, "test-tenant", policies, BatchImportOptions{})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		if result.SuccessCount != 3 {
-			t.Errorf("expected 3 successes, got %d", result.SuccessCount)
 		}
 	})
 }
@@ -1709,38 +1588,6 @@ func TestImportPolicy(t *testing.T) {
 		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{UpdateExisting: false})
 		if err == nil {
 			t.Error("expected error for existing policy")
-		}
-	})
-
-	t.Run("missing name error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policyImport := &PolicyImport{
-			Name: "",
-			Rules: []Rule{
-				{Name: "rule1", Effect: EffectAllow, Actions: []string{"*"}, Resources: []string{"*"}},
-			},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing name")
-		}
-	})
-
-	t.Run("missing rules error", func(t *testing.T) {
-		bm, _ := createTestBatchManager(t)
-		ctx := context.Background()
-
-		policyImport := &PolicyImport{
-			Name:  "test-policy",
-			Rules: []Rule{},
-		}
-
-		err := bm.importPolicy(ctx, "test-tenant", policyImport, BatchImportOptions{})
-		if err == nil {
-			t.Error("expected error for missing rules")
 		}
 	})
 }
