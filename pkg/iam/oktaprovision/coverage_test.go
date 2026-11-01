@@ -1109,32 +1109,58 @@ func TestFindGroupByName(t *testing.T) {
 
 // -------------------- createApp / createGroup decode & request errors --------------------
 
-func TestCreateApp_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("POST", "/api/v1/apps", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	_, err := p.createApp(context.Background(), "https://acme.okta.com", "tok", "L", "https://cb", "https://app")
-	assertProvOp(t, err, "create_app")
+// The HTTP-error paths of createApp and createGroup are covered through
+// ProvisionApp in provisioner_test.go; these rows cover the rest.
+func TestCreateApp_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+	}{
+		{name: "decode error", handler: rawBody(http.StatusOK, "nope")},
+		{name: "request error", baseURL: "://bad"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.on("POST", "/api/v1/apps", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			_, err := p.createApp(context.Background(), baseURL, "tok", "L", "https://cb", "https://app")
+			assertProvOp(t, err, "create_app")
+		})
+	}
 }
 
-func TestCreateApp_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.createApp(context.Background(), "://bad", "tok", "L", "https://cb", "https://app")
-	assertProvOp(t, err, "create_app")
-}
-
-func TestCreateGroup_DecodeError(t *testing.T) {
-	r := newRouter(t)
-	r.on("POST", "/api/v1/groups", rawBody(http.StatusOK, "nope"))
-	p := newTestProvisioner(t, r)
-	_, err := p.createGroup(context.Background(), "https://acme.okta.com", "tok", "G", "desc")
-	assertProvOp(t, err, "create_group")
-}
-
-func TestCreateGroup_RequestError(t *testing.T) {
-	p := New(Config{}, nil)
-	_, err := p.createGroup(context.Background(), "://bad", "tok", "G", "desc")
-	assertProvOp(t, err, "create_group")
+func TestCreateGroup_Errors(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		baseURL string
+	}{
+		{name: "decode error", handler: rawBody(http.StatusOK, "nope")},
+		{name: "request error", baseURL: "://bad"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			if tc.handler != nil {
+				r.on("POST", "/api/v1/groups", tc.handler)
+			}
+			baseURL := tc.baseURL
+			if baseURL == "" {
+				baseURL = "https://acme.okta.com"
+			}
+			p := newTestProvisioner(t, r)
+			_, err := p.createGroup(context.Background(), baseURL, "tok", "G", "desc")
+			assertProvOp(t, err, "create_group")
+		})
+	}
 }
 
 // -------------------- ProvisionApp: findGroup/assignGroup error propagation --------------------
@@ -1264,36 +1290,42 @@ func TestProvisionApp_SeedAdminGroupNotInSet(t *testing.T) {
 
 // -------------------- doRequest / parseError / orgNameFromURL --------------------
 
-func TestDoRequest_BadURL(t *testing.T) {
-	p := New(Config{}, nil)
-	resp, err := p.doRequest(context.Background(), http.MethodGet, "://bad", "tok", nil)
-	if err == nil {
-		resp.Body.Close()
-		t.Fatal("expected request-creation error for bad URL")
+func TestParseError(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		wantText []string
+	}{
+		{
+			name:     "plain-text body",
+			status:   http.StatusBadGateway,
+			body:     "upstream down",
+			wantText: []string{"upstream down", "502"},
+		},
+		{
+			// A JSON object without errorSummary falls through to the raw body.
+			name:     "okta json without summary",
+			status:   http.StatusTeapot,
+			body:     `{"errorCode":"E1","other":"x"}`,
+			wantText: []string{"418"},
+		},
 	}
-}
-
-func TestParseError_PlainTextBody(t *testing.T) {
-	r := newRouter(t)
-	r.on("GET", "/api/v1/users/me", rawBody(http.StatusBadGateway, "upstream down"))
-	p := newTestProvisioner(t, r)
-	_, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
-	if err == nil || !strings.Contains(err.Error(), "upstream down") {
-		t.Fatalf("err = %v, want plain-text body in message", err)
-	}
-	if !strings.Contains(err.Error(), "502") {
-		t.Errorf("err = %v, want status code 502", err)
-	}
-}
-
-func TestParseError_OktaJSONWithoutSummary(t *testing.T) {
-	r := newRouter(t)
-	// Valid JSON object but no errorSummary field -> falls through to raw body.
-	r.on("GET", "/api/v1/users/me", rawBody(http.StatusTeapot, `{"errorCode":"E1","other":"x"}`))
-	p := newTestProvisioner(t, r)
-	_, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
-	if err == nil || !strings.Contains(err.Error(), "418") {
-		t.Fatalf("err = %v, want status 418", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRouter(t)
+			r.on("GET", "/api/v1/users/me", rawBody(tc.status, tc.body))
+			p := newTestProvisioner(t, r)
+			_, err := p.getTokenOwner(context.Background(), "https://acme.okta.com", "tok")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			for _, want := range tc.wantText {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to contain %q", err, want)
+				}
+			}
+		})
 	}
 }
 
