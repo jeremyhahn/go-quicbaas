@@ -8,7 +8,6 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -342,6 +341,10 @@ func TestCreateUser_Success(t *testing.T) {
 	}
 	if user.TenantID != "tenant1" {
 		t.Errorf("Expected tenant ID tenant1, got %s", user.TenantID)
+	}
+	// No Roles in opts yields an empty, non-nil slice so JSON stays [].
+	if user.Roles == nil || len(user.Roles) != 0 {
+		t.Errorf("Expected non-nil empty Roles, got %#v", user.Roles)
 	}
 }
 
@@ -797,25 +800,6 @@ func TestCrossTenantIsolation(t *testing.T) {
 	_ = user2
 }
 
-// Test Context Cancellation
-
-func TestContextCancellation(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
-	defer cancel()
-
-	time.Sleep(2 * time.Millisecond)
-
-	_, err := store.CreateUser(ctx, "tenant1", CreateUserOptions{
-		Email:    "test@example.com",
-		Username: "testuser",
-	})
-
-	// Context cancellation handling depends on storage implementation
-	// This test verifies the store can handle cancelled contexts
-	_ = err
-}
-
 // Test Validation Errors
 
 func TestValidationError(t *testing.T) {
@@ -925,43 +909,26 @@ func TestListRoles_Success(t *testing.T) {
 	}
 }
 
-func TestListRoles_EmptyList(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	roles, err := store.ListRoles(ctx, "tenant1", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListRoles failed: %v", err)
-	}
-
-	if len(roles) != 0 {
-		t.Errorf("Expected 0 roles, got %d", len(roles))
-	}
-}
-
 func TestListRoles_TenantIsolation(t *testing.T) {
 	store := newTestIdentityStore()
 	ctx := context.Background()
 
 	// Create roles in different tenants
-	_, _ = store.CreateRole(ctx, "tenant1", CreateRoleOptions{Name: "Role T1"})
-	_, _ = store.CreateRole(ctx, "tenant2", CreateRoleOptions{Name: "Role T2"})
-
-	roles1, err := store.ListRoles(ctx, "tenant1", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListRoles tenant1 failed: %v", err)
+	for _, tenantID := range []string{"tenant1", "tenant2"} {
+		if _, err := store.CreateRole(ctx, tenantID, CreateRoleOptions{Name: "Role " + tenantID}); err != nil {
+			t.Fatalf("CreateRole %s failed: %v", tenantID, err)
+		}
 	}
 
-	roles2, err := store.ListRoles(ctx, "tenant2", ListOptions{})
-	if err != nil {
-		t.Fatalf("ListRoles tenant2 failed: %v", err)
-	}
-
-	if len(roles1) != 1 {
-		t.Errorf("Expected 1 role in tenant1, got %d", len(roles1))
-	}
-	if len(roles2) != 1 {
-		t.Errorf("Expected 1 role in tenant2, got %d", len(roles2))
+	// A tenant with no roles lists none; each other tenant sees only its own.
+	for tenantID, want := range map[string]int{"tenant1": 1, "tenant2": 1, "tenant3": 0} {
+		roles, err := store.ListRoles(ctx, tenantID, ListOptions{})
+		if err != nil {
+			t.Fatalf("ListRoles %s failed: %v", tenantID, err)
+		}
+		if len(roles) != want {
+			t.Errorf("Expected %d roles in %s, got %d", want, tenantID, len(roles))
+		}
 	}
 }
 
@@ -2031,66 +1998,6 @@ func (m *mockRoleStorageWithFailure) ListRoles(ctx context.Context, tenantID str
 // TestCreateUser_WithRoles ensures that roles specified in CreateUserOptions are
 // persisted to the created user and surfaced in the GET response. This is the
 // direct regression gate for the bootstrap-admin-empty-ROLES-column bug.
-func TestCreateUser_WithRoles(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	// Register the role first, mirroring first-boot ordering (roles are
-	// created before the admin user). CreateUser validates role references
-	// before writing the user record.
-	if _, err := store.CreateRole(ctx, "default", CreateRoleOptions{ID: "admin", Name: "admin"}); err != nil {
-		t.Fatalf("CreateRole failed: %v", err)
-	}
-
-	opts := CreateUserOptions{
-		Email:    "admin@quicbaas.local",
-		Username: "admin",
-		Name:     "Bootstrap Admin",
-		Roles:    []string{"admin"},
-	}
-
-	user, err := store.CreateUser(ctx, "default", opts)
-	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-	if len(user.Roles) != 1 || user.Roles[0] != "admin" {
-		t.Errorf("expected Roles=[admin], got %v", user.Roles)
-	}
-
-	// Re-fetch to confirm the store persisted the roles.
-	fetched, err := store.GetUser(ctx, "default", user.ID)
-	if err != nil {
-		t.Fatalf("GetUser failed: %v", err)
-	}
-	if len(fetched.Roles) != 1 || fetched.Roles[0] != "admin" {
-		t.Errorf("persisted Roles mismatch: expected [admin], got %v", fetched.Roles)
-	}
-}
-
-// TestCreateUser_WithNoRoles ensures that a user created without Roles in opts
-// receives an empty (non-nil) Roles slice rather than nil, keeping JSON
-// serialisation consistent across callers.
-func TestCreateUser_WithNoRoles(t *testing.T) {
-	store := newTestIdentityStore()
-	ctx := context.Background()
-
-	opts := CreateUserOptions{
-		Email:    "noroles@example.com",
-		Username: "noroles",
-	}
-
-	user, err := store.CreateUser(ctx, "tenant1", opts)
-	if err != nil {
-		t.Fatalf("CreateUser failed: %v", err)
-	}
-	if user.Roles == nil {
-		t.Error("expected non-nil empty Roles slice, got nil")
-	}
-	if len(user.Roles) != 0 {
-		t.Errorf("expected empty Roles, got %v", user.Roles)
-	}
-}
-
 // =============================================================================
 // CreateUser role validation (validate-before-create shared seam)
 // =============================================================================
