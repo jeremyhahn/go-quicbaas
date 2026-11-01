@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1002,283 +1003,98 @@ func TestObjectFormatStorageSizeCoverage(t *testing.T) {
 // Object Storage Command Factory Error Tests
 // =============================================================================
 
-func TestRunObjectPutCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	testErr := &errors.QBError{
-		Code: errors.ErrUnavailable,
-		Op:   "test",
-		Err:  errors.New(errors.ErrUnavailable, "test", "connection refused"),
-	}
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, testErr
-	}
-
-	cmd := newObjectPutCommand()
-	objectFile = ""
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_NoData(t *testing.T) {
-	origFile := objectFile
-	defer func() { objectFile = origFile }()
-	objectFile = ""
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_BadFile(t *testing.T) {
-	origFile := objectFile
-	defer func() { objectFile = origFile }()
-	objectFile = "/nonexistent/path/to/file.dat"
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectPutCommand_BadMetadataJSON(t *testing.T) {
+func TestRunObjectPutCommand_InvalidInput(t *testing.T) {
 	origFile := objectFile
 	origMeta := objectMetadata
 	origTags := objectTags
-	defer func() {
+	t.Cleanup(func() {
 		objectFile = origFile
 		objectMetadata = origMeta
 		objectTags = origTags
-	}()
+	})
 
-	objectFile = "/dev/null"
-	objectMetadata = "not-valid-json"
-	objectTags = nil
-
-	cmd := newObjectPutCommand()
-	err := runObjectPutCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
+	tests := []struct {
+		name     string
+		file     string
+		metadata string
+	}{
+		{name: "no data", file: ""},
+		{name: "unreadable file", file: "/nonexistent/path/to/file.dat"},
+		{name: "invalid metadata JSON", file: "/dev/null", metadata: "not-valid-json"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objectFile = tt.file
+			objectMetadata = tt.metadata
+			objectTags = nil
+			err := runObjectPutCommand(newObjectPutCommand(), []string{"bucket/key"})
+			assert.Error(t, err)
+		})
+	}
 }
 
-func TestRunObjectGetCommand_FactoryError(t *testing.T) {
+// TestRunObjectCommands_FactoryError checks that every object verb returns
+// the client factory's error instead of proceeding without a client.
+func TestRunObjectCommands_FactoryError(t *testing.T) {
 	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
+	origFile := objectFile
+	origTagFilter := objectTagFilter
+	origMeta := objectMetadata
+	origPolicy := objectPolicyJSON
+	t.Cleanup(func() {
+		objectStorageClientFactory = origFactory
+		objectFile = origFile
+		objectTagFilter = origTagFilter
+		objectMetadata = origMeta
+		objectPolicyJSON = origPolicy
+	})
 
+	factoryErr := &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "connection refused")}
 	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+		return nil, factoryErr
 	}
 
-	cmd := newObjectGetCommand()
-	err := runObjectGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
+	dataFile := filepath.Join(t.TempDir(), "data.bin")
+	require.NoError(t, os.WriteFile(dataFile, []byte("payload"), 0o600))
 
-func TestRunObjectDeleteCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+	tests := []struct {
+		name   string
+		run    func(*cobra.Command, []string) error
+		newCmd func() *cobra.Command
+		args   []string
+	}{
+		{"put", runObjectPutCommand, newObjectPutCommand, []string{"bucket/key"}},
+		{"get", runObjectGetCommand, newObjectGetCommand, []string{"bucket/key"}},
+		{"delete", runObjectDeleteCommand, newObjectDeleteCommand, []string{"bucket/key"}},
+		{"head", runObjectHeadCommand, newObjectHeadCommand, []string{"bucket/key"}},
+		{"list", runObjectListCommand, newObjectListCommand, []string{"test-namespace"}},
+		{"list-by-tag", runObjectListByTagCommand, newObjectListByTagCommand, []string{"bucket"}},
+		{"list-by-tenant", runObjectListByTenantCommand, newObjectListByTenantCommand, []string{}},
+		{"copy", runObjectCopyCommand, newObjectCopyCommand, []string{"src/key", "dst/key"}},
+		{"archive", runObjectArchiveCommand, newObjectArchiveCommand, []string{"bucket/key"}},
+		{"restore", runObjectRestoreCommand, newObjectRestoreCommand, []string{"bucket/key"}},
+		{"verify", runObjectVerifyCommand, newObjectVerifyCommand, []string{"bucket/key"}},
+		{"replicate", runObjectReplicateCommand, newObjectReplicateCommand, []string{"bucket/key"}},
+		{"migrate", runObjectMigrateCommand, newObjectMigrateCommand, []string{"bucket/key"}},
+		{"metadata get", runObjectMetadataGetCommand, newObjectMetadataGetCommand, []string{"bucket/key"}},
+		{"metadata update", runObjectMetadataUpdateCommand, newObjectMetadataUpdateCommand, []string{"bucket/key"}},
+		{"stats", runObjectStatsCommand, newObjectStatsCommand, []string{}},
+		{"lifecycle set", runObjectLifecycleSetCommand, newObjectLifecycleSetCommand, []string{"bucket"}},
+		{"lifecycle get", runObjectLifecycleGetCommand, newObjectLifecycleGetCommand, []string{"bucket"}},
 	}
-
-	cmd := newObjectDeleteCommand()
-	err := runObjectDeleteCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectHeadCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Building the command binds its flags to their defaults, so
+			// valid inputs are set afterwards to reach the client factory.
+			cmd := tt.newCmd()
+			objectFile = dataFile
+			objectTagFilter = "env=prod"
+			objectMetadata = "{}"
+			objectPolicyJSON = "{}"
+			err := tt.run(cmd, tt.args)
+			assert.ErrorIs(t, err, factoryErr)
+		})
 	}
-
-	cmd := newObjectHeadCommand()
-	err := runObjectHeadCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListCommand()
-	err := runObjectListCommand(cmd, []string{"test-namespace"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListByTagCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListByTagCommand()
-	err := runObjectListByTagCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectListByTenantCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectListByTenantCommand()
-	err := runObjectListByTenantCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRunObjectCopyCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectCopyCommand()
-	err := runObjectCopyCommand(cmd, []string{"src/key", "dst/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectArchiveCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectArchiveCommand()
-	err := runObjectArchiveCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectRestoreCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectRestoreCommand()
-	err := runObjectRestoreCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectVerifyCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectVerifyCommand()
-	err := runObjectVerifyCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectReplicateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectReplicateCommand()
-	err := runObjectReplicateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMigrateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMigrateCommand()
-	err := runObjectMigrateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMetadataGetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMetadataGetCommand()
-	err := runObjectMetadataGetCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectMetadataUpdateCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectMetadataUpdateCommand()
-	err := runObjectMetadataUpdateCommand(cmd, []string{"bucket/key"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectStatsCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectStatsCommand()
-	err := runObjectStatsCommand(cmd, []string{})
-	assert.Error(t, err)
-}
-
-func TestRunObjectLifecycleSetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectLifecycleSetCommand()
-	err := runObjectLifecycleSetCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
-}
-
-func TestRunObjectLifecycleGetCommand_FactoryError(t *testing.T) {
-	origFactory := objectStorageClientFactory
-	defer func() { objectStorageClientFactory = origFactory }()
-
-	objectStorageClientFactory = func() (*grpc.Client, error) {
-		return nil, &errors.QBError{Code: errors.ErrUnavailable, Op: "test", Err: errors.New(errors.ErrUnavailable, "test", "fail")}
-	}
-
-	cmd := newObjectLifecycleGetCommand()
-	err := runObjectLifecycleGetCommand(cmd, []string{"bucket"})
-	assert.Error(t, err)
 }
 
 // =============================================================================
