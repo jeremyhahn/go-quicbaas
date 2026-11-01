@@ -425,25 +425,25 @@ func TestHandler_buildContext(t *testing.T) {
 	}
 }
 
-// TestHandler_cleanupLoop tests the cleanup loop goroutine.
+// TestHandler_cleanupLoop checks that the cleanup goroutine removes expired
+// entries on its own and stops when the handler closes. Stats does not touch
+// expired entries, so the size reaching zero proves the loop ran.
 func TestHandler_cleanupLoop(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
 	config := DefaultConfig()
-	config.CleanupInterval = 10 * time.Millisecond // Short interval for testing
+	config.CleanupInterval = time.Millisecond
 
-	h, err := NewHandler(embedder, searcher, config)
+	h, err := NewHandler(newMockEmbedder(), newMockSearcher(), config)
 	require.NoError(t, err)
 
-	// Let cleanup run a few times
-	time.Sleep(50 * time.Millisecond)
+	cache := h.(*handler).cache
+	cache.Set("expired", &Response{Query: "expired"}, -time.Minute)
+	require.Equal(t, 1, cache.Stats().Size)
 
-	// Close handler - should stop cleanup loop
-	err = h.Close()
-	assert.NoError(t, err)
+	require.Eventually(t, func() bool { return cache.Stats().Size == 0 },
+		5*time.Second, time.Millisecond, "cleanup loop never removed the expired entry")
 
-	// Give time for cleanup to stop
-	time.Sleep(20 * time.Millisecond)
+	// Close waits for the loop to return.
+	assert.NoError(t, h.Close())
 }
 
 // TestHandler_cleanupLoop_WithoutCache tests cleanup loop when cache is disabled.
@@ -576,57 +576,6 @@ func TestParser_detectLanguage_Python(t *testing.T) {
 	}
 }
 
-// TestHandler_Query_ParseError tests query parsing error handling.
-func TestHandler_Query_ParseError(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-
-	// Empty query should fail parsing
-	response, err := h.Query(ctx, "", DefaultOptions())
-	assert.Error(t, err)
-	assert.Nil(t, response)
-	assert.Equal(t, ErrEmptyQuery, err)
-}
-
-// TestHandler_cleanupLoop_CacheExpiry tests that cleanup loop actually cleans cache.
-func TestHandler_cleanupLoop_CacheExpiry(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	config := DefaultConfig()
-	config.CacheTTL = 50 * time.Millisecond        // Short TTL
-	config.CleanupInterval = 25 * time.Millisecond // Frequent cleanup
-
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
-
-	ctx := context.Background()
-
-	// Add item to cache
-	_, err = h.Query(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-
-	// Verify it's cached
-	response2, err := h.Query(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-	assert.True(t, response2.CacheHit)
-
-	// Wait for TTL to expire and cleanup to run
-	time.Sleep(100 * time.Millisecond)
-
-	// Query again - should be cache miss now
-	response3, err := h.Query(ctx, "test query", DefaultOptions())
-	require.NoError(t, err)
-	assert.False(t, response3.CacheHit)
-}
-
 // TestParser_detectLanguage_Node tests Node.js detection.
 func TestParser_detectLanguage_Node(t *testing.T) {
 	query := "show me node server code"
@@ -641,23 +590,38 @@ func TestParser_detectLanguage_Rust(t *testing.T) {
 	assert.Equal(t, "rust", got)
 }
 
-// TestHandler_Query_NoResults tests query with no search results.
-func TestHandler_Query_NoResults(t *testing.T) {
-	embedder := newMockEmbedder()
-	searcher := newMockSearcher()
-	searcher.setResults([]Result{}) // No results
+func TestHandler_Query(t *testing.T) {
+	tests := []struct {
+		name        string
+		query       string
+		results     []Result
+		wantErr     error
+		wantContext string
+	}{
+		{name: "empty query", query: "", wantErr: ErrEmptyQuery},
+		{name: "no results", query: "test query", results: []Result{}, wantContext: "No relevant results found."},
+	}
 
-	config := DefaultConfig()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			searcher := newMockSearcher()
+			if tt.results != nil {
+				searcher.setResults(tt.results)
+			}
 
-	h, err := NewHandler(embedder, searcher, config)
-	require.NoError(t, err)
-	defer h.Close()
+			h, err := NewHandler(newMockEmbedder(), searcher, DefaultConfig())
+			require.NoError(t, err)
+			defer h.Close()
 
-	ctx := context.Background()
-	response, err := h.Query(ctx, "test query", DefaultOptions())
-
-	require.NoError(t, err)
-	assert.NotNil(t, response)
-	assert.Len(t, response.Results, 0)
-	assert.Equal(t, "No relevant results found.", response.Context)
+			response, err := h.Query(context.Background(), tt.query, DefaultOptions())
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, response)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, response.Results)
+			assert.Equal(t, tt.wantContext, response.Context)
+		})
+	}
 }
