@@ -214,28 +214,33 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 // OIDC Handler Tests
 // =============================================================================
 
-func TestIAMHandler_GetOIDCConfig_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
+func TestIAMHandler_Discovery_ServiceNotAvailable(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		call   func(h *IAMHandler, w http.ResponseWriter, r *http.Request)
+	}{
+		{name: "GetOIDCConfig", target: "/.well-known/openid-configuration",
+			call: (*IAMHandler).GetOIDCConfig},
+		{name: "GetJWKS", target: "/.well-known/jwks.json",
+			call: (*IAMHandler).GetJWKS},
+		{name: "GetOAuthASMetadata", target: "/.well-known/oauth-authorization-server",
+			call: (*IAMHandler).GetOAuthASMetadata},
+	}
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil)
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, _, handler, cleanup := setupIAMTestServer(t)
+			defer cleanup()
 
-	handler.GetOIDCConfig(w, req)
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
+			tt.call(handler, w, req)
 
-func TestIAMHandler_GetJWKS_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
-	w := httptest.NewRecorder()
-
-	handler.GetJWKS(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+		})
+	}
 }
 
 func TestIAMHandler_Authorize_MissingClientID(t *testing.T) {
@@ -737,49 +742,35 @@ func TestIAMHandler_DeleteRole_Success(t *testing.T) {
 // OAuth Metadata Handler Tests
 // =============================================================================
 
-func TestIAMHandler_GetOAuthASMetadata_ServiceNotAvailable(t *testing.T) {
-	_, _, _, handler, cleanup := setupIAMTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
-	w := httptest.NewRecorder()
-
-	handler.GetOAuthASMetadata(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // =============================================================================
 // IAM Error Response Tests
 // =============================================================================
 
-func TestIAMAPIError_Fields(t *testing.T) {
-	err := &IAMAPIError{
-		Error:            "bad_request",
-		ErrorDescription: "test error description",
+func TestIAMErrorConstructors(t *testing.T) {
+	apiErr := NewIAMAPIError("not_found", "resource not found")
+	oauthErr := NewInvalidRequestError("missing client_id")
+
+	tests := []struct {
+		name     string
+		gotCode  string
+		gotDesc  string
+		wantCode string
+		wantDesc string
+	}{
+		{name: "NewIAMAPIError", gotCode: apiErr.Error, gotDesc: apiErr.ErrorDescription,
+			wantCode: "not_found", wantDesc: "resource not found"},
+		{name: "NewInvalidRequestError", gotCode: oauthErr.Code, gotDesc: oauthErr.ErrorDescription,
+			wantCode: "invalid_request", wantDesc: "missing client_id"},
 	}
-	assert.Equal(t, "bad_request", err.Error)
-	assert.Equal(t, "test error description", err.ErrorDescription)
-}
 
-func TestOAuthError_Error(t *testing.T) {
-	err := &OAuthError{
-		Code:             "invalid_request",
-		ErrorDescription: "missing required parameter",
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantCode, tt.gotCode)
+			assert.Equal(t, tt.wantDesc, tt.gotDesc)
+		})
 	}
-	assert.Contains(t, err.Error(), "invalid_request")
-}
 
-func TestNewIAMAPIError(t *testing.T) {
-	err := NewIAMAPIError("not_found", "resource not found")
-	assert.Equal(t, "not_found", err.Error)
-	assert.Equal(t, "resource not found", err.ErrorDescription)
-}
-
-func TestNewInvalidRequestError(t *testing.T) {
-	err := NewInvalidRequestError("missing client_id")
-	assert.Equal(t, "invalid_request", err.Code)
-	assert.Equal(t, "missing client_id", err.ErrorDescription)
+	assert.Contains(t, oauthErr.Error(), "invalid_request")
 }
 
 // =============================================================================
@@ -793,12 +784,23 @@ func TestIAMHandler_RegisterRoutes(t *testing.T) {
 	router := chi.NewRouter()
 	handler.RegisterRoutes(router)
 
-	// Verify routes are registered
+	registered := make(map[string]bool)
 	walkErr := chi.Walk(router, func(method string, route string, handler http.Handler, middlewares ...func(http.Handler) http.Handler) error {
+		registered[method+" "+route] = true
 		return nil
 	})
+	require.NoError(t, walkErr)
 
-	assert.NoError(t, walkErr)
+	for _, route := range []string{
+		"GET /.well-known/openid-configuration",
+		"GET /.well-known/jwks.json",
+		"GET /oauth2/authorize",
+		"POST /oauth2/token",
+		"GET /oauth2/userinfo",
+		"POST /oauth2/revoke",
+	} {
+		assert.True(t, registered[route], "route %q not registered", route)
+	}
 }
 
 // =============================================================================
