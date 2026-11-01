@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-quicbaas/pkg/config"
 	"github.com/jeremyhahn/go-quicbaas/pkg/embedding"
-	qberrors "github.com/jeremyhahn/go-quicbaas/pkg/errors"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/adapters"
 	ragcontext "github.com/jeremyhahn/go-quicbaas/pkg/rag/context"
 	"github.com/jeremyhahn/go-quicbaas/pkg/rag/pipeline"
@@ -376,59 +375,6 @@ func indexTestDocuments(t *testing.T, system *System) {
 
 // Additional test coverage
 
-func TestMockEmbedder(t *testing.T) {
-	embedder := &mockEmbedderImpl{dimensions: 384}
-
-	t.Run("basic embedding", func(t *testing.T) {
-		emb, err := embedder.Embed(context.Background(), "test")
-		require.NoError(t, err)
-		assert.Len(t, emb, 384)
-	})
-
-	t.Run("batch embedding", func(t *testing.T) {
-		texts := []string{"test1", "test2", "test3"}
-		embs, err := embedder.EmbedBatch(context.Background(), texts)
-		require.NoError(t, err)
-		assert.Len(t, embs, 3)
-	})
-
-	t.Run("dimensions", func(t *testing.T) {
-		assert.Equal(t, 384, embedder.Dimensions())
-	})
-
-	t.Run("max tokens", func(t *testing.T) {
-		assert.Equal(t, 8192, embedder.MaxTokens())
-	})
-
-	t.Run("name", func(t *testing.T) {
-		assert.Equal(t, "mock", embedder.Name())
-	})
-}
-
-func TestCreateVectorIndex(t *testing.T) {
-	cfg := config.RAGVectorConfig{
-		NumCentroids: 10,
-		Dimensions:   384,
-		NProbe:       3,
-		Metric:       "cosine",
-	}
-
-	idx, err := createVectorIndex(cfg)
-
-	require.NoError(t, err)
-	assert.NotNil(t, idx)
-
-	t.Run("different metrics", func(t *testing.T) {
-		metrics := []string{"cosine", "l2", "ip", "unknown"}
-		for _, metric := range metrics {
-			cfg.Metric = metric
-			idx, err := createVectorIndex(cfg)
-			assert.NoError(t, err)
-			assert.NotNil(t, idx)
-		}
-	})
-}
-
 func TestCreateEmbedder_UnsupportedProvider(t *testing.T) {
 	cfg := config.EmbeddingConfig{
 		Provider:   "unsupported",
@@ -522,24 +468,6 @@ func TestTrainIndex_VariousDimensions(t *testing.T) {
 			assert.True(t, idx.IsTrained())
 		})
 	}
-}
-
-// =============================================================================
-// System.Close when already closed (idempotent)
-// =============================================================================
-
-func TestSystem_CloseIdempotent(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// First close
-	err = system.Close()
-	assert.NoError(t, err)
-
-	// Second close should return nil (already closed)
-	err = system.Close()
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -713,6 +641,8 @@ func TestMockEmbedderAdapter_SpecialCharacters(t *testing.T) {
 		"Unicode: \u0041\u0042\u0043",
 		"Emoji: test",
 		"Quotes: 'single' and \"double\"",
+		"backslash: \\path\\to\\file",
+		"null: \x00",
 	}
 
 	for _, text := range testTexts {
@@ -839,37 +769,19 @@ func TestNewSystem_TrainedIndex(t *testing.T) {
 	assert.NotNil(t, stats)
 }
 
-func TestNewSystem_L2Metric(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	cfg.Vector.Metric = "l2"
+func TestNewSystem_Metrics(t *testing.T) {
+	for _, metric := range []string{"l2", "dot", "ip"} {
+		t.Run(metric, func(t *testing.T) {
+			cfg := createTestRAGConfig(t)
+			cfg.Vector.Metric = metric
 
-	system, err := NewSystem(cfg)
+			system, err := NewSystem(cfg)
 
-	require.NoError(t, err)
-	require.NotNil(t, system)
-	defer system.Close()
-}
-
-func TestNewSystem_DotMetric(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	cfg.Vector.Metric = "dot"
-
-	system, err := NewSystem(cfg)
-
-	require.NoError(t, err)
-	require.NotNil(t, system)
-	defer system.Close()
-}
-
-func TestNewSystem_IPMetric(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	cfg.Vector.Metric = "ip"
-
-	system, err := NewSystem(cfg)
-
-	require.NoError(t, err)
-	require.NotNil(t, system)
-	defer system.Close()
+			require.NoError(t, err)
+			require.NotNil(t, system)
+			defer system.Close()
+		})
+	}
 }
 
 // =============================================================================
@@ -1239,68 +1151,64 @@ func TestL2Distance(t *testing.T) {
 // Error types: VectorIndexConfigError, VectorDimensionError
 // =============================================================================
 
-func TestVectorIndexConfigError_Error(t *testing.T) {
-	err := &VectorIndexConfigError{Field: "Dimensions", Reason: "must be positive"}
-	assert.Equal(t, "invalid vector index config: Dimensions must be positive", err.Error())
-}
-
-func TestVectorDimensionError_Error(t *testing.T) {
-	err := &VectorDimensionError{Expected: 128, Got: 256}
-	assert.Equal(t, "vector dimension mismatch", err.Error())
-	assert.Equal(t, 128, err.Expected)
-	assert.Equal(t, 256, err.Got)
-}
-
-// =============================================================================
-// Factory error types: DimensionMismatchError, ComponentError, MultiComponentError
-// =============================================================================
-
-func TestDimensionMismatchError_Error(t *testing.T) {
-	err := &DimensionMismatchError{EmbeddingDim: 384, VectorDim: 768}
-	assert.Contains(t, err.Error(), "dimension mismatch")
-	assert.Equal(t, 384, err.EmbeddingDim)
-	assert.Equal(t, 768, err.VectorDim)
-}
-
-func TestComponentError_Unwrap(t *testing.T) {
+func TestErrorTypes(t *testing.T) {
 	cause := errors.New("root cause")
-	err := &ComponentError{Component: "embedder", Operation: "create", Cause: cause}
-
-	assert.Contains(t, err.Error(), "failed to create embedder")
-	assert.Contains(t, err.Error(), "root cause")
-	assert.True(t, errors.Is(err, cause))
-	assert.Equal(t, cause, err.Unwrap())
-}
-
-func TestMultiComponentError_Unwrap(t *testing.T) {
-	primary := errors.New("primary error")
 	cleanup := errors.New("cleanup error")
-	err := &MultiComponentError{Primary: primary, Cleanup: cleanup}
 
-	assert.Contains(t, err.Error(), "primary error")
-	assert.Contains(t, err.Error(), "cleanup error")
-	assert.Contains(t, err.Error(), "also:")
+	testCases := []struct {
+		name    string
+		err     error
+		wantMsg string
+		wantIs  []error
+	}{
+		{
+			name:    "VectorIndexConfigError",
+			err:     &VectorIndexConfigError{Field: "Dimensions", Reason: "must be positive"},
+			wantMsg: "invalid vector index config: Dimensions must be positive",
+		},
+		{
+			name:    "VectorDimensionError",
+			err:     &VectorDimensionError{Expected: 128, Got: 256},
+			wantMsg: "vector dimension mismatch",
+		},
+		{
+			name:    "DimensionMismatchError",
+			err:     &DimensionMismatchError{EmbeddingDim: 384, VectorDim: 768},
+			wantMsg: "dimension mismatch between embedding and vector config",
+		},
+		{
+			name:    "UnsupportedProviderError",
+			err:     &UnsupportedProviderError{Provider: "bogus"},
+			wantMsg: "unsupported embedding provider: 'bogus' - supported providers: mock, ollama, openai, voyage, lmstudio",
+		},
+		{
+			name:    "ComponentError",
+			err:     &ComponentError{Component: "embedder", Operation: "create", Cause: cause},
+			wantMsg: "failed to create embedder: root cause",
+			wantIs:  []error{cause},
+		},
+		{
+			name:    "MultiComponentError",
+			err:     &MultiComponentError{Primary: cause, Cleanup: cleanup},
+			wantMsg: "root cause (also: cleanup error)",
+			wantIs:  []error{cause, cleanup},
+		},
+		{
+			name:    "SentinelCauseError",
+			err:     &SentinelCauseError{Sentinel: ErrInvalidConfig, Cause: cause},
+			wantMsg: "invalid configuration: root cause",
+			wantIs:  []error{ErrInvalidConfig, cause},
+		},
+	}
 
-	unwrapped := err.Unwrap()
-	assert.Len(t, unwrapped, 2)
-	assert.Equal(t, primary, unwrapped[0])
-	assert.Equal(t, cleanup, unwrapped[1])
-
-	// Verify errors.Is works with multi-unwrap.
-	assert.True(t, errors.Is(err, primary))
-	assert.True(t, errors.Is(err, cleanup))
-}
-
-func TestSentinelCauseError_Unwrap(t *testing.T) {
-	cause := errors.New("underlying cause")
-	err := &SentinelCauseError{Sentinel: ErrInvalidConfig, Cause: cause}
-
-	assert.Contains(t, err.Error(), "invalid configuration")
-	assert.Contains(t, err.Error(), "underlying cause")
-
-	// Verify multi-unwrap returns both.
-	assert.True(t, errors.Is(err, ErrInvalidConfig))
-	assert.True(t, errors.Is(err, cause))
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.wantMsg, tc.err.Error())
+			for _, target := range tc.wantIs {
+				assert.ErrorIs(t, tc.err, target)
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1388,53 +1296,6 @@ func TestRAGSearcher_SearchDefaultTopK(t *testing.T) {
 	assert.Len(t, results, 1) // Only 1 vector in index.
 }
 
-func TestSystem_QueryOnClosedSystem(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Close the system
-	err = system.Close()
-	require.NoError(t, err)
-
-	// Try to query - should return ErrSystemClosed
-	opts := pipeline.QueryOptions{TopK: 5}
-	_, err = system.Query(context.Background(), "test query", opts)
-
-	assert.Error(t, err)
-	assert.Equal(t, ErrSystemClosed, err)
-}
-
-func TestSystem_IndexContentOnClosedSystem(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Close the system
-	err = system.Close()
-	require.NoError(t, err)
-
-	// Try to index - should return ErrSystemClosed
-	err = system.IndexContent(context.Background(), "id1", "content", nil)
-
-	assert.Error(t, err)
-	assert.Equal(t, ErrSystemClosed, err)
-}
-
-func TestSystem_StatsOnClosedSystem(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Close the system
-	err = system.Close()
-	require.NoError(t, err)
-
-	// Stats should return empty stats when closed
-	stats := system.Stats()
-	assert.NotNil(t, stats)
-}
-
 // =============================================================================
 // createEmbedder with safe providers only
 // =============================================================================
@@ -1482,36 +1343,6 @@ func TestCreateEmbedder_SafeProviders(t *testing.T) {
 					embedder.Close()
 				}
 			}
-		})
-	}
-}
-
-// =============================================================================
-// createVectorIndex with extended metric coverage
-// =============================================================================
-
-func TestCreateVectorIndex_ExtendedMetrics(t *testing.T) {
-	testCases := []struct {
-		name   string
-		metric string
-	}{
-		{"default empty metric", ""},
-		{"unknown metric fallback", "unknown"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.RAGVectorConfig{
-				NumCentroids: 10,
-				Dimensions:   128,
-				NProbe:       3,
-				Metric:       tc.metric,
-			}
-
-			idx, err := createVectorIndex(cfg)
-
-			assert.NoError(t, err)
-			assert.NotNil(t, idx)
 		})
 	}
 }
@@ -1577,39 +1408,6 @@ func TestSystem_IndexContentWithEmptyMetadata(t *testing.T) {
 	err = system.IndexContent(context.Background(), "test-empty-meta", "test content", map[string]interface{}{})
 
 	assert.NoError(t, err)
-}
-
-// =============================================================================
-// mockEmbedderAdapter caching behavior
-// =============================================================================
-
-func TestMockEmbedderAdapter_CachingBehavior(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	// First call should generate embedding
-	emb1, err := adapter.Embed(context.Background(), "test text")
-	require.NoError(t, err)
-
-	// Second call with same text should return cached embedding
-	emb2, err := adapter.Embed(context.Background(), "test text")
-	require.NoError(t, err)
-
-	// Embeddings should be identical
-	assert.Equal(t, emb1, emb2)
-}
-
-func TestMockEmbedderAdapter_DifferentTexts(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	// Different texts should produce different embeddings
-	emb1, err := adapter.Embed(context.Background(), "text one")
-	require.NoError(t, err)
-
-	emb2, err := adapter.Embed(context.Background(), "text two")
-	require.NoError(t, err)
-
-	// Embeddings should be different
-	assert.NotEqual(t, emb1, emb2)
 }
 
 // =============================================================================
@@ -1698,37 +1496,6 @@ func TestNewSystem_PipelineConfigVariations(t *testing.T) {
 }
 
 // =============================================================================
-// mockEmbedderAdapter batch operations
-// =============================================================================
-
-func TestMockEmbedderAdapter_EmbedBatchEmpty(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	results, err := adapter.EmbedBatch(context.Background(), []string{})
-
-	require.NoError(t, err)
-	assert.Empty(t, results)
-}
-
-func TestMockEmbedderAdapter_EmbedBatchLarge(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	texts := make([]string, 100)
-	for i := range texts {
-		texts[i] = "text number " + string(rune('A'+i%26))
-	}
-
-	results, err := adapter.EmbedBatch(context.Background(), texts)
-
-	require.NoError(t, err)
-	assert.Len(t, results, 100)
-
-	for _, emb := range results {
-		assert.Len(t, emb, 128)
-	}
-}
-
-// =============================================================================
 // Error type tests
 // =============================================================================
 
@@ -1738,27 +1505,6 @@ func TestRAGErrors(t *testing.T) {
 	assert.Equal(t, "dimension mismatch between embedding and vector config", ErrDimensionMismatch.Error())
 	assert.Equal(t, "unsupported embedding provider", ErrUnsupportedProvider.Error())
 	assert.Equal(t, "failed to create embedding provider", ErrProviderCreationFailed.Error())
-}
-
-// =============================================================================
-// mockEmbedderAdapter all methods
-// =============================================================================
-
-func TestMockEmbedderAdapter_AllMethods(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 256}
-
-	// Test Dimensions
-	assert.Equal(t, 256, adapter.Dimensions())
-
-	// Test MaxTokens
-	assert.Equal(t, 8192, adapter.MaxTokens())
-
-	// Test Name
-	assert.Equal(t, "mock", adapter.Name())
-
-	// Test Close
-	err := adapter.Close()
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -1923,21 +1669,6 @@ func TestSystem_StatsAfterClose(t *testing.T) {
 
 // Test Close error paths with error-returning components
 
-func TestSystem_CloseWithErrors(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Replace components with error-returning mocks
-	system.pipeline = &errorPipeline{}
-	system.embedder = &errorEmbedder{}
-
-	err = system.Close()
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to close pipeline")
-}
-
 func TestSystem_CloseWithPipelineError(t *testing.T) {
 	cfg := createTestRAGConfig(t)
 	system, err := NewSystem(cfg)
@@ -1966,32 +1697,6 @@ func TestSystem_CloseWithEmbedderError(t *testing.T) {
 	assert.Contains(t, err.Error(), "embedder close")
 }
 
-// Test EmbedBatch error path
-
-func TestMockEmbedder_EmbedBatchError(t *testing.T) {
-	// Use an embedder that will fail on one text
-	ctx := context.Background()
-	texts := []string{"test1", "test2"}
-
-	// Create a failing embedder
-	failingEmb := &failingEmbedder{failAfter: 1}
-	results, err := failingEmb.EmbedBatch(ctx, texts)
-
-	assert.Error(t, err)
-	assert.Nil(t, results)
-}
-
-// Test QueryHandler error path
-
-func TestMockQueryHandler_EmbedError(t *testing.T) {
-	handler := &mockQueryHandler{embedder: &failingEmbedder{failAfter: 0}}
-
-	result, err := handler.Process(context.Background(), "test query")
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-}
-
 // Test IndexContent with nil metadata
 
 func TestSystem_IndexContentNilMetadata(t *testing.T) {
@@ -2008,34 +1713,6 @@ func TestSystem_IndexContentNilMetadata(t *testing.T) {
 }
 
 // Test vector index with different metrics
-func TestCreateVectorIndex_AllMetrics(t *testing.T) {
-	testCases := []struct {
-		name   string
-		metric string
-	}{
-		{"cosine", "cosine"},
-		{"l2", "l2"},
-		{"inner product", "ip"},
-		{"dot product", "dot"},
-		{"unknown defaults to cosine", "unknown"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.RAGVectorConfig{
-				NumCentroids: 10,
-				Dimensions:   384,
-				NProbe:       3,
-				Metric:       tc.metric,
-			}
-
-			idx, err := createVectorIndex(cfg)
-			assert.NoError(t, err)
-			assert.NotNil(t, idx)
-		})
-	}
-}
-
 // Mock implementations that return errors
 
 type errorPipeline struct{}
@@ -2129,192 +1806,7 @@ func (f *failingEmbedder) Close() error {
 var _ embedding.Provider = (*failingEmbedder)(nil)
 var _ embedding.Provider = (*errorEmbedder)(nil)
 
-func TestMockEmbedderImpl_CachedEmbedding(t *testing.T) {
-	embedder := &mockEmbedderImpl{dimensions: 128}
-
-	// First call - not cached
-	emb1, err := embedder.Embed(context.Background(), "test text")
-	require.NoError(t, err)
-	assert.Len(t, emb1, 128)
-
-	// Second call - should return cached
-	emb2, err := embedder.Embed(context.Background(), "test text")
-	require.NoError(t, err)
-	assert.Equal(t, emb1, emb2) // Should be identical
-
-	// Different text - not cached
-	emb3, err := embedder.Embed(context.Background(), "different text")
-	require.NoError(t, err)
-	assert.Len(t, emb3, 128)
-	assert.NotEqual(t, emb1, emb3) // Should be different
-}
-
 // TestCreateVectorIndex_DotMetric specifically tests the "dot" metric path
-func TestCreateVectorIndex_DotMetric(t *testing.T) {
-	cfg := config.RAGVectorConfig{
-		NumCentroids: 10,
-		Dimensions:   128,
-		NProbe:       3,
-		Metric:       "dot",
-	}
-
-	idx, err := createVectorIndex(cfg)
-	assert.NoError(t, err)
-	assert.NotNil(t, idx)
-}
-
-// TestMockEmbedderImpl_EmptyEmbeddings tests initial state
-func TestMockEmbedderImpl_EmptyEmbeddings(t *testing.T) {
-	embedder := &mockEmbedderImpl{dimensions: 256}
-
-	// Embeddings map should be nil initially
-	assert.Nil(t, embedder.embeddings)
-
-	// After first call, it should be initialized
-	_, err := embedder.Embed(context.Background(), "test")
-	require.NoError(t, err)
-	assert.NotNil(t, embedder.embeddings)
-}
-
-// TestMockEmbedderImpl_Close tests close method
-func TestMockEmbedderImpl_Close(t *testing.T) {
-	embedder := &mockEmbedderImpl{dimensions: 128}
-
-	err := embedder.Close()
-	assert.NoError(t, err)
-}
-
-type errorVectorSearcher struct {
-	closeErr error
-}
-
-func (e *errorVectorSearcher) Search(ctx context.Context, query string, k int, filters map[string]interface{}) ([]pipeline.Result, error) {
-	return nil, nil
-}
-
-func (e *errorVectorSearcher) Add(ctx context.Context, id string, content string, metadata map[string]interface{}) error {
-	return nil
-}
-
-func (e *errorVectorSearcher) Remove(id string) error {
-	return nil
-}
-
-func (e *errorVectorSearcher) Close() error {
-	return e.closeErr
-}
-
-func TestSystemCloseWithVectorSearcherError(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Create a mock error searcher
-	mockSearcher := &mockVectorSearcherWithCloseError{
-		closeErr: errors.New("vector searcher close error"),
-	}
-
-	// We can't directly replace vectorSearcher since it's *vector.RAGSearcher
-	// Instead we test the error message format
-	_ = mockSearcher
-
-	// Close the real system - this should succeed
-	err = system.Close()
-	assert.NoError(t, err)
-}
-
-// mockVectorSearcherWithCloseError implements the searcher interface with Close error
-type mockVectorSearcherWithCloseError struct {
-	closeErr error
-}
-
-func (m *mockVectorSearcherWithCloseError) Search(ctx context.Context, query string, k int, filters map[string]interface{}) ([]pipeline.Result, error) {
-	return nil, nil
-}
-
-func (m *mockVectorSearcherWithCloseError) Add(ctx context.Context, id string, content string, metadata map[string]interface{}) error {
-	return nil
-}
-
-func (m *mockVectorSearcherWithCloseError) Remove(id string) error {
-	return nil
-}
-
-func (m *mockVectorSearcherWithCloseError) Close() error {
-	return m.closeErr
-}
-
-// =============================================================================
-// Test dimension mismatch AFTER config validation (lines 64-67)
-// This requires config validation to pass but have mismatched dimensions
-// =============================================================================
-
-func TestNewSystemDimensionMismatchAfterValidation(t *testing.T) {
-	// Create config where RAGConfig.Validate() passes but dimensions still mismatch
-	// The check at lines 64-67 happens AFTER cfg.Validate()
-	// Looking at the code: cfg.Validate() may have its own dimension check
-	// We need to find a way to pass validation but fail the dimension check
-
-	// After reviewing - the config validation also checks dimensions
-	// So this path may be unreachable through normal config
-
-	// Test that the error type is correct when dimension mismatch detected
-	cfg := createTestRAGConfig(t)
-	cfg.Embedding.Dimensions = 256
-	cfg.Vector.Dimensions = 512
-
-	_, err := NewSystem(cfg)
-
-	assert.Error(t, err)
-	// Config validation catches this first, but we verify the error type
-	assert.Contains(t, err.Error(), "dimension")
-}
-
-// =============================================================================
-// Test embedder close error in vector index creation failure (lines 77-83)
-// =============================================================================
-
-// failOnCloseEmbedder returns an error when Close is called
-type failOnCloseEmbedder struct {
-	dimensions int
-}
-
-func (f *failOnCloseEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
-	return make([]float32, f.dimensions), nil
-}
-
-func (f *failOnCloseEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	results := make([][]float32, len(texts))
-	for i := range texts {
-		results[i] = make([]float32, f.dimensions)
-	}
-	return results, nil
-}
-
-func (f *failOnCloseEmbedder) Dimensions() int { return f.dimensions }
-func (f *failOnCloseEmbedder) MaxTokens() int  { return 8192 }
-func (f *failOnCloseEmbedder) Name() string    { return "fail-on-close" }
-func (f *failOnCloseEmbedder) Close() error    { return errors.New("embedder close error") }
-
-var _ embedding.Provider = (*failOnCloseEmbedder)(nil)
-
-// TestNewSystemVectorIndexFailureWithEmbedderCloseError tests the error path at lines 77-83
-// This requires vector index creation to fail AND embedder.Close() to fail
-// Vector index creation fails with invalid config like 0 dimensions
-func TestNewSystemVectorIndexFailureWithEmbedderCloseError(t *testing.T) {
-	// This path is hard to reach because:
-	// 1. Config validation happens first
-	// 2. We can't inject a failing embedder before the validation
-
-	// Instead we test the error messages that would be generated
-	cfg := createTestRAGConfig(t)
-	cfg.Vector.NumCentroids = 0 // Should fail validation or index creation
-
-	_, err := NewSystem(cfg)
-
-	assert.Error(t, err)
-}
-
 // =============================================================================
 // Test combined error scenarios - Close with multiple error components
 // =============================================================================
@@ -2336,51 +1828,6 @@ func TestSystemCloseWithAllComponentErrors(t *testing.T) {
 	// Should contain both pipeline and embedder errors
 	assert.Contains(t, err.Error(), "pipeline close")
 	assert.Contains(t, err.Error(), "embedder close")
-}
-
-// =============================================================================
-// Test System error accumulation in Close
-// =============================================================================
-
-func TestSystemCloseErrorAccumulation(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Replace with components that return errors
-	system.pipeline = &errorPipeline{}
-	system.embedder = &errorEmbedder{}
-
-	err = system.Close()
-
-	assert.Error(t, err)
-	errStr := err.Error()
-
-	// Verify all errors are accumulated
-	assert.Contains(t, errStr, "pipeline close")
-	assert.Contains(t, errStr, "embedder close")
-}
-
-// =============================================================================
-// Test Close idempotency with errors
-// =============================================================================
-
-func TestSystemCloseIdempotentWithErrors(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// First close should succeed
-	err = system.Close()
-	assert.NoError(t, err)
-
-	// Second close should also succeed (idempotent)
-	err = system.Close()
-	assert.NoError(t, err)
-
-	// Third close - still idempotent
-	err = system.Close()
-	assert.NoError(t, err)
 }
 
 // =============================================================================
@@ -2531,78 +1978,6 @@ func TestNewSystemWithInvalidPipelineConfig(t *testing.T) {
 }
 
 // =============================================================================
-// Test error formatting in Close
-// =============================================================================
-
-func TestSystemCloseErrorFormatting(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-	system, err := NewSystem(cfg)
-	require.NoError(t, err)
-
-	// Replace with specific error-returning mocks
-	system.pipeline = &errorPipeline{}
-	system.embedder = &errorEmbedder{}
-
-	err = system.Close()
-
-	assert.Error(t, err)
-	// Verify error is formatted as expected
-	assert.Contains(t, err.Error(), "failed to close pipeline")
-}
-
-// =============================================================================
-// Additional edge cases for mockEmbedderAdapter
-// =============================================================================
-
-func TestMockEmbedderAdapterEmptyString(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 64}
-
-	emb, err := adapter.Embed(context.Background(), "")
-
-	assert.NoError(t, err)
-	assert.Len(t, emb, 64)
-}
-
-func TestMockEmbedderAdapterSpecialCharacters(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 64}
-
-	specialTexts := []string{
-		"line1\nline2\nline3",
-		"tab\there",
-		"unicode: ",
-		"quotes: \"test\"",
-		"backslash: \\path\\to\\file",
-		"null: \x00",
-	}
-
-	for _, text := range specialTexts {
-		emb, err := adapter.Embed(context.Background(), text)
-		assert.NoError(t, err)
-		assert.Len(t, emb, 64)
-	}
-}
-
-func TestMockEmbedderAdapterCacheHitPath(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-
-	// First embed - creates entry in cache
-	emb1, err := adapter.Embed(context.Background(), "cached_text")
-	require.NoError(t, err)
-
-	// Second embed - should hit cache
-	emb2, err := adapter.Embed(context.Background(), "cached_text")
-	require.NoError(t, err)
-
-	// Third embed - different text
-	emb3, err := adapter.Embed(context.Background(), "different_text")
-	require.NoError(t, err)
-
-	// Verify cache behavior
-	assert.Equal(t, emb1, emb2, "cached embeddings should be identical")
-	assert.NotEqual(t, emb1, emb3, "different text should produce different embedding")
-}
-
-// =============================================================================
 // Test queryHandlerAdapter edge cases
 // =============================================================================
 
@@ -2621,17 +1996,6 @@ func TestQueryHandlerAdapterVeryLongQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, longQuery, result.Original)
 	assert.Len(t, result.Embedding, 128)
-}
-
-func TestQueryHandlerAdapterCloseAlwaysSucceeds(t *testing.T) {
-	adapter := &mockEmbedderAdapter{dimensions: 128}
-	handler := &queryHandlerAdapter{embedder: adapter}
-
-	// Close multiple times
-	for i := 0; i < 5; i++ {
-		err := handler.Close()
-		assert.NoError(t, err)
-	}
 }
 
 // =============================================================================
@@ -2661,34 +2025,6 @@ func TestSystemOperationsInSequence(t *testing.T) {
 	resp, err = system.Query(context.Background(), "second", pipeline.QueryOptions{TopK: 5})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-}
-
-// =============================================================================
-// Test error types are properly defined
-// =============================================================================
-
-func TestErrorTypesExist(t *testing.T) {
-	// Verify all error types are accessible and have correct values
-	assert.NotNil(t, ErrSystemClosed)
-	assert.NotNil(t, ErrInvalidConfig)
-	assert.NotNil(t, ErrDimensionMismatch)
-	assert.NotNil(t, ErrUnsupportedProvider)
-	assert.NotNil(t, ErrProviderCreationFailed)
-
-	// Verify they are distinct
-	assert.NotEqual(t, ErrSystemClosed, ErrInvalidConfig)
-	assert.NotEqual(t, ErrInvalidConfig, ErrDimensionMismatch)
-	assert.NotEqual(t, ErrDimensionMismatch, ErrUnsupportedProvider)
-	assert.NotEqual(t, ErrUnsupportedProvider, ErrProviderCreationFailed)
-}
-
-func TestErrorWrapping(t *testing.T) {
-	// Test that errors can be properly wrapped and unwrapped
-	wrappedErr := &qberrors.WrappedMessageError{Message: "outer", Cause: ErrSystemClosed}
-	assert.ErrorIs(t, wrappedErr, ErrSystemClosed)
-
-	wrappedErr = &qberrors.WrappedMessageError{Message: "outer", Cause: ErrDimensionMismatch}
-	assert.ErrorIs(t, wrappedErr, ErrDimensionMismatch)
 }
 
 // =============================================================================
@@ -2739,82 +2075,6 @@ func TestCreateVectorIndexAllMetrics(t *testing.T) {
 			assert.NotNil(t, idx)
 		})
 	}
-}
-
-// =============================================================================
-// Test failOnCloseEmbedder methods (ensure interface compliance)
-// =============================================================================
-
-func TestFailOnCloseEmbedderMethods(t *testing.T) {
-	embedder := &failOnCloseEmbedder{dimensions: 128}
-
-	// Test Embed
-	emb, err := embedder.Embed(context.Background(), "test")
-	assert.NoError(t, err)
-	assert.Len(t, emb, 128)
-
-	// Test EmbedBatch
-	results, err := embedder.EmbedBatch(context.Background(), []string{"a", "b", "c"})
-	assert.NoError(t, err)
-	assert.Len(t, results, 3)
-
-	// Test metadata methods
-	assert.Equal(t, 128, embedder.Dimensions())
-	assert.Equal(t, 8192, embedder.MaxTokens())
-	assert.Equal(t, "fail-on-close", embedder.Name())
-
-	// Test Close returns error
-	err = embedder.Close()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "embedder close error")
-}
-
-// =============================================================================
-// Test mock searcher types for interface compliance
-// =============================================================================
-
-func TestErrorVectorSearcherMethods(t *testing.T) {
-	searcher := &errorVectorSearcher{closeErr: errors.New("close error")}
-
-	// Test Search
-	results, err := searcher.Search(context.Background(), "query", 5, nil)
-	assert.NoError(t, err)
-	assert.Nil(t, results)
-
-	// Test Add
-	err = searcher.Add(context.Background(), "id", "content", nil)
-	assert.NoError(t, err)
-
-	// Test Remove
-	err = searcher.Remove("id")
-	assert.NoError(t, err)
-
-	// Test Close
-	err = searcher.Close()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "close error")
-}
-
-func TestMockVectorSearcherWithCloseErrorMethods(t *testing.T) {
-	searcher := &mockVectorSearcherWithCloseError{closeErr: errors.New("mock close error")}
-
-	// Test Search
-	results, err := searcher.Search(context.Background(), "query", 5, nil)
-	assert.NoError(t, err)
-	assert.Nil(t, results)
-
-	// Test Add
-	err = searcher.Add(context.Background(), "id", "content", nil)
-	assert.NoError(t, err)
-
-	// Test Remove
-	err = searcher.Remove("id")
-	assert.NoError(t, err)
-
-	// Test Close
-	err = searcher.Close()
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "mock close error")
 }
 
 // =============================================================================
@@ -3201,46 +2461,6 @@ func TestCreateEmbedder(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, embedder)
 		assert.Contains(t, err.Error(), "unsupported embedding provider")
-	})
-}
-
-// TestNewSystem_DimensionMismatchAfterValidation tests dimension mismatch between embedding and vector config
-func TestNewSystem_DimensionMismatchAfterValidation(t *testing.T) {
-	cfg := createTestRAGConfig(t)
-
-	// Set dimensions that are individually valid but mismatch
-	cfg.Embedding.Dimensions = 384
-	cfg.Vector.Dimensions = 768
-
-	system, err := NewSystem(cfg)
-
-	// Should fail on dimension mismatch check
-	assert.Error(t, err)
-	assert.Nil(t, system)
-	// Check that error message contains dimension info
-	assert.Contains(t, err.Error(), "dimension")
-}
-
-// TestErrorSentinels tests that error sentinels work correctly
-func TestErrorSentinels(t *testing.T) {
-	t.Run("ErrSystemClosed", func(t *testing.T) {
-		assert.Contains(t, ErrSystemClosed.Error(), "closed")
-	})
-
-	t.Run("ErrInvalidConfig", func(t *testing.T) {
-		assert.Contains(t, ErrInvalidConfig.Error(), "invalid")
-	})
-
-	t.Run("ErrDimensionMismatch", func(t *testing.T) {
-		assert.Contains(t, ErrDimensionMismatch.Error(), "dimension")
-	})
-
-	t.Run("ErrUnsupportedProvider", func(t *testing.T) {
-		assert.Contains(t, ErrUnsupportedProvider.Error(), "unsupported")
-	})
-
-	t.Run("ErrProviderCreationFailed", func(t *testing.T) {
-		assert.Contains(t, ErrProviderCreationFailed.Error(), "failed")
 	})
 }
 
