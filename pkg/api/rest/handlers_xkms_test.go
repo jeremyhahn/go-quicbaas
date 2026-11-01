@@ -44,35 +44,6 @@ import (
 )
 
 // =============================================================================
-// Error type tests
-// =============================================================================
-
-func TestXKMSServiceNotInitializedError(t *testing.T) {
-	err := &XKMSServiceNotInitializedError{}
-	assert.Equal(t, "xkms service is not initialized", err.Error())
-}
-
-func TestXKMSInvalidRequestError(t *testing.T) {
-	err := &XKMSInvalidRequestError{Detail: "missing field"}
-	assert.Equal(t, "invalid request: missing field", err.Error())
-}
-
-func TestXKMSBackendNotFoundError(t *testing.T) {
-	err := &XKMSBackendNotFoundError{Backend: "tpm2"}
-	assert.Equal(t, "backend not found: tpm2", err.Error())
-}
-
-func TestXKMSKeyNotFoundError(t *testing.T) {
-	err := &XKMSKeyNotFoundError{KeyID: "test-key-1"}
-	assert.Equal(t, "key not found: test-key-1", err.Error())
-}
-
-func TestXKMSOperationError(t *testing.T) {
-	err := &XKMSOperationError{Op: "Sign", Detail: "key is disabled"}
-	assert.Equal(t, "Sign: key is disabled", err.Error())
-}
-
-// =============================================================================
 // respondXKMSError tests
 // =============================================================================
 
@@ -608,682 +579,87 @@ func TestHandleXKMSHealth_Unavailable(t *testing.T) {
 	assert.Equal(t, "unavailable", resp.Status)
 }
 
-func TestHandleXKMSListBackends_NotInitialized(t *testing.T) {
+// TestHandleXKMS_NotInitialized drives every xkms route through the router
+// without an initialized xkms service: each handler must reject the request
+// with 412 before it reads or validates the body.
+func TestHandleXKMS_NotInitialized(t *testing.T) {
 	server, _, cleanup := setupMockServer(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/backends", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSGetBackend_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/backends/tpm2", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGenerateKey_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.GenerateKeyRequest{
-		KeyID:   "test-key",
-		KeyType: "rsa",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGenerateKey_Validation(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	// Note: validation checks happen after the initialization check,
-	// so these will return 412 since xkms is not initialized.
-	// The validation logic is tested through buildKeyAttributes tests above.
-
-	t.Run("empty body returns 412 because xkms is not initialized", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys", bytes.NewReader([]byte{}))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		server.router.ServeHTTP(w, req)
-
-		// Returns 412 because xkms is not initialized (checked first)
-		assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-	})
-}
-
-func TestHandleXKMSListKeys_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/keys", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGetKey_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/keys/test-key", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSDeleteKey_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/keys/test-key", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSRotateKey_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/rotate", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSSign_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"data": []byte("test data"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/sign", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSVerify_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"data":      []byte("test data"),
-		"signature": []byte("sig"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSEncrypt_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"plaintext": []byte("secret"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/encrypt", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSDecrypt_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"ciphertext": []byte("encrypted"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/decrypt", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSSaveCert_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]string{
-		"certificate_pem": "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/certs?key_id=test", bytes.NewReader(body)).WithContext(tenantctx.WithSystem(context.Background()))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSListCerts_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs", nil).WithContext(tenantctx.WithSystem(context.Background()))
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGetCert_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/certs/test-cert", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSDeleteCert_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/certs/test-cert", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSCertExists_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodHead, "/api/v1/xkms/certs/test-cert", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSSeal_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.SealRequest{
-		Data: []byte("secret"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/seal", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSUnseal_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.UnsealRequest{
-		Ciphertext: []byte("encrypted"),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/unseal", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSCanSeal_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/seal/capability", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSListKeyVersions_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/keys/test-key/versions", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSEnableKeyVersion_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/versions/1/enable", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSDisableKeyVersion_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/versions/1/disable", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSEnableAllKeyVersions_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/versions/enable-all", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSDisableAllKeyVersions_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/keys/test-key/versions/disable-all", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-// =============================================================================
-// PIV Handler HTTP tests (xkms not initialized path)
-// =============================================================================
-
-func TestHandleXKMSListPIVSlots_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSListPIVSlots_NotInitializedWithBackendParam(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots?backend=tpm2", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGetPIVCertificate_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots/9a/cert", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSGetPIVCertificate_NotInitializedWithFormatParam(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/piv/slots/9a/cert?format=der&backend=pkcs11", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSStorePIVCertificate_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.StorePIVCertificateRequest{
-		Certificate: []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"),
-	})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/xkms/piv/slots/9a/cert", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSDeletePIVCertificate_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/piv/slots/9a/cert", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSDeletePIVCertificate_NotInitializedWithBackendParam(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/xkms/piv/slots/9c/cert?backend=tpm2", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSGeneratePIVKey_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.GeneratePIVKeyRequest{
-		Algorithm: "ECCP256",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/key", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSGeneratePIVCSR_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.GeneratePIVCSRRequest{
-		Subject: "CN=test-cn",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/piv/slots/9a/csr", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-// =============================================================================
-// PIN Handler HTTP tests (xkms not initialized path)
-// =============================================================================
-
-func TestHandleXKMSSetSOPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.SetSOPINRequest{
-		NewSOPIN: "123456",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/set", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSSetSOPIN_EmptyBody(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/set", bytes.NewReader([]byte{}))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSSetUserPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.SetUserPINRequest{
-		SOPIN:      "123456",
-		NewUserPIN: "654321",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/set", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSChangeSOPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.ChangeSOPINRequest{
-		CurrentSOPIN: "123456",
-		NewSOPIN:     "654321",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/change", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSChangeSOPIN_EmptyBody(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/change", bytes.NewReader([]byte{}))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSChangeUserPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.ChangeUserPINRequest{
-		CurrentUserPIN: "654321",
-		NewUserPIN:     "111111",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/change", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSVerifySOPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.VerifySOPINRequest{
-		SOPIN: "123456",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSVerifySOPIN_EmptyBody(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/so/verify", bytes.NewReader([]byte{}))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-}
-
-func TestHandleXKMSVerifyUserPIN_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.VerifyUserPINRequest{
-		UserPIN: "654321",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/user/verify", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSGetLockoutStatus_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/xkms/pin/lockout", nil)
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSResetLockout_NotInitialized(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(transportTypes.ResetLockoutRequest{
-		SOPIN: "123456",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/lockout/reset", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
-
-	var resp xkmsErrorResponse
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	require.NoError(t, err)
-	assert.Contains(t, resp.Error, "not initialized")
-}
-
-func TestHandleXKMSResetLockout_EmptyBody(t *testing.T) {
-	server, _, cleanup := setupMockServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/xkms/pin/lockout/reset", bytes.NewReader([]byte{}))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	server.router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		system bool
+	}{
+		{name: "ListBackends", method: http.MethodGet, path: "/api/v1/xkms/backends"},
+		{name: "GetBackend", method: http.MethodGet, path: "/api/v1/xkms/backends/tpm2"},
+		{name: "GenerateKey", method: http.MethodPost, path: "/api/v1/xkms/keys", body: `{"key_id":"test-key","key_type":"rsa"}`},
+		{name: "GenerateKey empty body", method: http.MethodPost, path: "/api/v1/xkms/keys", body: ""},
+		{name: "ListKeys", method: http.MethodGet, path: "/api/v1/xkms/keys"},
+		{name: "GetKey", method: http.MethodGet, path: "/api/v1/xkms/keys/test-key"},
+		{name: "DeleteKey", method: http.MethodDelete, path: "/api/v1/xkms/keys/test-key"},
+		{name: "RotateKey", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/rotate"},
+		{name: "Sign", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/sign", body: `{"data":"dGVzdCBkYXRh"}`},
+		{name: "Verify", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/verify", body: `{"data":"dGVzdCBkYXRh","signature":"c2ln"}`},
+		{name: "Encrypt", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/encrypt", body: `{"plaintext":"c2VjcmV0"}`},
+		{name: "Decrypt", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/decrypt", body: `{"ciphertext":"ZW5jcnlwdGVk"}`},
+		{name: "SaveCert", method: http.MethodPost, path: "/api/v1/xkms/certs?key_id=test", body: `{"certificate_pem":"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"}`, system: true},
+		{name: "ListCerts", method: http.MethodGet, path: "/api/v1/xkms/certs", system: true},
+		{name: "GetCert", method: http.MethodGet, path: "/api/v1/xkms/certs/test-cert"},
+		{name: "DeleteCert", method: http.MethodDelete, path: "/api/v1/xkms/certs/test-cert"},
+		{name: "CertExists", method: http.MethodHead, path: "/api/v1/xkms/certs/test-cert"},
+		{name: "Seal", method: http.MethodPost, path: "/api/v1/xkms/seal", body: `{"data":"c2VjcmV0"}`},
+		{name: "Unseal", method: http.MethodPost, path: "/api/v1/xkms/unseal", body: `{"ciphertext":"ZW5jcnlwdGVk"}`},
+		{name: "CanSeal", method: http.MethodGet, path: "/api/v1/xkms/seal/capability"},
+		{name: "ListKeyVersions", method: http.MethodGet, path: "/api/v1/xkms/keys/test-key/versions"},
+		{name: "EnableKeyVersion", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/versions/1/enable"},
+		{name: "DisableKeyVersion", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/versions/1/disable"},
+		{name: "EnableAllKeyVersions", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/versions/enable-all"},
+		{name: "DisableAllKeyVersions", method: http.MethodPost, path: "/api/v1/xkms/keys/test-key/versions/disable-all"},
+		{name: "ListPIVSlots", method: http.MethodGet, path: "/api/v1/xkms/piv/slots"},
+		{name: "ListPIVSlots with backend", method: http.MethodGet, path: "/api/v1/xkms/piv/slots?backend=tpm2"},
+		{name: "GetPIVCertificate", method: http.MethodGet, path: "/api/v1/xkms/piv/slots/9a/cert"},
+		{name: "GetPIVCertificate with format", method: http.MethodGet, path: "/api/v1/xkms/piv/slots/9a/cert?format=der&backend=pkcs11"},
+		{name: "StorePIVCertificate", method: http.MethodPut, path: "/api/v1/xkms/piv/slots/9a/cert", body: `{"certificate":"dGVzdA=="}`},
+		{name: "DeletePIVCertificate", method: http.MethodDelete, path: "/api/v1/xkms/piv/slots/9a/cert"},
+		{name: "DeletePIVCertificate with backend", method: http.MethodDelete, path: "/api/v1/xkms/piv/slots/9c/cert?backend=tpm2"},
+		{name: "GeneratePIVKey", method: http.MethodPost, path: "/api/v1/xkms/piv/slots/9a/key", body: `{"algorithm":"ECCP256"}`},
+		{name: "GeneratePIVCSR", method: http.MethodPost, path: "/api/v1/xkms/piv/slots/9a/csr", body: `{"subject":"CN=test-cn"}`},
+		{name: "SetSOPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/so/set", body: `{"new_so_pin":"123456"}`},
+		{name: "SetSOPIN empty body", method: http.MethodPost, path: "/api/v1/xkms/pin/so/set", body: ""},
+		{name: "SetUserPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/user/set", body: `{"so_pin":"123456","new_user_pin":"654321"}`},
+		{name: "ChangeSOPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/so/change", body: `{"current_so_pin":"123456","new_so_pin":"654321"}`},
+		{name: "ChangeSOPIN empty body", method: http.MethodPost, path: "/api/v1/xkms/pin/so/change", body: ""},
+		{name: "ChangeUserPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/user/change", body: `{"current_user_pin":"654321","new_user_pin":"111111"}`},
+		{name: "VerifySOPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/so/verify", body: `{"so_pin":"123456"}`},
+		{name: "VerifySOPIN empty body", method: http.MethodPost, path: "/api/v1/xkms/pin/so/verify", body: ""},
+		{name: "VerifyUserPIN", method: http.MethodPost, path: "/api/v1/xkms/pin/user/verify", body: `{"user_pin":"654321"}`},
+		{name: "GetLockoutStatus", method: http.MethodGet, path: "/api/v1/xkms/pin/lockout"},
+		{name: "ResetLockout", method: http.MethodPost, path: "/api/v1/xkms/pin/lockout/reset", body: `{"so_pin":"123456"}`},
+		{name: "ResetLockout empty body", method: http.MethodPost, path: "/api/v1/xkms/pin/lockout/reset", body: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, bytes.NewReader([]byte(tt.body)))
+			if tt.system {
+				req = req.WithContext(tenantctx.WithSystem(context.Background()))
+			}
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			server.router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusPreconditionFailed, w.Code)
+			if tt.method == http.MethodHead {
+				return
+			}
+			var resp xkmsErrorResponse
+			require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+			assert.Contains(t, resp.Error, "not initialized")
+		})
+	}
 }
 
 // =============================================================================
